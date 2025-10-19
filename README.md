@@ -1,6 +1,6 @@
 # clautorun
 
-[![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://python.org)
+[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **clautorun** - Claude Agent SDK Command Interceptor
@@ -17,6 +17,19 @@ A command interceptor for Claude Code that processes specific commands locally t
 
 ## Installation
 
+### Option A: UV (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/clautorun.git
+cd clautorun
+
+# Install with UV (includes dev dependencies for testing)
+uv sync --dev
+```
+
+### Option B: Traditional pip
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/clautorun.git
@@ -27,7 +40,7 @@ python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Integration Options
@@ -153,31 +166,114 @@ AGENT_MODE=SDK_ONLY python clautorun.py
 
 ## Testing
 
-**Test file policy commands:**
+clautorun includes a comprehensive pytest testing suite to verify functionality and compatibility.
+
+### Quick Test (Core Functionality)
+
+**With UV (Recommended):**
+```bash
+uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+```
+
+**With Traditional pip:**
 ```bash
 source .venv/bin/activate
-python tests/test_autorun_compatibility.py
+pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+```
+
+**Using Makefile:**
+```bash
+make test-quick
 ```
 
 **Expected output:**
 ```
-🧪 Testing clautorun compatibility
-✅ Completion marker matches
-✅ Emergency stop phrase matches
-✅ Policy descriptions match exactly
-✅ Command mappings work correctly
-🎯 All tests passed
+============================= test session starts ==============================
+collected 29 items
+
+tests/test_unit_simple.py::TestConfiguration::test_completion_marker PASSED [  3%]
+tests/test_unit_simple.py::TestConfiguration::test_emergency_stop_phrase PASSED [  6%]
+...
+tests/test_autorun_compatibility.py::test_completion_marker PASSED [ 84%]
+tests/test_autorun_compatibility.py::test_emergency_stop_phrase PASSED [ 87%]
+...
+============================== 29 passed in 0.15s ==============================
 ```
 
-**Test interactive mode:**
+### Full Test Suite
+
+**Run all tests with coverage:**
 ```bash
-source .venv/bin/activate
-python tests/test_interactive.py
+# With UV
+uv run pytest --cov=src/clautorun --cov-report=term-missing
+
+# With make
+make test-all
+
+# With traditional pip
+pytest --cov=src/clautorun --cov-report=term-missing
+```
+
+### Test Categories
+
+**Unit Tests** (`test_unit_simple.py`):
+- Configuration constants and mappings
+- Command handler functionality
+- Command detection logic
+- Basic functionality validation
+
+**Compatibility Tests** (`test_autorun_compatibility.py`):
+- autorun5.py string compatibility
+- Policy descriptions and blocked messages
+- Injection and recheck templates
+- Configuration verification
+
+**Integration Tests** (`test_interceptor.py`, `test_interactive.py`):
+- Command processing validation
+- Interactive mode functionality
+
+### Running Specific Test Categories
+
+```bash
+# Unit tests only
+uv run pytest tests/test_unit_simple.py -v
+
+# Compatibility tests only
+uv run pytest tests/test_autorun_compatibility.py -v
+
+# With markers
+uv run pytest -m unit -v
+uv run pytest -m compatibility -v
+```
+
+### Test Coverage Report
+
+After running tests with coverage, view detailed reports:
+
+```bash
+# HTML report (opens in browser)
+open htmlcov/index.html
+
+# Terminal summary
+cat coverage.txt
+```
+
+### Manual Testing
+
+**Test interactive commands:**
+```bash
+uv run python src/clautorun/main.py
+# Then try: /afs, /afa, /afj, /afst, quit
 ```
 
 **Test hook integration:**
 ```bash
-echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | python src/clautorun/agent_sdk_hook.py
+echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/clautorun/agent_sdk_hook.py
+```
+
+**Test plugin mode:**
+```bash
+echo '{"prompt": "/afa"}' | uv run python src/clautorun/claude_code_plugin.py
 ```
 
 ## Project Structure
