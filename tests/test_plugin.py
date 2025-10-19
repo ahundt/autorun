@@ -65,7 +65,7 @@ class TestPluginIntegration:
             ("/afs", "strict-search"),
             ("/afa", "allow-all"),
             ("/afj", "justify-create"),
-            ("/afst", "Current policy")
+            ("/afst", "Current policy")  # Will match the "Current policy:" prefix in the response
         ]
 
         for command, expected_content in policy_commands:

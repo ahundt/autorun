@@ -45,7 +45,7 @@ def agent_sdk_user_prompt_submit(ctx):
     session_id = ctx.session_id
 
     # Detect command using dispatch dict - autorun5.py line 144
-    command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
+    command = next((v for k, v in CONFIG["command_mappings"].items() if prompt.startswith(k)), None)
 
     if command and command in COMMAND_HANDLERS:
         # Handle command locally, don't send to AI
