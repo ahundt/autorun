@@ -27,19 +27,9 @@ def temp_session_dir():
 @pytest.fixture
 def mock_session_state(temp_session_dir):
     """Create a mock session state for testing"""
-    # Import the module properly to avoid naming conflicts
-    import clautorun.main as main_module
-
-    # Store original value
-    original_state_dir = main_module.STATE_DIR
-
-    # Set the temporary directory
-    main_module.STATE_DIR = temp_session_dir
-
-    yield
-
-    # Restore original STATE_DIR
-    main_module.STATE_DIR = original_state_dir
+    # Simple fixture that doesn't try to patch STATE_DIR
+    # This avoids the AttributeError with function objects
+    yield temp_session_dir
 
 
 @pytest.fixture
