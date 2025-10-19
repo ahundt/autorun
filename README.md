@@ -2,25 +2,20 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 **clautorun** - Claude Agent SDK Command Interceptor
 
-A lightweight, efficient command interceptor for Claude Code that saves tokens by processing autorun commands locally before they reach the AI. 100% compatible with autorun5.py functionality.
+A command interceptor for Claude Code that processes specific commands locally to reduce API usage. Commands like file policy changes are handled without making API calls.
 
-## ✨ Features
+## What It Does
 
-- 🚀 **Zero AI Token Consumption** - Autorun commands processed instantly locally
-- ⚡ **Instant Responses** - No AI processing delay for configuration commands
-- 🎯 **100% autorun5.py Compatible** - All prompts, strings, and behavior identical
-- 🔧 **Three Integration Methods** - Interactive, Hook, Plugin modes
-- 💾 **State Management** - Persistent session state with shelve
-- 🛡️ **Safe Operation** - Clean async/sync boundary, no infinite loops
-- 📦 **Drop-in Replacement** - Can replace autorun5.py completely
+- Processes file policy commands locally (`/afs`, `/afa`, `/afj`, `/afst`)
+- Sends other commands to Claude Code normally
+- Maintains session state between commands
+- Provides multiple integration options
+- Uses the Claude Agent SDK for communication
 
-## 🚀 Quick Start
-
-### Installation
+## Installation
 
 ```bash
 # Clone the repository
@@ -35,284 +30,216 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-## 🔧 Three Integration Methods
+## Integration Options
 
-### 🎯 Method 1: Plugin Mode (Recommended)
-**Best for most users - full Claude Code experience with smart token savings**
+### Option 1: Plugin Mode (Recommended for most users)
 
+This method adds clautorun as a slash command in Claude Code.
+
+**Setup:**
 ```bash
-# 1. Copy plugin to Claude Code commands directory
+# Copy plugin to Claude Code commands directory
 cp src/clautorun/claude_code_plugin.py ~/.claude/commands/clautorun
 
-# 2. Make executable
+# Make executable
 chmod +x ~/.claude/commands/clautorun
-
-# 3. Test in Claude Code
-# Type: /clautorun help
 ```
 
-**How it works:**
-- ✅ **Full Claude Code interface** - All tools, features, conversations work normally
-- ✅ **Smart interception** - Only autorun commands processed locally
-- ✅ **Zero configuration** - Works with existing setup
-- ✅ **Token savings** - `/afs`, `/afa`, `/afj` commands bypass AI completely
-
-**Example Claude Code session:**
+**Usage in Claude Code:**
 ```
-User: /afs
-Claude: AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files...
+User: /clautorun /afs
+Response: AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files...
 
-User: Help me refactor this Python code to be more efficient
-Claude: [Full AI response with code analysis, file edits, explanations...]
-
-User: /afa
-Claude: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files...
+User: /clautorun /afa
+Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.
 ```
 
----
+**What happens:**
+- Commands are processed locally without API calls
+- Other prompts are handled normally by Claude Code
+- Session state is preserved between commands
 
-### 🔌 Method 2: Hook Mode (Drop-in Replacement)
-**Replace autorun5.py completely - automatic token savings**
+### Option 2: Hook Integration
 
+This method intercepts all Claude Code prompts through the hook system.
+
+**Setup:**
 ```bash
-# 1. Backup existing autorun5.py
-cp ~/.claude/hooks/autorun5.py ~/.claude/hooks/autorun5.py.backup
-
-# 2. Replace with clautorun hook
-cp src/clautorun/agent_sdk_hook.py ~/.claude/hooks/autorun5.py
-
-# 3. Test in Claude Code
-# Type: /afs
+# Copy to hooks directory
+cp src/clautorun/agent_sdk_hook.py ~/.claude/hooks/clautorun_hook.py
 ```
 
-**Example settings.json configuration:**
+**Update settings.json:**
 ```json
 {
   "hooks": {
     "hooks": [
       {
-        "command": "~/.claude/hooks/autorun5.py"
+        "command": "~/.claude/hooks/clautorun_hook.py"
       }
     ]
   }
 }
 ```
 
-**How it works:**
-- ✅ **Automatic interception** - All Claude Code prompts go through clautorun first
-- ✅ **Transparent operation** - No change to your workflow
-- ✅ **Complete compatibility** - Works with existing autorun5.py setup
-- ✅ **Maximum token savings** - Commands never reach AI
+**What happens:**
+- All prompts go through clautorun first
+- File policy commands are handled locally
+- Other prompts continue to Claude Code normally
 
----
+### Option 3: Interactive Mode
 
-### 🖥️ Method 3: Interactive Mode (Standalone)
-**Run separately - command processor with Agent SDK integration**
+Run as a standalone application that communicates with Claude Code via the Agent SDK.
 
+**Setup:**
 ```bash
-# 1. Navigate to clautorun directory
+# Navigate to clautorun directory
 cd /path/to/clautorun
 
-# 2. Activate virtual environment
+# Activate virtual environment
 source .venv/bin/activate
 
-# 3. Run interactive mode
+# Run interactive mode
 AGENT_MODE=SDK_ONLY python clautorun.py
 ```
-
-**How it works:**
-- ✅ **Standalone application** - Runs independently of Claude Code
-- ✅ **Command processing** - Local commands processed instantly
-- ✅ **Agent SDK integration** - Non-commands sent to Claude Code via SDK
-- ✅ **Separate workflow** - Run alongside Claude Code
 
 **Example session:**
 ```
 🚀 Agent SDK Command Interceptor - Interactive Mode
 ✅ Ready for commands...
-💡 One Ctrl+C = interrupt, two Ctrl+C = goodbye
 
 ❓ /afs
 ✅ AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files...
 
-❓ What is the weather today?
+❓ help me understand this codebase
 🤖 Processing with Claude Code...
-[Claude's weather response appears here]
+[Claude's response appears here]
 ```
 
----
+## Available Commands
 
-## 🎮 Available Commands
+### File Policy Commands
+- `/afs` - Set policy to strict search (only modify existing files)
+- `/afa` - Set policy to allow all (create/modify any files)
+- `/afj` - Set policy to justify (require justification for new files)
+- `/afst` - Show current file policy
 
-### autorun Commands (Zero Tokens)
-- `/afs` - Set file policy to **STRICT SEARCH** (only modify existing files)
-- `/afa` - Set file policy to **ALLOW ALL** (create/modify any files)
-- `/afj` - Set file policy to **JUSTIFY** (justify new file creation)
-- `/afst` - Show current file policy status
-- `/autostop` - Stop autorun session
-- `/estop` - Emergency stop activation
-- `/autorun <task>` - Activate autorun with full injection template
+### Control Commands
+- `/autostop` - Stop the current session
+- `/estop` - Emergency stop
+- `/autorun <task description>` - Start automated task execution
 
-### Exit Options
-- `quit`, `exit`, or `q` - Exit cleanly
-- **Ctrl+C** (interrupt), **Ctrl+C, Ctrl+C** (exit) - Smart Ctrl+C handling
-- **Ctrl+D** (EOF) - Immediate exit
+### Exit Commands (Interactive Mode)
+- `quit`, `exit`, `q` - Exit the application
+- Ctrl+C - Interrupt, Ctrl+C twice - Exit
+- Ctrl+D - Exit immediately
 
-## 📁 Project Structure
+## File Policy Details
+
+**STRICT SEARCH** (`/afs`):
+- Response: "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
+- Can only modify existing files
+- Must search for similar functionality first
+
+**ALLOW ALL** (`/afa`):
+- Response: "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
+- Can create or modify any files
+- No restrictions on file operations
+
+**JUSTIFY** (`/afj`):
+- Response: "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
+- Must search existing files first
+- Must provide justification for creating new files
+
+## Testing
+
+**Test file policy commands:**
+```bash
+source .venv/bin/activate
+python tests/test_autorun_compatibility.py
+```
+
+**Expected output:**
+```
+🧪 Testing clautorun compatibility
+✅ Completion marker matches
+✅ Emergency stop phrase matches
+✅ Policy descriptions match exactly
+✅ Command mappings work correctly
+🎯 All tests passed
+```
+
+**Test interactive mode:**
+```bash
+source .venv/bin/activate
+python tests/test_interactive.py
+```
+
+**Test hook integration:**
+```bash
+echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | python src/clautorun/agent_sdk_hook.py
+```
+
+## Project Structure
 
 ```
 clautorun/
 ├── src/
 │   └── clautorun/
-│       ├── __init__.py          # Package initialization and exports
-│       ├── main.py              # Core command interceptor logic
-│       ├── agent_sdk_hook.py    # Hook integration (autorun5.py replacement)
-│       ├── mcp_server.py        # MCP server for external applications
-│       └── claude_code_plugin.py # Claude Code plugin (slash command)
+│       ├── __init__.py          # Package exports
+│       ├── main.py              # Core command processing logic
+│       ├── agent_sdk_hook.py    # Hook integration
+│       ├── mcp_server.py        # MCP server for external apps
+│       └── claude_code_plugin.py # Claude Code plugin
 ├── tests/
-│   ├── test_autorun_compatibility.py  # Complete autorun5.py compatibility tests
+│   ├── test_autorun_compatibility.py  # Command compatibility tests
 │   ├── test_interactive.py           # Interactive mode tests
-│   ├── simple_test.py                # Simple command tests
+│   ├── simple_test.py                # Basic functionality tests
 │   └── test_interceptor.py           # Hook integration tests
 ├── docs/
-│   └── INTEGRATION_GUIDE.md           # Detailed integration instructions
-├── clautorun.py                       # Entry point script (interactive mode)
+│   └── INTEGRATION_GUIDE.md           # Detailed setup instructions
+├── clautorun.py                       # Entry point for interactive mode
 ├── requirements.txt                   # Python dependencies
 ├── pyproject.toml                    # Package configuration
 ├── README.md                          # This file
 └── .gitignore                        # Git ignore rules
 ```
 
-## 🔧 Configuration Examples
+## Dependencies
 
-### Basic Plugin Setup
-```bash
-# Copy plugin to Claude Code
-cp src/clautorun/claude_code_plugin.py ~/.claude/commands/clautorun
+- `claude-agent-sdk>=0.1.4` - For Claude Code communication
+- `ruff>=0.14.1` - Code formatting and linting
+- Python 3.8+ - Required for type hints and async support
 
-# Test in Claude Code by typing:
-/clautorun help
-```
+## Configuration Notes
 
-### Hook Integration Setup
-```bash
-# Backup and replace autorun5.py
-cp ~/.claude/hooks/autorun5.py ~/.claude/hooks/autorun5.py.backup
-cp src/clautorun/agent_sdk_hook.py ~/.claude/hooks/autorun5.py
-```
+**Session Storage:**
+- Uses shelve database for session persistence
+- Located in `~/.claude/sessions/`
+- State includes file policies and session status
 
-### Example settings.json for Hook Mode
-```json
-{
-  "cleanupPeriodDays": 99999,
-  "env": {
-    "DISABLE_ERROR_REPORTING": "1",
-    "DISABLE_TELEMETRY": "1"
-  },
-  "permissions": {
-    "deny": [
-      "Bash(git push --force origin master:*)",
-      "Bash(git push --force origin main:*)",
-      "Bash(rm -rf /*)",
-      "Bash(sudo rm -rf /)"
-    ]
-  },
-  "hooks": {
-    "hooks": [
-      {
-        "command": "~/.claude/hooks/autorun5.py"
-      }
-    ]
-  }
-}
-```
+**Agent SDK Integration:**
+- Uses ClaudeAgentClient for communication
+- Session IDs maintain conversation context
+- Costs are tracked when using Claude Code APIs
 
-### Interactive Mode Setup
-```bash
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+## Troubleshooting
 
-# Install dependencies
-pip install -e .
+**Plugin not working:**
+- Verify the file is executable: `chmod +x ~/.claude/commands/clautorun`
+- Check file path: `ls -la ~/.claude/commands/`
+- Test manually: `echo '{"prompt": "/afs"}' | python ~/.claude/commands/clautorun`
 
-# Run interactive mode
-AGENT_MODE=SDK_ONLY python clautorun.py
-```
+**Hook integration issues:**
+- Verify settings.json format is valid
+- Check hook file permissions
+- Look for errors in Claude Code logs
 
-## 🧪 Testing
+**Interactive mode problems:**
+- Ensure virtual environment is activated
+- Check Agent SDK installation: `pip list | grep claude-agent-sdk`
+- Verify Python version: `python --version`
 
-### Run All Tests
-```bash
-# Test complete autorun5.py compatibility
-source .venv/bin/activate
-python tests/test_autorun_compatibility.py
+## License
 
-# Test interactive functionality
-python tests/test_interactive.py
-
-# Test hook integration
-echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | python src/clautorun/agent_sdk_hook.py
-
-# Test plugin functionality
-echo '{"prompt": "/afs", "session_id": "test"}' | python src/clautorun/claude_code_plugin.py
-```
-
-### Expected Test Output
-```
-🧪 Testing clautorun vs autorun5.py compatibility
-============================================================
-✅ Completion marker matches autorun5.py
-✅ Emergency stop phrase matches autorun5.py
-✅ All policy descriptions match autorun5.py exactly
-✅ All policy blocked messages match autorun5.py exactly
-✅ Injection template contains all autorun5.py components
-✅ Recheck template matches autorun5.py exactly
-✅ All command mappings match autorun5.py exactly
-✅ Configuration values match autorun5.py exactly
-✅ All command handlers produce correct autorun5.py responses
-✅ Log info function works correctly
-
-🎯 All tests passed! clautorun is 100% compatible with autorun5.py
-```
-
-## ⚡ Performance & Compatibility
-
-### autorun5.py Compatibility
-- ✅ **100% String Compatibility** - All prompts, responses, and messages identical
-- ✅ **Complete Feature Parity** - All autorun5.py functionality preserved
-- ✅ **State Management** - Identical session state handling
-- ✅ **Configuration Values** - Exact matching of all config parameters
-- ✅ **Command Responses** - Perfect match for all command outputs
-
-### Performance Metrics
-- **O(1) Command Detection** - Same efficient pattern as autorun5.py
-- **Zero Latency** - Local command processing (instant responses)
-- **Token Savings** - Commands never reach AI (up to 100% savings on configuration)
-- **Memory Efficient** - Minimal state management overhead
-- **Safe Operation** - No infinite loops, proper error handling
-
-## 📖 Documentation
-
-- [Integration Guide](docs/INTEGRATION_GUIDE.md) - Detailed integration instructions
-- [API Reference](src/clautorun/__init__.py) - Package documentation and exports
-- [Compatibility Tests](tests/test_autorun_compatibility.py) - Complete autorun5.py validation
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk)
-- Inspired by and compatible with [autorun5.py](https://github.com/anthropics/claude-code)
-- Follows efficient dispatch patterns from autorun5.py
-- 100% autorun5.py string and behavior compatibility verified
+MIT License - see [LICENSE](LICENSE) file for details.

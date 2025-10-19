@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 # Add the clautorun to path
-sys.path.insert(0, str(Path(__file__).parent / "clautorun"))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from enhanced_main import enhanced_intercept_commands
+from main import CONFIG, COMMAND_HANDLERS, session_state
 
 def main():
     """Plugin entry point for Claude Code"""
@@ -16,14 +16,32 @@ def main():
     payload = json.loads(sys.stdin.read())
 
     # Extract input data
-    input_data = {
-        'prompt': payload.get('prompt', ''),
-        'session_id': payload.get('session_id', 'default'),
-        'session_transcript': payload.get('session_transcript', [])
-    }
+    prompt = payload.get('prompt', '')
+    session_id = payload.get('session_id', 'default')
 
-    # Call the enhanced interceptor
-    result = enhanced_intercept_commands(input_data, payload)
+    # Efficient command detection - autorun5.py pattern
+    command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
+
+    if command and command in COMMAND_HANDLERS:
+        # Handle command locally, don't send to AI
+        with session_state(session_id) as state:
+            if command == "activate":
+                # For autorun activation, return the injection template
+                response = COMMAND_HANDLERS[command](state, prompt)
+            else:
+                response = COMMAND_HANDLERS[command](state)
+
+        # Return response to Claude Code
+        result = {
+            "continue": False,
+            "response": response
+        }
+    else:
+        # Let AI handle non-commands
+        result = {
+            "continue": True,
+            "response": ""
+        }
 
     # Return JSON response
     print(json.dumps(result, sort_keys=True))
