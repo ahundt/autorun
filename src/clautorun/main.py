@@ -5,6 +5,7 @@ import os
 import json
 import shelve
 import sys
+import time
 import asyncio
 from typing import Dict, Any, Optional
 from contextlib import contextmanager
@@ -17,28 +18,76 @@ except ImportError:
     print("❌ Claude Agent SDK not installed. Run: pip install claude-agent-sdk")
     sys.exit(1)
 
-# Configuration - DRY principle like autorun5.py
+# Configuration - Complete autorun5.py compatibility
 CONFIG = {
     "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
     "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
+    "max_recheck_count": 3,
+    "monitor_stop_delay_seconds": 300,
+    "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+
+1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
+    * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
+2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop_phrase}** and **{completion_marker}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
+3.  **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
+    * **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
+    * **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
+        1.  **INITIATE SAFETY PROTOCOL:** Announce 'INITIATE SAFETY PROTOCOL' to begin structured assessment.
+        2.  **Secure State:** Execute the recovery command(s) to create an **environment backup** or **state checkpoint** (using available systems and tools) *before* proceeding.
+        3.  **Verify Integrity:** Run a quick non-destructive check to ensure the state checkpoint was successful.
+        4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
+    * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
+4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop_phrase}**
+5.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{completion_marker}**
+6.  **FILE CREATION POLICY:** {policy_instructions}""",
+    "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
+
+Original Task: {activation_prompt}
+
+CRITICAL VERIFICATION INSTRUCTIONS:
+1. Carefully review ALL aspects of the original task above
+2. Verify EVERY requirement has been fully met and tested
+3. Check for any incomplete, partial, or missed elements
+4. Test any implemented functionality thoroughly
+5. Double-check your work against the original requirements
+6. Verify all files are in their correct final state
+7. Ensure no temporary or incomplete work remains
+
+Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {completion_marker}
+
+If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
+
+This is verification attempt #{recheck_count} of {max_recheck_count}.""",
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
         "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
     },
+    "policy_blocked": {
+        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using Glob patterns like "*related-topic*", 3) Use Grep to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
+        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using Glob/Grep related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
+    },
     "command_mappings": {
+        "/autorun ": "activate",
+        "/autostop ": "stop",
+        "/estop ": "emergency_stop",
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "STATUS",
-        "/autostop": "STOP",
-        "/estop": "EMERGENCY_STOP"
+        "/afst": "status"
     }
 }
 
 # State management - copied from autorun5.py
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+def log_info(message):
+    """Log info message to file - copied from autorun5.py"""
+    try:
+        with open(STATE_DIR / "autorun.log", "a") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {os.getpid()}: {message}\n")
+    except: pass
 
 @contextmanager
 def session_state(session_id: str):
@@ -101,8 +150,35 @@ def handle_stop(state):
 
 def handle_emergency_stop(state):
     """Handle EMERGENCY_STOP command - update state and return response"""
+    log_info(f"Emergency stop: autorun session")
     state["session_status"] = "emergency_stopped"
     return "Emergency stop activated"
+
+def handle_activate(state, prompt=""):
+    """Handle AUTORUN activation - complete autorun setup with injection template"""
+    log_info(f"Activating autorun: autorun session")
+
+    # Clear and setup state like autorun5.py
+    state.clear()
+    state.update({
+        "session_status": "active",
+        "autorun_stage": "INITIAL",
+        "activation_prompt": prompt,
+        "verification_attempts": 0,
+        "file_policy": state.get("file_policy", "ALLOW")
+    })
+
+    # Generate injection template with current policy
+    policy = state["file_policy"]
+    policy_instructions = CONFIG["policies"][policy][1]
+
+    injection = CONFIG["injection_template"].format(
+        emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
+        completion_marker=CONFIG["completion_marker"],
+        policy_instructions=policy_instructions
+    )
+
+    return injection
 
 # Command handlers - clean dispatch like autorun5.py
 COMMAND_HANDLERS = {
@@ -110,8 +186,10 @@ COMMAND_HANDLERS = {
     "ALLOW": handle_allow,
     "JUSTIFY": handle_justify,
     "STATUS": handle_status,
+    "status": handle_status,  # Add lowercase version for /afst command
     "STOP": handle_stop,
-    "EMERGENCY_STOP": handle_emergency_stop
+    "EMERGENCY_STOP": handle_emergency_stop,
+    "activate": handle_activate
 }
 
 @handler("UserPromptSubmit")
@@ -268,7 +346,11 @@ def run_interactive_sdk(operation_mode: str):
             if command and command in COMMAND_HANDLERS:
                 # Handle locally using dispatch pattern - autorun5.py efficiency
                 with session_state(session_id) as state:
-                    response = COMMAND_HANDLERS[command](state)
+                    if command == "activate":
+                        # Pass the full prompt for activation
+                        response = COMMAND_HANDLERS[command](state, user_input)
+                    else:
+                        response = COMMAND_HANDLERS[command](state)
                     print(f"✅ {response}")
 
             else:
