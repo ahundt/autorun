@@ -1,9 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "clautorun"
 version = "0.1.0"
-description = "Add your description here"
+description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+keywords = ["claude", "agent-sdk", "autorun", "cli", "command-interceptor"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
+    "claude-agent-sdk>=0.1.4",
     "ruff>=0.14.1",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+clautorun = "clautorun.main:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/clautorun"
+Repository = "https://github.com/yourusername/clautorun.git"
+Issues = "https://github.com/yourusername/clautorun/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
