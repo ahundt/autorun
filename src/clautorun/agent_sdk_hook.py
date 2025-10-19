@@ -44,8 +44,8 @@ def agent_sdk_user_prompt_submit(ctx):
     prompt = ctx.prompt.lower()
     session_id = ctx.session_id
 
-    # Detect command using dispatch dict - autorun5.py line 144
-    command = next((v for k, v in CONFIG["command_mappings"].items() if prompt.startswith(k)), None)
+    # Detect command using dispatch dict - sort by length (longest first) for specific matches
+    command = next((v for k, v in sorted(CONFIG["command_mappings"].items(), key=lambda x: len(x[0]), reverse=True) if prompt.startswith(k)), None)
 
     if command and command in COMMAND_HANDLERS:
         # Handle command locally, don't send to AI
@@ -119,7 +119,6 @@ def main():
 
     except Exception:
         print(json.dumps(build_hook_response()))
-        sys.exit(1)
 
 if __name__ == "__main__":
     main()

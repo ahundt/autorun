@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 pytest configuration and fixtures for clautorun testing
@@ -6,9 +5,27 @@ pytest configuration and fixtures for clautorun testing
 import pytest
 import tempfile
 import shutil
-from pathlib import Path
 import sys
 import json
+
+# Python 2/3 compatibility
+try:
+    from pathlib import Path
+except ImportError:
+    # Python 2.7 fallback
+    import os
+    class Path(object):
+        def __init__(self, path):
+            self.path = str(path)
+        def __str__(self):
+            return self.path
+        def __div__(self, other):
+            return Path(os.path.join(self.path, str(other)))
+        def __truediv__(self, other):
+            return Path(os.path.join(self.path, str(other)))
+        @property
+        def parent(self):
+            return Path(os.path.dirname(self.path))
 
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
