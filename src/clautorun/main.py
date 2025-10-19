@@ -10,7 +10,6 @@ import asyncio
 from typing import Dict, Any, Optional
 from contextlib import contextmanager
 from pathlib import Path
-import tempfile
 
 # Import Agent SDK
 try:
@@ -95,40 +94,35 @@ def session_state(session_id: str):
     """Session state with shelve - copied from autorun5.py with cross-platform compatibility"""
     db_path = STATE_DIR / f"{session_id}.db"
 
-    # Try different dbm backends for cross-platform compatibility
-    state = None
+    # Try default backend first (exactly like autorun5.py)
     try:
-        # Try default system backend first (exactly like autorun5.py)
         state = shelve.open(str(db_path), writeback=True)
-    except Exception as e:
-        log_info(f"Default dbm backend failed: {e}")
-
-        # Try fallback with dumbdbm in temp directory
-        try:
-            import dbm.dumb
-            temp_dir = tempfile.mkdtemp(prefix=f"clautorun_{session_id}_")
-            temp_db = os.path.join(temp_dir, f"{session_id}.db")
-            state = shelve.open(temp_db, writeback=True)
-            log_info("Using dumbdbm fallback in temp directory")
-        except Exception as e2:
-            log_info(f"Dumbdbm fallback failed: {e2}")
-            # Last resort: in-memory dict as fallback
-            log_info("Using in-memory fallback session state")
-            state = {}
-
-    try:
         yield state
-    finally:
-        if hasattr(state, 'sync'):
-            state.sync()
-            state.close()
-        # Clean up temp directory if created
-        if 'temp_dir' in locals() and os.path.exists(temp_dir):
-            try:
-                import shutil
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except:
-                pass
+        state.sync()
+        state.close()
+        return
+    except Exception as e:
+        log_info(f"Default shelve backend failed: {e}")
+
+    # Fallback to dumbdbm if available
+    try:
+        import dbm.dumb
+        # Use a different filename to avoid conflicts
+        fallback_path = STATE_DIR / f"{session_id}_fallback.db"
+        state = shelve.open(str(fallback_path), writeback=True)
+        yield state
+        state.sync()
+        state.close()
+        log_info("Used dumbdbm fallback")
+        return
+    except Exception as e2:
+        log_info(f"Dumbdbm fallback failed: {e2}")
+
+    # Last resort: in-memory dict (not persistent but works for testing)
+    log_info("Using in-memory session state fallback")
+    state = {}
+    yield state
+    # No sync/close needed for dict
 
 # Response builders - copied from autorun5.py
 def build_hook_response(continue_execution=True, stop_reason="", system_message=""):

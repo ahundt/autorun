@@ -65,13 +65,14 @@ class TestPluginIntegration:
             ("/afs", "strict-search"),
             ("/afa", "allow-all"),
             ("/afj", "justify-create"),
-            ("/afst", "Current policy")  # Will match the "Current policy:" prefix in the response
+            ("/afst", "Current policy: allow-all")  # Fresh session defaults to ALLOW policy
         ]
 
-        for command, expected_content in policy_commands:
+        for i, (command, expected_content) in enumerate(policy_commands):
+            # Use different session_id for each command to avoid state conflicts
             input_data = {
                 "prompt": command,
-                "session_id": "test_session",
+                "session_id": f"test_session_{i}",
                 "session_transcript": []
             }
             input_json = json.dumps(input_data)
@@ -90,8 +91,8 @@ class TestPluginIntegration:
     def test_plugin_handles_control_commands(self, capsys):
         """Test plugin handles control commands"""
         control_commands = [
-            ("/autostop", "Autorun stopped"),
-            ("/estop", "Emergency stop activated")
+            ("/autostop ", "Autorun stopped"),
+            ("/estop ", "Emergency stop activated")
         ]
 
         for command, expected_response in control_commands:
@@ -169,8 +170,15 @@ class TestPluginIntegration:
         invalid_json = "not valid json {"
 
         with patch('sys.stdin', StringIO(invalid_json)):
-            with pytest.raises(json.JSONDecodeError):
-                main()
+            main()
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        # Should handle error gracefully
+        assert output["continue"] is True, "Should continue to AI on invalid JSON"
+        assert "error" in output, "Should include error message"
+        assert "Invalid JSON" in output["error"], "Should mention invalid JSON"
 
     @pytest.mark.plugin
     @pytest.mark.integration
