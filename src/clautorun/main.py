@@ -10,6 +10,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from contextlib import contextmanager
 from pathlib import Path
+import tempfile
 
 # Import Agent SDK
 try:
@@ -78,7 +79,7 @@ This is verification attempt #{recheck_count} of {max_recheck_count}.""",
     }
 }
 
-# State management - copied from autorun5.py
+# State management - copied from autorun5.py with cross-platform fixes
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -91,13 +92,43 @@ def log_info(message):
 
 @contextmanager
 def session_state(session_id: str):
-    """Session state with shelve - copied from autorun5.py"""
-    state = shelve.open(str(STATE_DIR / f"{session_id}.db"), writeback=True)
+    """Session state with shelve - copied from autorun5.py with cross-platform compatibility"""
+    db_path = STATE_DIR / f"{session_id}.db"
+
+    # Try different dbm backends for cross-platform compatibility
+    state = None
+    try:
+        # Try default system backend first (exactly like autorun5.py)
+        state = shelve.open(str(db_path), writeback=True)
+    except Exception as e:
+        log_info(f"Default dbm backend failed: {e}")
+
+        # Try fallback with dumbdbm in temp directory
+        try:
+            import dbm.dumb
+            temp_dir = tempfile.mkdtemp(prefix=f"clautorun_{session_id}_")
+            temp_db = os.path.join(temp_dir, f"{session_id}.db")
+            state = shelve.open(temp_db, writeback=True)
+            log_info("Using dumbdbm fallback in temp directory")
+        except Exception as e2:
+            log_info(f"Dumbdbm fallback failed: {e2}")
+            # Last resort: in-memory dict as fallback
+            log_info("Using in-memory fallback session state")
+            state = {}
+
     try:
         yield state
     finally:
-        state.sync()
-        state.close()
+        if hasattr(state, 'sync'):
+            state.sync()
+            state.close()
+        # Clean up temp directory if created
+        if 'temp_dir' in locals() and os.path.exists(temp_dir):
+            try:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except:
+                pass
 
 # Response builders - copied from autorun5.py
 def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
@@ -121,7 +152,7 @@ def handler(name):
         return f
     return dec
 
-# Command handlers - streamlined dispatch
+# Command handlers - copied from autorun5.py
 def handle_search(state):
     """Handle SEARCH command - update state and return response"""
     state["file_policy"] = "SEARCH"
@@ -187,7 +218,9 @@ COMMAND_HANDLERS = {
     "JUSTIFY": handle_justify,
     "STATUS": handle_status,
     "status": handle_status,  # Add lowercase version for /afst command
+    "stop": handle_stop,         # Add lowercase version for /autostop command
     "STOP": handle_stop,
+    "emergency_stop": handle_emergency_stop,  # Add lowercase version for /estop command
     "EMERGENCY_STOP": handle_emergency_stop,
     "activate": handle_activate
 }
