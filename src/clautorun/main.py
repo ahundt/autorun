@@ -306,13 +306,103 @@ def pretooluse_handler(ctx):
 
     return build_pretooluse_response("allow")
 
+# ai_monitor integration: Continuation enforcement functions
+def inject_continue_prompt(state):
+    """Inject continue working prompt - ai_monitor functionality"""
+    log_info("Injecting continue working prompt - preventing premature stop")
+
+    continue_message = """AUTORUN CONTINUATION: Continue working on your current task.
+
+You appear to have stopped working, but the task is not yet complete.
+
+CONTINUATION INSTRUCTIONS:
+1. Review what you've accomplished so far
+2. Identify what still needs to be done
+3. Continue working methodically and concretely
+4. Use tools as needed to make progress
+5. Only stop when the task is genuinely complete
+
+Remember: Work autonomously, safely, and thoroughly. Continue until the task is actually finished."""
+
+    return build_hook_response(
+        continue_execution=True,
+        system_message=continue_message
+    )
+
+def inject_verification_prompt(state):
+    """Inject verification prompt - two-stage verification"""
+    log_info(f"Injecting verification prompt - attempt {state.get('verification_attempts', 1)}")
+
+    verification_prompt = CONFIG["recheck_template"].format(
+        activation_prompt=state.get("activation_prompt", "original task"),
+        completion_marker=CONFIG["completion_marker"],
+        recheck_count=state.get("verification_attempts", 1),
+        max_recheck_count=CONFIG["max_recheck_count"]
+    )
+
+    return build_hook_response(
+        continue_execution=True,
+        system_message=verification_prompt
+    )
+
+def is_premature_stop(ctx, state):
+    """Check if this is a premature stop - ai_monitor logic"""
+    # Only active autorun sessions are protected
+    if state.get("session_status") != "active":
+        return False
+
+    # Get transcript for analysis
+    transcript = str(getattr(ctx, 'session_transcript', []))
+
+    # Check if completion marker is present
+    if CONFIG["completion_marker"] in transcript:
+        return False  # Proper completion
+
+    # Check if emergency stop was used
+    if CONFIG["emergency_stop_phrase"] in transcript:
+        return False  # Intentional emergency stop
+
+    return True  # Premature stop - needs intervention
+
+def should_trigger_verification(state):
+    """Check if we should trigger verification stage"""
+    return (state.get("autorun_stage") == "INITIAL" and
+            state.get("verification_attempts", 0) < CONFIG["max_recheck_count"])
+
 @handler("Stop")
 @handler("SubagentStop")
 def stop_handler(ctx):
-    """Stop handlers - simplified"""
-    with session_state(ctx.session_id) as state:
+    """Enhanced stop handler with ai_monitor continuation enforcement"""
+    session_id = getattr(ctx, 'session_id', 'default')
+
+    with session_state(session_id) as state:
+        # Check if this is a premature stop that needs intervention
+        if is_premature_stop(ctx, state):
+            log_info(f"Detected premature stop for session {session_id}")
+
+            # Check if we should trigger verification stage
+            if should_trigger_verification(state):
+                # Move to verification stage
+                state["autorun_stage"] = "VERIFICATION"
+                state["verification_attempts"] = state.get("verification_attempts", 0) + 1
+                log_info(f"Moving to verification stage, attempt {state['verification_attempts']}")
+
+                return inject_verification_prompt(state)
+            else:
+                # Already in verification or max attempts reached - inject continue prompt
+                return inject_continue_prompt(state)
+
+        # Check if we're in verification stage and completion marker is present
+        if (state.get("autorun_stage") == "VERIFICATION" and
+            CONFIG["completion_marker"] in str(getattr(ctx, 'session_transcript', []))):
+            log_info(f"Verification completed for session {session_id}")
+            state.clear()  # Clean up successful completion
+            return build_hook_response(continue_execution=False,
+                                     system_message="✅ Task completed and verified successfully!")
+
+        # Normal cleanup for non-autorun sessions or completed sessions
         state.clear()
-    return build_hook_response()
+        return build_hook_response()
 
 # Default handler
 def default_handler(ctx): return build_hook_response()
