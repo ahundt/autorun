@@ -13,7 +13,7 @@ cd clautorun
 uv pip install claude-agent-sdk
 
 # Run in SDK-Only mode (most efficient)
-AGENT_MODE=SDK_ONLY python enhanced_main.py
+AGENT_MODE=SDK_ONLY python -m clautorun
 ```
 
 **Pros**:
@@ -108,8 +108,8 @@ cp agent_sdk_hook.py /Users/athundt/.claude/hooks/autorun5.py
 **Use Case**: Maximum efficiency with backward compatibility
 **Setup**:
 ```bash
-# Run in hybrid mode
-AGENT_MODE=HYBRID python enhanced_main.py
+# Run in hybrid mode (if implemented)
+AGENT_MODE=HYBRID python -m clautorun
 ```
 
 **Pros**:
@@ -127,7 +127,7 @@ AGENT_MODE=HYBRID python enhanced_main.py
 ### For Maximum Efficiency:
 Use **Option 1: Standalone Agent SDK Application** with:
 ```bash
-AGENT_MODE=SDK_ONLY python enhanced_main.py
+AGENT_MODE=SDK_ONLY python -m clautorun
 ```
 
 ### For Seamless Integration:
@@ -166,7 +166,7 @@ DEBUG=true                  # Enable debug logging
 1. **Standalone**:
 ```bash
 cd clautorun
-AGENT_MODE=SDK_ONLY python enhanced_main.py
+AGENT_MODE=SDK_ONLY python -m clautorun
 ```
 
 2. **Slash Command**:

@@ -8,7 +8,7 @@ from typing import Dict, Any
 # Add the clautorun to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from enhanced_main import enhanced_intercept_commands
+from main import intercept_commands
 
 def create_mcp_server():
     """Create MCP server for Agent SDK functionality"""
@@ -21,7 +21,7 @@ def create_mcp_server():
             'session_transcript': params.get('session_transcript', [])
         }
 
-        result = await enhanced_intercept_commands(input_data, params)
+        result = await intercept_commands(input_data, params)
         return result
 
     return {
