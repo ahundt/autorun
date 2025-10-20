@@ -103,9 +103,11 @@ def session_state(session_id: str):
         if session_id not in _session_backends:
             # Test different backends and pick one that works for this platform
             try:
-                # Try default shelve backend first
+                # Try default shelve backend first - but be more robust about testing
                 test_db = STATE_DIR / f"test_backend_{session_id}.db"
                 test_state = shelve.open(str(test_db), writeback=True)
+                test_state["test"] = "test"  # Actually write something to test
+                test_state.sync()
                 test_state.close()
                 os.remove(test_db)  # Clean up test file
                 _session_backends[session_id] = "default"
@@ -117,19 +119,27 @@ def session_state(session_id: str):
                     import dbm.dumb
                     test_db = STATE_DIR / f"test_dumbdbm_{session_id}.db"
                     test_state = shelve.open(str(test_db), writeback=True)
+                    test_state["test"] = "test"  # Actually write something to test
+                    test_state.sync()
                     test_state.close()
                     os.remove(test_db)  # Clean up test file
                     _session_backends[session_id] = "dumbdbm"
                     log_info(f"Session {session_id}: Using dumbdbm backend")
                 except Exception as e2:
                     log_info(f"Session {session_id}: Dumbdbm failed: {e2}")
-                    # Last resort: use in-memory with thread-safe dict
-                    _session_backends[session_id] = "memory"
-                    log_info(f"Session {session_id}: Using in-memory fallback")
+                    # Try to use default shelve anyway without testing (some systems have issues with test/create/delete)
+                    try:
+                        _session_backends[session_id] = "default"
+                        log_info(f"Session {session_id}: Trying default shelve without test")
+                    except Exception as e3:
+                        # Last resort: use in-memory with thread-safe dict
+                        _session_backends[session_id] = "memory"
+                        log_info(f"Session {session_id}: Using in-memory fallback")
 
     # Use the selected backend consistently for this session_id
     backend = _session_backends[session_id]
 
+    state = None
     try:
         if backend == "default":
             state = shelve.open(str(STATE_DIR / f"{session_id}.db"), writeback=True)
@@ -142,7 +152,7 @@ def session_state(session_id: str):
         yield state
 
     finally:
-        if hasattr(state, 'sync'):
+        if state and hasattr(state, 'sync'):
             state.sync()
             state.close()
 
@@ -284,7 +294,7 @@ def claude_code_handler(ctx):
 @handler("PreToolUse")
 def pretooluse_handler(ctx):
     """PreToolUse hook - simplified policy enforcement"""
-    if ctx.tool_name != "Write" or ctx.tool_input.get("file_path", ""):
+    if ctx.tool_name != "Write" and ctx.tool_input.get("file_path", ""):
         return build_pretooluse_response("allow")
 
     with session_state(ctx.session_id) as state:
