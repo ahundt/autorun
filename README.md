@@ -24,10 +24,20 @@ A command interceptor for Claude Code that processes specific commands locally t
 git clone https://github.com/yourusername/clautorun.git
 cd clautorun
 
+# Create and activate virtual environment
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
 # Install with UV and Claude Code integration
 uv sync --extra claude-code
 python -m clautorun install
 ```
+
+**UV Environment Setup Requirements:**
+- Requires UV package manager (https://github.com/astral-sh/uv)
+- Virtual environment activation required before running commands
+- `source .venv/bin/activate` must be done in each new terminal session
+- Dependencies automatically managed by uv sync command
 
 ### Option B: UV Development Installation
 
@@ -436,14 +446,18 @@ QUICK START FOR NEW USERS
 
 1. INSTALL PLUGIN
 ```bash
+# Create and activate virtual environment
+uv venv
+source .venv/bin/activate
+uv sync --extra claude-code
 python -m clautorun install
 ```
 
 2. VERIFY INSTALLATION
-Test with: /clautorun /afst (should show policy level)
+Test with: `/clautorun /afst` (should show policy level)
 
 3. START AUTONOMOUS WORK
-/clautorun /autorun Create complete e-commerce system with payment processing, testing, and deployment
+`/clautorun /autorun Create complete e-commerce system with payment processing, testing, and deployment`
 
 ==============================================================================
 COMMAND REFERENCE
@@ -575,27 +589,27 @@ graph TD
 ```
 
 **Stage 1: Initial Activation**
-1. User sends `/autorun <task description>`
-2. Hook creates session state with original prompt
-3. ai-monitor started for persistent session tracking
+1. User sends `/clautorun /autorun <task description>`
+2. Command processor creates session state with original prompt
+3. Session tracking initiated via Agent SDK
 4. AI receives full autonomous instructions
 
 **Stage 2: Work Extension**
 1. AI stops working (timeout, completion claim, etc.)
-2. Hook detects stop and analyzes transcript
+2. Command processor detects stop and analyzes transcript
 3. If no completion marker, re-injects continue instructions
 4. AI resumes work with full context
 
 **Stage 3: Verification**
 1. AI claims completion with completion marker
-2. Hook detects first completion and triggers verification
+2. Command processor detects first completion and triggers verification
 3. Original task re-injected with verification checklist
 4. AI must verify all requirements are met
 
 **Stage 4: Final Completion**
 1. AI completes verification with second completion marker
-2. Hook verifies two-stage completion
-3. Cleanup processes and state files
+2. Command processor verifies two-stage completion
+3. Cleanup session state files
 4. Allow final session exit
 
 ## AUTOFILE LIFECYCLE FLOW
@@ -624,7 +638,7 @@ graph TD
 ```
 
 **Policy Level 1: Strict Search**
-- Blocks all new file creation via PreToolWrite hooks
+- Blocks all new file creation via PreToolUse hooks
 - Forces AI to modify existing files using Glob/Grep
 - Ideal for refactoring established codebases
 - Prevents pollution with experimental files
@@ -632,7 +646,7 @@ graph TD
 **Policy Level 2: Justify Create**
 - Requires `<AUTOFILE_JUSTIFICATION>` tag in AI reasoning
 - AI must explain why each file is necessary before creation
-- PreToolUse hook scans transcript for justification
+- PreToolUse processor scans transcript for justification
 - Blocks creation if justification missing or inadequate
 
 **Policy Level 3: Allow All**
@@ -656,7 +670,7 @@ AI systems commonly claim tasks are complete when they've only addressed the obv
 ```
 AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification.
 
-Original Task: /autorun Implement user authentication with JWT, database, tests, and API docs
+Original Task: /clautorun /autorun Implement user authentication with JWT, database, tests, and API docs
 
 CRITICAL VERIFICATION INSTRUCTIONS:
 1. Carefully review ALL aspects of the original task above
@@ -675,8 +689,7 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 ```
 
 **System Response**: Allow final exit with cleanup
-- Clean up ai-monitor processes
-- Remove session state files
+- Clean up session state files
 - Allow graceful session termination
 
 ### Safety Mechanisms
