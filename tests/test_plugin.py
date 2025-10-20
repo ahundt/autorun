@@ -11,9 +11,15 @@ from unittest.mock import patch, MagicMock
 from io import StringIO
 
 # Add src directory to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+src_path = str(Path(__file__).parent.parent / "src")
+sys.path.insert(0, src_path)
 
-from clautorun.claude_code_plugin import main
+# Also add clautorun package path
+clautorun_path = str(Path(__file__).parent.parent / "src" / "clautorun")
+if clautorun_path not in sys.path:
+    sys.path.insert(0, clautorun_path)
+
+import clautorun.claude_code_plugin as plugin_module
 
 
 class TestPluginIntegration:
@@ -27,9 +33,14 @@ class TestPluginIntegration:
         plugin_input_data["prompt"] = "/afs"
         input_json = json.dumps(plugin_input_data)
 
-        # Mock stdin and run plugin
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        # Mock session state and stdin
+        mock_state = {}
+        with patch.object(plugin_module, 'session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
+
+            with patch('sys.stdin', StringIO(input_json)):
+                plugin_module.main()
 
         # Check output
         captured = capsys.readouterr()
@@ -48,7 +59,7 @@ class TestPluginIntegration:
 
         # Mock stdin and run plugin
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         # Check output
         captured = capsys.readouterr()
@@ -77,22 +88,28 @@ class TestPluginIntegration:
             }
             input_json = json.dumps(input_data)
 
-            with patch('sys.stdin', StringIO(input_json)):
-                main()
+            # Mock session state for each command
+            mock_state = {}
+            with patch.object(plugin_module, 'session_state') as mock_session:
+                mock_session.return_value.__enter__.return_value = mock_state
+                mock_session.return_value.__exit__.return_value = None
 
-            captured = capsys.readouterr()
-            output = json.loads(captured.out)
+                with patch('sys.stdin', StringIO(input_json)):
+                    plugin_module.main()
 
-            assert output["continue"] is False, f"{command} should not continue to AI"
-            assert expected_content in output["response"], f"{command} response should contain {expected_content}"
+                captured = capsys.readouterr()
+                output = json.loads(captured.out)
+
+                assert output["continue"] is False, f"{command} should not continue to AI"
+                assert expected_content in output["response"], f"{command} response should contain {expected_content}"
 
     @pytest.mark.plugin
     @pytest.mark.integration
     def test_plugin_handles_control_commands(self, capsys):
         """Test plugin handles control commands"""
         control_commands = [
-            ("/autostop ", "Autorun stopped"),
-            ("/estop ", "Emergency stop activated")
+            ("/autostop", "Autorun stopped"),
+            ("/estop", "Emergency stop activated")
         ]
 
         for command, expected_response in control_commands:
@@ -103,14 +120,20 @@ class TestPluginIntegration:
             }
             input_json = json.dumps(input_data)
 
-            with patch('sys.stdin', StringIO(input_json)):
-                main()
+            # Mock session state for each command
+            mock_state = {}
+            with patch.object(plugin_module, 'session_state') as mock_session:
+                mock_session.return_value.__enter__.return_value = mock_state
+                mock_session.return_value.__exit__.return_value = None
 
-            captured = capsys.readouterr()
-            output = json.loads(captured.out)
+                with patch('sys.stdin', StringIO(input_json)):
+                    plugin_module.main()
 
-            assert output["continue"] is False, f"{command} should not continue to AI"
-            assert expected_response in output["response"], f"{command} response should contain {expected_response}"
+                captured = capsys.readouterr()
+                output = json.loads(captured.out)
+
+                assert output["continue"] is False, f"{command} should not continue to AI"
+                assert expected_response in output["response"], f"{command} response should contain {expected_response}"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -123,15 +146,21 @@ class TestPluginIntegration:
         }
         input_json = json.dumps(input_data)
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        # Mock session state
+        mock_state = {}
+        with patch.object(plugin_module, 'session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
 
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
+            with patch('sys.stdin', StringIO(input_json)):
+                plugin_module.main()
 
-        assert output["continue"] is False, "Autorun command should not continue to AI"
-        assert "UNINTERRUPTED" in output["response"], "Response should contain injection template"
-        assert "AUTONOMOUS" in output["response"], "Response should contain injection template"
+            captured = capsys.readouterr()
+            output = json.loads(captured.out)
+
+            assert output["continue"] is False, "Autorun command should not continue to AI"
+            assert "UNINTERRUPTED" in output["response"], "Response should contain injection template"
+            assert "AUTONOMOUS" in output["response"], "Response should contain injection template"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -139,29 +168,36 @@ class TestPluginIntegration:
         """Test plugin maintains session state across commands"""
         session_id = "plugin_test_session"
 
-        # First command - set policy
-        input_data = {
-            "prompt": "/afs",
-            "session_id": session_id,
-            "session_transcript": []
-        }
-        input_json = json.dumps(input_data)
+        # Mock session state that persists across commands
+        mock_state = {}
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        with patch.object(plugin_module, 'session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
 
-        # Second command - check status
-        input_data["prompt"] = "/afst"
-        input_json = json.dumps(input_data)
+            # First command - set policy
+            input_data = {
+                "prompt": "/afs",
+                "session_id": session_id,
+                "session_transcript": []
+            }
+            input_json = json.dumps(input_data)
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+            with patch('sys.stdin', StringIO(input_json)):
+                plugin_module.main()
 
-        captured = capsys.readouterr()
-        lines = captured.out.strip().split('\n')
-        second_output = json.loads(lines[-1])
+            # Second command - check status
+            input_data["prompt"] = "/afst"
+            input_json = json.dumps(input_data)
 
-        assert "strict-search" in second_output["response"], "Status should reflect previously set policy"
+            with patch('sys.stdin', StringIO(input_json)):
+                plugin_module.main()
+
+            captured = capsys.readouterr()
+            lines = captured.out.strip().split('\n')
+            second_output = json.loads(lines[-1])
+
+            assert "strict-search" in second_output["response"], "Status should reflect previously set policy"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -170,7 +206,7 @@ class TestPluginIntegration:
         invalid_json = "not valid json {"
 
         with patch('sys.stdin', StringIO(invalid_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -192,7 +228,7 @@ class TestPluginIntegration:
         input_json = json.dumps(input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -211,7 +247,7 @@ class TestPluginJsonOutput:
         input_json = json.dumps(plugin_input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
 
@@ -227,7 +263,7 @@ class TestPluginJsonOutput:
         input_json = json.dumps(plugin_input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -243,7 +279,7 @@ class TestPluginJsonOutput:
         input_json = json.dumps(plugin_input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -259,7 +295,7 @@ class TestPluginErrorHandling:
     def test_plugin_handles_empty_input(self, capsys):
         """Test plugin handles empty input gracefully"""
         with patch('sys.stdin', StringIO("")):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         # Should not crash and produce some output
@@ -276,7 +312,7 @@ class TestPluginErrorHandling:
         input_json = json.dumps(input_data, ensure_ascii=False)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -296,7 +332,7 @@ class TestPluginErrorHandling:
         input_json = json.dumps(input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            plugin_module.main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
