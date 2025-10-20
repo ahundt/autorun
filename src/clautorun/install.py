@@ -15,19 +15,21 @@ class ClautorunInstaller:
     def __init__(self):
         self.home_dir = Path.home()
         self.claude_dir = self.home_dir / ".claude"
-        self.commands_dir = self.claude_dir / "commands"
+        self.plugins_dir = self.claude_dir / "plugins"
         self.plugin_name = "clautorun"
+        self.plugin_install_dir = self.plugins_dir / self.plugin_name
 
-        # Get the location of the installed clautorun package
+        # Get the location of the clautorun project root
         try:
             import clautorun
-            self.package_dir = Path(clautorun.__file__).parent
+            # If installed as package, find the project root
+            self.package_dir = Path(clautorun.__file__).parent.parent.parent
         except ImportError:
             # Fallback for development/relative imports
-            self.package_dir = Path(__file__).parent
+            self.package_dir = Path(__file__).parent.parent.parent
 
-        self.plugin_source = self.package_dir / "claude_code_plugin.py"
-        self.plugin_target = self.commands_dir / self.plugin_name
+        self.plugin_source_dir = self.package_dir
+        self.plugin_manifest = self.package_dir / ".claude-plugin" / "plugin.json"
 
     def detect_claude_code_installation(self) -> bool:
         """Detect if Claude Code is installed"""
@@ -36,7 +38,7 @@ class ClautorunInstaller:
     def create_directories(self) -> bool:
         """Create necessary directories if they don't exist"""
         try:
-            self.commands_dir.mkdir(parents=True, exist_ok=True)
+            self.plugins_dir.mkdir(parents=True, exist_ok=True)
             return True
         except (OSError, PermissionError) as e:
             print(f"❌ Failed to create directories: {e}")
@@ -44,106 +46,133 @@ class ClautorunInstaller:
 
     def backup_existing_plugin(self) -> Optional[Path]:
         """Backup existing plugin if it exists"""
-        if not self.plugin_target.exists():
+        if not self.plugin_install_dir.exists():
             return None
 
-        backup_path = self.plugin_target.with_suffix('.backup')
+        backup_path = self.plugin_install_dir.with_suffix('.backup')
         try:
             if backup_path.exists():
                 # Remove old backup
-                backup_path.unlink()
+                shutil.rmtree(backup_path)
 
             # Create backup of existing plugin
-            shutil.copy2(self.plugin_target, backup_path)
+            shutil.copytree(self.plugin_install_dir, backup_path)
             print(f"📦 Backed up existing plugin to {backup_path}")
             return backup_path
         except (OSError, PermissionError) as e:
             print(f"⚠️  Warning: Could not backup existing plugin: {e}")
             return None
 
-    def is_symlink_valid(self) -> bool:
-        """Check if existing symlink is valid"""
-        if not self.plugin_target.is_symlink():
+    def validate_plugin_structure(self) -> bool:
+        """Check if plugin has proper structure"""
+        if not self.plugin_manifest.exists():
+            print(f"❌ Plugin manifest not found: {self.plugin_manifest}")
             return False
 
+        commands_dir = self.plugin_source_dir / "commands"
+        if not commands_dir.exists():
+            print(f"❌ Commands directory not found: {commands_dir}")
+            return False
+
+        return True
+
+    def is_plugin_installed(self) -> bool:
+        """Check if plugin is properly installed"""
+        if not self.plugin_install_dir.exists():
+            return False
+
+        installed_manifest = self.plugin_install_dir / ".claude-plugin" / "plugin.json"
+        if not installed_manifest.exists():
+            return False
+
+        # Compare manifests to ensure it's our plugin
         try:
-            # Check if symlink points to our source
-            target = self.plugin_target.resolve()
-            source = self.plugin_source.resolve()
-            return target == source
-        except (OSError, RuntimeError):
+            with open(self.plugin_manifest) as src, open(installed_manifest) as dst:
+                src_data = json.load(src)
+                dst_data = json.load(dst)
+                return src_data.get("name") == dst_data.get("name")
+        except (json.JSONDecodeError, OSError):
             return False
 
-    def create_plugin_symlink(self) -> bool:
-        """Create symlink from package to Claude Code commands directory"""
-        if not self.plugin_source.exists():
-            print(f"❌ Plugin source not found: {self.plugin_source}")
+    def install_plugin(self) -> bool:
+        """Install plugin to Claude Code plugins directory"""
+        if not self.validate_plugin_structure():
             return False
 
         if not self.create_directories():
             return False
 
         # Check if we need to update existing installation
-        if self.plugin_target.exists():
-            if self.is_symlink_valid():
+        if self.plugin_install_dir.exists():
+            if self.is_plugin_installed():
                 print("✅ Plugin is already properly installed")
                 return True
             else:
                 self.backup_existing_plugin()
-                self.plugin_target.unlink()
+                shutil.rmtree(self.plugin_install_dir)
 
         try:
-            # Create relative symlink for portability
-            relative_target = os.path.relpath(self.plugin_source, self.commands_dir)
-            self.plugin_target.symlink_to(relative_target)
+            # Copy entire plugin directory
+            shutil.copytree(self.plugin_source_dir, self.plugin_install_dir,
+                          ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc', '.coverage'))
 
-            # Make executable
-            self.plugin_target.chmod(0o755)
-
-            print(f"✅ Created plugin symlink: {self.plugin_target} -> {self.plugin_source}")
+            print(f"✅ Installed plugin to: {self.plugin_install_dir}")
             return True
 
         except (OSError, PermissionError) as e:
-            print(f"❌ Failed to create symlink: {e}")
+            print(f"❌ Failed to install plugin: {e}")
             return False
 
-    def remove_plugin_symlink(self) -> bool:
-        """Remove the plugin symlink"""
-        if not self.plugin_target.exists():
+    def remove_plugin(self) -> bool:
+        """Remove the plugin directory"""
+        if not self.plugin_install_dir.exists():
             print("ℹ️  Plugin is not installed")
             return True
 
         try:
-            if self.plugin_target.is_symlink():
-                self.plugin_target.unlink()
-                print("✅ Removed plugin symlink")
-                return True
-            else:
-                print("⚠️  Existing plugin is not a symlink. Use --force to remove.")
-                return False
+            shutil.rmtree(self.plugin_install_dir)
+            print("✅ Removed plugin directory")
+            return True
         except (OSError, PermissionError) as e:
             print(f"❌ Failed to remove plugin: {e}")
             return False
 
     def verify_installation(self) -> bool:
         """Verify that the plugin is properly installed"""
-        if not self.plugin_target.exists():
-            print("❌ Plugin not found")
+        if not self.plugin_install_dir.exists():
+            print("❌ Plugin directory not found")
             return False
 
-        if not self.is_symlink_valid():
-            print("❌ Plugin symlink is invalid or points to wrong location")
+        if not self.is_plugin_installed():
+            print("❌ Plugin is not properly installed or has wrong manifest")
             return False
 
-        if not os.access(self.plugin_target, os.X_OK):
-            print("❌ Plugin is not executable")
+        # Verify plugin structure
+        installed_manifest = self.plugin_install_dir / ".claude-plugin" / "plugin.json"
+        commands_dir = self.plugin_install_dir / "commands"
+        plugin_script = commands_dir / "clautorun"
+
+        if not installed_manifest.exists():
+            print("❌ Plugin manifest not found in installation")
+            return False
+
+        if not commands_dir.exists():
+            print("❌ Commands directory not found in installation")
+            return False
+
+        if not plugin_script.exists():
+            print("❌ Plugin script not found in installation")
+            return False
+
+        if not os.access(plugin_script, os.X_OK):
+            print("❌ Plugin script is not executable")
             return False
 
         # Try to execute the plugin with a simple test
         try:
             import subprocess
             result = subprocess.run(
-                [str(self.plugin_target)],
+                [str(plugin_script)],
                 input='{"prompt": "/afs", "session_id": "test"}',
                 text=True,
                 capture_output=True,
@@ -174,16 +203,16 @@ class ClautorunInstaller:
             print(f"   Expected directory: {self.claude_dir}")
             return False
 
-        if force and self.plugin_target.exists():
+        if force and self.plugin_install_dir.exists():
             print("🔄 Force mode: removing existing installation")
-            if not self.remove_plugin_symlink():
+            if not self.remove_plugin():
                 return False
 
-        success = self.create_plugin_symlink()
+        success = self.install_plugin()
 
         if success:
             print("✅ Installation completed successfully!")
-            print(f"   Plugin installed at: {self.plugin_target}")
+            print(f"   Plugin installed at: {self.plugin_install_dir}")
             print("   You can now use: /clautorun /afs, /clautorun /afa, etc.")
 
         return success
@@ -192,16 +221,12 @@ class ClautorunInstaller:
         """Uninstall the Claude Code plugin"""
         print("🗑️  Uninstalling clautorun Claude Code plugin...")
 
-        if not self.plugin_target.exists():
+        if not self.plugin_install_dir.exists():
             print("ℹ️  Plugin is not installed")
             return True
 
-        if not force and not self.plugin_target.is_symlink():
-            print("⚠️  Existing plugin is not a symlink (may be manually installed)")
-            print("   Use --force to remove anyway")
-            return False
-
-        success = self.remove_plugin_symlink()
+        # Plugin directories can be safely removed without force check
+        success = self.remove_plugin()
 
         if success:
             print("✅ Uninstallation completed successfully!")
@@ -212,26 +237,26 @@ class ClautorunInstaller:
         """Check installation status"""
         print("🔍 Checking clautorun installation...")
 
-        print(f"   Package directory: {self.package_dir}")
-        print(f"   Plugin source: {self.plugin_source}")
-        print(f"   Plugin target: {self.plugin_target}")
+        print(f"   Plugin source directory: {self.plugin_source_dir}")
+        print(f"   Plugin manifest: {self.plugin_manifest}")
+        print(f"   Plugin install directory: {self.plugin_install_dir}")
 
         if not self.detect_claude_code_installation():
             print("❌ Claude Code installation not detected")
             return False
 
-        if not self.plugin_source.exists():
-            print("❌ Plugin source file not found")
+        if not self.validate_plugin_structure():
+            print("❌ Plugin source structure is invalid")
             return False
 
-        if not self.plugin_target.exists():
+        if not self.plugin_install_dir.exists():
             print("❌ Plugin is not installed")
             return False
 
-        if self.is_symlink_valid():
-            print("✅ Plugin symlink is valid")
+        if self.is_plugin_installed():
+            print("✅ Plugin is properly installed")
         else:
-            print("❌ Plugin symlink is invalid")
+            print("❌ Plugin installation is invalid")
             return False
 
         return self.verify_installation()

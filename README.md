@@ -61,16 +61,15 @@ python -m clautorun install
 
 ### Option 1: Plugin Mode (Recommended & Automatic)
 
-This method adds clautorun as a slash command in Claude Code using automatic installation.
+This method installs clautorun as a standard Claude Code plugin using the official plugin structure.
 
 **Setup:**
 ```bash
 # Automatic installation (recommended)
 python -m clautorun install
 
-# Manual installation (if needed)
-cp src/clautorun/claude_code_plugin.py ~/.claude/commands/clautorun
-chmod +x ~/.claude/commands/clautorun
+# Plugin will be installed to ~/.claude/plugins/clautorun/
+# Follows standard Claude Code plugin structure with .claude-plugin/plugin.json
 ```
 
 **Usage in Claude Code:**
@@ -83,11 +82,13 @@ Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modi
 ```
 
 **What happens:**
-- Creates symlink from installed package to Claude Code commands directory
+- Installs as standard Claude Code plugin to `~/.claude/plugins/clautorun/`
+- Uses official plugin structure with `.claude-plugin/plugin.json` manifest
+- Commands are in `commands/` directory following plugin conventions
 - Commands are processed locally without API calls
 - Other prompts are handled normally by Claude Code
 - Session state is preserved between commands
-- Package updates automatically update the plugin
+- Plugin is automatically discovered and loaded by Claude Code
 
 **Installation Management:**
 ```bash
@@ -309,13 +310,18 @@ echo '{"prompt": "/afa"}' | uv run python src/clautorun/claude_code_plugin.py
 
 ```
 clautorun/
+├── .claude-plugin/
+│   └── plugin.json          # Plugin manifest and metadata
+├── commands/
+│   └── clautorun            # Plugin command script
 ├── src/
 │   └── clautorun/
 │       ├── __init__.py          # Package exports
 │       ├── main.py              # Core command processing logic
 │       ├── agent_sdk_hook.py    # Hook integration
 │       ├── mcp_server.py        # MCP server for external apps
-│       └── claude_code_plugin.py # Claude Code plugin
+│       ├── install.py           # Plugin installation management
+│       └── claude_code_plugin.py # Legacy plugin (moved to commands/)
 ├── tests/
 │   ├── test_autorun_compatibility.py  # Command compatibility tests
 │   ├── test_interactive.py           # Interactive mode tests
@@ -353,13 +359,13 @@ clautorun/
 The installation system provides comprehensive management capabilities:
 
 ```bash
-# Install Claude Code plugin (creates symlink)
+# Install Claude Code plugin (standard plugin structure)
 python -m clautorun install
 
 # Check installation status and validate plugin
 python -m clautorun check
 
-# Uninstall plugin (removes symlink)
+# Uninstall plugin (removes plugin directory)
 python -m clautorun uninstall
 
 # Force reinstall (overwrites existing)
@@ -376,17 +382,18 @@ python -m clautorun install --help
 # Check if Claude Code is detected
 python -m clautorun check
 
-# Verify plugin symlink exists and is valid
-ls -la ~/.claude/commands/clautorun
+# Verify plugin directory exists and is valid
+ls -la ~/.claude/plugins/clautorun/
 
 # Test plugin manually
-echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/commands/clautorun
+echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun
 ```
 
 **Plugin not working:**
 - Ensure dependencies are installed: `uv sync --extra claude-code`
-- Verify the symlink is valid: `python -m clautorun check`
-- Check permissions: `ls -la ~/.claude/commands/`
+- Verify the plugin installation: `python -m clautorun check`
+- Check plugin structure: `ls -la ~/.claude/plugins/clautorun/.claude-plugin/`
+- Check plugin permissions: `ls -la ~/.claude/plugins/clautorun/commands/`
 - Test with UV environment activated
 
 **Hook integration issues:**
