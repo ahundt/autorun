@@ -35,9 +35,16 @@ python -m clautorun install
 
 **UV Environment Setup Requirements:**
 - Requires UV package manager (https://github.com/astral-sh/uv)
-- Virtual environment activation required before running commands
+- ⚠️ **CRITICAL**: Virtual environment activation required before running commands
 - `source .venv/bin/activate` must be done in each new terminal session
+- Use `python3` instead of `python` if your system defaults to Python 2.x
 - Dependencies automatically managed by uv sync command
+
+**Python Environment Notes:**
+- Claude Code CLI uses the system Python interpreter unless a virtual environment is activated
+- On macOS systems, `python` often defaults to Python 2.7 which is incompatible
+- Always use `python3` or activate the UV virtual environment first
+- The plugin command script (`commands/clautorun`) has smart path resolution for dependencies
 
 ### Option B: UV Development Installation
 
@@ -99,6 +106,14 @@ Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modi
 - Other prompts are handled normally by Claude Code
 - Session state is preserved between commands
 - Plugin is automatically discovered and loaded by Claude Code
+
+**Plugin Structure Details:**
+- Follows Claude Code plugin specification with `.claude-plugin/plugin.json` manifest
+- Uses command components in `commands/` directory with markdown files
+- Implements standard plugin layout as defined in [Claude Code Plugin Documentation](https://docs.claude.com/en/docs/claude-code/plugins)
+- Compatible with [Plugin Marketplace](https://docs.claude.com/en/docs/claude-code/plugin-marketplaces) installation and verification
+- Uses `${CLAUDE_PLUGIN_ROOT}` environment variable for script execution
+- Supports debugging with `claude --debug` to show plugin loading details
 
 **Installation Management:**
 ```bash
@@ -323,7 +338,7 @@ clautorun/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest and metadata
 ├── commands/
-│   └── clautorun            # Plugin command script
+│   └── clautorun            # Plugin command script (Claude Code commands)
 ├── src/
 │   └── clautorun/
 │       ├── __init__.py          # Package exports
@@ -336,15 +351,31 @@ clautorun/
 │   ├── test_autorun_compatibility.py  # Command compatibility tests
 │   ├── test_interactive.py           # Interactive mode tests
 │   ├── simple_test.py                # Basic functionality tests
-│   └── test_interceptor.py           # Hook integration tests
+│   ├── test_interceptor.py           # Hook integration tests
+│   └── test_pretooluse_policy_enforcement.py # PreToolUse policy tests
 ├── docs/
 │   └── INTEGRATION_GUIDE.md           # Detailed setup instructions
 ├── clautorun.py                       # Entry point for interactive mode
 ├── requirements.txt                   # Python dependencies
 ├── pyproject.toml                    # Package configuration
 ├── README.md                          # This file
+├── CLAUDE.md                          # Symlink to README.md for Claude Code reference
 └── .gitignore                        # Git ignore rules
 ```
+
+**Plugin Components:**
+- **Commands** (`commands/` directory): Claude Code slash commands using markdown files
+- **Hooks** (`agent_sdk_hook.py`): Event handlers for PreToolUse and UserPromptSubmit events
+- **MCP Servers** (`mcp_server.py`): Model Context Protocol integration for external applications
+
+**Plugin Manifest** (`.claude-plugin/plugin.json`):
+- Required: `name`, `description`, `commands` path
+- Optional: `version`, `author`, `homepage`, `repository`, `license`, `keywords`
+- Follows [Claude Code Plugin Reference](https://docs.claude.com/en/docs/claude-code/plugins-reference) specification
+
+**Environment Variables:**
+- `${CLAUDE_PLUGIN_ROOT}`: Absolute path to plugin directory for script execution
+- `${CLAUDE_PLUGIN_NAME}`: Plugin name from manifest
 
 ## Dependencies
 
@@ -369,6 +400,9 @@ clautorun/
 The installation system provides comprehensive management capabilities:
 
 ```bash
+# IMPORTANT: Activate virtual environment first, or use python3
+source .venv/bin/activate
+
 # Install Claude Code plugin (standard plugin structure)
 python -m clautorun install
 
@@ -385,10 +419,18 @@ python -m clautorun install --force
 python -m clautorun install --help
 ```
 
+**Python Environment Reminders:**
+- Always activate UV environment: `source .venv/bin/activate`
+- Or use explicit Python3: `python3 -m clautorun install`
+- The plugin inherits dependencies from the active Python environment
+
 ## Troubleshooting
 
 **Installation Issues:**
 ```bash
+# First, ensure virtual environment is activated
+source .venv/bin/activate
+
 # Check if Claude Code is detected
 python -m clautorun check
 
@@ -399,12 +441,27 @@ ls -la ~/.claude/plugins/clautorun/
 echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun
 ```
 
+**Python Environment Issues:**
+- **Automatic Version Detection**: clautorun now checks Python version and provides helpful error messages
+- **Error: "PYTHON VERSION ERROR: clautorun requires Python 3.10 or higher"** → Follow the on-screen solutions
+- **Error: "ImportError: No module named pathlib"** → You're using Python 2.7, use `python3` instead
+- **Error: "dbm error: db type could not be determined"** → Normal for first run, plugin still works
+- **Solution**: Always activate UV environment: `source .venv/bin/activate`
+- **Alternative**: Use explicit Python3: `python3 -m clautorun check`
+
+**Built-in Python Version Checking:**
+clautorun includes comprehensive Python version validation:
+- **Python 2.x**: Blocked with clear error message and solutions
+- **Python 3.0-3.9**: Warning shown but functionality allowed
+- **Python 3.10+**: Full compatibility and no warnings
+- **Automatic Solutions**: Provides specific commands to fix Python version issues
+
 **Plugin not working:**
 - Ensure dependencies are installed: `uv sync --extra claude-code`
-- Verify the plugin installation: `python -m clautorun check`
+- Verify the plugin installation: `source .venv/bin/activate && python -m clautorun check`
 - Check plugin structure: `ls -la ~/.claude/plugins/clautorun/.claude-plugin/`
 - Check plugin permissions: `ls -la ~/.claude/plugins/clautorun/commands/`
-- Test with UV environment activated
+- Test with UV environment activated: `source .venv/bin/activate`
 
 **Hook integration issues:**
 - Verify settings.json format is valid

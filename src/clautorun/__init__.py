@@ -14,6 +14,13 @@ Features:
 - Full compatibility with existing autorun workflows
 """
 
+import sys
+
+# Check Python version compatibility
+from .python_check import check_python_version
+if not check_python_version():
+    sys.exit(1)
+
 __version__ = "0.1.0"
 __author__ = "Your Name"
 __email__ = "your.email@example.com"
