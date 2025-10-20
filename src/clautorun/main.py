@@ -156,18 +156,64 @@ def session_state(session_id: str):
             state.sync()
             state.close()
 
-# Response builders - copied from autorun5.py
+# Response builders - standard format for plugins, hooks, and internal functions
+def build_response(continue_execution=True, response="", error="", stop_reason="", system_message=""):
+    """Build standard response format that works for all contexts (plugins, hooks, internal)
+
+    Base fields (used by all):
+    - continue: boolean - whether to continue to AI
+    - response: string - response message for user/system
+    - error: string - error message (optional)
+
+    Hook-specific fields (only used by hooks, ignored by others):
+    - stopReason: string - reason for stopping (hooks only)
+    - suppressOutput: boolean - whether to suppress output (hooks only)
+    - systemMessage: string - system message (hooks only)
+    """
+    standard = {
+        "continue": continue_execution,
+        "response": response
+    }
+
+    # Add error field if provided
+    if error:
+        standard["error"] = error
+
+    # Add hook-specific fields (these will be ignored by plugins)
+    standard.update({
+        "stopReason": json.dumps(stop_reason)[1:-1] if stop_reason else "",
+        "suppressOutput": False,
+        "systemMessage": json.dumps(system_message)[1:-1] if system_message else ""
+    })
+
+    return standard
+
 def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
-    """Build standardized JSON hook response"""
-    return {"continue": continue_execution, "stopReason": json.dumps(stop_reason)[1:-1],
-            "suppressOutput": False, "systemMessage": json.dumps(system_message)[1:-1]}
+    """Legacy hook response builder - now uses standard format internally"""
+    return build_response(
+        continue_execution=continue_execution,
+        response=system_message,  # Map system_message to response field for standard format
+        stop_reason=stop_reason,
+        system_message=system_message
+    )
 
 def build_pretooluse_response(decision="allow", reason=""):
-    """Build PreToolUse hook response - copied from autorun5.py"""
-    return {"continue": True, "stopReason": "", "suppressOutput": False,
-            "systemMessage": json.dumps(reason)[1:-1] if reason else "",
-            "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                  "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
+    """Build PreToolUse hook response - standard format with hook-specific output"""
+    standard = build_response(
+        continue_execution=True,
+        response=reason,  # Use reason as response for standard format
+        stop_reason="",
+        system_message=reason
+    )
+
+    # Add PreToolUse-specific hook output
+    standard["hookSpecificOutput"] = {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": decision,
+        "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""
+    }
+
+    return standard
 
 # Ultra-efficient dispatch system - using autorun5.py patterns
 HANDLERS = {}
@@ -272,10 +318,10 @@ async def intercept_commands(input_data: Dict[str, Any], context: Optional[Dict[
                 response = COMMAND_HANDLERS[command](state, prompt)
             else:
                 response = COMMAND_HANDLERS[command](state)
-            return {"continue": False, "response": response}
+            return build_response(continue_execution=False, response=response)
 
     # Let AI handle non-commands
-    return {"continue": True}
+    return build_response(continue_execution=True)
 
 # Synchronous version for hook integration
 @handler("UserPromptSubmit")
@@ -295,20 +341,21 @@ def intercept_commands_sync(input_data: Dict[str, Any], context: Optional[Dict[s
 # Claude Code hook handlers - ultra-compact
 @handler("UserPromptSubmit")
 def claude_code_handler(ctx):
-    """Claude Code UserPromptSubmit hook - simplified"""
+    """Claude Code UserPromptSubmit hook - using unified response format"""
     input_data = {'prompt': ctx.prompt, 'session_id': ctx.session_id}
     result = intercept_commands_sync(input_data, ctx)
 
-    # Convert to proper hook response format
+    # Result is already in unified format, just ensure hook-specific fields are set
     if result.get("continue") is False:
-        # Command handled locally, return proper hook response
-        return build_hook_response(
-            continue_execution=False,
-            system_message=result.get("response", "")
-        )
+        # Command handled locally - unified format already has response field
+        # Make sure system_message is populated for hook compatibility
+        if "systemMessage" not in result or not result["systemMessage"]:
+            result["systemMessage"] = json.dumps(result.get("response", ""))[1:-1]
+        return result
     else:
-        # Let AI handle it
-        return build_hook_response(continue_execution=True)
+        # Let AI handle it - ensure proper hook format
+        result["systemMessage"] = ""
+        return result
 
 @handler("PreToolUse")
 def pretooluse_handler(ctx):

@@ -33,7 +33,7 @@ from .main import (
     inject_continue_prompt, inject_verification_prompt,
     is_premature_stop, should_trigger_verification,
     # Response builders
-    build_hook_response, build_pretooluse_response,
+    build_response, build_hook_response, build_pretooluse_response,
     # Session management
     session_state, log_info,
     # Command handlers
@@ -59,6 +59,7 @@ __all__ = [
     "should_trigger_verification",
 
     # Response builders
+    "build_response",
     "build_hook_response",
     "build_pretooluse_response",
 

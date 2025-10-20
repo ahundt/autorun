@@ -15,21 +15,22 @@ from clautorun import (
 def agent_sdk_user_prompt_submit(ctx):
     """Hook handler using main.py UserPromptSubmit logic - complete AI monitor workflow"""
     # Delegate to main.py's proven UserPromptSubmit handler
+    # The result is now in unified format that works for all contexts
     result = intercept_commands_sync(
         {'prompt': ctx.prompt, 'session_id': ctx.session_id},
         ctx
     )
 
-    # Convert internal response format to hook response format
-    if result.get("continue") is False:
-        # Command handled locally, return proper hook response
-        return build_hook_response(
-            continue_execution=False,
-            system_message=result.get("response", "")
-        )
+    # Ensure hook compatibility: copy response content to systemMessage for hooks
+    if result.get("continue") is False and result.get("response"):
+        # For handled commands, ensure systemMessage is populated for hook compatibility
+        if not result.get("systemMessage"):
+            result["systemMessage"] = json.dumps(result.get("response", ""))[1:-1]
     else:
-        # Let AI handle it
-        return build_hook_response(continue_execution=True)
+        # For commands that continue to AI, ensure systemMessage is empty
+        result["systemMessage"] = ""
+
+    return result
 
 def agent_sdk_pre_tool_use(ctx):
     """Hook handler using main.py PreToolUse logic - complete file policy enforcement"""

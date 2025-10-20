@@ -29,11 +29,12 @@ def main():
 
         # Handle empty input
         if not input_data.strip():
-            result = {
-                "continue": True,
-                "response": "",
-                "error": "No input provided"
-            }
+            from clautorun import build_response
+            result = build_response(
+                continue_execution=True,
+                response="",
+                error="No input provided"
+            )
             print(json.dumps(result, sort_keys=True))
             sys.stdout.flush()
             return
@@ -42,11 +43,12 @@ def main():
         try:
             payload = json.loads(input_data)
         except json.JSONDecodeError as e:
-            result = {
-                "continue": True,
-                "response": "",
-                "error": f"Invalid JSON: {e}"
-            }
+            from clautorun import build_response
+            result = build_response(
+                continue_execution=True,
+                response="",
+                error=f"Invalid JSON: {e}"
+            )
             print(json.dumps(result, sort_keys=True))
             sys.stdout.flush()
             return
@@ -58,6 +60,9 @@ def main():
         # Efficient command detection - sort by length (longest first) for specific matches
         command = next((v for k, v in sorted(CONFIG["command_mappings"].items(), key=lambda x: len(x[0]), reverse=True) if prompt.startswith(k)), None)
 
+        # Import standard response builder
+        from clautorun import build_response
+
         if command and command in COMMAND_HANDLERS:
             # Handle command locally, don't send to AI
             try:
@@ -68,23 +73,23 @@ def main():
                     else:
                         response = COMMAND_HANDLERS[command](state)
 
-                # Return response to Claude Code
-                result = {
-                    "continue": False,
-                    "response": response
-                }
+                # Return standard response to Claude Code
+                result = build_response(
+                    continue_execution=False,
+                    response=response
+                )
             except Exception as e:
-                result = {
-                    "continue": True,
-                    "response": "",
-                    "error": f"Command execution failed: {e}"
-                }
+                result = build_response(
+                    continue_execution=True,
+                    response="",
+                    error=f"Command execution failed: {e}"
+                )
         else:
             # Let AI handle non-commands
-            result = {
-                "continue": True,
-                "response": ""
-            }
+            result = build_response(
+                continue_execution=True,
+                response=""
+            )
 
         # Return JSON response
         print(json.dumps(result, sort_keys=True))
@@ -92,11 +97,12 @@ def main():
 
     except Exception as e:
         # Handle any unexpected errors
-        result = {
-            "continue": True,
-            "response": "",
-            "error": f"Unexpected error: {e}"
-        }
+        from clautorun import build_response
+        result = build_response(
+            continue_execution=True,
+            response="",
+            error=f"Unexpected error: {e}"
+        )
         print(json.dumps(result, sort_keys=True))
         sys.stdout.flush()
 
