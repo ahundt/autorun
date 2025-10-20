@@ -161,3 +161,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Additional development artifacts
+debug_*.py
+debug_*.json
+run_tests.py
+history.jsonl
+*_test_file.txt
+*.session.json
