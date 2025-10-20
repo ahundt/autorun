@@ -70,7 +70,8 @@ def test_verification_trigger_logic():
 
 def test_continue_prompt_injection():
     """Test continue prompt injection functionality"""
-    from clautorun.main import inject_continue_prompt
+    from clautorun.main import inject_continue_prompt, CONFIG
+    import json
 
     state = {"session_status": "active"}
 
@@ -78,8 +79,11 @@ def test_continue_prompt_injection():
 
     # Verify response structure
     assert response["continue"] == True, "Continue should be True"
+    # Account for JSON processing in build_hook_response which escapes newlines
+    expected_processed = json.dumps(CONFIG["continue_template"])[1:-1]
+    assert response["systemMessage"] == expected_processed, "Should use CONFIG continue template with JSON processing"
     assert "AUTORUN CONTINUATION" in response["systemMessage"], "Should contain continuation message"
-    assert "Continue working on your current task" in response["systemMessage"], "Should contain continue instruction"
+    assert "Review what you've accomplished so far" in response["systemMessage"], "Should contain detailed instructions"
 
     print("✅ test_continue_prompt_injection passed")
 

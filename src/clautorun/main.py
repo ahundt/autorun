@@ -25,6 +25,18 @@ CONFIG = {
     "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,
+    "continue_template": """AUTORUN CONTINUATION: Continue working on your current task.
+
+You appear to have stopped working, but the task is not yet complete.
+
+CONTINUATION INSTRUCTIONS:
+1. Review what you've accomplished so far
+2. Identify what still needs to be done
+3. Continue working methodically and concretely
+4. Use tools as needed to make progress
+5. Only stop when the task is genuinely complete
+
+Remember: Work autonomously, safely, and thoroughly. Continue until the task is actually finished.""",
     "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
@@ -311,18 +323,8 @@ def inject_continue_prompt(state):
     """Inject continue working prompt - ai_monitor functionality"""
     log_info("Injecting continue working prompt - preventing premature stop")
 
-    continue_message = """AUTORUN CONTINUATION: Continue working on your current task.
-
-You appear to have stopped working, but the task is not yet complete.
-
-CONTINUATION INSTRUCTIONS:
-1. Review what you've accomplished so far
-2. Identify what still needs to be done
-3. Continue working methodically and concretely
-4. Use tools as needed to make progress
-5. Only stop when the task is genuinely complete
-
-Remember: Work autonomously, safely, and thoroughly. Continue until the task is actually finished."""
+    # Use the detailed continue template from CONFIG
+    continue_message = CONFIG["continue_template"]
 
     return build_hook_response(
         continue_execution=True,
