@@ -27,7 +27,7 @@ __email__ = "your.email@example.com"
 
 # Export main functions for easier import
 from .main import main, CONFIG, COMMAND_HANDLERS
-from .agent_sdk_hook import HANDLERS as hook_handlers
+from .agent_sdk_hook import HOOK_HANDLERS as hook_handlers
 from .mcp_server import create_mcp_server
 
 __all__ = [

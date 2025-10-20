@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Hook integration that replaces autorun5.py with Agent SDK functionality"""
-import asyncio
+"""Hook integration that fully implements autorun5.py AI monitor functionality using main.py"""
 import json
 import sys
 from pathlib import Path
@@ -8,81 +7,35 @@ from pathlib import Path
 # Add the clautorun to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from main import CONFIG, COMMAND_HANDLERS, session_state
+# Import ALL required functionality from main.py for complete AI monitor workflow
+from main import (
+    CONFIG, COMMAND_HANDLERS, session_state,
+    build_hook_response, build_pretooluse_response,
+    # Import the complete AI monitor workflow
+    stop_handler, pretooluse_handler, intercept_commands_sync
+)
 
-# Handler registry - copied from autorun5.py pattern
-HANDLERS = {}
-def handler(name):
-    """Decorator to register handlers"""
-    def dec(f):
-        HANDLERS[name] = f
-        return f
-    return dec
-
-def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
-    """Build standardized JSON hook response - compatible with autorun5.py format"""
-    return {"continue": continue_execution, "stopReason": json.dumps(stop_reason)[1:-1],
-            "suppressOutput": False, "systemMessage": json.dumps(system_message)[1:-1]}
-
-def build_pretooluse_response(decision="allow", reason=""):
-    """Build PreToolUse hook response - compatible with autorun5.py format"""
-    return {"continue": True, "stopReason": "", "suppressOutput": False,
-            "systemMessage": json.dumps(reason)[1:-1] if reason else "",
-            "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                  "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
-
-@handler("UserPromptSubmit")
+# Hook-specific handler registry that delegates to main.py logic
 def agent_sdk_user_prompt_submit(ctx):
-    """Hook handler using Agent SDK - replaces autorun5.py UserPromptSubmit"""
-    input_data = {
-        'prompt': ctx.prompt,
-        'session_id': ctx.session_id,
-        'session_transcript': getattr(ctx, 'session_transcript', [])
-    }
-
-    # Use efficient command detection - autorun5.py pattern
-    prompt = ctx.prompt.lower()
-    session_id = ctx.session_id
-
-    # Detect command using dispatch dict - sort by length (longest first) for specific matches
-    command = next((v for k, v in sorted(CONFIG["command_mappings"].items(), key=lambda x: len(x[0]), reverse=True) if prompt.startswith(k)), None)
-
-    if command and command in COMMAND_HANDLERS:
-        # Handle command locally, don't send to AI
-        with session_state(session_id) as state:
-            response = COMMAND_HANDLERS[command](state)
-            return build_hook_response(
-                continue_execution=False,
-                system_message=response
-            )
-
-    # Let AI handle non-commands
-    return build_hook_response(
-        continue_execution=True,
-        system_message=""
+    """Hook handler using main.py UserPromptSubmit logic - complete AI monitor workflow"""
+    # Delegate to main.py's proven UserPromptSubmit handler
+    return intercept_commands_sync(
+        {'prompt': ctx.prompt, 'session_id': ctx.session_id},
+        ctx
     )
 
-@handler("PreToolUse")
 def agent_sdk_pre_tool_use(ctx):
-    """Hook handler using Agent SDK for file policy enforcement"""
-    # Use Agent SDK state for policy enforcement
-    return build_pretooluse_response("allow")  # Simplified for demonstration
+    """Hook handler using main.py PreToolUse logic - complete file policy enforcement"""
+    # Delegate to main.py's proven PreToolUse handler
+    return pretooluse_handler(ctx)
 
-@handler("Stop")
-@handler("SubagentStop")
 def agent_sdk_stop_event(ctx):
-    """Hook handler using Agent SDK for stop events"""
-    # Use Agent SDK for stop handling
-    return build_hook_response()
+    """Hook handler using main.py Stop logic - complete AI monitor workflow"""
+    # Delegate to main.py's proven stop handler with full AI monitor logic
+    return stop_handler(ctx)
 
-def handler(name):
-    """Decorator to register handlers"""
-    def dec(f):
-        HANDLERS[name] = f
-        return f
-    return dec
-
-HANDLERS = {
+# Handler registry mapping hook events to main.py functionality
+HOOK_HANDLERS = {
     "UserPromptSubmit": agent_sdk_user_prompt_submit,
     "PreToolUse": agent_sdk_pre_tool_use,
     "Stop": agent_sdk_stop_event,
@@ -90,17 +43,17 @@ HANDLERS = {
 }
 
 def default_handler(ctx):
-    """Default handler"""
+    """Default handler - same as main.py"""
     return build_hook_response()
 
 def main():
-    """Entry point - same as autorun5.py"""
+    """Entry point - identical to main.py but uses hook delegation pattern"""
     try:
         payload = json.loads(sys.stdin.read())
         event = payload.get("hook_event_name", "?")
         _session_id = payload.get("session_id", "?")
 
-        # Create context object
+        # Create context object - identical to main.py
         class Ctx:
             def __init__(self, p):
                 self.hook_event_name = p.get("hook_event_name", "")
@@ -111,7 +64,7 @@ def main():
                 self.session_transcript = p.get("session_transcript", [])
 
         ctx = Ctx(payload)
-        handler = HANDLERS.get(event, default_handler)
+        handler = HOOK_HANDLERS.get(event, default_handler)
         response = handler(ctx)
 
         print(json.dumps(response, sort_keys=True))

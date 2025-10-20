@@ -25,19 +25,7 @@ CONFIG = {
     "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,
-    "continue_template": """AUTORUN CONTINUATION: Continue working on your current task.
-
-You appear to have stopped working, but the task is not yet complete.
-
-CONTINUATION INSTRUCTIONS:
-1. Review what you've accomplished so far
-2. Identify what still needs to be done
-3. Continue working methodically and concretely
-4. Use tools as needed to make progress
-5. Only stop when the task is genuinely complete
-
-Remember: Work autonomously, safely, and thoroughly. Continue until the task is actually finished.""",
-    "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+      "injection_context_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
     * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
@@ -52,8 +40,8 @@ Remember: Work autonomously, safely, and thoroughly. Continue until the task is 
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop_phrase}**
 5.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{completion_marker}**
-6.  **FILE CREATION POLICY:** {policy_instructions}""",
-    "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
+6.  **FILE CREATION POLICY:** {AUTORUN_FILE_POLICY_instructions}""",
+    "recheck_injection_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
 
 Original Task: {activation_prompt}
 
@@ -66,7 +54,7 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 6. Verify all files are in their correct final state
 7. Ensure no temporary or incomplete work remains
 
-Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {completion_marker}
+Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY
 
 If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
 
@@ -241,10 +229,10 @@ def handle_activate(state, prompt=""):
     policy = state["file_policy"]
     policy_instructions = CONFIG["policies"][policy][1]
 
-    injection = CONFIG["injection_template"].format(
+    injection = CONFIG["injection_context_template"].format(
         emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
         completion_marker=CONFIG["completion_marker"],
-        policy_instructions=policy_instructions
+        AUTORUN_FILE_POLICY_instructions=policy_instructions
     )
 
     return injection
@@ -270,12 +258,19 @@ async def intercept_commands(input_data: Dict[str, Any], context: Optional[Dict[
     session_id = getattr(context, 'session_id', 'default') if context else 'default'
 
     # Efficient command detection - same pattern as autorun5.py
+    # Check for exact matches first, then prefix matches for commands with arguments
     command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
+    if not command:
+        command = next((v for k, v in CONFIG["command_mappings"].items() if k.endswith(' ') and prompt.startswith(k)), None)
 
     if command and command in COMMAND_HANDLERS:
         # Handle command locally, don't send to AI
         with session_state(session_id) as state:
-            response = COMMAND_HANDLERS[command](state)
+            if command == "activate":
+                # Pass the full prompt for activation commands
+                response = COMMAND_HANDLERS[command](state, prompt)
+            else:
+                response = COMMAND_HANDLERS[command](state)
             return {"continue": False, "response": response}
 
     # Let AI handle non-commands
@@ -323,8 +318,16 @@ def inject_continue_prompt(state):
     """Inject continue working prompt - ai_monitor functionality"""
     log_info("Injecting continue working prompt - preventing premature stop")
 
-    # Use the detailed continue template from CONFIG
-    continue_message = CONFIG["continue_template"]
+    # CRITICAL: Use full injection template with stop signal instructions
+    # This is NOT a simple continue message - it includes critical stop conditions
+    policy = state.get("file_policy", "ALLOW")
+    policy_instructions = CONFIG["policies"][policy][1]
+
+    continue_message = CONFIG["injection_context_template"].format(
+        emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
+        completion_marker=CONFIG["completion_marker"],
+        AUTORUN_FILE_POLICY_instructions=policy_instructions
+    )
 
     return build_hook_response(
         continue_execution=True,
@@ -335,9 +338,8 @@ def inject_verification_prompt(state):
     """Inject verification prompt - two-stage verification"""
     log_info(f"Injecting verification prompt - attempt {state.get('verification_attempts', 1)}")
 
-    verification_prompt = CONFIG["recheck_template"].format(
+    verification_prompt = CONFIG["recheck_injection_template"].format(
         activation_prompt=state.get("activation_prompt", "original task"),
-        completion_marker=CONFIG["completion_marker"],
         recheck_count=state.get("verification_attempts", 1),
         max_recheck_count=CONFIG["max_recheck_count"]
     )
