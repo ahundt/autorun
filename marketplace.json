@@ -1,0 +1,12 @@
+{
+  "name": "clautorun-dev",
+  "plugins": [
+    {
+      "name": "clautorun",
+      "source": "./",
+      "author": {
+        "name": "Andrew Hundt"
+      }
+    }
+  ]
+}

@@ -1,14 +1,14 @@
 {
   "name": "clautorun",
   "version": "0.4.1",
-  "description": "Claude Agent SDK Command Interceptor - Processes file policy commands locally to reduce API usage",
+  "description": "Claude Agent SDK Command Interceptor - Manages file creation policies and prevents tool stopping to enable extended autonomous work sessions without constant user intervention",
   "author": {
     "name": "clautorun contributors",
-    "url": "https://github.com/athundt/clautorun"
+    "url": "https://github.com/ahundt/clautorun"
   },
-  "homepage": "https://github.com/athundt/clautorun#readme",
-  "repository": "https://github.com/athundt/clautorun.git",
+  "homepage": "https://github.com/ahundt/clautorun#readme",
+  "repository": "https://github.com/ahundt/clautorun.git",
   "license": "MIT",
-  "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "api-optimization"],
+  "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "autonomous-sessions", "extended-workflow", "no-new-files", "justify-new-files"],
   "commands": "./commands"
 }

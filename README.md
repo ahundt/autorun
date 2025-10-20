@@ -5,7 +5,7 @@
 
 **clautorun** - Claude Agent SDK Command Interceptor
 
-A command interceptor for Claude Code that processes specific commands locally to reduce API usage. Commands like file policy changes are handled without making API calls.
+A command interceptor for Claude Code that manages file creation policies and prevents tool stopping to enable extended autonomous work sessions without constant user intervention.
 
 ## What It Does
 
@@ -83,17 +83,22 @@ This method installs clautorun as an official Claude Code plugin using the stand
 **Official Claude Code Plugin Installation:**
 
 ```bash
-# Method A: Install from GitHub Repository (Recommended)
-/plugin marketplace add https://github.com/yourusername/clautorun.git
-/plugin install clautorun@main
+# Method A: Install from GitHub Repository (Recommended for production)
+/plugin install https://github.com/ahundt/clautorun.git
 
-# Method B: Local Development Installation
+# Method B: Local Development Installation (For testing changes)
 /plugin marketplace add ./clautorun
-/plugin install clautorun@default
+/plugin install clautorun@clautorun-dev
 
 # Method C: Interactive Installation
 /plugin  # Opens interactive plugin management menu
 ```
+
+**When to Use Each Method:**
+
+- **Method A (GitHub)**: Use for stable production installation with the latest released version
+- **Method B (Local)**: Use for development and testing changes before pushing to GitHub
+- **Method C (Interactive)**: Use for exploring available plugins and management options
 
 **Verification:**
 ```bash
@@ -449,22 +454,46 @@ clautorun/
 
 ### Official Claude Code Plugin Management
 
+**GitHub Version Management:**
 ```bash
-# Install plugin from repository (recommended)
-/plugin marketplace add https://github.com/yourusername/clautorun.git
-/plugin install clautorun@main
+# Install or update from GitHub (recommended)
+/plugin install https://github.com/ahundt/clautorun.git
+
+# Update to latest version
+/plugin update clautorun
 
 # List installed plugins
 /plugin
 
 # Uninstall plugin
 /plugin uninstall clautorun
+```
 
-# Update plugin
-/plugin update clautorun
+**Local Development Management:**
+```bash
+# Add/refresh local development marketplace
+/plugin marketplace add ./clautorun
 
-# Browse marketplace
+# Install or update local development version
+/plugin install clautorun@clautorun-dev
+
+# List available marketplaces
 /plugin marketplace list
+
+# Remove local marketplace when done
+/plugin marketplace remove clautorun-dev
+```
+
+**General Management:**
+```bash
+# List all installed plugins
+/plugin
+
+# Debug plugin loading issues
+claude --debug
+
+# Browse available plugins in marketplaces
+/plugin
 ```
 
 ### Development Installation Management
@@ -501,15 +530,17 @@ python -m clautorun install --force
 # Check if plugin is installed
 /plugin
 
-# Verify plugin marketplace is added
-/plugin marketplace list
-
 # Debug plugin loading
 claude --debug
 
-# Reinstall plugin
+# Reinstall plugin (GitHub version)
 /plugin uninstall clautorun
-/plugin install clautorun@main
+/plugin install https://github.com/ahundt/clautorun.git
+
+# Reinstall plugin (local development version)
+/plugin uninstall clautorun
+/plugin marketplace add ./clautorun
+/plugin install clautorun@clautorun-dev
 
 # Check plugin structure after installation
 ls -la ~/.claude/plugins/clautorun/.claude-plugin/
@@ -591,17 +622,29 @@ PREVENT FILESYSTEM CHAOS
 QUICK START FOR NEW USERS
 ==============================================================================
 
-1. INSTALL PLUGIN (Official Method)
-```bash
-# Method A: Install from repository (recommended)
-/plugin marketplace add https://github.com/yourusername/clautorun.git
-/plugin install clautorun@main
+1. INSTALL PLUGIN (Choose Method)
 
-# Method B: Local development setup
-cd /path/to/clautorun
-/plugin marketplace add ./clautorun
-/plugin install clautorun@default
+**Option A: GitHub Installation (Production - Recommended)**
+```bash
+# Install directly from GitHub
+/plugin install https://github.com/ahundt/clautorun.git
 ```
+
+**Option B: Local Development Installation (Testing Changes)**
+```bash
+# Navigate to clautorun directory
+cd /Users/athundt/.claude/clautorun
+
+# Add local development marketplace
+/plugin marketplace add ./clautorun
+
+# Install local development version
+/plugin install clautorun@clautorun-dev
+```
+
+**Which to Choose:**
+- **Option A**: For stable production use with released versions
+- **Option B**: For testing changes before pushing to GitHub
 
 2. VERIFY INSTALLATION
 ```bash
