@@ -56,10 +56,16 @@ cd clautorun
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies and plugin
+# Install dependencies and plugin (automatic installation)
 uv sync --extra claude-code
 uv run clautorun install
 ```
+
+**Automatic Plugin Installation:**
+- `uv run clautorun install` automatically detects Claude Code and installs the plugin
+- Prioritizes local marketplace installation for reliability
+- Falls back to GitHub installation if needed
+- Includes comprehensive status checking with `uv run clautorun status`
 
 **UV Environment Setup Requirements:**
 - Requires UV package manager (https://github.com/astral-sh/uv)
