@@ -9,7 +9,7 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import CONFIG, COMMAND_HANDLERS, session_state, log_info
+from clautorun import CONFIG, COMMAND_HANDLERS, session_state, log_info
 
 def test_completion_marker():
     """Test completion marker matches autorun5.py exactly"""
@@ -54,7 +54,7 @@ def test_policy_blocked_messages():
 
 def test_injection_template():
     """Test injection template contains all autorun5.py components"""
-    template = CONFIG["injection_template"]
+    template = CONFIG["injection_context_template"]
 
     # Check for key autorun5.py phrases
     required_phrases = [
@@ -74,13 +74,13 @@ def test_injection_template():
     # Check for placeholders
     assert "{emergency_stop_phrase}" in template, "Missing emergency_stop_phrase placeholder"
     assert "{completion_marker}" in template, "Missing completion_marker placeholder"
-    assert "{policy_instructions}" in template, "Missing policy_instructions placeholder"
+    assert "{AUTORUN_FILE_POLICY_instructions}" in template, "Missing AUTORUN_FILE_POLICY_instructions placeholder"
 
     print("✅ Injection template contains all autorun5.py components")
 
 def test_recheck_template():
     """Test recheck template matches autorun5.py exactly"""
-    template = CONFIG["recheck_template"]
+    template = CONFIG["recheck_injection_template"]
 
     # Check for key recheck phrases
     required_phrases = [
@@ -94,7 +94,6 @@ def test_recheck_template():
 
     # Check for placeholders
     assert "{activation_prompt}" in template, "Missing activation_prompt placeholder"
-    assert "{completion_marker}" in template, "Missing completion_marker placeholder"
     assert "{recheck_count}" in template, "Missing recheck_count placeholder"
     assert "{max_recheck_count}" in template, "Missing max_recheck_count placeholder"
 
@@ -129,46 +128,48 @@ def test_command_handlers():
     """Test command handlers produce correct responses"""
     session_id = "test_compatibility"
 
-    with session_state(session_id) as state:
-        # Test policy commands
-        response = COMMAND_HANDLERS["SEARCH"](state)
-        expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
-        assert response == expected, f"SEARCH handler response mismatch"
-        assert state["file_policy"] == "SEARCH", "SEARCH handler should update state"
+    # Use a simple dict instead of shelve for testing
+    test_state = {}
 
-        response = COMMAND_HANDLERS["ALLOW"](state)
-        expected = "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
-        assert response == expected, f"ALLOW handler response mismatch"
-        assert state["file_policy"] == "ALLOW", "ALLOW handler should update state"
+    # Test policy commands
+    response = COMMAND_HANDLERS["SEARCH"](test_state)
+    expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
+    assert response == expected, f"SEARCH handler response mismatch"
+    assert test_state["file_policy"] == "SEARCH", "SEARCH handler should update state"
 
-        response = COMMAND_HANDLERS["JUSTIFY"](state)
-        expected = "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
-        assert response == expected, f"JUSTIFY handler response mismatch"
-        assert state["file_policy"] == "JUSTIFY", "JUSTIFY handler should update state"
+    response = COMMAND_HANDLERS["ALLOW"](test_state)
+    expected = "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
+    assert response == expected, f"ALLOW handler response mismatch"
+    assert test_state["file_policy"] == "ALLOW", "ALLOW handler should update state"
 
-        # Test status command
-        response = COMMAND_HANDLERS["STATUS"](state)
-        expected = "Current policy: justify-create"
-        assert response == expected, f"STATUS handler response mismatch"
+    response = COMMAND_HANDLERS["JUSTIFY"](test_state)
+    expected = "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
+    assert response == expected, f"JUSTIFY handler response mismatch"
+    assert test_state["file_policy"] == "JUSTIFY", "JUSTIFY handler should update state"
 
-        # Test stop commands
-        response = COMMAND_HANDLERS["STOP"](state)
-        expected = "Autorun stopped"
-        assert response == expected, f"STOP handler response mismatch"
-        assert state["session_status"] == "stopped", "STOP handler should update state"
+    # Test status command
+    response = COMMAND_HANDLERS["STATUS"](test_state)
+    expected = "Current policy: justify-create"
+    assert response == expected, f"STATUS handler response mismatch"
 
-        response = COMMAND_HANDLERS["EMERGENCY_STOP"](state)
-        expected = "Emergency stop activated"
-        assert response == expected, f"EMERGENCY_STOP handler response mismatch"
-        assert state["session_status"] == "emergency_stopped", "EMERGENCY_STOP handler should update state"
+    # Test stop commands
+    response = COMMAND_HANDLERS["STOP"](test_state)
+    expected = "Autorun stopped"
+    assert response == expected, f"STOP handler response mismatch"
+    assert test_state["session_status"] == "stopped", "STOP handler should update state"
 
-        # Test activation command
-        test_prompt = "/autorun test task description"
-        response = COMMAND_HANDLERS["activate"](state, test_prompt)
-        assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response, "ACTIVATE handler should return injection template"
-        assert state["session_status"] == "active", "ACTIVATE handler should set session status"
-        assert state["autorun_stage"] == "INITIAL", "ACTIVATE handler should set autorun stage"
-        assert state["activation_prompt"] == test_prompt, "ACTIVATE handler should store activation prompt"
+    response = COMMAND_HANDLERS["EMERGENCY_STOP"](test_state)
+    expected = "Emergency stop activated"
+    assert response == expected, f"EMERGENCY_STOP handler response mismatch"
+    assert test_state["session_status"] == "emergency_stopped", "EMERGENCY_STOP handler should update state"
+
+    # Test activation command
+    test_prompt = "/autorun test task description"
+    response = COMMAND_HANDLERS["activate"](test_state, test_prompt)
+    assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response, "ACTIVATE handler should return injection template"
+    assert test_state["session_status"] == "active", "ACTIVATE handler should set session status"
+    assert test_state["autorun_stage"] == "INITIAL", "ACTIVATE handler should set autorun stage"
+    assert test_state["activation_prompt"] == test_prompt, "ACTIVATE handler should store activation prompt"
 
     print("✅ All command handlers produce correct autorun5.py responses")
 

@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Hook integration that fully implements autorun5.py AI monitor functionality using main.py"""
+"""Hook integration that fully implements autorun5.py AI monitor functionality using clautorun package"""
 import json
-import sys
-from pathlib import Path
 
-# Add the clautorun to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-# Import ALL required functionality from main.py for complete AI monitor workflow
-from main import (
+# Import ALL required functionality from clautorun package for complete AI monitor workflow
+from clautorun import (
     CONFIG, COMMAND_HANDLERS, session_state,
     build_hook_response, build_pretooluse_response,
     # Import the complete AI monitor workflow

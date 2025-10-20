@@ -67,6 +67,13 @@ coverage.xml
 test_hook*.json
 test_*.json
 
+# Development artifacts
+test*.txt
+tmp*.txt
+tmp*.json
+memory_watch*.json
+debug/
+
 # Development tools and cache
 .ruff_cache/
 .mypy_cache/
