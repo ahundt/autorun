@@ -17,7 +17,19 @@ A command interceptor for Claude Code that processes specific commands locally t
 
 ## Installation
 
-### Option A: UV (Recommended)
+### Option A: UV with Claude Code Integration (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/clautorun.git
+cd clautorun
+
+# Install with UV and Claude Code integration
+uv sync --extra claude-code
+python -m clautorun install
+```
+
+### Option B: UV Development Installation
 
 ```bash
 # Clone the repository
@@ -26,9 +38,10 @@ cd clautorun
 
 # Install with UV (includes dev dependencies for testing)
 uv sync --dev
+python -m clautorun install
 ```
 
-### Option B: Traditional pip
+### Option C: Traditional pip
 
 ```bash
 # Clone the repository
@@ -41,20 +54,22 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -e ".[dev]"
+python -m clautorun install
 ```
 
 ## Integration Options
 
-### Option 1: Plugin Mode (Recommended for most users)
+### Option 1: Plugin Mode (Recommended & Automatic)
 
-This method adds clautorun as a slash command in Claude Code.
+This method adds clautorun as a slash command in Claude Code using automatic installation.
 
 **Setup:**
 ```bash
-# Copy plugin to Claude Code commands directory
-cp src/clautorun/claude_code_plugin.py ~/.claude/commands/clautorun
+# Automatic installation (recommended)
+python -m clautorun install
 
-# Make executable
+# Manual installation (if needed)
+cp src/clautorun/claude_code_plugin.py ~/.claude/commands/clautorun
 chmod +x ~/.claude/commands/clautorun
 ```
 
@@ -68,9 +83,23 @@ Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modi
 ```
 
 **What happens:**
+- Creates symlink from installed package to Claude Code commands directory
 - Commands are processed locally without API calls
 - Other prompts are handled normally by Claude Code
 - Session state is preserved between commands
+- Package updates automatically update the plugin
+
+**Installation Management:**
+```bash
+# Check installation status
+python -m clautorun check
+
+# Uninstall plugin
+python -m clautorun uninstall
+
+# Force reinstall
+python -m clautorun install --force
+```
 
 ### Option 2: Hook Integration
 
@@ -319,12 +348,46 @@ clautorun/
 - Session IDs maintain conversation context
 - Costs are tracked when using Claude Code APIs
 
+## Installation Management
+
+The installation system provides comprehensive management capabilities:
+
+```bash
+# Install Claude Code plugin (creates symlink)
+python -m clautorun install
+
+# Check installation status and validate plugin
+python -m clautorun check
+
+# Uninstall plugin (removes symlink)
+python -m clautorun uninstall
+
+# Force reinstall (overwrites existing)
+python -m clautorun install --force
+
+# Show help for all commands
+python -m clautorun install --help
+```
+
 ## Troubleshooting
 
+**Installation Issues:**
+```bash
+# Check if Claude Code is detected
+python -m clautorun check
+
+# Verify plugin symlink exists and is valid
+ls -la ~/.claude/commands/clautorun
+
+# Test plugin manually
+echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/commands/clautorun
+```
+
 **Plugin not working:**
-- Verify the file is executable: `chmod +x ~/.claude/commands/clautorun`
-- Check file path: `ls -la ~/.claude/commands/`
-- Test manually: `echo '{"prompt": "/afs"}' | python ~/.claude/commands/clautorun`
+- Ensure dependencies are installed: `uv sync --extra claude-code`
+- Verify the symlink is valid: `python -m clautorun check`
+- Check permissions: `ls -la ~/.claude/commands/`
+- Test with UV environment activated
 
 **Hook integration issues:**
 - Verify settings.json format is valid
@@ -333,6 +396,12 @@ clautorun/
 
 **Interactive mode problems:**
 - Ensure virtual environment is activated
+- Run: `python -m clautorun` (starts interactive mode)
+
+**Common Solutions:**
+- Force reinstall: `python -m clautorun install --force`
+- Check installation: `python -m clautorun check`
+- Ensure UV environment is active for dependency access
 - Check Agent SDK installation: `pip list | grep claude-agent-sdk`
 - Verify Python version: `python --version`
 

@@ -4,10 +4,14 @@ import json
 import sys
 from pathlib import Path
 
-# Add the clautorun to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from main import CONFIG, COMMAND_HANDLERS, session_state
+# Add the clautorun to path - handle both package and standalone execution
+try:
+    # Try package import first
+    from .main import CONFIG, COMMAND_HANDLERS, session_state
+except ImportError:
+    # Fallback for standalone execution
+    sys.path.insert(0, str(Path(__file__).parent))
+    from main import CONFIG, COMMAND_HANDLERS, session_state
 
 def main():
     """Plugin entry point for Claude Code"""

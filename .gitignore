@@ -1,8 +1,12 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C extensions
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -21,6 +25,10 @@ wheels/
 *.egg
 MANIFEST
 
+# UV Package Manager
+.uv_cache/
+uv.lock
+
 # Virtual environments
 .env
 .venv
@@ -30,14 +38,16 @@ ENV/
 env.bak/
 venv.bak/
 
-# IDEs
+# IDEs and editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.sublime-project
+.sublime-workspace
 
-# OS
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -45,14 +55,102 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
 
-# Test files
+# Testing and coverage
+.coverage
+htmlcov/
+coverage.xml
+.pytest_cache/
+.tox/
 test_hook*.json
-*.db
-*.log
+test_*.json
 
-# Cache
+# Development tools and cache
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Session state and databases
+*.db
+*.db.*
+.sessions/
+*.state.json
+memory_*.db
+test_*.db
+debug_*.db
+*_fallback.db
+*_dumb.db
+high_freq_test.db
+multiprocess_*.db
+policy_switching*.db
+thread_*.db
+session_*.db
+plugin_*.db
+interactive_*.db
+persistence_*.db
+stress_*.db
+basic_*.db
+iso_*.db
+counter_*.db
+
+# Logs and temporary files
+*.log
+*.log.*
+*.tmp
+*.temp
+tmp/
+temp/
+logs/
+autorun*.log
+autorun*.json
+autorun_debug.*
+memory_watch*.json
+new_test_*.txt
+debug_*.txt
+
+# Cache and runtime
+cache/
+.cache/
+.pytest_cache/
+.mypy_cache/
 .ruff_cache/
 
-# Sessions
-sessions/
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/

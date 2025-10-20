@@ -38,9 +38,13 @@ dev = [
     "black>=23.0.0",
     "mypy>=1.0.0",
 ]
+claude-code = [
+    "claude-agent-sdk>=0.1.4",
+]
 
 [project.scripts]
 clautorun = "clautorun.main:main"
+clautorun-plugin = "clautorun.claude_code_plugin:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/clautorun"
