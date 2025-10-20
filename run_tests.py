@@ -93,7 +93,7 @@ def main():
         ], cwd=project_root)
 
         if returncode != 0:
-            print(f"❌ Failed to install dependencies:")
+            print("❌ Failed to install dependencies:")
             print(f"Error: {stderr}")
             return 1
         print("✅ Dependencies installed successfully")

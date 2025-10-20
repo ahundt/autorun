@@ -4,14 +4,14 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Add current directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add src directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 async def test_command_logic():
     """Test the core command logic without database dependencies"""
 
     # Import the command handling logic directly
-    from main import CONFIG, COMMAND_HANDLERS
+    from clautorun import CONFIG, COMMAND_HANDLERS
 
     print("🧪 Testing Agent SDK Command Logic")
     print("=" * 50)

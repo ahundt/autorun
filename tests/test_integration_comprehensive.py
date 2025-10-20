@@ -265,9 +265,9 @@ def test_readme_workflow_compliance():
 
     # Verify documented command mappings
     expected_mappings = {
-        "/autorun ": "activate",
-        "/autostop ": "stop",
-        "/estop ": "emergency_stop",
+        "/autorun": "activate",
+        "/autostop": "stop",
+        "/estop": "emergency_stop",
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",

@@ -1,33 +1,15 @@
 #!/usr/bin/env python3
 """Test script to demonstrate Agent SDK command interception"""
-import asyncio
 import sys
+from pathlib import Path
+from unittest.mock import patch
 
-# Mock the session_state to avoid db issues
-def mock_session_state(session_id):
-    """Mock session state for testing"""
-    class MockState:
-        def __init__(self):
-            self.data = {}
-        def __enter__(self):
-            return self
-        def __exit__(self, *args):
-            pass
-        def __setitem__(self, key, value):
-            self.data[key] = value
-        def __getitem__(self, key):
-            return self.data[key]
-        def get(self, key, default=None):
-            return self.data.get(key, default)
-        def clear(self):
-            self.data.clear()
-    return MockState()
+# Add src to path for testing
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Patch the session_state function temporarily
-sys.path.insert(0, '.')
-from main import intercept_commands
+from clautorun import intercept_commands_sync
 
-async def test_commands():
+def test_commands():
     """Test the command interception functionality"""
 
     # Test data that simulates Claude Code input
@@ -44,20 +26,26 @@ async def test_commands():
     print("🧪 Testing Agent SDK Command Interception")
     print("=" * 50)
 
-    for prompt, expected in test_cases:
-        # Create test context
-        context = {"session_id": "test_session"}
+    # Mock session state to avoid database issues
+    mock_state = {}
+    with patch('clautorun.main.session_state') as mock_session:
+        mock_session.return_value.__enter__.return_value = mock_state
+        mock_session.return_value.__exit__.return_value = None
 
-        # Test the command interception
-        result = await intercept_commands(
-            {"prompt": prompt, "session_id": "test_session"},
-            context
-        )
+        for prompt, expected in test_cases:
+            # Create test context
+            context = {"session_id": "test_session"}
 
-        print(f"Command: {prompt}")
-        print(f"Expected: {expected}")
-        print(f"Result: {result}")
-        print("-" * 30)
+            # Test the command interception (sync version)
+            result = intercept_commands_sync(
+                {"prompt": prompt, "session_id": "test_session"},
+                context
+            )
+
+            print(f"Command: {prompt}")
+            print(f"Expected: {expected}")
+            print(f"Result: {result}")
+            print("-" * 30)
 
 if __name__ == "__main__":
-    asyncio.run(test_commands())
+    test_commands()

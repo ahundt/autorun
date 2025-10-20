@@ -262,7 +262,7 @@ def test_template_content_completeness():
     from clautorun import CONFIG
 
     # Test injection template has all critical components
-    injection_template = CONFIG["injection_context_template"]
+    injection_template = CONFIG["injection_template"]
     critical_components = [
         "UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION",
         "SYSTEM STOP SIGNAL RULE",
@@ -277,7 +277,7 @@ def test_template_content_completeness():
         assert component in injection_template, f"Missing critical component: {component}"
 
     # Test verification template has all critical components
-    verification_template = CONFIG["recheck_injection_template"]
+    verification_template = CONFIG["recheck_template"]
     verification_components = [
         "AUTORUN TASK VERIFICATION",
         "CRITICAL VERIFICATION INSTRUCTIONS",

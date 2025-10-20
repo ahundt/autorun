@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import CONFIG, COMMAND_HANDLERS
+from clautorun import CONFIG, COMMAND_HANDLERS
 
 
 class TestConfiguration:
@@ -50,7 +50,7 @@ class TestConfiguration:
         mappings = CONFIG["command_mappings"]
 
         # Check essential commands
-        essential_commands = ["/afs", "/afa", "/afj", "/afst", "/autostop ", "/estop "]
+        essential_commands = ["/afs", "/afa", "/afj", "/afst", "/autostop", "/estop"]
         for cmd in essential_commands:
             assert cmd in mappings, f"Missing command mapping: {cmd}"
             assert mappings[cmd], f"Command {cmd} should map to an action"
@@ -159,7 +159,7 @@ class TestCommandDetection:
     def test_control_commands_detected(self):
         """Test control commands are detected correctly"""
         mappings = CONFIG["command_mappings"]
-        control_commands = ["/autostop ", "/estop "]
+        control_commands = ["/autostop", "/estop"]
 
         for cmd in control_commands:
             found = next((v for k, v in mappings.items() if k == cmd), None)

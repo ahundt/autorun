@@ -30,7 +30,7 @@ except ImportError:
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import CONFIG, COMMAND_HANDLERS
+from clautorun import CONFIG, COMMAND_HANDLERS
 
 
 @pytest.fixture

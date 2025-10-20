@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Hook integration that fully implements autorun5.py AI monitor functionality using clautorun package"""
 import json
+import sys
 
 # Import ALL required functionality from clautorun package for complete AI monitor workflow
 from clautorun import (
@@ -14,10 +15,21 @@ from clautorun import (
 def agent_sdk_user_prompt_submit(ctx):
     """Hook handler using main.py UserPromptSubmit logic - complete AI monitor workflow"""
     # Delegate to main.py's proven UserPromptSubmit handler
-    return intercept_commands_sync(
+    result = intercept_commands_sync(
         {'prompt': ctx.prompt, 'session_id': ctx.session_id},
         ctx
     )
+
+    # Convert internal response format to hook response format
+    if result.get("continue") is False:
+        # Command handled locally, return proper hook response
+        return build_hook_response(
+            continue_execution=False,
+            system_message=result.get("response", "")
+        )
+    else:
+        # Let AI handle it
+        return build_hook_response(continue_execution=True)
 
 def agent_sdk_pre_tool_use(ctx):
     """Hook handler using main.py PreToolUse logic - complete file policy enforcement"""

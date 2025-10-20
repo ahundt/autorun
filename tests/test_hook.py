@@ -28,9 +28,14 @@ class TestHookIntegration:
         hook_input_data["prompt"] = "/afa"
         input_json = json.dumps(hook_input_data)
 
-        # Mock stdin and run hook
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        # Mock session state and stdin
+        mock_state = {}
+        with patch('clautorun.main.session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
+
+            with patch('sys.stdin', StringIO(input_json)):
+                main()
 
         # Check output
         captured = capsys.readouterr()
@@ -91,8 +96,8 @@ class TestHookIntegration:
             ("/afa", False, "allow-all"),
             ("/afj", False, "justify-create"),
             ("/afst", False, "Current policy"),
-            ("/autostop ", False, "Autorun stopped"),
-            ("/estop ", False, "Emergency stop activated"),
+            ("/autostop", False, "Autorun stopped"),
+            ("/estop", False, "Emergency stop activated"),
             ("normal command", True, ""),
             ("help me please", True, ""),
             ("what is this", True, "")
@@ -107,15 +112,21 @@ class TestHookIntegration:
             }
             input_json = json.dumps(input_data)
 
-            with patch('sys.stdin', StringIO(input_json)):
-                main()
+            # Mock session state for each test case
+            mock_state = {}
+            with patch('clautorun.main.session_state') as mock_session:
+                mock_session.return_value.__enter__.return_value = mock_state
+                mock_session.return_value.__exit__.return_value = None
 
-            captured = capsys.readouterr()
-            output = json.loads(captured.out)
+                with patch('sys.stdin', StringIO(input_json)):
+                    main()
 
-            assert output["continue"] == should_continue, f"Command '{prompt}' continue flag incorrect"
-            if expected_content:
-                assert expected_content in output["systemMessage"], f"Command '{prompt}' response incorrect"
+                captured = capsys.readouterr()
+                output = json.loads(captured.out)
+
+                assert output["continue"] == should_continue, f"Command '{prompt}' continue flag incorrect"
+                if expected_content:
+                    assert expected_content in output["systemMessage"], f"Command '{prompt}' response incorrect"
 
     @pytest.mark.hook
     @pytest.mark.integration
@@ -123,30 +134,37 @@ class TestHookIntegration:
         """Test hook maintains session state across commands"""
         session_id = "hook_test_session"
 
-        # First command - set policy
-        input_data = {
-            "hook_event_name": "UserPromptSubmit",
-            "session_id": session_id,
-            "prompt": "/afa",
-            "session_transcript": []
-        }
-        input_json = json.dumps(input_data)
+        # Mock session state that persists across commands
+        mock_state = {}
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        with patch('clautorun.main.session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
 
-        # Second command - check status
-        input_data["prompt"] = "/afst"
-        input_json = json.dumps(input_data)
+            # First command - set policy
+            input_data = {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": session_id,
+                "prompt": "/afa",
+                "session_transcript": []
+            }
+            input_json = json.dumps(input_data)
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+            with patch('sys.stdin', StringIO(input_json)):
+                main()
 
-        captured = capsys.readouterr()
-        lines = captured.out.strip().split('\n')
-        second_output = json.loads(lines[-1])
+            # Second command - check status
+            input_data["prompt"] = "/afst"
+            input_json = json.dumps(input_data)
 
-        assert "allow-all" in second_output["systemMessage"], "Status should reflect previously set policy"
+            with patch('sys.stdin', StringIO(input_json)):
+                main()
+
+            captured = capsys.readouterr()
+            lines = captured.out.strip().split('\n')
+            second_output = json.loads(lines[-1])
+
+            assert "allow-all" in second_output["systemMessage"], "Status should reflect previously set policy"
 
     @pytest.mark.hook
     @pytest.mark.integration
@@ -160,14 +178,20 @@ class TestHookIntegration:
         }
         input_json = json.dumps(input_data)
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        # Mock session state
+        mock_state = {}
+        with patch('clautorun.main.session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
 
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
+            with patch('sys.stdin', StringIO(input_json)):
+                main()
 
-        assert output["continue"] is False, "Autorun command should not continue to AI"
-        assert "UNINTERRUPTED" in output["systemMessage"], "Response should contain injection template"
+            captured = capsys.readouterr()
+            output = json.loads(captured.out)
+
+            assert output["continue"] is False, "Autorun command should not continue to AI"
+            assert "UNINTERRUPTED" in output["systemMessage"], "Response should contain injection template"
 
 
 class TestHookErrorHandling:

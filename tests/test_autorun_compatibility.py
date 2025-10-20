@@ -54,7 +54,7 @@ def test_policy_blocked_messages():
 
 def test_injection_template():
     """Test injection template contains all autorun5.py components"""
-    template = CONFIG["injection_context_template"]
+    template = CONFIG["injection_template"]
 
     # Check for key autorun5.py phrases
     required_phrases = [
@@ -74,13 +74,13 @@ def test_injection_template():
     # Check for placeholders
     assert "{emergency_stop_phrase}" in template, "Missing emergency_stop_phrase placeholder"
     assert "{completion_marker}" in template, "Missing completion_marker placeholder"
-    assert "{AUTORUN_FILE_POLICY_instructions}" in template, "Missing AUTORUN_FILE_POLICY_instructions placeholder"
+    assert "{policy_instructions}" in template, "Missing policy_instructions placeholder"
 
     print("✅ Injection template contains all autorun5.py components")
 
 def test_recheck_template():
     """Test recheck template matches autorun5.py exactly"""
-    template = CONFIG["recheck_injection_template"]
+    template = CONFIG["recheck_template"]
 
     # Check for key recheck phrases
     required_phrases = [
@@ -102,9 +102,9 @@ def test_recheck_template():
 def test_command_mappings():
     """Test command mappings match autorun5.py exactly"""
     expected_mappings = {
-        "/autorun ": "activate",
-        "/autostop ": "stop",
-        "/estop ": "emergency_stop",
+        "/autorun": "activate",
+        "/autostop": "stop",
+        "/estop": "emergency_stop",
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
