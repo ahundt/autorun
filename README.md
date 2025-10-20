@@ -17,20 +17,48 @@ A command interceptor for Claude Code that manages file creation policies and pr
 
 ## Installation
 
-### Option A: UV with Claude Code Integration (Recommended)
+### Option 1: Claude Code Plugin (Recommended)
+
+This is the simplest installation method using Claude Code's built-in plugin system.
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/clautorun.git
-cd clautorun
-
-# Create and activate virtual environment
+# ⚠️ CRITICAL: Create and activate virtual environment first
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install with UV and Claude Code integration
+# Install directly from GitHub (Recommended for production)
+/plugin install https://github.com/ahundt/clautorun.git
+
+# Or for local development:
+/plugin marketplace add ./clautorun
+/plugin install clautorun@clautorun-dev
+```
+
+**Verification:**
+```bash
+# List installed plugins
+/plugin
+
+# Test plugin functionality
+/clautorun /afst
+```
+
+### Option 2: UV Development Installation (Recommended for developers)
+
+For development and testing, UV provides the cleanest installation method.
+
+```bash
+# Clone the repository
+git clone https://github.com/ahundt/clautorun.git
+cd clautorun
+
+# ⚠️ CRITICAL: Create and activate virtual environment
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies and plugin
 uv sync --extra claude-code
-python -m clautorun install
+uv run clautorun install
 ```
 
 **UV Environment Setup Requirements:**
@@ -46,23 +74,11 @@ python -m clautorun install
 - Always use `python3` or activate the UV virtual environment first
 - The plugin command script (`commands/clautorun`) has smart path resolution for dependencies
 
-### Option B: UV Development Installation
+### Option 3: Traditional pip Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/clautorun.git
-cd clautorun
-
-# Install with UV (includes dev dependencies for testing)
-uv sync --dev
-python -m clautorun install
-```
-
-### Option C: Traditional pip
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/clautorun.git
+git clone https://github.com/ahundt/clautorun.git
 cd clautorun
 
 # Create virtual environment
@@ -71,7 +87,9 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -e ".[dev]"
-python -m clautorun install
+
+# Install plugin manually
+PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
 ```
 
 ## Integration Options
@@ -496,25 +514,31 @@ claude --debug
 /plugin
 ```
 
-### Development Installation Management
+### UV Development Commands
 
-For local development and testing, you can use the built-in installation system:
+UV provides simple, clean commands for development:
 
 ```bash
-# IMPORTANT: Activate virtual environment first, or use python3
-source .venv/bin/activate
+# Install plugin (handles everything automatically)
+uv run clautorun install
 
-# Development installation (for testing)
-python -m clautorun install
+# Check installation status
+uv run clautorun check
 
-# Check installation status and validate plugin
-python -m clautorun check
-
-# Development uninstall (removes plugin directory)
-python -m clautorun uninstall
+# Uninstall plugin
+uv run clautorun uninstall
 
 # Force reinstall (overwrites existing)
-python -m clautorun install --force
+uv run clautorun install --force
+```
+
+**UV Testing Commands:**
+```bash
+# Run quick tests
+uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+
+# Run full test suite with coverage
+uv run pytest --cov=src/clautorun --cov-report=term-missing
 ```
 
 **Python Environment Reminders:**
@@ -522,6 +546,11 @@ python -m clautorun install --force
 - Or use explicit Python3: `python3 -m clautorun install`
 - The plugin inherits dependencies from the active Python environment
 - For production use, prefer the official `/plugin` commands
+
+**That's it!** But remember to activate virtual environment in each new terminal session:
+```bash
+source .venv/bin/activate  # Must be done in each new terminal
+```
 
 ## Troubleshooting
 
@@ -547,19 +576,19 @@ ls -la ~/.claude/plugins/clautorun/.claude-plugin/
 ls -la ~/.claude/plugins/clautorun/commands/
 ```
 
-**Development Installation Issues:**
+**UV Installation Issues:**
 ```bash
-# First, ensure virtual environment is activated
+# ⚠️ CRITICAL: First activate virtual environment
 source .venv/bin/activate
 
-# Check if Claude Code is detected
-python -m clautorun check
+# Check installation status
+uv run clautorun check
 
-# Verify plugin directory exists and is valid
-ls -la ~/.claude/plugins/clautorun/
+# Force reinstall if needed
+uv run clautorun install --force
 
-# Test plugin manually
-echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun
+# Ensure dependencies are up to date
+uv sync --extra claude-code
 ```
 
 **Python Environment Issues:**
@@ -578,27 +607,24 @@ clautorun includes comprehensive Python version validation:
 - **Automatic Solutions**: Provides specific commands to fix Python version issues
 
 **Plugin not working:**
-- Ensure dependencies are installed: `uv sync --extra claude-code`
-- Verify the plugin installation: `source .venv/bin/activate && python -m clautorun check`
+- Verify the plugin installation: `uv run clautorun check`
 - Check plugin structure: `ls -la ~/.claude/plugins/clautorun/.claude-plugin/`
 - Check plugin permissions: `ls -la ~/.claude/plugins/clautorun/commands/`
-- Test with UV environment activated: `source .venv/bin/activate`
+- Test plugin manually: `echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun`
 
-**Hook integration issues:**
-- Verify settings.json format is valid
-- Check hook file permissions
-- Look for errors in Claude Code logs
+**UV Environment Issues:**
+- Ensure UV is installed: `uv --version`
+- Check project structure: `ls pyproject.toml uv.lock`
+- Re-sync dependencies: `uv sync --extra claude-code`
 
-**Interactive mode problems:**
-- Ensure virtual environment is activated
-- Run: `python -m clautorun` (starts interactive mode)
+**Testing Issues:**
+- Run tests with UV: `uv run pytest tests/`
+- Check test coverage: `uv run pytest --cov=src/clautorun --cov-report=term-missing`
 
 **Common Solutions:**
-- Force reinstall: `python -m clautorun install --force`
-- Check installation: `python -m clautorun check`
-- Ensure UV environment is active for dependency access
-- Check Agent SDK installation: `pip list | grep claude-agent-sdk`
-- Verify Python version: `python --version`
+- Force reinstall: `uv run clautorun install --force`
+- Check installation: `uv run clautorun check`
+- Ensure UV is working: `uv run python --version`
 
 ## License
 
