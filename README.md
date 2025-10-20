@@ -76,17 +76,35 @@ python -m clautorun install
 
 ## Integration Options
 
-### Option 1: Plugin Mode (Recommended & Automatic)
+### Option 1: Claude Code Plugin Mode (Recommended)
 
-This method installs clautorun as a standard Claude Code plugin using the official plugin structure.
+This method installs clautorun as an official Claude Code plugin using the standard plugin marketplace system.
 
-**Setup:**
+**Official Claude Code Plugin Installation:**
+
 ```bash
-# Automatic installation (recommended)
-python -m clautorun install
+# Method A: Install from GitHub Repository (Recommended)
+/plugin marketplace add https://github.com/yourusername/clautorun.git
+/plugin install clautorun@main
 
-# Plugin will be installed to ~/.claude/plugins/clautorun/
-# Follows standard Claude Code plugin structure with .claude-plugin/plugin.json
+# Method B: Local Development Installation
+/plugin marketplace add ./clautorun
+/plugin install clautorun@default
+
+# Method C: Interactive Installation
+/plugin  # Opens interactive plugin management menu
+```
+
+**Verification:**
+```bash
+# List installed plugins
+/plugin
+
+# Check plugin details
+/plugin marketplace list
+
+# Debug plugin loading (if issues occur)
+claude --debug
 ```
 
 **Usage in Claude Code:**
@@ -98,33 +116,65 @@ User: /clautorun /afa
 Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.
 ```
 
-**What happens:**
-- Installs as standard Claude Code plugin to `~/.claude/plugins/clautorun/`
-- Uses official plugin structure with `.claude-plugin/plugin.json` manifest
-- Commands are in `commands/` directory following plugin conventions
-- Commands are processed locally without API calls
-- Other prompts are handled normally by Claude Code
-- Session state is preserved between commands
-- Plugin is automatically discovered and loaded by Claude Code
+**Plugin Structure (Official Claude Code Standard):**
+```
+clautorun/
+├── .claude-plugin/
+│   └── plugin.json          # Plugin manifest (required)
+├── commands/
+│   └── clautorun            # Plugin command script
+├── src/
+│   └── clautorun/           # Package code
+└── ... (other files)
+```
 
-**Plugin Structure Details:**
+**What happens:**
+- Claude Code automatically discovers and loads the plugin from marketplace
+- Uses official plugin structure with `.claude-plugin/plugin.json` manifest
+- Commands are processed locally through the plugin system
+- Session state is preserved between command invocations
+- Plugin integrates seamlessly with Claude Code's plugin management
+- Automatic dependency resolution through plugin environment
+
+**Plugin Documentation:**
 - Follows Claude Code plugin specification with `.claude-plugin/plugin.json` manifest
-- Uses command components in `commands/` directory with markdown files
+- Uses command components in `commands/` directory with executable scripts
 - Implements standard plugin layout as defined in [Claude Code Plugin Documentation](https://docs.claude.com/en/docs/claude-code/plugins)
 - Compatible with [Plugin Marketplace](https://docs.claude.com/en/docs/claude-code/plugin-marketplaces) installation and verification
-- Uses `${CLAUDE_PLUGIN_ROOT}` environment variable for script execution
-- Supports debugging with `claude --debug` to show plugin loading details
+- See [Develop More Complex Plugins](https://docs.claude.com/en/docs/claude-code/plugins#develop-more-complex-plugins) for advanced patterns
+- Follows [Claude Code Plugin Reference](https://docs.claude.com/en/docs/claude-code/plugins-reference) specification
+- Compatible with [Plugin Marketplace Installation](https://docs.claude.com/en/docs/claude-code/plugin-marketplaces#verify-marketplace-installation)
 
-**Installation Management:**
+**Environment Variables:**
+- `${CLAUDE_PLUGIN_ROOT}`: Absolute path to plugin directory for script execution
+- `${CLAUDE_PLUGIN_NAME}`: Plugin name from manifest (clautorun)
+
+**Debugging Plugin Issues:**
 ```bash
-# Check installation status
-python -m clautorun check
+# Check plugin loading details
+claude --debug
 
+# Verify plugin structure
+ls -la ~/.claude/plugins/clautorun/.claude-plugin/
+ls -la ~/.claude/plugins/clautorun/commands/
+
+# Test plugin manually
+echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun
+```
+
+**Plugin Management Commands:**
+```bash
 # Uninstall plugin
-python -m clautorun uninstall
+/plugin uninstall clautorun
 
-# Force reinstall
-python -m clautorun install --force
+# Reinstall plugin
+/plugin install clautorun@main
+
+# Update plugin from repository
+/plugin update clautorun
+
+# Browse available plugins
+/plugin marketplace list
 ```
 
 ### Option 2: Hook Integration
@@ -397,36 +447,76 @@ clautorun/
 
 ## Installation Management
 
-The installation system provides comprehensive management capabilities:
+### Official Claude Code Plugin Management
+
+```bash
+# Install plugin from repository (recommended)
+/plugin marketplace add https://github.com/yourusername/clautorun.git
+/plugin install clautorun@main
+
+# List installed plugins
+/plugin
+
+# Uninstall plugin
+/plugin uninstall clautorun
+
+# Update plugin
+/plugin update clautorun
+
+# Browse marketplace
+/plugin marketplace list
+```
+
+### Development Installation Management
+
+For local development and testing, you can use the built-in installation system:
 
 ```bash
 # IMPORTANT: Activate virtual environment first, or use python3
 source .venv/bin/activate
 
-# Install Claude Code plugin (standard plugin structure)
+# Development installation (for testing)
 python -m clautorun install
 
 # Check installation status and validate plugin
 python -m clautorun check
 
-# Uninstall plugin (removes plugin directory)
+# Development uninstall (removes plugin directory)
 python -m clautorun uninstall
 
 # Force reinstall (overwrites existing)
 python -m clautorun install --force
-
-# Show help for all commands
-python -m clautorun install --help
 ```
 
 **Python Environment Reminders:**
 - Always activate UV environment: `source .venv/bin/activate`
 - Or use explicit Python3: `python3 -m clautorun install`
 - The plugin inherits dependencies from the active Python environment
+- For production use, prefer the official `/plugin` commands
 
 ## Troubleshooting
 
-**Installation Issues:**
+**Official Plugin Installation Issues:**
+```bash
+# Check if plugin is installed
+/plugin
+
+# Verify plugin marketplace is added
+/plugin marketplace list
+
+# Debug plugin loading
+claude --debug
+
+# Reinstall plugin
+/plugin uninstall clautorun
+/plugin install clautorun@main
+
+# Check plugin structure after installation
+ls -la ~/.claude/plugins/clautorun/.claude-plugin/
+ls -la ~/.claude/plugins/clautorun/commands/
+```
+
+**Development Installation Issues:**
 ```bash
 # First, ensure virtual environment is activated
 source .venv/bin/activate
@@ -501,17 +591,26 @@ PREVENT FILESYSTEM CHAOS
 QUICK START FOR NEW USERS
 ==============================================================================
 
-1. INSTALL PLUGIN
+1. INSTALL PLUGIN (Official Method)
 ```bash
-# Create and activate virtual environment
-uv venv
-source .venv/bin/activate
-uv sync --extra claude-code
-python -m clautorun install
+# Method A: Install from repository (recommended)
+/plugin marketplace add https://github.com/yourusername/clautorun.git
+/plugin install clautorun@main
+
+# Method B: Local development setup
+cd /path/to/clautorun
+/plugin marketplace add ./clautorun
+/plugin install clautorun@default
 ```
 
 2. VERIFY INSTALLATION
-Test with: `/clautorun /afst` (should show policy level)
+```bash
+# List installed plugins
+/plugin
+
+# Test plugin functionality
+/clautorun /afst
+```
 
 3. START AUTONOMOUS WORK
 `/clautorun /autorun Create complete e-commerce system with payment processing, testing, and deployment`
