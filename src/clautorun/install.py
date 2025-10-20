@@ -5,8 +5,89 @@ import sys
 import json
 import shutil
 import argparse
-from pathlib import Path
-from typing import Optional
+import subprocess
+
+# Python 2/3 compatibility
+try:
+    from pathlib import Path
+    from typing import Optional
+except ImportError:
+    # Python 2.7 compatibility
+    try:
+        from pathlib2 import Path
+    except ImportError:
+        # Fallback for systems without pathlib2
+        import os as Path
+    Optional = type(None)
+
+
+def check_python_version():
+    """
+    Check Python version and provide helpful error messages for incompatible versions.
+
+    Returns:
+        bool: True if Python version is compatible, False otherwise
+    """
+    # Check for Python 2.x - critical error
+    if sys.version_info[0] < 3:
+        print("=" * 70)
+        print("ERROR: clautorun requires Python 3.10 or higher")
+        print("=" * 70)
+        print()
+        print("You are using Python {}.{} which is incompatible.".format(
+            sys.version_info[0], sys.version_info[1]))
+        print()
+        print("SOLUTIONS:")
+        print("1. Use UV package manager for proper Python management (RECOMMENDED):")
+        print("   # Check if UV is already installed:")
+        print("   uv --version")
+        print("   # If UV is not installed, install it:")
+        print("   curl -LsSf https://astral.sh/uv/install.sh | sh")
+        print("   # Create virtual environment and install dependencies:")
+        print("   uv venv")
+        print("   source .venv/bin/activate")
+        print("   uv sync --extra claude-code")
+        print("   # Install the plugin:")
+        print("   python3 src/clautorun/install.py install")
+        print()
+        print("2. Use python3 explicitly:")
+        print("   python3 src/clautorun/install.py install")
+        print()
+        print("3. Activate your UV virtual environment:")
+        print("   source .venv/bin/activate")
+        print("   python3 src/clautorun/install.py install")
+        print()
+        print("4. Update your system default (if you have admin rights):")
+        print("   ln -sf /usr/bin/python3 /usr/local/bin/python")
+        print()
+        print("=" * 70)
+        return False
+
+    # Check for Python 3.0-3.9 - warning but allow usage
+    if sys.version_info < (3, 10):
+        print("=" * 70)
+        print("WARNING: Python 3.10+ recommended")
+        print("=" * 70)
+        print()
+        print("You are using Python {}.{}.{}.".format(
+            sys.version_info[0], sys.version_info[1], sys.version_info[2]))
+        print("clautorun requires Python 3.10+ for full compatibility.")
+        print()
+        print("RECOMMENDED SOLUTIONS:")
+        print("1. Use UV with Python 3.10+ (RECOMMENDED):")
+        print("   uv venv --python 3.10")
+        print("   source .venv/bin/activate")
+        print("   uv sync --extra claude-code")
+        print("   python src/clautorun/install.py install")
+        print()
+        print("2. Install Python 3.10+ and activate virtual environment:")
+        print("   python3.10 -m venv .venv")
+        print("   source .venv/bin/activate")
+        print("   python3 src/clautorun/install.py install")
+        print()
+        print("=" * 70)
+
+    return True
 
 
 class ClautorunInstaller:
@@ -34,6 +115,75 @@ class ClautorunInstaller:
     def detect_claude_code_installation(self) -> bool:
         """Detect if Claude Code is installed"""
         return self.claude_dir.exists()
+
+    def check_uv_environment(self) -> bool:
+        """Check if UV is available and properly configured"""
+        try:
+            # Check if UV is available
+            uv_result = subprocess.run(
+                ["uv", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if uv_result.returncode != 0:
+                print("❌ UV is not installed or not in PATH")
+                print("   Please install UV: https://github.com/astral-sh/uv")
+                return False
+
+            print(f"✅ UV detected: {uv_result.stdout.strip()}")
+
+            # Check if we're in a UV-managed project
+            uv_toml = self.package_dir / "pyproject.toml"
+            uv_lock = self.package_dir / "uv.lock"
+
+            if not uv_toml.exists():
+                print("⚠️  Not in a UV project (no pyproject.toml found)")
+                return False
+
+            if not uv_lock.exists():
+                print("⚠️  UV lock file not found, run 'uv sync' first")
+                return False
+
+            # Check if virtual environment exists
+            venv_dir = self.package_dir / ".venv"
+            if not venv_dir.exists():
+                print("⚠️  UV virtual environment not found")
+                print("   Run: uv sync")
+                return False
+
+            print("✅ UV environment is properly configured")
+            return True
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"❌ UV environment check failed: {e}")
+            return False
+
+    def ensure_dependencies(self) -> bool:
+        """Ensure dependencies are installed using UV"""
+        try:
+            print("🔄 Checking dependencies with UV...")
+
+            # Run uv sync to ensure dependencies are up to date
+            sync_result = subprocess.run(
+                ["uv", "sync", "--extra", "claude-code"],
+                cwd=self.package_dir,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if sync_result.returncode == 0:
+                print("✅ Dependencies synchronized with UV")
+                return True
+            else:
+                print(f"⚠️  UV sync failed: {sync_result.stderr}")
+                return False
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"❌ Dependency synchronization failed: {e}")
+            return False
 
     def create_directories(self) -> bool:
         """Create necessary directories if they don't exist"""
@@ -74,6 +224,17 @@ class ClautorunInstaller:
             print(f"❌ Commands directory not found: {commands_dir}")
             return False
 
+        # Ensure marketplace.json exists in .claude-plugin directory
+        marketplace_src = self.plugin_source_dir / "marketplace.json"
+        marketplace_dst = self.plugin_source_dir / ".claude-plugin" / "marketplace.json"
+
+        if marketplace_src.exists() and not marketplace_dst.exists():
+            try:
+                shutil.copy2(marketplace_src, marketplace_dst)
+                print("✅ Copied marketplace.json to .claude-plugin directory")
+            except (OSError, PermissionError) as e:
+                print(f"⚠️  Warning: Could not copy marketplace.json: {e}")
+
         return True
 
     def is_plugin_installed(self) -> bool:
@@ -94,10 +255,76 @@ class ClautorunInstaller:
         except (json.JSONDecodeError, OSError):
             return False
 
+    def try_claude_plugin_install(self) -> bool:
+        """Try to install using Claude Code's plugin system first"""
+        try:
+            # Check if we're in a Claude Code session by trying to run claude command
+            result = subprocess.run(
+                ["claude", "plugin", "list"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                print("🤖 Claude Code detected, attempting plugin installation...")
+
+                # Try to install from GitHub (production method)
+                github_result = subprocess.run(
+                    ["claude", "plugin", "install", "https://github.com/ahundt/clautorun.git"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+
+                if github_result.returncode == 0:
+                    print("✅ Successfully installed via Claude Code plugin system")
+                    return True
+                else:
+                    print(f"⚠️  GitHub installation failed: {github_result.stderr}")
+
+                    # Try local marketplace method as fallback
+                    print("🔄 Trying local marketplace installation...")
+
+                    # Add local marketplace
+                    marketplace_result = subprocess.run(
+                        ["claude", "plugin", "marketplace", "add", str(self.plugin_source_dir)],
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+
+                    if marketplace_result.returncode == 0:
+                        # Install from local marketplace
+                        local_install_result = subprocess.run(
+                            ["claude", "plugin", "install", "clautorun"],
+                            capture_output=True,
+                            text=True,
+                            timeout=15
+                        )
+
+                        if local_install_result.returncode == 0:
+                            print("✅ Successfully installed via local marketplace")
+                            return True
+                        else:
+                            print(f"⚠️  Local marketplace installation failed: {local_install_result.stderr}")
+
+            return False
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"ℹ️  Claude Code plugin system not available: {e}")
+            return False
+
     def install_plugin(self) -> bool:
         """Install plugin to Claude Code plugins directory"""
         if not self.validate_plugin_structure():
             return False
+
+        # First, try Claude Code's plugin system
+        if self.try_claude_plugin_install():
+            return True
+
+        print("🔄 Falling back to manual installation...")
 
         if not self.create_directories():
             return False
@@ -116,7 +343,7 @@ class ClautorunInstaller:
             shutil.copytree(self.plugin_source_dir, self.plugin_install_dir,
                           ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc', '.coverage'))
 
-            print(f"✅ Installed plugin to: {self.plugin_install_dir}")
+            print(f"✅ Manually installed plugin to: {self.plugin_install_dir}")
             return True
 
         except (OSError, PermissionError) as e:
@@ -198,6 +425,17 @@ class ClautorunInstaller:
         """Install the Claude Code plugin"""
         print("🚀 Installing clautorun Claude Code plugin...")
 
+        # Check UV environment first
+        if not self.check_uv_environment():
+            print("❌ UV environment check failed")
+            print("   Please ensure UV is installed and run 'uv sync --extra claude-code'")
+            return False
+
+        # Ensure dependencies are up to date
+        if not self.ensure_dependencies():
+            print("❌ Failed to synchronize dependencies")
+            return False
+
         if not self.detect_claude_code_installation():
             print("❌ Claude Code installation not detected")
             print(f"   Expected directory: {self.claude_dir}")
@@ -214,12 +452,53 @@ class ClautorunInstaller:
             print("✅ Installation completed successfully!")
             print(f"   Plugin installed at: {self.plugin_install_dir}")
             print("   You can now use: /clautorun /afs, /clautorun /afa, etc.")
+            print("   Run tests with: uv run pytest tests/")
 
         return success
+
+    def try_claude_plugin_uninstall(self) -> bool:
+        """Try to uninstall using Claude Code's plugin system first"""
+        try:
+            # Check if we're in a Claude Code session
+            result = subprocess.run(
+                ["claude", "plugin", "list"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                print("🤖 Claude Code detected, attempting plugin uninstall...")
+
+                # Try to uninstall using Claude Code
+                uninstall_result = subprocess.run(
+                    ["claude", "plugin", "uninstall", "clautorun"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+
+                if uninstall_result.returncode == 0:
+                    print("✅ Successfully uninstalled via Claude Code plugin system")
+                    return True
+                else:
+                    print(f"⚠️  Claude Code uninstall failed: {uninstall_result.stderr}")
+
+            return False
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"ℹ️  Claude Code plugin system not available: {e}")
+            return False
 
     def uninstall(self, force: bool = False) -> bool:
         """Uninstall the Claude Code plugin"""
         print("🗑️  Uninstalling clautorun Claude Code plugin...")
+
+        # First, try Claude Code's plugin system
+        if self.try_claude_plugin_uninstall():
+            return True
+
+        print("🔄 Falling back to manual uninstall...")
 
         if not self.plugin_install_dir.exists():
             print("ℹ️  Plugin is not installed")
@@ -229,7 +508,7 @@ class ClautorunInstaller:
         success = self.remove_plugin()
 
         if success:
-            print("✅ Uninstallation completed successfully!")
+            print("✅ Manual uninstallation completed successfully!")
 
         return success
 
@@ -240,6 +519,11 @@ class ClautorunInstaller:
         print(f"   Plugin source directory: {self.plugin_source_dir}")
         print(f"   Plugin manifest: {self.plugin_manifest}")
         print(f"   Plugin install directory: {self.plugin_install_dir}")
+
+        # Check UV environment
+        if not self.check_uv_environment():
+            print("⚠️  UV environment issues detected")
+            print("   Run 'uv sync --extra claude-code' to fix")
 
         if not self.detect_claude_code_installation():
             print("❌ Claude Code installation not detected")
@@ -264,15 +548,23 @@ class ClautorunInstaller:
 
 def main():
     """Main installation CLI"""
+    # Check Python version compatibility first
+    if not check_python_version():
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="Manage clautorun Claude Code plugin installation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m clautorun install          # Install plugin
-  python -m clautorun install --force  # Force reinstall
-  python -m clautorun uninstall        # Remove plugin
-  python -m clautorun check            # Check installation status
+  clautorun install          # Install plugin
+  clautorun install --force  # Force reinstall
+  clautorun uninstall        # Remove plugin
+  clautorun check            # Check installation status
+
+  With UV environment:
+  source .venv/bin/activate
+  clautorun install
         """
     )
 

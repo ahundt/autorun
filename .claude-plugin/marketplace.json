@@ -1,0 +1,15 @@
+{
+  "name": "clautorun",
+  "owner": {
+    "name": "ahundt"
+  },
+  "plugins": [
+    {
+      "name": "clautorun",
+      "source": "./",
+      "author": {
+        "name": "Andrew Hundt"
+      }
+    }
+  ]
+}
