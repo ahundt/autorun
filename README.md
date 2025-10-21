@@ -456,6 +456,238 @@ clautorun/
 - `${CLAUDE_PLUGIN_ROOT}`: Absolute path to plugin directory for script execution
 - `${CLAUDE_PLUGIN_NAME}`: Plugin name from manifest
 
+## Developer Documentation
+
+### Claude Code Plugin Architecture
+
+This section documents the actual Claude Code plugin system architecture based on official documentation.
+
+#### Plugin Command System - Two Approaches
+
+##### Approach 1: Markdown Commands (Basic)
+
+**Source**: [Claude Code Plugin Reference](https://docs.claude.com/en/docs/claude-code/plugins-reference)
+
+**Key Finding**: "Commands directory contains slash command markdown files with frontmatter."
+
+- Plugin commands can be **markdown files** with YAML frontmatter
+- Commands appear in Claude Code with the format: `plugin-name:command-name`
+- Example: `commands/test.md` appears as `/clautorun:test` in slash commands list
+
+**Plugin Manifest Structure**:
+```json
+{
+  "name": "plugin-name",
+  "commands": ["./custom/commands/special.md"]
+}
+```
+
+Source: https://docs.claude.com/en/docs/claude-code/plugins-reference
+
+##### Approach 2: Agent SDK Executable Scripts (Advanced)
+
+**Key Finding**: Executable scripts in `commands/` directory that follow the Agent SDK JSON protocol
+
+**JSON Protocol Format**:
+```python
+# Input (via stdin):
+{"prompt": "/command args", "session_id": "uuid"}
+
+# Output (via stdout):
+{"continue": false, "response": "Command response text"}
+```
+
+**How It Works**:
+1. Executable script in plugin's `commands/` directory
+2. Claude Code calls script and sends JSON via stdin
+3. Script processes command and returns JSON via stdout
+4. `continue: false` means command was handled locally
+5. `continue: true` means pass to AI for processing
+
+**Current Implementation**:
+- ✅ `commands/clautorun` executable script - Agent SDK JSON protocol
+- ✅ Receives: `{"prompt": "/afst", "session_id": "test"}`
+- ✅ Returns: `{"continue": false, "response": "Current policy: strict-search"}`
+- ✅ Symlinked in `~/.claude/commands/clautorun` for system-wide access
+
+**Testing**:
+```bash
+echo '{"prompt": "/afst", "session_id": "test"}' | ~/.claude/commands/clautorun
+# Output: {"continue": false, "response": "Current policy: strict-search"}
+```
+
+#### Environment Variables
+
+**Available in Plugins**:
+- `${CLAUDE_PLUGIN_ROOT}`: Absolute path to plugin directory
+- `${CLAUDE_PLUGIN_NAME}`: Plugin name from manifest
+
+Source: https://docs.claude.com/en/docs/claude-code/plugins-reference
+
+#### UV Tool Integration
+
+**Current UV Tool Setup**:
+```bash
+# Main plugin functionality (reads JSON stdin)
+clautorun
+
+# Installation management utility
+clautorun-install
+
+# Interactive standalone mode
+clautorun-interactive
+```
+
+**Entry Points** (from `pyproject.toml`):
+```toml
+[project.scripts]
+clautorun = "clautorun.claude_code_plugin:main"
+clautorun-interactive = "clautorun.main:main"
+clautorun-install = "clautorun.install:main"
+```
+
+#### Plugin Development Workflow
+
+1. **Create markdown commands** in `commands/` directory
+2. **Markdown files call UV tool** via shell execution
+3. **UV tool** (`clautorun`) processes commands using Python package
+4. **Fallback mechanisms** ensure functionality when UV tool unavailable
+
+**Testing Plugin Loading**:
+```bash
+# Check if plugin is loaded
+echo '{"prompt": "/test-command"}' | claude -p --output-format json | jq '.slash_commands'
+
+# Verify plugin commands appear as "plugin-name:command-name"
+```
+
+#### Plugin Implementation Approaches - Research Findings
+
+**Official Plugin Pattern** (Sources: [Agent SDK Overview](https://docs.claude.com/en/api/agent-sdk/overview), [Plugins](https://github.com/anthropics/claude-code/tree/main/plugins)):
+
+Official documentation states: *"Slash Commands: Use custom commands defined as Markdown files in `./.claude/commands/`"*
+
+- Plugins use **markdown files** in `commands/` directory
+- Example: `/new-sdk-app` is implemented as `new-sdk-app.md`
+- Markdown files contain prompts that tell Claude what to do
+- No executable scripts found in official plugins
+
+**Example: agent-sdk-dev Plugin** ([Source](https://github.com/anthropics/claude-code/blob/main/plugins/agent-sdk-dev/README.md)):
+
+Plugin Structure:
+```
+agent-sdk-dev/
+├── .claude-plugin/
+│   └── plugin.json
+├── commands/
+│   └── new-sdk-app.md          # Main command - interactive project setup
+├── agents/
+│   ├── agent-sdk-verifier-py   # Python verification agent
+│   └── agent-sdk-verifier-ts   # TypeScript verification agent
+└── README.md
+```
+
+How It Works:
+1. **Command File** ([new-sdk-app.md](https://github.com/anthropics/claude-code/blob/main/plugins/agent-sdk-dev/commands/new-sdk-app.md)) contains:
+   - Detailed prompt with requirements gathering questions
+   - Step-by-step setup instructions
+   - Verification procedures
+   - Best practices and principles
+
+2. **Command Execution**:
+   - User runs `/new-sdk-app`
+   - Claude reads the markdown prompt
+   - Interactively asks questions one at a time
+   - Creates project files based on responses
+   - Runs verification agent to check setup
+
+3. **Key Principles from Official Plugin**:
+   - "ALWAYS USE LATEST VERSIONS"
+   - "VERIFY CODE RUNS CORRECTLY"
+   - Ask questions one at a time
+   - Use modern syntax and patterns
+   - Include proper error handling
+
+This shows the official pattern: **Markdown files define prompts that guide Claude's behavior**, not executable code that processes commands.
+
+**Bash Integration in Slash Commands** ([Documentation](https://docs.claude.com/en/docs/claude-code/slash-commands)):
+
+Commands can execute bash scripts using the `!` prefix:
+
+```markdown
+---
+allowed-tools: Bash(git add:*), Bash(git status:*)
+description: Create a git commit
+---
+
+## Context
+- Current git status: !`git status`
+- Current branch: !`git branch --show-current`
+
+## Your task
+Based on the above changes, create a single git commit.
+```
+
+**How Bash Integration Works**:
+- Use `!` prefix before bash command in markdown
+- Must declare `allowed-tools` in frontmatter
+- Command output is included in context for Claude
+- Can call external scripts: `!`./scripts/my-script.sh``
+
+**Python Agent SDK** ([README](https://github.com/anthropics/claude-agent-sdk-python), [client.py](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/client.py)):
+
+The SDK provides direct communication with Claude Code:
+- `query()` - Async function for querying Claude Code directly
+- `ClaudeSDKClient()` - Advanced client for interactive conversations
+- `@tool` decorator - Define custom tools (in-process MCP servers)
+- Hooks support via `ClaudeAgentOptions`
+- `get_server_info()` - Can retrieve available commands from server
+
+**Key Quote from README**: *"In-process MCP servers for custom tools - No subprocess management - Direct Python function calls with type safety"*
+
+This means Python code CAN communicate with Claude Code directly, but the documented pattern for slash commands is still markdown files that can call bash scripts.
+
+**Our Implementation** (Non-standard JSON Protocol):
+- Executable `commands/clautorun` script using JSON stdin/stdout protocol
+- Works when symlinked to `~/.claude/commands/clautorun`
+- Not recognized by plugin system's command discovery
+- Uses Agent SDK-style JSON communication pattern
+
+**Current Status**:
+- ❌ Plugin system doesn't auto-discover executable commands
+- ✅ Executable works via manual symlink in `~/.claude/commands/`
+- ❌ No documentation found for executable-based plugin commands
+- ⚠️ May need to switch to markdown command files OR use hooks instead
+
+#### Possible Solutions
+
+1. **Bash Integration in Markdown** (RECOMMENDED - Official Pattern):
+   - Create markdown command files (e.g., `afs.md`, `afa.md`)
+   - Use `allowed-tools: Bash(...)` in frontmatter
+   - Call our executable with `!`echo '{"prompt": "/afs"}' | clautorun``
+   - Output becomes context for Claude's response
+   - Fully documented and supported approach
+
+2. **Use Hooks Instead**:
+   - UserPromptSubmit hooks can intercept commands programmatically
+   - Configure in plugin.json or hooks.json
+   - Can process commands before they reach Claude
+
+3. **Python SDK Direct Integration**:
+   - Use `ClaudeSDKClient()` with hooks support
+   - Create in-process tools with `@tool` decorator
+   - Communicate directly with Claude Code (no subprocess)
+
+4. **Direct Symlink** (Current Working Solution):
+   - Keep using `~/.claude/commands/` symlink
+   - Works but not discoverable via plugin system
+   - Non-standard but functional
+
+5. **Pure Markdown** (Simplest):
+   - Convert to pure prompts without executable code
+   - Example: `/afs` becomes a markdown prompt explaining strict-search policy
+   - Loses programmatic state management
+
 ## Dependencies
 
 - `claude-agent-sdk>=0.1.4` - For Claude Code communication

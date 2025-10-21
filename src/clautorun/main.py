@@ -19,6 +19,17 @@ except ImportError:
     print("❌ Claude Agent SDK not installed. Run: pip install claude-agent-sdk")
     sys.exit(1)
 
+# Import the ai_monitor library, with a fallback if it's not found.
+try:
+    from . import ai_monitor
+except ImportError:
+    try:
+        # Fallback for when running as script directly
+        import ai_monitor
+    except ImportError:
+        # Silent fallback - don't print as it pollutes hook output
+        ai_monitor = None
+
 # Configuration - Complete autorun5.py compatibility
 CONFIG = {
     "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
@@ -224,6 +235,27 @@ def handler(name):
         return f
     return dec
 
+def _manage_monitor(state: dict, action: str):
+    """Centralized helper for all ai-monitor process management."""
+    if not ai_monitor or "session_id" not in state:
+        return
+    session_id = state["session_id"]
+    if action == 'start':
+        if state.get("ai_monitor_pid"):
+            ai_monitor.stop_monitor(session_id)
+        pid = ai_monitor.start_monitor(
+            session_id=session_id, prompt="continue working",
+            stop_marker=CONFIG["completion_marker"], max_cycles=20, prompt_on_start=True
+        )
+        log_info(f"Started ai-monitor for session {session_id} with PID: {pid}")
+        state["ai_monitor_pid"] = pid
+    elif action == 'stop':
+        if state.get("ai_monitor_pid"):
+            ai_monitor.stop_monitor(session_id)
+            log_info(f"Stopped monitor for session {session_id}")
+            state["ai_monitor_pid"] = None
+
+
 # Command handlers - copied from autorun5.py
 def handle_search(state):
     """Handle SEARCH command - update state and return response"""
@@ -248,18 +280,26 @@ def handle_status(state):
 
 def handle_stop(state):
     """Handle STOP command - update state and return response"""
+    # Note: session_id must be in state (added by intercept_commands caller)
+    _manage_monitor(state, 'stop')
     state["session_status"] = "stopped"
     return "Autorun stopped"
 
 def handle_emergency_stop(state):
     """Handle EMERGENCY_STOP command - update state and return response"""
     log_info(f"Emergency stop: autorun session")
+    # Note: session_id must be in state (added by intercept_commands caller)
+    _manage_monitor(state, 'stop')
     state["session_status"] = "emergency_stopped"
     return "Emergency stop activated"
 
 def handle_activate(state, prompt=""):
     """Handle AUTORUN activation - complete autorun setup with injection template"""
     log_info(f"Activating autorun: autorun session")
+
+    # Preserve file_policy and session_id before clearing
+    old_file_policy = state.get("file_policy", "ALLOW")
+    old_session_id = state.get("session_id")
 
     # Clear and setup state like autorun5.py
     state.clear()
@@ -268,8 +308,12 @@ def handle_activate(state, prompt=""):
         "autorun_stage": "INITIAL",
         "activation_prompt": prompt,
         "verification_attempts": 0,
-        "file_policy": state.get("file_policy", "ALLOW")
+        "file_policy": old_file_policy,
+        "session_id": old_session_id  # Restore session_id for monitor
     })
+
+    # Start monitor AFTER state is set up with session_id
+    _manage_monitor(state, 'start')
 
     # Generate injection template with current policy
     policy = state["file_policy"]
@@ -313,6 +357,7 @@ async def intercept_commands(input_data: Dict[str, Any], context: Optional[Dict[
     if command and command in COMMAND_HANDLERS:
         # Handle command locally, don't send to AI
         with session_state(session_id) as state:
+            state['session_id'] = session_id # Ensure session_id is in state for handlers
             if command == "activate":
                 # Pass the full prompt for activation commands
                 response = COMMAND_HANDLERS[command](state, prompt)
@@ -440,6 +485,8 @@ def stop_handler(ctx):
     session_id = getattr(ctx, 'session_id', 'default')
 
     with session_state(session_id) as state:
+        # Ensure session_id is in state for _manage_monitor
+        state['session_id'] = session_id
         # Check if this is a premature stop that needs intervention
         if is_premature_stop(ctx, state):
             log_info(f"Detected premature stop for session {session_id}")
@@ -460,6 +507,7 @@ def stop_handler(ctx):
         if (state.get("autorun_stage") == "VERIFICATION" and
             CONFIG["completion_marker"] in str(getattr(ctx, 'session_transcript', []))):
             log_info(f"Verification completed for session {session_id}")
+            _manage_monitor(state, 'stop')
             state.clear()  # Clean up successful completion
             return build_hook_response(continue_execution=False,
                                      system_message="✅ Task completed and verified successfully!")

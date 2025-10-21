@@ -43,8 +43,9 @@ claude-code = [
 ]
 
 [project.scripts]
-clautorun = "clautorun.install:main"
+clautorun = "clautorun.claude_code_plugin:main"
 clautorun-interactive = "clautorun.main:main"
+clautorun-install = "clautorun.install:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/clautorun"
