@@ -174,11 +174,26 @@ class ClautorunInstaller:
                 timeout=60
             )
 
-            if sync_result.returncode == 0:
+            if sync_result.returncode != 0:
+                print(f"⚠️  UV sync failed: {sync_result.stderr}")
+                return False
+
+            # Install clautorun package in editable mode in the UV venv
+            print("🔄 Installing clautorun package in UV environment...")
+            install_result = subprocess.run(
+                ["uv", "pip", "install", "-e", "."],
+                cwd=self.package_dir,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if install_result.returncode == 0:
                 print("✅ Dependencies synchronized with UV")
+                print("✅ clautorun package installed in UV environment")
                 return True
             else:
-                print(f"⚠️  UV sync failed: {sync_result.stderr}")
+                print(f"⚠️  Package installation failed: {install_result.stderr}")
                 return False
 
         except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:

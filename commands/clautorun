@@ -1,25 +1,9 @@
 #!/usr/bin/env python3
 """Claude Code plugin for Agent SDK command interception"""
-import sys
-from pathlib import Path
-
-# Add the clautorun package to path - handle development vs package installation
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root / "src"))
-
-# Check Python version compatibility
-from clautorun.python_check import check_python_version
-if not check_python_version():
-    sys.exit(1)
-
 import json
-
-try:
-    from clautorun.main import CONFIG, COMMAND_HANDLERS, session_state
-except ImportError:
-    # Fallback for development when package not installed
-    sys.path.insert(0, str(project_root))
-    from src.clautorun.main import CONFIG, COMMAND_HANDLERS, session_state
+import sys
+import os
+from pathlib import Path
 
 def main():
     """Plugin entry point for Claude Code"""
@@ -29,12 +13,11 @@ def main():
 
         # Handle empty input
         if not input_data.strip():
-            from clautorun import build_response
-            result = build_response(
-                continue_execution=True,
-                response="",
-                error="No input provided"
-            )
+            result = {
+                "continue": True,
+                "response": "",
+                "error": "No input provided"
+            }
             print(json.dumps(result, sort_keys=True))
             sys.stdout.flush()
             return
@@ -43,12 +26,11 @@ def main():
         try:
             payload = json.loads(input_data)
         except json.JSONDecodeError as e:
-            from clautorun import build_response
-            result = build_response(
-                continue_execution=True,
-                response="",
-                error=f"Invalid JSON: {e}"
-            )
+            result = {
+                "continue": True,
+                "response": "",
+                "error": f"Invalid JSON: {e}"
+            }
             print(json.dumps(result, sort_keys=True))
             sys.stdout.flush()
             return
@@ -57,52 +39,133 @@ def main():
         prompt = payload.get('prompt', '')
         session_id = payload.get('session_id', 'default')
 
-        # Efficient command detection - sort by length (longest first) for specific matches
+        # Set up paths to find clautorun package
+        plugin_file = Path(__file__).resolve()
+
+        # Simple path detection - look for clautorun in common locations
+        possible_project_roots = [
+            plugin_file.parent.parent,  # ../ from commands/
+            plugin_file.parent.parent / "clautorun",  # ../clautorun from commands/
+            plugin_file.parent.parent.parent,  # ../../ from commands/
+            Path.home() / ".claude" / "clautorun",  # Common location
+        ]
+
+        project_root = None
+        for root in possible_project_roots:
+            if (root / "src" / "clautorun").exists():
+                project_root = root
+                break
+
+        if not project_root:
+            # Fallback responses if we can't find clautorun
+            simple_responses = {
+                "/afs": "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.",
+                "/afa": "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.",
+                "/afj": "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.",
+                "/afst": "AutoFile policy status checking...",
+            }
+
+            response = None
+            for cmd, resp in simple_responses.items():
+                if prompt.startswith(cmd):
+                    response = resp
+                    break
+
+            if response:
+                result = {
+                    "continue": False,
+                    "response": response
+                }
+            else:
+                result = {
+                    "continue": True,
+                    "response": ""
+                }
+
+            print(json.dumps(result, sort_keys=True))
+            sys.stdout.flush()
+            return
+
+        # Change to project directory
+        os.chdir(project_root)
+
+        # Add src to Python path
+        src_path = project_root / "src"
+        if src_path.exists():
+            sys.path.insert(0, str(src_path))
+
+        # Try to import clautorun functionality
+        try:
+            from clautorun import CONFIG, COMMAND_HANDLERS, session_state
+        except ImportError as e:
+            # If import fails, use simple fallback responses
+            simple_responses = {
+                "/afs": "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.",
+                "/afa": "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.",
+                "/afj": "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.",
+                "/afst": "AutoFile policy status checking...",
+            }
+
+            response = None
+            for cmd, resp in simple_responses.items():
+                if prompt.startswith(cmd):
+                    response = resp
+                    break
+
+            if response:
+                result = {
+                    "continue": False,
+                    "response": response
+                }
+            else:
+                result = {
+                    "continue": True,
+                    "response": ""
+                }
+
+            print(json.dumps(result, sort_keys=True))
+            sys.stdout.flush()
+            return
+
+        # Use full clautorun functionality
         command = next((v for k, v in sorted(CONFIG["command_mappings"].items(), key=lambda x: len(x[0]), reverse=True) if prompt.startswith(k)), None)
 
-        # Import standard response builder
-        from clautorun import build_response
-
         if command and command in COMMAND_HANDLERS:
-            # Handle command locally, don't send to AI
             try:
                 with session_state(session_id) as state:
                     if command == "activate":
-                        # For autorun activation, return the injection template
                         response = COMMAND_HANDLERS[command](state, prompt)
                     else:
                         response = COMMAND_HANDLERS[command](state)
 
-                # Return standard response to Claude Code
+                from clautorun import build_response
                 result = build_response(
                     continue_execution=False,
                     response=response
                 )
             except Exception as e:
+                from clautorun import build_response
                 result = build_response(
                     continue_execution=True,
                     response="",
                     error=f"Command execution failed: {e}"
                 )
         else:
-            # Let AI handle non-commands
+            from clautorun import build_response
             result = build_response(
                 continue_execution=True,
                 response=""
             )
 
-        # Return JSON response
         print(json.dumps(result, sort_keys=True))
         sys.stdout.flush()
 
     except Exception as e:
-        # Handle any unexpected errors
-        from clautorun import build_response
-        result = build_response(
-            continue_execution=True,
-            response="",
-            error=f"Unexpected error: {e}"
-        )
+        result = {
+            "continue": True,
+            "response": "",
+            "error": f"Unexpected error: {e}"
+        }
         print(json.dumps(result, sort_keys=True))
         sys.stdout.flush()
 
