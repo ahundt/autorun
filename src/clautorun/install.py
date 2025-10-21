@@ -523,57 +523,43 @@ class ClautorunInstaller:
             return False
 
     def install(self, force: bool = False) -> bool:
-        """Install the Claude Code plugin and UV tools"""
-        print("🚀 Installing clautorun Claude Code plugin and tools...")
+        """Install the Claude Code plugin"""
+        print("🚀 Installing clautorun Claude Code plugin...")
 
-        # Check UV environment first
+        # Prerequisite checks
         if not self.check_uv_environment():
             print("❌ UV environment check failed")
             print("   Please ensure UV is installed and run 'uv sync --extra claude-code'")
             return False
 
-        # Ensure dependencies are up to date
         if not self.ensure_dependencies():
             print("❌ Failed to synchronize dependencies")
             return False
 
-        # Install UV tool for interactive app (global installation)
-        uv_tool_success = self.install_uv_tool()
-
-        # Install plugin via marketplace
         if not self.detect_claude_code_installation():
             print("❌ Claude Code installation not detected")
             print(f"   Expected directory: {self.claude_dir}")
-            if uv_tool_success:
-                print("✅ UV tool installed, but plugin installation skipped")
-                print("   Install plugin manually: claude plugin marketplace add .")
-                print("   Then: claude plugin install clautorun@clautorun")
             return False
 
-        plugin_success = self.install_plugin()
+        if force and self.plugin_install_dir.exists():
+            print("🔄 Force mode: removing existing installation")
+            if not self.remove_plugin():
+                return False
 
-        # Summary
-        print("\n" + "=" * 70)
-        if plugin_success and uv_tool_success:
-            print("✅ Complete installation successful!")
-            print("\nPlugin Commands (via Claude Code):")
-            print("   /afs, /afa, /afj, /afst - File policy commands")
-            print("   /autorun, /autoproc - Autonomous workflow commands")
-            print("\nInteractive Mode (standalone):")
-            print("   clautorun-interactive - Run interactive command processor")
-            print("\nManagement:")
-            print("   clautorun-install check - Verify installation")
-            print("   clautorun-install uninstall - Remove plugin")
-        elif plugin_success:
-            print("✅ Plugin installed successfully (UV tool installation failed)")
-        elif uv_tool_success:
-            print("✅ UV tool installed successfully (plugin installation failed)")
-        else:
-            print("❌ Installation failed")
-            return False
+        # Primary goal: Install the plugin
+        success = self.install_plugin()
 
-        print("=" * 70)
-        return plugin_success or uv_tool_success
+        if success:
+            print("✅ Installation completed successfully!")
+            print(f"   Plugin installed at: {self.plugin_install_dir}")
+            print("   You can now use: /afs, /afa, /afj, /afst, /autorun, /autoproc")
+            print("   Run tests with: uv run pytest tests/")
+
+            # Secondary: Install UV tool for interactive mode (optional, best-effort)
+            print("\n🔧 Installing interactive mode tool (optional)...")
+            self.install_uv_tool()  # Don't fail overall install if this fails
+
+        return success
 
     def try_claude_plugin_uninstall(self) -> bool:
         """Try to uninstall using Claude Code's plugin system first"""
