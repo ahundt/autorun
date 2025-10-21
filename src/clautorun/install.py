@@ -253,19 +253,37 @@ class ClautorunInstaller:
         return True
 
     def is_plugin_installed(self) -> bool:
-        """Check if plugin is properly installed"""
-        # Check for marketplace installation first
-        commands_symlink = Path.home() / ".claude" / "commands" / "clautorun"
-        if commands_symlink.exists() and commands_symlink.is_symlink():
-            # Check if the symlink points to our plugin
-            try:
-                target = commands_symlink.resolve()
-                if target.is_file() and "clautorun" in str(target):
-                    return True
-            except (OSError, RuntimeError):
-                pass
+        """Check if plugin is properly installed (marketplace or manual)"""
+        # Check method 1: Commands are available via Claude Code (best check for marketplace)
+        try:
+            test_result = subprocess.run(
+                ["sh", "-c", "echo '/help' | claude -p --output-format json 2>/dev/null | jq '.[] | select(.type==\"system\") | .slash_commands | map(select(. | contains(\"afs\")))' 2>/dev/null"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
 
-        # Check for manual installation
+            # If commands are available, plugin is installed and working
+            if test_result.returncode == 0 and test_result.stdout.strip() not in ('[]', ''):
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
+            pass
+
+        # Check method 2: Marketplace is configured (works for both local and remote)
+        try:
+            marketplace_result = subprocess.run(
+                ["claude", "plugin", "marketplace", "list"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if marketplace_result.returncode == 0 and "clautorun" in marketplace_result.stdout:
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
+            pass
+
+        # Check method 3: Manual installation in ~/.claude/plugins
         if not self.plugin_install_dir.exists():
             return False
 
@@ -436,74 +454,77 @@ class ClautorunInstaller:
             return False
 
     def verify_installation(self) -> bool:
-        """Verify that the plugin is properly installed"""
-        # Check for marketplace installation first
-        commands_symlink = Path.home() / ".claude" / "commands" / "clautorun"
-        if commands_symlink.exists() and commands_symlink.is_symlink():
-            print("✅ Plugin installed via Claude Code marketplace")
-            # Note: We can't easily test marketplace plugins due to Python path issues
-            # But the marketplace installation itself is verification enough
-            return True
-
-        # Check for manual installation
-        if not self.plugin_install_dir.exists():
-            print("❌ Plugin directory not found")
-            return False
-
-        if not self.is_plugin_installed():
-            print("❌ Plugin is not properly installed or has wrong manifest")
-            return False
-
-        # Verify plugin structure
-        installed_manifest = self.plugin_install_dir / ".claude-plugin" / "plugin.json"
-        commands_dir = self.plugin_install_dir / "commands"
-        plugin_script = commands_dir / "clautorun"
-
-        if not installed_manifest.exists():
-            print("❌ Plugin manifest not found in installation")
-            return False
-
-        if not commands_dir.exists():
-            print("❌ Commands directory not found in installation")
-            return False
-
-        if not plugin_script.exists():
-            print("❌ Plugin script not found in installation")
-            return False
-
-        if not os.access(plugin_script, os.X_OK):
-            print("❌ Plugin script is not executable")
-            return False
-
-        # Try to execute the plugin with a simple test
+        """Verify that the plugin is properly installed (marketplace or manual)"""
+        # Check method 1: Marketplace installation - commands are available
         try:
-            import subprocess
-            result = subprocess.run(
-                [str(plugin_script)],
-                input='{"prompt": "/afs", "session_id": "test"}',
-                text=True,
+            marketplace_result = subprocess.run(
+                ["claude", "plugin", "marketplace", "list"],
                 capture_output=True,
-                timeout=5
+                text=True,
+                timeout=10
+            )
+
+            if marketplace_result.returncode == 0 and "clautorun" in marketplace_result.stdout:
+                # Marketplace is configured - check if commands work
+                test_result = subprocess.run(
+                    ["sh", "-c", "echo '/help' | claude -p --output-format json | jq '.[] | select(.type==\"system\") | .slash_commands | map(select(. | contains(\"afs\")))' 2>/dev/null"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                if test_result.returncode == 0 and test_result.stdout.strip() not in ('[]', ''):
+                    return True  # Marketplace installation is working
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
+            pass
+
+        # Check method 2: Manual installation - verify structure
+        if self.plugin_install_dir.exists():
+            installed_manifest = self.plugin_install_dir / ".claude-plugin" / "plugin.json"
+            commands_dir = self.plugin_install_dir / "commands"
+            main_script = self.plugin_install_dir / "src" / "clautorun" / "main.py"
+
+            if installed_manifest.exists() and commands_dir.exists() and main_script.exists():
+                # Verify it's our plugin by comparing manifest
+                try:
+                    with open(installed_manifest) as f:
+                        data = json.load(f)
+                        if data.get("name") == "clautorun":
+                            return True  # Manual installation structure is valid
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        return False
+
+    def install_uv_tool(self) -> bool:
+        """Install clautorun-interactive as global UV tool"""
+        try:
+            print("🔧 Installing clautorun-interactive as global UV tool...")
+
+            # Install as UV tool
+            result = subprocess.run(
+                ["uv", "tool", "install", ".", "--force"],
+                cwd=self.package_dir,
+                capture_output=True,
+                text=True,
+                timeout=60
             )
 
             if result.returncode == 0:
-                output = json.loads(result.stdout)
-                if "continue" in output and "response" in output:
-                    print("✅ Plugin is working correctly")
-                    return True
+                print("✅ UV tool installed successfully")
+                print("   Available commands: clautorun-interactive, clautorun-install")
+                return True
+            else:
+                print(f"⚠️  UV tool installation failed: {result.stderr}")
+                return False
 
-            print("⚠️  Plugin test failed")
-            print(f"   stdout: {result.stdout}")
-            print(f"   stderr: {result.stderr}")
-            return False
-
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
-            print(f"⚠️  Plugin verification failed: {e}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"❌ UV tool installation failed: {e}")
             return False
 
     def install(self, force: bool = False) -> bool:
-        """Install the Claude Code plugin"""
-        print("🚀 Installing clautorun Claude Code plugin...")
+        """Install the Claude Code plugin and UV tools"""
+        print("🚀 Installing clautorun Claude Code plugin and tools...")
 
         # Check UV environment first
         if not self.check_uv_environment():
@@ -516,25 +537,43 @@ class ClautorunInstaller:
             print("❌ Failed to synchronize dependencies")
             return False
 
+        # Install UV tool for interactive app (global installation)
+        uv_tool_success = self.install_uv_tool()
+
+        # Install plugin via marketplace
         if not self.detect_claude_code_installation():
             print("❌ Claude Code installation not detected")
             print(f"   Expected directory: {self.claude_dir}")
+            if uv_tool_success:
+                print("✅ UV tool installed, but plugin installation skipped")
+                print("   Install plugin manually: claude plugin marketplace add .")
+                print("   Then: claude plugin install clautorun@clautorun")
             return False
 
-        if force and self.plugin_install_dir.exists():
-            print("🔄 Force mode: removing existing installation")
-            if not self.remove_plugin():
-                return False
+        plugin_success = self.install_plugin()
 
-        success = self.install_plugin()
+        # Summary
+        print("\n" + "=" * 70)
+        if plugin_success and uv_tool_success:
+            print("✅ Complete installation successful!")
+            print("\nPlugin Commands (via Claude Code):")
+            print("   /afs, /afa, /afj, /afst - File policy commands")
+            print("   /autorun, /autoproc - Autonomous workflow commands")
+            print("\nInteractive Mode (standalone):")
+            print("   clautorun-interactive - Run interactive command processor")
+            print("\nManagement:")
+            print("   clautorun-install check - Verify installation")
+            print("   clautorun-install uninstall - Remove plugin")
+        elif plugin_success:
+            print("✅ Plugin installed successfully (UV tool installation failed)")
+        elif uv_tool_success:
+            print("✅ UV tool installed successfully (plugin installation failed)")
+        else:
+            print("❌ Installation failed")
+            return False
 
-        if success:
-            print("✅ Installation completed successfully!")
-            print(f"   Plugin installed at: {self.plugin_install_dir}")
-            print("   You can now use: /clautorun /afs, /clautorun /afa, etc.")
-            print("   Run tests with: uv run pytest tests/")
-
-        return success
+        print("=" * 70)
+        return plugin_success or uv_tool_success
 
     def try_claude_plugin_uninstall(self) -> bool:
         """Try to uninstall using Claude Code's plugin system first"""
@@ -570,40 +609,114 @@ class ClautorunInstaller:
             print(f"ℹ️  Claude Code plugin system not available: {e}")
             return False
 
+    def uninstall_uv_tool(self) -> bool:
+        """Uninstall clautorun UV tools"""
+        try:
+            print("🔧 Uninstalling clautorun UV tools...")
+
+            result = subprocess.run(
+                ["uv", "tool", "uninstall", "clautorun"],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode == 0:
+                print("✅ UV tools uninstalled successfully")
+                return True
+            else:
+                # Check if it's just not installed
+                if "not installed" in result.stderr.lower() or "not found" in result.stderr.lower():
+                    print("ℹ️  UV tools were not installed")
+                    return True
+                print(f"⚠️  UV tool uninstall failed: {result.stderr}")
+                return False
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"⚠️  UV tool uninstall failed: {e}")
+            return False
+
     def uninstall(self, force: bool = False) -> bool:
-        """Uninstall the Claude Code plugin"""
-        print("🗑️  Uninstalling clautorun Claude Code plugin...")
+        """Uninstall the Claude Code plugin and UV tools"""
+        print("🗑️  Uninstalling clautorun...")
+        print()
 
-        # First, try Claude Code's plugin system
-        if self.try_claude_plugin_uninstall():
-            return True
+        # Uninstall UV tools
+        uv_success = self.uninstall_uv_tool()
 
-        print("🔄 Falling back to manual uninstall...")
+        # Uninstall Claude Code plugin
+        plugin_success = self.try_claude_plugin_uninstall()
 
-        if not self.plugin_install_dir.exists():
-            print("ℹ️  Plugin is not installed")
-            return True
+        # Summary
+        print("\n" + "=" * 70)
+        if plugin_success and uv_success:
+            print("✅ Complete uninstallation successful!")
+        elif plugin_success:
+            print("✅ Plugin uninstalled (UV tools already removed or not installed)")
+        elif uv_success:
+            print("✅ UV tools uninstalled (plugin already removed or not installed)")
+        else:
+            print("⚠️  Some components may still be installed")
+            print("   Check manually: claude plugin marketplace list")
+            print("   Check manually: uv tool list")
 
-        # Plugin directories can be safely removed without force check
-        success = self.remove_plugin()
-
-        if success:
-            print("✅ Manual uninstallation completed successfully!")
-
-        return success
+        print("=" * 70)
+        return plugin_success or uv_success
 
     def check(self) -> bool:
-        """Check installation status using Claude Code plugin system"""
+        """Check installation status for both plugin and UV tools"""
         print("🔍 Checking clautorun installation...")
+        print()
+
+        all_good = True
 
         # Check UV environment
-        if not self.check_uv_environment():
-            print("⚠️  UV environment issues detected")
+        print("1. UV Environment:")
+        if self.check_uv_environment():
+            print("   ✅ UV environment is properly configured")
+        else:
+            print("   ⚠️  UV environment issues detected")
             print("   Run 'uv sync --extra claude-code' to fix")
+            all_good = False
 
-        # Use Claude Code's plugin system to check status
+        # Check UV tool installation
+        print("\n2. UV Tools (Interactive Mode):")
         try:
-            # Check if we can access Claude Code plugin system
+            result = subprocess.run(
+                ["which", "clautorun-interactive"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                print(f"   ✅ clautorun-interactive: {result.stdout.strip()}")
+            else:
+                print("   ❌ clautorun-interactive not found")
+                print("   Run: uv tool install . (from clautorun directory)")
+                all_good = False
+
+            # Check for clautorun-install
+            result2 = subprocess.run(
+                ["which", "clautorun-install"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result2.returncode == 0:
+                print(f"   ✅ clautorun-install: {result2.stdout.strip()}")
+            else:
+                print("   ❌ clautorun-install not found")
+                all_good = False
+
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            print("   ❌ UV tools not installed")
+            all_good = False
+
+        # Check Claude Code plugin
+        print("\n3. Claude Code Plugin:")
+        try:
             result = subprocess.run(
                 ["claude", "--version"],
                 capture_output=True,
@@ -612,44 +725,49 @@ class ClautorunInstaller:
             )
 
             if result.returncode != 0:
-                print("❌ Claude Code not accessible")
-                return False
-
-            print(f"✅ Claude Code detected: {result.stdout.strip()}")
-
-            # Check marketplace status
-            marketplace_result = subprocess.run(
-                ["claude", "plugin", "marketplace", "list"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-
-            if marketplace_result.returncode == 0:
-                print("✅ Plugin marketplace accessible")
-                # Show if our marketplace is configured
-                if "clautorun" in marketplace_result.stdout:
-                    print("✅ clautorun marketplace is configured")
-
-                    # Try to find if plugin is installed by checking for the symlink
-                    commands_symlink = Path.home() / ".claude" / "commands" / "clautorun"
-                    if commands_symlink.exists() and commands_symlink.is_symlink():
-                        print("✅ Plugin is installed and accessible")
-                        return True
-                    else:
-                        print("⚠️  Plugin not installed (run: uv run clautorun install)")
-                        return False
-                else:
-                    print("⚠️  clautorun marketplace not found")
-                    print("   Run: uv run clautorun install to set up marketplace")
-                    return False
+                print("   ❌ Claude Code not accessible")
+                all_good = False
             else:
-                print("⚠️  Plugin marketplace check failed")
-                return False
+                print(f"   ✅ Claude Code: {result.stdout.strip()}")
+
+                # Check marketplace
+                marketplace_result = subprocess.run(
+                    ["claude", "plugin", "marketplace", "list"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                if marketplace_result.returncode == 0:
+                    if "clautorun" in marketplace_result.stdout:
+                        print("   ✅ clautorun marketplace configured")
+
+                        # Verify commands are available
+                        if self.verify_installation():
+                            print("   ✅ Plugin commands available")
+                        else:
+                            print("   ⚠️  Plugin may need reinstallation")
+                            all_good = False
+                    else:
+                        print("   ❌ clautorun marketplace not configured")
+                        print("   Run: claude plugin marketplace add .")
+                        all_good = False
+                else:
+                    print("   ⚠️  Cannot check marketplace")
+                    all_good = False
 
         except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
-            print(f"❌ Claude Code plugin system check failed: {e}")
-            return False
+            print(f"   ❌ Claude Code check failed: {e}")
+            all_good = False
+
+        print()
+        if all_good:
+            print("✅ All components are properly installed")
+        else:
+            print("⚠️  Some components need attention")
+            print("   Run: clautorun-install install --force")
+
+        return all_good
 
     
 
@@ -660,18 +778,25 @@ def main():
         sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description="Manage clautorun Claude Code plugin installation",
+        description="Manage clautorun Claude Code plugin and UV tool installation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  clautorun install          # Install plugin
-  clautorun install --force  # Force reinstall
-  clautorun uninstall        # Remove plugin
-  clautorun check            # Check installation status
+  clautorun-install install          # Install plugin and UV tools
+  clautorun-install install --force  # Force reinstall both
+  clautorun-install uninstall        # Remove plugin and UV tools
+  clautorun-install check            # Check installation status
+
+Installation includes:
+  1. Claude Code plugin (via marketplace)
+     - Provides: /afs, /afa, /afj, /afst, /autorun, /autoproc commands
+  2. UV global tools
+     - clautorun-interactive: Interactive command processor
+     - clautorun-install: This installer tool
 
   With UV environment:
   source .venv/bin/activate
-  clautorun install
+  clautorun-install install
         """
     )
 
