@@ -17,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py",
+            "command": "uv",
+            "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "python", "src/clautorun/main.py"],
             "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
           }
         ]
@@ -29,7 +30,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py",
+            "command": "uv",
+            "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "python", "src/clautorun/main.py"],
             "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
           }
         ]
@@ -40,7 +42,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py",
+            "command": "uv",
+            "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "python", "src/clautorun/main.py"],
             "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
           }
         ]
@@ -51,7 +54,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py",
+            "command": "uv",
+            "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "python", "src/clautorun/main.py"],
             "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
           }
         ]
