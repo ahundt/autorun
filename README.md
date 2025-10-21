@@ -634,7 +634,7 @@ Based on the above changes, create a single git commit.
 - Command output is included in context for Claude
 - Can call external scripts: `!`./scripts/my-script.sh``
 
-**Python Agent SDK** ([README](https://github.com/anthropics/claude-agent-sdk-python), [client.py](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/client.py)):
+**Python Agent SDK** ([Documentation](https://docs.claude.com/en/api/agent-sdk/python), [README](https://github.com/anthropics/claude-agent-sdk-python), [client.py](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/client.py)):
 
 The SDK provides direct communication with Claude Code:
 - `query()` - Async function for querying Claude Code directly
