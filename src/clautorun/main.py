@@ -95,11 +95,34 @@ STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 def log_info(message):
-    """Log info message to file - copied from autorun5.py"""
+    """Log info message to file with DEBUG environment variable control"""
+    # Only log if DEBUG environment variable is set to true
+    # Handle various forms of "true": true, True, TRUE, 1, yes, YES, etc.
+    debug_value = os.getenv("DEBUG", "false").lower().strip()
+    true_values = {"true", "1", "yes", "on", "enabled"}
+    if debug_value not in true_values:
+        return
+
     try:
+        # Ensure directory exists
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Log to main autorun log
         with open(STATE_DIR / "autorun.log", "a") as f:
-            f.write(f"[{time.strftime('%H:%M:%S')}] {os.getpid()}: {message}\n")
-    except: pass
+            log_time = time.strftime('%Y-%m-%d %H:%M:%S')
+            pid = os.getpid()
+            f.write(f"[{log_time}] {pid}: {message}\n")
+            f.flush()
+
+        # Separate log for PreToolUse debugging
+        if "PreToolUse" in message:
+            with open(STATE_DIR / "pretooluse_debug.log", "a") as debug_f:
+                debug_f.write(f"[{log_time}] {pid}: {message}\n")
+                debug_f.flush()
+
+    except Exception as e:
+        # Fallback logging to stderr in case of write failure
+        print(f"Log write failed: {e}", file=sys.stderr)
 
 # Global lock to ensure only one backend selection happens at a time
 _backend_selection_lock = threading.Lock()
@@ -335,6 +358,11 @@ def pretooluse_handler(ctx):
     # Extract file path - autorun5.py line 117
     file_path = ctx.tool_input.get("file_path", "")
 
+    # Debug logging using log_info for consistent logging
+    log_info(f"PreToolUse Debug: Tool Name: {ctx.tool_name}")
+    log_info(f"PreToolUse Debug: File Path: {file_path}")
+    log_info(f"PreToolUse Debug: Tool Input: {ctx.tool_input}")
+
     # Apply file creation policies - enhanced based on test expectations
     session_id = ctx.session_id
     with session_state(session_id) as state:
@@ -359,13 +387,22 @@ def pretooluse_handler(ctx):
 
         # Write tools - always apply policy
         if file_policy == "SEARCH":
+            # Extensive logging for SEARCH policy enforcement
+            log_info(f"PreToolUse SEARCH Policy Debug:")
+            log_info(f"  Current Policy: {file_policy}")
+            log_info(f"  File Path: {file_path}")
+            log_info(f"  Path Exists: {Path(file_path).exists() if file_path else 'No file path'}")
+            log_info(f"  Session State: {state}")
+
             # SEARCH policy blocks new file creation but allows editing existing files
             if file_path and Path(file_path).exists():
                 # File exists - allow editing
+                log_info("  Decision: ALLOW (Existing file modification)")
                 return build_pretooluse_response("allow", "Existing file modification allowed under SEARCH policy")
             else:
                 # No file path or file doesn't exist - block new file creation
                 # Use policy description which contains "NO new files" as expected by tests
+                log_info("  Decision: DENY (No file or does not exist)")
                 return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
 
         elif file_policy == "JUSTIFY":
