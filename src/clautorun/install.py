@@ -228,6 +228,32 @@ class ClautorunInstaller:
             print(f"⚠️  Warning: Could not backup existing plugin: {e}")
             return None
 
+    def substitute_plugin_paths(self) -> bool:
+        """Substitute ${CLAUDE_PLUGIN_ROOT} with actual path in plugin.json"""
+        try:
+            plugin_json_path = self.plugin_source_dir / ".claude-plugin" / "plugin.json"
+            if not plugin_json_path.exists():
+                print(f"❌ Plugin manifest not found: {plugin_json_path}")
+                return False
+
+            # Read the plugin.json file
+            with open(plugin_json_path, 'r') as f:
+                content = f.read()
+
+            # Substitute ${CLAUDE_PLUGIN_ROOT} with actual path
+            content = content.replace("${CLAUDE_PLUGIN_ROOT}", str(self.plugin_source_dir))
+
+            # Write the modified content back
+            with open(plugin_json_path, 'w') as f:
+                f.write(content)
+
+            print(f"✅ Substituted plugin paths in {plugin_json_path}")
+            return True
+
+        except (OSError, PermissionError) as e:
+            print(f"❌ Failed to substitute plugin paths: {e}")
+            return False
+
     def validate_plugin_structure(self) -> bool:
         """Check if plugin has proper structure"""
         if not self.plugin_manifest.exists():
@@ -249,6 +275,10 @@ class ClautorunInstaller:
                 print("✅ Copied marketplace.json to .claude-plugin directory")
             except (OSError, PermissionError) as e:
                 print(f"⚠️  Warning: Could not copy marketplace.json: {e}")
+
+        # Substitute plugin paths
+        if not self.substitute_plugin_paths():
+            return False
 
         return True
 
