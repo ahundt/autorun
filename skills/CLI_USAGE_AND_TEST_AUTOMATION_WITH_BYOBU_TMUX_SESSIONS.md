@@ -188,6 +188,62 @@ byobu kill-session -t "test-session"
 byobu new-session -d -s "test-session"
 ```
 
+## Common Mistakes and Solutions
+
+### CRITICAL: Control Sequence Syntax Errors
+
+**❌ Common Mistake: Incorrect Enter Key Syntax**
+```bash
+# WRONG - This will NOT work as expected
+byobu send-keys -t "session_name" "command" "C-m"  # WRONG syntax
+byobu send-keys -t "session_name" "command C-m"     # WRONG syntax
+```
+
+**✅ CORRECT: Proper Control Sequence Syntax**
+```bash
+# CORRECT - Each operation is ALWAYS a separate byobu send-keys command
+byobu send-keys -t "session_name" "command"   # Step 1: Type the command text
+byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to execute
+
+byobu send-keys -t "session_name" "cd /path"  # Step 1: Type "cd /path"
+byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to execute
+
+byobu send-keys -t "session_name" C-c         # Step 1: Press Ctrl+C interrupt
+byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (if needed)
+```
+
+**Key Rules:**
+- Control sequences (C-m, C-c, C-d) must be **separate arguments**, not inside quotes
+- Commands go in quotes, control sequences go outside quotes as separate args
+- `C-m` = Enter/Return, `C-c` = Ctrl+C, `C-d` = EOF, `C-l` = Clear screen
+- **CRITICAL**: Text input and Enter key are ALWAYS separate byobu send-keys operations
+- **CRITICAL**: Enter key (C-m) must ALWAYS be sent as a separate operation after typing text
+- **CRITICAL**: Ctrl+C (C-c) and Enter (C-m) are different operations and must be sent separately when needed
+
+### Command Execution Issues
+
+**Problem:** Commands appear to execute but fail silently
+- **Cause:** Missing proper Enter key sequence (C-m)
+- **Solution:** Always add `C-m` as separate argument after command
+
+**Problem:** Commands hang or timeout
+- **Cause:** Missing sleep intervals for Claude Code processing
+- **Solution:** Add `sleep 2-5` between commands, especially after Claude Code startup
+
+**Problem:** Session becomes unresponsive
+- **Cause:** Commands failing without proper error handling
+- **Solution:** Use Ctrl+C (`C-c`) to interrupt, recreate session if needed
+
+### Plugin Installation Issues
+
+**Problem:** Marketplace addition fails with "not found"
+- **Cause:** Incorrect path syntax or marketplace already exists
+- **Solution:** Use absolute paths and check existing marketplaces first
+
+**Problem:** Plugin installation fails after marketplace addition
+- **Cause:** Timing issues or plugin name mismatch
+- **Solution:** Wait for marketplace addition to complete, use correct plugin identifier
+
 ## Best Practices
 
 1. **Session Naming**: Use descriptive names (e.g., "clautorun" for main testing, "clautorun-test" for specific tests)
@@ -200,6 +256,8 @@ byobu new-session -d -s "test-session"
 8. **AI-Monitor Integration**: Use ai-monitor for long-running autonomous sessions and automated workflows
 9. **Model Selection**: Use haiku for automated tasks to reduce resource usage and improve performance
 10. **Byobu vs Tmux**: Prefer byobu commands for user-friendly interface, tmux commands for scripting
+11. **Control Sequences**: Always use proper control sequence syntax - commands in quotes, C-m/C-c as separate arguments
+12. **Error Prevention**: Test control sequences manually before automation scripts
 
 ## Implementation Notes
 
