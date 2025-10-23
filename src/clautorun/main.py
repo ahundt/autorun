@@ -170,8 +170,8 @@ def session_state(session_id: str):
 # Response builders - follow autorun5.py pattern exactly (lines 118-128)
 def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
     """Build standardized JSON hook response - autorun5.py line 118-121"""
-    return {"continue": continue_execution, "stopReason": json.dumps(stop_reason)[1:-1],
-            "suppressOutput": False, "systemMessage": json.dumps(system_message)[1:-1]}
+    return {"continue": continue_execution, "stopReason": stop_reason,
+            "suppressOutput": False, "systemMessage": system_message}
 
 def build_pretooluse_response(decision="allow", reason=""):
     """Build PreToolUse hook response - autorun5.py line 123-128"""
