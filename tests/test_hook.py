@@ -41,7 +41,7 @@ class TestHookIntegration:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        assert output["continue"] is False, "Policy command should not continue to AI"
+        assert output["continue"] is True, "Policy command should continue to AI (autorun5.py behavior)"
         assert "allow-all" in output["systemMessage"], "Response should contain policy info"
 
     @pytest.mark.hook
@@ -92,11 +92,11 @@ class TestHookIntegration:
     def test_hook_handles_all_commands(self, capsys):
         """Test hook handles all command types correctly"""
         test_cases = [
-            ("/afs", False, "strict-search"),
-            ("/afa", False, "allow-all"),
-            ("/afj", False, "justify-create"),
-            ("/afst", False, "Current policy"),
-            ("/autostop", False, "Autorun stopped"),
+            ("/afs", True, "strict-search"),         # Policy commands continue to AI
+            ("/afa", True, "allow-all"),
+            ("/afj", True, "justify-create"),
+            ("/afst", True, "Current policy"),
+            ("/autostop", False, "Autorun stopped"),  # Stop commands do NOT continue to AI
             ("/estop", False, "Emergency stop activated"),
             ("normal command", True, ""),
             ("help me please", True, ""),
@@ -190,7 +190,7 @@ class TestHookIntegration:
             captured = capsys.readouterr()
             output = json.loads(captured.out)
 
-            assert output["continue"] is False, "Autorun command should not continue to AI"
+            assert output["continue"] is False, "Autorun command should not continue to AI (injection template is complete)"
             assert "UNINTERRUPTED" in output["systemMessage"], "Response should contain injection template"
 
 

@@ -167,64 +167,18 @@ def session_state(session_id: str):
             state.sync()
             state.close()
 
-# Response builders - standard format for plugins, hooks, and internal functions
-def build_response(continue_execution=True, response="", error="", stop_reason="", system_message=""):
-    """Build standard response format that works for all contexts (plugins, hooks, internal)
-
-    Base fields (used by all):
-    - continue: boolean - whether to continue to AI
-    - response: string - response message for user/system
-    - error: string - error message (optional)
-
-    Hook-specific fields (only used by hooks, ignored by others):
-    - stopReason: string - reason for stopping (hooks only)
-    - suppressOutput: boolean - whether to suppress output (hooks only)
-    - systemMessage: string - system message (hooks only)
-    """
-    standard = {
-        "continue": continue_execution,
-        "response": response
-    }
-
-    # Add error field if provided
-    if error:
-        standard["error"] = error
-
-    # Add hook-specific fields (these will be ignored by plugins)
-    standard.update({
-        "stopReason": json.dumps(stop_reason)[1:-1] if stop_reason else "",
-        "suppressOutput": False,
-        "systemMessage": json.dumps(system_message)[1:-1] if system_message else ""
-    })
-
-    return standard
-
+# Response builders - follow autorun5.py pattern exactly (lines 118-128)
 def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
-    """Legacy hook response builder - now uses standard format internally"""
-    return build_response(
-        continue_execution=continue_execution,
-        response=system_message,  # Map system_message to response field for standard format
-        stop_reason=stop_reason,
-        system_message=system_message
-    )
+    """Build standardized JSON hook response - autorun5.py line 118-121"""
+    return {"continue": continue_execution, "stopReason": json.dumps(stop_reason)[1:-1],
+            "suppressOutput": False, "systemMessage": json.dumps(system_message)[1:-1]}
 
 def build_pretooluse_response(decision="allow", reason=""):
-    """Build PreToolUse hook response - standard format with hook-specific output"""
-    standard = build_response(
-        continue_execution=True,
-        response=reason,  # Use reason as response for standard format
-        stop_reason="",
-        system_message=reason
-    )
-
-    # Add PreToolUse-specific hook output
-    standard["hookSpecificOutput"] = {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": decision,
-        "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""
-    }
-
-    return standard
+    """Build PreToolUse hook response - autorun5.py line 123-128"""
+    return {"continue": True, "stopReason": "", "suppressOutput": False,
+            "systemMessage": json.dumps(reason)[1:-1] if reason else "",
+            "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                  "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
 
 # Ultra-efficient dispatch system - using autorun5.py patterns
 HANDLERS = {}
@@ -341,14 +295,15 @@ COMMAND_HANDLERS = {
     "activate": handle_activate
 }
 
-@handler("UserPromptSubmit")
-async def intercept_commands(input_data: Dict[str, Any], context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Intercept autorun commands using efficient dispatch - like autorun5.py line 144"""
-    prompt = input_data.get('prompt', '').strip()
-    session_id = getattr(context, 'session_id', 'default') if context else 'default'
 
-    # Efficient command detection - same pattern as autorun5.py
-    # Check for exact matches first, then prefix matches for commands with arguments
+# Claude Code hook handlers - ultra-compact
+@handler("UserPromptSubmit")
+def claude_code_handler(ctx):
+    """Claude Code UserPromptSubmit hook - sync version like autorun5.py"""
+    prompt = ctx.prompt.strip()
+    session_id = ctx.session_id
+
+    # Efficient command detection - autorun5.py line 144 pattern
     command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
     if not command:
         # Check for commands that support arguments (autorun)
@@ -357,65 +312,70 @@ async def intercept_commands(input_data: Dict[str, Any], context: Optional[Dict[
     if command and command in COMMAND_HANDLERS:
         # Handle command locally, don't send to AI
         with session_state(session_id) as state:
-            state['session_id'] = session_id # Ensure session_id is in state for handlers
+            state['session_id'] = session_id
             if command == "activate":
-                # Pass the full prompt for activation commands
                 response = COMMAND_HANDLERS[command](state, prompt)
+                # Autorun command should NOT continue to AI - injection template is complete
+                return build_hook_response(False, "", response)
+            elif command in ["stop", "emergency_stop"]:
+                response = COMMAND_HANDLERS[command](state)
+                # Stop commands should NOT continue to AI
+                return build_hook_response(False, "", response)
             else:
                 response = COMMAND_HANDLERS[command](state)
-            return build_response(continue_execution=False, response=response)
+                # Policy and status commands should continue to AI
+                return build_hook_response(True, "", response)
 
     # Let AI handle non-commands
-    return build_response(continue_execution=True)
-
-# Synchronous version for hook integration
-@handler("UserPromptSubmit")
-def intercept_commands_sync(input_data: Dict[str, Any], context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Synchronous version for hook integration"""
-    import asyncio
-
-    # Run the async function in the event loop
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    return loop.run_until_complete(intercept_commands(input_data, context))
-
-# Claude Code hook handlers - ultra-compact
-@handler("UserPromptSubmit")
-def claude_code_handler(ctx):
-    """Claude Code UserPromptSubmit hook - using unified response format"""
-    input_data = {'prompt': ctx.prompt, 'session_id': ctx.session_id}
-    result = intercept_commands_sync(input_data, ctx)
-
-    # Result is already in unified format, just ensure hook-specific fields are set
-    if result.get("continue") is False:
-        # Command handled locally - unified format already has response field
-        # Make sure system_message is populated for hook compatibility
-        if "systemMessage" not in result or not result["systemMessage"]:
-            result["systemMessage"] = json.dumps(result.get("response", ""))[1:-1]
-        return result
-    else:
-        # Let AI handle it - ensure proper hook format
-        result["systemMessage"] = ""
-        return result
+    return build_hook_response()
 
 @handler("PreToolUse")
 def pretooluse_handler(ctx):
-    """PreToolUse hook - simplified policy enforcement"""
-    if ctx.tool_name != "Write" and ctx.tool_input.get("file_path", ""):
-        return build_pretooluse_response("allow")
+    """PreToolUse hook - enhanced policy enforcement based on test expectations"""
+    # Extract file path - autorun5.py line 117
+    file_path = ctx.tool_input.get("file_path", "")
 
-    with session_state(ctx.session_id) as state:
+    # Apply file creation policies - enhanced based on test expectations
+    session_id = ctx.session_id
+    with session_state(session_id) as state:
         file_policy = state.get("file_policy", "ALLOW")
-        if file_policy == "SEARCH":
-            return build_pretooluse_response("deny", CONFIG["policies"]["SEARCH"][1])
-        elif file_policy == "JUSTIFY" and "AUTOFILE_JUSTIFICATION" not in str(ctx.session_transcript):
-            return build_pretooluse_response("deny", CONFIG["policies"]["JUSTIFY"][1])
 
-    return build_pretooluse_response("allow")
+        # For non-Write tools, only apply policy if there's no file path
+        if ctx.tool_name != "Write":
+            if not file_path:
+                # No file path - apply policy restrictions
+                if file_policy == "SEARCH":
+                    return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
+                elif file_policy == "JUSTIFY":
+                    justification_found = state.get("autofile_justification_detected", False) or \
+                                        "AUTOFILE_JUSTIFICATION" in str(ctx.session_transcript)
+                    if not justification_found:
+                        return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
+                # ALLOW policy or default - allow
+                return build_pretooluse_response("allow", "Non-Write tool without file path allowed")
+            else:
+                # Non-Write tool with file path - always allow
+                return build_pretooluse_response("allow", "Non-Write tool with file path allowed")
+
+        # Write tools - always apply policy
+        if file_policy == "SEARCH":
+            # SEARCH policy blocks new file creation but allows editing existing files
+            if file_path and Path(file_path).exists():
+                # File exists - allow editing
+                return build_pretooluse_response("allow", "Existing file modification allowed under SEARCH policy")
+            else:
+                # No file path or file doesn't exist - block new file creation
+                # Use policy description which contains "NO new files" as expected by tests
+                return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
+
+        elif file_policy == "JUSTIFY":
+            justification_found = state.get("autofile_justification_detected", False) or \
+                                "AUTOFILE_JUSTIFICATION" in str(ctx.session_transcript)
+            if not justification_found:
+                return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
+
+        # ALLOW policy - allow all operations
+        return build_pretooluse_response("allow", "File operations allowed under ALLOW policy")
 
 # ai_monitor integration: Continuation enforcement functions
 def inject_continue_prompt(state):
@@ -487,6 +447,13 @@ def stop_handler(ctx):
     with session_state(session_id) as state:
         # Ensure session_id is in state for _manage_monitor
         state['session_id'] = session_id
+
+        # Only intervene in active autorun sessions
+        if state.get("session_status") != "active":
+            # Normal cleanup for non-autorun sessions
+            state.clear()
+            return build_hook_response()
+
         # Check if this is a premature stop that needs intervention
         if is_premature_stop(ctx, state):
             log_info(f"Detected premature stop for session {session_id}")

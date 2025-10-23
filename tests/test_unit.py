@@ -154,7 +154,7 @@ class TestCommandHandlers:
         test_prompt = "/autorun test task"
 
         # Mock session state
-        mock_state = {}
+        mock_state = {"session_id": "test_session"}  # Set session_id for monitor
 
         response = COMMAND_HANDLERS["activate"](mock_state, test_prompt)
 

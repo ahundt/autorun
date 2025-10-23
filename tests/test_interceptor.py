@@ -7,7 +7,7 @@ from unittest.mock import patch
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import intercept_commands_sync
+from clautorun import claude_code_handler
 
 def test_commands():
     """Test the command interception functionality"""
@@ -34,13 +34,16 @@ def test_commands():
 
         for prompt, expected in test_cases:
             # Create test context
-            context = {"session_id": "test_session"}
+            class MockContext:
+                def __init__(self):
+                    self.prompt = prompt
+                    self.session_id = "test_session"
+                    self.session_transcript = []
+
+            context = MockContext()
 
             # Test the command interception (sync version)
-            result = intercept_commands_sync(
-                {"prompt": prompt, "session_id": "test_session"},
-                context
-            )
+            result = claude_code_handler(context)
 
             print(f"Command: {prompt}")
             print(f"Expected: {expected}")

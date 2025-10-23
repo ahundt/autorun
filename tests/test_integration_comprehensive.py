@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 def test_main_py_ai_monitor_workflow():
     """Test that main.py implements complete AI monitor workflow"""
     from clautorun import (
-        stop_handler, pretooluse_handler, intercept_commands_sync,
+        stop_handler, pretooluse_handler, claude_code_handler,
         CONFIG, session_state, build_hook_response
     )
 
@@ -29,8 +29,7 @@ def test_main_py_ai_monitor_workflow():
     ctx.prompt = "/autorun build a website"
     ctx.session_id = "test_session_main"
 
-    input_data = {'prompt': ctx.prompt, 'session_id': ctx.session_id}
-    response = intercept_commands_sync(input_data, ctx)
+    response = claude_code_handler(ctx)
 
     # Check if command is being detected properly
     command = next((v for k, v in CONFIG["command_mappings"].items() if k == ctx.prompt), None)

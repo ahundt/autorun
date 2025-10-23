@@ -147,7 +147,7 @@ class TestPluginIntegration:
         input_json = json.dumps(input_data)
 
         # Mock session state
-        mock_state = {}
+        mock_state = {"session_id": "test_session"}  # Required for activate handler
         with patch.object(plugin_module, 'session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None

@@ -8,27 +8,15 @@ from clautorun import (
     CONFIG, COMMAND_HANDLERS, session_state,
     build_hook_response, build_pretooluse_response,
     # Import the complete AI monitor workflow
-    stop_handler, pretooluse_handler, intercept_commands_sync
+    stop_handler, pretooluse_handler, claude_code_handler
 )
 
 # Hook-specific handler registry that delegates to main.py logic
 def agent_sdk_user_prompt_submit(ctx):
     """Hook handler using main.py UserPromptSubmit logic - complete AI monitor workflow"""
     # Delegate to main.py's proven UserPromptSubmit handler
-    # The result is now in unified format that works for all contexts
-    result = intercept_commands_sync(
-        {'prompt': ctx.prompt, 'session_id': ctx.session_id},
-        ctx
-    )
-
-    # Ensure hook compatibility: copy response content to systemMessage for hooks
-    if result.get("continue") is False and result.get("response"):
-        # For handled commands, ensure systemMessage is populated for hook compatibility
-        if not result.get("systemMessage"):
-            result["systemMessage"] = json.dumps(result.get("response", ""))[1:-1]
-    else:
-        # For commands that continue to AI, ensure systemMessage is empty
-        result["systemMessage"] = ""
+    # The result is already in unified format that works for all contexts
+    result = claude_code_handler(ctx)
 
     return result
 

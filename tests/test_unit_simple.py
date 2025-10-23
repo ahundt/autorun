@@ -134,7 +134,8 @@ class TestCommandHandlers:
     def test_activate_handler_returns_injection_template(self):
         """Test activate handler returns injection template content"""
         handler = COMMAND_HANDLERS["activate"]
-        result = handler({}, "/autorun test task")
+        test_state = {"session_id": "test_session"}  # Set session_id for monitor
+        result = handler(test_state, "/autorun test task")
 
         assert isinstance(result, str), "activate handler should return string"
         assert "UNINTERRUPTED" in result, "Response should contain injection template"
@@ -221,7 +222,12 @@ class TestBasicFunctionality:
         for handler_name, handler_func in COMMAND_HANDLERS.items():
             try:
                 # All handlers should accept at least one argument
-                result = handler_func({})
+                if handler_name == "activate":
+                    # Activate handler needs session_id and prompt argument
+                    test_state = {"session_id": "test_session"}
+                    result = handler_func(test_state, "/autorun test")
+                else:
+                    result = handler_func({})
                 assert result is not None, f"Handler {handler_name} should return something"
             except TypeError as e:
                 if "takes" in str(e) and "positional argument" in str(e):

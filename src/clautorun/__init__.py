@@ -29,11 +29,11 @@ __email__ = "your.email@example.com"
 from .main import (
     main, CONFIG, COMMAND_HANDLERS,
     # AI monitor workflow functions
-    stop_handler, pretooluse_handler, intercept_commands_sync,
+    stop_handler, pretooluse_handler, claude_code_handler,
     inject_continue_prompt, inject_verification_prompt,
     is_premature_stop, should_trigger_verification,
     # Response builders
-    build_response, build_hook_response, build_pretooluse_response,
+    build_hook_response, build_pretooluse_response,
     # Session management
     session_state, log_info,
     # Command handlers
@@ -52,14 +52,13 @@ __all__ = [
     # AI monitor workflow
     "stop_handler",
     "pretooluse_handler",
-    "intercept_commands_sync",
+    "claude_code_handler",
     "inject_continue_prompt",
     "inject_verification_prompt",
     "is_premature_stop",
     "should_trigger_verification",
 
     # Response builders
-    "build_response",
     "build_hook_response",
     "build_pretooluse_response",
 

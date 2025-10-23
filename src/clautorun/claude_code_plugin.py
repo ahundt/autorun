@@ -41,8 +41,11 @@ def main():
         prompt = payload.get('prompt', '')
         session_id = payload.get('session_id', 'default')
 
-        # Efficient command detection - sort by length (longest first) for specific matches
-        command = next((v for k, v in sorted(CONFIG["command_mappings"].items(), key=lambda x: len(x[0]), reverse=True) if prompt.startswith(k)), None)
+        # Efficient command detection - check for exact matches first, then prefix matches
+        command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
+        if not command:
+            # Check for commands that support arguments (autorun)
+            command = next((v for k, v in CONFIG["command_mappings"].items() if prompt.startswith(k)), None)
 
         if command and command in COMMAND_HANDLERS:
             # Handle command locally, don't send to AI

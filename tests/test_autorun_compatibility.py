@@ -165,6 +165,7 @@ def test_command_handlers():
 
     # Test activation command
     test_prompt = "/autorun test task description"
+    test_state["session_id"] = "test_session"  # Set session_id for monitor
     response = COMMAND_HANDLERS["activate"](test_state, test_prompt)
     assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response, "ACTIVATE handler should return injection template"
     assert test_state["session_status"] == "active", "ACTIVATE handler should set session status"
