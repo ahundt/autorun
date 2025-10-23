@@ -208,6 +208,9 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to execute
 byobu send-keys -t "session_name" "cd /path"  # Step 1: Type "cd /path"
 byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to execute
 
+# EFFICIENCY TIP: Chain operations with && for single-line execution
+byobu send-keys -t "session_name" C-c && byobu send-keys -t "session_name" C-m  # Interrupt + confirm
+
 byobu send-keys -t "session_name" C-c         # Step 1: Press Ctrl+C interrupt
 byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (if needed)
 ```
@@ -243,6 +246,12 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 **Problem:** Plugin installation fails after marketplace addition
 - **Cause:** Timing issues or plugin name mismatch
 - **Solution:** Wait for marketplace addition to complete, use correct plugin identifier
+
+**Discovery: Slash Commands vs Plugin Installation**
+- Some functionality may be installed as slash commands in `~/.claude/commands/` rather than formal plugins
+- Check slash commands first: `ls -la ~/.claude/commands/`
+- Slash commands work immediately without plugin installation
+- Example: `/afs`, `/afst`, `/afa`, `/afj` may be available as slash commands even when no plugins are installed
 
 ## Best Practices
 
