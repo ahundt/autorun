@@ -59,35 +59,12 @@ def main():
                 # Use uv run to execute with proper environment
                 clautorun_cmd = ["uv", "run", "--project", str(project_root), "python", "-m", "clautorun.claude_code_plugin"]
             else:
-                # Final fallback - simple responses only
-                simple_responses = {
-                    "/afs": "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.",
-                    "/afa": "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.",
-                    "/afj": "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.",
-                    "/afst": "AutoFile policy status checking...",
-                }
-
-                payload = json.loads(input_data)
-                prompt = payload.get('prompt', '')
-
-                response = None
-                for cmd, resp in simple_responses.items():
-                    if prompt.startswith(cmd):
-                        response = resp
-                        break
-
-                if response:
-                    result = {
-                        "continue": False,
-                        "response": response
-                    }
-                else:
-                    result = {
-                        "continue": True,
-                        "response": ""
-                    }
-
-                print(json.dumps(result, sort_keys=True))
+                # No fallback - raise error if project root not found
+                print(json.dumps({
+                    "continue": True,
+                    "response": "",
+                    "error": "clautorun project root not found - cannot execute proper hook logic"
+                }, sort_keys=True))
                 sys.stdout.flush()
                 return
 

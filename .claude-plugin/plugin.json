@@ -10,57 +10,5 @@
   "repository": "https://github.com/ahundt/clautorun.git",
   "license": "MIT",
   "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "autonomous-sessions", "extended-workflow", "no-new-files", "justify-new-files"],
-  "commands": "./commands/",
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv",
-            "args": ["run", "--project", "/Users/athundt/.claude/clautorun", "src/clautorun/main.py"],
-            "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv",
-            "args": ["run", "--project", "/Users/athundt/.claude/clautorun", "src/clautorun/main.py"],
-            "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv",
-            "args": ["run", "--project", "/Users/athundt/.claude/clautorun", "src/clautorun/main.py"],
-            "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv",
-            "args": ["run", "--project", "/Users/athundt/.claude/clautorun", "src/clautorun/main.py"],
-            "env": { "AGENT_MODE": "HOOK_INTEGRATION" }
-          }
-        ]
-      }
-    ]
-  }
+  "commands": "./commands/"
 }

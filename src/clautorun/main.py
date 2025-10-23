@@ -488,7 +488,7 @@ def default_handler(ctx): return build_hook_response()
 
 def main():
     """Entry point - unified with efficient dispatch"""
-    operation_mode = os.getenv("AGENT_MODE", "SDK_ONLY").upper()
+    operation_mode = os.getenv("AGENT_MODE", "HOOK_INTEGRATION").upper()
 
     if operation_mode == "HOOK_INTEGRATION":
         # Run as Claude Code hook - same as autorun5.py main()
@@ -496,6 +496,11 @@ def main():
             payload = json.loads(sys.stdin.read())
             event = payload.get("hook_event_name", "?")
             _session_id = payload.get("session_id", "?")
+
+            # DEBUG: Log all hook calls to track when script is called
+            debug_log = STATE_DIR / "hook_debug.log"
+            with open(debug_log, "a") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] HOOK_CALLED: {event} | session: {_session_id} | prompt: {payload.get('prompt', '')[:50]}...\n")
 
             # Context object - same as autorun5.py
             class Ctx:

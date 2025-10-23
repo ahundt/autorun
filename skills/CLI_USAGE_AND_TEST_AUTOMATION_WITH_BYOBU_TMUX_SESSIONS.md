@@ -113,61 +113,61 @@ check_monitor(session_id)
 
 ### Create Testing Session with AI-Monitor
 ```bash
-# Create session
-byobu new-session -d -s "test-session"
+# Create session (default: clautorun)
+byobu new-session -d -s "clautorun"
 
 # Navigate and start process
-byobu send-keys -t "test-session" "cd /path/to/project" C-m
-byobu send-keys -t "test-session" "npm test" C-m
+byobu send-keys -t "clautorun" "cd /path/to/project" C-m
+byobu send-keys -t "clautorun" "npm test" C-m
 
 # Start ai-monitor (from separate terminal)
-python3 ai_monitor.py "test-session" --prompt "Continue testing" --stop "Tests completed" --max-cycles 3
+python3 ai_monitor.py "clautorun" --prompt "Continue testing" --stop "Tests completed" --max-cycles 3
 ```
 
 ### Monitor Claude Code Session
 ```bash
-# Create Claude Code session
-byobu new-session -d -s "claude-test"
-byobu send-keys -t "claude-test" "cd /project" C-m
-byobu send-keys -t "claude-test" "claude" C-m
+# Create Claude Code session (default: clautorun unless user specifies otherwise)
+byobu new-session -d -s "clautorun"
+byobu send-keys -t "clautorun" "cd /project" C-m
+byobu send-keys -t "clautorun" "claude" C-m
 
 # Start monitoring for autonomous work
-python3 ai_monitor.py "claude-test" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-cycles 10
+python3 ai_monitor.py "clautorun" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-cycles 10
 ```
 
 ### Automated Plugin Testing Workflow
 ```bash
-# Create session for clautorun testing
-byobu new-session -d -s "clautorun-test"
+# Create session for clautorun testing (default: clautorun)
+byobu new-session -d -s "clautorun"
 
 # Navigate to project
-byobu send-keys -t "clautorun-test" "cd /Users/athundt/.claude/clautorun" C-m
+byobu send-keys -t "clautorun" "cd /Users/athundt/.claude/clautorun" C-m
 
 # Start Claude Code
-byobu send-keys -t "clautorun-test" "claude" C-m
+byobu send-keys -t "clautorun" "claude" C-m
 sleep 5
 
 # Set model to haiku for efficiency
-byobu send-keys -t "clautorun-test" "/model haiku" C-m
+byobu send-keys -t "clautorun" "/model haiku" C-m
 sleep 2
 
 # Install plugin locally
-byobu send-keys -t "clautorun-test" "/plugin marketplace add /Users/athundt/.claude/clautorun" C-m
+byobu send-keys -t "clautorun" "/plugin marketplace add /Users/athundt/.claude/clautorun" C-m
 sleep 3
 
 # Install plugin
-byobu send-keys -t "clautorun-test" "/plugin install clautorun@clautorun-dev" C-m
+byobu send-keys -t "clautorun" "/plugin install clautorun@clautorun-dev" C-m
 sleep 5
 
 # Test commands
-byobu send-keys -t "clautorun-test" "/afs" C-m
+byobu send-keys -t "clautorun" "/afs" C-m
 sleep 3
 
-byobu send-keys -t "clautorun-test" "/afst" C-m
+byobu send-keys -t "clautorun" "/afst" C-m
 sleep 3
 
 # Capture output for verification
-byobu capture-pane -t "clautorun-test" -p -S -20
+byobu capture-pane -t "clautorun" -p -S -20
 ```
 
 ### Error Handling and Recovery
@@ -255,8 +255,8 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 
 ## Best Practices
 
-1. **Session Naming**: Use descriptive names (e.g., "clautorun" for main testing, "clautorun-test" for specific tests)
-2. **Default Session**: Use "clautorun" as the default session name for clautorun testing workflows
+1. **Session Naming**: Always use "clautorun" as the default session name unless user specifies another tmux session name
+2. **Default Session**: Use "clautorun" as the default session name for all clautorun testing workflows
 3. **Existence Checks**: Always verify session existence before operations using `byobu list-sessions`
 4. **Error Recovery**: Implement Ctrl+C handling for stuck commands and session recreation when needed
 5. **Output Verification**: Use capture-pane for command result verification and testing validation

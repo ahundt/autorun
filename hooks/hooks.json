@@ -1,0 +1,47 @@
+{
+  "description": "clautorun command interceptor and AutoFile policy enforcement hooks",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "clautorun"
+          }
+        ],
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "clautorun"
+          }
+        ],
+        "matcher": "Write"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "clautorun"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "clautorun"
+          }
+        ]
+      }
+    ]
+  }
+}
