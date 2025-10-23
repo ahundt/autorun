@@ -267,6 +267,9 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 10. **Byobu vs Tmux**: Prefer byobu commands for user-friendly interface, tmux commands for scripting
 11. **Control Sequences**: Always use proper control sequence syntax - commands in quotes, C-m/C-c as separate arguments
 12. **Error Prevention**: Test control sequences manually before automation scripts
+13. **Efficiency Operations**: Use `&&` to chain byobu commands for single-line execution: `byobu send-keys C-c && byobu send-keys C-m`
+14. **Debugging Strategy**: Test functionality step-by-step instead of assuming installation state
+15. **Slash Command Priority**: Check `~/.claude/commands/` first before plugin installation attempts
 
 ## Implementation Notes
 
