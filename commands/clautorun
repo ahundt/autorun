@@ -1,18 +1,103 @@
 #!/usr/bin/env python3
-"""Claude Code plugin for Agent SDK command interception - UV Tool wrapper"""
+"""Standalone clautorun plugin - fixes for command prefix and settings bugs"""
+
 import json
 import sys
-import subprocess
 import os
 from pathlib import Path
 
+# Simple configuration - copy from main.py to avoid import issues
+CONFIG = {
+    "command_mappings": {
+        "/autorun": "activate",
+        "/autostop": "stop",
+        "/estop": "emergency_stop",
+        "/afs": "SEARCH",
+        "/afa": "ALLOW",
+        "/afj": "JUSTIFY",
+        "/afst": "STATUS"
+    },
+    "policies": {
+        "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
+        "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
+        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
+    }
+}
+
+# Simple state using dict for now - avoid shelve complexity
+_simple_state = {}
+
+def handle_search():
+    """Handle SEARCH command"""
+    policy_name, policy_desc = CONFIG["policies"]["SEARCH"]
+    return f"AutoFile policy: {policy_name} - {policy_desc}"
+
+def handle_allow():
+    """Handle ALLOW command"""
+    policy_name, policy_desc = CONFIG["policies"]["ALLOW"]
+    return f"AutoFile policy: {policy_name} - {policy_desc}"
+
+def handle_justify():
+    """Handle JUSTIFY command"""
+    policy_name, policy_desc = CONFIG["policies"]["JUSTIFY"]
+    return f"AutoFile policy: {policy_name} - {policy_desc}"
+
+def handle_status():
+    """Handle STATUS command"""
+    current_policy = _simple_state.get("file_policy", "ALLOW")
+    policy_name, policy_desc = CONFIG["policies"][current_policy]
+    return f"Current policy: {policy_name}"
+
+def handle_stop():
+    """Handle STOP command"""
+    return "Autorun stopped"
+
+def handle_emergency_stop():
+    """Handle EMERGENCY_STOP command"""
+    return "Emergency stop activated"
+
+def handle_activate(prompt):
+    """Handle AUTORUN activation"""
+    # Store original prompt
+    _simple_state["activation_prompt"] = prompt
+    _simple_state["file_policy"] = _simple_state.get("file_policy", "ALLOW")
+
+    policy = _simple_state["file_policy"]
+    policy_name, policy_desc = CONFIG["policies"][policy]
+
+    return f"""Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+
+1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions.
+    * **Permissions Granted:** You have full permission to use all tools without requiring further permission prompts.
+
+FILE CREATION POLICY: {policy_desc}
+
+2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP** and **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless corresponding stop condition has been met.
+
+3.  **Safety Protocol:** Execute full Preservation Sequence **ONLY IF** current task involves high-risk irreversible actions.
+
+4.  **FINAL OUTPUT ON SUCCESS:** When all tasks are 100% complete, output: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+
+Original task: {prompt}
+"""
+
+# Command handlers
+COMMAND_HANDLERS = {
+    "SEARCH": handle_search,
+    "ALLOW": handle_allow,
+    "JUSTIFY": handle_justify,
+    "STATUS": handle_status,
+    "stop": handle_stop,
+    "emergency_stop": handle_emergency_stop,
+    "activate": handle_activate
+}
+
 def main():
-    """Plugin entry point for Claude Code"""
+    """Standalone plugin entry point"""
     try:
         # Read input from stdin
         input_data = sys.stdin.read()
 
-        # Handle empty input
         if not input_data.strip():
             result = {
                 "continue": True,
@@ -23,117 +108,66 @@ def main():
             sys.stdout.flush()
             return
 
-        # Check if clautorun UV tool is available (preferred method)
-        clautorun_cmd = None
-
-        # Method 1: Check if clautorun UV tool is installed and available
+        # Parse JSON input
         try:
-            result = subprocess.run(
-                ["which", "clautorun"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                clautorun_cmd = "clautorun"
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-        # Method 2: Fallback to local package execution if UV tool not available
-        if not clautorun_cmd:
-            # Use local execution with path resolution
-            plugin_file = Path(__file__).resolve()
-            project_root = None
-
-            # Check for UV_PROJECT environment variable first
-            uv_project = os.environ.get('UV_PROJECT')
-            if uv_project and (Path(uv_project) / "src" / "clautorun").exists():
-                project_root = Path(uv_project)
-            else:
-                # Minimal fallback: check immediate parent
-                potential_root = plugin_file.parent.parent
-                if (potential_root / "src" / "clautorun").exists():
-                    project_root = potential_root
-
-            if project_root:
-                # Use uv run to execute with proper environment
-                clautorun_cmd = ["uv", "run", "--project", str(project_root), "python", "-m", "clautorun.claude_code_plugin"]
-            else:
-                # No fallback - raise error if project root not found
-                print(json.dumps({
-                    "continue": True,
-                    "response": "",
-                    "error": "clautorun project root not found - cannot execute proper hook logic"
-                }, sort_keys=True))
-                sys.stdout.flush()
-                return
-
-        # Execute clautorun command (either UV tool or local execution)
-        try:
-            if isinstance(clautorun_cmd, str):
-                # UV tool installation
-                result = subprocess.run(
-                    [clautorun_cmd],
-                    input=input_data,
-                    text=True,
-                    capture_output=True,
-                    timeout=30
-                )
-            else:
-                # Local execution with uv run
-                result = subprocess.run(
-                    clautorun_cmd,
-                    input=input_data,
-                    text=True,
-                    capture_output=True,
-                    timeout=30
-                )
-
-            # Parse and return the result - single JSON response only
-            if result.stdout:
-                try:
-                    # Try to parse as JSON and forward
-                    response_data = json.loads(result.stdout.strip())
-                    # Add stderr as error field if present
-                    if result.stderr:
-                        response_data["error"] = result.stderr.strip()
-                    print(json.dumps(response_data, sort_keys=True))
-                except json.JSONDecodeError:
-                    # If not JSON, wrap in proper response format
-                    output = {
-                        "continue": False,
-                        "response": result.stdout.strip()
-                    }
-                    if result.stderr:
-                        output["error"] = result.stderr.strip()
-                    print(json.dumps(output, sort_keys=True))
-            elif result.stderr:
-                # Only stderr, no stdout - return error
-                print(json.dumps({
-                    "continue": True,
-                    "response": "",
-                    "error": result.stderr.strip()
-                }, sort_keys=True))
-            else:
-                # No output at all - return empty continue
-                print(json.dumps({
-                    "continue": True,
-                    "response": ""
-                }, sort_keys=True))
-
-        except subprocess.TimeoutExpired:
-            print(json.dumps({
+            payload = json.loads(input_data)
+        except json.JSONDecodeError as e:
+            result = {
                 "continue": True,
                 "response": "",
-                "error": "Command execution timed out"
-            }, sort_keys=True))
-        except Exception as e:
-            print(json.dumps({
-                "continue": True,
-                "response": "",
-                "error": f"Command execution failed: {e}"
-            }, sort_keys=True))
+                "error": f"Invalid JSON: {e}"
+            }
+            print(json.dumps(result, sort_keys=True))
+            sys.stdout.flush()
+            return
 
+        # Extract input data
+        prompt = payload.get('prompt', '').strip()
+        session_id = payload.get('session_id', 'default')
+
+        # Command detection - exact match first, then prefix match (only for autorun)
+        command = None
+        # Try exact match first
+        command = CONFIG["command_mappings"].get(prompt, None)
+
+        if not command:
+            # Check for commands that support arguments (autorun and prefixed versions)
+            for cmd_key, cmd_value in CONFIG["command_mappings"].items():
+                if cmd_key.startswith('/autorun') and (prompt.startswith(cmd_key) or prompt.startswith('/clautorun ')):
+                    command = cmd_value
+                    break
+
+        if command and command in COMMAND_HANDLERS:
+            # Handle command locally
+            try:
+                if command == "activate":
+                    response = COMMAND_HANDLERS[command](prompt)
+                else:
+                    response = COMMAND_HANDLERS[command]()
+
+                # Update state for policy commands
+                if command in ["SEARCH", "ALLOW", "JUSTIFY"]:
+                    _simple_state["file_policy"] = command
+
+                result = {
+                    "continue": False,  # Command handled locally
+                    "response": response
+                }
+            except Exception as e:
+                result = {
+                    "continue": True,
+                    "response": "",
+                    "error": f"Command execution failed: {e}"
+                }
+        else:
+            # Let AI handle non-commands
+            result = {
+                "continue": True,  # Pass to AI
+                "response": ""
+            }
+
+        # Return JSON response
+        print(json.dumps(result, sort_keys=True))
         sys.stdout.flush()
 
     except Exception as e:
