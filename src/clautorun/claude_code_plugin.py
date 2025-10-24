@@ -41,11 +41,14 @@ def main():
         prompt = payload.get('prompt', '')
         session_id = payload.get('session_id', 'default')
 
-        # Efficient command detection - check for exact matches first, then prefix matches
+        # Efficient command detection - exact match first, then prefix match ONLY for autorun commands
         command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
         if not command:
-            # Check for commands that support arguments (autorun)
-            command = next((v for k, v in CONFIG["command_mappings"].items() if prompt.startswith(k)), None)
+            # Check for commands that support arguments (autorun and prefixed versions)
+            for k, v in CONFIG["command_mappings"].items():
+                if k.startswith('/autorun') and (prompt.startswith(k) or prompt.startswith('/clautorun ')):
+                    command = v
+                    break
 
         if command and command in COMMAND_HANDLERS:
             # Handle command locally, don't send to AI
