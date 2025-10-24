@@ -108,7 +108,7 @@ def test_command_mappings():
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "status"
+        "/afst": "STATUS"
     }
 
     for cmd, expected_action in expected_mappings.items():
@@ -131,48 +131,81 @@ def test_command_handlers():
     # Use a simple dict instead of shelve for testing
     test_state = {}
 
-    # Test policy commands
-    response = COMMAND_HANDLERS["SEARCH"](test_state)
-    expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
-    assert response == expected, f"SEARCH handler response mismatch"
-    assert test_state["file_policy"] == "SEARCH", "SEARCH handler should update state"
+    # Test policy commands (both uppercase and lowercase)
+    for policy_cmd in ["SEARCH", "search"]:
+        test_state.clear()
+        response = COMMAND_HANDLERS[policy_cmd](test_state)
+        expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
+        assert response == expected, f"{policy_cmd} handler response mismatch"
+        assert test_state["file_policy"] == "SEARCH", f"{policy_cmd} handler should update state"
 
-    response = COMMAND_HANDLERS["ALLOW"](test_state)
-    expected = "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
-    assert response == expected, f"ALLOW handler response mismatch"
-    assert test_state["file_policy"] == "ALLOW", "ALLOW handler should update state"
+    for policy_cmd in ["ALLOW", "allow"]:
+        test_state.clear()
+        response = COMMAND_HANDLERS[policy_cmd](test_state)
+        expected = "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
+        assert response == expected, f"{policy_cmd} handler response mismatch"
+        assert test_state["file_policy"] == "ALLOW", f"{policy_cmd} handler should update state"
 
-    response = COMMAND_HANDLERS["JUSTIFY"](test_state)
-    expected = "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
-    assert response == expected, f"JUSTIFY handler response mismatch"
-    assert test_state["file_policy"] == "JUSTIFY", "JUSTIFY handler should update state"
+    for policy_cmd in ["JUSTIFY", "justify"]:
+        test_state.clear()
+        response = COMMAND_HANDLERS[policy_cmd](test_state)
+        expected = "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
+        assert response == expected, f"{policy_cmd} handler response mismatch"
+        assert test_state["file_policy"] == "JUSTIFY", f"{policy_cmd} handler should update state"
 
-    # Test status command
-    response = COMMAND_HANDLERS["STATUS"](test_state)
-    expected = "Current policy: justify-create"
-    assert response == expected, f"STATUS handler response mismatch"
+    # Test status command (both versions)
+    for status_cmd in ["STATUS", "status"]:
+        response = COMMAND_HANDLERS[status_cmd](test_state)
+        expected = "Current policy: justify-create"
+        assert response == expected, f"{status_cmd} handler response mismatch"
 
-    # Test stop commands
-    response = COMMAND_HANDLERS["STOP"](test_state)
-    expected = "Autorun stopped"
-    assert response == expected, f"STOP handler response mismatch"
-    assert test_state["session_status"] == "stopped", "STOP handler should update state"
+    # Test stop commands (both versions)
+    for stop_cmd in ["stop", "STOP"]:
+        test_state.clear()
+        response = COMMAND_HANDLERS[stop_cmd](test_state)
+        expected = "Autorun stopped"
+        assert response == expected, f"{stop_cmd} handler response mismatch"
+        assert test_state["session_status"] == "stopped", f"{stop_cmd} handler should update state"
 
-    response = COMMAND_HANDLERS["EMERGENCY_STOP"](test_state)
-    expected = "Emergency stop activated"
-    assert response == expected, f"EMERGENCY_STOP handler response mismatch"
-    assert test_state["session_status"] == "emergency_stopped", "EMERGENCY_STOP handler should update state"
+    for emergency_cmd in ["emergency_stop", "EMERGENCY_STOP"]:
+        test_state.clear()
+        response = COMMAND_HANDLERS[emergency_cmd](test_state)
+        expected = "Emergency stop activated"
+        assert response == expected, f"{emergency_cmd} handler response mismatch"
+        assert test_state["session_status"] == "emergency_stopped", f"{emergency_cmd} handler should update state"
 
-    # Test activation command
+    # Test activation command (both versions)
     test_prompt = "/autorun test task description"
-    test_state["session_id"] = "test_session"  # Set session_id for monitor
-    response = COMMAND_HANDLERS["activate"](test_state, test_prompt)
-    assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response, "ACTIVATE handler should return injection template"
-    assert test_state["session_status"] == "active", "ACTIVATE handler should set session status"
-    assert test_state["autorun_stage"] == "INITIAL", "ACTIVATE handler should set autorun stage"
-    assert test_state["activation_prompt"] == test_prompt, "ACTIVATE handler should store activation prompt"
+    for activate_cmd in ["activate", "ACTIVATE"]:
+        test_state.clear()
+        test_state["session_id"] = "test_session"  # Set session_id for monitor
+        response = COMMAND_HANDLERS[activate_cmd](test_state, test_prompt)
+        assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response, f"{activate_cmd} handler should return injection template"
+        assert test_state["session_status"] == "active", f"{activate_cmd} handler should set session status"
+        assert test_state["autorun_stage"] == "INITIAL", f"{activate_cmd} handler should set autorun stage"
+        assert test_state["activation_prompt"] == test_prompt, f"{activate_cmd} handler should store activation prompt"
 
-    print("✅ All command handlers produce correct autorun5.py responses")
+    print("✅ All command handlers produce correct autorun5.py responses (both uppercase and lowercase)")
+
+def test_both_capitalizations_available():
+    """Test that both uppercase and lowercase versions are available for all commands"""
+    expected_pairs = [
+        ("SEARCH", "search"),
+        ("ALLOW", "allow"),
+        ("JUSTIFY", "justify"),
+        ("STATUS", "status"),
+        ("activate", "ACTIVATE"),
+        ("stop", "STOP"),
+        ("emergency_stop", "EMERGENCY_STOP")
+    ]
+
+    for uppercase, lowercase in expected_pairs:
+        assert uppercase in COMMAND_HANDLERS, f"Missing uppercase handler: {uppercase}"
+        assert lowercase in COMMAND_HANDLERS, f"Missing lowercase handler: {lowercase}"
+        # Both should point to the same function
+        assert COMMAND_HANDLERS[uppercase] == COMMAND_HANDLERS[lowercase], f"Handlers for {uppercase}/{lowercase} should be the same function"
+
+    print("✅ Both uppercase and lowercase handlers available for all commands")
 
 def test_log_function():
     """Test log_info function works like autorun5.py"""
@@ -197,6 +230,7 @@ def main():
     test_command_mappings()
     test_config_values()
     test_command_handlers()
+    test_both_capitalizations_available()
     test_log_function()
 
     print("\n🎯 All tests passed! clautorun is 100% compatible with autorun5.py")
@@ -205,6 +239,7 @@ def main():
     print("   ✅ All configuration values match")
     print("   ✅ All command responses match")
     print("   ✅ All state management works correctly")
+    print("   ✅ Both uppercase and lowercase handlers available")
     print("   ✅ No regressions detected")
 
 if __name__ == "__main__":

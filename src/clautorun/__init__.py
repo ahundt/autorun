@@ -232,14 +232,23 @@ except ImportError:
         return "Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals."
 
     COMMAND_HANDLERS = {
+        # Policy commands (both versions available)
         "SEARCH": handle_search,
+        "search": handle_search,
         "ALLOW": handle_allow,
+        "allow": handle_allow,
         "JUSTIFY": handle_justify,
+        "justify": handle_justify,
         "STATUS": handle_status,
-        "status": handle_status,  # Add lowercase version for compatibility
+        "status": handle_status,
+
+        # Control commands (both versions available)
+        "activate": handle_activate,
+        "ACTIVATE": handle_activate,
         "stop": handle_stop,
+        "STOP": handle_stop,
         "emergency_stop": handle_emergency_stop,
-        "activate": handle_activate
+        "EMERGENCY_STOP": handle_emergency_stop
     }
 
     def log_info(message):

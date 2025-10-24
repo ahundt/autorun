@@ -101,16 +101,19 @@ def log_info(message):
 
 def handle_search(state):
     """Handle SEARCH command"""
+    state["file_policy"] = "SEARCH"
     policy_name, policy_desc = CONFIG["policies"]["SEARCH"]
     return f"AutoFile policy: {policy_name} - {policy_desc}"
 
 def handle_allow(state):
     """Handle ALLOW command"""
+    state["file_policy"] = "ALLOW"
     policy_name, policy_desc = CONFIG["policies"]["ALLOW"]
     return f"AutoFile policy: {policy_name} - {policy_desc}"
 
 def handle_justify(state):
     """Handle JUSTIFY command"""
+    state["file_policy"] = "JUSTIFY"
     policy_name, policy_desc = CONFIG["policies"]["JUSTIFY"]
     return f"AutoFile policy: {policy_name} - {policy_desc}"
 
@@ -122,15 +125,19 @@ def handle_status(state):
 
 def handle_stop(state):
     """Handle STOP command"""
+    state["session_status"] = "stopped"
     return "Autorun stopped"
 
 def handle_emergency_stop(state):
     """Handle EMERGENCY_STOP command"""
+    state["session_status"] = "emergency_stopped"
     return "Emergency stop activated"
 
 def handle_activate(state, prompt):
     """Handle AUTORUN activation"""
-    # Store original prompt
+    # Store original prompt and set session status
+    state["session_status"] = "active"
+    state["autorun_stage"] = "INITIAL"
     state["activation_prompt"] = prompt
     state["file_policy"] = state.get("file_policy", "ALLOW")
 
@@ -153,15 +160,25 @@ FILE CREATION POLICY: {policy_desc}
 Original task: {prompt}
 """
 
-# Command handlers
+# Command handlers - both uppercase and lowercase versions available for all commands
 COMMAND_HANDLERS = {
+    # Policy commands (both versions available)
     "SEARCH": handle_search,
+    "search": handle_search,
     "ALLOW": handle_allow,
+    "allow": handle_allow,
     "JUSTIFY": handle_justify,
+    "justify": handle_justify,
     "STATUS": handle_status,
+    "status": handle_status,
+
+    # Control commands (both versions available)
+    "activate": handle_activate,
+    "ACTIVATE": handle_activate,
     "stop": handle_stop,
+    "STOP": handle_stop,
     "emergency_stop": handle_emergency_stop,
-    "activate": handle_activate
+    "EMERGENCY_STOP": handle_emergency_stop
 }
 
 def main():
@@ -211,15 +228,16 @@ def main():
             # Handle command locally, don't send to AI
             try:
                 with session_state(session_id) as state:
-                    if command == "activate":
+                    if command in ["activate", "ACTIVATE"]:
                         # For autorun activation, return the injection template
                         response = COMMAND_HANDLERS[command](state, prompt)
                     else:
                         response = COMMAND_HANDLERS[command](state)
 
-                    # Update state for policy commands
-                    if command in ["SEARCH", "ALLOW", "JUSTIFY"]:
-                        state["file_policy"] = command
+                    # Update state for policy commands (handle both cases)
+                    if command in ["SEARCH", "ALLOW", "JUSTIFY", "search", "allow", "justify"]:
+                        # Always store in uppercase for consistency
+                        state["file_policy"] = command.upper()
 
                 # Return response to Claude Code
                 result = {
