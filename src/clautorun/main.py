@@ -8,7 +8,6 @@ import sys
 import time
 import threading
 import asyncio
-from typing import Dict, Any, Optional
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -150,7 +149,6 @@ def session_state(session_id: str):
                 log_info(f"Session {session_id}: Default backend failed: {e}")
                 try:
                     # Try dumbdbm fallback
-                    import dbm.dumb
                     test_db = STATE_DIR / f"test_dumbdbm_{session_id}.db"
                     test_state = shelve.open(str(test_db), writeback=True)
                     test_state["test"] = "test"  # Actually write something to test
@@ -165,7 +163,7 @@ def session_state(session_id: str):
                     try:
                         _session_backends[session_id] = "default"
                         log_info(f"Session {session_id}: Trying default shelve without test")
-                    except Exception as e3:
+                    except Exception:
                         # Last resort: use in-memory with thread-safe dict
                         _session_backends[session_id] = "memory"
                         log_info(f"Session {session_id}: Using in-memory fallback")
@@ -178,7 +176,6 @@ def session_state(session_id: str):
         if backend == "default":
             state = shelve.open(str(STATE_DIR / f"{session_id}.db"), writeback=True)
         elif backend == "dumbdbm":
-            import dbm.dumb
             state = shelve.open(str(STATE_DIR / f"{session_id}_dumb.db"), writeback=True)
         else:  # memory
             state = {}
@@ -264,7 +261,7 @@ def handle_stop(state):
 
 def handle_emergency_stop(state):
     """Handle EMERGENCY_STOP command - update state and return response"""
-    log_info(f"Emergency stop: autorun session")
+    log_info("Emergency stop: autorun session")
     # Note: session_id must be in state (added by intercept_commands caller)
     _manage_monitor(state, 'stop')
     state["session_status"] = "emergency_stopped"
@@ -272,7 +269,7 @@ def handle_emergency_stop(state):
 
 def handle_activate(state, prompt=""):
     """Handle AUTORUN activation - complete autorun setup with injection template"""
-    log_info(f"Activating autorun: autorun session")
+    log_info("Activating autorun: autorun session")
 
     # Preserve file_policy and session_id before clearing
     old_file_policy = state.get("file_policy", "ALLOW")
@@ -388,7 +385,7 @@ def pretooluse_handler(ctx):
         # Write tools - always apply policy
         if file_policy == "SEARCH":
             # Extensive logging for SEARCH policy enforcement
-            log_info(f"PreToolUse SEARCH Policy Debug:")
+            log_info("PreToolUse SEARCH Policy Debug:")
             log_info(f"  Current Policy: {file_policy}")
             log_info(f"  File Path: {file_path}")
             log_info(f"  Path Exists: {Path(file_path).exists() if file_path else 'No file path'}")
