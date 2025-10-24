@@ -3,7 +3,65 @@
 import json
 import sys
 import os
+import time
 from pathlib import Path
+
+# Import robust session manager with centralized error handling
+try:
+    from .session_manager import session_state, shared_session_state, SessionStateError, SessionTimeoutError
+    SESSION_MANAGER_AVAILABLE = True
+except ImportError as e:
+    # Use centralized error handling - follows DRY principles
+    try:
+        from .error_handling import handle_import_error
+
+        if handle_import_error(e, exit_on_error=False):
+            # The error was handled by our centralized function, exit
+            sys.exit(1)
+        else:
+            # Standard fallback for other import errors
+            pass
+    except ImportError:
+        # If error handling itself can't be imported, show basic message
+        if "clautorun.python_check" in str(e) or "is not a package" in str(e):
+            print("=" * 70)
+            print("❌ IMPORT ERROR: clautorun module structure issue detected")
+            print("=" * 70)
+            print("UV environment not properly configured. Install UV and activate environment.")
+            print("Run: curl -LsSf https://astral.sh/uv/install.sh | sh")
+            print("Then: uv venv --python 3.10 && source .venv/bin/activate && uv sync --extra claude-code")
+            print("=" * 70)
+            sys.exit(1)
+
+    # Standard fallback for other import errors
+        SESSION_MANAGER_AVAILABLE = False
+        _simple_state = {}
+
+        def session_state(session_id: str, timeout: float = 30.0, shared_access: bool = False):
+            """Fallback session state using simple dict"""
+            class FallbackSessionState:
+                def __init__(self, session_id):
+                    self.session_id = session_id
+
+                def __enter__(self):
+                    if self.session_id not in _simple_state:
+                        _simple_state[self.session_id] = {}
+                    return _simple_state[self.session_id]
+
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    return False
+
+            return FallbackSessionState(session_id)
+
+        def shared_session_state(session_id: str, timeout: float = 5.0):
+            """Fallback shared session state"""
+            return session_state(session_id, timeout, shared_access=True)
+
+        class SessionStateError(Exception):
+            pass
+
+        class SessionTimeoutError(Exception):
+            pass
 
 # Self-contained configuration to avoid circular imports
 CONFIG = {
@@ -23,23 +81,23 @@ CONFIG = {
     }
 }
 
-# Simple state management using dict to avoid shelve complexity
-_simple_state = {}
+def log_info(message):
+    """Log info message for debugging"""
+    debug_value = os.getenv("DEBUG", "false").lower().strip()
+    true_values = {"true", "1", "yes", "on", "enabled"}
+    if debug_value not in true_values:
+        return
 
-def session_state(session_id):
-    """Simple session state context manager"""
-    class SessionContext:
-        def __init__(self, session_id):
-            self.session_id = session_id
-            self.state = _simple_state
-
-        def __enter__(self):
-            return self.state
-
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            return False
-
-    return SessionContext(session_id)
+    try:
+        state_dir = Path.home() / ".claude" / "sessions"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        with open(state_dir / "plugin.log", "a") as f:
+            log_time = time.strftime('%Y-%m-%d %H:%M:%S')
+            pid = os.getpid()
+            f.write(f"[{log_time}] {pid}: {message}\n")
+            f.flush()
+    except Exception:
+        pass  # Silently ignore logging failures
 
 def handle_search(state):
     """Handle SEARCH command"""

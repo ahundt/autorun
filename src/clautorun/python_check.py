@@ -6,6 +6,17 @@ Python version checking utilities for clautorun
 
 import sys
 
+# Import centralized error handling for consistency
+try:
+    from .error_handling import show_comprehensive_uv_error
+except ImportError:
+    def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module structure issue detected"):
+        """Fallback UV error message"""
+        print("=" * 70)
+        print(f"❌ {error_type}: {error_message}")
+        print("=" * 70)
+        print("UV environment not properly configured. Install UV and activate environment.")
+
 
 def check_python_version():
     """
@@ -17,7 +28,7 @@ def check_python_version():
     # Check for Python 2.x - critical error
     if sys.version_info[0] < 3:
         print("=" * 70)
-        print("❌ PYTHON VERSION ERROR: clautorun requires Python 3.10 or higher")
+        print("❌ PYTHON VERSION ERROR: clautorun requires Python 3.0 or higher (3.10+ preferred)")
         print("=" * 70)
         print()
         print("You are using Python {}.{} which is incompatible.".format(
@@ -39,14 +50,18 @@ def check_python_version():
         print("   uv venv")
         print("   source .venv/bin/activate")
         print("   uv sync --extra claude-code")
+        print("   # For Python 3.10+ (recommended): uv venv --python 3.10")
         print()
+        print("=" * 70)
+        print("For comprehensive troubleshooting, run:")
+        print("   python3 -c \"from clautorun.error_handling import show_uv_environment_status; show_uv_environment_status()\"")
         print("=" * 70)
         return False
 
     # Check for Python 3.0-3.9 - warning but allow usage
     if sys.version_info < (3, 10):
         print("=" * 70)
-        print("⚠️  PYTHON VERSION WARNING: Python 3.10+ recommended")
+        print("⚠️  PYTHON VERSION WARNING: Python 3.10+ preferred for full compatibility")
         print("=" * 70)
         print()
         print("You are using Python {}.{}.{}.".format(

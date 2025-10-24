@@ -20,27 +20,44 @@ if sys.version_info[0] >= 3:
             sys.exit(1)
         from clautorun.main import main
     except ImportError as e:
-        print("=" * 70)
-        print("❌ IMPORT ERROR: {}".format(str(e)))
-        print("=" * 70)
-        print()
-        print("This might be a Python version compatibility issue.")
-        print("Make sure you're using Python 3.10+ and have activated your UV environment.")
-        print()
-        print("🔧 SOLUTIONS:")
-        print("1. Use python3 explicitly:")
-        print("   python3 -m clautorun install")
-        print()
-        print("2. Activate your UV virtual environment:")
-        print("   source .venv/bin/activate")
-        print("   python -m clautorun install")
-        print()
-        print("=" * 70)
-        sys.exit(1)
+        # Use centralized error handling - follows DRY principles
+        try:
+            # Add src to path for error handling import
+            sys.path.insert(0, str(Path(__file__).parent / "src"))
+            from clautorun.error_handling import handle_import_error
+
+            if handle_import_error(e):
+                sys.exit(1)
+            else:
+                # Fallback to basic error message for non-clautorun import errors
+                print("=" * 70)
+                print("❌ IMPORT ERROR: {}".format(str(e)))
+                print("=" * 70)
+                print()
+                print("This might be a Python version compatibility issue.")
+                print("Make sure you're using Python 3.10+ and have activated your UV environment.")
+                print()
+                print("🔧 SOLUTIONS:")
+                print("1. Use python3 explicitly:")
+                print("   python3 -m clautorun install")
+                print()
+                print("2. Activate your UV virtual environment:")
+                print("   source .venv/bin/activate")
+                print("   python -m clautorun install")
+                print()
+                print("=" * 70)
+                sys.exit(1)
+        except ImportError:
+            # If even error handling can't be imported, show basic message
+            print("=" * 70)
+            print("❌ IMPORT ERROR: {}".format(str(e)))
+            print("=" * 70)
+            print("Install UV and activate virtual environment: source .venv/bin/activate")
+            sys.exit(1)
 else:
     # Python 2.x - provide helpful error message
     print("=" * 70)
-    print("❌ PYTHON VERSION ERROR: clautorun requires Python 3.10 or higher")
+    print("❌ PYTHON VERSION ERROR: clautorun requires Python 3.0 or higher (3.10+ preferred)")
     print("=" * 70)
     print()
     print("You are using Python {}.{} which is incompatible.".format(
@@ -59,6 +76,7 @@ else:
     print("   uv venv")
     print("   source .venv/bin/activate")
     print("   uv sync --extra claude-code")
+    print("   # For Python 3.10+ (recommended): uv venv --python 3.10")
     print()
     print("=" * 70)
     sys.exit(1)
