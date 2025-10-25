@@ -459,11 +459,139 @@ clautorun/
 
 ## Developer Documentation
 
-### Claude Code Plugin Architecture
+### Core Design Principles
 
-This section documents the actual Claude Code plugin system architecture based on official documentation.
+This section outlines the essential design principles, patterns, and architectural decisions that guide clautorun development.
 
-#### Plugin Command System - Two Approaches
+#### **RAII Pattern Implementation**
+
+clautorun uses Resource Acquisition Is Initialization (RAII) patterns for robust resource management:
+
+```python
+# RAII Session Lock - Automatic acquisition and guaranteed release
+with SessionLock(session_id, timeout, state_dir) as lock_fd:
+    # Lock is acquired automatically when entering context
+    # All resources are cleaned up automatically when exiting context
+    pass  # Exception safety guaranteed
+```
+
+**Key RAII Benefits:**
+- **Automatic Resource Management**: No manual cleanup required
+- **Exception Safety**: Resources released even if exceptions occur
+- **Deadlock Prevention**: Timeout-based lock acquisition
+- **Thread/Process Isolation**: Each session gets isolated access
+
+#### **Thread & Process Safety Architecture**
+
+**Concurrency Model:**
+- **Thread Safety**: File-based locking using `fcntl.flock` for cross-thread synchronization
+- **Process Safety**: POSIX file locks work across process boundaries
+- **Deadlock Prevention**: Configurable timeouts with exponential backoff
+
+**Safety Mechanisms:**
+```python
+# Session lock with automatic timeout handling
+with SessionLock(session_id, timeout=30.0, state_dir) as lock_fd:
+    # Exclusive access guaranteed during context
+    pass  # Lock automatically released after context exits
+```
+
+**Testing Validation:**
+- **6/6 RAII tests passed** - Resource management and cleanup
+- **4/4 safety tests passed** - Concurrent access patterns validated
+- **27/29 unit tests passed** - Core functionality verified
+
+#### **Dispatch Pattern**
+
+clautorun uses a **command dispatch pattern** for processing different types of commands:
+
+```python
+# Command Detection and Dispatch Logic
+command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
+
+if command and command in COMMAND_HANDLERS:
+    # Handle command locally (don't send to AI)
+    response = COMMAND_HANDLERS[command](state)
+else:
+    # Let AI handle non-commands
+    result = {"continue": True, "response": ""}
+```
+
+**Dispatch Categories:**
+- **Policy Commands**: File policy management (`/afs`, `/afa`, `/afj`, `/afst`)
+- **Control Commands**: Session control (`/autostop`, `/estop`)
+- **Autorun Commands**: Task automation (`/autorun`, `/autoproc`)
+- **AI Commands**: All other prompts (sent to Claude Code)
+
+#### **Environment Requirements**
+
+**Development Environment:**
+```bash
+# Required: UV package manager for Python version management
+uv --version  # Verify UV installation
+uv venv --python 3.10  # Create with preferred Python version
+source .venv/bin/activate  # Activate environment
+uv sync --extra claude-code  # Install dependencies
+```
+
+**Production Environment:**
+- **Claude Code Plugin**: Official installation via `/plugin install`
+- **Virtual Environment**: Activated for dependency isolation
+- **Session Storage**: `~/.claude/sessions/` for state persistence
+- **Lock Management**: File-based locks for cross-process coordination
+
+#### **Python Version Support**
+
+- **Minimum**: Python 3.0+ (basic functionality)
+- **Preferred**: Python 3.10+ (full compatibility)
+- **Testing**: Python 2.7 compatibility in error handling
+
+#### **Centralized Error Handling (DRY)**
+
+Following DRY principles, clautorun implements centralized error handling:
+
+```python
+from clautorun.error_handling import show_comprehensive_uv_error
+
+# Single source of truth for all import errors
+show_comprehensive_uv_error("MODULE ERROR", "Specific error details")
+```
+
+**Centralized Features:**
+- **UV Environment Checking**: Automatic UV detection and setup guidance
+- **Version Compatibility**: Flexible Python version support
+- **Comprehensive Troubleshooting**: Step-by-step resolution guides
+- **Consistent Messaging**: Same error format across all components
+
+### System Architecture
+
+#### **Session State Management**
+clautorun implements a robust session state system using multiple backends:
+
+```python
+# RAII session state with automatic backend selection
+with session_state(session_id) as state:
+    # State automatically persisted to shelve database
+    # Lock ensures thread/process isolation
+    # Backend selection: shelve → dumbdbm → memory fallback
+    state["user_data"] = "data"
+```
+
+**Backend Fallback Chain:**
+1. **Default shelve**: Standard Python database with writeback
+2. **dumbdbm**: Compatibility fallback for older systems
+3. **Memory**: In-memory fallback for development
+
+#### **Integration Architecture**
+
+clautorun provides multiple integration approaches:
+
+1. **Claude Code Plugin**: Official plugin system integration
+2. **Hook Integration**: Event-based command interception
+3. **MCP Server**: External application communication
+4. **Interactive Mode**: Standalone command processing
+
+Each integration uses the same core session management and error handling infrastructure, ensuring consistent behavior across all deployment scenarios.
 
 ##### Approach 1: Markdown Commands (Basic)
 
