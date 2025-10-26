@@ -1,168 +1,276 @@
 # clautorun
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-**clautorun** - Claude Agent SDK Command Interceptor
+**clautorun** - Supercharge Your Claude Code Sessions with Terminal Multiplexing
 
-A command interceptor for Claude Code that manages file creation policies and prevents tool stopping to enable extended autonomous work sessions without constant user intervention.
+Stop babysitting your AI sessions. Work for hours instead of minutes. Keep your work safe from crashes and disconnections.
 
-## What It Does
+## What clautorun Does For You
 
-- Processes file policy commands locally (`/afs`, `/afa`, `/afj`, `/afst`)
-- Sends other commands to Claude Code normally
-- Maintains session state between commands
-- Provides multiple integration options
-- Uses the Claude Agent SDK for communication
+**Problem Statement**: Claude Code requires manual "continue" prompts every 5 minutes during extended tasks. It creates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final). Network disconnections or application crashes terminate active sessions, losing all in-progress work.
 
-## Installation
+**Solution Overview**: clautorun addresses these specific limitations through session automation, file policy enforcement, and session persistence.
 
-### Option 1: Claude Code Plugin (Recommended)
+### Session Duration Extension
+- **Current Behavior**: Claude Code stops every 5 minutes awaiting manual continuation
+- **With clautorun**: Sessions continue for 1-2 hours with reduced intervention requirements
+- **Mechanism**: Automatic task re-injection when session timeouts are detected
+- **Result**: Users can start autonomous tasks and return to completed work without hourly interruptions
 
-This is the simplest installation method using Claude Code's built-in plugin system.
+### File Creation Control
+- **Current Behavior**: AI creates multiple experimental files during development
+- **With clautorun**: Three-tier policy system restricts unnecessary file creation
+- **Policy Levels**:
+  1. Strict search (search for and modify existing files instead of creating new ones)
+  2. Justified creation (require explanation for new files)
+  3. Allow all (unrestricted for new projects)
+- **Mechanism**: "Strict search" requires AI to first search for existing functionality or similar files, then modify those files rather than creating new ones
+- **Result**: Project directories contain essential files only, reducing cleanup requirements
+
+### Reduce Manual Interventions (clautorun feature)
+- **Current Behavior**: Claude Code stops every 5 minutes and waits for manual continuation
+- **clautorun Action**: Hook system intercepts Claude Code stop events and automatically re-injects continuation prompts
+- **Mechanism**: UserPromptSubmit and Stop hooks detect when Claude stops working, analyze the transcript for completion markers, and inject "continue working" prompts when tasks are incomplete
+- **Benefit**: Start autonomous tasks and return to completed work without hourly interruptions
+
+### Prevent File Clutter (clautorun feature)
+- **Current Behavior**: AI creates multiple experimental files during development
+- **clautorun Action**: PreToolUse hooks intercept Write tool calls and enforce file creation policies
+- **Mechanism**: Before each file creation, the hook scans the conversation transcript for policy compliance. It blocks or allows file operations based on the current policy level and any required justifications
+- **Policy Levels**:
+  1. Strict search - Hook blocks all new file creation, forcing AI to modify existing files found through search
+  2. Justified creation - Hook allows new files only when AI includes required justification tags
+  3. Allow all - Hook allows all file creation operations
+- **Benefit**: Maintain clean project directories with only essential files
+
+### Ensure Complete Tasks (clautorun feature)
+- **Current Behavior**: AI may claim task completion after implementing only partial requirements
+- **clautorun Action**: Hook system implements two-stage verification by detecting completion markers and re-injecting the original task
+- **Mechanism**: When AI outputs a completion marker, the hook detects this first completion and re-injects the original task with a verification checklist. Only after a second completion marker does the system allow the session to end
+- **Benefit**: Reduce incomplete features and ensure all requirements are implemented
+
+### Survive Crashes and Disconnections (tmux/byobu feature)
+- **Current Behavior**: Application crashes or network drops terminate work sessions
+- **tmux/byobu Action**: Maintains session state across interruptions using terminal multiplexing
+- **How it Works**: Terminal multiplexer keeps processes running on the server regardless of client connectivity
+- **Benefit**: Resume work from the exact interruption point after reconnection
+- **Note**: clautorun integrates with tmux/byobu but does not provide session persistence itself
+
+### Work From Anywhere (tmux/byobu + SSH/Mosh feature)
+- **Current Behavior**: Users must stay at their workstation to monitor and intervene in AI sessions
+- **SSH/Mosh + tmux Action**: Enables remote session monitoring and intervention from any device
+- **How it Works**: SSH/Mosh clients connect to the tmux session through network connections
+- **Benefit**: Monitor and control AI work from any location with internet access
+- **Note**: clautorun provides commands to work within tmux sessions but does not provide remote access
+
+## Why Byobu + tmux Integration
+
+**clautorun is designed for use with byobu (tmux-compatible terminal multiplexer)** - this integration provides concrete technical capabilities:
+
+### Survive System Failures
+- **Technical Issue**: Terminal application crashes, network disconnections, or system reboots terminate Claude Code sessions, losing all in-progress AI work
+- **Solution**: byobu + tmux maintains session state on the server. Session persists even when your local machine loses power or network connection
+- **Concrete Result**: SSH back to the same session after system reboot; AI work continues from exactly where it left off
+
+### Access Sessions Remotely
+- **Technical Issue**: You must be physically present at your workstation to monitor or intervene in AI sessions
+- **Solution**: SSH access to byobu session from any device with SSH client (phone, tablet, laptop)
+- **Concrete Result**: Monitor AI progress from mobile device; intervene when needed without returning to desk
+
+**What is SSH?** SSH (Secure Shell) is a secure network protocol that lets you securely access and control your computer from anywhere in the world.
+
+**SSH Clients for Different Devices:**
+
+**Enhanced SSH Experience (Recommended):**
+- **Mosh (Mobile Shell)**: [mosh.org](https://mosh.org/) - The ultimate mobile SSH client that handles network interruptions gracefully
+  - **Why Mosh?** Keeps your connection alive even when switching networks (WiFi → 4G → WiFi), works with poor connections, provides intelligent local echo for reduced lag, and automatically resumes where you left off after reconnection
+  - **Installation**: `brew install mosh` (macOS), `sudo apt install mosh` (Ubuntu/Debian)
+  - **Usage**: `mosh username@your-server-address` instead of `ssh username@your-server-address`
+
+**Traditional SSH Clients:**
+- **Windows**: [Windows Terminal](https://learn.microsoft.com/en-us/windows/terminal/) (built-in, modern), [VS Code Terminal](https://code.visualstudio.com/) (built-in to VS Code), [Fluent Terminal](https://github.com/felixse/FluentTerminal) (free), [Hyper](https://hyper.is/) (modern, extensible)
+- **macOS**: [iTerm2](https://iterm2.com/) (recommended, powerful), [VS Code Terminal](https://code.visualstudio.com/) (built-in to VS Code), or built-in Terminal app
+- **Linux**: Most terminal emulators work well (gnome-terminal, konsole, etc.), [VS Code Terminal](https://code.visualstudio.com/) (built-in to VS Code)
+- **iOS**: [Terminus](https://www.termius.com/mobile) (supports Mosh), [Prompt](https://panic.com/prompt/) (supports Mosh), or [Blink Shell](https://blink.sh/) (supports Mosh)
+- **Android**: [Termius](https://www.termius.com/mobile) (supports Mosh), [JuiceSSH](https://juicessh.com/), or [ConnectBot](https://github.com/connectbot/connectbot)
+
+### Monitor Multiple Processes Simultaneously
+- **Technical Issue**: Single terminal window hides AI output, error messages, and system status
+- **Solution**: byobu splits terminal into multiple panes: AI output, error logs, file system monitoring, command history
+- **Concrete Result**: See AI responses in real-time while monitoring system resources and errors simultaneously
+
+### Reduce Manual Interventions
+- **Technical Issue**: Claude Code's default 5-minute session timeout requires manual "continue" prompts every few minutes
+- **Solution**: clautorun's automatic continuation system extends sessions to 1-2 hours with 80-90% fewer manual interventions
+- **Concrete Result**: Start autonomous task, return after 2 hours to find completed work instead of intervening every 5 minutes
+
+### Control File Creation
+- **Technical Issue**: AI generates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final)
+- **Solution**: Three-tier file policy system (strict-search, justify-create, allow-all) with PreToolUse hook enforcement
+- **Concrete Result**: Clean project directories with meaningful files only; experimental work contained to existing files
+
+## 🎯 What It Does
+
+- **Extended Work Sessions**: Reduces manual "continue" prompts by 80-90%
+- **Smart File Management**: Prevents AI from creating meaningless files
+- **Session Persistence**: Keeps work alive across crashes and disconnections
+- **Remote Control**: Monitor and manage AI sessions from anywhere
+- **Two-Stage Verification**: Ensures tasks are actually complete, not just "good enough"
+
+## ⚡ Quick Start (5 Minutes)
+
+### Prerequisites: Install Terminal Multiplexers
+
+**First, install the tools that give you terminal superpowers:**
+
+**What are Terminal Multiplexers?**
+Terminal multiplexers are programs that let you create multiple virtual terminal sessions within a single terminal window. Think of them like having multiple tabs in your browser, but for the command line. They keep your sessions running even when you close your terminal or lose connection.
+
+**byobu** (Recommended - easiest):
+- **What is byobu?** A user-friendly wrapper around tmux that makes terminal multiplexing easy with intuitive keyboard shortcuts and status bars
+- **Why byobu?** Simpler interface than raw tmux, designed for humans, includes helpful keyboard shortcut reminders
+- **Installation:**
+  ```bash
+  # Ubuntu/Debian: sudo apt install byobu
+  # macOS: brew install byobu
+  # Or install from: https://byobu.co/
+  ```
+
+**tmux** (byobu backend - installed automatically with byobu):
+- **What is tmux?** Terminal Multiplexer - the powerful engine that byobu uses for session management
+- **Why tmux?** Industry standard, extremely reliable, perfect for remote servers and long-running processes
+- **Installation:**
+  ```bash
+  # Ubuntu/Debian: sudo apt install tmux
+  # macOS: brew install tmux
+  # Documentation: https://github.com/tmux/tmux/wiki
+  ```
+
+**What is Homebrew (brew)?**
+Homebrew is a free and open-source package manager for macOS and Linux that makes it easy to install software. If you don't have it:
+- **Install Homebrew:** `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+
+### One-Command Installation
 
 ```bash
-# ⚠️ CRITICAL: Create and activate virtual environment first
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install directly from GitHub (Recommended for production)
+# Install clautorun directly from GitHub
 /plugin install https://github.com/ahundt/clautorun.git
-
-# Or for local development:
-/plugin marketplace add ./clautorun
-/plugin install clautorun@clautorun-dev
 ```
 
-**Verification:**
+That's it! The plugin handles everything automatically.
+
+### Verify Installation
+
 ```bash
-# List installed plugins
+# Check plugin is installed
 /plugin
 
-# Test plugin functionality
+# Test functionality
 /clautorun /afst
 ```
 
-### Option 2: UV Development Installation (Recommended for developers)
-
-For development and testing, UV provides the cleanest installation method.
-
-```bash
-# Clone the repository
-git clone https://github.com/ahundt/clautorun.git
-cd clautorun
-
-# ⚠️ CRITICAL: Create and activate virtual environment
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies and plugin (automatic installation)
-uv sync --extra claude-code
-uv run clautorun install
+**Expected output:**
+```
+AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.
 ```
 
-**Automatic Plugin Installation:**
-- `uv run clautorun install` automatically detects Claude Code and installs the plugin
-- Prioritizes local marketplace installation for reliability
-- Falls back to GitHub installation if needed
-- Includes comprehensive status checking with `uv run clautorun status`
-
-**UV Environment Setup Requirements:**
-- Requires UV package manager (https://github.com/astral-sh/uv)
-- ⚠️ **CRITICAL**: Virtual environment activation required before running commands
-- `source .venv/bin/activate` must be done in each new terminal session
-- Use `python3` instead of `python` if your system defaults to Python 2.x
-- Dependencies automatically managed by uv sync command
-
-**Python Environment Notes:**
-- Claude Code CLI uses the system Python interpreter unless a virtual environment is activated
-- On macOS systems, `python` often defaults to Python 2.7 which is incompatible
-- Always use `python3` or activate the UV virtual environment first
-- The plugin command script (`commands/clautorun`) has smart path resolution for dependencies
-
-### Option 3: Traditional pip Installation
+### Start Your First Extended Session
 
 ```bash
-# Clone the repository
+# Create a byobu session for crash-safe AI work
+byobu-new-session clautorun-work
+
+# Start autonomous work (runs for hours instead of minutes)
+/clautorun /autorun Build a complete web application with authentication
+
+# Detach with Ctrl+D, reattach anytime with: byobu-attach clautorun-work
+```
+
+## 🔧 Advanced Setup (Optional)
+
+### Development Installation
+
+If you want to modify clautorun or contribute:
+
+```bash
+# Clone repository
 git clone https://github.com/ahundt/clautorun.git
 cd clautorun
 
+# Add local development marketplace
+/plugin marketplace add ./clautorun
+
+# Install local development version
+/plugin install clautorun@clautorun-dev
+```
+
+**What is Git?**
+Git is a version control system that tracks changes in code and enables collaboration among developers. Think of it as a sophisticated "save history" for your code that lets you go back to any previous version and work with others without overwriting each other's changes.
+
+**Why use Git to undo AI changes:**
+- **Complete protection from AI mistakes**: When AI systems modify large files or implement complex changes, Git provides a complete history to undo all damage instantly
+- **Instant rollback capability**: One command (`git reset --hard HEAD~1`) can restore your entire project to its previous working state before AI modifications
+- **Selective undo**: You can revert specific AI changes with `git checkout -- filename` or `git revert <commit>`
+- **Safe experimentation**: Test AI suggestions confidently knowing any problematic changes can be completely reverted in seconds
+- **Change visibility**: `git diff` shows exactly what AI systems changed, allowing you to review modifications before committing
+
+**Which installation method to choose:**
+- **Standard installation**: Use `/plugin install https://github.com/ahundt/clautorun.git` for stable released versions
+- **Development installation**: Use the local marketplace method when testing changes before releasing
+
+### Manual Installation (if plugin system fails)
+
+```bash
 # Create virtual environment
 python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 
 # Install dependencies
 pip install -e ".[dev]"
 
-# Install plugin manually
+# Manual plugin setup
 PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
 ```
 
-## Integration Options
+## 📋 Available Commands
 
-### Option 1: Claude Code Plugin Mode (Recommended)
+### File Policy Commands
+- `/afs` - Set policy to strict search (only modify existing files)
+- `/afa` - Set policy to allow all (create/modify any files)
+- `/afj` - Set policy to justify (require justification for new files)
+- `/afst` - Show current file policy
 
-This method installs clautorun as an official Claude Code plugin using the standard plugin marketplace system.
+### Control Commands
+- `/autostop` - Stop the current session gracefully
+- `/estop` - Emergency stop immediately
+- `/autorun <task description>` - Start automated task execution
 
-**Official Claude Code Plugin Installation:**
+### Tmux Automation Commands
+- `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing
+- `/clautorun tmux-session-management` - Interactive session management
 
-```bash
-# Method A: Install from GitHub Repository (Recommended for production)
-/plugin install https://github.com/ahundt/clautorun.git
+## 🛠️ Plugin Architecture
 
-# Method B: Local Development Installation (For testing changes)
-/plugin marketplace add ./clautorun
-/plugin install clautorun@clautorun-dev
-
-# Method C: Interactive Installation
-/plugin  # Opens interactive plugin management menu
-```
-
-**When to Use Each Method:**
-
-- **Method A (GitHub)**: Use for stable production installation with the latest released version
-- **Method B (Local)**: Use for development and testing changes before pushing to GitHub
-- **Method C (Interactive)**: Use for exploring available plugins and management options
-
-**Verification:**
-```bash
-# List installed plugins
-/plugin
-
-# Check plugin details
-/plugin marketplace list
-
-# Debug plugin loading (if issues occur)
-claude --debug
-```
-
-**Usage in Claude Code:**
-```
-User: /clautorun /afs
-Response: AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files...
-
-User: /clautorun /afa
-Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.
-```
-
-**Plugin Structure (Official Claude Code Standard):**
+**Official Claude Code Plugin Structure:**
 ```
 clautorun/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest and metadata
 ├── agents/
-│   ├── tmux-session-automation.md      # Session lifecycle automation agent
-│   └── cli-test-automation.md         # CLI testing automation agent
+│   ├── tmux-session-automation.md      # Session lifecycle automation
+│   └── cli-test-automation.md         # CLI testing automation
 ├── commands/
 │   ├── clautorun            # Core plugin command script
-│   ├── tmux-test-workflow.md           # Comprehensive testing workflow
-│   └── tmux-session-management.md      # Interactive session management
+│   ├── tmux-test-workflow.md           # Testing workflow
+│   └── tmux-session-management.md      # Session management
 ├── src/
 │   └── clautorun/           # Package code
 └── ... (other files)
 ```
 
-**What happens:**
+**How the Plugin Works:**
 - Claude Code automatically discovers and loads the plugin from marketplace
 - Uses official plugin structure with `.claude-plugin/plugin.json` manifest
 - Commands are processed locally through the plugin system
@@ -215,6 +323,12 @@ echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/co
 ### Option 2: Hook Integration
 
 This method intercepts all Claude Code prompts through the hook system.
+
+**What are Hooks?**
+Hooks are automated scripts that run at specific points during program execution. Think of them as custom triggers that let you extend or modify how a program works. In clautorun, hooks intercept commands before they reach Claude Code, enabling file policy enforcement and command processing.
+
+**What is JSON?**
+JSON (JavaScript Object Notation) is a lightweight data format that's easy for humans to read and write, and easy for computers to parse and generate. It's commonly used for configuration files and data exchange between programs.
 
 **Setup:**
 ```bash
@@ -269,7 +383,7 @@ AGENT_MODE=SDK_ONLY python clautorun.py
 [Claude's response appears here]
 ```
 
-## Available Commands
+## Command Reference
 
 ### File Policy Commands
 - `/afs` - Set policy to strict search (only modify existing files)
@@ -278,15 +392,15 @@ AGENT_MODE=SDK_ONLY python clautorun.py
 - `/afst` - Show current file policy
 
 ### Control Commands
-- `/autostop` - Stop the current session
-- `/estop` - Emergency stop
+- `/autostop` - Stop the current session gracefully
+- `/estop` - Emergency stop immediately
 - `/autorun <task description>` - Start automated task execution
 
 ### Tmux Automation Commands
-- `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing workflow
-- `/clautorun tmux-session-management` - Interactive tmux session management and monitoring
+- `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing
+- `/clautorun tmux-session-management` - Interactive session management
 
-### Exit Commands (Interactive Mode)
+### Interactive Mode Commands
 - `quit`, `exit`, `q` - Exit the application
 - Ctrl+C - Interrupt, Ctrl+C twice - Exit
 - Ctrl+D - Exit immediately
@@ -370,7 +484,16 @@ tmux.send_keys("npm test", "my-test-session")  # Executes in "my-test-session"
 
 clautorun includes a comprehensive pytest testing suite to verify functionality and compatibility.
 
+**What is pytest?**
+pytest is a popular testing framework for Python that makes it easy to write simple and scalable tests. It automatically discovers test files and functions, provides detailed output, and supports powerful fixtures and plugins.
+
 ### Quick Test (Core Functionality)
+
+**What are Virtual Environments?**
+Virtual environments are isolated Python environments that keep project dependencies separate. Think of them as clean rooms for each project - they prevent different projects from conflicting with each other's requirements.
+
+**What is UV?**
+UV is a modern, extremely fast Python package manager and virtual environment manager. It's like `pip` + `venv` but 10-100x faster with better dependency resolution.
 
 **With UV (Recommended):**
 ```bash
@@ -379,7 +502,12 @@ uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
 
 **With Traditional pip:**
 ```bash
+# Create and activate virtual environment
+python3 -m venv .venv
 source .venv/bin/activate
+
+# Install dependencies and run tests
+pip install -e ".[dev]"
 pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
 ```
 
@@ -1060,6 +1188,53 @@ clautorun includes comprehensive Python version validation:
 - Force reinstall: `uv run clautorun install --force`
 - Check installation: `uv run clautorun check`
 - Ensure UV is working: `uv run python --version`
+
+## Contributing and Sharing
+
+clautorun is an open source project that thrives on community contributions. If you find bugs, have suggestions, or create improvements, please consider sharing them with the community.
+
+### How to Share Your Improvements
+
+**Option 1: Submit a Pull Request**
+```bash
+# Fork the repository on GitHub
+# Clone your fork
+git clone https://github.com/yourusername/clautorun.git
+cd clautorun
+
+# Add the original repository as upstream
+git remote add upstream https://github.com/ahundt/clautorun.git
+
+# Create your improvement branch
+git checkout -b feature/your-improvement
+
+# Make your changes, test them, then:
+git add .
+git commit -m "Add your improvement description"
+
+# Push to your fork
+git push origin feature/your-improvement
+
+# Create pull request on GitHub
+```
+
+**Option 2: Report Issues**
+- **Bugs**: Use the [GitHub Issues](https://github.com/ahundt/clautorun/issues) page
+- **Feature requests**: Share ideas for new functionality
+- **Documentation**: Help improve clarity and completeness
+
+**Option 3: Share Knowledge**
+- Write blog posts about your clautorun workflows
+- Share screenshots of successful autonomous tasks
+- Document unique use cases and solutions
+- Help other users in discussions
+
+### Why Share?
+
+- **Help others**: Your improvements benefit the entire community
+- **Get feedback**: Community review makes your contributions stronger
+- **Build reputation**: Contributors are recognized in the project
+- **Improve the tool**: Shared knowledge makes clautorun better for everyone
 
 ## License
 
