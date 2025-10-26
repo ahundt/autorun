@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
-"""Standalone clautorun plugin - fixes for command prefix and settings bugs"""
+"""Enhanced clautorun plugin - supports arbitrary command wrapping and enhanced prompt injection"""
 
 import json
 import sys
 import os
 from pathlib import Path
 
-# Simple configuration - copy from main.py to avoid import issues
+# Add the src directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+try:
+    from clautorun.command_discovery import (
+        discover_existing_commands,
+        load_command_content,
+        parse_command_args,
+        validate_command_exists,
+        get_command_metadata,
+        find_command_by_pattern
+    )
+    COMMAND_DISCOVERY_AVAILABLE = True
+except ImportError:
+    # Fallback if command discovery not available
+    COMMAND_DISCOVERY_AVAILABLE = False
+
+# Enhanced configuration - copy from main.py to avoid import issues
 CONFIG = {
     "command_mappings": {
         "/autorun": "activate",
@@ -15,13 +32,32 @@ CONFIG = {
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "STATUS"
+        "/afst": "STATUS",
+        "/clautorun-discover": "command_discovery",
+        "/clautorun-search": "command_search"
     },
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
         "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
-    }
+    },
+    # Templates from main.py - reused for consistency
+    "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+    "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
+    "injection_template": """Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+
+1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions.
+    * **Permissions Granted:** You have full permission to use all tools without requiring further permission prompts.
+
+FILE CREATION POLICY: {policy_instructions}
+
+2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop_phrase}** and **{completion_marker}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless corresponding stop condition has been met.
+
+3.  **Safety Protocol:** Execute full Preservation Sequence **ONLY IF** current task involves high-risk irreversible actions.
+
+4.  **FINAL OUTPUT ON SUCCESS:** When all tasks are 100% complete, output: **{completion_marker}**
+
+Original task: {original_task}"""
 }
 
 # Simple state using dict for now - avoid shelve complexity
@@ -63,23 +99,112 @@ def handle_activate(prompt):
     _simple_state["file_policy"] = _simple_state.get("file_policy", "ALLOW")
 
     policy = _simple_state["file_policy"]
-    policy_name, policy_desc = CONFIG["policies"][policy]
+    policy_instructions = CONFIG["policies"][policy][1]
 
-    return f"""Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+    # Use the shared injection template
+    return CONFIG["injection_template"].format(
+        emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
+        completion_marker=CONFIG["completion_marker"],
+        policy_instructions=policy_instructions,
+        original_task=prompt
+    )
 
-1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions.
-    * **Permissions Granted:** You have full permission to use all tools without requiring further permission prompts.
+def handle_wrapped_command(prompt, original_command, args=""):
+    """Handle arbitrary command wrapped with autorun functionality"""
+    if not COMMAND_DISCOVERY_AVAILABLE:
+        return f"Command discovery not available for: {original_command}"
 
-FILE CREATION POLICY: {policy_desc}
+    # Get command metadata
+    cmd_info = get_command_metadata(original_command)
+    if not cmd_info:
+        return f"Command not found: {original_command}"
 
-2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP** and **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless corresponding stop condition has been met.
+    # Load original command content
+    original_content = load_command_content(cmd_info)
+    if not original_content:
+        return f"Error loading command content for: {original_command}"
 
-3.  **Safety Protocol:** Execute full Preservation Sequence **ONLY IF** current task involves high-risk irreversible actions.
+    # Store original prompt and command for later use
+    _simple_state["activation_prompt"] = prompt
+    _simple_state["wrapped_command"] = original_command
+    _simple_state["wrapped_args"] = args
+    _simple_state["original_command_content"] = original_content
+    _simple_state["file_policy"] = _simple_state.get("file_policy", "ALLOW")
 
-4.  **FINAL OUTPUT ON SUCCESS:** When all tasks are 100% complete, output: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+    policy = _simple_state["file_policy"]
+    policy_instructions = CONFIG["policies"][policy][1]
 
-Original task: {prompt}
-"""
+    # Create combined task description that includes both the wrapped command and original request
+    combined_task = f"""AUTORUN WRAPPED COMMAND: {original_command}
+
+=== ORIGINAL COMMAND CONTENT ===
+{original_content}
+=== END ORIGINAL COMMAND ===
+
+Command arguments: {args if args else "None"}
+
+Original wrapper request: {prompt}
+
+AUTORUN INSTRUCTIONS:
+Execute the above command with full autorun functionality while preserving all original command behavior.
+- Execute the original command as specified above
+- Handle any arguments provided
+- Ensure all functionality of the original command is preserved
+- Apply autorun methodology to extend autonomous execution
+- Do not simply echo or repeat the command - actually execute it"""
+
+    # Use the shared injection template with the combined task
+    injection = CONFIG["injection_template"].format(
+        emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
+        completion_marker=CONFIG["completion_marker"],
+        policy_instructions=policy_instructions,
+        original_task=combined_task
+    )
+
+    return injection
+
+def handle_command_discovery():
+    """Handle command discovery functionality"""
+    if not COMMAND_DISCOVERY_AVAILABLE:
+        return "Command discovery not available"
+
+    commands = discover_existing_commands()
+    stats = {
+        "total": len(commands),
+        "by_type": {},
+        "by_source": {}
+    }
+
+    for cmd_info in commands.values():
+        cmd_type = cmd_info.get("type", "unknown")
+        source = cmd_info.get("source", "unknown")
+
+        stats["by_type"][cmd_type] = stats["by_type"].get(cmd_type, 0) + 1
+        stats["by_source"][source] = stats["by_source"].get(source, 0) + 1
+
+    result = f"Discovered {stats['total']} commands:\n"
+    result += f"By type: {dict(stats['by_type'])}\n"
+    result += f"By source: {dict(stats['by_source'])}"
+
+    return result
+
+def handle_command_search(query):
+    """Handle command search functionality"""
+    if not COMMAND_DISCOVERY_AVAILABLE:
+        return "Command discovery not available"
+
+    matches = find_command_by_pattern(query, limit=10)
+    if not matches:
+        return f"No commands found matching: {query}"
+
+    result = f"Found {len(matches)} commands matching '{query}':\n"
+    for match in matches:
+        cmd_name = match["command"]
+        source = match.get("source", "unknown")
+        score = match["score"]
+        result += f"  {cmd_name} (source: {source}, score: {score})\n"
+
+    return result
 
 # Command handlers
 COMMAND_HANDLERS = {
@@ -89,7 +214,10 @@ COMMAND_HANDLERS = {
     "STATUS": handle_status,
     "stop": handle_stop,
     "emergency_stop": handle_emergency_stop,
-    "activate": handle_activate
+    "activate": handle_activate,
+    "wrapped_command": handle_wrapped_command,
+    "command_discovery": handle_command_discovery,
+    "command_search": handle_command_search
 }
 
 def main():
@@ -125,9 +253,12 @@ def main():
         prompt = payload.get('prompt', '').strip()
         session_id = payload.get('session_id', 'default')
 
-        # Command detection - exact match first, then prefix match (only for autorun)
+        # Enhanced command detection with arbitrary command support
         command = None
-        # Try exact match first
+        wrapped_command = None
+        command_args = ""
+
+        # Try exact match first for known clautorun commands
         command = CONFIG["command_mappings"].get(prompt, None)
 
         if not command:
@@ -137,11 +268,61 @@ def main():
                     command = cmd_value
                     break
 
+        # Handle arbitrary command wrapping: /clautorun:yourcommand
+        if not command and COMMAND_DISCOVERY_AVAILABLE and prompt.startswith('/clautorun:'):
+            # Extract command name after /clautorun:
+            wrapped_command = prompt[11:].strip()  # Remove '/clautorun:' prefix
+
+            # Handle potential arguments in the wrapped command
+            if ' ' in wrapped_command:
+                parts = wrapped_command.split(' ', 1)
+                wrapped_command = parts[0]
+                command_args = parts[1] if len(parts) > 1 else ""
+
+            # Add leading slash back for command lookup
+            wrapped_command = f"/{wrapped_command}"
+
+            # Validate that the wrapped command exists
+            if validate_command_exists(wrapped_command):
+                command = "wrapped_command"
+            else:
+                wrapped_command = None
+
+        # Handle space-separated autorun commands: /clautorun /yourcommand
+        if not command and prompt.startswith('/clautorun ') and len(prompt) > 12:
+            space_separated_cmd = prompt[12:].strip()  # Remove '/clautorun ' prefix
+
+            # Handle potential arguments
+            if ' ' in space_separated_cmd:
+                parts = space_separated_cmd.split(' ', 1)
+                space_separated_cmd = parts[0]
+                command_args = parts[1] if len(parts) > 1 else ""
+
+            # Validate that the command exists
+            if validate_command_exists(space_separated_cmd):
+                wrapped_command = space_separated_cmd
+                command = "wrapped_command"
+
+        # Handle clautorun search command: /clautorun-search query
+        if not command and prompt.startswith('/clautorun-search ') and len(prompt) > 19:
+            search_query = prompt[19:].strip()  # Remove '/clautorun-search ' prefix
+            if search_query:
+                response = handle_command_search(search_query)
+                result = {
+                    "continue": False,  # Command handled locally
+                    "response": response
+                }
+                print(json.dumps(result, sort_keys=True))
+                sys.stdout.flush()
+                return
+
         if command and command in COMMAND_HANDLERS:
             # Handle command locally
             try:
                 if command == "activate":
                     response = COMMAND_HANDLERS[command](prompt)
+                elif command == "wrapped_command" and wrapped_command:
+                    response = COMMAND_HANDLERS[command](prompt, wrapped_command, command_args)
                 else:
                     response = COMMAND_HANDLERS[command]()
 

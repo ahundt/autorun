@@ -149,9 +149,14 @@ Response: AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modi
 ```
 clautorun/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin manifest (required)
+│   └── plugin.json          # Plugin manifest and metadata
+├── agents/
+│   ├── tmux-session-automation.md      # Session lifecycle automation agent
+│   └── cli-test-automation.md         # CLI testing automation agent
 ├── commands/
-│   └── clautorun            # Plugin command script
+│   ├── clautorun            # Core plugin command script
+│   ├── tmux-test-workflow.md           # Comprehensive testing workflow
+│   └── tmux-session-management.md      # Interactive session management
 ├── src/
 │   └── clautorun/           # Package code
 └── ... (other files)
@@ -277,10 +282,72 @@ AGENT_MODE=SDK_ONLY python clautorun.py
 - `/estop` - Emergency stop
 - `/autorun <task description>` - Start automated task execution
 
+### Tmux Automation Commands
+- `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing workflow
+- `/clautorun tmux-session-management` - Interactive tmux session management and monitoring
+
 ### Exit Commands (Interactive Mode)
 - `quit`, `exit`, `q` - Exit the application
 - Ctrl+C - Interrupt, Ctrl+C twice - Exit
 - Ctrl+D - Exit immediately
+
+## Tmux Automation Agents
+
+clautorun includes specialized agents for tmux-based automation and testing workflows with reliable session targeting:
+
+### tmux-session-automation Agent
+Automates tmux session lifecycle management with health monitoring and recovery:
+
+- **Session Management**: Create, monitor, and clean up tmux sessions automatically
+- **Health Monitoring**: Continuous monitoring of session responsiveness and resource usage
+- **Automated Recovery**: Detect and recover from stuck or unresponsive sessions
+- **Integration Ready**: Works with ai-monitor for extended autonomous workflows
+- **Safe Session Targeting**: Commands always target "clautorun" session, never affect current Claude Code session
+
+### cli-test-automation Agent
+Comprehensive CLI application testing automation with verification capabilities:
+
+- **Test Framework Integration**: Automated test discovery and systematic execution
+- **Session Management**: Isolated test environments with proper cleanup
+- **Verification and Validation**: Output pattern matching and error condition testing
+- **Plugin Testing Specialization**: Claude Code plugin compatibility and functionality testing
+- **Secure Test Environments**: Tests run in isolated tmux sessions to prevent interference
+
+### Session Targeting and Safety
+
+**Critical Safety Feature**: All tmux utilities use explicit session targeting to prevent commands from accidentally affecting the current Claude Code session.
+
+- **Default Session**: "clautorun" - ensures commands never interfere with current session
+- **Custom Targeting**: Pass session parameter to target different sessions when needed
+- **Format**: `session:window.pane` for precise targeting
+- **Guarantee**: Commands will NEVER go to the wrong session accidentally
+
+```python
+from clautorun.tmux_utils import get_tmux_utilities
+
+# Default: Always targets "clautorun" session
+tmux = get_tmux_utilities()
+tmux.send_keys("npm test")  # Executes in "clautorun" session, not current session
+
+# Custom: Target specific session
+tmux.send_keys("npm test", "my-test-session")  # Executes in "my-test-session"
+```
+
+### Usage Examples
+
+```bash
+# Test claude CLI with comprehensive automation
+/clautorun tmux-test-workflow claude --test-categories basic,integration,performance
+
+# Create and manage interactive development session
+/clautorun tmux-session-management create my-project --template development
+
+# Start health monitoring for existing session
+/clautorun tmux-session-management monitor my-dev-session
+
+# Safe command execution - never affects current Claude Code session
+/clautorun tmux-test-workflow --session=test-session --verify-functionality
+```
 
 ## File Policy Details
 
@@ -444,7 +511,8 @@ clautorun/
 ```
 
 **Plugin Components:**
-- **Commands** (`commands/` directory): Claude Code slash commands using markdown files
+- **Agents** (`agents/` directory): Specialized automation agents for tmux and CLI workflows
+- **Commands** (`commands/` directory): Claude Code slash commands using markdown files and executable scripts
 - **Hooks** (`agent_sdk_hook.py`): Event handlers for PreToolUse and UserPromptSubmit events
 - **MCP Servers** (`mcp_server.py`): Model Context Protocol integration for external applications
 
@@ -1306,8 +1374,8 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 - **Process isolation**: Each hook runs in independent process context
 
 ### Supported Environments
-- **byobu**: Primary terminal multiplexer (tmux-compatible)
-- **tmux**: Direct support with session detection
+- **byobu**: Primary terminal multiplexer (tmux-compatible) - **RECOMMENDED**
+- **tmux**: Direct backend support with session detection
 - **Standard terminal**: Graceful fallback without multiplexing
 
 ==============================================================================

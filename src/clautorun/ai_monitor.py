@@ -3,6 +3,9 @@ import subprocess as sp, shelve, time, os, sys, signal
 from pathlib import Path
 from contextlib import contextmanager
 
+# Import centralized tmux utilities for DRY compliance
+from .tmux_utils import get_tmux_utilities
+
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -13,17 +16,50 @@ def monitor_state(session_id):
     try: yield s
     finally: s.sync(); s.close()
 
-# Compact tmux command wrapper
-def tmux(*args):
-    try: return sp.run(['tmux'] + list(args), capture_output=True, text=True, timeout=2).stdout.strip()
-    except: return ""
+# Global tmux utilities instance
+_tmux_utils = None
 
-# Window operations dispatch
+def get_tmux():
+    """Get tmux utilities instance with proper session naming"""
+    global _tmux_utils
+    if _tmux_utils is None:
+        _tmux_utils = get_tmux_utilities()  # Uses default "clautorun" session
+    return _tmux_utils
+
+# Window operations dispatch using centralized tmux utilities
+def win_list(session):
+    """List windows in session"""
+    result = get_tmux().execute_tmux_command(['list-windows', '-t', session, '-F', '#{window_index}'])
+    if result and result['returncode'] == 0:
+        return [int(w) for w in result['stdout'].split() if w.strip().isdigit()]
+    return []
+
+def win_read(session, window):
+    """Read window content"""
+    result = get_tmux().execute_tmux_command(['capture-pane', '-t', f'{session}:{window}', '-p', '-S', '-100'])
+    return result['stdout'] if result and result['returncode'] == 0 else ""
+
+def win_send(session, window, text):
+    """Send text to window"""
+    # Send literal text first
+    get_tmux().send_keys(text, session, window)
+    time.sleep(0.1)
+    # Send Enter
+    return get_tmux().send_keys('C-m', session, window)
+
+def win_own():
+    """Get current session and window"""
+    env_info = get_tmux().detect_tmux_environment()
+    if env_info:
+        return env_info["session"], int(env_info["window"])
+    return None, None
+
+# Window operations dispatch using centralized utilities
 WIN_OPS = {
-    'list': lambda s: [int(w) for w in tmux('list-windows', '-t', s, '-F', '#{window_index}').split() if w],
-    'read': lambda s, w: tmux('capture-pane', '-t', f'{s}:{w}', '-p', '-S', '-100'),
-    'send': lambda s, w, t: (tmux('send-keys', '-t', f'{s}:{w}', '-l', t), time.sleep(0.1), tmux('send-keys', '-t', f'{s}:{w}', 'C-m'))[-1],
-    'own': lambda: (lambda x: (x[0], int(x[1])) if len(x := tmux('display-message', '-p', '#{session_name}:#{window_index}').split(':')) == 2 else (None, None))()
+    'list': win_list,
+    'read': win_read,
+    'send': win_send,
+    'own': win_own
 }
 
 # Monitor control functions (library interface)
@@ -174,7 +210,10 @@ def parse_cli():
 
     if not session_id:
         own_sess, _ = WIN_OPS['own']()
-        session_id = own_sess or tmux('list-sessions', '-F', '#{session_name}').split('\n')[0]
+        # Default to "clautorun" session as required by standards
+        session_id = own_sess or get_tmux().DEFAULT_SESSION_NAME
+        # Ensure session exists
+        get_tmux().ensure_session_exists(session_id)
 
     return session_id, config
 

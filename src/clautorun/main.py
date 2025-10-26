@@ -10,6 +10,7 @@ import threading
 import asyncio
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Optional
 
 # Import Agent SDK
 try:
@@ -28,6 +29,119 @@ except ImportError:
     except ImportError:
         # Silent fallback - don't print as it pollutes hook output
         ai_monitor = None
+
+# Import verification engine for enhanced two-stage verification
+try:
+    from .verification_engine import (
+        RequirementVerificationEngine,
+        VerificationStatus,
+        RequirementType
+    )
+    VERIFICATION_ENGINE_AVAILABLE = True
+except ImportError:
+    # Fallback if verification engine not available
+    VERIFICATION_ENGINE_AVAILABLE = False
+    RequirementVerificationEngine = None
+    VerificationStatus = None
+    RequirementType = None
+
+# Import enhanced transcript analyzer
+try:
+    from .transcript_analyzer import (
+        TranscriptAnalyzer,
+        EvidenceType,
+        ConfidenceLevel
+    )
+    TRANSCRIPT_ANALYZER_AVAILABLE = True
+except ImportError:
+    # Fallback if transcript analyzer not available
+    TRANSCRIPT_ANALYZER_AVAILABLE = False
+    TranscriptAnalyzer = None
+    EvidenceType = None
+    ConfidenceLevel = None
+
+# Import injection effectiveness monitoring system
+try:
+    from .injection_monitoring import (
+        InjectionEffectivenessMonitor,
+        InjectionMethod,
+        InjectionOutcome,
+        record_injection
+    )
+    INJECTION_MONITORING_AVAILABLE = True
+except ImportError:
+    # Fallback if injection monitoring not available
+    INJECTION_MONITORING_AVAILABLE = False
+    InjectionEffectivenessMonitor = None
+    InjectionMethod = None
+    InjectionOutcome = None
+
+# Import centralized tmux utilities for DRY compliance and standards enforcement
+try:
+    from .tmux_utils import get_tmux_utilities
+    TMUX_UTILS_AVAILABLE = True
+except ImportError:
+    # Fallback if tmux utilities not available
+    TMUX_UTILS_AVAILABLE = False
+    get_tmux_utilities = None
+
+# Global injection monitor instance
+_injection_monitor: Optional[InjectionEffectivenessMonitor] = None
+
+# Global tmux utilities instance for session management
+_tmux_utilities = None
+
+def get_global_tmux_utils():
+    """Get global tmux utilities instance with proper session management"""
+    global _tmux_utilities
+    if _tmux_utilities is None and TMUX_UTILS_AVAILABLE:
+        _tmux_utilities = get_tmux_utilities()  # Uses default "clautorun" session
+        log_info("Centralized tmux utilities initialized with default session")
+    return _tmux_utilities
+
+def get_injection_monitor() -> Optional[InjectionEffectivenessMonitor]:
+    """Get or create global injection monitor instance"""
+    global _injection_monitor
+    if _injection_monitor is None and INJECTION_MONITORING_AVAILABLE:
+        try:
+            _injection_monitor = InjectionEffectivenessMonitor()
+            log_info("Injection monitoring initialized")
+        except Exception as e:
+            log_info(f"Failed to initialize injection monitoring: {e}")
+    return _injection_monitor
+
+def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Optional[str] = None):
+    """Update the outcome of the last injection attempt with response time"""
+    if not INJECTION_MONITORING_AVAILABLE:
+        return
+
+    monitor = get_injection_monitor()
+    if not monitor:
+        return
+
+    session_id = state.get("session_id", "unknown")
+    last_injection_id = state.get("last_injection_attempt_id")
+    start_time = state.get("last_injection_start_time")
+
+    if not last_injection_id or not start_time:
+        return
+
+    try:
+        # Calculate response time
+        response_time_ms = (time.time() - start_time) * 1000
+
+        # Update the injection attempt with actual outcome and response time
+        for attempt in monitor.injection_attempts:
+            if attempt.attempt_id == last_injection_id and attempt.response_time_ms == 0:
+                attempt.outcome = outcome
+                attempt.response_time_ms = response_time_ms
+                attempt.error_message = error_message
+                break
+
+        log_info(f"Updated injection outcome: {outcome.value} ({response_time_ms:.1f}ms)")
+
+    except Exception as e:
+        log_info(f"Failed to update injection outcome: {e}")
 
 # Configuration - Complete autorun5.py compatibility
 CONFIG = {
@@ -63,12 +177,33 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 5. Double-check your work against the original requirements
 6. Verify all files are in their correct final state
 7. Ensure no temporary or incomplete work remains
+{verification_requirements}
 
 Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {completion_marker}
 
 If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
 
 This is verification attempt #{recheck_count} of {max_recheck_count}.""",
+
+    "forced_compliance_template": """AUTORUN FORCED COMPLIANCE OVERRIDE: System has detected prolonged verification cycles.
+
+Original Task: {activation_prompt}
+
+FORCED COMPLIANCE PROTOCOL ACTIVATED:
+Due to extended verification duration, the system is forcing task completion with the following requirements:
+
+{verification_requirements}
+
+SYSTEM OVERRIDE INSTRUCTIONS:
+1. Complete any remaining critical requirements immediately
+2. Ensure basic functionality is implemented and working
+3. Add any missing documentation or comments
+4. Perform final validation and cleanup
+
+After completing the above forced requirements, output: {completion_marker}
+
+NOTE: This is a forced compliance override to prevent infinite verification loops.
+Ensure core functionality is working before final completion.""",
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
@@ -268,12 +403,28 @@ def handle_emergency_stop(state):
     return "Emergency stop activated"
 
 def handle_activate(state, prompt=""):
-    """Handle AUTORUN activation - complete autorun setup with injection template"""
+    """Handle AUTORUN activation - complete autorun setup with injection template and tmux standards"""
     log_info("Activating autorun: autorun session")
 
     # Preserve file_policy and session_id before clearing
     old_file_policy = state.get("file_policy", "ALLOW")
     old_session_id = state.get("session_id")
+
+    # Enforce tmux session standards if available
+    if TMUX_UTILS_AVAILABLE:
+        try:
+            tmux_utils = get_global_tmux_utilities()
+            if tmux_utils:
+                # Ensure default "clautorun" session exists and is available
+                tmux_utils.ensure_session_exists()
+                session_info = tmux_utils.get_session_info()
+                log_info(f"tmux session ensured: {session_info['session']} (tmux active: {session_info['tmux_active']})")
+
+                # Store tmux session info in state for monitoring integration
+                state["tmux_session"] = session_info["session"]
+                state["tmux_active"] = session_info["tmux_active"]
+        except Exception as e:
+            log_info(f"tmux session setup failed: {e}")
 
     # Clear and setup state like autorun5.py
     state.clear()
@@ -413,8 +564,18 @@ def pretooluse_handler(ctx):
 
 # ai_monitor integration: Continuation enforcement functions
 def inject_continue_prompt(state):
-    """Inject continue working prompt - ai_monitor functionality"""
+    """Inject continue working prompt - ai_monitor functionality with monitoring"""
     log_info("Injecting continue working prompt - preventing premature stop")
+
+    # Get injection monitor
+    monitor = get_injection_monitor()
+    injection_start_time = time.time()
+    session_id = state.get("session_id", "unknown")
+
+    # Determine injection method based on current context
+    injection_method = InjectionMethod.HOOK_INTEGRATION
+    if ai_monitor and state.get("ai_monitor_pid"):
+        injection_method = InjectionMethod.TMUX_INJECTION
 
     # CRITICAL: Use full injection template with stop signal instructions
     # This is NOT a simple continue message - it includes critical stop conditions
@@ -427,26 +588,247 @@ def inject_continue_prompt(state):
         policy_instructions=policy_instructions
     )
 
+    # Record injection attempt
+    if monitor:
+        try:
+            # Calculate context size from transcript
+            transcript_length = len(str(state.get("transcript", "")))
+
+            monitor.record_injection_attempt(
+                method=injection_method,
+                session_id=session_id,
+                prompt_type="continue",
+                prompt_content=continue_message[:200] + "...",  # Truncate for storage
+                outcome=InjectionOutcome.SUCCESS,  # Assume success initially
+                response_time_ms=0,  # Will be updated after response
+                success_indicators=["Continue prompt injected"],
+                context_size=0,
+                transcript_length=transcript_length,
+                follow_up_required=False,
+                user_intervention=False
+            )
+
+            # Store injection attempt ID for later response time tracking
+            state["last_injection_attempt_id"] = f"{session_id}_{int(injection_start_time * 1000)}"
+            state["last_injection_start_time"] = injection_start_time
+
+        except Exception as e:
+            log_info(f"Failed to record injection attempt: {e}")
+
     return build_hook_response(
         continue_execution=True,
         system_message=continue_message
     )
 
 def inject_verification_prompt(state):
-    """Inject verification prompt - two-stage verification"""
-    log_info(f"Injecting verification prompt - attempt {state.get('verification_attempts', 1)}")
+    """Inject verification prompt - enhanced two-stage verification with forced compliance and monitoring"""
+    verification_attempts = state.get('verification_attempts', 1)
+    log_info(f"Injecting verification prompt - attempt {verification_attempts}")
 
-    verification_prompt = CONFIG["recheck_template"].format(
+    # Get injection monitor
+    monitor = get_injection_monitor()
+    injection_start_time = time.time()
+    session_id = state.get("session_id", "unknown")
+
+    # Determine injection method and prompt type
+    injection_method = InjectionMethod.HOOK_INTEGRATION
+    if ai_monitor and state.get("ai_monitor_pid"):
+        injection_method = InjectionMethod.TMUX_INJECTION
+
+    # Determine prompt type based on verification attempts
+    if verification_attempts > CONFIG["max_recheck_count"] - 1:
+        prompt_type = "forced_compliance"
+    else:
+        prompt_type = "verification"
+
+    # Initialize verification engine if available
+    verification_requirements = ""
+    if VERIFICATION_ENGINE_AVAILABLE and verification_attempts == 1:
+        try:
+            engine = RequirementVerificationEngine(state.get("session_id", "default"))
+            activation_prompt = state.get("activation_prompt", "")
+
+            # Parse requirements from original task
+            requirements = engine.parse_requirements_from_task(activation_prompt)
+
+            if requirements:
+                # Format requirements for prompt
+                req_text = "8. SPECIFIC REQUIREMENTS TO VERIFY:\n"
+                for i, req in enumerate(requirements[:5], 1):  # Limit to 5 requirements
+                    req_text += f"   {i}. {req.description} (Type: {req.requirement_type.value}, Mandatory: {req.mandatory})\n"
+                verification_requirements = req_text
+
+                # Store engine in state for later use
+                state["verification_engine"] = engine
+
+        except Exception as e:
+            log_info(f"Verification engine initialization failed: {e}")
+
+    # Choose template based on verification attempts
+    if verification_attempts > CONFIG["max_recheck_count"] - 1:
+        # Force compliance on final attempt
+        template = CONFIG["forced_compliance_template"]
+        log_info("Using forced compliance template")
+        success_indicators = ["Forced compliance activated"]
+    else:
+        template = CONFIG["recheck_template"]
+        success_indicators = [f"Verification prompt injected (attempt {verification_attempts})"]
+
+    verification_prompt = template.format(
         activation_prompt=state.get("activation_prompt", "original task"),
         completion_marker=CONFIG["completion_marker"],
-        recheck_count=state.get("verification_attempts", 1),
-        max_recheck_count=CONFIG["max_recheck_count"]
+        recheck_count=verification_attempts,
+        max_recheck_count=CONFIG["max_recheck_count"],
+        verification_requirements=verification_requirements
     )
+
+    # Record injection attempt
+    if monitor:
+        try:
+            # Calculate context size from transcript
+            transcript_length = len(str(state.get("transcript", "")))
+
+            monitor.record_injection_attempt(
+                method=injection_method,
+                session_id=session_id,
+                prompt_type=prompt_type,
+                prompt_content=verification_prompt[:200] + "...",  # Truncate for storage
+                outcome=InjectionOutcome.SUCCESS,  # Assume success initially
+                response_time_ms=0,  # Will be updated after response
+                success_indicators=success_indicators,
+                context_size=0,
+                transcript_length=transcript_length,
+                follow_up_required=verification_attempts < CONFIG["max_recheck_count"],
+                user_intervention=False
+            )
+
+            # Store injection attempt ID for later response time tracking
+            state["last_injection_attempt_id"] = f"{session_id}_{int(injection_start_time * 1000)}"
+            state["last_injection_start_time"] = injection_start_time
+
+        except Exception as e:
+            log_info(f"Failed to record verification injection attempt: {e}")
 
     return build_hook_response(
         continue_execution=True,
         system_message=verification_prompt
     )
+
+def analyze_verification_results(state, transcript):
+    """Analyze verification results using enhanced verification engine and transcript analyzer"""
+    if not VERIFICATION_ENGINE_AVAILABLE or "verification_engine" not in state:
+        return None
+
+    try:
+        engine = state["verification_engine"]
+        activation_prompt = state.get("activation_prompt", "")
+
+        # Enhanced transcript analysis using transcript analyzer
+        transcript_analysis = None
+        if TRANSCRIPT_ANALYZER_AVAILABLE:
+            try:
+                analyzer = TranscriptAnalyzer()
+                transcript_analysis = analyzer.analyze_full_transcript(transcript, state.get("session_id", "default"))
+
+                # Analyze task completion specifically
+                task_completion = analyzer.analyze_task_completion(transcript, activation_prompt)
+                state["task_completion_analysis"] = task_completion
+
+                log_info(f"Transcript analysis found {transcript_analysis.total_evidence} evidence items")
+            except Exception as e:
+                log_info(f"Enhanced transcript analysis failed: {e}")
+
+        # Analyze transcript for evidence using verification engine
+        evidence_by_requirement = engine.analyze_transcript_evidence(transcript)
+
+        # Enhance evidence with transcript analyzer results
+        if transcript_analysis:
+            evidence_by_requirement = _enhance_evidence_with_analysis(
+                evidence_by_requirement, transcript_analysis
+            )
+
+        # Verify each requirement
+        results = {}
+        for req_id, evidence in evidence_by_requirement.items():
+            result = engine.verify_single_requirement(req_id, evidence)
+            results[req_id] = result
+
+        # Generate verification report
+        report = engine.generate_verification_report()
+
+        # Enhance report with transcript analysis data
+        if transcript_analysis:
+            report["transcript_analysis"] = {
+                "total_evidence": transcript_analysis.total_evidence,
+                "confidence_score": transcript_analysis.confidence_score,
+                "evidence_summary": transcript_analysis.summary,
+                "high_confidence_evidence": transcript_analysis.summary.get("high_confidence_evidence", 0)
+            }
+
+        # Check if forced compliance is needed
+        failed_mandatory = [
+            req_id for req_id, result in results.items()
+            if (engine.requirements.get(req_id) and
+                engine.requirements[req_id].mandatory and
+                result.status != VerificationStatus.COMPLETED)
+        ]
+
+        # Use enhanced completion confidence to determine forced compliance
+        completion_confidence = state.get("task_completion_analysis", {}).get("completion_confidence", 0.0)
+        should_force_compliance = (
+            (failed_mandatory and state.get('verification_attempts', 1) >= CONFIG["max_recheck_count"]) or
+            (completion_confidence > 0.7 and state.get('verification_attempts', 1) >= CONFIG["max_recheck_count"] - 1)
+        )
+
+        if should_force_compliance and failed_mandatory:
+            log_info("Forcing compliance for failed mandatory requirements")
+            forced_results = engine.force_requirement_compliance(failed_mandatory)
+            report["forced_compliance_reason"] = "Failed mandatory requirements after max attempts"
+
+        # Store enhanced report in state
+        state["verification_report"] = report
+        state["transcript_analysis_result"] = transcript_analysis
+
+        log_info(f"Enhanced verification analysis complete: {report['summary']['completed']}/{report['summary']['total_requirements']} completed")
+        if transcript_analysis:
+            log_info(f"Transcript confidence score: {transcript_analysis.confidence_score:.2f}")
+
+        return report
+
+    except Exception as e:
+        log_info(f"Enhanced verification analysis failed: {e}")
+        return None
+
+def _enhance_evidence_with_analysis(evidence_by_requirement, transcript_analysis):
+    """Enhance verification evidence with transcript analyzer results"""
+    if not transcript_analysis:
+        return evidence_by_requirement
+
+    # Map transcript analyzer evidence types to verification engine evidence
+    type_mapping = {
+        EvidenceType.FILE_OPERATION: "file_operation",
+        EvidenceType.TEST_RESULT: "test_result",
+        EvidenceType.SUCCESS_INDICATOR: "success_indicator"
+    }
+
+    for req_id, evidence_list in evidence_by_requirement.items():
+        # Add high-confidence evidence from transcript analyzer
+        for evidence_type, mapped_type in type_mapping.items():
+            if evidence_type in transcript_analysis.evidence_by_type:
+                for analyzer_evidence in transcript_analysis.evidence_by_type[evidence_type]:
+                    if analyzer_evidence.confidence in [ConfidenceLevel.HIGH, ConfidenceLevel.VERY_HIGH]:
+                        # Convert analyzer evidence to verification engine format
+                        enhanced_evidence = RequirementEvidence(
+                            requirement_id=req_id,
+                            evidence_type=mapped_type,
+                            evidence_data=analyzer_evidence.content,
+                            confidence_score=analyzer_evidence.confidence.value,
+                            timestamp=analyzer_evidence.timestamp,
+                            source_location=f"transcript_analyzer:{analyzer_evidence.position}"
+                        )
+                        evidence_list.append(enhanced_evidence)
+
+    return evidence_by_requirement
 
 def is_premature_stop(ctx, state):
     """Check if this is a premature stop - ai_monitor logic"""
@@ -507,11 +889,33 @@ def stop_handler(ctx):
         # Check if we're in verification stage and completion marker is present
         if (state.get("autorun_stage") == "VERIFICATION" and
             CONFIG["completion_marker"] in str(getattr(ctx, 'session_transcript', []))):
+
             log_info(f"Verification completed for session {session_id}")
+
+            # Analyze verification results if engine is available
+            transcript = str(getattr(ctx, 'session_transcript', []))
+            verification_report = analyze_verification_results(state, transcript)
+
+            # Generate completion message
+            completion_msg = "✅ Task completed and verified successfully!"
+            if verification_report:
+                summary = verification_report.get("summary", {})
+                completed = summary.get("completed", 0)
+                total = summary.get("total_requirements", 0)
+                forced = summary.get("forced_compliance", 0)
+
+                if forced > 0:
+                    completion_msg += f" (Note: {forced} requirements required forced compliance)"
+                elif completed < total:
+                    completion_msg += f" (Warning: Only {completed}/{total} requirements verified)"
+
+                # Log verification summary
+                log_info(f"Verification summary: {completed}/{total} completed, {forced} forced compliance")
+
             _manage_monitor(state, 'stop')
             state.clear()  # Clean up successful completion
             return build_hook_response(continue_execution=False,
-                                     system_message="✅ Task completed and verified successfully!")
+                                     system_message=completion_msg)
 
         # Normal cleanup for non-autorun sessions or completed sessions
         state.clear()
