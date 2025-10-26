@@ -1,0 +1,173 @@
+{
+  "last_updated": 1761335329.493709,
+  "attempts": [
+    {
+      "attempt_id": "boundary_test_2_1761335329493",
+      "timestamp": 1761335329.493684,
+      "method": "InjectionMethod.API_DIRECT",
+      "session_id": "boundary_test_2",
+      "prompt_type": "test",
+      "prompt_content": "test",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 100.0,
+      "success_indicators": [],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    }
+  ],
+  "session_contexts": {
+    "worker_0": {
+      "first_attempt": 1761335329.464303,
+      "last_attempt": 1761335329.486166,
+      "total_attempts": 10,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "worker_1": {
+      "first_attempt": 1761335329.46448,
+      "last_attempt": 1761335329.483126,
+      "total_attempts": 10,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "worker_2": {
+      "first_attempt": 1761335329.464612,
+      "last_attempt": 1761335329.485409,
+      "total_attempts": 10,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "worker_3": {
+      "first_attempt": 1761335329.464897,
+      "last_attempt": 1761335329.4862258,
+      "total_attempts": 10,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "worker_4": {
+      "first_attempt": 1761335329.465077,
+      "last_attempt": 1761335329.486141,
+      "total_attempts": 10,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "boundary_test": {
+      "first_attempt": 1761335329.491827,
+      "last_attempt": 1761335329.492744,
+      "total_attempts": 7,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "boundary_test_0": {
+      "first_attempt": 1761335329.493579,
+      "last_attempt": 1761335329.493579,
+      "total_attempts": 1,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success"
+      ]
+    },
+    "boundary_test_1": {
+      "first_attempt": 1761335329.493632,
+      "last_attempt": 1761335329.493632,
+      "total_attempts": 1,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success"
+      ]
+    },
+    "boundary_test_2": {
+      "first_attempt": 1761335329.493684,
+      "last_attempt": 1761335329.493684,
+      "total_attempts": 1,
+      "methods_used": [
+        "api_direct"
+      ],
+      "outcomes": [
+        "success"
+      ]
+    }
+  }
+}

@@ -5,11 +5,11 @@
 
 **clautorun** - Reduce User Interruptions While Claude Completes Tasks
 
-Stop babysitting your AI sessions. Let Claude complete tasks autonomously with 80-90% fewer interruptions. Keep your work safe from crashes and disconnections.
+Stop babysitting your AI sessions. Let Claude complete tasks autonomously with minimal interruptions. Keep your work safe from crashes and disconnections.
 
 ## What clautorun Does For You
 
-**Problem Statement**: Claude Code sessions can end unexpectedly during extended tasks, requiring manual intervention to continue work. AI creates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final). Network disconnections or application crashes terminate active sessions, losing all in-progress work.
+**Problem Statement**: Claude Code sessions can end unexpectedly during extended tasks, requiring manual intervention to continue work. AI creates numerous experimental files during development, leading to cluttered project directories. Network disconnections or application crashes terminate active sessions, losing all in-progress work.
 
 **Solution Overview**: clautorun addresses these specific limitations through session automation, file policy enforcement, and session persistence.
 
@@ -30,7 +30,7 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with 8
 - **Result**: Project directories contain essential files only, reducing cleanup requirements
 
 ### Reduce Manual Interventions (clautorun feature)
-- **Current Behavior**: Claude Code stops every 5 minutes and waits for manual continuation
+- **Current Behavior**: Claude Code stops and waits for manual continuation
 - **clautorun Action**: Hook system intercepts Claude Code stop events and automatically re-injects continuation prompts
 - **Mechanism**: UserPromptSubmit and Stop hooks detect when Claude stops working, analyze the transcript for completion markers, and inject "continue working" prompts when tasks are incomplete
 - **Benefit**: Start autonomous tasks and return to completed work without hourly interruptions
@@ -102,14 +102,14 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with 8
 - **Concrete Result**: See AI responses in real-time while monitoring system resources and errors simultaneously
 
 ### Reduce User Interruptions
-- **Technical Issue**: Claude Code's default 5-minute session timeout requires manual "continue" prompts, constantly interrupting users
-- **Solution**: clautorun's automatic continuation system reduces user interruptions by 80-90% while keeping Claude working on the original task
-- **Concrete Result**: Start autonomous task, return later to find completed work instead of constantly being interrupted for manual "continue" prompts
+- **Technical Issue**: Claude Code sessions require manual continuation prompts, interrupting users and breaking workflow focus
+- **Solution**: clautorun's automatic continuation system keeps Claude working on tasks without requiring user intervention
+- **Concrete Result**: Start autonomous task, return later to find completed work instead of constant interruptions for manual continuation
 
 ### Control File Creation
-- **Technical Issue**: AI generates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final)
+- **Technical Issue**: AI creates numerous experimental files during development, leading to cluttered project directories
 - **Solution**: Three-tier file policy system (strict-search, justify-create, allow-all) with PreToolUse hook enforcement
-- **Concrete Result**: Clean project directories with meaningful files only; experimental work contained to existing files
+- **Concrete Result**: Clean project directories with meaningful files only; unified implementation approach reduces file proliferation
 
 ## 🎯 What It Does
 
@@ -251,7 +251,7 @@ PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
 - `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing
 - `/clautorun tmux-session-management` - Interactive session management
 
-## 🛠️ Plugin Architecture
+## 🛠️ Plugin Architecture and Integration Guide
 
 **Official Claude Code Plugin Structure:**
 ```
@@ -269,6 +269,29 @@ clautorun/
 │   └── clautorun/           # Package code
 └── ... (other files)
 ```
+
+### Integration Approach Guidance
+
+**clautorun provides three integration approaches - choose based on your needs:**
+
+#### 1. **Official Plugin Integration** (Recommended for most users)
+- **Use When**: Standard clautorun functionality via `/plugin install`
+- **Commands**: `/afs`, `/afa`, `/afj`, `/afst`, `/autorun`, `/autostop`, `/estop`
+- **How**: `/plugin install https://github.com/ahundt/clautorun.git`
+- **Benefits**: Official plugin system, automatic updates, seamless integration
+- **State Management**: Enhanced session management with verification engine
+
+#### 2. **Hook Integration** (Advanced users)
+- **Use When**: Fine-grained control over command interception, custom workflows
+- **Setup**: Configure hooks in `settings.json` to intercept all prompts
+- **Benefits**: Complete control over prompt processing, custom logic injection
+- **State Management**: Same core system as plugin integration
+
+#### 3. **Interactive Mode** (Development and testing)
+- **Use When**: Standalone command processing, development, testing
+- **Setup**: `AGENT_MODE=SDK_ONLY python src/clautorun/main.py`
+- **Benefits**: Direct testing, development debugging, standalone operation
+- **State Management**: Local session state for testing purposes
 
 **How the Plugin Works:**
 - Claude Code automatically discovers and loads the plugin from marketplace
@@ -1238,21 +1261,21 @@ git push origin feature/your-improvement
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
 ==============================================================================
 COMPREHENSIVE WORKFLOW DOCUMENTATION
 ==============================================================================
 
 REDUCE CONSTANT BABYSITTING
-• Problem: Claude stops every 5 minutes waiting for "continue"
-• Solution: Extend tasks from 5 minutes to 1-2 hours with occasional interventions
-• Result: Complete large projects with 80-90% fewer manual prompts
+• Problem: Claude requires manual continuation prompts, interrupting workflow focus
+• Solution: Keep Claude working autonomously on tasks without requiring user intervention
+• Result: Complete projects with unified implementation and minimal interruptions
 
 PREVENT FILESYSTEM CHAOS
-• Problem: AI creates 50 files named "comprehensive_solution_v3_final.txt"
-• Solution: Only meaningful files with clear purpose and justification
-• Result: Clean codebase vs folder of experimental junk
+• Problem: AI creates numerous experimental files, leading to cluttered directories
+• Solution: Unified implementation approach with clear file creation policies
+• Result: Clean codebase with meaningful, well-organized files
 
 ==============================================================================
 QUICK START FOR NEW USERS
@@ -1300,7 +1323,7 @@ COMMAND REFERENCE
 
 AUTORUN COMMANDS
 /autorun <prompt>    Start autonomous workflow with extended work sessions
-                    Reduces manual "continue" prompts by 80-90%
+                    Reduces manual "continue" prompts significantly
                     Enables two-stage verification to prevent premature exits
                     Takes task description as argument (required)
 
@@ -1368,7 +1391,7 @@ HOW IT WORKS
 
 1. AI claims task complete → System re-injects original task for verification
 2. AI completes verification → System allows final exit
-3. Result: Extended work sessions with 80-90% fewer interruptions
+3. Result: Extended work sessions with minimal interruptions
 
 ## AUTOFILE: PREVENT FILE CHAOS
 1. Level 3 (allow-all): Create files freely (new projects)
@@ -1390,7 +1413,7 @@ TECHNICAL DETAILS
 ### Autorun System
 - **Two-stage verification**: Prevents premature exits by requiring task completion verification
 - **Automatic task re-injection**: Re-inserts original prompt when AI stops working
-- **Extended work sessions**: Enables 1-2 hour continuous work periods vs 5-minute default
+- **Extended work sessions**: Enables continuous work periods without requiring manual continuation
 - **Intelligent completion detection**: Recognizes when tasks are genuinely finished
 - **Graceful degradation**: Works without external dependencies
 - **Session isolation**: Each session has independent state management
