@@ -38,7 +38,7 @@ Reduce user interruptions while Claude completes tasks. Maintain work across cra
 ### Prevent File Clutter (clautorun feature)
 - **Current Behavior**: AI creates multiple experimental files during development
 - **clautorun Action**: PreToolUse hooks intercept Write tool calls and enforce file creation policies
-- **Mechanism**: Before each file creation, the hook scans the conversation transcript for policy compliance. It blocks or allows file operations based on the current policy level and any required justifications
+- **Mechanism**: Before each file creation, the hook scans the conversation transcript for policy compliance. It blocks or allows file operations based on the current policy level (`/afs`, `/afj`, `/afa`) and any required justifications
 - **Policy Levels**:
   1. Strict search - Hook blocks all new file creation, forcing AI to modify existing files found through search
   2. Justified creation - Hook allows new files only when AI includes required justification tags
@@ -157,15 +157,53 @@ tmux list-sessions | grep clautorun
 - **Solution**: byobu splits terminal into multiple panes: AI output, error logs, file system monitoring, command history
 - **Concrete Result**: See AI responses in real-time while monitoring system resources and errors simultaneously
 
-### Reduce User Interruptions
-- **Technical Issue**: Claude Code sessions require manually typing continue, interrupting users and breaking workflow focus
-- **Solution**: clautorun's automatic continuation system keeps Claude working on tasks without requiring user intervention
-- **Concrete Result**: Start autonomous task, return later to find completed work instead of constant interruptions for manually typing continue
-
 ### Control File Creation
 - **Technical Issue**: AI creates numerous experimental files during development, leading to cluttered project directories
-- **Solution**: Three-tier file policy system (strict-search, justify-create, allow-all) with PreToolUse hook enforcement
+- **Solution**: Three-tier file policy system (`/afs` strict-search, `/afj` justify-create, `/afa` allow-all) with PreToolUse hook enforcement
 - **Concrete Result**: Clean project directories with meaningful files only; unified implementation approach reduces file proliferation
+
+## AUTOFILE LIFECYCLE FLOW
+
+```mermaid
+graph TD
+    A[User sets AutoFile policy] --> B{Policy Level}
+    B -->|Level 3<br/>allow-all| C[All file creation allowed]
+    B -->|Level 2<br/>justify-create| D[Require justification check]
+    B -->|Level 1<br/>strict-search| E[Block all new files]
+
+    C --> F[PreToolUse Hook]
+    D --> G{Justification found?}
+    E --> H{File exists?}
+
+    G -->|Yes| F
+    G -->|No| I[Block file creation]
+    H -->|Yes| F
+    H -->|No| I
+
+    F --> J{Tool is Write?}
+    J -->|No| K[Allow tool execution]
+    J -->|Yes| L{File already exists?}
+    L -->|Yes| K
+    L -->|No| M[Allow new file creation]
+```
+
+**Policy Level 1: Strict Search** (`/afs`)
+- Blocks all new file creation via PreToolWrite hooks
+- Forces AI to modify existing files using Glob/Grep
+- Ideal for refactoring established codebases
+- Prevents pollution with experimental files
+
+**Policy Level 2: Justify Create** (`/afj`)
+- Requires `<AUTOFILE_JUSTIFICATION>` tag in AI reasoning
+- Hook scans transcript for proper justification before allowing new files
+- Balances innovation with organization
+- Records why each file was created in reasoning
+
+**Policy Level 3: Allow All** (`/afa`)
+- No restrictions on file creation (default for new projects)
+- Full creative freedom for initial development
+- Best for prototyping and new project setup
+- All tools pass through without intervention
 
 ## 🎯 What It Does
 
@@ -174,6 +212,97 @@ tmux list-sessions | grep clautorun
 - **Session Persistence**: Keeps work alive across crashes and disconnections
 - **Remote Control**: Monitor and manage AI sessions from anywhere
 - **Two-Stage Verification**: Ensures tasks are actually complete, not just "good enough"
+
+## AUTORUN LIFECYCLE FLOW
+
+```mermaid
+graph TD
+    A[User sends /autorun command] --> B[UserPromptSubmit Hook]
+    B --> C[Activate session state]
+    C --> D[Start ai-monitor process]
+    D --> E[AI works autonomously]
+    E --> F{Stop Hook triggered}
+    F --> G[First completion detected?]
+    G -->|No| H[Re-inject continue instructions]
+    H --> E
+    G -->|Yes| I[Re-inject verification prompt]
+    I --> J[AI performs verification]
+    J --> K{Second completion detected?}
+    K -->|No| L[Continue verification work]
+    L --> J
+    K -->|Yes| M[Cleanup and exit]
+```
+
+**Stage 1: Initial Activation**
+1. User sends `/autorun <task description>`
+2. Hook creates session state with original prompt
+3. ai-monitor started for persistent session tracking
+4. AI receives full autonomous instructions
+
+**Stage 2: Work Extension**
+1. AI stops working (timeout, completion claim, etc.)
+2. Hook detects stop and analyzes transcript
+3. If no completion marker, re-injects continue instructions
+4. AI resumes work with full context
+
+**Stage 3: Verification**
+1. AI outputs completion marker
+2. Hook detects first completion and re-injects verification prompt
+3. AI performs thorough verification of original requirements
+4. AI must verify all requirements are met
+
+**Stage 4: Final Completion**
+1. AI completes verification with second completion marker
+2. Hook verifies two-stage completion
+3. Cleanup processes and state files
+4. Allow final session exit
+
+### Verification Example
+**Before**: Claude stops after basic login form
+**After**:
+- First completion: "Login form done!" → System: "Did you add tests? Error handling? Database migrations?"
+- Second completion: "Full auth system with tests complete!" → System: "✅ Task verified, exiting"
+
+### Two-Stage Verification Process
+
+#### Stage 1: Initial Completion
+**Trigger**: AI outputs completion marker in transcript
+```
+"User authentication system is complete! AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
+```
+
+**System Response**: Re-inject original task with verification checklist
+```
+AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification.
+
+Original Task: /clautorun /autorun Implement user authentication with JWT, database, tests, and API docs
+
+CRITICAL VERIFICATION INSTRUCTIONS:
+1. Carefully review ALL aspects of the original task above
+2. Verify EVERY requirement has been fully met and tested
+3. Check for any incomplete, partial, or missed elements
+4. Test any implemented functionality thoroughly
+5. Double-check your work against the original requirements
+6. Verify all files are in their correct final state
+7. Ensure no temporary or incomplete work remains
+```
+
+#### Stage 2: Verification Completion
+**Trigger**: AI outputs completion marker after thorough verification
+```
+"Full authentication system with comprehensive testing and documentation is verified complete!
+AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
+```
+
+**System Response**: Allow final exit with cleanup
+- Clean up session state files
+- Allow graceful session termination
+
+### Safety Mechanisms
+- **Maximum recheck limit**: Prevents infinite loops (default: 3 attempts)
+- **Emergency stop**: `/estop` immediately terminates any runaway process
+- **State validation**: Ensures session integrity throughout process
+- **Atomic operations**: Prevents corruption during concurrent access
 
 ## ⚡ Quick Start (5 Minutes)
 
@@ -208,14 +337,29 @@ Terminal multiplexers are programs that let you create multiple virtual terminal
 Homebrew is a free and open-source package manager for macOS and Linux that makes it easy to install software. If you don't have it:
 - **Install Homebrew:** `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 
-### One-Command Installation
+### Plugin Installation (Choose Method)
 
+**Option A: GitHub Installation (Production - Recommended)**
 ```bash
-# Install clautorun directly from GitHub
+# Install directly from GitHub
 /plugin install https://github.com/ahundt/clautorun.git
 ```
 
-That's it! The plugin handles everything automatically.
+**Option B: Local Development Installation (Testing Changes)**
+```bash
+# Navigate to clautorun directory
+cd /path/to/clautorun
+
+# Add local development marketplace
+/plugin marketplace add ./clautorun
+
+# Install local development version
+/plugin install clautorun@clautorun-dev
+```
+
+**Which to Choose:**
+- **Option A**: For stable production use with released versions
+- **Option B**: For testing changes before pushing to GitHub
 
 ### Verify Installation
 
@@ -292,20 +436,66 @@ PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
 
 ## 📋 Available Commands
 
-### File Policy Commands
-- `/afs` - Set policy to strict search (only modify existing files)
-- `/afa` - Set policy to allow all (create/modify any files)
-- `/afj` - Set policy to justify (require justification for new files)
-- `/afst` - Show current file policy
+### Autorun Commands
+- **/autorun \<prompt>** - Start autonomous workflow with extended work sessions
+  - Reduces manual "continue" prompts significantly
+  - Enables two-stage verification to prevent premature exits
+  - Takes task description as argument (required)
 
-### Control Commands
-- `/autostop` - Stop the current session gracefully
-- `/estop` - Emergency stop immediately
-- `/autorun <task description>` - Start automated task execution
+- **/autostop** - Stop gracefully after current task completion
+  - Allows AI to finish current work before stopping
+  - Cleans up processes and state files properly
+
+- **/estop** - Emergency stop - immediately halt any runaway process
+  - Stops all processes immediately without waiting
+  - Use for critical situations or when something goes wrong
+
+### AutoFile Commands
+- **/afa** - Allow all file creation (Level 3 - default)
+  - No restrictions on creating new files
+  - Best for new projects and initial development
+
+- **/afj** - Require justification before creating new files (Level 2)
+  - AI must include \<AUTOFILE_JUSTIFICATION> tag with reasoning
+  - Ideal for security-sensitive work and established projects
+
+- **/afs** - STOP the auto creation of files, only modify existing files (Level 1 - strict)
+  - Blocks ALL new file creation
+  - Forces AI to use existing files via Glob/Grep search
+  - Perfect for refactoring established codebases
+
+- **/afst** - Display current AutoFile policy and settings
+  - Shows current policy level and name
+  - Displays current enforcement status
 
 ### Tmux Automation Commands
 - `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing
 - `/clautorun tmux-session-management` - Interactive session management
+
+### Usage Examples
+
+```bash
+# Start autonomous work on a large project
+/clautorun /autorun Build complete REST API with authentication, testing, and documentation
+
+# Enable strict file control for security-sensitive work
+/clautorun /afj
+/clautorun /autorun Implement OAuth2 authentication system
+
+# Check current file creation policy
+/clautorun /afst
+# Output: "AutoFile Policy: justify-create (Level 2)"
+
+# Protect existing codebase during refactoring
+/clautorun /afs
+/clautorun /autorun Refactor authentication module to use new database schema
+
+# Stop gracefully when task is complete
+/clautorun /autostop
+
+# Emergency stop if something goes wrong
+/clautorun /estop
+```
 
 ## 🛠️ Plugin Architecture and Integration Guide
 
@@ -1304,176 +1494,6 @@ git push origin feature/your-improvement
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
-## 📚 Comprehensive Workflow Documentation
-
-### Reduce Constant Babysitting
-- **Problem**: Claude requires manually typing continue, interrupting workflow focus
-- **Solution**: Keep Claude working autonomously on tasks without requiring user intervention
-- **Result**: Complete projects with reduced interruptions
-
-### Prevent Filesystem Chaos
-- **Problem**: AI creates numerous experimental files, leading to cluttered directories
-- **Solution**: Three-tier file creation policy with strict enforcement
-- **Result**: Clean codebase with meaningful, well-organized files
-
-## 🔧 Quick Start for New Users
-
-### 1. Install Plugin (Choose Method)
-
-**Option A: GitHub Installation (Production - Recommended)**
-```bash
-# Install directly from GitHub
-/plugin install https://github.com/ahundt/clautorun.git
-```
-
-**Option B: Local Development Installation (Testing Changes)**
-```bash
-# Navigate to clautorun directory
-cd /path/to/clautorun
-
-# Add local development marketplace
-/plugin marketplace add ./clautorun
-
-# Install local development version
-/plugin install clautorun@clautorun-dev
-```
-
-**Which to Choose:**
-- **Option A**: For stable production use with released versions
-- **Option B**: For testing changes before pushing to GitHub
-
-### 2. Verify Installation
-```bash
-# List installed plugins
-/plugin
-
-# Test plugin functionality
-/clautorun /afst
-```
-
-### 3. Start Autonomous Work
-```bash
-/clautorun /autorun Create complete e-commerce system with payment processing, testing, and deployment
-```
-
-## 📋 Detailed Command Reference
-
-### Autorun Commands
-- **/autorun \<prompt>** - Start autonomous workflow with extended work sessions
-  - Reduces manual "continue" prompts significantly
-  - Enables two-stage verification to prevent premature exits
-  - Takes task description as argument (required)
-
-- **/autostop** - Stop gracefully after current task completion
-  - Allows AI to finish current work before stopping
-  - Cleans up processes and state files properly
-
-- **/estop** - Emergency stop - immediately halt any runaway process
-  - Stops all processes immediately without waiting
-  - Use for critical situations or when something goes wrong
-
-### AutoFile Commands
-- **/afa** - Allow all file creation (Level 3 - default)
-  - No restrictions on creating new files
-  - Best for new projects and initial development
-
-- **/afj** - Require justification before creating new files (Level 2)
-  - AI must include \<AUTOFILE_JUSTIFICATION> tag with reasoning
-  - Ideal for security-sensitive work and established projects
-
-- **/afs** - STOP the auto creation of files, only modify existing files (Level 1 - strict)
-  - Blocks ALL new file creation
-  - Forces AI to use existing files via Glob/Grep search
-  - Perfect for refactoring established codebases
-
-- **/afst** - Display current AutoFile policy and settings
-  - Shows current policy level and name
-  - Displays current enforcement status
-
-### Usage Examples
-
-```bash
-# Start autonomous work on a large project
-/clautorun /autorun Build complete REST API with authentication, testing, and documentation
-
-# Enable strict file control for security-sensitive work
-/clautorun /afj
-/clautorun /autorun Implement OAuth2 authentication system
-
-# Check current file creation policy
-/clautorun /afst
-# Output: "AutoFile Policy: justify-create (Level 2)"
-
-# Protect existing codebase during refactoring
-/clautorun /afs
-/clautorun /autorun Refactor authentication module to use new database schema
-
-# Stop gracefully when task is complete
-/clautorun /autostop
-
-# Emergency stop if something goes wrong
-/clautorun /estop
-```
-
-## ⚙️ How It Works
-
-### Autorun: Reduce Interventions
-1. AI claims task complete → System re-injects original task for verification
-2. AI completes verification → System allows final exit
-3. Result: Extended work sessions with fewer interruptions
-
-### AutoFile: Prevent File Chaos
-1. **Level 3 (allow-all)**: Create files freely (new projects)
-2. **Level 2 (justify-create)**: Must explain why each file is needed
-3. **Level 1 (strict-search)**: Only modify existing files (refactoring)
-
-### Verification Example
-**Before**: Claude stops after basic login form
-**After**:
-- First completion: "Login form done!" → System: "Did you add tests? Error handling? Database migrations?"
-- Second completion: "Full auth system with tests complete!" → System: "✅ Task verified, exiting"
-
-### Two-Stage Verification Process
-
-#### Stage 1: Initial Completion
-**Trigger**: AI outputs completion marker in transcript
-```
-"User authentication system is complete! AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
-```
-
-**System Response**: Re-inject original task with verification checklist
-```
-AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification.
-
-Original Task: /clautorun /autorun Implement user authentication with JWT, database, tests, and API docs
-
-CRITICAL VERIFICATION INSTRUCTIONS:
-1. Carefully review ALL aspects of the original task above
-2. Verify EVERY requirement has been fully met and tested
-3. Check for any incomplete, partial, or missed elements
-4. Test any implemented functionality thoroughly
-5. Double-check your work against the original requirements
-6. Verify all files are in their correct final state
-7. Ensure no temporary or incomplete work remains
-```
-
-#### Stage 2: Verification Completion
-**Trigger**: AI outputs completion marker after thorough verification
-```
-"Full authentication system with comprehensive testing and documentation is verified complete!
-AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
-```
-
-**System Response**: Allow final exit with cleanup
-- Clean up session state files
-- Allow graceful session termination
-
-### Safety Mechanisms
-- **Maximum recheck limit**: Prevents infinite loops (default: 3 attempts)
-- **Emergency stop**: `/estop` immediately terminates any runaway process
-- **State validation**: Ensures session integrity throughout process
-- **Atomic operations**: Prevents corruption during concurrent access
-
 ### Custom Command Workflows
 
 You can extend clautorun with your own command workflows by creating markdown files:
@@ -1503,5 +1523,22 @@ $ARGUMENTS - analyze and resolve technical issues using systematic debugging met
 3. Document findings and solutions
 ```
 
-Usage: `/autorun debug performance issues in auth module`
+
+
+
+## ⚙️ How It Works
+
+### Autorun: Reduce Interventions
+1. AI claims task complete → System re-injects original task for verification
+2. AI completes verification → System allows final exit
+3. Result: Extended work sessions with fewer interruptions
+
+### AutoFile: Prevent File Chaos
+1. **Level 3 (`/afa` allow-all)**: Create files freely (new projects)
+2. **Level 2 (`/afj` justify-create)**: Must explain why each file is needed
+3. **Level 1 (`/afs` strict-search)**: Only modify existing files (refactoring)
+
+
+
+
 
