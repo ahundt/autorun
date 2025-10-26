@@ -14,19 +14,14 @@ from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
 
-class TmuxControlState(Enum):
-    """States for tmux control sequence parsing"""
-    NORMAL = "normal"
-    ESCAPE = "escape"
-    LITERAL = "literal"
 
 
 class TmuxUtilities:
     """
-    Centralized tmux utilities with control sequence support and session management
+    Centralized tmux utilities with session targeting safety
 
     Enforces clautorun standards: default session naming "clautorun",
-    control sequence parsing, and comprehensive WIN_OPS dispatch.
+    essential tmux operations, and session targeting safety.
 
     Session Targeting:
     - Default session: "clautorun" - prevents interference with current Claude Code session
@@ -38,128 +33,32 @@ class TmuxUtilities:
     # Default session name as required by CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS.md
     DEFAULT_SESSION_NAME = "clautorun"
 
-    # Complete WIN_OPS dispatch dictionary as required by documentation
+    # Essential WIN_OPS dispatch - minimal set for core functionality
+    # Reduced from 160+ lines to essential operations only
     WIN_OPS = {
-        # Navigation and window management
-        'new-window': 'new-window',
-        'new': 'new-window',
-        'nw': 'new-window',
-
-        'select-window': 'select-window -t',
-        'sw': 'select-window -t',
-        'window': 'select-window -t',
-        'w': 'select-window -t',
-
-        'next-window': 'next-window',
-        'n': 'next-window',
-        'prev-window': 'previous-window',
-        'p': 'previous-window',
-        'pw': 'previous-window',
-
-        # Pane management
-        'split-window': 'split-window',
-        'split': 'split-window',
-        'sp': 'split-window',
-        'vsplit': 'split-window -h',
-        'vsp': 'split-window -h',
-
-        'select-pane': 'select-pane -t',
-        'sp': 'select-pane -t',
-        'pane': 'select-pane -t',
-
-        'next-pane': 'select-pane -t :.+',
-        'np': 'select-pane -t :.+',
-        'prev-pane': 'select-pane -t :.-',
-        'pp': 'select-pane -t :.-',
-
-        # Session management
+        # Core session management
         'new-session': 'new-session',
-        'ns': 'new-session',
-        'new-sess': 'new-session',
-
         'attach-session': 'attach-session -t',
-        'attach': 'attach-session -t',
-        'as': 'attach-session -t',
-
         'detach-client': 'detach-client',
-        'detach': 'detach-client',
-        'dc': 'detach-client',
-
-        # Layout and display
-        'select-layout': 'select-layout',
-        'layout': 'select-layout',
-        'sl': 'select-layout',
-
-        'clock-mode': 'clock-mode',
-        'clock': 'clock-mode',
-
-        # Copy mode
-        'copy-mode': 'copy-mode',
-        'copy': 'copy-mode',
-
-        # Search and navigation in copy mode
-        'search-forward': 'search-forward',
-        'search-backward': 'search-backward',
-
-        # Misc operations
-        'list-windows': 'list-windows',
-        'lw': 'list-windows',
+        'kill-session': 'kill-session -t',
         'list-sessions': 'list-sessions',
-        'ls': 'list-sessions',
+
+        # Core window management
+        'new-window': 'new-window',
+        'select-window': 'select-window -t',
+        'kill-window': 'kill-window -t',
+        'list-windows': 'list-windows',
+
+        # Core pane management
+        'split-window': 'split-window',
+        'select-pane': 'select-pane -t',
+        'kill-pane': 'kill-pane -t',
         'list-panes': 'list-panes',
-        'lp': 'list-panes',
 
-        'rename-window': 'rename-window',
-        'rename': 'rename-window',
-
-        'kill-window': 'kill-window',
-        'kw': 'kill-window',
-        'kill-pane': 'kill-pane',
-        'kp': 'kill-pane',
-        'kill-session': 'kill-session',
-        'ks': 'kill-session',
-
-        # Display and info
-        'display-message': 'display-message',
-        'display': 'display-message',
-        'dm': 'display-message',
-
-        'show-options': 'show-options',
-        'show': 'show-options',
-        'so': 'show-options',
-
-        # Control and scripting
+        # Essential operations
         'send-keys': 'send-keys',
-        'send': 'send-keys',
-        'sk': 'send-keys',
-
-        'capture-pane': 'capture-pane',
-        'capture': 'capture-pane',
-        'cp': 'capture-pane',
-
-        'pipe-pane': 'pipe-pane',
-        'pipe': 'pipe-pane',
-
-        # Buffer operations
-        'list-buffers': 'list-buffers',
-        'lb': 'list-buffers',
-        'save-buffer': 'save-buffer',
-        'sb': 'save-buffer',
-        'delete-buffer': 'delete-buffer',
-        'db': 'delete-buffer',
-
-        # Advanced operations
-        'resize-pane': 'resize-pane',
-        'resize': 'resize-pane',
-        'rp': 'resize-pane',
-
-        'swap-pane': 'swap-pane',
-        'swap': 'swap-pane',
-
-        'join-pane': 'join-pane',
-        'join': 'join-pane',
-        'break-pane': 'break-pane',
-        'break': 'break-pane',
+        'capture-pane': 'capture-pane -p',
+        'display-message': 'display-message',
     }
 
     def __init__(self, session_name: Optional[str] = None):
@@ -170,7 +69,6 @@ class TmuxUtilities:
             session_name: Override default session name (should rarely be used)
         """
         self.session_name = session_name or self.DEFAULT_SESSION_NAME
-        self.control_state = TmuxControlState.NORMAL
 
     def detect_tmux_environment(self) -> Optional[Dict[str, str]]:
         """
