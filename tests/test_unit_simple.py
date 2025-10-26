@@ -218,19 +218,20 @@ class TestBasicFunctionality:
     @pytest.mark.unit
     def test_command_handlers_accept_state_argument(self):
         """Test command handlers accept state argument"""
-        # Test each handler with empty state dict
+        # Test each handler with appropriate arguments
         for handler_name, handler_func in COMMAND_HANDLERS.items():
             try:
                 # All handlers should accept at least one argument
-                if handler_name == "activate":
+                if handler_name in ["activate", "ACTIVATE"]:
                     # Activate handler needs session_id and prompt argument
                     test_state = {"session_id": "test_session"}
                     result = handler_func(test_state, "/autorun test")
                 else:
+                    # Other handlers need state dict
                     result = handler_func({})
                 assert result is not None, f"Handler {handler_name} should return something"
             except TypeError as e:
-                if "takes" in str(e) and "positional argument" in str(e):
+                if "missing" in str(e) and "positional argument" in str(e):
                     pytest.fail(f"Handler {handler_name} should accept at least one argument")
                 else:
                     raise

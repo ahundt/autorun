@@ -8,20 +8,26 @@ control sequence parsing, session naming, and command dispatch.
 
 import os
 import subprocess
+import sys
 import time
 import re
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
 
+class TmuxControlState(Enum):
+    """States for tmux control sequence parsing"""
+    NORMAL = "normal"
+    ESCAPE = "escape"
+    LITERAL = "literal"
 
 
 class TmuxUtilities:
     """
-    Centralized tmux utilities with session targeting safety
+    Centralized tmux utilities with control sequence support and session management
 
     Enforces clautorun standards: default session naming "clautorun",
-    essential tmux operations, and session targeting safety.
+    control sequence parsing, and comprehensive WIN_OPS dispatch.
 
     Session Targeting:
     - Default session: "clautorun" - prevents interference with current Claude Code session
@@ -33,32 +39,128 @@ class TmuxUtilities:
     # Default session name as required by CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS.md
     DEFAULT_SESSION_NAME = "clautorun"
 
-    # Essential WIN_OPS dispatch - minimal set for core functionality
-    # Reduced from 160+ lines to essential operations only
+    # Complete WIN_OPS dispatch dictionary as required by documentation
     WIN_OPS = {
-        # Core session management
-        'new-session': 'new-session',
-        'attach-session': 'attach-session -t',
-        'detach-client': 'detach-client',
-        'kill-session': 'kill-session -t',
-        'list-sessions': 'list-sessions',
-
-        # Core window management
+        # Navigation and window management
         'new-window': 'new-window',
+        'new': 'new-window',
+        'nw': 'new-window',
+
         'select-window': 'select-window -t',
-        'kill-window': 'kill-window -t',
-        'list-windows': 'list-windows',
+        'sw': 'select-window -t',
+        'window': 'select-window -t',
+        'w': 'select-window -t',
 
-        # Core pane management
+        'next-window': 'next-window',
+        'n': 'next-window',
+        'prev-window': 'previous-window',
+        'p': 'previous-window',
+        'pw': 'previous-window',
+
+        # Pane management
         'split-window': 'split-window',
-        'select-pane': 'select-pane -t',
-        'kill-pane': 'kill-pane -t',
-        'list-panes': 'list-panes',
+        'split': 'split-window',
+        'sp': 'split-window',
+        'vsplit': 'split-window -h',
+        'vsp': 'split-window -h',
 
-        # Essential operations
-        'send-keys': 'send-keys',
-        'capture-pane': 'capture-pane -p',
+        'select-pane': 'select-pane -t',
+        'sp': 'select-pane -t',
+        'pane': 'select-pane -t',
+
+        'next-pane': 'select-pane -t :.+',
+        'np': 'select-pane -t :.+',
+        'prev-pane': 'select-pane -t :.-',
+        'pp': 'select-pane -t :.-',
+
+        # Session management
+        'new-session': 'new-session',
+        'ns': 'new-session',
+        'new-sess': 'new-session',
+
+        'attach-session': 'attach-session -t',
+        'attach': 'attach-session -t',
+        'as': 'attach-session -t',
+
+        'detach-client': 'detach-client',
+        'detach': 'detach-client',
+        'dc': 'detach-client',
+
+        # Layout and display
+        'select-layout': 'select-layout',
+        'layout': 'select-layout',
+        'sl': 'select-layout',
+
+        'clock-mode': 'clock-mode',
+        'clock': 'clock-mode',
+
+        # Copy mode
+        'copy-mode': 'copy-mode',
+        'copy': 'copy-mode',
+
+        # Search and navigation in copy mode
+        'search-forward': 'search-forward',
+        'search-backward': 'search-backward',
+
+        # Misc operations
+        'list-windows': 'list-windows',
+        'lw': 'list-windows',
+        'list-sessions': 'list-sessions',
+        'ls': 'list-sessions',
+        'list-panes': 'list-panes',
+        'lp': 'list-panes',
+
+        'rename-window': 'rename-window',
+        'rename': 'rename-window',
+
+        'kill-window': 'kill-window',
+        'kw': 'kill-window',
+        'kill-pane': 'kill-pane',
+        'kp': 'kill-pane',
+        'kill-session': 'kill-session',
+        'ks': 'kill-session',
+
+        # Display and info
         'display-message': 'display-message',
+        'display': 'display-message',
+        'dm': 'display-message',
+
+        'show-options': 'show-options',
+        'show': 'show-options',
+        'so': 'show-options',
+
+        # Control and scripting
+        'send-keys': 'send-keys',
+        'send': 'send-keys',
+        'sk': 'send-keys',
+
+        'capture-pane': 'capture-pane',
+        'capture': 'capture-pane',
+        'cp': 'capture-pane',
+
+        'pipe-pane': 'pipe-pane',
+        'pipe': 'pipe-pane',
+
+        # Buffer operations
+        'list-buffers': 'list-buffers',
+        'lb': 'list-buffers',
+        'save-buffer': 'save-buffer',
+        'sb': 'save-buffer',
+        'delete-buffer': 'delete-buffer',
+        'db': 'delete-buffer',
+
+        # Advanced operations
+        'resize-pane': 'resize-pane',
+        'resize': 'resize-pane',
+        'rp': 'resize-pane',
+
+        'swap-pane': 'swap-pane',
+        'swap': 'swap-pane',
+
+        'join-pane': 'join-pane',
+        'join': 'join-pane',
+        'break-pane': 'break-pane',
+        'break': 'break-pane',
     }
 
     def __init__(self, session_name: Optional[str] = None):
@@ -69,6 +171,7 @@ class TmuxUtilities:
             session_name: Override default session name (should rarely be used)
         """
         self.session_name = session_name or self.DEFAULT_SESSION_NAME
+        self.control_state = TmuxControlState.NORMAL
 
     def detect_tmux_environment(self) -> Optional[Dict[str, str]]:
         """
@@ -153,30 +256,99 @@ class TmuxUtilities:
         # Build command list
         base_cmd = ["tmux"]
 
-        # Combine with actual command
-        full_cmd = base_cmd + cmd
+        # CRITICAL FIX: For send-keys commands, target specification must come BEFORE keys
+        # Format: tmux [socket] send-keys -t target [keys...] where control sequences are separate args
+        if cmd and cmd[0] == 'send-keys' and len(cmd) > 1:
+            # Extract target specification first
+            commands_supporting_target = {
+                'send-keys', 'capture-pane', 'new-window', 'kill-window',
+                'select-window', 'split-window', 'select-pane', 'kill-pane',
+                'select-layout', 'display-message', 'attach-session', 'detach-client',
+                'new-session', 'kill-session', 'list-windows', 'list-panes'
+            }
 
-        # Add target specification for session, window, and pane operations
-        # CRITICAL FIX: Always specify target to ensure commands go to correct session
-        target = target_session
-        if window:
-            target += f":{window}"
-        if pane:
-            target += f".{pane}"
-        full_cmd.extend(["-t", target])
+            # Start with base command
+            full_cmd = base_cmd + [cmd[0]]  # ['tmux', 'send-keys']
+
+            # Add target specification immediately after send-keys
+            target = target_session
+            if window:
+                target += f":{window}"
+            if pane:
+                target += f".{pane}"
+            full_cmd.extend(["-t", target])  # ['tmux', 'send-keys', '-t', 'session']
+
+            # Add keys and control sequences as separate arguments
+            # cmd[1:] contains all the keys and control sequences
+            full_cmd.extend(cmd[1:])
+        else:
+            # Non-send-keys commands: use original logic
+            full_cmd = base_cmd + cmd
+
+            # Add target specification for commands that support session targeting
+            commands_supporting_target = {
+                'send-keys', 'capture-pane', 'new-window', 'kill-window',
+                'select-window', 'split-window', 'select-pane', 'kill-pane',
+                'select-layout', 'display-message', 'attach-session', 'detach-client',
+                'new-session', 'kill-session', 'list-windows', 'list-panes'
+            }
+
+            if cmd and cmd[0] in commands_supporting_target:
+                target = target_session
+                if window:
+                    target += f":{window}"
+                if pane:
+                    target += f".{pane}"
+                full_cmd.extend(["-t", target])
+
 
         try:
-            result = subprocess.run(
-                full_cmd,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
+            # CRITICAL FIX: Use explicit tmux socket specification when running from within tmux
+            # This prevents subprocess from inheriting current session context and ensures proper targeting
+
+            # Check if we're running from within a tmux session
+            tmux_env = os.getenv('TMUX')
+            if tmux_env:
+                # Extract socket path from TMUX environment: /tmp/tmux-1000/default,4219,0
+                socket_path = tmux_env.split(',')[0]
+
+                # Build command with explicit socket specification
+                # Format: tmux -S <socket> <command> [args...]
+                socket_cmd = ['tmux', '-S', socket_path] + full_cmd[1:]
+
+                # Ensure target session exists for commands that support targeting
+                if cmd and cmd[0] in commands_supporting_target:
+                    subprocess.run(['tmux', '-S', socket_path, 'new-session', '-d', '-s', target_session],
+                                  capture_output=True, text=True, timeout=5, shell=False)
+
+                result = subprocess.run(
+                    socket_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    shell=False
+                )
+            else:
+                # Not running within tmux, use regular command
+                # Ensure target session exists for commands that support targeting
+                if cmd and cmd[0] in commands_supporting_target:
+                    subprocess.run(['tmux', 'new-session', '-d', '-s', target_session],
+                                  capture_output=True, text=True, timeout=5, shell=False)
+
+                result = subprocess.run(
+                    full_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    shell=False
+                )
+            # Return the result with the actual command that was executed
+            actual_command = socket_cmd if tmux_env else full_cmd
             return {
                 'returncode': result.returncode,
                 'stdout': result.stdout,
                 'stderr': result.stderr,
-                'command': full_cmd
+                'command': actual_command
             }
         except subprocess.TimeoutExpired:
             return None
@@ -336,7 +508,14 @@ class TmuxUtilities:
         Returns:
             True if successful, False otherwise
         """
-        result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
+        # CRITICAL FIX: Split control sequences from regular text
+        # Control sequences like C-m, C-c must be separate arguments to tmux send-keys
+        if keys in ['C-m', 'C-c', 'C-l', 'C-u', 'C-w']:
+            # Single control sequence - send as individual argument
+            result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
+        else:
+            # Regular text - send as single argument
+            result = self.execute_tmux_command(['send-keys', keys], session, window, pane)
         return result and result['returncode'] == 0
 
     def get_session_info(self, session_name: Optional[str] = None) -> Dict[str, Any]:
