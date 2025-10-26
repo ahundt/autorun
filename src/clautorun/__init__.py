@@ -29,7 +29,7 @@ Features:
 - Full compatibility with existing autorun workflows
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 __author__ = "Andrew Hundt"
 __email__ = "ATHundt@gmail.com"
 

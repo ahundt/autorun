@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clautorun"
-version = "2.1.0"
+version = "0.2.1"
 description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
 readme = "README.md"
 requires-python = ">=3.10"

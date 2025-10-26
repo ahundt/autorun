@@ -1,6 +1,6 @@
 {
   "name": "clautorun",
-  "version": "2.1.0",
+  "version": "0.2.1",
   "description": "Programmatic command handling for AutoFile policies and autonomous operation via hooks.",
   "author": {
     "name": "clautorun contributors",
