@@ -9,15 +9,15 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with 8
 
 ## What clautorun Does For You
 
-**Problem Statement**: Claude Code requires manual "continue" prompts every 5 minutes during extended tasks. It creates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final). Network disconnections or application crashes terminate active sessions, losing all in-progress work.
+**Problem Statement**: Claude Code sessions can end unexpectedly during extended tasks, requiring manual intervention to continue work. AI creates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final). Network disconnections or application crashes terminate active sessions, losing all in-progress work.
 
 **Solution Overview**: clautorun addresses these specific limitations through session automation, file policy enforcement, and session persistence.
 
 ### Reduce User Interruptions
-- **Current Behavior**: Claude Code stops every 5 minutes awaiting manual continuation, constantly interrupting users
-- **With clautorun**: Claude continues working autonomously on the same task, reducing user interruptions by 80-90%
+- **Current Behavior**: Claude Code sessions can end unexpectedly, requiring manual intervention to continue work
+- **With clautorun**: Claude continues working autonomously on the same task, reducing user interruptions
 - **Mechanism**: Automatic task continuation when Claude stops working, ensuring focus stays on completing the original task without user intervention
-- **Result**: Tasks get completed without constant babysitting - short focused sessions that finish the job are best
+- **Result**: Tasks get completed without constant babysitting - focused sessions that finish the job efficiently
 
 ### File Creation Control
 - **Current Behavior**: AI creates multiple experimental files during development
