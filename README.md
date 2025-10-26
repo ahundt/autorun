@@ -3,9 +3,9 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-**clautorun** - Supercharge Your Claude Code Sessions with Terminal Multiplexing
+**clautorun** - Reduce User Interruptions While Claude Completes Tasks
 
-Stop babysitting your AI sessions. Work for hours instead of minutes. Keep your work safe from crashes and disconnections.
+Stop babysitting your AI sessions. Let Claude complete tasks autonomously with 80-90% fewer interruptions. Keep your work safe from crashes and disconnections.
 
 ## What clautorun Does For You
 
@@ -13,11 +13,11 @@ Stop babysitting your AI sessions. Work for hours instead of minutes. Keep your 
 
 **Solution Overview**: clautorun addresses these specific limitations through session automation, file policy enforcement, and session persistence.
 
-### Session Duration Extension
-- **Current Behavior**: Claude Code stops every 5 minutes awaiting manual continuation
-- **With clautorun**: Sessions continue for 1-2 hours with reduced intervention requirements
-- **Mechanism**: Automatic task re-injection when session timeouts are detected
-- **Result**: Users can start autonomous tasks and return to completed work without hourly interruptions
+### Reduce User Interruptions
+- **Current Behavior**: Claude Code stops every 5 minutes awaiting manual continuation, constantly interrupting users
+- **With clautorun**: Claude continues working autonomously on the same task, reducing user interruptions by 80-90%
+- **Mechanism**: Automatic task continuation when Claude stops working, ensuring focus stays on completing the original task without user intervention
+- **Result**: Tasks get completed without constant babysitting - short focused sessions that finish the job are best
 
 ### File Creation Control
 - **Current Behavior**: AI creates multiple experimental files during development
@@ -101,10 +101,10 @@ Stop babysitting your AI sessions. Work for hours instead of minutes. Keep your 
 - **Solution**: byobu splits terminal into multiple panes: AI output, error logs, file system monitoring, command history
 - **Concrete Result**: See AI responses in real-time while monitoring system resources and errors simultaneously
 
-### Reduce Manual Interventions
-- **Technical Issue**: Claude Code's default 5-minute session timeout requires manual "continue" prompts every few minutes
-- **Solution**: clautorun's automatic continuation system extends sessions to 1-2 hours with 80-90% fewer manual interventions
-- **Concrete Result**: Start autonomous task, return after 2 hours to find completed work instead of intervening every 5 minutes
+### Reduce User Interruptions
+- **Technical Issue**: Claude Code's default 5-minute session timeout requires manual "continue" prompts, constantly interrupting users
+- **Solution**: clautorun's automatic continuation system reduces user interruptions by 80-90% while keeping Claude working on the original task
+- **Concrete Result**: Start autonomous task, return later to find completed work instead of constantly being interrupted for manual "continue" prompts
 
 ### Control File Creation
 - **Technical Issue**: AI generates numerous experimental files with iterative naming (test_v1, test_v2_final, test_v3_final_final)
@@ -113,7 +113,7 @@ Stop babysitting your AI sessions. Work for hours instead of minutes. Keep your 
 
 ## 🎯 What It Does
 
-- **Extended Work Sessions**: Reduces manual "continue" prompts by 80-90%
+- **Autonomous Task Completion**: Keeps Claude working on tasks without interrupting you
 - **Smart File Management**: Prevents AI from creating meaningless files
 - **Session Persistence**: Keeps work alive across crashes and disconnections
 - **Remote Control**: Monitor and manage AI sessions from anywhere
