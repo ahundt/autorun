@@ -5,7 +5,7 @@
 
 **clautorun** - Reduce User Interruptions While Claude Completes Tasks
 
-Stop babysitting your AI sessions. Let Claude complete tasks autonomously with minimal interruptions. Keep your work safe from crashes and disconnections.
+Reduce user interruptions while Claude completes tasks. Maintain work across crashes and disconnections.
 
 ## What clautorun Does For You
 
@@ -17,7 +17,7 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with m
 - **Current Behavior**: Claude Code sessions can end unexpectedly, requiring manual intervention to continue work
 - **With clautorun**: Claude continues working autonomously on the same task, reducing user interruptions
 - **Mechanism**: Automatic task continuation when Claude stops working, ensuring focus stays on completing the original task without user intervention
-- **Result**: Tasks get completed without constant babysitting - focused sessions that finish the job efficiently
+- **Result**: Tasks get completed with reduced interruptions
 
 ### File Creation Control
 - **Current Behavior**: AI creates multiple experimental files during development
@@ -33,7 +33,7 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with m
 - **Current Behavior**: Claude Code stops and waits for manually typing continue
 - **clautorun Action**: Hook system intercepts Claude Code stop events and automatically re-injects continuation prompts
 - **Mechanism**: UserPromptSubmit and Stop hooks detect when Claude stops working, analyze the transcript for completion markers, and inject "continue working" prompts when tasks are incomplete
-- **Benefit**: Start autonomous tasks and return to completed work without hourly interruptions
+- **Benefit**: Start autonomous tasks and return to completed work with fewer interruptions
 
 ### Prevent File Clutter (clautorun feature)
 - **Current Behavior**: AI creates multiple experimental files during development
@@ -65,6 +65,62 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with m
 - **Benefit**: Monitor and control AI work from any location with internet access
 - **Note**: clautorun provides commands to work within tmux sessions but does not provide remote access
 
+### Concrete Capabilities Matrix
+
+**tmux/byobu Base Capabilities:**
+- **Session Persistence**: Processes continue running even when client disconnects
+- **Session Isolation**: Multiple independent sessions can run simultaneously
+- **Remote Access**: SSH/Mosh provides secure remote access from any device
+- **Multiplexing**: Split terminal windows for simultaneous viewing
+- **Process Recovery**: Automatic session recovery after system restart
+
+**clautorun Enhanced Capabilities:**
+- **Automatic Continuation**: Keeps Claude working without manually typing continue
+- **File Policy Enforcement**: Three-tier system to prevent file clutter
+- **Two-Stage Verification**: Helps ensure tasks are complete
+- **Session State Management**: Robust state isolation and recovery
+- **Targeted Session Safety**: Commands never affect current Claude Code session
+
+### Measurable Technical Benefits
+
+**Before clautorun + tmux/byobu:**
+- AI work lost when terminal closes
+- Manual intervention required for session interruptions
+- No file creation control during autonomous workflows
+- No verification that tasks are actually complete
+
+**With clautorun + tmux/byobu:**
+- Reduced data loss during crashes or disconnections
+- Decreased need for manual intervention
+- File creation policies to reduce unnecessary files
+- Two-stage verification to help ensure task completion
+
+### Testing the Integration
+
+**Quick Test:**
+```bash
+# Create byobu session with crash protection
+byobu-new-session clautorun-work
+
+# Start autonomous task that simulates crash
+/clautorun /autorun simulate network issues during build process
+
+# Test session recovery
+# Close terminal, reconnect with SSH/Mosh
+byobu-attach clautorun-work
+# Expected: AI work continues from interruption point
+```
+
+**Recovery Verification:**
+```bash
+# Check if AI is still working
+ps aux | grep python  # Look for running clautorun processes
+
+# Verify session state persistence
+tmux list-sessions | grep clautorun
+# Expected: "clautorun-work" session exists and is running
+```
+
 ## Why Byobu + tmux Integration
 
 **clautorun is designed for use with byobu (tmux-compatible terminal multiplexer)** - this integration provides concrete technical capabilities:
@@ -84,7 +140,7 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with m
 **SSH Clients for Different Devices:**
 
 **Enhanced SSH Experience (Recommended):**
-- **Mosh (Mobile Shell)**: [mosh.org](https://mosh.org/) - The ultimate mobile SSH client that handles network interruptions gracefully
+- **Mosh (Mobile Shell)**: [mosh.org](https://mosh.org/) - A mobile SSH client that handles network interruptions gracefully
   - **Why Mosh?** Keeps your connection alive even when switching networks (WiFi → 4G → WiFi), works with poor connections, provides intelligent local echo for reduced lag, and automatically resumes where you left off after reconnection
   - **Installation**: `brew install mosh` (macOS), `sudo apt install mosh` (Ubuntu/Debian)
   - **Usage**: `mosh username@your-server-address` instead of `ssh username@your-server-address`
@@ -407,21 +463,6 @@ AGENT_MODE=SDK_ONLY python clautorun.py
 ```
 
 ## Command Reference
-
-### File Policy Commands
-- `/afs` - Set policy to strict search (only modify existing files)
-- `/afa` - Set policy to allow all (create/modify any files)
-- `/afj` - Set policy to justify (require justification for new files)
-- `/afst` - Show current file policy
-
-### Control Commands
-- `/autostop` - Stop the current session gracefully
-- `/estop` - Emergency stop immediately
-- `/autorun <task description>` - Start automated task execution
-
-### Tmux Automation Commands
-- `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing
-- `/clautorun tmux-session-management` - Interactive session management
 
 ### Interactive Mode Commands
 - `quit`, `exit`, `q` - Exit the application
@@ -1263,25 +1304,21 @@ git push origin feature/your-improvement
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
-==============================================================================
-COMPREHENSIVE WORKFLOW DOCUMENTATION
-==============================================================================
+## 📚 Comprehensive Workflow Documentation
 
-REDUCE CONSTANT BABYSITTING
-• Problem: Claude requires manually typing continue, interrupting workflow focus
-• Solution: Keep Claude working autonomously on tasks without requiring user intervention
-• Result: Complete projects with unified implementation and minimal interruptions
+### Reduce Constant Babysitting
+- **Problem**: Claude requires manually typing continue, interrupting workflow focus
+- **Solution**: Keep Claude working autonomously on tasks without requiring user intervention
+- **Result**: Complete projects with reduced interruptions
 
-PREVENT FILESYSTEM CHAOS
-• Problem: AI creates numerous experimental files, leading to cluttered directories
-• Solution: Unified implementation approach with clear file creation policies
-• Result: Clean codebase with meaningful, well-organized files
+### Prevent Filesystem Chaos
+- **Problem**: AI creates numerous experimental files, leading to cluttered directories
+- **Solution**: Three-tier file creation policy with strict enforcement
+- **Result**: Clean codebase with meaningful, well-organized files
 
-==============================================================================
-QUICK START FOR NEW USERS
-==============================================================================
+## 🔧 Quick Start for New Users
 
-1. INSTALL PLUGIN (Choose Method)
+### 1. Install Plugin (Choose Method)
 
 **Option A: GitHub Installation (Production - Recommended)**
 ```bash
@@ -1292,7 +1329,7 @@ QUICK START FOR NEW USERS
 **Option B: Local Development Installation (Testing Changes)**
 ```bash
 # Navigate to clautorun directory
-cd /Users/athundt/.claude/clautorun
+cd /path/to/clautorun
 
 # Add local development marketplace
 /plugin marketplace add ./clautorun
@@ -1305,7 +1342,7 @@ cd /Users/athundt/.claude/clautorun
 - **Option A**: For stable production use with released versions
 - **Option B**: For testing changes before pushing to GitHub
 
-2. VERIFY INSTALLATION
+### 2. Verify Installation
 ```bash
 # List installed plugins
 /plugin
@@ -1314,211 +1351,91 @@ cd /Users/athundt/.claude/clautorun
 /clautorun /afst
 ```
 
-3. START AUTONOMOUS WORK
-`/clautorun /autorun Create complete e-commerce system with payment processing, testing, and deployment`
+### 3. Start Autonomous Work
+```bash
+/clautorun /autorun Create complete e-commerce system with payment processing, testing, and deployment
+```
 
-==============================================================================
-COMMAND REFERENCE
-==============================================================================
+## 📋 Detailed Command Reference
 
-AUTORUN COMMANDS
-/autorun <prompt>    Start autonomous workflow with extended work sessions
-                    Reduces manual "continue" prompts significantly
-                    Enables two-stage verification to prevent premature exits
-                    Takes task description as argument (required)
+### Autorun Commands
+- **/autorun \<prompt>** - Start autonomous workflow with extended work sessions
+  - Reduces manual "continue" prompts significantly
+  - Enables two-stage verification to prevent premature exits
+  - Takes task description as argument (required)
 
-/autorun autoproc    Use rigorous sequential improvement methodology
-                    Follows structured process with wait steps and quality gates
-                    Implements best practices and comprehensive critique cycles
+- **/autostop** - Stop gracefully after current task completion
+  - Allows AI to finish current work before stopping
+  - Cleans up processes and state files properly
 
-/autostop           Stop gracefully after current task completion
-                    Allows AI to finish current work before stopping
-                    Cleans up processes and state files properly
+- **/estop** - Emergency stop - immediately halt any runaway process
+  - Stops all processes immediately without waiting
+  - Use for critical situations or when something goes wrong
 
-/estop              Emergency stop - immediately halt any runaway process
-                    Stops all processes immediately without waiting
-                    Use for critical situations or when something goes wrong
+### AutoFile Commands
+- **/afa** - Allow all file creation (Level 3 - default)
+  - No restrictions on creating new files
+  - Best for new projects and initial development
 
-AUTOFILE COMMANDS
-/autofileall, /afa           Allow all file creation (Level 3 - default)
-                              No restrictions on creating new files
-                              Best for new projects and initial development
+- **/afj** - Require justification before creating new files (Level 2)
+  - AI must include \<AUTOFILE_JUSTIFICATION> tag with reasoning
+  - Ideal for security-sensitive work and established projects
 
-/autofilejustify, /afj       Require justification before creating new files (Level 2)
-                              AI must include <AUTOFILE_JUSTIFICATION> tag with reasoning
-                              Ideal for security-sensitive work and established projects
+- **/afs** - STOP the auto creation of files, only modify existing files (Level 1 - strict)
+  - Blocks ALL new file creation
+  - Forces AI to use existing files via Glob/Grep search
+  - Perfect for refactoring established codebases
 
-/autofilesearch, /afs        STOP the auto creation of files, only modify existing files (Level 1 - strict)
-                              Blocks ALL new file creation
-                              Forces AI to use existing files via Glob/Grep search
-                              Perfect for refactoring established codebases
+- **/afst** - Display current AutoFile policy and settings
+  - Shows current policy level and name
+  - Displays current enforcement status
 
-/autofilestatus, /afst       Display current AutoFile policy and settings
-                              Shows current policy level and name
-                              Displays how many times policy has been changed
+### Usage Examples
 
-# USAGE EXAMPLES
-
+```bash
 # Start autonomous work on a large project
 /clautorun /autorun Build complete REST API with authentication, testing, and documentation
 
-## Use autoproc methodology for rigorous sequential improvement
-/clautorun /autorun autoproc
-
-## Enable strict file control for security-sensitive work
+# Enable strict file control for security-sensitive work
 /clautorun /afj
 /clautorun /autorun Implement OAuth2 authentication system
 
-## Check current file creation policy
+# Check current file creation policy
 /clautorun /afst
-# Output: "AutoFile Policy: justify-create (Level 2). Commands: /autofileall (/afa), /autofilejustify (/afj), /autofilesearch (/afs)"
+# Output: "AutoFile Policy: justify-create (Level 2)"
 
-## Protect existing codebase during refactoring
+# Protect existing codebase during refactoring
 /clautorun /afs
 /clautorun /autorun Refactor authentication module to use new database schema
 
-## Stop gracefully when task is complete
+# Stop gracefully when task is complete
 /clautorun /autostop
 
 # Emergency stop if something goes wrong
 /clautorun /estop
+```
 
-==============================================================================
-HOW IT WORKS
-==============================================================================
+## ⚙️ How It Works
 
-## AUTORUN: REDUCE INTERVENTIONS
-
+### Autorun: Reduce Interventions
 1. AI claims task complete → System re-injects original task for verification
 2. AI completes verification → System allows final exit
-3. Result: Extended work sessions with minimal interruptions
+3. Result: Extended work sessions with fewer interruptions
 
-## AUTOFILE: PREVENT FILE CHAOS
-1. Level 3 (allow-all): Create files freely (new projects)
-2. Level 2 (justify-create): Must explain why each file is needed
-3. Level 1 (strict-search): Only modify existing files (refactoring)
+### AutoFile: Prevent File Chaos
+1. **Level 3 (allow-all)**: Create files freely (new projects)
+2. **Level 2 (justify-create)**: Must explain why each file is needed
+3. **Level 1 (strict-search)**: Only modify existing files (refactoring)
 
-## VERIFICATION EXAMPLE
-BEFORE: Claude stops after basic login form
-AFTER:
+### Verification Example
+**Before**: Claude stops after basic login form
+**After**:
 - First completion: "Login form done!" → System: "Did you add tests? Error handling? Database migrations?"
 - Second completion: "Full auth system with tests complete!" → System: "✅ Task verified, exiting"
 
-==============================================================================
-TECHNICAL DETAILS
-==============================================================================
+### Two-Stage Verification Process
 
-## FEATURES LIST
-
-### Autorun System
-- **Two-stage verification**: Prevents premature exits by requiring task completion verification
-- **Automatic task re-injection**: Re-inserts original prompt when AI stops working
-- **Extended work sessions**: Enables continuous work periods without requiring manually typing continue
-- **Intelligent completion detection**: Recognizes when tasks are genuinely finished
-- **Graceful degradation**: Works without external dependencies
-- **Session isolation**: Each session has independent state management
-
-### AutoFile System
-- **Three-tier policy system**: allow-all, justify-create, strict-search modes
-- **Real-time enforcement**: Blocks file creation before it happens via PreToolUse hooks
-- **Policy persistence**: Settings survive across sessions and restarts
-- **Justification tracking**: Records why each file was created in reasoning
-- **Atomic file operations**: Prevents state corruption during concurrent access
-- **Fallback mechanisms**: Graceful handling when state files are missing
-
-## AUTORUN LIFECYCLE FLOW
-
-```mermaid
-graph TD
-    A[User sends /autorun command] --> B[UserPromptSubmit Hook]
-    B --> C[Activate session state]
-    C --> D[Start ai-monitor process]
-    D --> E[AI works autonomously]
-    E --> F{Stop Hook triggered}
-    F --> G[First completion detected?]
-    G -->|No| H[Re-inject continue instructions]
-    H --> E
-    G -->|Yes| I[Re-inject verification prompt]
-    I --> J[AI performs verification]
-    J --> K{Second completion detected?}
-    K -->|No| L[Continue verification work]
-    L --> J
-    K -->|Yes| M[Cleanup and exit]
-```
-
-**Stage 1: Initial Activation**
-1. User sends `/clautorun /autorun <task description>`
-2. Command processor creates session state with original prompt
-3. Session tracking initiated via Agent SDK
-4. AI receives full autonomous instructions
-
-**Stage 2: Work Extension**
-1. AI stops working (timeout, completion claim, etc.)
-2. Command processor detects stop and analyzes transcript
-3. If no completion marker, re-injects continue instructions
-4. AI resumes work with full context
-
-**Stage 3: Verification**
-1. AI claims completion with completion marker
-2. Command processor detects first completion and triggers verification
-3. Original task re-injected with verification checklist
-4. AI must verify all requirements are met
-
-**Stage 4: Final Completion**
-1. AI completes verification with second completion marker
-2. Command processor verifies two-stage completion
-3. Cleanup session state files
-4. Allow final session exit
-
-## AUTOFILE LIFECYCLE FLOW
-
-```mermaid
-graph TD
-    A[User sets AutoFile policy] --> B{Policy Level}
-    B -->|Level 3<br/>allow-all| C[All file creation allowed]
-    B -->|Level 2<br/>justify-create| D[Require justification check]
-    B -->|Level 1<br/>strict-search| E[Block all new files]
-
-    C --> F[PreToolUse Hook]
-    D --> G{Justification found?}
-    E --> H{File exists?}
-
-    G -->|Yes| F
-    G -->|No| I[Block file creation]
-    H -->|Yes| F
-    H -->|No| I
-
-    F --> J{Tool is Write?}
-    J -->|No| K[Allow tool execution]
-    J -->|Yes| L{File already exists?}
-    L -->|Yes| K
-    L -->|No| M[Allow new file creation]
-```
-
-**Policy Level 1: Strict Search**
-- Blocks all new file creation via PreToolUse hooks
-- Forces AI to modify existing files using Glob/Grep
-- Ideal for refactoring established codebases
-- Prevents pollution with experimental files
-
-**Policy Level 2: Justify Create**
-- Requires `<AUTOFILE_JUSTIFICATION>` tag in AI reasoning
-- AI must explain why each file is necessary before creation
-- PreToolUse processor scans transcript for justification
-- Blocks creation if justification missing or inadequate
-
-**Policy Level 3: Allow All**
-- Default mode for new projects
-- No restrictions on file creation
-- Still tracks file creation in session state
-- Best for initial development phases
-
-## TWO-STAGE VERIFICATION
-
-### Why Two Stages?
-AI systems commonly claim tasks are complete when they've only addressed the obvious parts. The two-stage system ensures thorough completion by requiring verification.
-
-### Stage 1: Initial Completion
+#### Stage 1: Initial Completion
 **Trigger**: AI outputs completion marker in transcript
 ```
 "User authentication system is complete! AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
@@ -1540,10 +1457,11 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 7. Ensure no temporary or incomplete work remains
 ```
 
-### Stage 2: Verification Completion
+#### Stage 2: Verification Completion
 **Trigger**: AI outputs completion marker after thorough verification
 ```
-"Full authentication system with comprehensive testing and documentation is verified complete! AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
+"Full authentication system with comprehensive testing and documentation is verified complete!
+AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
 ```
 
 **System Response**: Allow final exit with cleanup
@@ -1556,47 +1474,23 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 - **State validation**: Ensures session integrity throughout process
 - **Atomic operations**: Prevents corruption during concurrent access
 
-## PERFORMANCE & RELIABILITY
-
-### Performance Metrics
-- **Hook processing**: 2-5ms per invocation
-- **State operations**: <1ms read/write, <50KB per session
-- **Memory usage**: <5MB per process
-- **File creation reduction**: 90%+ fewer meaningless files
-
-### Reliability Features
-- **Atomic file operations**: Prevents state corruption using POSIX atomic renames
-- **Fresh process boundaries**: Eliminates memory leaks between hook invocations
-- **Graceful degradation**: Works without ai-monitor, tmux, or external tools
-- **3-retry mechanism**: Handles transient failures with exponential backoff
-- **Process isolation**: Each hook runs in independent process context
-
-### Supported Environments
-- **byobu**: Primary terminal multiplexer (tmux-compatible) - **RECOMMENDED**
-- **tmux**: Direct backend support with session detection
-- **Standard terminal**: Graceful fallback without multiplexing
-
-==============================================================================
-ADDITIONAL FEATURES
-==============================================================================
-
-## CUSTOM COMMAND WORKFLOWS
+### Custom Command Workflows
 
 You can extend clautorun with your own command workflows by creating markdown files:
 
-### Creating Custom Workflows
+#### Creating Custom Workflows
 1. Create a markdown file in `~/.claude/commands/` (e.g., `myworkflow.md`)
 2. Include `$ARGUMENTS` placeholder in the file to receive arguments
 3. Title must include `(/autorun: Your Methodology Name)`
 4. Use `/autorun myworkflow` to execute with your custom methodology
 
-### Argument Handling
+#### Argument Handling
 - `$ARGUMENTS` in your command file gets replaced with everything after `/autorun`
 - Example: `/autorun myworkflow build database with migrations`
 - The `$ARGUMENTS` placeholder becomes: `"build database with migrations"`
 - Your workflow template can reference these arguments throughout
 
-### Example Custom Command
+#### Example Custom Command
 File: `~/.claude/commands/debug.md`
 
 ```markdown
@@ -1610,3 +1504,4 @@ $ARGUMENTS - analyze and resolve technical issues using systematic debugging met
 ```
 
 Usage: `/autorun debug performance issues in auth module`
+
