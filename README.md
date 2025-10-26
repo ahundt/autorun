@@ -30,7 +30,7 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with m
 - **Result**: Project directories contain essential files only, reducing cleanup requirements
 
 ### Reduce Manual Interventions (clautorun feature)
-- **Current Behavior**: Claude Code stops and waits for manual continuation
+- **Current Behavior**: Claude Code stops and waits for manually typing continue
 - **clautorun Action**: Hook system intercepts Claude Code stop events and automatically re-injects continuation prompts
 - **Mechanism**: UserPromptSubmit and Stop hooks detect when Claude stops working, analyze the transcript for completion markers, and inject "continue working" prompts when tasks are incomplete
 - **Benefit**: Start autonomous tasks and return to completed work without hourly interruptions
@@ -102,9 +102,9 @@ Stop babysitting your AI sessions. Let Claude complete tasks autonomously with m
 - **Concrete Result**: See AI responses in real-time while monitoring system resources and errors simultaneously
 
 ### Reduce User Interruptions
-- **Technical Issue**: Claude Code sessions require manual continuation prompts, interrupting users and breaking workflow focus
+- **Technical Issue**: Claude Code sessions require manually typing continue, interrupting users and breaking workflow focus
 - **Solution**: clautorun's automatic continuation system keeps Claude working on tasks without requiring user intervention
-- **Concrete Result**: Start autonomous task, return later to find completed work instead of constant interruptions for manual continuation
+- **Concrete Result**: Start autonomous task, return later to find completed work instead of constant interruptions for manually typing continue
 
 ### Control File Creation
 - **Technical Issue**: AI creates numerous experimental files during development, leading to cluttered project directories
@@ -1268,7 +1268,7 @@ COMPREHENSIVE WORKFLOW DOCUMENTATION
 ==============================================================================
 
 REDUCE CONSTANT BABYSITTING
-• Problem: Claude requires manual continuation prompts, interrupting workflow focus
+• Problem: Claude requires manually typing continue, interrupting workflow focus
 • Solution: Keep Claude working autonomously on tasks without requiring user intervention
 • Result: Complete projects with unified implementation and minimal interruptions
 
@@ -1413,7 +1413,7 @@ TECHNICAL DETAILS
 ### Autorun System
 - **Two-stage verification**: Prevents premature exits by requiring task completion verification
 - **Automatic task re-injection**: Re-inserts original prompt when AI stops working
-- **Extended work sessions**: Enables continuous work periods without requiring manual continuation
+- **Extended work sessions**: Enables continuous work periods without requiring manually typing continue
 - **Intelligent completion detection**: Recognizes when tasks are genuinely finished
 - **Graceful degradation**: Works without external dependencies
 - **Session isolation**: Each session has independent state management
