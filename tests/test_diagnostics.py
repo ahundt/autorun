@@ -379,7 +379,7 @@ class TestHealthChecker:
     def test_overall_health_calculation(self):
         """Test overall health status calculation"""
         if not DIAGNOSTICS_AVAILABLE:
-            pytest pytest.skip("Diagnostics not available")
+            pytest.skip("Diagnostics not available")
 
         # Empty results should be UNKNOWN
         assert self.health_checker.get_overall_health() == HealthStatus.UNKNOWN

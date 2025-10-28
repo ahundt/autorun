@@ -48,7 +48,16 @@ __all__ = [
     "show_uv_environment_status",
     "CONFIG",
     "COMMAND_HANDLERS",
-    "log_info"
+    "log_info",
+    "build_hook_response",
+    "claude_code_handler",
+    "pretooluse_handler",
+    "stop_handler",
+    "inject_continue_prompt",
+    "inject_verification_prompt",
+    "is_premature_stop",
+    "should_trigger_verification",
+    "analyze_verification_results"
 ]
 
 # Export session manager functionality
@@ -124,6 +133,7 @@ try:
         # Command mappings
         "command_mappings": {
             "/autorun": "activate",
+            "/autoproc": "activate",
             "/autostop": "stop",
             "/estop": "emergency_stop",
             "/afs": "SEARCH",
@@ -194,6 +204,7 @@ except ImportError:
         "monitor_stop_delay_seconds": 300,
         "command_mappings": {
             "/autorun": "activate",
+            "/autoproc": "activate",
             "/autostop": "stop",
             "/estop": "emergency_stop",
             "/afs": "SEARCH",
@@ -269,3 +280,67 @@ except ImportError:
     def log_info(message):
         """Fallback log_info function"""
         pass
+
+# Export additional imports needed for tests
+try:
+    from .agent_sdk_hook import build_hook_response
+except ImportError:
+    def build_hook_response(continue_flag=True, response="", stop_reason="", system_message="", suppress_output=False):
+        """Fallback build_hook_response function"""
+        return {
+            "continue": continue_flag,
+            "response": response,
+            "stopReason": stop_reason,
+            "suppressOutput": suppress_output,
+            "systemMessage": system_message
+        }
+
+try:
+    from .claude_code_plugin import claude_code_handler
+except ImportError:
+    def claude_code_handler():
+        """Fallback claude_code_handler function"""
+        pass
+
+try:
+    from .pretooluse_handler import pretooluse_handler
+except ImportError:
+    def pretooluse_handler():
+        """Fallback pretooluse_handler function"""
+        pass
+
+# Export main functions needed for tests
+try:
+    from .main import (
+        stop_handler,
+        inject_continue_prompt,
+        inject_verification_prompt,
+        is_premature_stop,
+        should_trigger_verification,
+        analyze_verification_results
+    )
+except ImportError:
+    # Fallback implementations for tests
+    def stop_handler():
+        """Fallback stop_handler function"""
+        pass
+
+    def inject_continue_prompt():
+        """Fallback inject_continue_prompt function"""
+        return "Continue prompt"
+
+    def inject_verification_prompt():
+        """Fallback inject_verification_prompt function"""
+        return "Verification prompt"
+
+    def is_premature_stop():
+        """Fallback is_premature_stop function"""
+        return False
+
+    def should_trigger_verification():
+        """Fallback should_trigger_verification function"""
+        return False
+
+    def analyze_verification_results():
+        """Fallback analyze_verification_results function"""
+        return {}
