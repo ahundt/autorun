@@ -1,16 +1,288 @@
 {
-  "last_updated": 1761335329.493709,
+  "last_updated": 1761668978.171529,
   "attempts": [
     {
-      "attempt_id": "boundary_test_2_1761335329493",
-      "timestamp": 1761335329.493684,
-      "method": "InjectionMethod.API_DIRECT",
-      "session_id": "boundary_test_2",
-      "prompt_type": "test",
-      "prompt_content": "test",
+      "attempt_id": "unknown_1761668977916",
+      "timestamp": 1761668977.916376,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
       "outcome": "InjectionOutcome.SUCCESS",
-      "response_time_ms": 100.0,
-      "success_indicators": [],
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "unknown_1761668977918",
+      "timestamp": 1761668977.918551,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun build a website\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Caref...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 2)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "test_session_1761668977932",
+      "timestamp": 1761668977.932296,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "test_session",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun build a website\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Caref...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 1)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "test_session_1761668977935",
+      "timestamp": 1761668977.935044,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "test_session",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "unknown_1761668977940",
+      "timestamp": 1761668977.940992,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "unknown_1761668977942",
+      "timestamp": 1761668977.94261,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun build a website\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Caref...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 2)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "session_1_1761668977945",
+      "timestamp": 1761668977.945675,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "session_1",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun task 1\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Carefully revi...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 1)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "test_session_1761668977948",
+      "timestamp": 1761668977.948759,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "test_session",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "unknown_1761668977951",
+      "timestamp": 1761668977.951987,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "unknown_1761668977953",
+      "timestamp": 1761668977.953394,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "unknown_1761668977956",
+      "timestamp": 1761668977.9562502,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "unknown",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": false,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "session_0_1761668977960",
+      "timestamp": 1761668977.9600651,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "session_0",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun task for session_0\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Ca...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 1)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "session_1_1761668978069",
+      "timestamp": 1761668978.069855,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "session_1",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun task for session_1\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Ca...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 1)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "session_2_1761668978163",
+      "timestamp": 1761668978.1636128,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "session_2",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: /autorun task for session_2\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Ca...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 1)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "test_session_1761668978168",
+      "timestamp": 1761668978.168155,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "test_session",
+      "prompt_type": "verification",
+      "prompt_content": "AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.\n\nOriginal Task: original task\n\nCRITICAL VERIFICATION INSTRUCTIONS:\n1. Carefully review...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Verification prompt injected (attempt 1)"
+      ],
+      "error_message": null,
+      "context_size": 0,
+      "transcript_length": 0,
+      "follow_up_required": true,
+      "user_intervention": false
+    },
+    {
+      "attempt_id": "test_session_1761668978171",
+      "timestamp": 1761668978.171448,
+      "method": "InjectionMethod.HOOK_INTEGRATION",
+      "session_id": "test_session",
+      "prompt_type": "continue",
+      "prompt_content": "Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.\n\n1.  **MANDATORY PROCESS TO CONTINUE EXECUTI...",
+      "outcome": "InjectionOutcome.SUCCESS",
+      "response_time_ms": 0,
+      "success_indicators": [
+        "Continue prompt injected"
+      ],
       "error_message": null,
       "context_size": 0,
       "transcript_length": 0,
@@ -166,6 +438,93 @@
         "api_direct"
       ],
       "outcomes": [
+        "success"
+      ]
+    },
+    "session_0": {
+      "first_attempt": 1761618822.660374,
+      "last_attempt": 1761668977.9600651,
+      "total_attempts": 3,
+      "methods_used": [
+        "hook_integration"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "session_1": {
+      "first_attempt": 1761618822.759802,
+      "last_attempt": 1761668978.069855,
+      "total_attempts": 5,
+      "methods_used": [
+        "hook_integration"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "session_2": {
+      "first_attempt": 1761618822.859353,
+      "last_attempt": 1761668978.1636128,
+      "total_attempts": 3,
+      "methods_used": [
+        "hook_integration"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "test_session": {
+      "first_attempt": 1761618822.861284,
+      "last_attempt": 1761668978.171448,
+      "total_attempts": 12,
+      "methods_used": [
+        "hook_integration"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      ]
+    },
+    "unknown": {
+      "first_attempt": 1761618904.356919,
+      "last_attempt": 1761668977.9562502,
+      "total_attempts": 14,
+      "methods_used": [
+        "hook_integration"
+      ],
+      "outcomes": [
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
         "success"
       ]
     }

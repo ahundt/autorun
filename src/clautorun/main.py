@@ -160,6 +160,8 @@ def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Op
 # Configuration - Complete autorun5.py compatibility
 CONFIG = {
     "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+    "initial_completion_marker": "AUTORUN_INITIAL_TASKS_COMPLETED",
+    "verification_completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
     "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,
@@ -177,7 +179,7 @@ CONFIG = {
         4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop_phrase}**
-5.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{completion_marker}**
+5.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{initial_completion_marker}**
 6.  **FILE CREATION POLICY:** {policy_instructions}""",
     "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
 
@@ -193,7 +195,7 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 7. Ensure no temporary or incomplete work remains
 {verification_requirements}
 
-Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {completion_marker}
+Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {verification_completion_marker}
 
 If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
 
@@ -214,7 +216,7 @@ SYSTEM OVERRIDE INSTRUCTIONS:
 3. Add any missing documentation or comments
 4. Perform final validation and cleanup
 
-After completing the above forced requirements, output: {completion_marker}
+After completing the above forced requirements, output: {verification_completion_marker}
 
 NOTE: This is a forced compliance override to prevent infinite verification loops.
 Ensure core functionality is working before final completion.""",
@@ -369,7 +371,7 @@ def _manage_monitor(state: dict, action: str):
             ai_monitor.stop_monitor(session_id)
         pid = ai_monitor.start_monitor(
             session_id=session_id, prompt="continue working",
-            stop_marker=CONFIG["completion_marker"], max_cycles=20, prompt_on_start=True
+            stop_marker=CONFIG["verification_completion_marker"], max_cycles=20, prompt_on_start=True
         )
         log_info(f"Started ai-monitor for session {session_id} with PID: {pid}")
         state["ai_monitor_pid"] = pid
@@ -462,6 +464,8 @@ def handle_activate(state, prompt=""):
     injection = CONFIG["injection_template"].format(
         emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
         completion_marker=CONFIG["completion_marker"],
+        initial_completion_marker=CONFIG["initial_completion_marker"],
+        verification_completion_marker=CONFIG["verification_completion_marker"],
         policy_instructions=policy_instructions
     )
 
@@ -600,6 +604,8 @@ def inject_continue_prompt(state):
     continue_message = CONFIG["injection_template"].format(
         emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
         completion_marker=CONFIG["completion_marker"],
+        initial_completion_marker=CONFIG["initial_completion_marker"],
+        verification_completion_marker=CONFIG["verification_completion_marker"],
         policy_instructions=policy_instructions
     )
 
@@ -692,6 +698,8 @@ def inject_verification_prompt(state):
     verification_prompt = template.format(
         activation_prompt=state.get("activation_prompt", "original task"),
         completion_marker=CONFIG["completion_marker"],
+        initial_completion_marker=CONFIG["initial_completion_marker"],
+        verification_completion_marker=CONFIG["verification_completion_marker"],
         recheck_count=verification_attempts,
         max_recheck_count=CONFIG["max_recheck_count"],
         verification_requirements=verification_requirements
@@ -854,9 +862,10 @@ def is_premature_stop(ctx, state):
     # Get transcript for analysis
     transcript = str(getattr(ctx, 'session_transcript', []))
 
-    # Check if completion marker is present
-    if CONFIG["completion_marker"] in transcript:
-        return False  # Proper completion
+    # Check if ANY completion marker is present
+    if (CONFIG["initial_completion_marker"] in transcript or
+        CONFIG["verification_completion_marker"] in transcript):
+        return False  # Proper completion of some kind
 
     # Check if emergency stop was used
     if CONFIG["emergency_stop_phrase"] in transcript:
@@ -872,8 +881,9 @@ def should_trigger_verification(state):
 @handler("Stop")
 @handler("SubagentStop")
 def stop_handler(ctx):
-    """Enhanced stop handler with ai_monitor continuation enforcement"""
+    """Enhanced stop handler with proper two-stage completion and AI monitor lifecycle management"""
     session_id = getattr(ctx, 'session_id', 'default')
+    transcript = str(getattr(ctx, 'session_transcript', []))
 
     with session_state(session_id) as state:
         # Ensure session_id is in state for _manage_monitor
@@ -885,56 +895,89 @@ def stop_handler(ctx):
             state.clear()
             return build_hook_response()
 
-        # Check if this is a premature stop that needs intervention
-        if is_premature_stop(ctx, state):
-            log_info(f"Detected premature stop for session {session_id}")
+        # STAGE 1: Handle initial completion
+        if state.get("autorun_stage") == "INITIAL":
+            # Check for initial completion marker
+            if CONFIG["initial_completion_marker"] in transcript:
+                log_info(f"Initial completion detected for session {session_id}")
 
-            # Check if we should trigger verification stage
-            if should_trigger_verification(state):
                 # Move to verification stage
                 state["autorun_stage"] = "VERIFICATION"
-                state["verification_attempts"] = state.get("verification_attempts", 0) + 1
-                log_info(f"Moving to verification stage, attempt {state['verification_attempts']}")
+                state["verification_attempts"] = 1
+                state["initial_completion_timestamp"] = time.time()
 
+                log_info(f"Moving to verification stage - AI monitor remains active")
+
+                # AI monitor stays running - DO NOT STOP IT
                 return inject_verification_prompt(state)
-            else:
-                # Already in verification or max attempts reached - inject continue prompt
+
+            # Check for premature stop (no completion markers)
+            elif is_premature_stop(ctx, state):
+                log_info(f"Premature stop detected in INITIAL stage for session {session_id}")
                 return inject_continue_prompt(state)
 
-        # Check if we're in verification stage and completion marker is present
-        if (state.get("autorun_stage") == "VERIFICATION" and
-            CONFIG["completion_marker"] in str(getattr(ctx, 'session_transcript', []))):
+        # STAGE 2: Handle verification completion
+        elif state.get("autorun_stage") == "VERIFICATION":
+            # Check for verification completion marker
+            if CONFIG["verification_completion_marker"] in transcript:
+                log_info(f"Verification completion detected for session {session_id}")
 
-            log_info(f"Verification completed for session {session_id}")
+                # Add verification window to ensure thorough checking
+                verification_start_time = state.get("initial_completion_timestamp", time.time())
+                verification_duration = time.time() - verification_start_time
 
-            # Analyze verification results if engine is available
-            transcript = str(getattr(ctx, 'session_transcript', []))
-            verification_report = analyze_verification_results(state, transcript)
+                # Ensure minimum verification time (5 seconds) to prevent accidental immediate completion
+                if verification_duration < 5.0:
+                    log_info(f"Verification too quick ({verification_duration:.1f}s), continuing verification")
+                    return inject_continue_prompt(state)
 
-            # Generate completion message
-            completion_msg = "✅ Task completed and verified successfully!"
-            if verification_report:
-                summary = verification_report.get("summary", {})
-                completed = summary.get("completed", 0)
-                total = summary.get("total_requirements", 0)
-                forced = summary.get("forced_compliance", 0)
+                # Analyze verification results if engine is available
+                verification_report = analyze_verification_results(state, transcript)
 
-                if forced > 0:
-                    completion_msg += f" (Note: {forced} requirements required forced compliance)"
-                elif completed < total:
-                    completion_msg += f" (Warning: Only {completed}/{total} requirements verified)"
+                # Generate completion message
+                completion_msg = "✅ Task completed and verified successfully!"
+                if verification_report:
+                    summary = verification_report.get("summary", {})
+                    completed = summary.get("completed", 0)
+                    total = summary.get("total_requirements", 0)
+                    forced = summary.get("forced_compliance", 0)
 
-                # Log verification summary
-                log_info(f"Verification summary: {completed}/{total} completed, {forced} forced compliance")
+                    if forced > 0:
+                        completion_msg += f" (Note: {forced} requirements required forced compliance)"
+                    elif completed < total:
+                        completion_msg += f" (Warning: Only {completed}/{total} requirements verified)"
 
-            _manage_monitor(state, 'stop')
-            state.clear()  # Clean up successful completion
-            return build_hook_response(continue_execution=False,
-                                     system_message=completion_msg)
+                    # Log verification summary
+                    log_info(f"Verification summary: {completed}/{total} completed, {forced} forced compliance")
 
-        # Normal cleanup for non-autorun sessions or completed sessions
-        state.clear()
-        return build_hook_response()
+                # NOW stop the AI monitor after successful verification
+                log_info("Stopping AI monitor after successful verification")
+                _manage_monitor(state, 'stop')
+
+                state.clear()  # Clean up successful completion
+                return build_hook_response(continue_execution=False,
+                                         system_message=completion_msg)
+
+            # Check for wrong completion marker (initial completion in verification stage)
+            elif CONFIG["initial_completion_marker"] in transcript:
+                log_info(f"Wrong completion marker detected in verification stage, continuing verification")
+                return inject_verification_prompt(state)
+
+            # Handle premature stop in verification stage
+            elif is_premature_stop(ctx, state):
+                log_info(f"Premature stop detected in VERIFICATION stage for session {session_id}")
+
+                # Check if we should continue verification or force completion
+                verification_attempts = state.get("verification_attempts", 1)
+                if verification_attempts < CONFIG["max_recheck_count"]:
+                    return inject_verification_prompt(state)
+                else:
+                    # Max attempts reached, force continue
+                    return inject_continue_prompt(state)
+
+        # Fallback: unknown stage or state
+        log_info(f"Unknown state in stop_handler: stage={state.get('autorun_stage')}, session={session_id}")
+        return inject_continue_prompt(state)
 
 # Default handler
 def default_handler(ctx): return build_hook_response()

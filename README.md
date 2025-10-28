@@ -95,9 +95,13 @@ Reduce user interruptions while Claude completes tasks. Maintain work across cra
 - File creation policies to reduce unnecessary files
 - Two-stage verification to help ensure task completion
 
-### Testing the Integration
+### Testing
 
-**Quick Test:**
+clautorun includes a comprehensive testing suite with multiple approaches to verify functionality and integration.
+
+#### Quick Integration Test
+
+**Test the complete workflow:**
 ```bash
 # Create byobu session with crash protection
 byobu-new-session clautorun-work
@@ -119,6 +123,99 @@ ps aux | grep python  # Look for running clautorun processes
 # Verify session state persistence
 tmux list-sessions | grep clautorun
 # Expected: "clautorun-work" session exists and is running
+```
+
+#### Comprehensive pytest Testing
+
+**What is pytest?**
+pytest is a popular testing framework for Python that makes it easy to write simple and scalable tests. It automatically discovers test files and functions, provides detailed output, and supports powerful fixtures and plugins.
+
+**What are Virtual Environments?**
+Virtual environments are isolated Python environments that keep project dependencies separate. Think of them as clean rooms for each project - they prevent different projects from conflicting with each other's requirements.
+
+**What is UV?**
+UV is a modern, extremely fast Python package manager and virtual environment manager. It's like `pip` + `venv` but 10-100x faster with better dependency resolution.
+
+**Quick Core Tests:**
+```bash
+# With UV (Recommended)
+uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+
+# With Traditional pip
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+
+# Using Makefile
+make test-quick
+```
+
+**Expected output:**
+```
+============================= test session starts ==============================
+collected 29 items
+
+tests/test_unit_simple.py::TestConfiguration::test_completion_marker PASSED [ 3%]
+tests/test_unit_simple.py::TestConfiguration::test_emergency_stop_phrase PASSED [ 6%]
+...
+tests/test_autorun_compatibility.py::test_completion_marker PASSED [ 84%]
+tests/test_autorun_compatibility.py::test_emergency_stop_phrase PASSED [ 87%]
+...
+============================== 29 passed in 0.15s ==============================
+```
+
+**Full Test Suite with Coverage:**
+```bash
+# With UV
+uv run pytest --cov=src/clautorun --cov-report=term-missing
+
+# With make
+make test-all
+
+# With traditional pip
+pytest --cov=src/clautorun --cov-report=term-missing
+```
+
+**Test Categories:**
+- **Unit Tests** (`test_unit_simple.py`): Configuration constants, command handlers, command detection logic
+- **Compatibility Tests** (`test_autorun_compatibility.py`): String compatibility, policy descriptions, configuration verification
+- **Integration Tests** (`test_interceptor.py`, `test_interactive.py`): Command processing, interactive mode functionality
+
+**Specific Test Categories:**
+```bash
+# Unit tests only
+uv run pytest tests/test_unit_simple.py -v
+
+# Compatibility tests only
+uv run pytest tests/test_autorun_compatibility.py -v
+
+# With markers
+uv run pytest -m unit -v
+uv run pytest -m compatibility -v
+```
+
+**Test Coverage Report:**
+After running tests with coverage, view detailed reports:
+```bash
+# HTML report (opens in browser)
+open htmlcov/index.html
+
+# Terminal summary
+cat coverage.txt
+```
+
+**Manual Testing:**
+```bash
+# Test interactive commands
+uv run python src/clautorun/main.py
+# Then try: /afs, /afa, /afj, /afst, quit
+
+# Test hook integration
+echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/clautorun/agent_sdk_hook.py
+
+# Test plugin mode
+echo '{"prompt": "/afa"}' | uv run python src/clautorun/claude_code_plugin.py
 ```
 
 ## Why Byobu + tmux Integration
@@ -390,35 +487,42 @@ byobu-new-session clautorun-work
 
 ## 🔧 Advanced Setup (Optional)
 
-### Development Installation
+### Development Installation (Contributors)
 
-If you want to modify clautorun or contribute:
+For contributing to clautorun development:
 
 ```bash
-# Clone repository
+# Clone repository and set up development environment
 git clone https://github.com/ahundt/clautorun.git
 cd clautorun
 
-# Add local development marketplace
+# Install development dependencies
+uv sync --extra dev
+
+# Add local development marketplace for testing
 /plugin marketplace add ./clautorun
 
-# Install local development version
+# Install your local development version
 /plugin install clautorun@clautorun-dev
 ```
 
-**What is Git?**
-Git is a version control system that tracks changes in code and enables collaboration among developers. Think of it as a sophisticated "save history" for your code that lets you go back to any previous version and work with others without overwriting each other's changes.
+**Contributor Workflow:**
+1. **Make changes**: Edit code in your local clone
+2. **Test locally**: Use the installed development version to test your changes
+3. **Run tests**: `uv run pytest tests/` to ensure nothing breaks
+4. **Submit PR**: Create a pull request with your improvements
 
-**Why use Git to undo AI changes:**
-- **Complete protection from AI mistakes**: When AI systems modify large files or implement complex changes, Git provides a complete history to undo all damage instantly
-- **Instant rollback capability**: One command (`git reset --hard HEAD~1`) can restore your entire project to its previous working state before AI modifications
-- **Selective undo**: You can revert specific AI changes with `git checkout -- filename` or `git revert <commit>`
-- **Safe experimentation**: Test AI suggestions confidently knowing any problematic changes can be completely reverted in seconds
-- **Change visibility**: `git diff` shows exactly what AI systems changed, allowing you to review modifications before committing
+**Git for Contributors:**
+Git provides complete version control for collaborative development. Essential commands:
+- `git diff` - Review your changes before committing
+- `git add . && git commit -m "Description"` - Commit your changes
+- `git push origin feature-branch` - Share your changes for review
 
-**Which installation method to choose:**
-- **Standard installation**: Use `/plugin install https://github.com/ahundt/clautorun.git` for stable released versions
-- **Development installation**: Use the local marketplace method when testing changes before releasing
+**AI Safety with Git:**
+- **Instant rollback**: `git reset --hard HEAD~1` undoes all AI changes instantly
+- **Selective revert**: `git checkout -- filename` restores specific files
+- **Safe experimentation**: Test AI suggestions knowing you can revert completely
+- **Change visibility**: See exactly what AI modified before committing
 
 ### Manual Installation (if plugin system fails)
 
@@ -734,131 +838,6 @@ tmux.send_keys("npm test", "my-test-session")  # Executes in "my-test-session"
 - Must search existing files first
 - Must provide justification for creating new files
 
-## Testing
-
-clautorun includes a comprehensive pytest testing suite to verify functionality and compatibility.
-
-**What is pytest?**
-pytest is a popular testing framework for Python that makes it easy to write simple and scalable tests. It automatically discovers test files and functions, provides detailed output, and supports powerful fixtures and plugins.
-
-### Quick Test (Core Functionality)
-
-**What are Virtual Environments?**
-Virtual environments are isolated Python environments that keep project dependencies separate. Think of them as clean rooms for each project - they prevent different projects from conflicting with each other's requirements.
-
-**What is UV?**
-UV is a modern, extremely fast Python package manager and virtual environment manager. It's like `pip` + `venv` but 10-100x faster with better dependency resolution.
-
-**With UV (Recommended):**
-```bash
-uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
-```
-
-**With Traditional pip:**
-```bash
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies and run tests
-pip install -e ".[dev]"
-pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
-```
-
-**Using Makefile:**
-```bash
-make test-quick
-```
-
-**Expected output:**
-```
-============================= test session starts ==============================
-collected 29 items
-
-tests/test_unit_simple.py::TestConfiguration::test_completion_marker PASSED [  3%]
-tests/test_unit_simple.py::TestConfiguration::test_emergency_stop_phrase PASSED [  6%]
-...
-tests/test_autorun_compatibility.py::test_completion_marker PASSED [ 84%]
-tests/test_autorun_compatibility.py::test_emergency_stop_phrase PASSED [ 87%]
-...
-============================== 29 passed in 0.15s ==============================
-```
-
-### Full Test Suite
-
-**Run all tests with coverage:**
-```bash
-# With UV
-uv run pytest --cov=src/clautorun --cov-report=term-missing
-
-# With make
-make test-all
-
-# With traditional pip
-pytest --cov=src/clautorun --cov-report=term-missing
-```
-
-### Test Categories
-
-**Unit Tests** (`test_unit_simple.py`):
-- Configuration constants and mappings
-- Command handler functionality
-- Command detection logic
-- Basic functionality validation
-
-**Compatibility Tests** (`test_autorun_compatibility.py`):
-- autorun5.py string compatibility
-- Policy descriptions and blocked messages
-- Injection and recheck templates
-- Configuration verification
-
-**Integration Tests** (`test_interceptor.py`, `test_interactive.py`):
-- Command processing validation
-- Interactive mode functionality
-
-### Running Specific Test Categories
-
-```bash
-# Unit tests only
-uv run pytest tests/test_unit_simple.py -v
-
-# Compatibility tests only
-uv run pytest tests/test_autorun_compatibility.py -v
-
-# With markers
-uv run pytest -m unit -v
-uv run pytest -m compatibility -v
-```
-
-### Test Coverage Report
-
-After running tests with coverage, view detailed reports:
-
-```bash
-# HTML report (opens in browser)
-open htmlcov/index.html
-
-# Terminal summary
-cat coverage.txt
-```
-
-### Manual Testing
-
-**Test interactive commands:**
-```bash
-uv run python src/clautorun/main.py
-# Then try: /afs, /afa, /afj, /afst, quit
-```
-
-**Test hook integration:**
-```bash
-echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/clautorun/agent_sdk_hook.py
-```
-
-**Test plugin mode:**
-```bash
-echo '{"prompt": "/afa"}' | uv run python src/clautorun/claude_code_plugin.py
-```
 
 ## Project Structure
 
@@ -1015,33 +994,19 @@ show_comprehensive_uv_error("MODULE ERROR", "Specific error details")
 
 ### System Architecture
 
-#### **Session State Management**
-clautorun implements a robust session state system using multiple backends:
-
-```python
-# RAII session state with automatic backend selection
-with session_state(session_id) as state:
-    # State automatically persisted to shelve database
-    # Lock ensures thread/process isolation
-    # Backend selection: shelve → dumbdbm → memory fallback
-    state["user_data"] = "data"
-```
-
-**Backend Fallback Chain:**
-1. **Default shelve**: Standard Python database with writeback
-2. **dumbdbm**: Compatibility fallback for older systems
-3. **Memory**: In-memory fallback for development
-
-#### **Integration Architecture**
-
-clautorun provides multiple integration approaches:
+**Integration Architecture:**
+clautorun provides multiple integration approaches, each using the same core session management and error handling infrastructure:
 
 1. **Claude Code Plugin**: Official plugin system integration
 2. **Hook Integration**: Event-based command interception
 3. **MCP Server**: External application communication
 4. **Interactive Mode**: Standalone command processing
 
-Each integration uses the same core session management and error handling infrastructure, ensuring consistent behavior across all deployment scenarios.
+**Technical Implementation Details:**
+- **RAII Pattern**: Resource Acquisition Is Initialization for robust resource management
+- **Thread & Process Safety**: File-based locking with POSIX file locks across process boundaries
+- **Command Dispatch Pattern**: Efficient command detection and routing
+- **Centralized Error Handling**: Single source of truth for all error scenarios
 
 ##### Approach 1: Markdown Commands (Basic)
 
@@ -1349,14 +1314,8 @@ uv run clautorun uninstall
 uv run clautorun install --force
 ```
 
-**UV Testing Commands:**
-```bash
-# Run quick tests
-uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
-
-# Run full test suite with coverage
-uv run pytest --cov=src/clautorun --cov-report=term-missing
-```
+**Testing with UV:**
+See the comprehensive [Testing](#testing) section above for all testing commands and approaches.
 
 **Python Environment Reminders:**
 - Always activate UV environment: `source .venv/bin/activate`
