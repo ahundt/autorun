@@ -27,6 +27,7 @@ except ImportError:
 CONFIG = {
     "command_mappings": {
         "/autorun": "activate",
+        "/autoproc": "activate",
         "/autostop": "stop",
         "/estop": "emergency_stop",
         "/afs": "SEARCH",
@@ -262,9 +263,9 @@ def main():
         command = CONFIG["command_mappings"].get(prompt, None)
 
         if not command:
-            # Check for commands that support arguments (autorun and prefixed versions)
+            # Check for commands that support arguments (autorun/autoproc and prefixed versions)
             for cmd_key, cmd_value in CONFIG["command_mappings"].items():
-                if cmd_key.startswith('/autorun') and (prompt.startswith(cmd_key) or prompt.startswith('/clautorun ')):
+                if (cmd_key.startswith('/autorun') or cmd_key.startswith('/autoproc')) and (prompt.startswith(cmd_key) or prompt.startswith('/clautorun ')):
                     command = cmd_value
                     break
 

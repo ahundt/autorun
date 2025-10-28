@@ -229,6 +229,7 @@ Ensure core functionality is working before final completion.""",
     },
     "command_mappings": {
         "/autorun": "activate",
+        "/autoproc": "activate",
         "/autostop": "stop",
         "/estop": "emergency_stop",
         "/afs": "SEARCH",
