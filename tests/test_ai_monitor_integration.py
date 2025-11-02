@@ -71,8 +71,8 @@ def test_verification_trigger_logic():
     print("✅ test_verification_trigger_logic passed")
 
 def test_continue_prompt_injection():
-    """Test continue prompt injection functionality"""
-    from clautorun import inject_continue_prompt, CONFIG
+    """Test continue prompt injection functionality with three-stage system"""
+    from clautorun.main import inject_continue_prompt, CONFIG
 
     state = {"session_status": "active", "file_policy": "ALLOW"}
 
@@ -83,8 +83,11 @@ def test_continue_prompt_injection():
     # Should use the full injection template with critical stop signal instructions
     assert "UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION" in response["systemMessage"], "Should contain full injection template"
     assert "SYSTEM STOP SIGNAL RULE" in response["systemMessage"], "Should contain critical stop signal instructions"
-    assert CONFIG["completion_marker"] in response["systemMessage"], "Should contain completion marker"
+    assert CONFIG["completion_marker"] in response["systemMessage"], "Should contain stage 1 completion marker"
     assert CONFIG["emergency_stop_phrase"] in response["systemMessage"], "Should contain emergency stop phrase"
+    assert "THREE-STAGE COMPLETION SYSTEM" in response["systemMessage"], "Should contain three-stage system instructions"
+    assert CONFIG["stage2_message"] in response["systemMessage"], "Should contain stage 2 message"
+    assert CONFIG["stage3_message"] in response["systemMessage"], "Should contain stage 3 message"
     assert "FILE CREATION POLICY" in response["systemMessage"], "Should contain file creation policy instructions"
 
     print("✅ test_continue_prompt_injection passed")
@@ -109,7 +112,7 @@ def test_verification_prompt_injection():
     print("✅ test_verification_prompt_injection passed")
 
 def test_stop_handler_with_premature_stop():
-    """Test stop handler behavior with premature stops"""
+    """Test stop handler behavior with premature stops in three-stage system"""
     from clautorun import stop_handler, CONFIG
     from unittest.mock import patch
 
@@ -132,11 +135,10 @@ def test_stop_handler_with_premature_stop():
 
         response = stop_handler(ctx)
 
-        # Should trigger verification stage
+        # Should inject continue prompt for three-stage system
         assert response["continue"] == True, "Should continue execution"
-        assert "VERIFICATION" in response["systemMessage"], "Should inject verification message"
-        assert mock_state["autorun_stage"] == "VERIFICATION", "Should update stage to VERIFICATION"
-        assert mock_state["verification_attempts"] == 1, "Should increment verification attempts"
+        assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"], "Should inject continue message"
+        assert mock_state["autorun_stage"] == "INITIAL", "Should remain in INITIAL stage"
 
     print("✅ test_stop_handler_with_premature_stop passed")
 
@@ -171,20 +173,20 @@ def test_stop_handler_with_continue_prompt():
     print("✅ test_stop_handler_with_continue_prompt passed")
 
 def test_stop_handler_with_successful_completion():
-    """Test stop handler allows proper completion"""
-    from clautorun import stop_handler, CONFIG
+    """Test stop handler allows proper three-stage completion"""
+    from clautorun.main import stop_handler, CONFIG
 
-    # Mock context with successful completion
+    # Mock context with successful stage 3 completion
     ctx = Mock()
     ctx.session_id = "test_session"
-    ctx.session_transcript = ["Some work", CONFIG["completion_marker"]]
+    ctx.session_transcript = ["Some work", CONFIG["stage3_message"]]
 
-    # Mock session state in verification stage
+    # Mock session state in STAGE2_COMPLETED with countdown completed
     mock_state = {
         "session_status": "active",
-        "autorun_stage": "VERIFICATION",
+        "autorun_stage": "STAGE2_COMPLETED",
         "activation_prompt": "/autorun build a website",
-        "verification_attempts": 1
+        "hook_call_count": CONFIG["stage3_countdown_calls"]  # Countdown completed
     }
 
     with patch('clautorun.main.session_state') as mock_session:
@@ -195,13 +197,13 @@ def test_stop_handler_with_successful_completion():
 
         # Should allow completion
         assert response["continue"] == False, "Should stop execution"
-        assert "completed and verified successfully" in response["systemMessage"], "Should show success message"
+        assert "Three-stage completion successful" in response["systemMessage"], "Should show success message"
 
     print("✅ test_stop_handler_with_successful_completion passed")
 
 def test_stop_handler_with_emergency_stop():
     """Test stop handler respects emergency stop"""
-    from clautorun import stop_handler, CONFIG
+    from clautorun.main import stop_handler, CONFIG
 
     # Mock context with emergency stop
     ctx = Mock()
@@ -290,8 +292,8 @@ def test_template_content_completeness():
     print("✅ test_template_content_completeness passed")
 
 def test_template_parameter_substitution():
-    """Test that template parameter substitution works correctly"""
-    from clautorun import CONFIG, inject_continue_prompt, inject_verification_prompt
+    """Test that template parameter substitution works correctly with three-stage system"""
+    from clautorun.main import CONFIG, inject_continue_prompt, inject_verification_prompt
 
     # Test continue prompt injection
     state = {
@@ -306,6 +308,10 @@ def test_template_parameter_substitution():
     # Verify all parameters were substituted
     assert CONFIG["emergency_stop_phrase"] in system_message
     assert CONFIG["completion_marker"] in system_message
+    assert CONFIG["stage1_message"] in system_message
+    assert CONFIG["stage2_message"] in system_message
+    assert CONFIG["stage3_message"] in system_message
+    assert "Complete Stage 1 before proceeding to Stage 2" in system_message
     assert CONFIG["policies"]["ALLOW"][1] in system_message
 
     # Test verification prompt injection
@@ -584,6 +590,137 @@ def test_error_recovery_scenarios():
 
     print("✅ test_error_recovery_scenarios passed")
 
+def test_three_stage_completion_flow():
+    """Test complete three-stage completion flow"""
+    from clautorun.main import stop_handler, CONFIG
+    from unittest.mock import patch
+
+    # Test Stage 1 completion
+    ctx = Mock()
+    ctx.session_id = "test_session"
+
+    mock_state = {
+        "session_status": "active",
+        "autorun_stage": "INITIAL",
+        "session_id": "test_session"
+    }
+
+    with patch('clautorun.main.session_state') as mock_session:
+        mock_session.return_value.__enter__.return_value = mock_state
+        mock_session.return_value.__exit__.return_value = None
+
+        # Stage 1: Complete initial tasks
+        ctx.session_transcript = ["Work done", CONFIG["completion_marker"]]
+        response = stop_handler(ctx)
+
+        assert response["continue"] == True, "Should continue to stage 2"
+        assert "STAGE 2 INSTRUCTIONS" in response["systemMessage"], "Should provide stage 2 instructions"
+        assert mock_state["autorun_stage"] == "STAGE2", "Should advance to stage 2"
+
+    print("✅ test_three_stage_completion_flow passed")
+
+def test_stage_2_countdown_mechanism():
+    """Test stage 2 countdown mechanism for stage 3 reveal"""
+    from clautorun.main import stop_handler, CONFIG
+    from unittest.mock import patch
+
+    ctx = Mock()
+    ctx.session_id = "test_session"
+
+    mock_state = {
+        "session_status": "active",
+        "autorun_stage": "STAGE2_COMPLETED",
+        "hook_call_count": 0,
+        "session_id": "test_session"
+    }
+
+    with patch('clautorun.main.session_state') as mock_session:
+        mock_session.return_value.__enter__.return_value = mock_state
+        mock_session.return_value.__exit__.return_value = None
+
+        # Test countdown progression
+        for i in range(CONFIG["stage3_countdown_calls"]):
+            mock_state["hook_call_count"] = i
+            ctx.session_transcript = ["No completion marker"]
+            response = stop_handler(ctx)
+
+            assert response["continue"] == True, f"Should continue during countdown (call {i+1})"
+
+            if i < CONFIG["stage3_countdown_calls"] - 1:
+                remaining = CONFIG["stage3_countdown_calls"] - (i + 1)
+                assert f"{remaining} more hook calls" in response["systemMessage"], f"Should show remaining calls (call {i+1})"
+
+        # Test stage 3 reveal after countdown
+        mock_state["hook_call_count"] = CONFIG["stage3_countdown_calls"]
+        response = stop_handler(ctx)
+
+        assert response["continue"] == True, "Should continue for stage 3"
+        assert "STAGE 3 INSTRUCTIONS" in response["systemMessage"], "Should reveal stage 3 instructions"
+
+    print("✅ test_stage_2_countdown_mechanism passed")
+
+def test_premature_stage_3_attempt_handling():
+    """Test handling of premature stage 3 attempts"""
+    from clautorun.main import stop_handler, CONFIG
+    from unittest.mock import patch
+
+    ctx = Mock()
+    ctx.session_id = "test_session"
+    ctx.session_transcript = ["Some work", CONFIG["stage3_message"]]
+
+    mock_state = {
+        "session_status": "active",
+        "autorun_stage": "INITIAL",  # Still in stage 1
+        "session_id": "test_session"
+    }
+
+    with patch('clautorun.main.session_state') as mock_session:
+        mock_session.return_value.__enter__.return_value = mock_state
+        mock_session.return_value.__exit__.return_value = None
+
+        response = stop_handler(ctx)
+
+        assert response["continue"] == True, "Should continue execution"
+        assert "You must complete Stage 1 first" in response["systemMessage"], "Should require stage 1 completion"
+        assert CONFIG["completion_marker"] in response["systemMessage"], "Should provide stage 1 completion instructions"
+
+    print("✅ test_premature_stage_3_attempt_handling passed")
+
+def test_three_stage_ai_monitor_coordination():
+    """Test AI monitor coordination with session IDs in three-stage system"""
+    from clautorun.main import _manage_monitor, CONFIG
+    from unittest.mock import patch
+
+    mock_state = {
+        "session_id": "test_session_three_stage",
+        "ai_monitor_pid": None
+    }
+
+    with patch('clautorun.main.ai_monitor') as mock_ai_monitor:
+        mock_ai_monitor.start_monitor.return_value = 12345
+        mock_ai_monitor.stop_monitor.return_value = None
+
+        # Test monitor start coordination
+        _manage_monitor(mock_state, 'start')
+
+        mock_ai_monitor.start_monitor.assert_called_once_with(
+            session_id="test_session_three_stage",
+            prompt="continue working",
+            stop_marker=CONFIG["verification_completion_marker"],
+            max_cycles=20,
+            prompt_on_start=True
+        )
+
+        assert mock_state["ai_monitor_pid"] == 12345, "Should set monitor PID in state"
+
+        # Test monitor stop coordination
+        _manage_monitor(mock_state, 'stop')
+
+        mock_ai_monitor.stop_monitor.assert_called_once_with("test_session_three_stage")
+        assert mock_state["ai_monitor_pid"] is None, "Should clear monitor PID from state"
+
+    print("✅ test_three_stage_ai_monitor_coordination passed")
+
 def run_all_tests():
     """Run all ai_monitor integration tests"""
     tests = [
@@ -604,7 +741,12 @@ def run_all_tests():
         test_edge_case_transcript_scenarios,
         test_file_policy_integration,
         test_concurrent_session_handling,
-        test_error_recovery_scenarios
+        test_error_recovery_scenarios,
+        # Three-stage system tests
+        test_three_stage_completion_flow,
+        test_stage_2_countdown_mechanism,
+        test_premature_stage_3_attempt_handling,
+        test_three_stage_ai_monitor_coordination
     ]
 
     passed = 0

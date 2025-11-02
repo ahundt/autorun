@@ -157,14 +157,17 @@ def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Op
     except Exception as e:
         log_info(f"Failed to update injection outcome: {e}")
 
-# Configuration - Complete autorun5.py compatibility
+# Configuration - Complete autorun5.py compatibility with three-stage completion system
 CONFIG = {
-    "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+    "completion_marker": "starting tasks, analyzing user requirements, and developing comprehensive plan",
     "initial_completion_marker": "AUTORUN_INITIAL_TASKS_COMPLETED",
     "verification_completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+    "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
+    "stage3_message": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
     "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,
+    "stage3_countdown_calls": 5,
     "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
@@ -179,8 +182,13 @@ CONFIG = {
         4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop_phrase}**
-5.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{initial_completion_marker}**
-6.  **FILE CREATION POLICY:** {policy_instructions}""",
+5.  **THREE-STAGE COMPLETION SYSTEM:** You must progress through three distinct stages:
+    * **Stage 1:** "{stage1_message}" - Work on initial tasks and planning
+    * **Stage 2:** "{stage2_message}" - Critical evaluation and continuation
+    * **Stage 3:** "{stage3_message}" - Final completion after proper evaluation
+    * **Stage Transitions:** After Stage 1, you MUST complete Stage 2 before attempting Stage 3. {stage3_instructions}
+6.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{initial_completion_marker}**
+7.  **FILE CREATION POLICY:** {policy_instructions}""",
     "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
 
 Original Task: {activation_prompt}
@@ -466,6 +474,10 @@ def handle_activate(state, prompt=""):
         completion_marker=CONFIG["completion_marker"],
         initial_completion_marker=CONFIG["initial_completion_marker"],
         verification_completion_marker=CONFIG["verification_completion_marker"],
+        stage1_message=CONFIG["completion_marker"],
+        stage2_message=CONFIG["stage2_message"],
+        stage3_message=CONFIG["stage3_message"],
+        stage3_instructions=get_stage3_instructions(state),
         policy_instructions=policy_instructions
     )
 
@@ -606,6 +618,10 @@ def inject_continue_prompt(state):
         completion_marker=CONFIG["completion_marker"],
         initial_completion_marker=CONFIG["initial_completion_marker"],
         verification_completion_marker=CONFIG["verification_completion_marker"],
+        stage1_message=CONFIG["completion_marker"],
+        stage2_message=CONFIG["stage2_message"],
+        stage3_message=CONFIG["stage3_message"],
+        stage3_instructions=get_stage3_instructions(state),
         policy_instructions=policy_instructions
     )
 
@@ -873,6 +889,26 @@ def is_premature_stop(ctx, state):
 
     return True  # Premature stop - needs intervention
 
+def get_stage3_instructions(state):
+    """Get stage 3 instructions based on current state"""
+    stage = state.get("autorun_stage", "INITIAL")
+    hook_call_count = state.get("hook_call_count", 0)
+
+    if stage == "STAGE2_COMPLETED":
+        # After stage 2, start countdown for stage 3
+        remaining_calls = CONFIG["stage3_countdown_calls"] - hook_call_count
+        if remaining_calls > 0:
+            return f"After {remaining_calls} more hook calls, Stage 3 instructions will be revealed. Continue with evaluation."
+        else:
+            return f"STAGE 3 INSTRUCTIONS: {CONFIG['stage3_message']} - Output this combined message to complete."
+    else:
+        return "Complete Stage 1 before proceeding to Stage 2."
+
+def should_trigger_stage2(state):
+    """Check if we should trigger stage 2"""
+    return (state.get("autorun_stage") == "INITIAL" and
+            state.get("stage1_completed", False))
+
 def should_trigger_verification(state):
     """Check if we should trigger verification stage"""
     return (state.get("autorun_stage") == "INITIAL" and
@@ -881,13 +917,15 @@ def should_trigger_verification(state):
 @handler("Stop")
 @handler("SubagentStop")
 def stop_handler(ctx):
-    """Enhanced stop handler with proper two-stage completion and AI monitor lifecycle management"""
+    """Enhanced stop handler with three-stage completion system and AI monitor lifecycle management"""
     session_id = getattr(ctx, 'session_id', 'default')
     transcript = str(getattr(ctx, 'session_transcript', []))
 
     with session_state(session_id) as state:
         # Ensure session_id is in state for _manage_monitor
         state['session_id'] = session_id
+        # Increment hook call count for stage 3 countdown
+        state['hook_call_count'] = state.get('hook_call_count', 0) + 1
 
         # Only intervene in active autorun sessions
         if state.get("session_status") != "active":
@@ -895,88 +933,88 @@ def stop_handler(ctx):
             state.clear()
             return build_hook_response()
 
-        # STAGE 1: Handle initial completion
-        if state.get("autorun_stage") == "INITIAL":
-            # Check for initial completion marker
-            if CONFIG["initial_completion_marker"] in transcript:
-                log_info(f"Initial completion detected for session {session_id}")
+        current_stage = state.get("autorun_stage", "INITIAL")
+        log_info(f"Three-stage system: stage={current_stage}, hook_calls={state['hook_call_count']}")
 
-                # Move to verification stage
-                state["autorun_stage"] = "VERIFICATION"
-                state["verification_attempts"] = 1
-                state["initial_completion_timestamp"] = time.time()
+        # STAGE 1: Initial work - check for stage 1 completion marker
+        if current_stage == "INITIAL":
+            # Check for stage 1 completion (the completion_marker)
+            if CONFIG["completion_marker"] in transcript:
+                log_info(f"Stage 1 completion detected for session {session_id}")
+                state["autorun_stage"] = "STAGE2"
+                state["stage1_completed"] = True
+                state["stage1_completion_timestamp"] = time.time()
 
-                log_info(f"Moving to verification stage - AI monitor remains active")
+                # Inject stage 2 instructions
+                stage2_prompt = f"STAGE 2 INSTRUCTIONS: {CONFIG['stage2_message']} - Continue with critical evaluation."
+                return build_hook_response(True, "", stage2_prompt)
 
-                # AI monitor stays running - DO NOT STOP IT
-                return inject_verification_prompt(state)
+            # Handle premature stage 3 attempt in stage 1
+            elif CONFIG["stage3_message"] in transcript:
+                log_info(f"Premature stage 3 attempt detected in stage 1 for session {session_id}")
+                stage1_continuation = f"You must complete Stage 1 first. Output: {CONFIG['completion_marker']}"
+                return build_hook_response(True, "", stage1_continuation)
 
-            # Check for premature stop (no completion markers)
+            # Handle premature stop (no completion markers)
             elif is_premature_stop(ctx, state):
-                log_info(f"Premature stop detected in INITIAL stage for session {session_id}")
+                log_info(f"Premature stop detected in Stage 1 for session {session_id}")
                 return inject_continue_prompt(state)
 
-        # STAGE 2: Handle verification completion
-        elif state.get("autorun_stage") == "VERIFICATION":
-            # Check for verification completion marker
-            if CONFIG["verification_completion_marker"] in transcript:
-                log_info(f"Verification completion detected for session {session_id}")
+        # STAGE 2: Critical evaluation
+        elif current_stage == "STAGE2":
+            # Check for stage 2 completion marker
+            if CONFIG["stage2_message"] in transcript:
+                log_info(f"Stage 2 completion detected for session {session_id}")
+                state["autorun_stage"] = "STAGE2_COMPLETED"
+                state["stage2_completion_timestamp"] = time.time()
+                state["hook_call_count"] = 0  # Reset countdown for stage 3
 
-                # Add verification window to ensure thorough checking
-                verification_start_time = state.get("initial_completion_timestamp", time.time())
-                verification_duration = time.time() - verification_start_time
+                # Start countdown for stage 3
+                remaining_calls = CONFIG["stage3_countdown_calls"]
+                countdown_msg = f"Stage 2 complete. Stage 3 instructions will be revealed after {remaining_calls} more hook calls. Continue working."
+                return build_hook_response(True, "", countdown_msg)
 
-                # Ensure minimum verification time (5 seconds) to prevent accidental immediate completion
-                if verification_duration < 5.0:
-                    log_info(f"Verification too quick ({verification_duration:.1f}s), continuing verification")
-                    return inject_continue_prompt(state)
-
-                # Analyze verification results if engine is available
-                verification_report = analyze_verification_results(state, transcript)
-
-                # Generate completion message
-                completion_msg = "✅ Task completed and verified successfully!"
-                if verification_report:
-                    summary = verification_report.get("summary", {})
-                    completed = summary.get("completed", 0)
-                    total = summary.get("total_requirements", 0)
-                    forced = summary.get("forced_compliance", 0)
-
-                    if forced > 0:
-                        completion_msg += f" (Note: {forced} requirements required forced compliance)"
-                    elif completed < total:
-                        completion_msg += f" (Warning: Only {completed}/{total} requirements verified)"
-
-                    # Log verification summary
-                    log_info(f"Verification summary: {completed}/{total} completed, {forced} forced compliance")
-
-                # NOW stop the AI monitor after successful verification
-                log_info("Stopping AI monitor after successful verification")
-                _manage_monitor(state, 'stop')
-
-                state.clear()  # Clean up successful completion
-                return build_hook_response(continue_execution=False,
-                                         system_message=completion_msg)
-
-            # Check for wrong completion marker (initial completion in verification stage)
-            elif CONFIG["initial_completion_marker"] in transcript:
-                log_info(f"Wrong completion marker detected in verification stage, continuing verification")
-                return inject_verification_prompt(state)
-
-            # Handle premature stop in verification stage
+            # Handle premature stop in stage 2
             elif is_premature_stop(ctx, state):
-                log_info(f"Premature stop detected in VERIFICATION stage for session {session_id}")
+                log_info(f"Premature stop detected in Stage 2 for session {session_id}")
+                stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_message']}"
+                return build_hook_response(True, "", stage2_continuation)
 
-                # Check if we should continue verification or force completion
-                verification_attempts = state.get("verification_attempts", 1)
-                if verification_attempts < CONFIG["max_recheck_count"]:
-                    return inject_verification_prompt(state)
+        # STAGE 2 COMPLETED: Countdown to stage 3
+        elif current_stage == "STAGE2_COMPLETED":
+            hook_call_count = state.get("hook_call_count", 0)
+            remaining_calls = CONFIG["stage3_countdown_calls"] - hook_call_count
+
+            # Check if stage 3 completion was attempted
+            if CONFIG["stage3_message"] in transcript:
+                if remaining_calls > 0:
+                    log_info(f"Early stage 3 attempt detected, {remaining_calls} calls remaining")
+                    reset_msg = f"Too early for Stage 3. Wait {remaining_calls} more hook calls. Resetting to Stage 1."
+                    state["autorun_stage"] = "INITIAL"
+                    state["stage1_completed"] = False
+                    return build_hook_response(True, "", reset_msg)
                 else:
-                    # Max attempts reached, force continue
+                    log_info(f"Stage 3 completion detected for session {session_id}")
+                    # Proper stage 3 completion - stop monitor and cleanup
+                    log_info("Stopping AI monitor after successful stage 3 completion")
+                    _manage_monitor(state, 'stop')
+                    state.clear()
+                    return build_hook_response(False, "", "✅ Three-stage completion successful!")
+
+            # Continue countdown and provide status updates
+            elif remaining_calls > 0:
+                if hook_call_count % 2 == 0:  # Provide updates every 2 calls
+                    status_msg = f"Stage 3 countdown: {remaining_calls} calls remaining. Continue with evaluation."
+                    return build_hook_response(True, "", status_msg)
+                else:
                     return inject_continue_prompt(state)
+            else:
+                # Reveal stage 3 instructions
+                stage3_instructions = f"STAGE 3 INSTRUCTIONS: {CONFIG['stage3_message']} - Output this to complete."
+                return build_hook_response(True, "", stage3_instructions)
 
         # Fallback: unknown stage or state
-        log_info(f"Unknown state in stop_handler: stage={state.get('autorun_stage')}, session={session_id}")
+        log_info(f"Unknown state in three-stage stop_handler: stage={current_stage}, session={session_id}")
         return inject_continue_prompt(state)
 
 # Default handler
