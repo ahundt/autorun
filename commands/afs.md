@@ -5,7 +5,7 @@ allowed-tools: Bash(*)
 
 # AutoFile Strict Search Mode
 
-!`echo '{"prompt": "/afs", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun"`
+!`echo '{"prompt": "/afs", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"`
 
 Set file policy to strict search - only modify existing files, no new file creation.
 
