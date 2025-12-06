@@ -11,7 +11,5 @@
   "license": "Apache-2.0",
   "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "autonomous-sessions", "extended-workflow", "no-new-files", "justify-new-files"],
   "commands": "./commands/",
-  "agents": "./agents/",
-  "skills": "./skills/",
   "hooks": "./hooks/hooks.json"
 }
