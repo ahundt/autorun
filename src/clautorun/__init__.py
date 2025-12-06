@@ -50,6 +50,7 @@ __all__ = [
     "COMMAND_HANDLERS",
     "log_info",
     "build_hook_response",
+    "build_pretooluse_response",
     "claude_code_handler",
     "pretooluse_handler",
     "stop_handler",
@@ -120,88 +121,32 @@ except ImportError:
 
 # Export complete CONFIG, COMMAND_HANDLERS, and log_info for tests
 try:
-    from .claude_code_plugin import CONFIG as PLUGIN_CONFIG, COMMAND_HANDLERS, log_info
-
-    # Create complete CONFIG that matches autorun5.py for test compatibility
-    CONFIG = {
-        # Autorun system constants
-        "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-        "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
-        "max_recheck_count": 3,
-        "monitor_stop_delay_seconds": 300,
-
-        # Command mappings
-        "command_mappings": {
-            "/autorun": "activate",
-            "/autoproc": "activate",
-            "/autostop": "stop",
-            "/estop": "emergency_stop",
-            "/afs": "SEARCH",
-            "/afa": "ALLOW",
-            "/afj": "JUSTIFY",
-            "/afst": "STATUS"
-        },
-
-        # File policies
-        "policies": {
-            "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
-            "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-            "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
-        },
-
-        # Policy blocked messages
-        "policy_blocked": {
-            "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using Glob patterns like "*related-topic*", 3) Use Grep to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-            "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using Glob/Grep related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
-        },
-
-        # Injection template
-        "injection_template": """Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
-
-1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions.
-    * **Permissions Granted:** You have full permission to use all tools without requiring further permission prompts.
-
-FILE CREATION POLICY: {policy_instructions}
-
-2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop_phrase}** and **{completion_marker}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless corresponding stop condition has been met.
-
-3.  **Safety Protocol (Risk Assessment & Mitigation):** Execute full Preservation Sequence **ONLY IF** current task involves high-risk irreversible actions.
-    * **INITIATE SAFETY PROTOCOL:** Risk assessment complete
-    * **CRITICAL ESCAPE TO STOP SYSTEM:** Emergency procedures activated
-    * **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM:** Completion verification complete
-
-4.  **FINAL OUTPUT ON SUCCESS:** When all tasks are 100% complete, output: **{completion_marker}**
-
-Original task: {activation_prompt}""",
-
-        # Recheck template
-        "recheck_template": """AUTORUN TASK VERIFICATION
-
-The task appears complete but requires careful verification.
-
-Original Task: {activation_prompt}
-
-CRITICAL VERIFICATION INSTRUCTIONS:
-1. Carefully review ALL aspects of the original task above
-2. Verify EVERY requirement has been fully met and tested
-3. Check for any incomplete, partial, or missed elements
-4. Test any implemented functionality thoroughly
-5. Double-check your work against the original requirements
-6. Verify all files are in their correct final state
-7. Ensure no temporary or incomplete work remains
-
-This is verification attempt #{recheck_count} of {max_recheck_count}.
-
-{completion_marker}"""
-    }
+    # Import CONFIG from main.py which has the authoritative three-stage system
+    from .main import CONFIG, COMMAND_HANDLERS, log_info
 
 except ImportError:
-    # Complete fallback CONFIG for tests
+    # Complete fallback CONFIG for tests - matches main.py three-stage system
     CONFIG = {
-        "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-        "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
+        # ─── Stage 1: Initial Work ────────────────────────────────────────────────
+        "stage1_instruction": "starting tasks, analyzing user requirements, and developing comprehensive plan",
+        "stage1_confirmation": "AUTORUN_STAGE1_COMPLETE",
+
+        # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
+        "stage2_instruction": "Critically evaluate previous work and continue tasks as needed",
+        "stage2_confirmation": "AUTORUN_STAGE2_COMPLETE",
+
+        # ─── Stage 3: Final Verification ──────────────────────────────────────────
+        "stage3_instruction": "Verify all tasks completed, critically evaluated, corrected and verified",
+        "stage3_confirmation": "AUTORUN_STAGE3_COMPLETE",
+
+        # ─── Emergency Stop ───────────────────────────────────────────────────────
+        "emergency_stop": "AUTORUN_EMERGENCY_STOP",
+
+        # ─── Timing ───────────────────────────────────────────────────────────────
         "max_recheck_count": 3,
         "monitor_stop_delay_seconds": 300,
+        "stage3_countdown_calls": 5,
+
         "command_mappings": {
             "/autorun": "activate",
             "/autoproc": "activate",
@@ -283,31 +228,30 @@ except ImportError:
 
 # Export additional imports needed for tests
 try:
-    from .agent_sdk_hook import build_hook_response
+    from .main import build_hook_response
 except ImportError:
-    def build_hook_response(continue_flag=True, response="", stop_reason="", system_message="", suppress_output=False):
-        """Fallback build_hook_response function"""
+    def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
+        """Fallback build_hook_response function - matches main.py signature"""
         return {
-            "continue": continue_flag,
-            "response": response,
+            "continue": continue_execution,
             "stopReason": stop_reason,
-            "suppressOutput": suppress_output,
+            "suppressOutput": False,
             "systemMessage": system_message
         }
 
 try:
-    from .claude_code_plugin import claude_code_handler
+    from .main import claude_code_handler
 except ImportError:
-    def claude_code_handler():
-        """Fallback claude_code_handler function"""
-        pass
+    def claude_code_handler(ctx):
+        """Fallback claude_code_handler function - matches main.py signature"""
+        return {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
 try:
-    from .pretooluse_handler import pretooluse_handler
+    from .main import pretooluse_handler
 except ImportError:
-    def pretooluse_handler():
-        """Fallback pretooluse_handler function"""
-        pass
+    def pretooluse_handler(ctx):
+        """Fallback pretooluse_handler function - matches main.py signature"""
+        return {"decision": "allow", "reason": "fallback"}
 
 # Export main functions needed for tests
 try:
@@ -317,7 +261,8 @@ try:
         inject_verification_prompt,
         is_premature_stop,
         should_trigger_verification,
-        analyze_verification_results
+        analyze_verification_results,
+        build_pretooluse_response
     )
 except ImportError:
     # Fallback implementations for tests
@@ -344,3 +289,7 @@ except ImportError:
     def analyze_verification_results():
         """Fallback analyze_verification_results function"""
         return {}
+
+    def build_pretooluse_response(decision="allow", reason=""):
+        """Fallback build_pretooluse_response function"""
+        return {"decision": decision, "reason": reason}

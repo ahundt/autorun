@@ -157,14 +157,24 @@ def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Op
     except Exception as e:
         log_info(f"Failed to update injection outcome: {e}")
 
-# Configuration - Complete autorun5.py compatibility with three-stage completion system
+# Configuration - Three-stage completion system with clear instruction/confirmation naming
 CONFIG = {
-    "completion_marker": "starting tasks, analyzing user requirements, and developing comprehensive plan",
-    "initial_completion_marker": "AUTORUN_INITIAL_TASKS_COMPLETED",
-    "verification_completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-    "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
-    "stage3_message": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
-    "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
+    # ─── Stage 1: Initial Work ────────────────────────────────────────────────
+    "stage1_instruction": "starting tasks, analyzing user requirements, and developing comprehensive plan",
+    "stage1_confirmation": "AUTORUN_STAGE1_COMPLETE",
+
+    # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
+    "stage2_instruction": "Critically evaluate previous work and continue tasks as needed",
+    "stage2_confirmation": "AUTORUN_STAGE2_COMPLETE",
+
+    # ─── Stage 3: Final Verification ──────────────────────────────────────────
+    "stage3_instruction": "Verify all tasks completed, critically evaluated, corrected and verified",
+    "stage3_confirmation": "AUTORUN_STAGE3_COMPLETE",
+
+    # ─── Emergency Stop ───────────────────────────────────────────────────────
+    "emergency_stop": "AUTORUN_EMERGENCY_STOP",
+
+    # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,
     "stage3_countdown_calls": 5,
@@ -172,7 +182,7 @@ CONFIG = {
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
     * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
-2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop_phrase}** and **{completion_marker}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
+2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop}** and **{stage1_confirmation}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
 3.  **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
     * **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
     * **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
@@ -181,13 +191,16 @@ CONFIG = {
         3.  **Verify Integrity:** Run a quick non-destructive check to ensure the state checkpoint was successful.
         4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
-4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop_phrase}**
+4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop}**
 5.  **THREE-STAGE COMPLETION SYSTEM:** You must progress through three distinct stages:
-    * **Stage 1:** "{stage1_message}" - Work on initial tasks and planning
-    * **Stage 2:** "{stage2_message}" - Critical evaluation and continuation
-    * **Stage 3:** "{stage3_message}" - Final completion after proper evaluation
+    * **Stage 1:** {stage1_instruction}
+      → Output **{stage1_confirmation}** when Stage 1 is complete
+    * **Stage 2:** {stage2_instruction}
+      → Output **{stage2_confirmation}** when Stage 2 is complete
+    * **Stage 3:** {stage3_instruction}
+      → Output **{stage3_confirmation}** to signal final completion
     * **Stage Transitions:** After Stage 1, you MUST complete Stage 2 before attempting Stage 3. {stage3_instructions}
-6.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{initial_completion_marker}**
+6.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{stage1_confirmation}**
 7.  **FILE CREATION POLICY:** {policy_instructions}""",
     "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
 
@@ -203,7 +216,7 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 7. Ensure no temporary or incomplete work remains
 {verification_requirements}
 
-Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {verification_completion_marker}
+Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {stage3_confirmation}
 
 If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
 
@@ -224,7 +237,7 @@ SYSTEM OVERRIDE INSTRUCTIONS:
 3. Add any missing documentation or comments
 4. Perform final validation and cleanup
 
-After completing the above forced requirements, output: {verification_completion_marker}
+After completing the above forced requirements, output: {stage3_confirmation}
 
 NOTE: This is a forced compliance override to prevent infinite verification loops.
 Ensure core functionality is working before final completion.""",
@@ -379,7 +392,7 @@ def _manage_monitor(state: dict, action: str):
             ai_monitor.stop_monitor(session_id)
         pid = ai_monitor.start_monitor(
             session_id=session_id, prompt="continue working",
-            stop_marker=CONFIG["verification_completion_marker"], max_cycles=20, prompt_on_start=True
+            stop_marker=CONFIG["stage3_confirmation"], max_cycles=20, prompt_on_start=True
         )
         log_info(f"Started ai-monitor for session {session_id} with PID: {pid}")
         state["ai_monitor_pid"] = pid
@@ -470,13 +483,13 @@ def handle_activate(state, prompt=""):
     policy_instructions = CONFIG["policies"][policy][1]
 
     injection = CONFIG["injection_template"].format(
-        emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
-        completion_marker=CONFIG["completion_marker"],
-        initial_completion_marker=CONFIG["initial_completion_marker"],
-        verification_completion_marker=CONFIG["verification_completion_marker"],
-        stage1_message=CONFIG["completion_marker"],
-        stage2_message=CONFIG["stage2_message"],
-        stage3_message=CONFIG["stage3_message"],
+        emergency_stop=CONFIG["emergency_stop"],
+        stage1_instruction=CONFIG["stage1_instruction"],
+        stage1_confirmation=CONFIG["stage1_confirmation"],
+        stage2_instruction=CONFIG["stage2_instruction"],
+        stage2_confirmation=CONFIG["stage2_confirmation"],
+        stage3_instruction=CONFIG["stage3_instruction"],
+        stage3_confirmation=CONFIG["stage3_confirmation"],
         stage3_instructions=get_stage3_instructions(state),
         policy_instructions=policy_instructions
     )
@@ -614,13 +627,13 @@ def inject_continue_prompt(state):
     policy_instructions = CONFIG["policies"][policy][1]
 
     continue_message = CONFIG["injection_template"].format(
-        emergency_stop_phrase=CONFIG["emergency_stop_phrase"],
-        completion_marker=CONFIG["completion_marker"],
-        initial_completion_marker=CONFIG["initial_completion_marker"],
-        verification_completion_marker=CONFIG["verification_completion_marker"],
-        stage1_message=CONFIG["completion_marker"],
-        stage2_message=CONFIG["stage2_message"],
-        stage3_message=CONFIG["stage3_message"],
+        emergency_stop=CONFIG["emergency_stop"],
+        stage1_instruction=CONFIG["stage1_instruction"],
+        stage1_confirmation=CONFIG["stage1_confirmation"],
+        stage2_instruction=CONFIG["stage2_instruction"],
+        stage2_confirmation=CONFIG["stage2_confirmation"],
+        stage3_instruction=CONFIG["stage3_instruction"],
+        stage3_confirmation=CONFIG["stage3_confirmation"],
         stage3_instructions=get_stage3_instructions(state),
         policy_instructions=policy_instructions
     )
@@ -713,9 +726,7 @@ def inject_verification_prompt(state):
 
     verification_prompt = template.format(
         activation_prompt=state.get("activation_prompt", "original task"),
-        completion_marker=CONFIG["completion_marker"],
-        initial_completion_marker=CONFIG["initial_completion_marker"],
-        verification_completion_marker=CONFIG["verification_completion_marker"],
+        stage3_confirmation=CONFIG["stage3_confirmation"],
         recheck_count=verification_attempts,
         max_recheck_count=CONFIG["max_recheck_count"],
         verification_requirements=verification_requirements
@@ -878,13 +889,14 @@ def is_premature_stop(ctx, state):
     # Get transcript for analysis
     transcript = str(getattr(ctx, 'session_transcript', []))
 
-    # Check if ANY completion marker is present
-    if (CONFIG["initial_completion_marker"] in transcript or
-        CONFIG["verification_completion_marker"] in transcript):
-        return False  # Proper completion of some kind
+    # Check if ANY stage confirmation is present
+    if (CONFIG["stage1_confirmation"] in transcript or
+        CONFIG["stage2_confirmation"] in transcript or
+        CONFIG["stage3_confirmation"] in transcript):
+        return False  # Proper completion of some stage
 
     # Check if emergency stop was used
-    if CONFIG["emergency_stop_phrase"] in transcript:
+    if CONFIG["emergency_stop"] in transcript:
         return False  # Intentional emergency stop
 
     return True  # Premature stop - needs intervention
@@ -900,7 +912,7 @@ def get_stage3_instructions(state):
         if remaining_calls > 0:
             return f"After {remaining_calls} more hook calls, Stage 3 instructions will be revealed. Continue with evaluation."
         else:
-            return f"STAGE 3 INSTRUCTIONS: {CONFIG['stage3_message']} - Output this combined message to complete."
+            return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
     else:
         return "Complete Stage 1 before proceeding to Stage 2."
 
@@ -936,23 +948,23 @@ def stop_handler(ctx):
         current_stage = state.get("autorun_stage", "INITIAL")
         log_info(f"Three-stage system: stage={current_stage}, hook_calls={state['hook_call_count']}")
 
-        # STAGE 1: Initial work - check for stage 1 completion marker
+        # STAGE 1: Initial work - check for stage 1 confirmation
         if current_stage == "INITIAL":
-            # Check for stage 1 completion (the completion_marker)
-            if CONFIG["completion_marker"] in transcript:
+            # Check for stage 1 confirmation (AI outputs this to complete stage 1)
+            if CONFIG["stage1_confirmation"] in transcript:
                 log_info(f"Stage 1 completion detected for session {session_id}")
                 state["autorun_stage"] = "STAGE2"
                 state["stage1_completed"] = True
                 state["stage1_completion_timestamp"] = time.time()
 
                 # Inject stage 2 instructions
-                stage2_prompt = f"STAGE 2 INSTRUCTIONS: {CONFIG['stage2_message']} - Continue with critical evaluation."
+                stage2_prompt = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
                 return build_hook_response(True, "", stage2_prompt)
 
             # Handle premature stage 3 attempt in stage 1
-            elif CONFIG["stage3_message"] in transcript:
+            elif CONFIG["stage3_confirmation"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 1 for session {session_id}")
-                stage1_continuation = f"You must complete Stage 1 first. Output: {CONFIG['completion_marker']}"
+                stage1_continuation = f"You must complete Stage 1 first. Output **{CONFIG['stage1_confirmation']}** when done."
                 return build_hook_response(True, "", stage1_continuation)
 
             # Handle premature stop (no completion markers)
@@ -962,8 +974,8 @@ def stop_handler(ctx):
 
         # STAGE 2: Critical evaluation
         elif current_stage == "STAGE2":
-            # Check for stage 2 completion marker
-            if CONFIG["stage2_message"] in transcript:
+            # Check for stage 2 confirmation (AI outputs this to complete stage 2)
+            if CONFIG["stage2_confirmation"] in transcript:
                 log_info(f"Stage 2 completion detected for session {session_id}")
                 state["autorun_stage"] = "STAGE2_COMPLETED"
                 state["stage2_completion_timestamp"] = time.time()
@@ -971,13 +983,13 @@ def stop_handler(ctx):
 
                 # Start countdown for stage 3
                 remaining_calls = CONFIG["stage3_countdown_calls"]
-                countdown_msg = f"Stage 2 complete. Stage 3 instructions will be revealed after {remaining_calls} more hook calls. Continue working."
+                countdown_msg = f"Stage 2 complete. Continue working for {remaining_calls} more cycles before Stage 3 instructions are revealed."
                 return build_hook_response(True, "", countdown_msg)
 
             # Handle premature stop in stage 2
             elif is_premature_stop(ctx, state):
                 log_info(f"Premature stop detected in Stage 2 for session {session_id}")
-                stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_message']}"
+                stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
                 return build_hook_response(True, "", stage2_continuation)
 
         # STAGE 2 COMPLETED: Countdown to stage 3
@@ -985,13 +997,14 @@ def stop_handler(ctx):
             hook_call_count = state.get("hook_call_count", 0)
             remaining_calls = CONFIG["stage3_countdown_calls"] - hook_call_count
 
-            # Check if stage 3 completion was attempted
-            if CONFIG["stage3_message"] in transcript:
+            # Check if stage 3 confirmation was attempted
+            if CONFIG["stage3_confirmation"] in transcript:
                 if remaining_calls > 0:
+                    # Early attempt - reset to STAGE2 (not INITIAL) to preserve progress
                     log_info(f"Early stage 3 attempt detected, {remaining_calls} calls remaining")
-                    reset_msg = f"Too early for Stage 3. Wait {remaining_calls} more hook calls. Resetting to Stage 1."
-                    state["autorun_stage"] = "INITIAL"
-                    state["stage1_completed"] = False
+                    reset_msg = f"Too early for Stage 3. Continue with Stage 2: {CONFIG['stage2_instruction']}"
+                    state["autorun_stage"] = "STAGE2"
+                    # Don't reset stage1_completed - preserve progress
                     return build_hook_response(True, "", reset_msg)
                 else:
                     log_info(f"Stage 3 completion detected for session {session_id}")
@@ -1010,7 +1023,7 @@ def stop_handler(ctx):
                     return inject_continue_prompt(state)
             else:
                 # Reveal stage 3 instructions
-                stage3_instructions = f"STAGE 3 INSTRUCTIONS: {CONFIG['stage3_message']} - Output this to complete."
+                stage3_instructions = f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
                 return build_hook_response(True, "", stage3_instructions)
 
         # Fallback: unknown stage or state

@@ -86,6 +86,56 @@ markers = [
 ]
 asyncio_mode = "auto"
 
+[tool.coverage.run]
+source = ["src/clautorun"]
+omit = [
+    # Entry points and system integration
+    "src/clautorun/install.py",
+    "src/clautorun/mcp_server.py",
+    "src/clautorun/python_check.py",
+    "src/clautorun/diagnostics.py",
+    "src/clautorun/__main__.py",
+    # Plugin entry points (require Claude Code runtime)
+    "src/clautorun/agent_sdk_hook.py",
+    "src/clautorun/claude_code_plugin.py",
+    # External system integration (requires tmux)
+    "src/clautorun/tmux_injector.py",
+    "src/clautorun/tmux_utils.py",
+    # Test utilities (tested indirectly)
+    "src/clautorun/testing_framework.py",
+    # Discovery utilities (runtime-dependent)
+    "src/clautorun/command_discovery.py",
+    # AI monitoring (requires running sessions)
+    "src/clautorun/ai_monitor.py",
+    # Complex integration modules (require full environment)
+    "src/clautorun/injection_monitoring.py",
+    # Analysis modules (require complex transcript data)
+    "src/clautorun/transcript_analyzer.py",
+    "src/clautorun/verification_engine.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    # Exclude fallback code in __init__.py
+    "except ImportError:",
+    "# Fallback",
+    "# If session manager can't be imported",
+    "raise ImportError",
+    # Exclude try/except blocks that handle optional dependencies
+    "except Exception as e:",
+    "except Exception:",
+    # Exclude logging calls
+    "log_info\\(",
+    # Exclude pass statements in exception handlers
+    "pass  # Silently",
+    "pass  # pragma",
+]
+fail_under = 60
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",

@@ -12,18 +12,32 @@ class TestConfiguration:
     """Test configuration constants and mappings"""
 
     @pytest.mark.unit
-    def test_completion_marker(self):
-        """Test completion marker is present and correct"""
-        assert "completion_marker" in CONFIG
-        assert isinstance(CONFIG["completion_marker"], str)
-        assert len(CONFIG["completion_marker"]) > 0
+    def test_three_stage_confirmations(self):
+        """Test three-stage confirmation markers are present and correct"""
+        # Stage 1
+        assert "stage1_instruction" in CONFIG
+        assert "stage1_confirmation" in CONFIG
+        assert isinstance(CONFIG["stage1_confirmation"], str)
+        assert len(CONFIG["stage1_confirmation"]) > 0
+
+        # Stage 2
+        assert "stage2_instruction" in CONFIG
+        assert "stage2_confirmation" in CONFIG
+        assert isinstance(CONFIG["stage2_confirmation"], str)
+        assert len(CONFIG["stage2_confirmation"]) > 0
+
+        # Stage 3
+        assert "stage3_instruction" in CONFIG
+        assert "stage3_confirmation" in CONFIG
+        assert isinstance(CONFIG["stage3_confirmation"], str)
+        assert len(CONFIG["stage3_confirmation"]) > 0
 
     @pytest.mark.unit
-    def test_emergency_stop_phrase(self):
-        """Test emergency stop phrase is present"""
-        assert "emergency_stop_phrase" in CONFIG
-        assert isinstance(CONFIG["emergency_stop_phrase"], str)
-        assert len(CONFIG["emergency_stop_phrase"]) > 0
+    def test_emergency_stop(self):
+        """Test emergency stop is present"""
+        assert "emergency_stop" in CONFIG
+        assert isinstance(CONFIG["emergency_stop"], str)
+        assert len(CONFIG["emergency_stop"]) > 0
 
     @pytest.mark.unit
     def test_policies_configuration(self):
@@ -52,14 +66,19 @@ class TestConfiguration:
 
     @pytest.mark.unit
     def test_injection_template_present(self):
-        """Test injection template is present and contains placeholders"""
+        """Test injection template is present and contains three-stage placeholders"""
         assert "injection_template" in CONFIG
         template = CONFIG["injection_template"]
 
-        # Check for required placeholders
+        # Check for required three-stage placeholders
         required_placeholders = [
-            "{emergency_stop_phrase}",
-            "{completion_marker}",
+            "{emergency_stop}",
+            "{stage1_instruction}",
+            "{stage1_confirmation}",
+            "{stage2_instruction}",
+            "{stage2_confirmation}",
+            "{stage3_instruction}",
+            "{stage3_confirmation}",
             "{policy_instructions}"
         ]
 
@@ -75,7 +94,6 @@ class TestConfiguration:
         # Check for required placeholders
         required_placeholders = [
             "{activation_prompt}",
-            "{completion_marker}",
             "{recheck_count}",
             "{max_recheck_count}"
         ]
