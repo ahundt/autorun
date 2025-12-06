@@ -9,7 +9,7 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG, COMMAND_HANDLERS, session_state, log_info
+from clautorun import CONFIG, COMMAND_HANDLERS, log_info
 
 def test_three_stage_confirmations():
     """Test three-stage confirmation markers are properly configured"""
@@ -145,7 +145,6 @@ def test_config_values():
 
 def test_command_handlers():
     """Test command handlers produce correct responses"""
-    session_id = "test_compatibility"
 
     # Use a simple dict instead of shelve for testing
     test_state = {}
@@ -154,20 +153,20 @@ def test_command_handlers():
     test_state.clear()
     response = COMMAND_HANDLERS["SEARCH"](test_state)
     expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
-    assert response == expected, f"SEARCH handler response mismatch"
-    assert test_state["file_policy"] == "SEARCH", f"SEARCH handler should update state"
+    assert response == expected, "SEARCH handler response mismatch"
+    assert test_state["file_policy"] == "SEARCH", "SEARCH handler should update state"
 
     test_state.clear()
     response = COMMAND_HANDLERS["ALLOW"](test_state)
     expected = "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
-    assert response == expected, f"ALLOW handler response mismatch"
-    assert test_state["file_policy"] == "ALLOW", f"ALLOW handler should update state"
+    assert response == expected, "ALLOW handler response mismatch"
+    assert test_state["file_policy"] == "ALLOW", "ALLOW handler should update state"
 
     test_state.clear()
     response = COMMAND_HANDLERS["JUSTIFY"](test_state)
     expected = "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
-    assert response == expected, f"JUSTIFY handler response mismatch"
-    assert test_state["file_policy"] == "JUSTIFY", f"JUSTIFY handler should update state"
+    assert response == expected, "JUSTIFY handler response mismatch"
+    assert test_state["file_policy"] == "JUSTIFY", "JUSTIFY handler should update state"
 
     # Test status command (both versions available)
     for status_cmd in ["STATUS", "status"]:

@@ -19,16 +19,13 @@ Follows CLAUDE.md principles: concrete, reliable, automatic, correct from start
 """
 
 import os
-import sys
 import time
 import threading
 import fcntl
 import errno
-import tempfile
-import hashlib
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any
 import json
 
 # Constants for concrete behavior
@@ -105,7 +102,7 @@ class SessionLock:
             try:
                 fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 self.acquired = True
-                acquisition_time = time.time() - start_time
+                time.time() - start_time
                 return
             except (IOError, OSError) as e:
                 if e.errno == errno.EAGAIN:
@@ -175,7 +172,7 @@ class SessionBackendManager:
             try:
                 if test_func(session_id):
                     return backend_name
-            except Exception as e:
+            except Exception:
                 # Log and continue to next backend
                 pass
 

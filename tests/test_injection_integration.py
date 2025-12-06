@@ -4,8 +4,6 @@
 import sys
 import os
 import time
-import tempfile
-from pathlib import Path
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -47,7 +45,7 @@ def test_injection_monitoring_integration():
         print("🔄 Testing continue prompt injection...")
         initial_count = len(monitor.injection_attempts)
 
-        response = inject_continue_prompt(test_state)
+        inject_continue_prompt(test_state)
 
         # Check that injection was recorded
         if len(monitor.injection_attempts) > initial_count:
@@ -60,7 +58,7 @@ def test_injection_monitoring_integration():
         print("🔄 Testing verification prompt injection...")
         initial_count = len(monitor.injection_attempts)
 
-        response = inject_verification_prompt(test_state)
+        inject_verification_prompt(test_state)
 
         # Check that injection was recorded
         if len(monitor.injection_attempts) > initial_count:

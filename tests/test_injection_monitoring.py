@@ -6,12 +6,16 @@ import tempfile
 import json
 import time
 import threading
+import shutil
 from pathlib import Path
 import sys
 import os
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Import conftest utilities for cleanup
+from conftest import should_keep_test_artifacts
 
 try:
     from clautorun.injection_monitoring import (
@@ -41,13 +45,15 @@ class TestInjectionEffectivenessMonitor:
             self.monitor = InjectionEffectivenessMonitor(storage_dir=self.temp_dir, max_records=100)
 
     def teardown_method(self):
-        """Clean up test environment"""
+        """Clean up test environment unless debug flag is set"""
+        if should_keep_test_artifacts():
+            if hasattr(self, 'temp_dir'):
+                print(f"\n[DEBUG] Keeping injection monitoring test dir: {self.temp_dir}")
+            return
+
         if hasattr(self, 'temp_dir') and self.temp_dir.exists():
-            # Clean up temporary files
-            for file_path in self.temp_dir.glob("*"):
-                if file_path.is_file():
-                    file_path.unlink()
-            self.temp_dir.rmdir()
+            # Use shutil.rmtree for reliable cleanup (handles subdirectories)
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_monitor_initialization(self):
         """Test monitor initialization"""

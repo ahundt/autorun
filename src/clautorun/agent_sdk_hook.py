@@ -19,10 +19,7 @@ import sys
 
 # Import ALL required functionality from clautorun package for complete AI monitor workflow
 from clautorun import (
-    CONFIG, COMMAND_HANDLERS, session_state,
-    build_hook_response, build_pretooluse_response,
-    # Import the complete AI monitor workflow
-    stop_handler, pretooluse_handler, claude_code_handler
+    build_hook_response, stop_handler, pretooluse_handler, claude_code_handler
 )
 
 # Hook-specific handler registry that delegates to main.py logic

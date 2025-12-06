@@ -307,9 +307,8 @@ class TestSessionTargetingRegression:
     def test_no_target_leakage_in_current_session(self):
         """Test that targeted commands don't leak into current session"""
         # Get current session content before test
-        before_capture = subprocess.run(['tmux', 'capture-pane', '-p'],
+        subprocess.run(['tmux', 'capture-pane', '-p'],
                                        capture_output=True, text=True, timeout=5)
-        before_content = before_capture.stdout
 
         # Send multiple commands to test session
         test_commands = [

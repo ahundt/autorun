@@ -7,7 +7,6 @@ import pytest
 import threading
 import multiprocessing
 import time
-import os
 
 # Add src directory to Python path
 import sys
@@ -164,12 +163,12 @@ class TestBasicThreadSafety:
             assert final_state["worker_count"] >= 1, "No workers counted"
 
             # Check for expected items (allowing for some data loss due to shelve limitations)
-            total_expected_items = final_state["worker_count"] * 3  # 3 items per worker
+            final_state["worker_count"] * 3  # 3 items per worker
             actual_items = len([k for k in final_state.keys() if k.startswith("worker_") and k.endswith("_item_")])
 
             # Allow for significant data loss due to shelve limitations under high contention
             # This is expected behavior - shelve isn't fully thread-safe under high contention
-            assert actual_items >= 0 or final_state["worker_count"] >= 1, f"Complete failure: no items persisted and no workers counted"
+            assert actual_items >= 0 or final_state["worker_count"] >= 1, "Complete failure: no items persisted and no workers counted"
 
 
 class TestMultiprocessingBasic:

@@ -5,12 +5,9 @@ Tests for session_manager.py module to increase coverage.
 """
 import pytest
 import sys
-import os
 import tempfile
 import threading
-import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock, Mock
 
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -70,14 +67,14 @@ class TestSessionLock:
             lock = SessionLock("test_session", 5.0, state_dir)
             with lock as fd:
                 assert fd is not None
-                assert lock.acquired == True
+                assert lock.acquired
 
     def test_lock_cleanup_on_exit(self):
         """Test lock is properly cleaned up"""
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)
             lock = SessionLock("test_session", 5.0, state_dir)
-            with lock as fd:
+            with lock:
                 pass
             # After exit, lock should be released
             assert lock.lock_fd is None
@@ -98,7 +95,7 @@ class TestSessionBackendManager:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)
             manager = SessionBackendManager(state_dir)
-            assert manager._test_memory_backend("test") == True
+            assert manager._test_memory_backend("test")
 
     def test_get_backend_thread_safety(self):
         """Test get_backend is thread-safe"""

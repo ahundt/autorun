@@ -18,8 +18,7 @@
 import re
 import json
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set, Any
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -528,7 +527,7 @@ class TranscriptAnalyzer:
     def _export_text(self, result: AnalysisResult) -> str:
         """Export analysis result as formatted text"""
         lines = [
-            f"Transcript Analysis Report",
+            "Transcript Analysis Report",
             f"Session: {result.session_id}",
             f"Timestamp: {time.ctime(result.timestamp)}",
             f"Total Evidence: {result.total_evidence}",

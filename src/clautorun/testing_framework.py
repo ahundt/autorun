@@ -23,7 +23,7 @@ import tempfile
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 from contextlib import contextmanager
@@ -493,7 +493,6 @@ class TestRunner:
             # Import verification components
             sys.path.insert(0, 'src')
             from clautorun.verification_engine import RequirementVerificationEngine
-            from clautorun.transcript_analyzer import TranscriptAnalyzer
 
             # Create test scenario
             if test_name == "basic_verification":
@@ -508,7 +507,7 @@ class TestRunner:
                 """
 
                 evidence = engine.analyze_transcript_evidence(transcript)
-                results = engine.verify_single_requirement(list(requirements.keys())[0], evidence[0])
+                engine.verify_single_requirement(list(requirements.keys())[0], evidence[0])
                 report = engine.generate_verification_report()
 
                 success = len(requirements) > 0 and report['summary']['total_requirements'] > 0

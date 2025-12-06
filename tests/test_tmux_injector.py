@@ -10,16 +10,14 @@ Tests are designed to:
 import pytest
 import subprocess
 import time
-from pathlib import Path
 import sys
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from clautorun.tmux_injector import TmuxInjector, DualChannelInjector
-from clautorun.tmux_utils import get_tmux_utilities, TmuxUtilities
 
 
 def is_tmux_available():

@@ -202,8 +202,8 @@ class TestCommandDetection:
         autorun_cmd = "/autorun test task description"
 
         found = next((v for k, v in mappings.items() if autorun_cmd.startswith(k)), None)
-        assert found == "activate", f"Autorun command should be detected as 'activate'"
-        assert "activate" in COMMAND_HANDLERS, f"Activate handler should exist"
+        assert found == "activate", "Autorun command should be detected as 'activate'"
+        assert "activate" in COMMAND_HANDLERS, "Activate handler should exist"
 
 
 class TestBasicFunctionality:

@@ -22,9 +22,7 @@ control sequence parsing, session naming, and command dispatch.
 
 import os
 import subprocess
-import sys
 import time
-import re
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
@@ -79,7 +77,7 @@ class TmuxUtilities:
         'vsp': 'split-window -h',
 
         'select-pane': 'select-pane -t',
-        'sp': 'select-pane -t',
+        'selp': 'select-pane -t',  # 'sp' is used for split-window above
         'pane': 'select-pane -t',
 
         'next-pane': 'select-pane -t :.+',

@@ -7,7 +7,7 @@ import pytest
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from io import StringIO
 
 # Add src directory to Python path

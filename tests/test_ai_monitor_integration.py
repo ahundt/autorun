@@ -3,11 +3,8 @@
 """Test ai_monitor integration functionality in clautorun"""
 
 import sys
-import tempfile
-import shutil
-import json
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -29,20 +26,20 @@ def test_premature_stop_detection():
     }
 
     # Should detect premature stop
-    assert is_premature_stop(ctx, state) == True, "Should detect premature stop when no completion marker"
+    assert is_premature_stop(ctx, state), "Should detect premature stop when no completion marker"
 
     # Test with stage 1 confirmation
     ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"]]
-    assert is_premature_stop(ctx, state) == False, "Should not detect premature stop when stage 1 confirmation present"
+    assert not is_premature_stop(ctx, state), "Should not detect premature stop when stage 1 confirmation present"
 
     # Test with emergency stop
     ctx.session_transcript = ["Some work", CONFIG["emergency_stop"]]
-    assert is_premature_stop(ctx, state) == False, "Should not detect premature stop when emergency stop used"
+    assert not is_premature_stop(ctx, state), "Should not detect premature stop when emergency stop used"
 
     # Test with inactive session
     state["session_status"] = "stopped"
     ctx.session_transcript = ["Some work only"]  # No completion marker
-    assert is_premature_stop(ctx, state) == False, "Should not detect premature stop when session inactive"
+    assert not is_premature_stop(ctx, state), "Should not detect premature stop when session inactive"
 
     print("✅ test_premature_stop_detection passed")
 
@@ -55,18 +52,18 @@ def test_verification_trigger_logic():
         "autorun_stage": "INITIAL",
         "verification_attempts": 1
     }
-    assert should_trigger_verification(state) == True, "Should trigger verification in initial stage"
+    assert should_trigger_verification(state), "Should trigger verification in initial stage"
 
     # Test max attempts reached
     state["verification_attempts"] = CONFIG["max_recheck_count"]
-    assert should_trigger_verification(state) == False, "Should not trigger verification when max attempts reached"
+    assert not should_trigger_verification(state), "Should not trigger verification when max attempts reached"
 
     # Test already in verification stage
     state = {
         "autorun_stage": "VERIFICATION",
         "verification_attempts": 1
     }
-    assert should_trigger_verification(state) == False, "Should not trigger verification when already in verification stage"
+    assert not should_trigger_verification(state), "Should not trigger verification when already in verification stage"
 
     print("✅ test_verification_trigger_logic passed")
 
@@ -79,7 +76,7 @@ def test_continue_prompt_injection():
     response = inject_continue_prompt(state)
 
     # Verify response structure
-    assert response["continue"] == True, "Continue should be True"
+    assert response["continue"], "Continue should be True"
     # Should use the full injection template with critical stop signal instructions
     assert "UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION" in response["systemMessage"], "Should contain full injection template"
     assert "SYSTEM STOP SIGNAL RULE" in response["systemMessage"], "Should contain critical stop signal instructions"
@@ -94,7 +91,7 @@ def test_continue_prompt_injection():
 
 def test_verification_prompt_injection():
     """Test verification prompt injection functionality"""
-    from clautorun import inject_verification_prompt, CONFIG
+    from clautorun import inject_verification_prompt
 
     state = {
         "activation_prompt": "/autorun build a website",
@@ -104,7 +101,7 @@ def test_verification_prompt_injection():
     response = inject_verification_prompt(state)
 
     # Verify response structure
-    assert response["continue"] == True, "Continue should be True"
+    assert response["continue"], "Continue should be True"
     assert "AUTORUN TASK VERIFICATION" in response["systemMessage"], "Should contain verification message"
     assert "build a website" in response["systemMessage"], "Should contain original task"
     assert "verification attempt #2 of" in response["systemMessage"], "Should contain attempt count"
@@ -113,7 +110,7 @@ def test_verification_prompt_injection():
 
 def test_stop_handler_with_premature_stop():
     """Test stop handler behavior with premature stops in three-stage system"""
-    from clautorun import stop_handler, CONFIG
+    from clautorun import stop_handler
     from unittest.mock import patch
 
     # Mock context with premature stop
@@ -136,7 +133,7 @@ def test_stop_handler_with_premature_stop():
         response = stop_handler(ctx)
 
         # Should inject continue prompt for three-stage system
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"], "Should inject continue message"
         assert mock_state["autorun_stage"] == "INITIAL", "Should remain in INITIAL stage"
 
@@ -166,7 +163,7 @@ def test_stop_handler_with_continue_prompt():
         response = stop_handler(ctx)
 
         # Should inject continue prompt instead of verification
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         assert "UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION" in response["systemMessage"], "Should inject full injection template"
         assert "SYSTEM STOP SIGNAL RULE" in response["systemMessage"], "Should contain critical stop signal instructions"
 
@@ -196,7 +193,7 @@ def test_stop_handler_with_successful_completion():
         response = stop_handler(ctx)
 
         # Should allow completion
-        assert response["continue"] == False, "Should stop execution"
+        assert not response["continue"], "Should stop execution"
         assert "Three-stage completion successful" in response["systemMessage"], "Should show success message"
 
     print("✅ test_stop_handler_with_successful_completion passed")
@@ -227,7 +224,7 @@ def test_stop_handler_with_emergency_stop():
         # Emergency stop is detected in is_premature_stop() which returns False,
         # so the system continues but injects the continue prompt since no stage confirmation
         # was found. The emergency stop marker prevents premature stop detection.
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         # In the three-stage system, when no stage confirmation is found but emergency stop
         # is present, it still injects continue prompt (emergency stop prevents intervention)
         assert "THREE-STAGE COMPLETION SYSTEM" in response["systemMessage"], "Should inject continue message"
@@ -254,7 +251,7 @@ def test_stop_handler_with_non_autorun_session():
 
         # Should allow normal stop without intervention
         # For non-autorun sessions, returns default response
-        assert response["continue"] == True, "Should return default response for non-autorun session"
+        assert response["continue"], "Should return default response for non-autorun session"
         assert response["systemMessage"] == "", "Should not inject any message"
 
     print("✅ test_stop_handler_with_non_autorun_session passed")
@@ -304,7 +301,7 @@ def test_template_parameter_substitution():
     }
 
     response = inject_continue_prompt(state)
-    assert response["continue"] == True
+    assert response["continue"]
     system_message = response["systemMessage"]
 
     # Verify all parameters were substituted
@@ -323,7 +320,7 @@ def test_template_parameter_substitution():
     }
 
     response = inject_verification_prompt(state)
-    assert response["continue"] == True
+    assert response["continue"]
     system_message = response["systemMessage"]
 
     # Verify all parameters were substituted
@@ -367,7 +364,7 @@ def test_session_state_isolation():
 
         # Session 1 should inject continue prompt (no confirmation found)
         response1 = stop_handler(ctx1)
-        assert response1["continue"] == True
+        assert response1["continue"]
         assert "THREE-STAGE COMPLETION SYSTEM" in response1["systemMessage"]
         assert mock_state_1["autorun_stage"] == "INITIAL"  # Should remain in INITIAL
 
@@ -376,7 +373,7 @@ def test_session_state_isolation():
 
         # Session 2 with stage1_confirmation should advance to STAGE2
         response2 = stop_handler(ctx2)
-        assert response2["continue"] == True
+        assert response2["continue"]
         assert "STAGE 2:" in response2["systemMessage"]
         assert mock_state_2["autorun_stage"] == "STAGE2"
 
@@ -406,7 +403,7 @@ def test_max_verification_attempts_boundary():
         response = stop_handler(ctx)
 
         # Should inject continue prompt instead of verification
-        assert response["continue"] == True
+        assert response["continue"]
         assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"]
         # Should not increment verification attempts beyond max
         assert mock_state["verification_attempts"] == CONFIG["max_recheck_count"]
@@ -422,31 +419,31 @@ def test_edge_case_transcript_scenarios():
     ctx.session_transcript = []
 
     state = {"session_status": "active"}
-    assert is_premature_stop(ctx, state) == True, "Empty transcript should be considered premature stop"
+    assert is_premature_stop(ctx, state), "Empty transcript should be considered premature stop"
 
     # Test with stage confirmation in middle (current behavior: any confirmation is valid)
     ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"], "More work after marker"]
-    assert is_premature_stop(ctx, state) == False, "Any stage confirmation in transcript should be considered valid completion"
+    assert not is_premature_stop(ctx, state), "Any stage confirmation in transcript should be considered valid completion"
 
     # Test with emergency stop marker in middle (current behavior: any emergency stop is valid)
     ctx.session_transcript = ["Some work", CONFIG["emergency_stop"], "More work after stop"]
-    assert is_premature_stop(ctx, state) == False, "Any emergency stop in transcript should be considered valid stop"
+    assert not is_premature_stop(ctx, state), "Any emergency stop in transcript should be considered valid stop"
 
     # Test with both markers (emergency should take precedence)
     ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"], CONFIG["emergency_stop"]]
-    assert is_premature_stop(ctx, state) == False, "Emergency stop in transcript should be considered valid stop"
+    assert not is_premature_stop(ctx, state), "Emergency stop in transcript should be considered valid stop"
 
     # Test with mixed case markers (case sensitivity should be enforced)
     ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"].lower()]
-    assert is_premature_stop(ctx, state) == True, "Lowercase confirmation marker should not match"
+    assert is_premature_stop(ctx, state), "Lowercase confirmation marker should not match"
 
     # Test with partial marker that doesn't contain full marker
     ctx.session_transcript = ["Some work", "PARTIAL_COMPLETION_MARKER"]
-    assert is_premature_stop(ctx, state) == True, "Non-matching partial marker should be considered premature stop"
+    assert is_premature_stop(ctx, state), "Non-matching partial marker should be considered premature stop"
 
     # Test with None transcript (error handling)
     ctx.session_transcript = None
-    assert is_premature_stop(ctx, state) == True, "None transcript should be considered premature stop"
+    assert is_premature_stop(ctx, state), "None transcript should be considered premature stop"
 
     print("✅ test_edge_case_transcript_scenarios passed")
 
@@ -524,8 +521,8 @@ def test_concurrent_session_handling():
     # Verify all sessions were handled correctly
     assert len(results) == 3, "All sessions should have results"
     for session_id, result in results.items():
-        assert result["continue"] == True, f"Session {session_id} should continue"
-        assert result["has_three_stage"] == True, f"Session {session_id} should have three-stage instructions"
+        assert result["continue"], f"Session {session_id} should continue"
+        assert result["has_three_stage"], f"Session {session_id} should have three-stage instructions"
         assert result["stage"] == "INITIAL", f"Session {session_id} should remain in INITIAL stage"
 
     print("✅ test_concurrent_session_handling passed")
@@ -553,7 +550,7 @@ def test_error_recovery_scenarios():
         response = stop_handler(ctx)
 
         # Should inject continue prompt with three-stage instructions
-        assert response["continue"] == True
+        assert response["continue"]
         system_message = response["systemMessage"]
         assert "THREE-STAGE COMPLETION SYSTEM" in system_message, f"Expected THREE-STAGE in: {system_message}"
         assert minimal_state["autorun_stage"] == "INITIAL"  # Should remain in INITIAL
@@ -568,7 +565,7 @@ def test_error_recovery_scenarios():
         response = stop_handler(ctx)
 
         # Should handle gracefully (continue since it's not premature stop)
-        assert response["continue"] == True
+        assert response["continue"]
 
     # Test with empty state dict
     empty_state = {}
@@ -580,7 +577,7 @@ def test_error_recovery_scenarios():
         response = stop_handler(ctx)
 
         # Should handle gracefully without crashing
-        assert response["continue"] == True
+        assert response["continue"]
 
     print("✅ test_error_recovery_scenarios passed")
 
@@ -607,7 +604,7 @@ def test_three_stage_completion_flow():
         ctx.session_transcript = ["Work done", CONFIG["stage1_confirmation"]]
         response = stop_handler(ctx)
 
-        assert response["continue"] == True, "Should continue to stage 2"
+        assert response["continue"], "Should continue to stage 2"
         assert "STAGE 2:" in response["systemMessage"], "Should provide stage 2 instructions"
         assert mock_state["autorun_stage"] == "STAGE2", "Should advance to stage 2"
 
@@ -646,7 +643,7 @@ def test_stage_2_countdown_mechanism():
             ctx.session_transcript = ["No completion marker"]
             response = stop_handler(ctx)
 
-            assert response["continue"] == True, f"Should continue during countdown (call {i+1})"
+            assert response["continue"], f"Should continue during countdown (call {i+1})"
 
             if i < CONFIG["stage3_countdown_calls"] - 1:
                 # After increment, actual count is i+1
@@ -662,7 +659,7 @@ def test_stage_2_countdown_mechanism():
         mock_state["hook_call_count"] = CONFIG["stage3_countdown_calls"]
         response = stop_handler(ctx)
 
-        assert response["continue"] == True, "Should continue for stage 3"
+        assert response["continue"], "Should continue for stage 3"
         assert "STAGE 3:" in response["systemMessage"], "Should reveal stage 3 instructions"
 
     print("✅ test_stage_2_countdown_mechanism passed")
@@ -688,7 +685,7 @@ def test_premature_stage_3_attempt_handling():
 
         response = stop_handler(ctx)
 
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         assert "You must complete Stage 1 first" in response["systemMessage"], "Should require stage 1 completion"
         assert CONFIG["stage1_confirmation"] in response["systemMessage"], "Should provide stage 1 completion instructions"
 
@@ -771,7 +768,7 @@ def run_all_tests():
             failed += 1
 
     print(f"\n{'='*60}")
-    print(f"AI_MONITOR INTEGRATION TEST RESULTS")
+    print("AI_MONITOR INTEGRATION TEST RESULTS")
     print(f"{'='*60}")
     print(f"✅ PASSED: {passed}")
     print(f"❌ FAILED: {failed}")

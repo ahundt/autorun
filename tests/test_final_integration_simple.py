@@ -7,7 +7,6 @@ import json
 import time
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Any
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -116,7 +115,7 @@ class SimplifiedIntegrationTest:
             if not report or "summary" not in report:
                 print("❌ Verification report generation failed")
                 return False
-            print(f"✅ Verification report generated")
+            print("✅ Verification report generated")
 
             return True
 
@@ -528,7 +527,7 @@ class SimplifiedIntegrationTest:
             import shutil
             if self.temp_dir.exists():
                 shutil.rmtree(self.temp_dir)
-                print(f"🧹 Cleaned up test directory")
+                print("🧹 Cleaned up test directory")
         except Exception as e:
             print(f"⚠️ Cleanup warning: {e}")
 

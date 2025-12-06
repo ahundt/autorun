@@ -16,7 +16,6 @@ from clautorun.command_discovery import (
     load_command_content,
     parse_command_args,
     validate_command_exists,
-    get_command_metadata,
     search_commands,
     invalidate_cache,
     get_command_statistics
@@ -216,23 +215,6 @@ echo "Executable command output"
     def test_search_commands(self):
         """Test command search functionality"""
         # Create mock command data
-        mock_commands = {
-            "/test-search": {
-                "display_name": "test-search",
-                "source": "test",
-                "type": "test_command"
-            },
-            "/another-test": {
-                "display_name": "another-test",
-                "source": "test",
-                "type": "test_command"
-            },
-            "/unrelated": {
-                "display_name": "unrelated",
-                "source": "other",
-                "type": "other_command"
-            }
-        }
 
         # Test search functionality - results depend on available commands
         results = search_commands("test", limit=10)

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -275,7 +275,6 @@ def test_data_persistence_edge_cases():
     """Test data persistence and recovery scenarios"""
     print("\n🔍 Testing Data Persistence Edge Cases...")
 
-    import tempfile
     import shutil
     import json
 
@@ -323,7 +322,7 @@ def test_data_persistence_edge_cases():
 
         try:
             # Create new monitor instance to test loading
-            monitor2 = InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
+            InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
             print("✅ Corrupted JSON file handled gracefully")
         except Exception as e:
             print(f"⚠️ Corrupted JSON file: {e}")
@@ -333,7 +332,7 @@ def test_data_persistence_edge_cases():
             f.write('{"attempts": [{"incomplete":')
 
         try:
-            monitor3 = InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
+            InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
             print("✅ Truncated JSON file handled gracefully")
         except Exception as e:
             print(f"⚠️ Truncated JSON file: {e}")
@@ -343,7 +342,7 @@ def test_data_persistence_edge_cases():
             json.dump({"wrong_structure": {"data": "here"}}, f)
 
         try:
-            monitor4 = InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
+            InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
             print("✅ Wrong structure JSON handled gracefully")
         except Exception as e:
             print(f"⚠️ Wrong structure JSON: {e}")
@@ -432,8 +431,6 @@ def test_error_handling_modes():
         print(f"⚠️ Missing transcript analyzer handling: {e}")
 
     # Test filesystem error scenarios
-    import tempfile
-    import os
 
     temp_dir = tempfile.mkdtemp()
 
@@ -442,11 +439,11 @@ def test_error_handling_modes():
         monitor = InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
 
         # Remove directory permissions during operation
-        data_file = monitor.storage_dir / "test_file.json"
+        monitor.storage_dir / "test_file.json"
         monitor.storage_dir.chmod(0o000)  # No permissions
 
         try:
-            attempt_id = monitor.record_injection_attempt(
+            monitor.record_injection_attempt(
                 method="api_direct",
                 session_id="permission_test",
                 prompt_type="test",

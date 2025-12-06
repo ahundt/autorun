@@ -54,13 +54,13 @@ def test_command_processing():
                 response = COMMAND_HANDLERS[expected_action](mock_state)
                 print(f"   Response: {response}")
 
-        print(f"\n🎯 All commands processed successfully!")
-        print(f"📊 Efficiency: Zero AI tokens used for command processing")
-        print(f"⚡ Speed: Instant responses (no AI delay)")
+        print("\n🎯 All commands processed successfully!")
+        print("📊 Efficiency: Zero AI tokens used for command processing")
+        print("⚡ Speed: Instant responses (no AI delay)")
 
 def test_command_detection():
     """Test efficient command detection - autorun5.py line 144 pattern"""
-    print(f"\n🔍 Testing command detection efficiency")
+    print("\n🔍 Testing command detection efficiency")
     print("=" * 45)
 
     # Test cases
@@ -85,10 +85,10 @@ def test_command_detection():
 
         print(f"   {status} '{prompt}' → {'Detected' if detected else 'Not detected'}")
 
-    print(f"\n⚡ Command detection: O(1) efficiency - same as autorun5.py")
+    print("\n⚡ Command detection: O(1) efficiency - same as autorun5.py")
 
 if __name__ == "__main__":
     test_command_processing()
     test_command_detection()
-    print(f"\n🚀 clautorun is ready for interactive use!")
-    print(f"💡 Run: AGENT_MODE=SDK_ONLY python -m clautorun")
+    print("\n🚀 clautorun is ready for interactive use!")
+    print("💡 Run: AGENT_MODE=SDK_ONLY python -m clautorun")

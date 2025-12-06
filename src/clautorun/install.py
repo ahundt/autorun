@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Clautorun Claude Code plugin installation and management"""
-import os
 import sys
 import json
 import shutil

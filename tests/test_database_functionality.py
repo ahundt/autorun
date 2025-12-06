@@ -4,9 +4,6 @@
 Real database functionality tests for clautorun session state
 Tests actual shelve database operations without mocks
 """
-import pytest
-import tempfile
-import shutil
 import time
 from pathlib import Path
 
@@ -14,7 +11,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import session_state, CONFIG, COMMAND_HANDLERS
+from clautorun import session_state, COMMAND_HANDLERS
 
 
 class TestRealDatabaseOperations:

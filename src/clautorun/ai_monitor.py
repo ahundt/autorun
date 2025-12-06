@@ -13,7 +13,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import subprocess as sp, shelve, time, os, sys, signal, logging
+import subprocess as sp
+import shelve
+import time
+import os
+import sys
+import signal
+import logging
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -44,8 +50,11 @@ def setup_clautorun_logging():
 @contextmanager
 def monitor_state(session_id):
     s = shelve.open(str(STATE_DIR / f"monitor-{session_id}.db"), writeback=True)
-    try: yield s
-    finally: s.sync(); s.close()
+    try:
+        yield s
+    finally:
+        s.sync()
+        s.close()
 
 # Global tmux utilities instance
 _tmux_utils = None
@@ -101,7 +110,8 @@ def start_monitor(session_id, prompt="Continue working", stop_marker=None, max_c
         try:
             os.kill(int(pf.read_text()), 0)
             return int(pf.read_text())  # Already running
-        except: pf.unlink()
+        except (OSError, ValueError):
+            pf.unlink()
 
     # Spawn monitor as subprocess
     script = Path(__file__)
@@ -120,7 +130,8 @@ def stop_monitor(session_id):
         try:
             os.kill(int(pf.read_text()), signal.SIGTERM)
             pf.unlink()
-        except: pass
+        except (OSError, ValueError):
+            pass
 
 def check_monitor(session_id):
     """Check if monitor is running, return PID or None"""
@@ -130,7 +141,8 @@ def check_monitor(session_id):
             pid = int(pf.read_text())
             os.kill(pid, 0)
             return pid
-        except: pf.unlink()
+        except (OSError, ValueError):
+            pf.unlink()
     return None
 
 # Core monitor loop
@@ -173,7 +185,8 @@ def run_monitor(session_id, config):
             if config.get("prompt_on_start"):
                 targets = [int(x) for x in (config.get("start_window") or "").split(',') if x.strip().isdigit()]
                 targets = [t for t in targets if t in windows] or [min(windows.keys())]
-                for t in targets: WIN_OPS['send'](session_id, t, config["prompt"])
+                for t in targets:
+                    WIN_OPS['send'](session_id, t, config["prompt"])
                 state["last_output"] = '\n'.join(windows.values())
                 state["last_change"] = time.time() + config["interval"]
 
@@ -183,7 +196,8 @@ def run_monitor(session_id, config):
 
                 # Check limits
                 if (config["max_runtime"] > 0 and
-                    time.time() - state["start_time"] > config["max_runtime"] * 60): break
+                        time.time() - state["start_time"] > config["max_runtime"] * 60):
+                    break
 
                 # Scan windows
                 changed = []
@@ -200,24 +214,29 @@ def run_monitor(session_id, config):
 
                 # Check stop marker
                 if config.get("stop_marker") and config.get("stop_marker") in all_content:
-                    if time.time() - state["start_time"] > config.get("stop_delay", 300): break
+                    if time.time() - state["start_time"] > config.get("stop_delay", 300):
+                        break
 
                 # Detect meaningful changes (>100 chars to filter echo)
                 if changed:
                     if not state["last_output"] or len(all_content) > len(state["last_output"]) + 100:
                         state["last_change"], state["checks"], state["cycles"] = time.time(), 0, 0
                         state["last_output"] = None
-                    else: state["checks"] += 1
-                else: state["checks"] += 1
+                    else:
+                        state["checks"] += 1
+                else:
+                    state["checks"] += 1
 
                 # Reprompt after 3 idle checks
                 if state["checks"] >= 3:
-                    if config["max_cycles"] > 0 and state["cycles"] >= config["max_cycles"]: break
+                    if config["max_cycles"] > 0 and state["cycles"] >= config["max_cycles"]:
+                        break
                     if state["windows"]:
                         WIN_OPS['send'](session_id, min(state["windows"].keys()), config["prompt"])
                         state["cycles"], state["checks"] = state["cycles"] + 1, 0
                         state["last_output"], state["last_change"] = '\n'.join(state["windows"].values()), time.time() + config["interval"]
-    finally: pf.unlink(missing_ok=True)
+    finally:
+        pf.unlink(missing_ok=True)
 
 # CLI argument dispatch
 ARG_DISPATCH = {
@@ -245,13 +264,15 @@ def parse_cli():
             config["prompt_on_start"] = True
             if i + 1 < len(args) and not args[i + 1].startswith('-'):
                 config["start_window"], i = args[i + 1], i + 2
-            else: i += 1
+            else:
+                i += 1
         elif arg in ARG_DISPATCH:
             key, cast = ARG_DISPATCH[arg]
             config[key], i = cast(args[i + 1]) if i + 1 < len(args) else config[key], i + 2
         elif not session_id and not arg.startswith('-'):
             session_id, i = arg, i + 1
-        else: i += 1
+        else:
+            i += 1
 
     if not session_id:
         own_sess, _ = WIN_OPS['own']()
@@ -264,4 +285,5 @@ def parse_cli():
 
 if __name__ == "__main__":
     sid, cfg = parse_cli()
-    if sid: run_monitor(sid, cfg)
+    if sid:
+        run_monitor(sid, cfg)

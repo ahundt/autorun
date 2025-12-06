@@ -16,13 +16,9 @@
 """Command Discovery Engine for clautorun - Enhanced with main.py DRY patterns"""
 
 import json
-import os
-import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import subprocess
-import shelve
 
 # Cache for discovered commands to avoid repeated filesystem scans
 _command_cache = {}
@@ -73,7 +69,7 @@ def discover_plugin_commands() -> Dict[str, Dict]:
                             with open(plugin_manifest, 'r') as f:
                                 manifest = json.load(f)
                                 plugin_name = manifest.get('name', plugin_dir.name)
-                        except:
+                        except (json.JSONDecodeError, IOError):
                             pass
 
                     for cmd_file in commands_dir.glob("*.md"):
@@ -146,7 +142,7 @@ def discover_existing_commands(force_refresh: bool = False) -> Dict[str, Dict]:
             cache_age = time.time() - _cache_timestamp
             if cache_age < 300:  # 5 minutes cache validity
                 return _command_cache
-        except:
+        except (TypeError, ValueError):
             pass
 
     commands = {}
@@ -156,7 +152,7 @@ def discover_existing_commands(force_refresh: bool = False) -> Dict[str, Dict]:
         try:
             discovered = handler_func()
             commands.update(discovered)
-        except Exception as e:
+        except Exception:
             # Graceful error handling - continue with other handlers
             pass
 

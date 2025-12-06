@@ -2,10 +2,8 @@
 """Unit tests for transcript analyzer"""
 
 import pytest
-import tempfile
 import json
 import time
-from pathlib import Path
 import sys
 import os
 

@@ -8,16 +8,15 @@ along with the tmux-test-workflow and tmux-session-management commands.
 
 import pytest
 import time
-import tempfile
 import os
 import json
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 # Add src to path for imports
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.tmux_utils import get_tmux_utilities, TmuxUtilities
+from clautorun.tmux_utils import get_tmux_utilities
 
 
 class TestTmuxUtilitiesEnhanced:
@@ -36,7 +35,7 @@ class TestTmuxUtilitiesEnhanced:
         assert 'available_sessions' in info
 
         # Test session health
-        result = tmux.execute_tmux_command(['display-message', '-p', 'Health check'])
+        tmux.execute_tmux_command(['display-message', '-p', 'Health check'])
         # Note: This may fail if no tmux server is running, but that's expected
 
         # Cleanup
@@ -461,7 +460,7 @@ class TestEdgeCasesAndBoundaryConditions:
             # Test multiple rapid operations
             operations = []
             for i in range(5):
-                op = tmux.execute_tmux_command(['display-message', f'-p', f'Message {i}'], 'concurrent-test')
+                op = tmux.execute_tmux_command(['display-message', '-p', f'Message {i}'], 'concurrent-test')
                 operations.append(op)
 
             # All operations should complete (may fail gracefully)

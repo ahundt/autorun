@@ -49,7 +49,8 @@ try:
     from .verification_engine import (
         RequirementVerificationEngine,
         VerificationStatus,
-        RequirementType
+        RequirementType,
+        RequirementEvidence
     )
     VERIFICATION_ENGINE_AVAILABLE = True
 except ImportError:
@@ -58,6 +59,7 @@ except ImportError:
     RequirementVerificationEngine = None
     VerificationStatus = None
     RequirementType = None
+    RequirementEvidence = None
 
 # Import enhanced transcript analyzer
 try:
@@ -133,7 +135,7 @@ def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Op
     if not monitor:
         return
 
-    session_id = state.get("session_id", "unknown")
+    state.get("session_id", "unknown")
     last_injection_id = state.get("last_injection_attempt_id")
     start_time = state.get("last_injection_start_time")
 
@@ -451,7 +453,7 @@ def handle_activate(state, prompt=""):
     # Enforce tmux session standards if available
     if TMUX_UTILS_AVAILABLE:
         try:
-            tmux_utils = get_global_tmux_utilities()
+            tmux_utils = get_global_tmux_utils()
             if tmux_utils:
                 # Ensure default "clautorun" session exists and is available
                 tmux_utils.ensure_session_exists()
@@ -832,7 +834,7 @@ def analyze_verification_results(state, transcript):
 
         if should_force_compliance and failed_mandatory:
             log_info("Forcing compliance for failed mandatory requirements")
-            forced_results = engine.force_requirement_compliance(failed_mandatory)
+            engine.force_requirement_compliance(failed_mandatory)
             report["forced_compliance_reason"] = "Failed mandatory requirements after max attempts"
 
         # Store enhanced report in state

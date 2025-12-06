@@ -8,10 +8,8 @@ import sys
 import os
 import time
 import threading
-import tempfile
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -20,7 +18,7 @@ def test_raii_resource_management():
     """Test RAII automatic resource acquisition and release"""
     print("🔍 Testing RAII Resource Management...")
 
-    from clautorun.session_manager import SessionLock, SessionStateError
+    from clautorun.session_manager import SessionLock
 
     session_id = "raii_test_session"
     lock_file = Path.home() / ".claude" / "sessions" / f".{session_id}.lock"
@@ -262,13 +260,13 @@ def test_error_handling_robustness():
     """Test robust error handling with concrete error details"""
     print("\n🔍 Testing Error Handling Robustness...")
 
-    from clautorun.session_manager import session_state, SessionStateError
+    from clautorun.session_manager import session_state, SessionStateError, SessionTimeoutError
 
     results = []
 
     # Test invalid session_id
     try:
-        with session_state("", timeout=1.0) as state:
+        with session_state("", timeout=1.0):
             results.append("empty_session_id_unexpected_success")
     except SessionStateError as e:
         results.append(f"empty_session_id_expected_error: {e}")
@@ -277,7 +275,7 @@ def test_error_handling_robustness():
 
     # Test None session_id
     try:
-        with session_state(None, timeout=1.0) as state:
+        with session_state(None, timeout=1.0):
             results.append("none_session_id_unexpected_success")
     except SessionStateError as e:
         results.append(f"none_session_id_expected_error: {e}")
@@ -286,7 +284,7 @@ def test_error_handling_robustness():
 
     # Test extremely short timeout
     try:
-        with session_state("short_timeout_test", timeout=0.001) as state:
+        with session_state("short_timeout_test", timeout=0.001):
             results.append("short_timeout_unexpected_success")
     except (SessionTimeoutError, Exception) as e:
         results.append(f"short_timeout_expected_error: {type(e).__name__}")

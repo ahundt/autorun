@@ -2,11 +2,8 @@
 """Unit tests for environment-controlled testing framework"""
 
 import pytest
-import tempfile
-import json
 import time
 import threading
-from pathlib import Path
 import sys
 import os
 
@@ -284,7 +281,6 @@ class TestTestRunner:
         if not TESTING_FRAMEWORK_AVAILABLE:
             pytest.skip("Testing framework not available")
 
-        import threading
         import queue
 
         results_queue = queue.Queue()

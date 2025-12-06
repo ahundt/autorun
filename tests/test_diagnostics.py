@@ -175,9 +175,12 @@ class TestDiagnosticLogger:
         if not DIAGNOSTICS_AVAILABLE:
             pytest.skip("Diagnostics not available")
 
+        # Create a logger with enough capacity for all concurrent messages
+        concurrent_logger = DiagnosticLogger(max_entries=200)
+
         def log_worker(worker_id):
             for i in range(50):
-                self.logger.info(f"worker_{worker_id}", f"Message {i}", f"session_{worker_id}")
+                concurrent_logger.info(f"worker_{worker_id}", f"Message {i}", f"session_{worker_id}")
 
         # Create multiple threads
         threads = []
@@ -191,11 +194,11 @@ class TestDiagnosticLogger:
             thread.join(timeout=10)
 
         # Should have all logs without corruption
-        assert len(self.logger.logs) == 150  # 3 workers × 50 messages each
+        assert len(concurrent_logger.logs) == 150  # 3 workers × 50 messages each
 
         # Check session distribution
         session_counts = {}
-        for log in self.logger.logs:
+        for log in concurrent_logger.logs:
             session_id = log.session_id
             session_counts[session_id] = session_counts.get(session_id, 0) + 1
 

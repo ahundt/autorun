@@ -7,7 +7,6 @@ import pytest
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from io import StringIO
 
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -50,21 +49,21 @@ class TestHandleImportError:
         error = ImportError("No module named 'clautorun'")
         result = handle_import_error(error, exit_on_error=False)
         # Should return True for clautorun-related errors
-        assert result == True
+        assert result
 
     def test_unrelated_import_error(self):
         """Test handling of unrelated import error"""
         error = ImportError("No module named 'some_random_module'")
         result = handle_import_error(error, exit_on_error=False)
         # Should return False for unrelated errors
-        assert result == False
+        assert not result
 
     def test_non_import_error(self):
         """Test handling of non-ImportError"""
         error = ValueError("Not an import error")
         # Should handle gracefully
         try:
-            result = handle_import_error(error, exit_on_error=False)
+            handle_import_error(error, exit_on_error=False)
         except (TypeError, AttributeError):
             pass  # Some implementations may not handle this
 

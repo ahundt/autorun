@@ -2,11 +2,8 @@
 """Unit tests for verification engine"""
 
 import pytest
-import tempfile
-import json
 import time
 import re
-from pathlib import Path
 import sys
 import os
 
@@ -74,13 +71,6 @@ class TestRequirementVerificationEngine:
 
         # Should find multiple requirement types
         types_found = {r.requirement_type for r in requirements}
-        expected_types = {
-            RequirementType.FUNCTIONAL,
-            RequirementType.SECURITY,
-            RequirementType.PERFORMANCE,
-            RequirementType.TESTING,
-            RequirementType.DOCUMENTATION
-        }
 
         # Should find at least functional and security requirements
         assert RequirementType.FUNCTIONAL in types_found
@@ -103,7 +93,7 @@ class TestRequirementVerificationEngine:
 
         # First add some requirements
         task = "Create authentication system with tests"
-        requirements = self.engine.parse_requirements_from_task(task)
+        self.engine.parse_requirements_from_task(task)
 
         # Analyze transcript
         evidence = self.engine.analyze_transcript_evidence(transcript)

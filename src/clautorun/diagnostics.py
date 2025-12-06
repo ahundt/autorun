@@ -16,18 +16,16 @@
 """Comprehensive Diagnostic and Logging Tools for clautorun - System health monitoring"""
 
 import os
-import sys
 import json
 import time
 import psutil
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Any, Callable
 from dataclasses import dataclass, asdict
 from enum import Enum
 from collections import defaultdict, deque
 import traceback
-import hashlib
 
 # Import main.py patterns for consistency
 try:
@@ -113,22 +111,29 @@ class HealthCheck:
 class DiagnosticLogger:
     """Enhanced diagnostic logger with structured logging"""
 
-    def __init__(self, max_entries: int = 10000):
+    def __init__(self, max_entries: int = 10000, log_file_path: Path = None):
         self.max_entries = max_entries
         self.logs = deque(maxlen=max_entries)
         self.session_logs = defaultdict(lambda: deque(maxlen=1000))
         self.category_counts = defaultdict(int)
         self.lock = threading.Lock()
         self.log_file = None
+        self.custom_log_file_path = log_file_path
         self._setup_log_file()
 
     def _setup_log_file(self):
         """Setup log file for persistent logging"""
         try:
-            log_dir = Path.home() / ".claude" / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
+            if self.custom_log_file_path:
+                # Use custom path if provided
+                log_file = Path(self.custom_log_file_path)
+                log_file.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                # Default path
+                log_dir = Path.home() / ".claude" / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_file = log_dir / f"clautorun_diagnostic_{int(time.time())}.log"
 
-            log_file = log_dir / f"clautorun_diagnostic_{int(time.time())}.log"
             self.log_file = open(log_file, 'a', encoding='utf-8')
 
             # Write header
@@ -164,7 +169,7 @@ class DiagnosticLogger:
                 log_line = json.dumps(entry.to_dict())
                 self.log_file.write(f"{log_line}\n")
                 self.log_file.flush()
-            except Exception as e:
+            except Exception:
                 # Don't let logging errors crash the system
                 pass
 
@@ -419,16 +424,22 @@ class HealthChecker:
         self.last_results = {}
 
     @diagnostic_handler("register_check")
-    def register_check(self, name: str, check_func: Callable[[], HealthCheck], interval: int = 300):
-        """Register a health check function"""
-        self.health_checks.append({
-            "name": name,
-            "func": check_func,
-            "interval": interval,
-            "last_run": 0
-        })
+    def register_check(self, name: str, check_func: Callable[[], HealthCheck] = None, interval: int = 300):
+        """Register a health check function (supports decorator and direct call patterns)"""
+        def decorator(func: Callable[[], HealthCheck]) -> Callable[[], HealthCheck]:
+            self.health_checks.append({
+                "name": name,
+                "func": func,
+                "interval": interval,
+                "last_run": 0
+            })
+            self.logger.info("health", f"Registered health check: {name}")
+            return func
 
-        self.logger.info("health", f"Registered health check: {name}")
+        # Support both decorator and direct call patterns
+        if check_func is not None:
+            return decorator(check_func)
+        return decorator
 
     @diagnostic_handler("run_all_checks")
     def run_all_checks(self) -> Dict[str, HealthCheck]:

@@ -15,11 +15,9 @@
 # limitations under the License.
 """Enhanced Verification Engine for clautorun - Two-stage verification with forced compliance"""
 
-import json
 import re
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List
 from dataclasses import dataclass
 from enum import Enum
 

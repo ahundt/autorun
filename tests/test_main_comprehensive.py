@@ -7,7 +7,7 @@ Tests core functions, handlers, and CONFIG processing.
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import patch, Mock
 
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -28,9 +28,9 @@ class TestBuildHookResponse:
     def test_default_response(self):
         """Test default hook response"""
         response = build_hook_response()
-        assert response["continue"] == True
+        assert response["continue"]
         assert response["stopReason"] == ""
-        assert response["suppressOutput"] == False
+        assert not response["suppressOutput"]
         assert response["systemMessage"] == ""
 
     def test_custom_response(self):
@@ -40,14 +40,14 @@ class TestBuildHookResponse:
             stop_reason="test reason",
             system_message="test message"
         )
-        assert response["continue"] == False
+        assert not response["continue"]
         assert response["stopReason"] == "test reason"
         assert response["systemMessage"] == "test message"
 
     def test_partial_custom_response(self):
         """Test partial custom response"""
         response = build_hook_response(system_message="only message")
-        assert response["continue"] == True
+        assert response["continue"]
         assert response["systemMessage"] == "only message"
 
 
@@ -58,7 +58,7 @@ class TestBuildPretoolUseResponse:
         """Test default allow response"""
         response = build_pretooluse_response()
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
-        assert response["continue"] == True
+        assert response["continue"]
 
     def test_deny_response(self):
         """Test deny response"""
@@ -221,7 +221,7 @@ class TestInjectContinuePrompt:
         # Should return a hook response dict
         assert "continue" in response
         assert "systemMessage" in response
-        assert response["continue"] == True
+        assert response["continue"]
 
 
 class TestPretoolUseHandler:
@@ -322,7 +322,7 @@ class TestClaudeCodeHandler:
 
             response = claude_code_handler(ctx)
 
-        assert response["continue"] == True
+        assert response["continue"]
         assert "strict-search" in response["systemMessage"].lower()
 
     def test_normal_command_passthrough(self):
@@ -339,7 +339,7 @@ class TestClaudeCodeHandler:
 
             response = claude_code_handler(ctx)
 
-        assert response["continue"] == True
+        assert response["continue"]
         assert response["systemMessage"] == ""
 
 
@@ -360,7 +360,7 @@ class TestStopHandler:
             response = stop_handler(ctx)
 
         # Non-autorun sessions should continue normally
-        assert response["continue"] == True
+        assert response["continue"]
 
     def test_active_session_continue(self):
         """Test active autorun session continues"""
@@ -379,7 +379,7 @@ class TestStopHandler:
 
             response = stop_handler(ctx)
 
-        assert response["continue"] == True
+        assert response["continue"]
 
 
 class TestLogInfo:
@@ -427,7 +427,7 @@ class TestIsPrematureStop:
         state = {"session_status": "active"}
 
         result = is_premature_stop(ctx, state)
-        assert result == True  # No markers = premature
+        assert result  # No markers = premature
 
     def test_not_premature_with_stage1_marker(self):
         """Test not premature when stage1 marker present"""
@@ -437,7 +437,7 @@ class TestIsPrematureStop:
         state = {"session_status": "active"}
 
         result = is_premature_stop(ctx, state)
-        assert result == False  # Has marker = not premature
+        assert not result  # Has marker = not premature
 
     def test_not_premature_with_stage2_marker(self):
         """Test not premature when stage2 marker present"""
@@ -447,7 +447,7 @@ class TestIsPrematureStop:
         state = {"session_status": "active"}
 
         result = is_premature_stop(ctx, state)
-        assert result == False
+        assert not result
 
     def test_not_premature_with_stage3_marker(self):
         """Test not premature when stage3 marker present"""
@@ -457,7 +457,7 @@ class TestIsPrematureStop:
         state = {"session_status": "active"}
 
         result = is_premature_stop(ctx, state)
-        assert result == False
+        assert not result
 
     def test_premature_with_inactive_session(self):
         """Test premature check with inactive session"""
@@ -468,7 +468,7 @@ class TestIsPrematureStop:
 
         result = is_premature_stop(ctx, state)
         # Inactive sessions should not be considered premature
-        assert result == False
+        assert not result
 
 
 class TestShouldTriggerVerification:
@@ -482,7 +482,7 @@ class TestShouldTriggerVerification:
         }
 
         result = should_trigger_verification(state)
-        assert result == True
+        assert result
 
     def test_no_trigger_max_attempts_reached(self):
         """Test no verification trigger when max attempts reached"""
@@ -492,7 +492,7 @@ class TestShouldTriggerVerification:
         }
 
         result = should_trigger_verification(state)
-        assert result == False
+        assert not result
 
     def test_no_trigger_non_initial_stage(self):
         """Test no verification trigger for non-INITIAL stage"""
@@ -502,7 +502,7 @@ class TestShouldTriggerVerification:
         }
 
         result = should_trigger_verification(state)
-        assert result == False
+        assert not result
 
 
 class TestInjectVerificationPrompt:

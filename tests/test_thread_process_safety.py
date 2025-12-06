@@ -5,8 +5,6 @@ import sys
 import os
 import threading
 import time
-import tempfile
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import multiprocessing
 
@@ -17,7 +15,7 @@ def test_thread_safety():
     """Test thread safety with multiple concurrent threads"""
     print("🔍 Testing Thread Safety...")
 
-    from clautorun.claude_code_plugin import session_state, shared_session_state
+    from clautorun.claude_code_plugin import session_state
 
     session_id = "thread_test_session"
     results = []

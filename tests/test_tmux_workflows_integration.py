@@ -8,11 +8,8 @@ CLI testing, and interactive management scenarios.
 
 import pytest
 import time
-import tempfile
 import os
-import json
 import subprocess
-from unittest.mock import Mock, patch, MagicMock
 
 # Add src to path for imports
 import sys
@@ -170,7 +167,7 @@ class TestSessionAutomationWorkflows:
                 try:
                     result = operation()
                     scenario_results.append(result)
-                except Exception as e:
+                except Exception:
                     scenario_results.append(False)
 
             recovery_results[scenario['name']] = all(scenario_results)
@@ -576,7 +573,7 @@ class TestInteractiveManagementWorkflows:
                 try:
                     result = operation(tmux)
                     session_results.append(result)
-                except Exception as e:
+                except Exception:
                     session_results.append(False)
 
             batch_results[session_name] = all(session_results)

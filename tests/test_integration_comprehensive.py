@@ -6,9 +6,6 @@ implement the complete AI monitor workflow as documented in README.md
 """
 
 import sys
-import json
-import tempfile
-import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
@@ -19,7 +16,7 @@ def test_main_py_ai_monitor_workflow():
     """Test that main.py implements complete AI monitor workflow"""
     from clautorun import (
         stop_handler, pretooluse_handler, claude_code_handler,
-        CONFIG, session_state, build_hook_response
+        CONFIG
     )
 
     print("Testing main.py AI monitor workflow...")
@@ -37,7 +34,7 @@ def test_main_py_ai_monitor_workflow():
     print(f"Debug - available mappings: {CONFIG['command_mappings']}")
     print(f"Debug - main.py response: {response}")
 
-    assert response["continue"] == False, "Should handle /autorun command locally"
+    assert not response["continue"], "Should handle /autorun command locally"
     response_content = response.get("response") or response.get("systemMessage", "")
     assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response_content, "Should include full injection template"
     print("✅ Stage 1 activation works")
@@ -67,7 +64,7 @@ def test_main_py_ai_monitor_workflow():
         response = stop_handler(ctx)
         print(f"Debug - stop_handler response: {response}")
 
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         # Implementation uses three-stage completion system, not "AUTORUN TASK VERIFICATION"
         assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"], "Should inject continue prompt"
         print(f"Debug - mock_state after stop_handler: {mock_state}")
@@ -87,7 +84,7 @@ def test_main_py_ai_monitor_workflow():
 
         response = stop_handler(ctx)
 
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"], "Should inject continue prompt"
 
     print("✅ Stage 3 continue prompt injection works")
@@ -114,7 +111,7 @@ def test_main_py_ai_monitor_workflow():
 
         response = stop_handler(ctx)
 
-        assert response["continue"] == False, "Should stop execution after stage 3 completion"
+        assert not response["continue"], "Should stop execution after stage 3 completion"
         assert "Three-stage completion successful" in response["systemMessage"], "Should confirm completion"
 
     print("✅ Stage 4 final completion detection works")
@@ -139,7 +136,7 @@ def test_main_py_ai_monitor_workflow():
         print(f"Debug - PreToolUse response: {response}")
         print(f"Debug - hookSpecificOutput: {response.get('hookSpecificOutput', {})}")
 
-        assert response["continue"] == True, "Should allow tool execution but deny file creation"
+        assert response["continue"], "Should allow tool execution but deny file creation"
         assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", f"Should deny file creation in SEARCH mode, got: {response.get('hookSpecificOutput', {}).get('permissionDecision')}"
 
     print("✅ AutoFile policy enforcement works")
@@ -164,7 +161,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
 
     response = agent_sdk_user_prompt_submit(ctx)
 
-    assert response["continue"] == False, "Should handle /autorun command locally"
+    assert not response["continue"], "Should handle /autorun command locally"
     # Check both possible response keys (response for hook, systemMessage for direct calls)
     response_content = response.get("response") or response.get("systemMessage", "")
     assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response_content, "Should include full injection template"
@@ -187,7 +184,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
 
         response = agent_sdk_stop_event(ctx)
 
-        assert response["continue"] == True, "Should continue execution"
+        assert response["continue"], "Should continue execution"
         # Implementation uses three-stage completion system, not "AUTORUN TASK VERIFICATION"
         assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"], "Should inject continue prompt"
 
@@ -209,7 +206,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
     with patch('clautorun.main.session_state', return_value=mock_session_manager):
         response = agent_sdk_pre_tool_use(ctx)
 
-        assert response["continue"] == True, "Should allow tool execution but deny file creation"
+        assert response["continue"], "Should allow tool execution but deny file creation"
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny", "Should deny file creation in SEARCH mode"
 
         print("✅ Hook AutoFile policy enforcement works")
@@ -340,7 +337,7 @@ def run_comprehensive_integration_tests():
             failed += 1
 
     print(f"\n{'='*60}")
-    print(f"COMPREHENSIVE INTEGRATION TEST RESULTS")
+    print("COMPREHENSIVE INTEGRATION TEST RESULTS")
     print(f"{'='*60}")
     print(f"✅ PASSED: {passed}")
     print(f"❌ FAILED: {failed}")

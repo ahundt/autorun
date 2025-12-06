@@ -15,13 +15,8 @@
 # limitations under the License.
 """tmux-based prompt injection system for clautorun - Using centralized tmux utilities"""
 
-import json
-import os
-import subprocess
 import time
-import re
-from pathlib import Path
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple
 import logging
 
 # Import centralized tmux utilities for DRY compliance

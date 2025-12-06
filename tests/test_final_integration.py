@@ -6,9 +6,7 @@ import os
 import json
 import time
 import tempfile
-import subprocess
 from pathlib import Path
-from typing import Dict, List, Any
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -309,7 +307,7 @@ class FinalIntegrationTest:
 
             # Test environment creation (dry run)
             test_id = "env_test"
-            env_info = {
+            {
                 "id": test_id,
                 "created_at": time.time(),
                 "temp_dir": str(self.temp_dir),
