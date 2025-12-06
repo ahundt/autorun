@@ -7,11 +7,15 @@ import json
 import tempfile
 import threading
 import time
+import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Import conftest utilities for cleanup
+from conftest import should_keep_test_artifacts
 
 def test_plugin_edge_cases():
     """Test edge cases for claude_code_plugin.py"""
@@ -348,8 +352,11 @@ def test_data_persistence_edge_cases():
             print(f"⚠️ Wrong structure JSON: {e}")
 
     finally:
-        # Cleanup
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # Cleanup using centralized debug flag check
+        if not should_keep_test_artifacts():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            print(f"\n[DEBUG] Keeping test temp dir: {temp_dir}")
 
 def test_boundary_conditions():
     """Test boundary conditions and input validation"""
@@ -458,8 +465,11 @@ def test_error_handling_modes():
             monitor.storage_dir.chmod(0o755)  # Restore permissions
 
     finally:
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # Cleanup using centralized debug flag check (shutil imported at top)
+        if not should_keep_test_artifacts():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            print(f"\n[DEBUG] Keeping test temp dir: {temp_dir}")
 
 def run_all_edge_case_tests():
     """Run comprehensive edge case test suite"""

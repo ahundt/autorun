@@ -15,6 +15,9 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+# Import conftest utilities for cleanup
+from conftest import should_keep_test_artifacts
+
 from clautorun.tmux_utils import get_tmux_utilities
 
 
@@ -39,7 +42,11 @@ class TestSessionTargetingRegression:
         self.initial_current_content = initial_capture.stdout
 
     def teardown_method(self):
-        """Clean up test sessions"""
+        """Clean up test sessions using centralized debug flag check"""
+        if should_keep_test_artifacts():
+            print(f"\n[DEBUG] Keeping tmux session: {self.test_session}")
+            return
+
         subprocess.run(['tmux', 'kill-session', '-t', self.test_session],
                       capture_output=True, timeout=5)
 

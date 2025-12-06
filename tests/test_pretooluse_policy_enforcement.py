@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from clautorun.main import pretooluse_handler, session_state, CONFIG, _session_backends
 
-# Import conftest utilities for cleanup
-from conftest import register_test_session, should_keep_test_artifacts
+# Import conftest utilities for cleanup - cleanup happens via pytest_sessionfinish
+from conftest import register_test_session
 
 
 class TestPreToolUsePolicyEnforcement:
@@ -23,31 +23,14 @@ class TestPreToolUsePolicyEnforcement:
         # Use a unique session ID for each test to avoid backend cache conflicts
         self.session_id = f"test_session_{uuid.uuid4().hex[:8]}"
 
-        # Register for cleanup
+        # Register for cleanup via conftest.pytest_sessionfinish
         register_test_session(self.session_id)
 
         # Clear any cached backend for this session
         if self.session_id in _session_backends:
             del _session_backends[self.session_id]
 
-    def teardown_method(self):
-        """Clean up test session files unless debug flag is set"""
-        if should_keep_test_artifacts():
-            return
-
-        # Clean up session database files
-        state_dir = Path.home() / ".claude" / "sessions"
-        if state_dir.exists():
-            for pattern in [f"{self.session_id}*", f"test_backend_{self.session_id}*", f"test_dumbdbm_{self.session_id}*"]:
-                for filepath in state_dir.glob(pattern):
-                    try:
-                        filepath.unlink()
-                    except (OSError, IOError):
-                        pass
-
-        # Clear cached backend
-        if self.session_id in _session_backends:
-            del _session_backends[self.session_id]
+    # Note: No teardown_method needed - cleanup handled by conftest.pytest_sessionfinish
 
     def create_mock_context(self, tool_name, file_path=None, session_transcript=None):
         """Create a mock context object for PreToolUse testing"""

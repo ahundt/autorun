@@ -6,10 +6,14 @@ import os
 import json
 import time
 import tempfile
+import shutil
 from pathlib import Path
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Import conftest utilities for cleanup
+from conftest import should_keep_test_artifacts
 
 # Check availability of components
 try:
@@ -522,9 +526,12 @@ class SimplifiedIntegrationTest:
         print(f"\n📄 Report saved to: {report_file}")
 
     def cleanup(self):
-        """Clean up test resources"""
+        """Clean up test resources using centralized debug flag check"""
+        if should_keep_test_artifacts():
+            print(f"\n[DEBUG] Keeping test temp dir: {self.temp_dir}")
+            return
+
         try:
-            import shutil
             if self.temp_dir.exists():
                 shutil.rmtree(self.temp_dir)
                 print("🧹 Cleaned up test directory")
