@@ -5,8 +5,10 @@ allowed-tools: Bash(*)
 
 # AutoFile Strict Search Mode
 
-!`echo '{"prompt": "/afs", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"`
+Run this command and display the result to the user:
 
-Set file policy to strict search - only modify existing files, no new file creation.
+```bash
+echo '{"prompt": "/afs", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"
+```
 
-This activates strict search mode which blocks all new file creation and forces use of Glob/Grep to modify existing files only.
+Display ONLY the output of the above command. Do not add any additional commentary.
