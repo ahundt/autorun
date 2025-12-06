@@ -169,3 +169,28 @@ run_tests.py
 history.jsonl
 *_test_file.txt
 *.session.json
+
+# Injection monitoring data (generated at runtime)
+injection_monitoring/injection_data.json
+
+# Session storage directory (runtime state)
+sessions/
+
+# Local plugin settings
+plugins/installed_plugins.json
+plugins/marketplaces/
+
+# Planning files (local development)
+plans/
+
+# Local hooks (development testing)
+hooks/*.py
+
+# Settings files (user-specific)
+settings.json
+settings.local.json
+.claude/settings.local.json
+
+# Symlink artifacts
+clautorun
+debug/latest
