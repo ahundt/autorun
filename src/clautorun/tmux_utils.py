@@ -274,11 +274,12 @@ class TmuxUtilities:
         # Format: tmux [socket] send-keys -t target [keys...] where control sequences are separate args
         if cmd and cmd[0] == 'send-keys' and len(cmd) > 1:
             # Extract target specification first
+            # NOTE: 'new-session' is excluded because -t means "session group" not "target"
             commands_supporting_target = {
                 'send-keys', 'capture-pane', 'new-window', 'kill-window',
                 'select-window', 'split-window', 'select-pane', 'kill-pane',
                 'select-layout', 'display-message', 'attach-session', 'detach-client',
-                'new-session', 'kill-session', 'list-windows', 'list-panes'
+                'kill-session', 'list-windows', 'list-panes', 'has-session'
             }
 
             # Start with base command
@@ -300,11 +301,13 @@ class TmuxUtilities:
             full_cmd = base_cmd + cmd
 
             # Add target specification for commands that support session targeting
+            # NOTE: 'new-session' is excluded because -t means "session group" not "target"
+            # For new-session, use -s to specify the session name instead
             commands_supporting_target = {
                 'send-keys', 'capture-pane', 'new-window', 'kill-window',
                 'select-window', 'split-window', 'select-pane', 'kill-pane',
                 'select-layout', 'display-message', 'attach-session', 'detach-client',
-                'new-session', 'kill-session', 'list-windows', 'list-panes'
+                'kill-session', 'list-windows', 'list-panes', 'has-session'
             }
 
             if cmd and cmd[0] in commands_supporting_target:
