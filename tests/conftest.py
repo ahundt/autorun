@@ -143,6 +143,44 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 @pytest.fixture
+def mock_session_state_factory():
+    """Factory for creating mock session states with configurable defaults.
+
+    Usage:
+        def test_something(mock_session_state_factory):
+            state = mock_session_state_factory(policy="SEARCH", status="active")
+            # Use state in test...
+
+    Reduces mock duplication across tests by providing a single factory.
+    """
+    def _create(policy="ALLOW", status="inactive", stage="INITIAL", **extra):
+        state = {
+            "file_policy": policy,
+            "session_status": status,
+            "autorun_stage": stage,
+            "activation_prompt": "",
+            "recheck_count": 0,
+        }
+        state.update(extra)
+        return state
+
+    return _create
+
+
+@pytest.fixture
+def policy_responses():
+    """Expected policy response strings for testing file policy commands.
+
+    These match the responses from CONFIG["policies"] in config.py.
+    """
+    return {
+        "SEARCH": "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.",
+        "ALLOW": "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.",
+        "JUSTIFY": "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.",
+    }
+
+
+@pytest.fixture
 def sample_commands():
     """Sample commands for testing"""
     return {

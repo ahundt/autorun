@@ -23,29 +23,42 @@ except ImportError:
     # Fallback if command discovery not available
     COMMAND_DISCOVERY_AVAILABLE = False
 
-# Enhanced configuration - copy from main.py to avoid import issues
-CONFIG = {
-    "command_mappings": {
-        "/autorun": "activate",
-        "/autoproc": "activate",
-        "/autostop": "stop",
-        "/estop": "emergency_stop",
-        "/afs": "SEARCH",
-        "/afa": "ALLOW",
-        "/afj": "JUSTIFY",
-        "/afst": "STATUS",
+# Import centralized configuration (DRY principle - single source of truth)
+try:
+    from clautorun.config import CONFIG as BASE_CONFIG
+    # Extend with command-specific mappings
+    CONFIG = dict(BASE_CONFIG)
+    CONFIG["command_mappings"] = dict(BASE_CONFIG["command_mappings"])
+    CONFIG["command_mappings"].update({
         "/clautorun-discover": "command_discovery",
         "/clautorun-search": "command_search"
-    },
-    "policies": {
-        "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
-        "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
-    },
-    # Templates from main.py - reused for consistency
-    "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-    "emergency_stop_phrase": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
-    "injection_template": """Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+    })
+    # Map legacy key names for backward compatibility
+    CONFIG["completion_marker"] = BASE_CONFIG["stage1_confirmation"]
+    CONFIG["emergency_stop_phrase"] = BASE_CONFIG["emergency_stop"]
+except ImportError:
+    # Fallback configuration if config.py cannot be imported
+    CONFIG = {
+        "command_mappings": {
+            "/autorun": "activate",
+            "/autoproc": "activate",
+            "/autostop": "stop",
+            "/estop": "emergency_stop",
+            "/afs": "SEARCH",
+            "/afa": "ALLOW",
+            "/afj": "JUSTIFY",
+            "/afst": "STATUS",
+            "/clautorun-discover": "command_discovery",
+            "/clautorun-search": "command_search"
+        },
+        "policies": {
+            "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
+            "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
+            "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
+        },
+        "completion_marker": "AUTORUN_STAGE1_COMPLETE",
+        "emergency_stop_phrase": "AUTORUN_EMERGENCY_STOP",
+        "injection_template": """Your primary objective is to continue **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions.
     * **Permissions Granted:** You have full permission to use all tools without requiring further permission prompts.
@@ -59,7 +72,7 @@ FILE CREATION POLICY: {policy_instructions}
 4.  **FINAL OUTPUT ON SUCCESS:** When all tasks are 100% complete, output: **{completion_marker}**
 
 Original task: {original_task}"""
-}
+    }
 
 # Simple state using dict for now - avoid shelve complexity
 _simple_state = {}

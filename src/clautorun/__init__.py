@@ -121,8 +121,10 @@ except ImportError:
 
 # Export complete CONFIG, COMMAND_HANDLERS, and log_info for tests
 try:
-    # Import CONFIG from main.py which has the authoritative three-stage system
-    from .main import CONFIG, COMMAND_HANDLERS, log_info
+    # Import CONFIG from centralized config.py (DRY principle - single source of truth)
+    from .config import CONFIG
+    # Import COMMAND_HANDLERS and log_info from main.py
+    from .main import COMMAND_HANDLERS, log_info
 
 except ImportError:
     # Complete fallback CONFIG for tests - matches main.py three-stage system

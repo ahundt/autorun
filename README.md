@@ -651,6 +651,9 @@ clautorun/
 - Plugin integrates seamlessly with Claude Code's plugin management
 - Automatic dependency resolution through plugin environment
 
+**Canonical Entry Point:**
+The canonical entry point for clautorun is `commands/clautorun` - this is the executable that Claude Code calls when processing plugin commands. Configuration is centralized in `src/clautorun/config.py` which serves as the single source of truth for all CONFIG values used throughout the plugin (DRY principle).
+
 **Plugin Documentation:**
 - Follows Claude Code plugin specification with `.claude-plugin/plugin.json` manifest
 - Uses command components in `commands/` directory with executable scripts
