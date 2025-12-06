@@ -127,7 +127,7 @@ def test_command_mappings():
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "status"  # lowercase to match actual CONFIG
+        "/afst": "STATUS"  # uppercase to match COMMAND_HANDLERS keys
     }
 
     for cmd, expected_action in expected_mappings.items():

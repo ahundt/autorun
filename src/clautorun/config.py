@@ -130,6 +130,7 @@ Ensure core functionality is working before final completion.""",
     },
 
     # ─── Command Mappings ─────────────────────────────────────────────────────
+    # Values must match keys in COMMAND_HANDLERS (case-sensitive)
     "command_mappings": {
         "/autorun": "activate",
         "/autoproc": "activate",
@@ -138,6 +139,6 @@ Ensure core functionality is working before final completion.""",
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "status"
+        "/afst": "STATUS"
     }
 }
