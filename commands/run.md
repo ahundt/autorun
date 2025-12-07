@@ -1,3 +1,7 @@
+---
+description: Start autorun - autonomous task execution
+---
+
 # Resume Claude automatically when it stops - Autorun Workflow
 
 $ARGUMENTS

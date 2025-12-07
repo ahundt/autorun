@@ -1,3 +1,7 @@
+---
+description: Start autorun - autonomous task execution (legacy command)
+---
+
 # Resume Claude automatically when it stops - Autorun Workflow
 
 $ARGUMENTS

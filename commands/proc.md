@@ -1,3 +1,7 @@
+---
+description: Start autoproc - procedural autonomous workflow
+---
+
 # Your Task (/cr:proc - Procedural Workflow: Sequential Improvement Methodology)
 
  $ARGUMENTS - fully autonomously following your process and your wait process and make a concrete step by step plan with checkbox checklist items broken down step by step and substep by substep and add everything to your todo list per the checkbox management logic and immediately execute it with your process doing each of the mandatory execution mode, the rigorous methodology steps, the wait process, and the safety and exit protocols as needed throughout.
