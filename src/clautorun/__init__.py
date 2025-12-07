@@ -141,8 +141,14 @@ except ImportError:
         "stage3_instruction": "Verify all tasks completed, critically evaluated, corrected and verified",
         "stage3_confirmation": "AUTORUN_STAGE3_COMPLETE",
 
+        # ─── Descriptive Completion Markers ──────────────────────────────────────
+        # NOTE: These are DESCRIPTIVE strings the AI outputs to communicate what it accomplished.
+        # Markdown command files use these descriptive strings for clarity.
+        "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+
         # ─── Emergency Stop ───────────────────────────────────────────────────────
-        "emergency_stop": "AUTORUN_EMERGENCY_STOP",
+        # NOTE: This is a DESCRIPTIVE string that the AI outputs to communicate its action.
+        "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
 
         # ─── Timing ───────────────────────────────────────────────────────────────
         "max_recheck_count": 3,

@@ -34,11 +34,45 @@ def test_three_stage_confirmations():
     print("✅ Three-stage confirmation markers properly configured")
 
 def test_emergency_stop():
-    """Test emergency stop key exists with correct value"""
-    expected = "AUTORUN_EMERGENCY_STOP"
+    """Test emergency stop key exists with correct DESCRIPTIVE value.
+
+    NOTE: The emergency_stop string should be DESCRIPTIVE (describing what the AI is doing)
+    rather than a short internal state variable name. This makes it clear to the AI what
+    action it's taking when it outputs this string.
+
+    CORRECT: AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP (descriptive - "preserving state due to emergency")
+    WRONG:   AUTORUN_EMERGENCY_STOP (just a variable name, not descriptive)
+    """
+    expected = "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP"
     actual = CONFIG["emergency_stop"]
     assert actual == expected, f"Emergency stop mismatch: expected '{expected}', got '{actual}'"
-    print("✅ Emergency stop key correctly configured")
+
+    # Verify it's descriptive (should contain words describing the action)
+    assert "STATE_PRESERVATION" in actual, "Emergency stop should be descriptive, containing 'STATE_PRESERVATION'"
+    print("✅ Emergency stop key correctly configured with descriptive string")
+
+def test_completion_marker():
+    """Test completion marker key exists with correct DESCRIPTIVE value.
+
+    NOTE: The completion_marker string should be DESCRIPTIVE (describing what the AI accomplished)
+    rather than a short internal state variable name. This makes it clear to the AI what
+    it's confirming when it outputs this string.
+
+    CORRECT: AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY (descriptive)
+    WRONG:   AUTORUN_STAGE3_COMPLETE (just a variable name, not descriptive)
+
+    The hook system recognizes BOTH the stage confirmations AND the descriptive completion_marker
+    for compatibility with both the three-stage hook system and standalone markdown commands.
+    """
+    expected = "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
+    actual = CONFIG["completion_marker"]
+    assert actual == expected, f"Completion marker mismatch: expected '{expected}', got '{actual}'"
+
+    # Verify it's descriptive (should contain words describing the accomplishment)
+    assert "COMPLETED" in actual, "Completion marker should be descriptive, containing 'COMPLETED'"
+    assert "VERIFIED" in actual, "Completion marker should be descriptive, containing 'VERIFIED'"
+    assert "SUCCESSFULLY" in actual, "Completion marker should be descriptive, containing 'SUCCESSFULLY'"
+    print("✅ Completion marker correctly configured with descriptive string")
 
 def test_policy_descriptions():
     """Test all policy descriptions match autorun5.py exactly"""
@@ -283,6 +317,7 @@ def main():
 
     test_three_stage_confirmations()
     test_emergency_stop()
+    test_completion_marker()
     test_policy_descriptions()
     test_policy_blocked_messages()
     test_injection_template()
@@ -297,6 +332,8 @@ def main():
     print("\n🎯 All tests passed! clautorun three-stage system verified")
     print("📋 Verification complete:")
     print("   ✅ Three-stage confirmation markers configured")
+    print("   ✅ Descriptive emergency stop string configured")
+    print("   ✅ Descriptive completion marker configured")
     print("   ✅ All configuration values match")
     print("   ✅ All command responses match")
     print("   ✅ All state management works correctly")

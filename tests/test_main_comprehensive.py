@@ -155,9 +155,10 @@ class TestCONFIGStructure:
         assert "stage3_instruction" in CONFIG
 
     def test_emergency_stop_exists(self):
-        """Test emergency stop key exists"""
+        """Test emergency stop key exists with DESCRIPTIVE value"""
         assert "emergency_stop" in CONFIG
-        assert CONFIG["emergency_stop"] == "AUTORUN_EMERGENCY_STOP"
+        # NOTE: emergency_stop should be DESCRIPTIVE (describing what the AI is doing)
+        assert CONFIG["emergency_stop"] == "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP"
 
     def test_policies_structure(self):
         """Test policies structure"""

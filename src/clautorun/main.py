@@ -789,10 +789,14 @@ def is_premature_stop(ctx, state):
     # Get transcript for analysis
     transcript = str(getattr(ctx, 'session_transcript', []))
 
-    # Check if ANY stage confirmation is present
+    # Check if ANY stage confirmation is present (including descriptive completion marker)
+    # NOTE: Markdown command files use the descriptive "completion_marker" string,
+    # while the three-stage hook system uses stage1/2/3_confirmation strings.
+    # The hook system recognizes BOTH for compatibility.
     if (CONFIG["stage1_confirmation"] in transcript or
         CONFIG["stage2_confirmation"] in transcript or
-        CONFIG["stage3_confirmation"] in transcript):
+        CONFIG["stage3_confirmation"] in transcript or
+        CONFIG["completion_marker"] in transcript):
         return False  # Proper completion of some stage
 
     # Check if emergency stop was used
@@ -861,8 +865,8 @@ def stop_handler(ctx):
                 stage2_prompt = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
                 return build_hook_response(True, "", stage2_prompt)
 
-            # Handle premature stage 3 attempt in stage 1
-            elif CONFIG["stage3_confirmation"] in transcript:
+            # Handle premature stage 3 attempt in stage 1 (also recognize descriptive completion_marker)
+            elif CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 1 for session {session_id}")
                 stage1_continuation = f"You must complete Stage 1 first. Output **{CONFIG['stage1_confirmation']}** when done."
                 return build_hook_response(True, "", stage1_continuation)
@@ -897,8 +901,8 @@ def stop_handler(ctx):
             hook_call_count = state.get("hook_call_count", 0)
             remaining_calls = CONFIG["stage3_countdown_calls"] - hook_call_count
 
-            # Check if stage 3 confirmation was attempted
-            if CONFIG["stage3_confirmation"] in transcript:
+            # Check if stage 3 confirmation was attempted (also recognize descriptive completion_marker)
+            if CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
                 if remaining_calls > 0:
                     # Early attempt - reset to STAGE2 (not INITIAL) to preserve progress
                     log_info(f"Early stage 3 attempt detected, {remaining_calls} calls remaining")

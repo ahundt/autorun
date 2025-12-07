@@ -270,7 +270,9 @@ def test_readme_workflow_compliance():
 
     # Verify documented emergency stop phrase exists
     assert "emergency_stop" in CONFIG, "Missing emergency_stop in config"
-    assert CONFIG["emergency_stop"] == "AUTORUN_EMERGENCY_STOP", "Incorrect emergency stop"
+    # NOTE: emergency_stop should be DESCRIPTIVE (describing what the AI is doing)
+    # not just a short internal state variable name
+    assert CONFIG["emergency_stop"] == "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP", "Incorrect emergency stop - should be descriptive"
     print("✅ Emergency stop phrase matches README")
 
     # Verify documented max recheck count
