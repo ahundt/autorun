@@ -136,6 +136,47 @@ def test_command_mappings():
 
     print("✅ All command mappings correctly configured")
 
+
+def test_new_cr_command_mappings():
+    """Test new /cr: prefix commands with short and long forms"""
+    # Short forms
+    short_mappings = {
+        "/cr:a": "ALLOW",
+        "/cr:j": "JUSTIFY",
+        "/cr:f": "SEARCH",
+        "/cr:st": "STATUS",
+        "/cr:go": "activate",
+        "/cr:gp": "activate",
+        "/cr:x": "stop",
+        "/cr:sos": "emergency_stop",
+    }
+
+    # Long forms
+    long_mappings = {
+        "/cr:allow": "ALLOW",
+        "/cr:justify": "JUSTIFY",
+        "/cr:find": "SEARCH",
+        "/cr:status": "STATUS",
+        "/cr:run": "activate",
+        "/cr:proc": "activate",
+        "/cr:stop": "stop",
+        "/cr:estop": "emergency_stop",
+    }
+
+    # Test short forms
+    for cmd, expected_action in short_mappings.items():
+        assert cmd in CONFIG["command_mappings"], f"Missing short command: {cmd}"
+        actual_action = CONFIG["command_mappings"][cmd]
+        assert actual_action == expected_action, f"Short command {cmd} mismatch: expected {expected_action}, got {actual_action}"
+
+    # Test long forms
+    for cmd, expected_action in long_mappings.items():
+        assert cmd in CONFIG["command_mappings"], f"Missing long command: {cmd}"
+        actual_action = CONFIG["command_mappings"][cmd]
+        assert actual_action == expected_action, f"Long command {cmd} mismatch: expected {expected_action}, got {actual_action}"
+
+    print("✅ All /cr: prefix commands correctly configured (short + long forms)")
+
 def test_config_values():
     """Test configuration values match autorun5.py exactly"""
     assert CONFIG["max_recheck_count"] == 3, f"max_recheck_count should be 3, got {CONFIG['max_recheck_count']}"
@@ -247,6 +288,7 @@ def main():
     test_injection_template()
     test_recheck_template()
     test_command_mappings()
+    test_new_cr_command_mappings()
     test_config_values()
     test_command_handlers()
     test_handler_variations_available()
@@ -259,6 +301,7 @@ def main():
     print("   ✅ All command responses match")
     print("   ✅ All state management works correctly")
     print("   ✅ Both uppercase and lowercase handlers available")
+    print("   ✅ New /cr: short and long form commands configured")
     print("   ✅ No regressions detected")
 
 if __name__ == "__main__":

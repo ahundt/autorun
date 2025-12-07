@@ -131,7 +131,33 @@ Ensure core functionality is working before final completion.""",
 
     # ─── Command Mappings ─────────────────────────────────────────────────────
     # Values must match keys in COMMAND_HANDLERS (case-sensitive)
+    # Commands support /cr: prefix with short and long forms
     "command_mappings": {
+        # ─── New Short Forms (/cr: prefix) ────────────────────────────────────
+        "/cr:a": "ALLOW",           # Allow all file creation
+        "/cr:j": "JUSTIFY",         # Justify new files
+        "/cr:f": "SEARCH",          # Find existing files only
+        "/cr:st": "STATUS",         # Show status
+        "/cr:go": "activate",       # Start autorun
+        "/cr:gp": "activate",       # Start autoproc (procedural)
+        "/cr:x": "stop",            # Graceful stop
+        "/cr:sos": "emergency_stop", # Emergency stop
+        "/cr:tm": "tmux_session",   # Tmux session management
+        "/cr:tt": "tmux_test",      # Tmux test workflow
+
+        # ─── New Long Forms (/cr: prefix) ─────────────────────────────────────
+        "/cr:allow": "ALLOW",       # Allow all file creation
+        "/cr:justify": "JUSTIFY",   # Justify new files
+        "/cr:find": "SEARCH",       # Find existing files only
+        "/cr:status": "STATUS",     # Show status
+        "/cr:run": "activate",      # Start autorun
+        "/cr:proc": "activate",     # Start autoproc (procedural)
+        "/cr:stop": "stop",         # Graceful stop
+        "/cr:estop": "emergency_stop", # Emergency stop
+        "/cr:tmux": "tmux_session", # Tmux session management
+        "/cr:ttest": "tmux_test",   # Tmux test workflow (ttest to avoid collision with test.md)
+
+        # ─── Legacy Commands (backward compatibility) ─────────────────────────
         "/autorun": "activate",
         "/autoproc": "activate",
         "/autostop": "stop",

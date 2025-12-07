@@ -279,7 +279,8 @@ def test_readme_workflow_compliance():
     print("✅ Max recheck count matches README")
 
     # Verify documented command mappings (including /autoproc which is an alias for /autorun)
-    expected_mappings = {
+    # Check that legacy commands are included (new /cr: commands also exist for short/long forms)
+    required_legacy_mappings = {
         "/autorun": "activate",
         "/autoproc": "activate",  # Alias for /autorun
         "/autostop": "stop",
@@ -287,10 +288,12 @@ def test_readme_workflow_compliance():
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "status"
+        "/afst": "STATUS"
     }
-    assert CONFIG["command_mappings"] == expected_mappings, "Command mappings don't match README"
-    print("✅ Command mappings match README")
+    for cmd, expected_action in required_legacy_mappings.items():
+        assert cmd in CONFIG["command_mappings"], f"Missing legacy command: {cmd}"
+        assert CONFIG["command_mappings"][cmd] == expected_action, f"Command {cmd} should map to {expected_action}, got {CONFIG['command_mappings'][cmd]}"
+    print("✅ Legacy command mappings preserved")
 
     # Verify documented file policies
     expected_policies = {

@@ -540,66 +540,99 @@ PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
 
 ## 📋 Available Commands
 
-### Autorun Commands
-- **/autorun \<prompt>** - Start autonomous workflow with extended work sessions
+Commands use the `/cr:` prefix with both **short** (for power users) and **long** (for discoverability) forms.
+
+### Command Reference Table
+
+| Short | Long | Legacy | Description |
+|-------|------|--------|-------------|
+| `/cr:a` | `/cr:allow` | `/afa` | Allow all file creation (Level 3) |
+| `/cr:j` | `/cr:justify` | `/afj` | Require justification for new files (Level 2) |
+| `/cr:f` | `/cr:find` | `/afs` | Find existing files only - no creation (Level 1) |
+| `/cr:st` | `/cr:status` | `/afst` | Show current policy status |
+| `/cr:go` | `/cr:run` | `/autorun` | Start autonomous task execution |
+| `/cr:gp` | `/cr:proc` | `/autoproc` | Procedural autonomous workflow |
+| `/cr:x` | `/cr:stop` | `/autostop` | Graceful stop |
+| `/cr:sos` | `/cr:estop` | `/estop` | Emergency stop |
+| `/cr:tm` | `/cr:tmux` | - | Tmux session management |
+| `/cr:tt` | `/cr:ttest` | - | Tmux test workflow |
+
+### AutoFile Commands (File Creation Control)
+
+- **/cr:a** or **/cr:allow** - Allow all file creation (Level 3 - default)
+  - No restrictions on creating new files
+  - Best for new projects and initial development
+
+- **/cr:j** or **/cr:justify** - Require justification before creating new files (Level 2)
+  - AI must include \<AUTOFILE_JUSTIFICATION> tag with reasoning
+  - Ideal for security-sensitive work and established projects
+
+- **/cr:f** or **/cr:find** - Find existing files only (Level 1 - strictest)
+  - Blocks ALL new file creation
+  - Forces AI to FIND and modify existing files via Glob/Grep search
+  - Perfect for refactoring established codebases
+
+- **/cr:st** or **/cr:status** - Display current AutoFile policy and settings
+  - Shows current policy level and name
+  - Displays current enforcement status
+
+### Autorun Commands (Autonomous Execution)
+
+- **/cr:go** or **/cr:run** \<prompt> - Start autonomous workflow with extended work sessions
   - Reduces manual "continue" prompts significantly
   - Enables two-stage verification to prevent premature exits
   - Takes task description as argument (required)
 
-- **/autostop** - Stop gracefully after current task completion
+- **/cr:gp** or **/cr:proc** \<prompt> - Procedural autonomous workflow
+  - Uses Sequential Improvement Methodology
+  - Includes wait process and best practices generation
+
+- **/cr:x** or **/cr:stop** - Stop gracefully after current task completion
   - Allows AI to finish current work before stopping
   - Cleans up processes and state files properly
 
-- **/estop** - Emergency stop - immediately halt any runaway process
+- **/cr:sos** or **/cr:estop** - Emergency stop - immediately halt any runaway process
   - Stops all processes immediately without waiting
   - Use for critical situations or when something goes wrong
 
-### AutoFile Commands
-- **/afa** - Allow all file creation (Level 3 - default)
-  - No restrictions on creating new files
-  - Best for new projects and initial development
-
-- **/afj** - Require justification before creating new files (Level 2)
-  - AI must include \<AUTOFILE_JUSTIFICATION> tag with reasoning
-  - Ideal for security-sensitive work and established projects
-
-- **/afs** - STOP the auto creation of files, only modify existing files (Level 1 - strict)
-  - Blocks ALL new file creation
-  - Forces AI to use existing files via Glob/Grep search
-  - Perfect for refactoring established codebases
-
-- **/afst** - Display current AutoFile policy and settings
-  - Shows current policy level and name
-  - Displays current enforcement status
-
 ### Tmux Automation Commands
-- `/clautorun tmux-test-workflow` - Comprehensive CLI and plugin testing
-- `/clautorun tmux-session-management` - Interactive session management
+
+- **/cr:tm** or **/cr:tmux** - Session lifecycle management (create, list, cleanup)
+- **/cr:tt** or **/cr:ttest** - Comprehensive CLI and plugin testing in isolated sessions
 
 ### Usage Examples
 
 ```bash
 # Start autonomous work on a large project
-/clautorun /autorun Build complete REST API with authentication, testing, and documentation
+/cr:go Build complete REST API with authentication, testing, and documentation
 
 # Enable strict file control for security-sensitive work
-/clautorun /afj
-/clautorun /autorun Implement OAuth2 authentication system
+/cr:j
+/cr:go Implement OAuth2 authentication system
 
 # Check current file creation policy
-/clautorun /afst
-# Output: "AutoFile Policy: justify-create (Level 2)"
+/cr:st
+# Output: "Current policy: justify-create"
 
-# Protect existing codebase during refactoring
-/clautorun /afs
-/clautorun /autorun Refactor authentication module to use new database schema
+# Protect existing codebase during refactoring (find existing files, don't create new ones)
+/cr:f
+/cr:go Refactor authentication module to use new database schema
 
 # Stop gracefully when task is complete
-/clautorun /autostop
+/cr:x
 
 # Emergency stop if something goes wrong
-/clautorun /estop
+/cr:sos
+
+# Tmux session management
+/cr:tm create my-project
+/cr:tm list
+/cr:tm cleanup
 ```
+
+### Legacy Commands (Backward Compatible)
+
+All legacy commands continue to work: `/afa`, `/afj`, `/afs`, `/afst`, `/autorun`, `/autoproc`, `/autostop`, `/estop`
 
 ## 🛠️ Plugin Architecture and Integration Guide
 
