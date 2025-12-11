@@ -540,6 +540,16 @@ PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
 
 ## 📋 Available Commands
 
+### Plugin Naming
+
+- **Project/Repo name**: `clautorun`
+- **Marketplace name**: `clautorun` (used for `/plugin install clautorun@clautorun`)
+- **Command prefix**: `cr` (used for short commands like `/cr:st`, `/cr:a`, `/cr:f`)
+
+The short `cr` prefix is intentional to make commands quick to type while the full name `clautorun` is used for the project, repository, and marketplace identification.
+
+### Command Prefix
+
 Commands use the `/cr:` prefix with both **short** (for power users) and **long** (for discoverability) forms.
 
 ### Command Reference Table
