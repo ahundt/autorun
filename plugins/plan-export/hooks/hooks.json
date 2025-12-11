@@ -1,0 +1,17 @@
+{
+  "description": "Hook to export plan files when exiting plan mode",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/export-plan.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

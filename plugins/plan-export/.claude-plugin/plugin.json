@@ -1,0 +1,12 @@
+{
+  "name": "plan-export",
+  "version": "1.0.0",
+  "description": "Automatically exports plan files to project notes when exiting plan mode. Creates note/YYYY_MM_DD_<name>.md files.",
+  "author": {
+    "name": "athundt"
+  },
+  "license": "MIT",
+  "keywords": ["plan-mode", "notes", "export", "archive"],
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
+}

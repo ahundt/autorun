@@ -1,0 +1,9 @@
+---
+description: Set the filename pattern for exported plans
+allowed-tools: Bash(python3:*)
+args: pattern
+---
+
+# Set Filename Pattern
+
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/config.py pattern "$ARGUMENTS"`
