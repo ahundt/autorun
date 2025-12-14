@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-extractor"
+version = "0.1.0"
+description = "PDF data extraction with 9 backend support"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Andrew Hundt", email = "ATHundt@gmail.com"}]
+keywords = ["pdf", "extraction", "ocr", "markdown", "data"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+dependencies = [
+    "markitdown>=0.1.0",
+    "pdfplumber>=0.10.0",
+    "pdfminer.six>=20221105",
+    "PyPDF2>=3.0.0",
+    "tqdm>=4.60.0",
+]
+
+[project.optional-dependencies]
+gpu = ["docling>=2.0.0", "marker-pdf>=0.3.0"]
+all = ["pdfbox>=0.1.0", "pymupdf4llm>=0.0.1"]
+
+[project.scripts]
+extract-pdfs = "scripts.extract_pdfs:main"

@@ -1,0 +1,9 @@
+{
+  "name": "pdf",
+  "version": "0.1.0",
+  "description": "PDF data extraction with multi-backend support (markitdown, docling, pdfplumber, etc.)",
+  "author": {"name": "Andrew Hundt", "email": "ATHundt@gmail.com"},
+  "license": "MIT",
+  "keywords": ["pdf", "extraction", "ocr", "markdown", "data"],
+  "commands": "./commands/"
+}
