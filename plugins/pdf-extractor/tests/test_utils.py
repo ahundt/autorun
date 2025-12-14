@@ -1,9 +1,8 @@
 """Tests for pdf_extraction.utils module."""
 
-import pytest
 from pdf_extraction.utils import (
-    detect_gpu_availability,
     calculate_extraction_quality_metrics,
+    detect_gpu_availability,
     is_pdf_encrypted,
 )
 

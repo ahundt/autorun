@@ -1,9 +1,9 @@
 """Tests for pdf_extraction.cli module."""
 
 import sys
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from io import StringIO
 
 from pdf_extraction.cli import main
 

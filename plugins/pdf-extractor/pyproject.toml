@@ -31,10 +31,22 @@ dependencies = [
 [project.optional-dependencies]
 gpu = ["docling>=2.0.0", "marker-pdf>=0.3.0"]
 llm = ["pymupdf4llm>=0.0.1"]
-dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
+dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.8.0"]
 
 [project.scripts]
 extract-pdfs = "pdf_extraction.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# cli.py has intentional late imports for standalone script execution support
+"src/pdf_extraction/cli.py" = ["E402"]

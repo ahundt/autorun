@@ -1,18 +1,19 @@
 """Tests for pdf_extraction.backends module."""
 
 import pytest
+
 from pdf_extraction.backends import (
-    BackendExtractor,
     BACKEND_REGISTRY,
+    BackendExtractor,
     DoclingExtractor,
     MarkerExtractor,
     MarkItDownExtractor,
-    Pymupdf4llmExtractor,
     PdfboxExtractor,
     PdfminerExtractor,
-    Pypdf2Extractor,
     PdfplumberExtractor,
     PdftotextExtractor,
+    Pymupdf4llmExtractor,
+    Pypdf2Extractor,
 )
 
 
@@ -60,7 +61,8 @@ class TestBackendExtractor:
 
     def test_init_sets_converter_factory(self):
         """Should set converter_factory attribute."""
-        factory = lambda: "converter"
+        def factory():
+            return "converter"
         extractor = BackendExtractor('test', factory)
         assert extractor.converter_factory is factory
 

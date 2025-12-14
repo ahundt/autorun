@@ -14,9 +14,9 @@ Usage:
     files = pdf_to_txt("/path/to/pdfs/", "/path/to/output/")
 """
 
-from .backends import BackendExtractor, BACKEND_REGISTRY
-from .utils import detect_gpu_availability, calculate_extraction_quality_metrics, is_pdf_encrypted
+from .backends import BACKEND_REGISTRY, BackendExtractor
 from .extractors import extract_single_pdf, pdf_to_txt
+from .utils import calculate_extraction_quality_metrics, detect_gpu_availability, is_pdf_encrypted
 
 __all__ = [
     # Backends

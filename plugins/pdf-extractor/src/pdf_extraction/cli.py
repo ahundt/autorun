@@ -39,9 +39,9 @@ if __name__ == '__main__':
     _setup_standalone_imports()
 
 # Now import the modules (works both installed and standalone)
-from pdf_extraction.extractors import pdf_to_txt, extract_single_pdf
-from pdf_extraction.utils import detect_gpu_availability
 from pdf_extraction.backends import BACKEND_REGISTRY
+from pdf_extraction.extractors import extract_single_pdf, pdf_to_txt
+from pdf_extraction.utils import detect_gpu_availability
 
 
 def main():
@@ -61,8 +61,11 @@ Examples:
     parser.add_argument('input', nargs='?', help='PDF file or directory containing PDFs')
     parser.add_argument('output', nargs='?',
                         help='Output file (.md) or directory (default: same location as input)')
-    parser.add_argument('--backends', nargs='+',
-                        help='Backends to use (default: auto-detect). Options: markitdown, pdfplumber, pdfminer, pypdf2, docling, marker')
+    parser.add_argument(
+        '--backends', nargs='+',
+        help='Backends to use (default: auto-detect). '
+             'Options: markitdown, pdfplumber, pdfminer, pypdf2, docling, marker'
+    )
     parser.add_argument('--no-resume', action='store_true',
                         help='Re-extract all files (ignore existing)')
     parser.add_argument('--format', choices=['md', 'txt'], default='md',

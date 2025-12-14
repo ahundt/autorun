@@ -4,10 +4,11 @@ PDF Extraction Functions - Single file and batch extraction.
 """
 
 import os
+
 from tqdm import tqdm
 
 from .backends import BACKEND_REGISTRY
-from .utils import detect_gpu_availability, calculate_extraction_quality_metrics, is_pdf_encrypted
+from .utils import calculate_extraction_quality_metrics, detect_gpu_availability, is_pdf_encrypted
 
 
 def extract_single_pdf(input_file: str, output_file: str, backends: list = None) -> dict:
@@ -71,7 +72,8 @@ def extract_single_pdf(input_file: str, output_file: str, backends: list = None)
             metadata['extraction_time_seconds'] = result['time']
             metadata['output_size_bytes'] = len(result['content'])
             metadata['quality_metrics'] = calculate_extraction_quality_metrics(result['content'])
-            print(f"OK {backend}: {input_file} -> {output_file} ({len(result['content'])} chars, {result['time']:.2f}s)")
+            chars = len(result['content'])
+            print(f"OK {backend}: {input_file} -> {output_file} ({chars} chars, {result['time']:.2f}s)")
             break
         else:
             print(f"X {backend} failed: {result['error']}")
@@ -90,7 +92,8 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
         output_dir: Path to the directory where text files will be saved.
         resume: Whether to skip conversion for PDFs that already have corresponding text files.
         remove_empty: Whether to remove empty text files at the end of conversion.
-        backends: The tools to use for PDF to text conversion. If None, auto-detects based on GPU availability.
+        backends: The tools to use for PDF to text conversion.
+            If None, auto-detects based on GPU availability.
         return_metadata: If True, returns (txt_files, metadata_dict).
 
     Returns:
@@ -152,13 +155,14 @@ def pdf_to_txt(input_dir: str, output_dir: str, resume: bool = True, remove_empt
             result = extract_single_pdf(pdf_file, txt_path, backends=backends)
 
             # Copy result to extraction_metadata
-            extraction_metadata[pdf_basename]['backend_used'] = result['backend_used']
-            extraction_metadata[pdf_basename]['extraction_time_seconds'] = result['extraction_time_seconds']
-            extraction_metadata[pdf_basename]['output_size_bytes'] = result['output_size_bytes']
-            extraction_metadata[pdf_basename]['quality_metrics'] = result['quality_metrics']
-            extraction_metadata[pdf_basename]['success'] = result['success']
-            extraction_metadata[pdf_basename]['error'] = result['error']
-            extraction_metadata[pdf_basename]['encrypted'] = result['encrypted']
+            meta = extraction_metadata[pdf_basename]
+            meta['backend_used'] = result['backend_used']
+            meta['extraction_time_seconds'] = result['extraction_time_seconds']
+            meta['output_size_bytes'] = result['output_size_bytes']
+            meta['quality_metrics'] = result['quality_metrics']
+            meta['success'] = result['success']
+            meta['error'] = result['error']
+            meta['encrypted'] = result['encrypted']
 
         except Exception as e:
             print(f"Error converting {pdf_file}: {e}")

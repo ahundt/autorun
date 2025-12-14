@@ -11,14 +11,15 @@ Backends (9 total):
 """
 
 import os
-import time
 import subprocess
 import tempfile
+import time
+
+import pdfplumber
+import PyPDF2
 
 # Core dependencies (always available)
 from pdfminer.high_level import extract_text
-import pdfplumber
-import PyPDF2
 
 # Optional dependencies - graceful degradation
 try:

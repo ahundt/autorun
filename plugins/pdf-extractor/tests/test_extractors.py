@@ -2,8 +2,7 @@
 
 import os
 import tempfile
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from pdf_extraction.extractors import extract_single_pdf, pdf_to_txt
 
@@ -58,7 +57,7 @@ class TestExtractSinglePdf:
             }[key]
             mock_registry.__contains__ = lambda self, key: key in ['backend1', 'backend2']
 
-            result = extract_single_pdf(
+            extract_single_pdf(
                 "/fake/file.pdf",
                 "/output.md",
                 backends=['backend1', 'backend2']
@@ -92,7 +91,7 @@ class TestExtractSinglePdf:
                 'recommended_backends': ['markitdown', 'pdfplumber']
             }
 
-            result = extract_single_pdf(
+            extract_single_pdf(
                 "/nonexistent/file.pdf",
                 "/output.md",
                 backends=None
@@ -114,7 +113,7 @@ class TestPdfToTxt:
             # Don't create output_dir - pdf_to_txt should create it
 
             # Run with empty input directory
-            result = pdf_to_txt(
+            pdf_to_txt(
                 input_dir,
                 output_dir,
                 backends=['pypdf2']
