@@ -13,30 +13,38 @@ uv pip install -e .
 
 For GPU-accelerated backends (docling, marker):
 ```bash
-uv pip install docling marker-pdf
+uv pip install -e ".[gpu]"
 ```
 
 ## Usage
 
 ### Single File
 ```bash
-python skills/pdf-extraction/scripts/extract_pdfs.py document.pdf
+extract-pdfs document.pdf
 # Output: document.md
 ```
 
 ### Batch Directory
 ```bash
-python skills/pdf-extraction/scripts/extract_pdfs.py /path/to/pdfs/ /path/to/output/
+extract-pdfs /path/to/pdfs/ /path/to/output/
 ```
 
 ### Custom Backend Order
 ```bash
-python skills/pdf-extraction/scripts/extract_pdfs.py document.pdf --backends pdfplumber markitdown pdfminer
+extract-pdfs document.pdf --backends pdfplumber markitdown pdfminer
 ```
 
 ### List Available Backends
 ```bash
-python skills/pdf-extraction/scripts/extract_pdfs.py --list-backends
+extract-pdfs --list-backends
+```
+
+### Python API
+```python
+from pdf_extraction import extract_single_pdf, pdf_to_txt
+
+result = extract_single_pdf("document.pdf", "output.md")
+files, metadata = pdf_to_txt("./pdfs/", "./output/", return_metadata=True)
 ```
 
 ## Available Backends
