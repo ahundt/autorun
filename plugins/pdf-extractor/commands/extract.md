@@ -9,14 +9,19 @@ Extract text from PDF documents using the multi-backend extraction system.
 
 ## Usage
 
-To extract a single PDF file:
+**Installed CLI (recommended):**
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py" "<input_path>" "<output_path>"
+extract-pdfs "<input_path>" "<output_path>"
 ```
 
-To extract all PDFs in a directory:
+**Module execution:**
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py" "<input_dir>" "<output_dir>"
+python -m pdf_extraction "<input_path>" "<output_path>"
+```
+
+**Standalone script:**
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/cli.py" "<input_path>" "<output_path>"
 ```
 
 ## Parameters
@@ -35,15 +40,15 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py" "<i
 
 Extract single file:
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py" document.pdf
+extract-pdfs document.pdf
 ```
 
 Extract directory with specific backends:
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py" ./pdfs/ ./output/ --backends markitdown pdfplumber
+extract-pdfs ./pdfs/ ./output/ --backends markitdown pdfplumber
 ```
 
 List available backends:
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py" --list-backends
+extract-pdfs --list-backends
 ```

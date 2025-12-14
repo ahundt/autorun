@@ -1,0 +1,1 @@
+"""PDF Extractor test suite."""

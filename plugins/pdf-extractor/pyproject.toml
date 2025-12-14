@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "PDF data extraction with 9 backend support"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "Andrew Hundt", email = "ATHundt@gmail.com"}]
 keywords = ["pdf", "extraction", "ocr", "markdown", "data"]
 classifiers = [
@@ -30,7 +30,11 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = ["docling>=2.0.0", "marker-pdf>=0.3.0"]
-all = ["pdfbox>=0.1.0", "pymupdf4llm>=0.0.1"]
+llm = ["pymupdf4llm>=0.0.1"]
+dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 
 [project.scripts]
-extract-pdfs = "scripts.extract_pdfs:main"
+extract-pdfs = "pdf_extraction.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

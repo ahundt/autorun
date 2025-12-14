@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "clautorun",
   "version": "1.0.0",
-  "description": "Automation suite: clautorun (file policies, autonomous sessions) + plan-export (plan archiving)",
+  "description": "Automation suite: clautorun (file policies, autonomous sessions) + plan-export (plan archiving) + pdf-extractor (PDF data extraction)",
   "owner": {
     "name": "ahundt"
   },
@@ -25,6 +25,16 @@
       "version": "1.0.0",
       "author": {
         "name": "athundt"
+      }
+    },
+    {
+      "name": "pdf-extractor",
+      "description": "PDF data extraction with 9 backend support (markitdown, docling, marker, pdfplumber, pdfminer, pypdf2, pymupdf4llm, pdfbox, pdftotext)",
+      "source": "./plugins/pdf-extractor",
+      "category": "data-processing",
+      "version": "0.1.0",
+      "author": {
+        "name": "Andrew Hundt"
       }
     }
   ]

@@ -4,29 +4,44 @@ CLI wrapper for PDF data extraction - supports files and directories.
 
 Usage:
     # Single file to auto-named output (.md)
-    python extract_pdfs.py /path/to/document.pdf
+    extract-pdfs /path/to/document.pdf
 
     # Single file to specific output file
-    python extract_pdfs.py /path/to/document.pdf /path/to/output.md
+    extract-pdfs /path/to/document.pdf /path/to/output.md
 
     # Directory to same directory (in-place)
-    python extract_pdfs.py /path/to/pdfs/
+    extract-pdfs /path/to/pdfs/
 
     # Directory to different output directory
-    python extract_pdfs.py /path/to/pdfs/ /path/to/output/
+    extract-pdfs /path/to/pdfs/ /path/to/output/
 
     # With specific backends
-    python extract_pdfs.py /path/to/document.pdf --backends markitdown pdfplumber
+    extract-pdfs /path/to/document.pdf --backends markitdown pdfplumber
+
+    # List available backends
+    extract-pdfs --list-backends
 """
 
 import argparse
 import os
 import sys
 
-# Add the scripts directory to path for local imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pdf_extraction import pdf_to_txt, extract_single_pdf, detect_gpu_availability
+def _setup_standalone_imports():
+    """Set up imports for standalone script execution."""
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
+
+# Handle standalone execution vs package import
+if __name__ == '__main__':
+    _setup_standalone_imports()
+
+# Now import the modules (works both installed and standalone)
+from pdf_extraction.extractors import pdf_to_txt, extract_single_pdf
+from pdf_extraction.utils import detect_gpu_availability
+from pdf_extraction.backends import BACKEND_REGISTRY
 
 
 def main():
@@ -40,6 +55,7 @@ Examples:
   %(prog)s ./pdfs/                         # Extract all PDFs in directory
   %(prog)s ./pdfs/ ./output/               # Extract to different directory
   %(prog)s doc.pdf --backends markitdown   # Use specific backend
+  %(prog)s --list-backends                 # Show available backends
         """
     )
     parser.add_argument('input', nargs='?', help='PDF file or directory containing PDFs')
@@ -58,7 +74,6 @@ Examples:
 
     # List backends option (no input required)
     if args.list_backends:
-        from pdf_extraction import BACKEND_REGISTRY
         gpu_info = detect_gpu_availability()
         print("Available backends:")
         for name in BACKEND_REGISTRY.keys():

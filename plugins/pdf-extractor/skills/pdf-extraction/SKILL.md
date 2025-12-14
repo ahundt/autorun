@@ -17,33 +17,45 @@ This skill provides PDF text extraction with 9 different backends, automatic GPU
 
 To extract text from PDFs:
 
-1. **Single file extraction:**
+1. **Single file extraction (installed CLI - recommended):**
    ```bash
-   python ${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py /path/to/document.pdf
+   extract-pdfs /path/to/document.pdf
    ```
    Output: Creates `document.md` in the same directory.
 
 2. **Batch extraction (directory):**
    ```bash
-   python ${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py /path/to/pdfs/ /path/to/output/
+   extract-pdfs /path/to/pdfs/ /path/to/output/
    ```
    Output: Creates `.md` files for all PDFs in output directory.
 
 3. **Custom output file:**
    ```bash
-   python ${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py document.pdf output.md
+   extract-pdfs document.pdf output.md
    ```
 
 4. **Specific backends:**
    ```bash
-   python ${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py document.pdf --backends markitdown pdfplumber
+   extract-pdfs document.pdf --backends markitdown pdfplumber
    ```
 
 5. **List available backends:**
    ```bash
-   python ${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py --list-backends
+   extract-pdfs --list-backends
    ```
    Output: Shows available backends and GPU status.
+
+### Alternative Execution Methods
+
+If the `extract-pdfs` CLI isn't installed, use these alternatives:
+
+```bash
+# Module execution (requires package in path)
+python -m pdf_extraction document.pdf
+
+# Standalone script execution
+python "${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/cli.py" document.pdf
+```
 
 ## Backend Selection Guide
 
@@ -53,16 +65,16 @@ Specify backends in any order with `--backends`. The system tries each in order,
 
 ```bash
 # Tables first, then general extraction
-python extract_pdfs.py document.pdf --backends pdfplumber markitdown pdfminer
+extract-pdfs document.pdf --backends pdfplumber markitdown pdfminer
 
 # Scanned documents: vision-based first
-python extract_pdfs.py scanned.pdf --backends marker docling markitdown
+extract-pdfs scanned.pdf --backends marker docling markitdown
 
 # Most permissive fallback order (handles problematic PDFs)
-python extract_pdfs.py document.pdf --backends pdfminer pypdf2 markitdown
+extract-pdfs document.pdf --backends pdfminer pypdf2 markitdown
 
 # Single backend only (no fallback)
-python extract_pdfs.py document.pdf --backends markitdown
+extract-pdfs document.pdf --backends markitdown
 ```
 
 ### CPU-Only Systems (Default)
@@ -184,20 +196,20 @@ When all backends fail:
 
 To continue interrupted batch extraction:
 ```bash
-python extract_pdfs.py /path/to/pdfs/ /path/to/output/
+extract-pdfs /path/to/pdfs/ /path/to/output/
 ```
 The `resume=True` default skips already-extracted files.
 
 To force re-extraction:
 ```bash
-python extract_pdfs.py /path/to/pdfs/ --no-resume
+extract-pdfs /path/to/pdfs/ --no-resume
 ```
 
 ### Tables and Structured Data
 
 For PDFs with tables, prioritize:
 ```bash
-python extract_pdfs.py document.pdf --backends pdfplumber markitdown
+extract-pdfs document.pdf --backends pdfplumber markitdown
 ```
 
 The output will contain markdown tables when detected:
@@ -207,50 +219,41 @@ The output will contain markdown tables when detected:
 | Data    | Data    | Data    |
 ```
 
-## Scripts Reference
+## Module Structure Reference
 
-### extract_pdfs.py (CLI entry point)
+### Source Code Layout
 
-Main CLI tool for PDF extraction.
+**Location:** `${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/`
 
-**Location:** `${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/extract_pdfs.py`
+| File | Purpose |
+|------|---------|
+| `__init__.py` | Package exports (extract_single_pdf, pdf_to_txt, etc.) |
+| `__main__.py` | Support for `python -m pdf_extraction` |
+| `cli.py` | CLI entry point with argparse |
+| `backends.py` | BackendExtractor base class + 9 backend implementations |
+| `extractors.py` | extract_single_pdf(), pdf_to_txt() functions |
+| `utils.py` | GPU detection, quality metrics, encryption check |
 
-```bash
-python extract_pdfs.py [input] [output] [options]
+### Key Classes and Functions
 
-Arguments:
-  input           PDF file or directory
-  output          Output file or directory (optional)
-
-Options:
-  --backends      Space-separated list of backends
-  --no-resume     Re-extract all files
-  --format        Output format: md (default), txt
-  --list-backends List available backends
-```
-
-### pdf_extraction.py (Core library)
-
-**Location:** `${CLAUDE_PLUGIN_ROOT}/skills/pdf-extraction/scripts/pdf_extraction.py`
-
-| Function/Class | Lines | Purpose |
-|----------------|-------|---------|
-| `BackendExtractor` | 46-137 | Base class with Template Method pattern for all backends |
-| `DoclingExtractor` | 140-152 | IBM Docling backend (MIT, GPU) |
-| `MarkerExtractor` | 155-168 | Vision-based marker backend (GPL-3.0, GPU) |
-| `MarkItDownExtractor` | 171-183 | Microsoft MarkItDown (MIT, CPU) |
-| `PdfplumberExtractor` | 255-265 | Table-focused extraction (MIT) |
-| `PdfminerExtractor` | 228-236 | Pure Python fallback (MIT) |
-| `Pypdf2Extractor` | 239-252 | Basic extraction, always available (BSD-3) |
-| `detect_gpu_availability()` | 293-324 | Auto-detect GPU and recommend backends |
-| `extract_single_pdf()` | 407-474 | Extract one PDF with backend fallback loop |
-| `pdf_to_txt()` | 477-589 | Batch extract directory with resume support |
-| `BACKEND_REGISTRY` | 387-400 | Dict mapping backend names to extractor factories |
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `BackendExtractor` | backends.py:35-123 | Base class with Template Method pattern |
+| `DoclingExtractor` | backends.py:130-142 | IBM Docling backend (MIT, GPU) |
+| `MarkerExtractor` | backends.py:145-158 | Vision-based marker backend (GPL-3.0, GPU) |
+| `MarkItDownExtractor` | backends.py:161-173 | Microsoft MarkItDown (MIT, CPU) |
+| `PdfplumberExtractor` | backends.py:244-253 | Table-focused extraction (MIT) |
+| `PdfminerExtractor` | backends.py:219-226 | Pure Python fallback (MIT) |
+| `Pypdf2Extractor` | backends.py:229-241 | Basic extraction, always available (BSD-3) |
+| `BACKEND_REGISTRY` | backends.py:279-292 | Dict mapping backend names to factories |
+| `detect_gpu_availability()` | utils.py:9-40 | Auto-detect GPU and recommend backends |
+| `extract_single_pdf()` | extractors.py:13-80 | Extract one PDF with backend fallback |
+| `pdf_to_txt()` | extractors.py:83-170 | Batch extract directory with resume |
 
 **Key implementation details:**
-- Backend fallback loop: `pdf_extraction.py:449-472` - Tries each backend in order, stops on first success
-- Lazy initialization: `pdf_extraction.py:88-90` - Converters created only when first used
-- Quality metrics: `pdf_extraction.py:327-362` - Calculates char/word/table counts
+- Backend fallback loop: `extractors.py:55-78` - Tries each backend in order, stops on first success
+- Lazy initialization: `backends.py:77-79` - Converters created only when first used
+- Quality metrics: `utils.py:43-76` - Calculates char/word/table counts
 
 ## Additional Resources
 
