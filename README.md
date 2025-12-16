@@ -566,6 +566,7 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 | `/cr:sos` | `/cr:estop` | `/estop` | Emergency stop |
 | `/cr:tm` | `/cr:tmux` | - | Tmux session management |
 | `/cr:tt` | `/cr:ttest` | - | Tmux test workflow |
+| `/cr:tabs` | - | - | Discover and manage Claude sessions across tmux |
 
 ### AutoFile Commands (File Creation Control)
 
@@ -609,6 +610,11 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 
 - **/cr:tm** or **/cr:tmux** - Session lifecycle management (create, list, cleanup)
 - **/cr:tt** or **/cr:ttest** - Comprehensive CLI and plugin testing in isolated sessions
+- **/cr:tabs** - Discover and manage Claude sessions running across tmux windows
+  - Scans all tmux panes for Claude Code sessions using pattern matching
+  - Displays organized table with session letter (A, B, C), directory, purpose, and status
+  - Supports batch actions: `all:continue`, `awaiting:continue`, `A:git status, B:pwd`
+  - Interactive workflow with user approval before executing commands
 
 ### Usage Examples
 
@@ -638,6 +644,11 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 /cr:tm create my-project
 /cr:tm list
 /cr:tm cleanup
+
+# Discover and manage Claude sessions across tmux windows
+/cr:tabs
+# Shows table of sessions (A, B, C...) with status
+# Then respond with selections like: "A, B:git status, all:continue"
 ```
 
 ### Legacy Commands (Backward Compatible)
