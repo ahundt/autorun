@@ -26,7 +26,7 @@ from pathlib import Path
 # Default configuration
 DEFAULT_CONFIG = {
     "enabled": True,
-    "output_dir": "note",
+    "output_dir": "notes",
     "filename_pattern": "{date}_{name}",
     "extension": ".md"
 }
@@ -157,7 +157,7 @@ def export_plan(plan_path: Path, project_dir: Path) -> dict:
     Returns a dict with status information for the hook response.
     """
     config = load_config()
-    output_dir = config.get("output_dir", "note")
+    output_dir = config.get("output_dir", "notes")
     filename_pattern = config.get("filename_pattern", "{date}_{name}")
     extension = config.get("extension", ".md")
 

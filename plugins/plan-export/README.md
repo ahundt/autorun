@@ -70,21 +70,21 @@ Use these in both `dir` and `pattern`:
 
 | Preset | Output | Description |
 |--------|--------|-------------|
-| `default` | `note/YYYY_MM_DD_name.md` | Standard (default) |
+| `default` | `notes/YYYY_MM_DD_name.md` | Standard (default) |
 | `plans` | `plans/YYYY_MM_DD_name.md` | Plans folder |
 | `docs` | `docs/plans/YYYY_MM_DD_name.md` | Documentation |
-| `dated` | `note/YYYY/MM/DD_name.md` | Date hierarchy |
-| `yearly` | `note/YYYY/MM_DD_name.md` | Yearly folders |
-| `simple` | `note/name.md` | Name only (may overwrite!) |
+| `dated` | `notes/YYYY/MM/DD_name.md` | Date hierarchy |
+| `yearly` | `notes/YYYY/MM_DD_name.md` | Yearly folders |
+| `simple` | `notes/name.md` | Name only (may overwrite!) |
 | `archive` | `.archive/plans/YYYY/date_name.md` | Hidden archive |
-| `original` | `note/YYYY_MM_DD_original.md` | Keep original name |
+| `original` | `notes/YYYY_MM_DD_original.md` | Keep original name |
 
 ## Examples
 
 ### Date-organized hierarchy
 ```bash
 /plan-export:preset dated
-# Creates: note/2025/12/10_my_plan.md
+# Creates: notes/2025/12/10_my_plan.md
 ```
 
 ### Custom configuration
@@ -97,7 +97,7 @@ Use these in both `dir` and `pattern`:
 ### Keep original Claude plan names
 ```bash
 /plan-export:preset original
-# Creates: note/2025_12_10_fuzzy-dancing-star.md
+# Creates: notes/2025_12_10_fuzzy-dancing-star.md
 ```
 
 ## Configuration File
@@ -107,7 +107,7 @@ Settings are stored in `~/.claude/plan-export.config.json`:
 ```json
 {
   "enabled": true,
-  "output_dir": "note",
+  "output_dir": "notes",
   "filename_pattern": "{date}_{name}",
   "extension": ".md"
 }

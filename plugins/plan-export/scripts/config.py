@@ -29,7 +29,7 @@ from pathlib import Path
 # Default configuration
 DEFAULT_CONFIG = {
     "enabled": True,
-    "output_dir": "note",
+    "output_dir": "notes",
     "filename_pattern": "{date}_{name}",
     "extension": ".md"
 }
@@ -37,9 +37,9 @@ DEFAULT_CONFIG = {
 # Preset configurations
 PRESETS = {
     "default": {
-        "output_dir": "note",
+        "output_dir": "notes",
         "filename_pattern": "{date}_{name}",
-        "description": "Standard: note/YYYY_MM_DD_name.md"
+        "description": "Standard: notes/YYYY_MM_DD_name.md"
     },
     "plans": {
         "output_dir": "plans",
@@ -52,19 +52,19 @@ PRESETS = {
         "description": "Documentation: docs/plans/YYYY_MM_DD_name.md"
     },
     "dated": {
-        "output_dir": "note/{YYYY}/{MM}",
+        "output_dir": "notes/{YYYY}/{MM}",
         "filename_pattern": "{DD}_{name}",
-        "description": "Date hierarchy: note/YYYY/MM/DD_name.md"
+        "description": "Date hierarchy: notes/YYYY/MM/DD_name.md"
     },
     "yearly": {
-        "output_dir": "note/{YYYY}",
+        "output_dir": "notes/{YYYY}",
         "filename_pattern": "{MM}_{DD}_{name}",
-        "description": "Yearly folders: note/YYYY/MM_DD_name.md"
+        "description": "Yearly folders: notes/YYYY/MM_DD_name.md"
     },
     "simple": {
-        "output_dir": "note",
+        "output_dir": "notes",
         "filename_pattern": "{name}",
-        "description": "Name only: note/name.md (overwrites!)"
+        "description": "Name only: notes/name.md (overwrites!)"
     },
     "archive": {
         "output_dir": ".archive/plans/{YYYY}",
@@ -72,9 +72,9 @@ PRESETS = {
         "description": "Hidden archive: .archive/plans/YYYY/date_name.md"
     },
     "original": {
-        "output_dir": "note",
+        "output_dir": "notes",
         "filename_pattern": "{date}_{original}",
-        "description": "Keep original name: note/YYYY_MM_DD_original.md"
+        "description": "Keep original name: notes/YYYY_MM_DD_original.md"
     }
 }
 
@@ -179,12 +179,12 @@ def reset():
 def show_current_settings(config: dict):
     """Show the current output settings."""
     print("\nCurrent Settings:")
-    print(f"  Directory: {config.get('output_dir', 'note')}")
+    print(f"  Directory: {config.get('output_dir', 'notes')}")
     print(f"  Pattern:   {config.get('filename_pattern', '{date}_{name}')}")
     print(f"  Extension: {config.get('extension', '.md')}")
 
     # Show example output
-    example_dir = config.get('output_dir', 'note').replace('{YYYY}', '2025').replace('{YY}', '25').replace('{MM}', '12').replace('{DD}', '10')
+    example_dir = config.get('output_dir', 'notes').replace('{YYYY}', '2025').replace('{YY}', '25').replace('{MM}', '12').replace('{DD}', '10')
     example_file = config.get('filename_pattern', '{date}_{name}').replace('{date}', '2025_12_10').replace('{YYYY}', '2025').replace('{YY}', '25').replace('{MM}', '12').replace('{DD}', '10').replace('{name}', 'my_plan').replace('{original}', 'fuzzy-dancing-star')
     print(f"\n  Example: {example_dir}/{example_file}{config.get('extension', '.md')}")
 
