@@ -191,6 +191,6 @@ settings.json
 settings.local.json
 .claude/settings.local.json
 
-# Symlink artifacts
-clautorun
-debug/latest
+# Symlink artifacts (root level only)
+/clautorun
+/debug/latest

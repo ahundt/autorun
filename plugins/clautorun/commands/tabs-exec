@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+"""
+Claude tmux session discovery and management.
+
+Uses TmuxUtilities (tmux_utils.py:37) + Claude SDK for analysis.
+
+References:
+- TmuxUtilities.execute_tmux_command(): tmux_utils.py:241-371
+- TmuxUtilities.send_keys(): tmux_utils.py:512-534
+- TmuxUtilities.detect_tmux_environment(): tmux_utils.py:188-239
+- capture-pane pattern: ai_monitor.py:77-80
+"""
+import sys
+import json
+import os
+import re
+from pathlib import Path
+from typing import List, Dict, Optional, Any
+
+# Add src to path for TmuxUtilities import
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from clautorun.tmux_utils import get_tmux_utilities, TmuxUtilities
+
+# Optional: Claude SDK for AI analysis
+try:
+    from anthropic import Anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
+
+def main() -> None:
+    """Main entry point - handles discovery, display, and execution modes."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Claude tmux session manager')
+    parser.add_argument('--execute', action='store_true',
+                        help='Execute mode: read JSON from stdin with action details')
+    parser.add_argument('--json', action='store_true',
+                        help='Output session data as JSON instead of table')
+    args = parser.parse_args()
+
+    # Execute mode: handle action from stdin JSON
+    if args.execute:
+        handle_execute_mode()
+        return
+
+    # Get TmuxUtilities instance
+    tmux = get_tmux_utilities()
+
+    # Phase 1: Discover Claude sessions
+    sessions = discover_claude_sessions(tmux)
+
+    if not sessions:
+        print("No Claude sessions found in tmux.")
+        return
+
+    # Phase 2: Analyze sessions
+    analyzed = analyze_sessions(sessions)
+
+    # Phase 3: Output results
+    if args.json:
+        # JSON output for AI to process
+        print(json.dumps({
+            'sessions': analyzed,
+            'count': len(analyzed)
+        }, indent=2))
+    else:
+        # Human-readable table
+        output = format_output(analyzed)
+        print(output)
+
+
+def handle_execute_mode() -> None:
+    """
+    Handle execution mode - read JSON from stdin and execute actions.
+
+    Expected JSON format:
+    {
+        "action": "execute",
+        "selections": "A,B" or "all:cmd" or "awaiting:cmd",
+        "command": "optional override command",
+        "sessions": [{"tmux_target": "...", "actions": [...], "awaiting": bool}, ...]
+    }
+    """
+    try:
+        data = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        print(json.dumps({'error': f'Invalid JSON: {e}', 'success': False}))
+        return
+
+    sessions = data.get('sessions', [])
+    selections = data.get('selections', '')
+    command = data.get('command', '')
+
+    if not sessions:
+        print(json.dumps({'error': 'No sessions provided', 'success': False}))
+        return
+
+    # If a command override is provided with selections like "A,B"
+    # apply that command to those selections
+    if command and not (':' in selections and not selections.startswith(('all:', 'awaiting:'))):
+        # Transform "A,B" + command="continue" into "A:continue, B:continue"
+        if not selections.startswith(('all:', 'awaiting:')):
+            letters = selections.replace(' ', '').replace(',', '')
+            selections = ', '.join(f'{l}:{command}' for l in letters if l.isalpha())
+
+    result = execute_selections(selections, sessions)
+    print(result)
+
+
+def discover_claude_sessions(tmux: TmuxUtilities) -> List[Dict[str, Any]]:
+    """
+    Discover all Claude sessions in tmux.
+
+    Uses:
+    - execute_tmux_command(): tmux_utils.py:241-371
+    - detect_tmux_environment(): tmux_utils.py:188-239
+    - capture-pane pattern: ai_monitor.py:77-80
+    """
+    sessions = []
+
+    # Get current session to exclude (don't list ourselves)
+    current_env = tmux.detect_tmux_environment()
+    current_session = current_env.get('session', '') if current_env else ''
+
+    # List all tmux sessions
+    result = tmux.execute_tmux_command([
+        'list-sessions', '-F', '#{session_name}'
+    ])
+    if not result or result['returncode'] != 0:
+        return []
+
+    session_names = [s.strip() for s in result['stdout'].strip().split('\n') if s.strip()]
+
+    for session_name in session_names:
+        # Skip current Claude Code session
+        if session_name == current_session:
+            continue
+
+        # List windows in this session
+        windows_result = tmux.execute_tmux_command([
+            'list-windows', '-t', session_name, '-F', '#{window_index}'
+        ])
+        if not windows_result or windows_result['returncode'] != 0:
+            continue
+
+        window_ids = [w.strip() for w in windows_result['stdout'].strip().split('\n') if w.strip()]
+
+        for window_id in window_ids:
+            # Capture pane content (ai_monitor.py:77-80 pattern)
+            content_result = tmux.execute_tmux_command([
+                'capture-pane', '-t', f'{session_name}:{window_id}', '-p', '-S', '-100'
+            ])
+
+            if content_result and content_result['returncode'] == 0:
+                content = content_result['stdout']
+
+                # Heuristic: Check if this is a Claude session
+                if is_claude_session(content):
+                    sessions.append({
+                        'session_name': session_name,
+                        'window_id': window_id,
+                        'tmux_target': f'{session_name}:{window_id}',
+                        'content': content,
+                        'content_preview': content[:500]
+                    })
+
+    return sessions
+
+
+def is_claude_session(content: str) -> bool:
+    """
+    Heuristic to determine if content is from a Claude session.
+
+    Uses weight-based scoring - require 2+ indicators.
+    """
+    content_lower = content.lower()
+    score = 0
+
+    indicators = [
+        ('claude code', 3),      # Strong indicator
+        ('claude', 1),           # Moderate indicator
+        ('anthropic', 2),        # Strong indicator
+        ('> ', 1),               # Prompt indicator
+        ('assistant:', 1),
+        ('human:', 1),
+        ('todowrite', 2),        # Claude tool
+        ('task tool', 2),        # Claude tool
+    ]
+
+    for indicator, weight in indicators:
+        if indicator in content_lower:
+            score += weight
+
+    return score >= 2
+
+
+def analyze_sessions(sessions: List[Dict]) -> List[Dict]:
+    """
+    Analyze sessions using Claude SDK or heuristics.
+    """
+    if ANTHROPIC_AVAILABLE and os.getenv('ANTHROPIC_API_KEY'):
+        try:
+            return analyze_sessions_with_claude(sessions)
+        except Exception as e:
+            print(f"SDK analysis failed, using heuristics: {e}", file=sys.stderr)
+
+    return analyze_sessions_heuristic(sessions)
+
+
+def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
+    """
+    Fallback heuristic analysis when Claude SDK unavailable.
+    """
+    for session in sessions:
+        content = session['content']
+        content_lower = content.lower()
+
+        # Directory: Look for path patterns
+        session['directory'] = extract_directory(content)
+
+        # Status: Keyword-based detection
+        if 'error' in content_lower or 'failed' in content_lower or 'exception' in content_lower:
+            session['status'] = 'error'
+        elif content.rstrip().endswith('>') or 'waiting' in content_lower:
+            session['status'] = 'idle'
+        elif 'completed' in content_lower or 'done' in content_lower:
+            session['status'] = 'completed'
+        else:
+            session['status'] = 'active'
+
+        # Awaiting input: Check for prompt at end
+        last_lines = content[-200:] if len(content) > 200 else content
+        session['awaiting'] = (
+            last_lines.rstrip().endswith('>') or
+            'waiting for' in content_lower or
+            'your selection' in content_lower
+        )
+
+        # Purpose: First meaningful line
+        session['purpose'] = extract_purpose(content)
+
+        # Default actions
+        session['actions'] = get_default_actions(session['status'])
+
+    return sessions
+
+
+def analyze_sessions_with_claude(sessions: List[Dict]) -> List[Dict]:
+    """
+    Analyze sessions using Claude SDK for intelligent analysis.
+    """
+    client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+
+    sessions_data = [
+        {'id': i, 'target': s['tmux_target'], 'content': s['content_preview']}
+        for i, s in enumerate(sessions)
+    ]
+
+    prompt = f"""Analyze these {len(sessions)} tmux Claude sessions. For each, determine:
+
+1. directory: Working directory (extract from paths in content, or "unknown")
+2. purpose: Brief description of what's being worked on (10 words max)
+3. status: One of: active, idle, error, completed, blocked
+4. awaiting: Boolean - is the session waiting for user input?
+5. actions: List of 2-3 recommended actions (e.g., "continue", "review error", "git status")
+
+Sessions (first 500 chars each):
+{json.dumps(sessions_data, indent=2)}
+
+Respond with ONLY a JSON array matching session order:
+[
+  {{"directory": "/path", "purpose": "description", "status": "active", "awaiting": false, "actions": ["continue", "status"]}},
+  ...
+]"""
+
+    response = client.messages.create(
+        model="claude-sonnet-4-5-20250929",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    text = response.content[0].text
+    start = text.find('[')
+    end = text.rfind(']') + 1
+
+    if start >= 0 and end > start:
+        analyses = json.loads(text[start:end])
+        for session, analysis in zip(sessions, analyses):
+            session.update(analysis)
+    else:
+        return analyze_sessions_heuristic(sessions)
+
+    return sessions
+
+
+def extract_directory(content: str) -> str:
+    """Extract working directory from content patterns."""
+    patterns = [
+        r'(?:cd|pwd|cwd)[:\s]+([~/][^\s\n]+)',
+        r'(?:directory|dir)[:\s]+([~/][^\s\n]+)',
+        r'Working directory[:\s]+([~/][^\s\n]+)',
+        r'^([~/][^\s]+)\s*[\$>]',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
+        if match:
+            path = match.group(1)
+            # Basic validation
+            if path.startswith(('~', '/')):
+                return path[:30]
+
+    return "unknown"
+
+
+def extract_purpose(content: str) -> str:
+    """Extract purpose from content."""
+    lines = [l.strip() for l in content.split('\n') if l.strip()]
+
+    skip_patterns = ['$', '>', '#', 'last login', '───', '═══']
+
+    for line in lines[:15]:
+        line_lower = line.lower()
+        if not any(line_lower.startswith(p.lower()) for p in skip_patterns):
+            if len(line) > 10:
+                return line[:40] + ('...' if len(line) > 40 else '')
+
+    return "unknown"
+
+
+def get_default_actions(status: str) -> List[str]:
+    """Get default actions based on status."""
+    actions_map = {
+        'active': ['let it work', 'status'],
+        'idle': ['continue', 'new task'],
+        'error': ['interrupt', 'retry'],
+        'completed': ['new task', 'close'],
+        'blocked': ['unblock', 'skip'],
+    }
+    return actions_map.get(status, ['continue', 'status'])
+
+
+def format_output(sessions: List[Dict]) -> str:
+    """Format sessions for display."""
+    lines = []
+    lines.append(f"\n{'=' * 80}")
+    lines.append(f" Claude Sessions ({len(sessions)} found)")
+    lines.append(f"{'=' * 80}\n")
+
+    # Header
+    lines.append(f"{'ID':<3} {'Target':<14} {'Directory':<20} {'Purpose':<25} {'Status':<10} {'Awaiting':<8} Actions")
+    lines.append(f"{'-' * 3} {'-' * 14} {'-' * 20} {'-' * 25} {'-' * 10} {'-' * 8} {'-' * 18}")
+
+    # Rows
+    for i, s in enumerate(sessions):
+        letter = chr(65 + i)
+        awaiting = 'yes' if s.get('awaiting') else 'no'
+        actions = ', '.join(s.get('actions', [])[:2])
+        directory = s.get('directory', 'unknown')[:19]
+        purpose = s.get('purpose', 'unknown')[:24]
+        status = s.get('status', 'unknown')[:9]
+
+        lines.append(
+            f"{letter:<3} {s['tmux_target']:<14} {directory:<20} {purpose:<25} {status:<10} {awaiting:<8} {actions}"
+        )
+
+    # Selection syntax help
+    lines.append(f"\n{'-' * 80}")
+    lines.append("Selection syntax:")
+    lines.append("  'A,C' or 'AC'              Execute default action for selected")
+    lines.append("  'A:git status, B:pwd'      Execute custom commands")
+    lines.append("  'all:continue'             Execute on all sessions")
+    lines.append("  'awaiting:continue'        Execute on sessions awaiting input")
+    lines.append(f"{'-' * 80}\n")
+
+    return '\n'.join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXECUTION FUNCTIONS (for follow-up selection handling)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def execute_selections(selection_str: str, sessions: List[Dict]) -> str:
+    """
+    Execute user selections across sessions.
+
+    Uses TmuxUtilities.send_keys(): tmux_utils.py:512-534
+    """
+    tmux = get_tmux_utilities()
+    results = []
+
+    # Handle special selectors
+    if selection_str.lower().startswith('all:'):
+        cmd = selection_str[4:].strip()
+        for session in sessions:
+            result = send_command(tmux, session, cmd)
+            results.append(result)
+        return format_execution_results(results)
+
+    if selection_str.lower().startswith('awaiting:'):
+        cmd = selection_str[9:].strip()
+        for session in sessions:
+            if session.get('awaiting'):
+                result = send_command(tmux, session, cmd)
+                results.append(result)
+        return format_execution_results(results)
+
+    # Parse individual selections
+    # Split by comma but preserve spaces in commands (A:git status, B:pwd)
+    for part in selection_str.split(','):
+        part = part.strip()
+        if not part:
+            continue
+
+        if ':' in part:
+            # Custom command: 'A:git status'
+            letter, cmd = part.split(':', 1)
+            letter = letter.strip().upper()
+            cmd = cmd.strip()
+            if len(letter) == 1 and letter.isalpha():
+                idx = ord(letter) - 65
+                if 0 <= idx < len(sessions):
+                    result = send_command(tmux, sessions[idx], cmd)
+                    results.append(result)
+        else:
+            # Default action: 'A' or 'AC' or 'A C'
+            letters = part.replace(' ', '').upper()
+            for letter in letters:
+                if letter.isalpha():
+                    idx = ord(letter) - 65
+                    if 0 <= idx < len(sessions):
+                        session = sessions[idx]
+                        default_cmd = session.get('actions', ['continue'])[0]
+                        result = send_command(tmux, session, default_cmd)
+                        results.append(result)
+
+    return format_execution_results(results)
+
+
+def send_command(tmux: TmuxUtilities, session: Dict, cmd: str) -> Dict:
+    """
+    Send command to a session.
+    """
+    target = session['tmux_target']
+    session_name, window_id = target.split(':')
+
+    try:
+        success = tmux.send_keys(cmd, session_name, window_id)
+        if success:
+            tmux.send_keys('C-m', session_name, window_id)
+
+        return {
+            'target': target,
+            'command': cmd,
+            'success': success,
+            'error': None if success else 'send_keys failed'
+        }
+    except Exception as e:
+        return {
+            'target': target,
+            'command': cmd,
+            'success': False,
+            'error': str(e)
+        }
+
+
+def format_execution_results(results: List[Dict]) -> str:
+    """Format execution results for display."""
+    if not results:
+        return "No commands executed."
+
+    lines = ["\nExecuting...\n"]
+
+    success_count = 0
+    for r in results:
+        if r['success']:
+            lines.append(f"  [ok] {r['target']}: '{r['command']}' sent")
+            success_count += 1
+        else:
+            lines.append(f"  [FAIL] {r['target']}: {r['error']}")
+
+    lines.append(f"\nDone! {success_count}/{len(results)} commands sent.")
+    return '\n'.join(lines)
+
+
+if __name__ == "__main__":
+    main()
