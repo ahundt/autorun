@@ -818,11 +818,11 @@ class WindowList(list):
         """
         return WindowList([w for w in self if w.get('prompt_type') is not None])
 
-    def working(self) -> 'WindowList':
-        """Return windows where Claude is working (no prompt_type).
+    def active(self) -> 'WindowList':
+        """Return windows where Claude is active (no prompt_type).
 
         Example:
-            windows.working()  # All windows without a prompt
+            windows.active()  # All windows without a prompt
         """
         return WindowList([w for w in self if w.get('prompt_type') is None])
 
