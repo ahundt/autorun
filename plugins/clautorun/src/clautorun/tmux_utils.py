@@ -864,6 +864,7 @@ def tmux_list_windows(
         - prompt_type: str|None - (only if content_lines > 0) detected Claude Code prompt type:
           'input', 'plan_approval', 'tool_permission_yn', 'tool_permission_numbered',
           'question', 'happy_mode_switch', 'clarification', 'error_prompt', or None
+        - is_active: bool - (only if content_lines > 0) True if Claude is actively generating output
 
     Example:
         >>> tmux_list_windows()
@@ -931,13 +932,15 @@ def tmux_list_windows(
                 'flags': data['flags']  # * = current, - = last, etc.
             }
 
-            # Optional: capture pane content and detect prompt type
+            # Optional: capture pane content and detect state
             if content_lines > 0:
                 win['content'] = _tmux_capture_pane(
                     tmux, win_session, win_index, content_lines
                 )
                 # Detect prompt type for filtering (e.g., windows.filter(prompt_type='input'))
                 win['prompt_type'] = detect_prompt_type(win['content'])
+                # Detect if Claude is actively working
+                win['is_active'] = detect_claude_active(win['content'])
 
             windows.append(win)
 
@@ -1106,6 +1109,25 @@ def detect_prompt_type(content: str) -> Optional[str]:
                 return PROMPT_TYPE_CLARIFICATION
 
     return None
+
+
+def detect_claude_active(content: str) -> bool:
+    """Detect if Claude is actively generating output.
+
+    Looks for "esc to interrupt" which appears in happy-cli status when Claude
+    is working: "✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)"
+
+    Args:
+        content: Terminal content string
+
+    Returns:
+        True if Claude appears to be actively working, False otherwise.
+    """
+    if not content:
+        return False
+
+    # "esc to interrupt" is the reliable indicator that Claude is working
+    return 'esc to interrupt' in content[-500:]
 
 
 def find_windows_awaiting_input(
