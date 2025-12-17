@@ -1422,10 +1422,6 @@ def send_message_to_claude(
     """
     if not force:
         # Capture current content to check state
-        target = f"{session or tmux.session_name}:{window or ''}"
-        if pane:
-            target += f".{pane}"
-
         result = tmux.execute_tmux_command(
             ['capture-pane', '-p', '-S', '-50'],
             session, window, pane
