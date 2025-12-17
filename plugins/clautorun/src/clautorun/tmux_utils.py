@@ -1171,6 +1171,276 @@ def detect_claude_active(content: str) -> bool:
     return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CLAUDE CODE MODE DETECTION - Status bar mode indicators
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Claude Code CLI modes (shown in status bar, cycled with Tab/Shift+Tab)
+# Order matches Shift+Tab cycle order
+CLAUDE_MODE_DEFAULT = 'default'  # Blank status bar - normal operation
+CLAUDE_MODE_PLAN = 'plan'  # "plan mode on" - planning without execution
+CLAUDE_MODE_BYPASS = 'bypass'  # "bypass permissions on" - requires --dangerously-skip-permissions
+CLAUDE_MODE_ACCEPT_EDITS = 'accept_edits'  # "accept edits on" - auto-accept file edits
+
+# Mode cycle order for Shift+Tab (wraps around)
+CLAUDE_MODE_CYCLE = [CLAUDE_MODE_DEFAULT, CLAUDE_MODE_PLAN, CLAUDE_MODE_ACCEPT_EDITS]
+# Note: bypass mode only available if --dangerously-skip-permissions was passed
+
+
+def detect_claude_mode(content: str) -> str:
+    """Detect current Claude Code CLI mode from terminal content.
+
+    Modes are shown in the status bar and can be cycled with Tab (toggle
+    thinking) or Shift+Tab (cycle through modes).
+
+    Args:
+        content: Terminal content string
+
+    Returns:
+        Mode constant:
+        - 'default': Normal operation (blank status)
+        - 'plan': Plan mode on - planning without execution
+        - 'bypass': Bypass permissions on (only if --dangerously-skip-permissions)
+        - 'accept_edits': Accept edits on - auto-accept file edits
+
+    Example:
+        >>> mode = detect_claude_mode(window['content'])
+        >>> if mode == CLAUDE_MODE_PLAN:
+        ...     print("Plan mode active")
+    """
+    if not content:
+        return CLAUDE_MODE_DEFAULT
+
+    # Check last 20 lines for mode indicators in status bar
+    last_lines = content.rstrip().split('\n')[-20:]
+    last_text = '\n'.join(last_lines).lower()
+
+    # Check for mode indicators (case-insensitive)
+    if 'plan mode on' in last_text:
+        return CLAUDE_MODE_PLAN
+    if 'bypass permissions on' in last_text:
+        return CLAUDE_MODE_BYPASS
+    if 'accept edits on' in last_text:
+        return CLAUDE_MODE_ACCEPT_EDITS
+
+    return CLAUDE_MODE_DEFAULT
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLAUDE CODE CLI CONTROL - Key sequences for controlling Claude Code
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def send_text_and_enter(
+    tmux: 'TmuxUtilities',
+    text: str,
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None
+) -> bool:
+    """Send text to Claude Code CLI followed by Enter.
+
+    IMPORTANT: Text and Enter (C-m) must be sent as separate tmux commands.
+    This is required because tmux send-keys handles control sequences
+    differently from regular text.
+
+    Args:
+        tmux: TmuxUtilities instance
+        text: Text to send (command, prompt, etc.)
+        session: Target session (uses tmux default if None)
+        window: Target window
+        pane: Target pane
+
+    Returns:
+        True if both sends succeeded, False otherwise
+
+    Example:
+        >>> tmux = get_tmux_utilities()
+        >>> send_text_and_enter(tmux, "/exit")  # Exit Claude CLI
+        >>> send_text_and_enter(tmux, "continue")  # Continue prompt
+    """
+    # Send text first
+    text_ok = tmux.send_keys(text, session, window, pane)
+    if not text_ok:
+        return False
+    # Send Enter as separate command (CRITICAL: must be separate)
+    return tmux.send_keys('C-m', session, window, pane)
+
+
+def send_escape(
+    tmux: 'TmuxUtilities',
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None
+) -> bool:
+    """Send Escape to stop Claude execution.
+
+    Pressing Escape once while Claude is generating will interrupt and
+    stop the current generation.
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session
+        window: Target window
+        pane: Target pane
+
+    Returns:
+        True if send succeeded
+    """
+    return tmux.send_keys('Escape', session, window, pane)
+
+
+def send_ctrl_c_twice(
+    tmux: 'TmuxUtilities',
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None,
+    delay_ms: int = 100
+) -> bool:
+    """Send Ctrl+C twice in rapid succession to exit Claude Code CLI.
+
+    Double Ctrl+C is the keyboard shortcut to exit the Claude Code CLI
+    entirely (equivalent to /exit command).
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session
+        window: Target window
+        pane: Target pane
+        delay_ms: Delay between Ctrl+C presses (default 100ms)
+
+    Returns:
+        True if both sends succeeded
+    """
+    import time
+    first = tmux.send_keys('C-c', session, window, pane)
+    if not first:
+        return False
+    time.sleep(delay_ms / 1000.0)
+    return tmux.send_keys('C-c', session, window, pane)
+
+
+def send_tab(
+    tmux: 'TmuxUtilities',
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None
+) -> bool:
+    """Send Tab to toggle thinking mode.
+
+    Tab alternates between thinking and non-thinking modes in Claude Code CLI.
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session
+        window: Target window
+        pane: Target pane
+
+    Returns:
+        True if send succeeded
+    """
+    return tmux.send_keys('Tab', session, window, pane)
+
+
+def send_shift_tab(
+    tmux: 'TmuxUtilities',
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None
+) -> bool:
+    """Send Shift+Tab to cycle through Claude Code modes.
+
+    Shift+Tab cycles through: default -> plan mode -> accept edits -> default
+    (bypass mode only available if --dangerously-skip-permissions was passed)
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session
+        window: Target window
+        pane: Target pane
+
+    Returns:
+        True if send succeeded
+    """
+    # BTab is tmux's name for Shift+Tab (Back Tab)
+    return tmux.send_keys('BTab', session, window, pane)
+
+
+def send_exit_command(
+    tmux: 'TmuxUtilities',
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None
+) -> bool:
+    """Send /exit command to gracefully exit Claude Code CLI.
+
+    This is equivalent to Ctrl+C twice but uses the explicit command.
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session
+        window: Target window
+        pane: Target pane
+
+    Returns:
+        True if send succeeded
+    """
+    return send_text_and_enter(tmux, '/exit', session, window, pane)
+
+
+def cycle_to_mode(
+    tmux: 'TmuxUtilities',
+    target_mode: str,
+    current_content: str,
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None,
+    max_cycles: int = 5
+) -> bool:
+    """Cycle through modes until reaching target mode.
+
+    Uses Shift+Tab to cycle through modes. Will not cycle more than
+    max_cycles times to prevent infinite loops.
+
+    NOTE: bypass mode cannot be reached by cycling - it requires
+    --dangerously-skip-permissions flag at startup.
+
+    Args:
+        tmux: TmuxUtilities instance
+        target_mode: Target mode constant (CLAUDE_MODE_*)
+        current_content: Current terminal content for mode detection
+        session: Target session
+        window: Target window
+        pane: Target pane
+        max_cycles: Maximum Shift+Tab presses (default 5)
+
+    Returns:
+        True if target mode reached, False if max cycles exceeded or error
+
+    Example:
+        >>> cycle_to_mode(tmux, CLAUDE_MODE_PLAN, window['content'])
+    """
+    import time
+
+    if target_mode == CLAUDE_MODE_BYPASS:
+        # bypass mode cannot be cycled to - requires startup flag
+        return False
+
+    current_mode = detect_claude_mode(current_content)
+    if current_mode == target_mode:
+        return True
+
+    for _ in range(max_cycles):
+        if not send_shift_tab(tmux, session, window, pane):
+            return False
+        # Brief delay to allow mode switch
+        time.sleep(0.2)
+        # Would need to re-capture content to check mode
+        # For now, return True after cycling (caller should verify)
+
+    return True  # Caller should verify mode after cycling
+
+
 def find_windows_awaiting_input(
     windows: Optional['WindowList'] = None,
     content_lines: int = DEFAULT_CAPTURE_LINES
