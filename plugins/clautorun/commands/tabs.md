@@ -1,134 +1,82 @@
 ---
 description: Discover and manage Claude sessions across tmux windows
 allowed-tools: Bash(tmux *), Bash(python3 *)
+argument-hint: [action] [sessions]
 ---
 
 # Claude Session Manager
 
-Discover, analyze, and manage Claude sessions across tmux windows.
+Discover, analyze, and interact with Claude Code sessions across tmux windows.
 
-## Quick Start
+## Context
+
+Current tmux sessions and Claude windows:
+!`tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"`
+
+## Your Task
+
+$ARGUMENTS
+
+If no arguments provided, discover all Claude sessions and present them to the user.
+
+## Workflow
+
+1. **Discover** - Run the discovery script to get session data
+2. **Present** - Show sessions as table with letter labels (A, B, C...)
+3. **Ask** - Get user selection for which sessions to interact with
+4. **Execute** - Run commands on selected sessions
+
+## Discovery
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec"
 ```
 
-## Workflow
+## User Selection Syntax
 
-1. **Discover** - Run tabs-exec to get session data
-2. **Analyze** - Answer user's query using session content
-3. **Prepare** - Show planned actions and get user approval
-4. **Execute** - Run approved commands via tabs-exec --execute or tmux send-keys
-
-## Selection Syntax
-
-| Syntax | Effect |
-|--------|--------|
-| `A,C` or `AC` | Default action for selected sessions |
-| `A:git status, B:pwd` | Custom commands per session |
-| `all:continue` | Execute on all sessions |
-| `awaiting:continue` | Execute on sessions awaiting input |
+| Syntax | Meaning |
+|--------|---------|
+| `A,C` or `AC` | Select sessions A and C |
+| `A:git status` | Run custom command on session A |
+| `B:pwd, C:git log` | Different commands per session |
+| `all:continue` | Execute on all discovered sessions |
+| `awaiting:continue` | Execute only on sessions awaiting input |
 
 ## Execution
 
-```bash
-# Via tabs-exec
-echo '{"selections": "B,C", "command": "continue", "sessions": [...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+After user confirms, execute via:
 
-# Direct tmux
+```bash
+# Using tabs-exec
+echo '{"selections": "B,C", "command": "continue"}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+
+# Direct tmux (for simple commands)
 tmux send-keys -t "session:window" "command" C-m
 ```
 
----
+## Prompt Types
 
-## Window Search API
+When discovering sessions, detect what state each Claude session is in:
 
-**Location:** `plugins/clautorun/src/clautorun/tmux_utils.py`
-- `tmux_list_windows()` - line 816
-- `WindowList` class - line 710
+| Type | Visual Indicator |
+|------|------------------|
+| `input` | Standalone `>` prompt - ready for input |
+| `plan_approval` | "Would you like to proceed?" |
+| `tool_permission` | `[Y/n]` or numbered options `[1] [2]` |
+| `question` | Multi-choice with ❯ selector |
+| `clarification` | Question ending with `?` |
+| `working` | No prompt detected - Claude is active |
 
-### Basic Usage
+## Session Table Format
 
-```python
-import sys
-sys.path.insert(0, 'plugins/clautorun/src')
-from clautorun.tmux_utils import tmux_list_windows, HAPPY_TITLE_MARKER
+Present discovered sessions as:
 
-windows = tmux_list_windows(content_lines=200)
-# Returns WindowList of dicts: {session, w, title, path, cmd, pid, content}
+```
+| # | Session | Purpose | Status |
+|---|---------|---------|--------|
+| A | main:3  | Feature dev | awaiting input |
+| B | main:5  | Testing     | working |
+| C | work:1  | Bug fix     | plan approval |
 ```
 
-### WindowList Methods
-
-```python
-# Filter and chain (all return new WindowList)
-windows.filter(cmd='node')                    # Exact match
-windows.filter(w=lambda x: x > 10)            # Lambda predicate
-windows.contains('title', HAPPY_TITLE_MARKER) # Substring match
-windows.filter(cmd='node').contains('title', '✳')  # Chain
-
-# Grouping and output
-windows.group_by('session')      # {'main': WindowList([...]), ...}
-windows.to_targets()             # ['main:1', 'main:2', ...]
-windows.to_grouped_compact()     # LLM-optimized minimal output
-```
-
-### Printing Results
-
-```python
-# Slicing returns regular list - just print directly
-for w in windows[:5]:
-    print(f"{w['session']}:{w['w']} - {w.get('title', '')[:40]}")
-
-# JSON output (exclude content for readability)
-import json
-print(json.dumps([{k: v for k, v in w.items() if k != 'content'} for w in windows[:3]], indent=2))
-```
-
-### Common Search Patterns
-
-| Goal | Method |
-|------|--------|
-| Find project tabs | `windows.contains('path', 'project-name')` |
-| Find Claude sessions | `windows.filter(cmd='node')` |
-| Find stuck sessions | Search content for `error`, `failed`, `blocked` |
-| Find awaiting input | Content ends with `>` |
-| Find happy-cli sessions | `windows.contains('title', HAPPY_TITLE_MARKER)` |
-
-### Prompt Detection
-
-```python
-from clautorun.tmux_utils import (
-    detect_prompt_type, find_windows_awaiting_input,
-    PROMPT_TYPE_INPUT, PROMPT_TYPE_PLAN_APPROVAL
-)
-
-# Detect prompt type for a single window
-windows = tmux_list_windows(content_lines=200)
-for w in windows:
-    prompt = detect_prompt_type(w.get('content', ''))
-    if prompt:
-        print(f"{w['session']}:{w['w']} - {prompt}")
-
-# Find all windows awaiting input (convenience function)
-awaiting = find_windows_awaiting_input()
-for w in awaiting:
-    print(f"{w['session']}:{w['w']} - {w['prompt_type']}")
-```
-
-| Prompt Type | Description | Pattern |
-|-------------|-------------|---------|
-| `plan_approval` | Plan/feature approval | "Would you like to proceed?" + ❯ |
-| `tool_permission_yn` | Yes/No permission | [Y/n], (yes/no) |
-| `tool_permission_numbered` | Numbered options | [1] Allow once [2] Allow always |
-| `question` | AskUserQuestion | ❯ with 1-4 numbered options |
-| `input` | Main input prompt | Standalone `>` at line end |
-| `happy_mode_switch` | Mode switch | 📱 Press space |
-| `clarification` | Natural question | Line ending with ? |
-| `error_prompt` | Error state | Press Enter, retry? |
-
-### Tips
-
-- Use `content_lines=200` for search context
-- Use multiple keyword variations: `['xonsh', 'xllm', 'xontrib']`
-- Check `~/.claude/plans/` for related plan files
+Then ask: "Which sessions would you like to interact with?"
