@@ -1132,17 +1132,18 @@ def detect_claude_active(content: str) -> bool:
         return False
 
     # Check last 15 lines for status line
-    # Real status line starts at column 0 (no indentation), pasted content is indented
+    # Real status line starts with a status symbol: ✻ ✢ · ∴ etc.
     # Example: "✻ Processing… (esc to interrupt · 2s · ↑ 0 tokens)"
+    # Pasted content is typically indented with spaces
+    status_symbols = '✻✢·∴⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     last_lines = content.rstrip().split('\n')[-15:]
 
     for line in last_lines:
-        # Skip indented lines (pasted content)
-        if line.startswith(' ') or line.startswith('\t'):
-            continue
-        # Check for both indicators on same unindented line
-        if 'esc to interrupt' in line and re.search(r'[\d.]+k?\s*tokens', line):
-            return True
+        stripped = line.lstrip()
+        # Check if line starts with status symbol (allowing minimal leading whitespace)
+        if stripped and stripped[0] in status_symbols:
+            if 'esc to interrupt' in line and re.search(r'[\d.]+k?\s*tokens', line):
+                return True
 
     return False
 
