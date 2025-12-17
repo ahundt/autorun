@@ -1136,7 +1136,7 @@ def detect_claude_active(content: str) -> bool:
     # Example: "✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)"
     # Pasted content is typically indented with spaces
     status_symbols = (
-        '✳·✻✢✶✽∴'        # Claude Code status prefixes
+        '✳·✻✢✶✽✼✾'       # Claude Code spinner: observed ✢·✻✳✶✽ + likely ✼✾
         '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'  # dots spinner (default)
         '⣾⣽⣻⢿⡿⣟⣯⣷'    # dots2 spinner
         '⠄⠆⠇⠋⠙⠚⠞⠖⠦⠴⠲⠳⠓⠸⠰⠠'  # dots3/4 variants
