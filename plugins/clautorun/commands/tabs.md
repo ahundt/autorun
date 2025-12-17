@@ -1,7 +1,7 @@
 ---
 description: Discover and manage Claude sessions across tmux windows
-allowed-tools: Bash(tmux *), Bash(python3 *), Bash(uv *)
-argument-hint: [action] [sessions]
+allowed-tools: Bash(tmux *), Bash(python *), Bash(python3 *), Bash(uv *)
+argument-hint: [A,B:command] or [all:continue] or [awaiting:status]
 ---
 
 # Claude Session Manager
