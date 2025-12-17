@@ -1023,7 +1023,12 @@ PROMPT_TYPE_TOOL_PERMISSION_NUMBERED = 'tool_permission_numbered'
 PROMPT_TYPE_QUESTION = 'question'
 PROMPT_TYPE_INPUT = 'input'
 PROMPT_TYPE_HAPPY_MODE_SWITCH = 'happy_mode_switch'
-PROMPT_TYPE_HAPPY_REMOTE = 'happy_remote'  # Remote mode - mobile connection active
+# Happy-cli remote mode - mobile device(s) connected via happy-cli
+# CAUTION: Pressing space twice rapidly switches to local mode but DISCONNECTS
+# all mobile connections. This is disruptive for mobile users who lose their
+# session view. Only switch modes when mobile user has been warned or is not
+# actively using the connection. The mobile user will need to reconnect.
+PROMPT_TYPE_HAPPY_REMOTE = 'happy_remote'
 PROMPT_TYPE_CLARIFICATION = 'clarification'
 PROMPT_TYPE_ERROR = 'error_prompt'
 
@@ -1045,7 +1050,10 @@ def detect_prompt_type(content: str) -> Optional[str]:
         - 'question': AskUserQuestion multi-choice prompt (❯ with numbered options)
         - 'input': Main input prompt (standalone > at line end)
         - 'happy_mode_switch': Happy-cli mode switch prompt (📱 Press space)
-        - 'happy_remote': Happy-cli remote mode (mobile connection active, shows "switch to local mode")
+        - 'happy_remote': Happy-cli remote mode - mobile device connected.
+          CAUTION: Double-space switches to local mode but DROPS mobile connections.
+          Mobile user loses session view and must reconnect. Only switch when
+          mobile user is warned or inactive.
         - 'clarification': Natural language question from Claude (ends with ?)
         - 'error_prompt': Error state requiring user action
 
