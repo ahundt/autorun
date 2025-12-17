@@ -2,10 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 Unit tests for tmux_utils enhanced features:
-- detect_thinking_mode
+- tmux_detect_claude_thinking_mode
 - WindowList helper methods (actively_generating, in_mode, claude_sessions, thinking_enabled)
-- execute_window_action
-- _normalize_targets
+- tmux_dangerous_batch_execute
+- _tmux_normalize_targets
+- tmux_get_claude_window_status
+- tmux_get_claude_window_mode
 """
 import pytest
 import sys
@@ -16,14 +18,14 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from clautorun.tmux_utils import (
-    detect_thinking_mode,
+    tmux_detect_claude_thinking_mode,
     detect_claude_mode,
     detect_claude_active,
     WindowList,
-    _normalize_targets,
-    execute_window_action,
-    get_claude_window_status,
-    get_claude_window_mode,
+    _tmux_normalize_targets,
+    tmux_dangerous_batch_execute,
+    tmux_get_claude_window_status,
+    tmux_get_claude_window_mode,
     ACTION_SEND,
     ACTION_CONTINUE,
     ACTION_ESCAPE,
@@ -41,7 +43,7 @@ from clautorun.tmux_utils import (
 
 
 class TestDetectThinkingMode:
-    """Tests for detect_thinking_mode function"""
+    """Tests for tmux_detect_claude_thinking_mode function"""
 
     @pytest.mark.unit
     def test_thinking_mode_active(self):
@@ -49,7 +51,7 @@ class TestDetectThinkingMode:
         content = """Some output here
 ✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)
 """
-        assert detect_thinking_mode(content) is True
+        assert tmux_detect_claude_thinking_mode(content) is True
 
     @pytest.mark.unit
     def test_thinking_mode_with_tokens(self):
@@ -57,7 +59,7 @@ class TestDetectThinkingMode:
         content = """Working on your request...
 ✳ Processing (esc to interrupt · 12s · ↑ 1.2k tokens · thinking)
 """
-        assert detect_thinking_mode(content) is True
+        assert tmux_detect_claude_thinking_mode(content) is True
 
     @pytest.mark.unit
     def test_thinking_mode_inactive(self):
@@ -65,7 +67,7 @@ class TestDetectThinkingMode:
         content = """Some output here
 ✳ Working... (esc to interrupt · 7s · ↓ 44 tokens)
 """
-        assert detect_thinking_mode(content) is False
+        assert tmux_detect_claude_thinking_mode(content) is False
 
     @pytest.mark.unit
     def test_thinking_word_without_status_bar(self):
@@ -74,13 +76,13 @@ class TestDetectThinkingMode:
 This requires careful thinking and analysis.
 >
 """
-        assert detect_thinking_mode(content) is False
+        assert tmux_detect_claude_thinking_mode(content) is False
 
     @pytest.mark.unit
     def test_empty_content(self):
         """Test with empty content"""
-        assert detect_thinking_mode("") is False
-        assert detect_thinking_mode(None) is False
+        assert tmux_detect_claude_thinking_mode("") is False
+        assert tmux_detect_claude_thinking_mode(None) is False
 
     @pytest.mark.unit
     def test_thinking_in_last_5_lines(self):
@@ -91,7 +93,7 @@ Line 3
 Line 4
 ✳ Working (esc to interrupt · 5s · ↓ 100 tokens · thinking)
 """
-        assert detect_thinking_mode(content) is True
+        assert tmux_detect_claude_thinking_mode(content) is True
 
 
 class TestDetectClaudeMode:
@@ -251,24 +253,24 @@ class TestWindowListHelperMethods:
 
 
 class TestNormalizeTargets:
-    """Tests for _normalize_targets helper function"""
+    """Tests for _tmux_normalize_targets helper function"""
 
     @pytest.mark.unit
     def test_string_target(self):
         """Test string target normalization"""
-        result = _normalize_targets("main:5")
+        result = _tmux_normalize_targets("main:5")
         assert result == [('main', '5')]
 
     @pytest.mark.unit
     def test_string_with_pane(self):
         """Test string target with pane number"""
-        result = _normalize_targets("main:5.0")
+        result = _tmux_normalize_targets("main:5.0")
         assert result == [('main', '5')]
 
     @pytest.mark.unit
     def test_single_dict(self):
         """Test single dict target"""
-        result = _normalize_targets({'session': 'main', 'w': 5})
+        result = _tmux_normalize_targets({'session': 'main', 'w': 5})
         assert result == [('main', '5')]
 
     @pytest.mark.unit
@@ -279,7 +281,7 @@ class TestNormalizeTargets:
             {'session': 'main', 'w': 2},
             {'session': 'dev', 'w': 1},
         ])
-        result = _normalize_targets(windows)
+        result = _tmux_normalize_targets(windows)
         assert result == [('main', '1'), ('main', '2'), ('dev', '1')]
 
     @pytest.mark.unit
@@ -289,24 +291,24 @@ class TestNormalizeTargets:
             {'session': 'main', 'w': 1},
             {'session': 'dev', 'w': 3},
         ]
-        result = _normalize_targets(targets)
+        result = _tmux_normalize_targets(targets)
         assert result == [('main', '1'), ('dev', '3')]
 
     @pytest.mark.unit
     def test_invalid_string(self):
         """Test invalid string returns empty list"""
-        result = _normalize_targets("invalid")
+        result = _tmux_normalize_targets("invalid")
         assert result == []
 
     @pytest.mark.unit
     def test_dict_missing_keys(self):
         """Test dict missing required keys"""
-        result = _normalize_targets({'title': 'test'})
+        result = _tmux_normalize_targets({'title': 'test'})
         assert result == []
 
 
 class TestExecuteWindowAction:
-    """Tests for execute_window_action function"""
+    """Tests for tmux_dangerous_batch_execute function"""
 
     @pytest.fixture
     def mock_tmux(self):
@@ -335,7 +337,7 @@ class TestExecuteWindowAction:
     @pytest.mark.unit
     def test_escape_action(self, mock_tmux):
         """Test escape action execution"""
-        result = execute_window_action(mock_tmux, 'escape', 'main:1')
+        result = tmux_dangerous_batch_execute(mock_tmux, 'escape', 'main:1')
 
         assert result['success_count'] == 1
         assert result['failure_count'] == 0
@@ -346,7 +348,7 @@ class TestExecuteWindowAction:
     @pytest.mark.unit
     def test_stop_action_alias(self, mock_tmux):
         """Test stop action (alias for escape)"""
-        result = execute_window_action(mock_tmux, 'stop', 'main:1')
+        result = tmux_dangerous_batch_execute(mock_tmux, 'stop', 'main:1')
 
         assert result['success_count'] == 1
         mock_tmux.send_keys.assert_called()
@@ -358,7 +360,7 @@ class TestExecuteWindowAction:
             {'session': 'main', 'w': 1},
             {'session': 'main', 'w': 2},
         ])
-        result = execute_window_action(mock_tmux, 'escape', targets)
+        result = tmux_dangerous_batch_execute(mock_tmux, 'escape', targets)
 
         assert result['success_count'] == 2
         assert result['failure_count'] == 0
@@ -367,7 +369,7 @@ class TestExecuteWindowAction:
     @pytest.mark.unit
     def test_send_without_message(self, mock_tmux):
         """Test send action without message fails"""
-        result = execute_window_action(mock_tmux, 'send', 'main:1')
+        result = tmux_dangerous_batch_execute(mock_tmux, 'send', 'main:1')
 
         assert result['success_count'] == 0
         assert result['failure_count'] == 1
@@ -376,7 +378,7 @@ class TestExecuteWindowAction:
     @pytest.mark.unit
     def test_set_mode_without_mode(self, mock_tmux):
         """Test set_mode action without mode specified fails"""
-        result = execute_window_action(mock_tmux, 'set_mode', 'main:1')
+        result = tmux_dangerous_batch_execute(mock_tmux, 'set_mode', 'main:1')
 
         assert result['success_count'] == 0
         assert result['failure_count'] == 1
@@ -385,7 +387,7 @@ class TestExecuteWindowAction:
     @pytest.mark.unit
     def test_unknown_action(self, mock_tmux):
         """Test unknown action returns error"""
-        result = execute_window_action(mock_tmux, 'invalid_action', 'main:1')
+        result = tmux_dangerous_batch_execute(mock_tmux, 'invalid_action', 'main:1')
 
         assert result['success_count'] == 0
         assert result['failure_count'] == 1
@@ -394,7 +396,7 @@ class TestExecuteWindowAction:
     @pytest.mark.unit
     def test_result_structure(self, mock_tmux):
         """Test result dictionary structure"""
-        result = execute_window_action(mock_tmux, 'escape', 'main:1')
+        result = tmux_dangerous_batch_execute(mock_tmux, 'escape', 'main:1')
 
         assert 'success_count' in result
         assert 'failure_count' in result
@@ -427,7 +429,7 @@ class TestIntegrationScenarios:
         assert active_claude[0]['w'] == 1
 
         # Get targets for potential action
-        targets = _normalize_targets(active_claude)
+        targets = _tmux_normalize_targets(active_claude)
         assert targets == [('main', '1')]
 
     @pytest.mark.unit
@@ -451,7 +453,7 @@ class TestIntegrationScenarios:
 
 
 class TestGetClaudeWindowStatus:
-    """Tests for get_claude_window_status and get_claude_window_mode functions"""
+    """Tests for tmux_get_claude_window_status and tmux_get_claude_window_mode functions"""
 
     @pytest.fixture
     def mock_tmux_with_content(self):
@@ -481,9 +483,9 @@ plan mode on
         return mock
 
     @pytest.mark.unit
-    def test_get_claude_window_status_success(self, mock_tmux_with_content):
+    def test_tmux_get_claude_window_status_success(self, mock_tmux_with_content):
         """Test successful window status retrieval"""
-        status = get_claude_window_status(mock_tmux_with_content, 'main', '5')
+        status = tmux_get_claude_window_status(mock_tmux_with_content, 'main', '5')
 
         assert status['success'] is True
         assert status['claude_mode'] == CLAUDE_MODE_PLAN
@@ -492,9 +494,9 @@ plan mode on
         assert status['content'] != ''
 
     @pytest.mark.unit
-    def test_get_claude_window_status_failed_capture(self, mock_tmux_failed_capture):
+    def test_tmux_get_claude_window_status_failed_capture(self, mock_tmux_failed_capture):
         """Test window status when capture fails"""
-        status = get_claude_window_status(mock_tmux_failed_capture, 'main', '5')
+        status = tmux_get_claude_window_status(mock_tmux_failed_capture, 'main', '5')
 
         assert status['success'] is False
         assert status['claude_mode'] == CLAUDE_MODE_DEFAULT
@@ -503,9 +505,9 @@ plan mode on
         assert status['content'] == ''
 
     @pytest.mark.unit
-    def test_get_claude_window_status_structure(self, mock_tmux_with_content):
+    def test_tmux_get_claude_window_status_structure(self, mock_tmux_with_content):
         """Test that status dict has all expected keys"""
-        status = get_claude_window_status(mock_tmux_with_content, 'main', '5')
+        status = tmux_get_claude_window_status(mock_tmux_with_content, 'main', '5')
 
         expected_keys = ['claude_mode', 'is_thinking', 'is_active',
                          'prompt_type', 'content', 'success']
@@ -513,22 +515,22 @@ plan mode on
             assert key in status, f"Missing key: {key}"
 
     @pytest.mark.unit
-    def test_get_claude_window_mode_convenience(self, mock_tmux_with_content):
-        """Test get_claude_window_mode convenience function"""
-        mode = get_claude_window_mode(mock_tmux_with_content, 'main', '5')
+    def test_tmux_get_claude_window_mode_convenience(self, mock_tmux_with_content):
+        """Test tmux_get_claude_window_mode convenience function"""
+        mode = tmux_get_claude_window_mode(mock_tmux_with_content, 'main', '5')
 
         assert mode == CLAUDE_MODE_PLAN
 
     @pytest.mark.unit
-    def test_get_claude_window_mode_failed_capture(self, mock_tmux_failed_capture):
-        """Test get_claude_window_mode returns default on failure"""
-        mode = get_claude_window_mode(mock_tmux_failed_capture, 'main', '5')
+    def test_tmux_get_claude_window_mode_failed_capture(self, mock_tmux_failed_capture):
+        """Test tmux_get_claude_window_mode returns default on failure"""
+        mode = tmux_get_claude_window_mode(mock_tmux_failed_capture, 'main', '5')
 
         assert mode == CLAUDE_MODE_DEFAULT
 
 
 class TestGetClaudeWindowStatusModes:
-    """Test get_claude_window_status with different modes"""
+    """Test tmux_get_claude_window_status with different modes"""
 
     def create_mock_for_content(self, content):
         """Helper to create mock with specific content"""
@@ -546,7 +548,7 @@ class TestGetClaudeWindowStatusModes:
 >
 """
         mock = self.create_mock_for_content(content)
-        status = get_claude_window_status(mock, 'main', '1')
+        status = tmux_get_claude_window_status(mock, 'main', '1')
 
         assert status['claude_mode'] == CLAUDE_MODE_DEFAULT
 
@@ -558,7 +560,7 @@ bypass permissions on
 >
 """
         mock = self.create_mock_for_content(content)
-        status = get_claude_window_status(mock, 'main', '1')
+        status = tmux_get_claude_window_status(mock, 'main', '1')
 
         assert status['claude_mode'] == CLAUDE_MODE_BYPASS
 
@@ -570,7 +572,7 @@ accept edits on
 >
 """
         mock = self.create_mock_for_content(content)
-        status = get_claude_window_status(mock, 'main', '1')
+        status = tmux_get_claude_window_status(mock, 'main', '1')
 
         assert status['claude_mode'] == CLAUDE_MODE_ACCEPT_EDITS
 
@@ -582,7 +584,7 @@ accept edits on
 >
 """
         mock = self.create_mock_for_content(content)
-        status = get_claude_window_status(mock, 'main', '1')
+        status = tmux_get_claude_window_status(mock, 'main', '1')
 
         assert status['is_thinking'] is False
 
@@ -593,6 +595,6 @@ accept edits on
 >
 """
         mock = self.create_mock_for_content(content)
-        status = get_claude_window_status(mock, 'main', '1')
+        status = tmux_get_claude_window_status(mock, 'main', '1')
 
         assert status['is_active'] is False

@@ -18,6 +18,47 @@ Centralized tmux utilities - DRY compliant implementation
 
 Ensures consistent tmux/byobu handling across clautorun with proper
 control sequence parsing, session naming, and command dispatch.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRIMARY API - Main functions for tmux window operations
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# READ OPERATIONS (Safe - no side effects):
+#
+#   tmux_list_windows(content_lines=0) -> WindowList
+#       Get all tmux windows with optional Claude status detection.
+#       Returns WindowList with chainable filters: .claude_sessions(), .in_mode(),
+#       .prompting_user_for_input(), .actively_generating(), .thinking_enabled()
+#
+#   tmux_get_claude_window_status(tmux, session, window) -> Dict
+#       Get detailed status of a single Claude Code window (mode, thinking, active).
+#
+#   tmux_get_claude_window_mode(tmux, session, window) -> str
+#       Get just the Claude mode ('default', 'plan', 'bypass', 'accept_edits').
+#
+# WRITE OPERATIONS (⚠️ DANGEROUS - modifies state):
+#
+#   tmux_dangerous_batch_execute(tmux, action, targets, ...) -> Dict
+#       ⚠️  Execute actions on MULTIPLE windows. Can disrupt work if misused!
+#       Actions: 'send', 'continue', 'escape', 'exit', 'kill', 'toggle_thinking',
+#                'cycle_mode', 'set_mode'
+#       ALWAYS verify targets before executing. See function docstring for safety.
+#
+# DETECTION FUNCTIONS:
+#
+#   detect_claude_mode(content) -> str
+#       Detect CLI mode from terminal content.
+#
+#   tmux_detect_claude_thinking_mode(content) -> bool
+#       Detect if thinking mode is enabled.
+#
+#   detect_claude_active(content) -> bool
+#       Detect if Claude is actively generating.
+#
+#   detect_prompt_type(content) -> str|None
+#       Detect prompt type ('input', 'plan_approval', 'tool_permission', etc.)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
 """
 
 import os
@@ -879,7 +920,7 @@ class WindowList(list):
 
         Example:
             active = windows.actively_generating()
-            execute_window_action(tmux, 'stop', active)
+            tmux_dangerous_batch_execute(tmux, 'stop', active)
         """
         return WindowList([w for w in self if w.get('is_active') is True])
 
@@ -1037,7 +1078,7 @@ def tmux_list_windows(
                 # Detect Claude Code CLI mode (plan/bypass/default/accept_edits)
                 win['claude_mode'] = detect_claude_mode(win['content'])
                 # Detect if thinking mode is enabled
-                win['is_thinking'] = detect_thinking_mode(win['content'])
+                win['is_thinking'] = tmux_detect_claude_thinking_mode(win['content'])
                 # Check if this is a Claude Code session (process tree contains claude/happy)
                 win['is_claude_session'] = tmux.is_claude_session(win_session, win_index)
 
@@ -1325,7 +1366,7 @@ def detect_claude_mode(content: str) -> str:
     return CLAUDE_MODE_DEFAULT
 
 
-def detect_thinking_mode(content: str) -> bool:
+def tmux_detect_claude_thinking_mode(content: str) -> bool:
     """Detect if Claude Code is in thinking mode.
 
     Thinking mode shows extended reasoning in the output. When enabled,
@@ -1341,7 +1382,7 @@ def detect_thinking_mode(content: str) -> bool:
         True if thinking mode is active, False otherwise
 
     Example:
-        >>> is_thinking = detect_thinking_mode(window['content'])
+        >>> is_thinking = tmux_detect_claude_thinking_mode(window['content'])
         >>> if is_thinking:
         ...     print("Extended thinking enabled")
     """
@@ -1741,7 +1782,7 @@ def find_windows_awaiting_input(
     return result
 
 
-def get_claude_window_status(
+def tmux_get_claude_window_status(
     tmux: 'TmuxUtilities',
     session: str,
     window: str,
@@ -1772,7 +1813,7 @@ def get_claude_window_status(
         }
 
     Example:
-        >>> status = get_claude_window_status(tmux, 'main', '5')
+        >>> status = tmux_get_claude_window_status(tmux, 'main', '5')
         >>> if status['success']:
         ...     print(f"Mode: {status['claude_mode']}, Active: {status['is_active']}")
     """
@@ -1800,14 +1841,14 @@ def get_claude_window_status(
 
     # Analyze content
     result['claude_mode'] = detect_claude_mode(content)
-    result['is_thinking'] = detect_thinking_mode(content)
+    result['is_thinking'] = tmux_detect_claude_thinking_mode(content)
     result['is_active'] = detect_claude_active(content)
     result['prompt_type'] = detect_prompt_type(content)
 
     return result
 
 
-def get_claude_window_mode(
+def tmux_get_claude_window_mode(
     tmux: 'TmuxUtilities',
     session: str,
     window: str,
@@ -1815,7 +1856,7 @@ def get_claude_window_mode(
 ) -> str:
     """Get current Claude Code mode for a window.
 
-    Convenience wrapper around get_claude_window_status that returns just the mode.
+    Convenience wrapper around tmux_get_claude_window_status that returns just the mode.
 
     Args:
         tmux: TmuxUtilities instance
@@ -1828,19 +1869,46 @@ def get_claude_window_mode(
         Returns 'default' if capture fails.
 
     Example:
-        >>> mode = get_claude_window_mode(tmux, 'main', '5')
+        >>> mode = tmux_get_claude_window_mode(tmux, 'main', '5')
         >>> if mode == CLAUDE_MODE_PLAN:
         ...     print("Window is in plan mode")
     """
-    status = get_claude_window_status(tmux, session, window, pane, content_lines=50)
+    status = tmux_get_claude_window_status(tmux, session, window, pane, content_lines=50)
     return status['claude_mode']
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BATCH WINDOW ACTIONS - Execute actions on multiple windows
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ⚠️  WARNING: DANGEROUS BATCH OPERATIONS ⚠️
+#
+# The tmux_dangerous_batch_execute() function can send commands to MULTIPLE
+# windows simultaneously. This is powerful but risky:
+#
+# RISKS:
+#   - Sending to wrong windows can disrupt ongoing work
+#   - No undo - once sent, commands execute immediately
+#   - May interrupt active Claude Code sessions unexpectedly
+#   - Could cause data loss if sessions are not in expected state
+#
+# SAFE USAGE:
+#   1. ALWAYS verify targets first: print the windows you're targeting
+#   2. Use .prompting_user_for_input() to target only idle sessions
+#   3. Start with force=False (default) to skip active sessions
+#   4. Test with a single window before batch operations
+#   5. Have emergency stop ready: tmux_dangerous_batch_execute(tmux, 'escape', targets)
+#
+# EXAMPLE SAFE WORKFLOW:
+#   windows = tmux_list_windows(content_lines=100)
+#   targets = windows.prompting_user_for_input()  # Only idle sessions
+#   print(f"Will target: {[f'{w['session']}:{w['w']}' for w in targets]}")
+#   # Verify the list looks correct, then:
+#   result = tmux_dangerous_batch_execute(tmux, 'continue', targets)
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Action constants for execute_window_action
+# Action constants for tmux_dangerous_batch_execute
 ACTION_SEND = 'send'
 ACTION_MESSAGE = 'message'
 ACTION_CONTINUE = 'continue'
@@ -1853,7 +1921,7 @@ ACTION_CYCLE_MODE = 'cycle_mode'
 ACTION_SET_MODE = 'set_mode'
 
 
-def _normalize_targets(
+def _tmux_normalize_targets(
     targets: Union['WindowList', List[Dict], Dict, str]
 ) -> List[Tuple[str, str]]:
     """Normalize various target formats to list of (session, window) tuples.
@@ -1869,9 +1937,9 @@ def _normalize_targets(
         List of (session, window) tuples
 
     Example:
-        >>> _normalize_targets("main:5")
+        >>> _tmux_normalize_targets("main:5")
         [('main', '5')]
-        >>> _normalize_targets({'session': 'main', 'w': 5})
+        >>> _tmux_normalize_targets({'session': 'main', 'w': 5})
         [('main', '5')]
     """
     result = []
@@ -1898,7 +1966,7 @@ def _normalize_targets(
     return result
 
 
-def execute_window_action(
+def tmux_dangerous_batch_execute(
     tmux: 'TmuxUtilities',
     action: str,
     targets: Union['WindowList', List[Dict], Dict, str],
@@ -1908,9 +1976,16 @@ def execute_window_action(
 ) -> Dict[str, Any]:
     """Execute an action on one or more Claude Code windows.
 
-    Unified function to perform batch operations on tmux windows running
-    Claude Code. Supports sending messages, stopping generation, exiting,
-    toggling modes, and more.
+    ⚠️  WARNING: DANGEROUS BATCH OPERATION ⚠️
+
+    This function sends commands to MULTIPLE windows simultaneously.
+    See section header for detailed safety guidelines.
+
+    BEFORE USING:
+    1. Verify your targets are correct
+    2. Use .prompting_user_for_input() to avoid disrupting active work
+    3. Test with a single window first
+    4. Have force=False (default) to skip active sessions
 
     Args:
         tmux: TmuxUtilities instance
@@ -1929,7 +2004,7 @@ def execute_window_action(
             - Single window dict
             - Target string like "main:5"
         message: Message text for 'send' action, or mode name for 'set_mode'
-        force: Skip safety checks for send/continue actions
+        force: Skip safety checks for send/continue actions (⚠️  use with caution)
         delay_ms: Delay between text and Enter for message actions (default 100ms)
 
     Returns:
@@ -1943,20 +2018,20 @@ def execute_window_action(
             ]
         }
 
-    Example:
-        >>> # Send continue to all windows awaiting input
-        >>> windows = tmux_list_windows(content_lines=100).prompting_user_for_input()
-        >>> result = execute_window_action(tmux, 'continue', windows)
+    Example - Safe workflow:
+        >>> # Get windows and filter to only those awaiting input
+        >>> windows = tmux_list_windows(content_lines=100)
+        >>> targets = windows.prompting_user_for_input()
+        >>> print(f"Targeting: {[f'{w['session']}:{w['w']}' for w in targets]}")
+        >>> # Verify the list, then execute:
+        >>> result = tmux_dangerous_batch_execute(tmux, 'continue', targets)
         >>> print(f"Sent to {result['success_count']} windows")
 
-        >>> # Stop all actively generating windows
-        >>> active = tmux_list_windows(content_lines=100).filter(is_active=True)
-        >>> execute_window_action(tmux, 'stop', active)
-
-        >>> # Set all windows to plan mode
-        >>> execute_window_action(tmux, 'set_mode', windows, message='plan')
+    Example - Emergency stop all active:
+        >>> active = tmux_list_windows(content_lines=100).actively_generating()
+        >>> tmux_dangerous_batch_execute(tmux, 'escape', active)
     """
-    normalized = _normalize_targets(targets)
+    normalized = _tmux_normalize_targets(targets)
     results = []
     success_count = 0
     failure_count = 0
