@@ -809,12 +809,12 @@ class WindowList(list):
             for session, wins in self.group_by('session').items()
         }
 
-    def awaiting(self) -> 'WindowList':
-        """Return windows awaiting user input (any prompt_type).
+    def prompting_user_for_input(self) -> 'WindowList':
+        """Return windows prompting user for input (any prompt_type).
 
         Example:
-            windows.awaiting()  # All windows with a prompt
-            windows.awaiting().filter(prompt_type='input')  # Just input prompts
+            windows.prompting_user_for_input()  # All windows with a prompt
+            windows.prompting_user_for_input().filter(prompt_type='input')
         """
         return WindowList([w for w in self if w.get('prompt_type') is not None])
 
