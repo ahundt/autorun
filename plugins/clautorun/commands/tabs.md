@@ -5,102 +5,98 @@ allowed-tools: Bash(tmux *), Bash(python3 *)
 
 # Claude Session Manager
 
-You are an AI assistant helping the user manage their Claude tmux sessions. Your job is to:
-1. Discover and analyze Claude sessions
-2. Present information based on what the user asks
-3. Prepare prompts/commands and get user approval before executing
-4. Execute approved actions across sessions
+Discover, analyze, and manage Claude sessions across tmux windows.
 
-## Step 1: Discover Sessions
-
-Run the discovery command to get session data:
+## Quick Start
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec"
 ```
 
-## Step 2: Respond to User Query
+## Workflow
 
-Based on what the user asked, provide the appropriate response:
+1. **Discover** - Run tabs-exec to get session data
+2. **Analyze** - Answer user's query using session content
+3. **Prepare** - Show planned actions and get user approval
+4. **Execute** - Run approved commands via tabs-exec --execute or tmux send-keys
 
-### Standard Queries
-- **No query / "show all"**: Display the full table as output
-- **"awaiting input"**: Filter to sessions with `awaiting: yes`, highlight what each is waiting for
-- **"action needed"**: Filter to sessions with status `error`, `blocked`, or `idle`
-- **"describe all"**: Provide detailed narrative description of each session
-- **"what projects"**: Summarize by working directory/project
+## Selection Syntax
 
-### Arbitrary Queries
-For any other query (e.g., "which sessions are working on authentication?", "find sessions with test failures"):
-1. Analyze the session content against the query
-2. Provide a thoughtful answer based on what you find
-3. Suggest relevant actions the user might want to take
+| Syntax | Effect |
+|--------|--------|
+| `A,C` or `AC` | Default action for selected sessions |
+| `A:git status, B:pwd` | Custom commands per session |
+| `all:continue` | Execute on all sessions |
+| `awaiting:continue` | Execute on sessions awaiting input |
 
-## Step 3: Prepare Actions for User Approval
-
-When the user wants to take action, prepare the commands but ASK FOR APPROVAL before executing:
-
-Example interaction:
-```
-User: "Tell all idle sessions to continue working"
-
-You: Based on the discovery, I found 2 idle sessions:
-- B (test:1) - Running tests, waiting for input
-- C (docs:2) - Writing docs, waiting for guidance
-
-I'll send "continue working" to both. Here's what will happen:
-- Session B: Will receive "continue working" + Enter
-- Session C: Will receive "continue working" + Enter
-
-Ready to execute? (yes/no/modify)
-```
-
-## Step 4: Execute Approved Actions
-
-Once user approves, use the tabs-exec script with the --execute flag:
+## Execution
 
 ```bash
-echo '{"action": "execute", "selections": "B,C", "command": "continue working", "sessions": [...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+# Via tabs-exec
+echo '{"selections": "B,C", "command": "continue", "sessions": [...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+
+# Direct tmux
+tmux send-keys -t "session:window" "command" C-m
 ```
 
-Or use tmux directly for simple cases:
-```bash
-tmux send-keys -t "session:window" "command text" C-m
+---
+
+## Window Search API
+
+**Location:** `plugins/clautorun/src/clautorun/tmux_utils.py`
+- `tmux_list_windows()` - line 816
+- `WindowList` class - line 710
+
+### Basic Usage
+
+```python
+import sys
+sys.path.insert(0, 'plugins/clautorun/src')
+from clautorun.tmux_utils import tmux_list_windows, HAPPY_TITLE_MARKER
+
+windows = tmux_list_windows(content_lines=200)
+# Returns WindowList of dicts: {session, w, title, path, cmd, pid, content}
 ```
 
-## Selection Syntax Reference
+### WindowList Methods
 
-When user provides selections:
-- `'A,C'` or `'AC'` - Execute default action for selected sessions
-- `'A:git status, B:pwd'` - Execute custom commands per session
-- `'all:continue'` - Execute on all sessions
-- `'awaiting:continue'` - Execute on sessions awaiting input
+```python
+# Filter and chain (all return new WindowList)
+windows.filter(cmd='node')                    # Exact match
+windows.filter(w=lambda x: x > 10)            # Lambda predicate
+windows.contains('title', HAPPY_TITLE_MARKER) # Substring match
+windows.filter(cmd='node').contains('title', '✳')  # Chain
 
-## Important Guidelines
+# Grouping and output
+windows.group_by('session')      # {'main': WindowList([...]), ...}
+windows.to_targets()             # ['main:1', 'main:2', ...]
+windows.to_grouped_compact()     # LLM-optimized minimal output
+```
 
-1. **Always show what you'll do before doing it** - User must approve actions
-2. **Be specific** - Show exact tmux targets and commands
-3. **Handle errors gracefully** - If a session doesn't exist, skip it and report
-4. **Provide context** - Explain why you're suggesting certain actions
-5. **Support iteration** - User may want to refine their request
+### Printing Results
 
-## Example Conversations
+```python
+# Slicing returns regular list - just print directly
+for w in windows[:5]:
+    print(f"{w['session']}:{w['w']} - {w.get('title', '')[:40]}")
 
-**User**: "Are any sessions stuck or need help?"
-**You**: *Run discovery, analyze, then respond:*
-"I found 3 Claude sessions. Session C (docs:2) appears stuck - it shows an error message about rate limiting. The other 2 sessions are actively working.
+# JSON output (exclude content for readability)
+import json
+print(json.dumps([{k: v for k, v in w.items() if k != 'content'} for w in windows[:3]], indent=2))
+```
 
-Would you like me to:
-- A: Send 'retry' to session C
-- B: Check status of all sessions
-- Or describe what you'd like to do?"
+### Common Search Patterns
 
-**User**: "Send continue to all sessions that are waiting"
-**You**: "I found 2 sessions awaiting input:
-- B (test:1): Idle after test completion
-- C (docs:2): Waiting after rate limit error
+| Goal | Method |
+|------|--------|
+| Find project tabs | `windows.contains('path', 'project-name')` |
+| Find Claude sessions | `windows.filter(cmd='node')` |
+| Find stuck sessions | Search content for `error`, `failed`, `blocked` |
+| Find awaiting input | Content ends with `>` |
+| Find happy-cli sessions | `windows.contains('title', HAPPY_TITLE_MARKER)` |
 
-I'll send 'continue' to both. Approve? (yes/no)"
+### Tips
 
-**User**: "yes"
-**You**: *Execute and report results*
+- Use `content_lines=200` for search context
+- Use multiple keyword variations: `['xonsh', 'xllm', 'xontrib']`
+- Check `~/.claude/plans/` for related plan files
