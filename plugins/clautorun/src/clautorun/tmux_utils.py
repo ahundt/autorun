@@ -869,6 +869,59 @@ class WindowList(list):
         """
         return WindowList([w for w in self if w.get('prompt_type') is None])
 
+    def actively_generating(self) -> 'WindowList':
+        """Return windows where Claude is actively generating output.
+
+        Filters for windows with is_active=True, meaning Claude is currently
+        working (spinner visible, tokens being generated).
+
+        Requires content_lines > 0 when calling tmux_list_windows.
+
+        Example:
+            active = windows.actively_generating()
+            execute_window_action(tmux, 'stop', active)
+        """
+        return WindowList([w for w in self if w.get('is_active') is True])
+
+    def in_mode(self, mode: str) -> 'WindowList':
+        """Return windows in a specific Claude Code mode.
+
+        Args:
+            mode: Mode to filter for ('default', 'plan', 'bypass', 'accept_edits')
+
+        Requires content_lines > 0 when calling tmux_list_windows.
+
+        Example:
+            plan_windows = windows.in_mode('plan')
+            default_windows = windows.in_mode('default')
+        """
+        return WindowList([w for w in self if w.get('claude_mode') == mode])
+
+    def claude_sessions(self) -> 'WindowList':
+        """Return only windows that are Claude Code sessions.
+
+        Filters for windows with is_claude_session=True, meaning the process
+        tree contains claude or happy-cli processes.
+
+        Requires content_lines > 0 when calling tmux_list_windows.
+
+        Example:
+            claude_only = windows.claude_sessions()
+        """
+        return WindowList([w for w in self if w.get('is_claude_session') is True])
+
+    def thinking_enabled(self) -> 'WindowList':
+        """Return windows with thinking mode enabled.
+
+        Filters for windows with is_thinking=True.
+
+        Requires content_lines > 0 when calling tmux_list_windows.
+
+        Example:
+            thinking = windows.thinking_enabled()
+        """
+        return WindowList([w for w in self if w.get('is_thinking') is True])
+
     def __repr__(self) -> str:
         """Debug-friendly representation."""
         return f'WindowList({list.__repr__(self)})'
@@ -981,6 +1034,12 @@ def tmux_list_windows(
                 win['prompt_type'] = detect_prompt_type(win['content'])
                 # Detect if Claude is actively working
                 win['is_active'] = detect_claude_active(win['content'])
+                # Detect Claude Code CLI mode (plan/bypass/default/accept_edits)
+                win['claude_mode'] = detect_claude_mode(win['content'])
+                # Detect if thinking mode is enabled
+                win['is_thinking'] = detect_thinking_mode(win['content'])
+                # Check if this is a Claude Code session (process tree contains claude/happy)
+                win['is_claude_session'] = tmux.is_claude_session(win_session, win_index)
 
             windows.append(win)
 
@@ -1264,6 +1323,40 @@ def detect_claude_mode(content: str) -> str:
         return CLAUDE_MODE_ACCEPT_EDITS
 
     return CLAUDE_MODE_DEFAULT
+
+
+def detect_thinking_mode(content: str) -> bool:
+    """Detect if Claude Code is in thinking mode.
+
+    Thinking mode shows extended reasoning in the output. When enabled,
+    "thinking" appears in the status bar during generation.
+
+    Status bar format example:
+        ✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)
+
+    Args:
+        content: Terminal content string
+
+    Returns:
+        True if thinking mode is active, False otherwise
+
+    Example:
+        >>> is_thinking = detect_thinking_mode(window['content'])
+        >>> if is_thinking:
+        ...     print("Extended thinking enabled")
+    """
+    if not content:
+        return False
+
+    # Check last 5 lines for "thinking" in status bar
+    # Must also have "tokens" or "esc to interrupt" to distinguish from
+    # regular text that might contain the word "thinking"
+    lines = content.strip().split('\n')
+    for line in reversed(lines[-5:]):
+        line_lower = line.lower()
+        if 'thinking' in line_lower and ('tokens' in line_lower or 'esc to interrupt' in line_lower):
+            return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1646,3 +1739,298 @@ def find_windows_awaiting_input(
             result.append(w_copy)
 
     return result
+
+
+def get_claude_window_status(
+    tmux: 'TmuxUtilities',
+    session: str,
+    window: str,
+    pane: Optional[str] = None,
+    content_lines: int = DEFAULT_CAPTURE_LINES
+) -> Dict[str, Any]:
+    """Get current status of a Claude Code window.
+
+    Captures window content and analyzes it to return comprehensive status
+    including mode, thinking state, activity, and prompt type.
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session name
+        window: Target window index
+        pane: Target pane (optional)
+        content_lines: Lines to capture (default: DEFAULT_CAPTURE_LINES)
+
+    Returns:
+        Dict with status information:
+        {
+            'claude_mode': str,      # 'default', 'plan', 'bypass', 'accept_edits'
+            'is_thinking': bool,     # thinking mode enabled
+            'is_active': bool,       # actively generating
+            'prompt_type': str|None, # 'input', 'plan_approval', etc.
+            'content': str,          # captured content (if capture succeeded)
+            'success': bool          # whether capture succeeded
+        }
+
+    Example:
+        >>> status = get_claude_window_status(tmux, 'main', '5')
+        >>> if status['success']:
+        ...     print(f"Mode: {status['claude_mode']}, Active: {status['is_active']}")
+    """
+    result = {
+        'claude_mode': CLAUDE_MODE_DEFAULT,
+        'is_thinking': False,
+        'is_active': False,
+        'prompt_type': None,
+        'content': '',
+        'success': False
+    }
+
+    # Capture window content
+    capture_result = tmux.execute_tmux_command(
+        ['capture-pane', '-p', '-S', f'-{content_lines}'],
+        session, window, pane
+    )
+
+    if not capture_result or capture_result.get('returncode') != 0:
+        return result
+
+    content = capture_result.get('stdout', '')
+    result['content'] = content
+    result['success'] = True
+
+    # Analyze content
+    result['claude_mode'] = detect_claude_mode(content)
+    result['is_thinking'] = detect_thinking_mode(content)
+    result['is_active'] = detect_claude_active(content)
+    result['prompt_type'] = detect_prompt_type(content)
+
+    return result
+
+
+def get_claude_window_mode(
+    tmux: 'TmuxUtilities',
+    session: str,
+    window: str,
+    pane: Optional[str] = None
+) -> str:
+    """Get current Claude Code mode for a window.
+
+    Convenience wrapper around get_claude_window_status that returns just the mode.
+
+    Args:
+        tmux: TmuxUtilities instance
+        session: Target session name
+        window: Target window index
+        pane: Target pane (optional)
+
+    Returns:
+        Mode string: 'default', 'plan', 'bypass', or 'accept_edits'
+        Returns 'default' if capture fails.
+
+    Example:
+        >>> mode = get_claude_window_mode(tmux, 'main', '5')
+        >>> if mode == CLAUDE_MODE_PLAN:
+        ...     print("Window is in plan mode")
+    """
+    status = get_claude_window_status(tmux, session, window, pane, content_lines=50)
+    return status['claude_mode']
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BATCH WINDOW ACTIONS - Execute actions on multiple windows
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Action constants for execute_window_action
+ACTION_SEND = 'send'
+ACTION_MESSAGE = 'message'
+ACTION_CONTINUE = 'continue'
+ACTION_ESCAPE = 'escape'
+ACTION_STOP = 'stop'
+ACTION_EXIT = 'exit'
+ACTION_KILL = 'kill'
+ACTION_TOGGLE_THINKING = 'toggle_thinking'
+ACTION_CYCLE_MODE = 'cycle_mode'
+ACTION_SET_MODE = 'set_mode'
+
+
+def _normalize_targets(
+    targets: Union['WindowList', List[Dict], Dict, str]
+) -> List[Tuple[str, str]]:
+    """Normalize various target formats to list of (session, window) tuples.
+
+    Args:
+        targets: Windows to target in various formats:
+            - WindowList from tmux_list_windows()
+            - List of window dicts with 'session' and 'w' keys
+            - Single window dict
+            - Target string like "main:5" or "main:5.0"
+
+    Returns:
+        List of (session, window) tuples
+
+    Example:
+        >>> _normalize_targets("main:5")
+        [('main', '5')]
+        >>> _normalize_targets({'session': 'main', 'w': 5})
+        [('main', '5')]
+    """
+    result = []
+
+    # String target like "main:5" or "main:5.0"
+    if isinstance(targets, str):
+        parts = targets.split(':')
+        if len(parts) >= 2:
+            session = parts[0]
+            # Handle window.pane format - extract just window
+            window = parts[1].split('.')[0]
+            result.append((session, window))
+        return result
+
+    # Single dict
+    if isinstance(targets, dict):
+        targets = [targets]
+
+    # List of dicts or WindowList
+    for t in targets:
+        if isinstance(t, dict) and 'session' in t and 'w' in t:
+            result.append((t['session'], str(t['w'])))
+
+    return result
+
+
+def execute_window_action(
+    tmux: 'TmuxUtilities',
+    action: str,
+    targets: Union['WindowList', List[Dict], Dict, str],
+    message: Optional[str] = None,
+    force: bool = False,
+    delay_ms: int = 100
+) -> Dict[str, Any]:
+    """Execute an action on one or more Claude Code windows.
+
+    Unified function to perform batch operations on tmux windows running
+    Claude Code. Supports sending messages, stopping generation, exiting,
+    toggling modes, and more.
+
+    Args:
+        tmux: TmuxUtilities instance
+        action: Action to perform:
+            - 'send' or 'message': Send custom message (requires message param)
+            - 'continue': Send "continue" to resume work
+            - 'escape' or 'stop': Stop generation (Escape key)
+            - 'exit': Exit CLI cleanly (/exit command)
+            - 'kill': Force exit (Ctrl+C twice)
+            - 'toggle_thinking': Toggle thinking mode (Tab)
+            - 'cycle_mode': Cycle to next mode (Shift+Tab)
+            - 'set_mode': Set specific mode (requires message='plan'|'default'|'accept_edits')
+        targets: Windows to target:
+            - WindowList from tmux_list_windows()
+            - List of window dicts with 'session' and 'w' keys
+            - Single window dict
+            - Target string like "main:5"
+        message: Message text for 'send' action, or mode name for 'set_mode'
+        force: Skip safety checks for send/continue actions
+        delay_ms: Delay between text and Enter for message actions (default 100ms)
+
+    Returns:
+        Dict with results:
+        {
+            'success_count': int,
+            'failure_count': int,
+            'results': [
+                {'target': 'main:5', 'success': True, 'reason': 'sent'},
+                {'target': 'main:7', 'success': False, 'reason': 'active'}
+            ]
+        }
+
+    Example:
+        >>> # Send continue to all windows awaiting input
+        >>> windows = tmux_list_windows(content_lines=100).prompting_user_for_input()
+        >>> result = execute_window_action(tmux, 'continue', windows)
+        >>> print(f"Sent to {result['success_count']} windows")
+
+        >>> # Stop all actively generating windows
+        >>> active = tmux_list_windows(content_lines=100).filter(is_active=True)
+        >>> execute_window_action(tmux, 'stop', active)
+
+        >>> # Set all windows to plan mode
+        >>> execute_window_action(tmux, 'set_mode', windows, message='plan')
+    """
+    normalized = _normalize_targets(targets)
+    results = []
+    success_count = 0
+    failure_count = 0
+
+    action_lower = action.lower()
+
+    for session, window in normalized:
+        target_str = f"{session}:{window}"
+        success = False
+        reason = "unknown"
+
+        try:
+            if action_lower in (ACTION_SEND, ACTION_MESSAGE):
+                if not message:
+                    success = False
+                    reason = "no_message"
+                else:
+                    success, reason = send_message_to_claude(
+                        tmux, message, session, window, None, force, delay_ms
+                    )
+
+            elif action_lower == ACTION_CONTINUE:
+                success, reason = send_message_to_claude(
+                    tmux, "continue", session, window, None, force, delay_ms
+                )
+
+            elif action_lower in (ACTION_ESCAPE, ACTION_STOP):
+                success = send_escape(tmux, session, window, None)
+                reason = "sent" if success else "failed"
+
+            elif action_lower == ACTION_EXIT:
+                success = send_exit_command(tmux, session, window, None)
+                reason = "sent" if success else "failed"
+
+            elif action_lower == ACTION_KILL:
+                success = send_ctrl_c_twice(tmux, session, window, None)
+                reason = "sent" if success else "failed"
+
+            elif action_lower == ACTION_TOGGLE_THINKING:
+                success = send_tab(tmux, session, window, None)
+                reason = "sent" if success else "failed"
+
+            elif action_lower == ACTION_CYCLE_MODE:
+                success = send_shift_tab(tmux, session, window, None)
+                reason = "sent" if success else "failed"
+
+            elif action_lower == ACTION_SET_MODE:
+                if not message:
+                    success = False
+                    reason = "no_mode_specified"
+                else:
+                    success = cycle_to_mode(tmux, message, session, window, None)
+                    reason = "cycled" if success else "failed"
+
+            else:
+                reason = f"unknown_action:{action}"
+
+        except Exception as e:
+            success = False
+            reason = f"error:{str(e)}"
+
+        if success:
+            success_count += 1
+        else:
+            failure_count += 1
+
+        results.append({
+            'target': target_str,
+            'success': success,
+            'reason': reason
+        })
+
+    return {
+        'success_count': success_count,
+        'failure_count': failure_count,
+        'results': results
+    }
