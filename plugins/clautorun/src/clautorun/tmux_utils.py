@@ -863,7 +863,7 @@ def tmux_list_windows(
         - content: str - (only if content_lines > 0) captured terminal output, last N lines
         - prompt_type: str|None - (only if content_lines > 0) detected Claude Code prompt type:
           'input', 'plan_approval', 'tool_permission_yn', 'tool_permission_numbered',
-          'question', 'happy_mode_switch', 'clarification', 'error_prompt', or None
+          'question', 'happy_mode_switch', 'happy_remote', 'clarification', 'error_prompt', or None
         - is_active: bool - (only if content_lines > 0) True if Claude is actively generating output
 
     Example:
@@ -1023,6 +1023,7 @@ PROMPT_TYPE_TOOL_PERMISSION_NUMBERED = 'tool_permission_numbered'
 PROMPT_TYPE_QUESTION = 'question'
 PROMPT_TYPE_INPUT = 'input'
 PROMPT_TYPE_HAPPY_MODE_SWITCH = 'happy_mode_switch'
+PROMPT_TYPE_HAPPY_REMOTE = 'happy_remote'  # Remote mode - mobile connection active
 PROMPT_TYPE_CLARIFICATION = 'clarification'
 PROMPT_TYPE_ERROR = 'error_prompt'
 
@@ -1044,6 +1045,7 @@ def detect_prompt_type(content: str) -> Optional[str]:
         - 'question': AskUserQuestion multi-choice prompt (❯ with numbered options)
         - 'input': Main input prompt (standalone > at line end)
         - 'happy_mode_switch': Happy-cli mode switch prompt (📱 Press space)
+        - 'happy_remote': Happy-cli remote mode (mobile connection active, shows "switch to local mode")
         - 'clarification': Natural language question from Claude (ends with ?)
         - 'error_prompt': Error state requiring user action
 
@@ -1087,8 +1089,12 @@ def detect_prompt_type(content: str) -> Optional[str]:
         if line == '>' or line == '> ':
             return PROMPT_TYPE_INPUT
 
-    # 6. Happy-cli mode switch prompt
+    # 6. Happy-cli mode prompts
     if '📱 Press space' in last_text:
+        # Remote mode: shows "switch to local mode" - mobile connection active
+        # WARNING: Double-space switches to local mode but drops mobile connections
+        if 'switch to local mode' in last_text:
+            return PROMPT_TYPE_HAPPY_REMOTE
         return PROMPT_TYPE_HAPPY_MODE_SWITCH
 
     # 7. Error state prompts
