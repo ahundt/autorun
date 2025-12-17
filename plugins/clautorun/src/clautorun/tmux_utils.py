@@ -1114,8 +1114,13 @@ def detect_prompt_type(content: str) -> Optional[str]:
 def detect_claude_active(content: str) -> bool:
     """Detect if Claude is actively generating output.
 
-    Looks for "esc to interrupt" which appears in happy-cli status when Claude
-    is working: "✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)"
+    Looks for happy-cli status indicators when Claude is working:
+    - "esc to interrupt" - always present when active
+    - "↓ N tokens" or "↑ N tokens" - token counter in status
+
+    Examples:
+        "✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)"
+        "· Schlepping… (esc to interrupt · 1m 20s · ↑ 3.6k tokens · thought for 2s)"
 
     Args:
         content: Terminal content string
@@ -1126,8 +1131,17 @@ def detect_claude_active(content: str) -> bool:
     if not content:
         return False
 
-    # "esc to interrupt" is the reliable indicator that Claude is working
-    return 'esc to interrupt' in content[-500:]
+    last_500 = content[-500:]
+
+    # "esc to interrupt" is the most reliable indicator
+    if 'esc to interrupt' in last_500:
+        return True
+
+    # Token counter with arrow (↓ or ↑) is also reliable
+    if re.search(r'[↓↑]\s*[\d.]+k?\s*tokens', last_500):
+        return True
+
+    return False
 
 
 def find_windows_awaiting_input(
