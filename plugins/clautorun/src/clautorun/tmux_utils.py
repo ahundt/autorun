@@ -1137,8 +1137,8 @@ def detect_claude_active(content: str) -> bool:
     if 'esc to interrupt' in last_500:
         return True
 
-    # Token counter with arrow (↓ or ↑) is also reliable
-    if re.search(r'[↓↑]\s*[\d.]+k?\s*tokens', last_500):
+    # Token counter pattern (e.g., "44 tokens", "3.6k tokens")
+    if re.search(r'[\d.]+k?\s*tokens', last_500):
         return True
 
     return False
