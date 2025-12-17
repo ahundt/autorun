@@ -20,7 +20,10 @@ from typing import List, Dict, Optional, Any
 # Add src to path for TmuxUtilities import
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.tmux_utils import get_tmux_utilities, TmuxUtilities
+from clautorun.tmux_utils import (
+    get_tmux_utilities, TmuxUtilities,
+    tmux_list_windows, DEFAULT_CAPTURE_LINES, CONTENT_PREVIEW_LENGTH
+)
 
 # Optional: Claude SDK for AI analysis
 try:
@@ -112,89 +115,36 @@ def handle_execute_mode() -> None:
 
 def discover_claude_sessions(tmux: TmuxUtilities) -> List[Dict[str, Any]]:
     """
-    Discover all Claude sessions in tmux.
+    Discover all Claude sessions in tmux using tmux_list_windows().
 
-    Uses:
-    - execute_tmux_command(): tmux_utils.py:241-371
-    - detect_tmux_environment(): tmux_utils.py:188-239
-    - capture-pane pattern: ai_monitor.py:77-80
+    Uses tmux_list_windows() for efficient single-query window listing,
+    then filters to Claude sessions using process-based detection.
     """
-    sessions = []
+    # Get all windows with content for Claude detection
+    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)
 
-    # Get current session to exclude (don't list ourselves)
-    current_env = tmux.detect_tmux_environment()
-    current_session = current_env.get('session', '') if current_env else ''
+    # Filter to Claude sessions using process-based detection
+    claude_sessions = []
+    for win in all_windows:
+        if tmux.is_claude_session(win['session'], str(win['w'])):
+            content = win.get('content', '')
+            claude_sessions.append({
+                'session_name': win['session'],
+                'window_id': str(win['w']),
+                'tmux_target': f"{win['session']}:{win['w']}",
+                'content': content,
+                'content_preview': content[:CONTENT_PREVIEW_LENGTH],
+                # Include new fields from tmux_list_windows
+                'title': win.get('title', ''),
+                'cmd': win.get('cmd', ''),
+                'path': win.get('path', ''),
+                'pid': win.get('pid', 0),
+                'active': win.get('active', False),
+                'activity': win.get('activity', 0),
+                'flags': win.get('flags', ''),
+            })
 
-    # List all tmux sessions
-    result = tmux.execute_tmux_command([
-        'list-sessions', '-F', '#{session_name}'
-    ])
-    if not result or result['returncode'] != 0:
-        return []
-
-    session_names = [s.strip() for s in result['stdout'].strip().split('\n') if s.strip()]
-
-    for session_name in session_names:
-        # Skip current Claude Code session
-        if session_name == current_session:
-            continue
-
-        # List windows in this session
-        windows_result = tmux.execute_tmux_command([
-            'list-windows', '-t', session_name, '-F', '#{window_index}'
-        ])
-        if not windows_result or windows_result['returncode'] != 0:
-            continue
-
-        window_ids = [w.strip() for w in windows_result['stdout'].strip().split('\n') if w.strip()]
-
-        for window_id in window_ids:
-            # Capture pane content (ai_monitor.py:77-80 pattern)
-            content_result = tmux.execute_tmux_command([
-                'capture-pane', '-t', f'{session_name}:{window_id}', '-p', '-S', '-100'
-            ])
-
-            if content_result and content_result['returncode'] == 0:
-                content = content_result['stdout']
-
-                # Heuristic: Check if this is a Claude session
-                if is_claude_session(content):
-                    sessions.append({
-                        'session_name': session_name,
-                        'window_id': window_id,
-                        'tmux_target': f'{session_name}:{window_id}',
-                        'content': content,
-                        'content_preview': content[:500]
-                    })
-
-    return sessions
-
-
-def is_claude_session(content: str) -> bool:
-    """
-    Heuristic to determine if content is from a Claude session.
-
-    Uses weight-based scoring - require 2+ indicators.
-    """
-    content_lower = content.lower()
-    score = 0
-
-    indicators = [
-        ('claude code', 3),      # Strong indicator
-        ('claude', 1),           # Moderate indicator
-        ('anthropic', 2),        # Strong indicator
-        ('> ', 1),               # Prompt indicator
-        ('assistant:', 1),
-        ('human:', 1),
-        ('todowrite', 2),        # Claude tool
-        ('task tool', 2),        # Claude tool
-    ]
-
-    for indicator, weight in indicators:
-        if indicator in content_lower:
-            score += weight
-
-    return score >= 2
+    return claude_sessions
 
 
 def analyze_sessions(sessions: List[Dict]) -> List[Dict]:
@@ -213,13 +163,15 @@ def analyze_sessions(sessions: List[Dict]) -> List[Dict]:
 def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
     """
     Fallback heuristic analysis when Claude SDK unavailable.
+
+    Now uses pre-populated fields from tmux_list_windows() when available.
     """
     for session in sessions:
-        content = session['content']
+        content = session.get('content', '')
         content_lower = content.lower()
 
-        # Directory: Look for path patterns
-        session['directory'] = extract_directory(content)
+        # Directory: Use path from tmux_list_windows, fallback to extraction
+        session['directory'] = session.get('path') or extract_directory(content)
 
         # Status: Keyword-based detection
         if 'error' in content_lower or 'failed' in content_lower or 'exception' in content_lower:
@@ -239,8 +191,8 @@ def analyze_sessions_heuristic(sessions: List[Dict]) -> List[Dict]:
             'your selection' in content_lower
         )
 
-        # Purpose: First meaningful line
-        session['purpose'] = extract_purpose(content)
+        # Purpose: Use title from tmux_list_windows if available
+        session['purpose'] = session.get('title') or extract_purpose(content)
 
         # Default actions
         session['actions'] = get_default_actions(session['status'])

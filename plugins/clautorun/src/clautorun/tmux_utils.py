@@ -23,7 +23,7 @@ control sequence parsing, session naming, and command dispatch.
 import os
 import subprocess
 import time
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable, Union
 from enum import Enum
 
 
@@ -576,6 +576,85 @@ class TmuxUtilities:
 
         return info
 
+    def is_claude_session(self, session: str, window: str) -> bool:
+        """
+        Detect if a tmux window is running Claude Code by checking process tree.
+
+        Uses existing execute_tmux_command infrastructure to get pane PID,
+        then examines child processes for Claude CLI indicators.
+
+        Args:
+            session: Tmux session name
+            window: Window index within session
+
+        Returns:
+            True if window contains active Claude Code session
+
+        Implementation:
+            1. Query tmux for pane PID using execute_tmux_command
+            2. Use pgrep -P to find child processes of shell
+            3. Check process names for Claude CLI indicators:
+               - 'claude' (official CLI)
+               - 'happy' (Claude CLI wrapper)
+               - 'happy-dev' (development build)
+
+        Best Practices:
+            - Leverages existing execute_tmux_command for consistency
+            - Timeout protection for subprocess calls (2s)
+            - Robust error handling for missing processes
+            - Case-insensitive matching for process names
+            - Fails safely (returns False on any error)
+        """
+        try:
+            # Get pane PID using existing execute_tmux_command
+            result = self.execute_tmux_command(
+                ['list-panes', '-F', '#{pane_pid}'],
+                session=session,
+                window=window
+            )
+
+            if not result or result['returncode'] != 0 or not result['stdout'].strip():
+                return False
+
+            pane_pid = result['stdout'].strip()
+
+            # Get child processes
+            child_result = subprocess.run(
+                ['pgrep', '-P', pane_pid],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+
+            if child_result.returncode != 0 or not child_result.stdout.strip():
+                return False
+
+            # Check each child process for Claude indicators
+            claude_indicators = {'claude', 'happy', 'happy-dev'}
+
+            for child_pid in child_result.stdout.strip().split('\n'):
+                if not child_pid.strip():
+                    continue
+
+                ps_result = subprocess.run(
+                    ['ps', '-p', child_pid.strip(), '-o', 'command='],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+
+                if ps_result.returncode == 0:
+                    cmd_lower = ps_result.stdout.lower()
+                    # Check for any Claude CLI indicator
+                    if any(indicator in cmd_lower for indicator in claude_indicators):
+                        return True
+
+            return False
+
+        except (subprocess.TimeoutExpired, Exception):
+            # Fail safely - don't report as Claude session if detection fails
+            return False
+
 
 # Global instance for consistent usage
 _tmux_utils = None
@@ -594,3 +673,311 @@ def get_tmux_utilities(session_name: Optional[str] = None) -> TmuxUtilities:
         _tmux_utils = TmuxUtilities(session_name)
 
     return _tmux_utils
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WindowList API - Simplified tmux window query with pandas-like filtering
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Constants (no magic numbers)
+HAPPY_TITLE_MARKER = '✳'  # Set by happy-cli MCP tool
+DEFAULT_CONTENT_LINES = 0  # Content disabled by default (expensive)
+CONTENT_PREVIEW_LENGTH = 500  # For Claude session detection
+DEFAULT_CAPTURE_LINES = 100  # For Claude session content analysis
+
+SHELL_COMMANDS = frozenset({
+    'zsh', 'bash', 'sh', 'fish', 'login', '-',  # Common shells
+    'xonsh', 'ksh', 'csh', 'tcsh',               # Alternative shells
+    'dash', 'ash', 'nu', 'pwsh', 'elvish',       # Other shells
+})
+
+
+TMUX_WINDOW_FORMAT = '|'.join([
+    '#{session_name}',
+    '#{window_index}',
+    '#{pane_title}',
+    '#{pane_current_command}',
+    '#{pane_current_path}',
+    '#{pane_pid}',
+    '#{window_active}',
+    '#{window_activity}',
+    '#{window_flags}'
+])
+TMUX_FORMAT_SEPARATOR = '|'
+TMUX_FORMAT_FIELDS = ('session', 'w', 'raw_title', 'cmd', 'path', 'pid', 'active', 'activity', 'flags')
+
+
+class WindowList(list):
+    """Filterable list of window dicts. Extends list - all list ops work.
+
+    Each method returns a NEW WindowList (stateless/immutable pattern).
+    Zero external dependencies.
+
+    Example:
+        >>> windows = tmux_list_windows()
+        >>> windows.filter(cmd='node').contains('title', HAPPY_TITLE_MARKER)
+        WindowList([{'session': 'main', 'w': 1, 'title': '✳ Task', ...}])
+    """
+
+    def filter(self, **kwargs: Union[Any, Callable[[Any], bool]]) -> 'WindowList':
+        """Filter by key=value or key=lambda. Returns NEW WindowList.
+
+        Args:
+            **kwargs: key=value for exact match, or key=callable for predicate
+
+        Example:
+            .filter(cmd='node')           # Exact match
+            .filter(w=1)                  # Window number 1
+            .filter(w=lambda x: x > 5)    # Lambda predicate
+            .filter(cmd='node', w=1)      # Multiple conditions (AND)
+        """
+        filtered = list(self)
+        for key, val in kwargs.items():
+            if callable(val):
+                filtered = [w for w in filtered if val(w.get(key))]
+            else:
+                filtered = [w for w in filtered if w.get(key) == val]
+        return WindowList(filtered)
+
+    def contains(self, key: str, substr: str) -> 'WindowList':
+        """Filter where key contains substring. Returns NEW WindowList.
+
+        Example:
+            .contains('title', HAPPY_TITLE_MARKER)  # Happy-cli sessions
+            .contains('path', 'clautorun')          # Path contains
+        """
+        return WindowList([w for w in self if substr in str(w.get(key, ''))])
+
+    def select(self, *keys: str) -> 'WindowList':
+        """Select specific keys only. Returns NEW WindowList with subset of keys.
+
+        Example:
+            .select('session', 'w', 'title')  # Only these keys in output
+        """
+        return WindowList([{k: w[k] for k in keys if k in w} for w in self])
+
+    def group_by(self, key: str = 'session') -> Dict[str, 'WindowList']:
+        """Group windows by key. Returns dict of WindowLists.
+
+        Useful for LLM-optimized output (reduces token count ~60%).
+
+        Example:
+            .group_by('session')  # {'main': WindowList([...]), 'dev': [...]}
+        """
+        from collections import defaultdict
+        groups: Dict[str, WindowList] = defaultdict(WindowList)
+        for w in self:
+            groups[w.get(key, '')].append(w)
+        return dict(groups)
+
+    def first(self) -> Optional[Dict[str, Any]]:
+        """Get first item or None. Safe alternative to [0]."""
+        return self[0] if self else None
+
+    def to_targets(self) -> List[str]:
+        """Get list of tmux targets (session:window format). LLM-friendly.
+
+        Example:
+            .to_targets()  # ['main:1', 'main:2', 'dev:1']
+        """
+        return [f"{w.get('session')}:{w.get('w')}" for w in self]
+
+    def to_compact(self, keys: tuple = ('session', 'w', 'title')) -> 'WindowList':
+        """Return minimal representation for LLM consumption.
+
+        Default keys are the most useful for LLM decision-making.
+
+        Example:
+            .to_compact()  # Minimal: session, w, title only
+            .to_compact(('session', 'w', 'cmd'))  # Custom keys
+        """
+        return self.select(*keys)
+
+    def to_grouped_compact(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Return grouped + compact format. Optimal for LLM output.
+
+        Combines group_by('session') with compact selection.
+        Reduces token count ~70% vs full output.
+
+        Example:
+            .to_grouped_compact()
+            # {'main': [{'w': 1, 'title': '✳ Task'}, {'w': 2, 'title': 'shell'}]}
+        """
+        return {
+            session: [{'w': w['w'], 'title': w.get('title', '')} for w in wins]
+            for session, wins in self.group_by('session').items()
+        }
+
+    def __repr__(self) -> str:
+        """Debug-friendly representation."""
+        return f'WindowList({list.__repr__(self)})'
+
+
+def tmux_list_windows(
+    session: Optional[str] = None,
+    content_lines: int = DEFAULT_CONTENT_LINES,
+    exclude_current: bool = True
+) -> WindowList:
+    """List all tmux windows as a filterable WindowList.
+
+    Single tmux query per session. Content capture disabled by default (expensive).
+    Returns empty WindowList if tmux not running or no windows found.
+
+    Args:
+        session: Filter to specific session name (None = all sessions)
+        content_lines: Lines to capture per pane (0 = none, >0 = last N lines)
+        exclude_current: Skip the window running this script (default: True)
+
+    Returns:
+        WindowList of window dicts. Each dict contains:
+        - session: str - tmux session name (use with w to form target "session:w")
+        - w: int - window index number (short for "window"; tmux #{window_index})
+        - title: str - enhanced window title (✳ prefix = happy-cli set title)
+        - cmd: str - current foreground command running in pane (e.g., 'node', 'zsh', 'python')
+        - path: str - current working directory/cwd of the pane (~ abbreviated)
+        - pid: int - process ID of the pane's foreground process
+        - active: bool - True if this window is currently selected/visible in its session
+        - activity: int - Unix timestamp of last activity in this window
+        - flags: str - tmux window flags (* = current, - = last, Z = zoomed, ! = bell)
+        - content: str - (only if content_lines > 0) captured terminal output, last N lines
+
+    Example:
+        >>> tmux_list_windows()
+        WindowList([{'session': 'main', 'w': 1, 'title': '✳ Task', ...}])
+
+        >>> tmux_list_windows().filter(cmd='node')
+        >>> tmux_list_windows().group_by('session')
+        >>> tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)  # With content
+
+        >>> for w in tmux_list_windows():
+        ...     print(f"{w['session']}:{w['w']} - {w['title']}")
+
+    Raises:
+        No exceptions - returns empty WindowList on any error (fail-safe).
+    """
+    tmux = get_tmux_utilities()
+    windows = WindowList()
+
+    # Get current window to exclude (RAII: detect once, use throughout)
+    current_session, current_window = _tmux_get_current_window() if exclude_current else ('', '')
+
+    # Get session list (or single session if specified)
+    session_names = [session] if session else _tmux_list_sessions(tmux)
+    if not session_names:
+        return windows  # No sessions - return empty WindowList
+
+    # Single query per session using format string
+    for session_name in session_names:
+        result = tmux.execute_tmux_command(
+            ['list-windows', '-F', TMUX_WINDOW_FORMAT],
+            session=session_name
+        )
+        if not result or result.get('returncode') != 0:
+            continue
+
+        for line in result['stdout'].strip().split('\n'):
+            if not line.strip():
+                continue
+
+            parts = line.split(TMUX_FORMAT_SEPARATOR)
+            if len(parts) != len(TMUX_FORMAT_FIELDS):
+                continue  # Malformed line - skip
+
+            data = dict(zip(TMUX_FORMAT_FIELDS, parts))
+            win_session = data['session']
+            win_index = data['w']
+
+            # Skip current window if requested
+            if exclude_current and win_session == current_session and win_index == current_window:
+                continue
+
+            # Build window dict
+            win = {
+                'session': win_session,
+                'w': int(win_index),
+                'title': _tmux_enhance_title(
+                    data['raw_title'], data['cmd'], data['path'],
+                    win_session, int(win_index)
+                ),
+                'cmd': data['cmd'],
+                'path': data['path'].replace(os.path.expanduser('~'), '~'),
+                'pid': int(data['pid']) if data['pid'].isdigit() else 0,
+                'active': data['active'] == '1',  # Is this the current window?
+                'activity': int(data['activity']) if data['activity'].isdigit() else 0,  # Unix timestamp
+                'flags': data['flags']  # * = current, - = last, etc.
+            }
+
+            # Optional: capture pane content
+            if content_lines > 0:
+                win['content'] = _tmux_capture_pane(
+                    tmux, win_session, win_index, content_lines
+                )
+
+            windows.append(win)
+
+    return windows
+
+
+def _tmux_get_current_window() -> Tuple[str, str]:
+    """Get current tmux session:window. Returns ('', '') if not in tmux."""
+    try:
+        result = subprocess.run(
+            ['tmux', 'display-message', '-p', '#{session_name}:#{window_index}'],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split(':')
+            return (parts[0], parts[1]) if len(parts) >= 2 else ('', '')
+    except Exception:
+        pass
+    return ('', '')
+
+
+def _tmux_list_sessions(tmux: 'TmuxUtilities') -> List[str]:
+    """List all tmux session names. Returns [] if none or error."""
+    result = tmux.execute_tmux_command(['list-sessions', '-F', '#{session_name}'])
+    if not result or result.get('returncode') != 0:
+        return []
+    return [s.strip() for s in result['stdout'].strip().split('\n') if s.strip()]
+
+
+def _tmux_capture_pane(
+    tmux: 'TmuxUtilities', session: str, window: str, lines: int
+) -> str:
+    """Capture last N lines from pane. Returns '' on error."""
+    result = tmux.execute_tmux_command(
+        ['capture-pane', '-p', '-S', f'-{lines}'],
+        session=session, window=window
+    )
+    return result['stdout'] if result and result.get('returncode') == 0 else ''
+
+
+def _tmux_enhance_title(
+    raw_title: Optional[str], cmd: str, path: str, session: str, window: int
+) -> str:
+    """Compute best display title with fallback hierarchy.
+
+    Title sources (in priority order):
+    1. Happy-cli title (has HAPPY_TITLE_MARKER prefix) - most reliable
+    2. Non-empty title different from command - trust as user-set
+    3. Command + path (for non-shell processes) - descriptive fallback
+    4. session:window - always works
+
+    Note: Cannot read happy-cli session metadata externally.
+    The pane_title is our ONLY reliable source for titles.
+    """
+    # Level 1: Happy-cli explicitly set this title
+    if raw_title and HAPPY_TITLE_MARKER in raw_title:
+        return raw_title
+
+    # Level 2: Non-empty title that differs from command name (user-set)
+    if raw_title and raw_title.strip() and raw_title.strip().lower() != cmd.lower():
+        return raw_title
+
+    # Level 3: Command + path for non-shell processes
+    if cmd not in SHELL_COMMANDS:
+        short_path = path.replace(os.path.expanduser('~'), '~')
+        return f'{cmd} ({short_path})'
+
+    # Level 4: Fallback
+    return f'{session}:{window}'
