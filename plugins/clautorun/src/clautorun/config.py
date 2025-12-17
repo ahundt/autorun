@@ -71,15 +71,10 @@ CONFIG = {
         4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop}**
-5.  **THREE-STAGE COMPLETION SYSTEM:** You must progress through three distinct stages:
-    * **Stage 1:** {stage1_instruction}
-      → Output **{stage1_confirmation}** when Stage 1 is complete
-    * **Stage 2:** {stage2_instruction}
-      → Output **{stage2_confirmation}** when Stage 2 is complete
-    * **Stage 3:** {stage3_instruction}
-      → Output **{stage3_confirmation}** to signal final completion
-    * **Stage Transitions:** After Stage 1, you MUST complete Stage 2 before attempting Stage 3. {stage3_instructions}
-6.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100 percent complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **{stage1_confirmation}**
+5.  **STAGE 1 - CURRENT OBJECTIVE:** {stage1_instruction}
+    * When Stage 1 is complete, output **{stage1_confirmation}** to advance
+    * (Stage 2 and 3 instructions will be revealed as you progress)
+6.  **FINAL OUTPUT TO ADVANCE:** When Stage 1 tasks are complete and verified, output the exact string: **{stage1_confirmation}**
 7.  **FILE CREATION POLICY:** {policy_instructions}""",
 
     # ─── Recheck Template ─────────────────────────────────────────────────────
