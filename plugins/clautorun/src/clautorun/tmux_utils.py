@@ -1133,15 +1133,11 @@ def detect_claude_active(content: str) -> bool:
 
     last_500 = content[-500:]
 
-    # "esc to interrupt" is the most reliable indicator
-    if 'esc to interrupt' in last_500:
-        return True
+    # Both "esc to interrupt" AND token counter must be present
+    has_esc = 'esc to interrupt' in last_500
+    has_tokens = re.search(r'[\d.]+k?\s*tokens', last_500) is not None
 
-    # Token counter pattern (e.g., "44 tokens", "3.6k tokens")
-    if re.search(r'[\d.]+k?\s*tokens', last_500):
-        return True
-
-    return False
+    return has_esc and has_tokens
 
 
 def find_windows_awaiting_input(
