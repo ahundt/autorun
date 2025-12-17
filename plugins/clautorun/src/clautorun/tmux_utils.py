@@ -841,6 +841,9 @@ def tmux_list_windows(
         - activity: int - Unix timestamp of last activity in this window
         - flags: str - tmux window flags (* = current, - = last, Z = zoomed, ! = bell)
         - content: str - (only if content_lines > 0) captured terminal output, last N lines
+        - prompt_type: str|None - (only if content_lines > 0) detected Claude Code prompt type:
+          'input', 'plan_approval', 'tool_permission_yn', 'tool_permission_numbered',
+          'question', 'happy_mode_switch', 'clarification', 'error_prompt', or None
 
     Example:
         >>> tmux_list_windows()
@@ -848,7 +851,7 @@ def tmux_list_windows(
 
         >>> tmux_list_windows().filter(cmd='node')
         >>> tmux_list_windows().group_by('session')
-        >>> tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)  # With content
+        >>> tmux_list_windows(content_lines=200).filter(prompt_type='input')  # Awaiting input
 
         >>> for w in tmux_list_windows():
         ...     print(f"{w['session']}:{w['w']} - {w['title']}")
@@ -908,11 +911,13 @@ def tmux_list_windows(
                 'flags': data['flags']  # * = current, - = last, etc.
             }
 
-            # Optional: capture pane content
+            # Optional: capture pane content and detect prompt type
             if content_lines > 0:
                 win['content'] = _tmux_capture_pane(
                     tmux, win_session, win_index, content_lines
                 )
+                # Detect prompt type for filtering (e.g., windows.filter(prompt_type='input'))
+                win['prompt_type'] = detect_prompt_type(win['content'])
 
             windows.append(win)
 
