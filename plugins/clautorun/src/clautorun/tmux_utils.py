@@ -1135,7 +1135,16 @@ def detect_claude_active(content: str) -> bool:
     # Real status line starts with a status symbol: ✻ ✢ · ∴ etc.
     # Example: "✻ Processing… (esc to interrupt · 2s · ↑ 0 tokens)"
     # Pasted content is typically indented with spaces
-    status_symbols = '✻✢·∴⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    status_symbols = (
+        '✻✢·∴'           # happy-cli status prefixes
+        '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'  # dots spinner (default)
+        '⣾⣽⣻⢿⡿⣟⣯⣷'    # dots2 spinner
+        '⠄⠆⠇⠋⠙⠚⠞⠖⠦⠴⠲⠳⠓⠸⠰⠠'  # dots3/4 variants
+        '✶✸✹✺✷'          # star spinner
+        '✔✖⚠ℹ'           # log-symbols status
+        '◐◓◑◒◴◷◶◵'       # circle spinners
+        '▖▘▝▗▌▀▐▄'       # box spinners
+    )
     last_lines = content.rstrip().split('\n')[-15:]
 
     for line in last_lines:
