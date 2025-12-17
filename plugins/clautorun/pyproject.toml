@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Project name is "clautorun" - the plugin uses "cr" as command prefix for easy typing
 name = "clautorun"
-version = "0.4.0"
+version = "0.5.0"
 description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
 readme = "README.md"
 requires-python = ">=3.10"

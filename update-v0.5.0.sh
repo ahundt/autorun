@@ -1,12 +1,12 @@
 #!/bin/bash
-# Update script for clautorun v0.4.0
-# Reinstalls plugins after ecosystem marketplace restructure
+# Update script for clautorun v0.5.0
+# Major changes: tmux API enhancements, batch window operations, Claude status detection
 #
-# Usage: ./update-v0.4.0.sh
+# Usage: ./update-v0.5.0.sh
 
 set -e
 
-echo "=== Clautorun v0.4.0 Update ==="
+echo "=== Clautorun v0.5.0 Update ==="
 echo ""
 
 # Step 1: Uninstall old plugin
@@ -15,7 +15,7 @@ claude plugin uninstall clautorun@clautorun 2>/dev/null || echo "  (Plugin may n
 
 # Step 2: Install new clautorun plugin
 echo ""
-echo "Step 2: Installing clautorun plugin (v0.4.0)..."
+echo "Step 2: Installing clautorun plugin (v0.5.0)..."
 claude plugin install clautorun@clautorun
 
 # Step 3: Install plan-export plugin
