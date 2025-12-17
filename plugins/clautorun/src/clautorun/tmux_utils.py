@@ -818,11 +818,14 @@ class WindowList(list):
         """
         return WindowList([w for w in self if w.get('prompt_type') is not None])
 
-    def active(self) -> 'WindowList':
-        """Return windows where Claude is active (no prompt_type).
+    def no_prompt_detected(self) -> 'WindowList':
+        """Return windows with no detected Claude Code prompt.
+
+        Note: This doesn't mean Claude is active - window could be idle,
+        running another app, or have an unrecognized prompt.
 
         Example:
-            windows.active()  # All windows without a prompt
+            windows.no_prompt_detected()
         """
         return WindowList([w for w in self if w.get('prompt_type') is None])
 
