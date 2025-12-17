@@ -1276,13 +1276,15 @@ def send_text_and_enter(
     text: str,
     session: Optional[str] = None,
     window: Optional[str] = None,
-    pane: Optional[str] = None
+    pane: Optional[str] = None,
+    delay_ms: int = 100
 ) -> bool:
     """Send text to Claude Code CLI followed by Enter.
 
-    IMPORTANT: Text and Enter (C-m) must be sent as separate tmux commands.
-    This is required because tmux send-keys handles control sequences
-    differently from regular text.
+    IMPORTANT: Text and Enter (C-m) must be sent as separate tmux commands
+    with a small delay between them. This is required because:
+    1. tmux send-keys handles control sequences differently from regular text
+    2. The target terminal needs time to process the text before Enter
 
     Args:
         tmux: TmuxUtilities instance
@@ -1290,21 +1292,155 @@ def send_text_and_enter(
         session: Target session (uses tmux default if None)
         window: Target window
         pane: Target pane
+        delay_ms: Delay between text and Enter in milliseconds (default 100ms)
 
     Returns:
         True if both sends succeeded, False otherwise
 
     Example:
-        >>> tmux = get_tmux_utilities()
-        >>> send_text_and_enter(tmux, "/exit")  # Exit Claude CLI
-        >>> send_text_and_enter(tmux, "continue")  # Continue prompt
+        >>> tmux = get_tmux_utilities(detect_current_tmux_session())
+        >>> send_text_and_enter(tmux, "/exit", window='48')  # Exit Claude CLI
+        >>> send_text_and_enter(tmux, "continue", window='48')  # Continue prompt
     """
+    import time
     # Send text first
     text_ok = tmux.send_keys(text, session, window, pane)
     if not text_ok:
         return False
+    # Brief delay for terminal to process text
+    time.sleep(delay_ms / 1000.0)
     # Send Enter as separate command (CRITICAL: must be separate)
     return tmux.send_keys('C-m', session, window, pane)
+
+
+def check_safe_to_send(content: str) -> tuple[bool, str]:
+    """Check if it's safe to send a message to a Claude Code window.
+
+    Performs safety checks to avoid interfering with:
+    - Claude actively generating output
+    - User actively typing in the input field
+    - Non-input states (permission prompts, plan approval, etc.)
+
+    Args:
+        content: Terminal content from the window
+
+    Returns:
+        Tuple of (is_safe, reason):
+        - (True, "ready") - Safe to send, input prompt is empty
+        - (False, "active") - Claude is actively generating
+        - (False, "no_prompt") - No input prompt detected
+        - (False, "user_typing") - User appears to be typing
+        - (False, "special_prompt") - Special prompt requiring specific response
+
+    Example:
+        >>> safe, reason = check_safe_to_send(window['content'])
+        >>> if safe:
+        ...     send_text_and_enter(tmux, "continue", window='48')
+        >>> else:
+        ...     print(f"Not safe to send: {reason}")
+    """
+    if not content:
+        return False, "no_content"
+
+    # Check if Claude is actively generating
+    if detect_claude_active(content):
+        return False, "active"
+
+    # Check prompt type
+    prompt_type = detect_prompt_type(content)
+
+    if prompt_type is None:
+        return False, "no_prompt"
+
+    # Special prompts require specific responses, not arbitrary text
+    if prompt_type in [
+        PROMPT_TYPE_PLAN_APPROVAL,
+        PROMPT_TYPE_TOOL_PERMISSION_YN,
+        PROMPT_TYPE_TOOL_PERMISSION_NUMBERED,
+        PROMPT_TYPE_QUESTION,
+        PROMPT_TYPE_HAPPY_MODE_SWITCH,
+        PROMPT_TYPE_HAPPY_REMOTE,
+    ]:
+        return False, f"special_prompt:{prompt_type}"
+
+    # For regular input prompt, check if user is typing
+    if prompt_type == PROMPT_TYPE_INPUT:
+        # Look for the last '>' prompt and check if there's text after it
+        lines = content.rstrip().split('\n')
+        for line in reversed(lines[-10:]):
+            if line.startswith('>'):
+                # Check what's after the prompt
+                after_prompt = line[1:].strip()
+                if after_prompt:
+                    # There's text after '>' - user may be typing
+                    return False, "user_typing"
+                # Empty prompt - safe to send
+                return True, "ready"
+
+    # Error prompts or clarification - might be ok but be cautious
+    if prompt_type in [PROMPT_TYPE_ERROR, PROMPT_TYPE_CLARIFICATION]:
+        return False, f"special_prompt:{prompt_type}"
+
+    return False, "unknown_state"
+
+
+def send_message_to_claude(
+    tmux: 'TmuxUtilities',
+    message: str,
+    session: Optional[str] = None,
+    window: Optional[str] = None,
+    pane: Optional[str] = None,
+    force: bool = False,
+    delay_ms: int = 100
+) -> tuple[bool, str]:
+    """Safely send a message to a Claude Code window.
+
+    Performs safety checks before sending to avoid interfering with:
+    - Claude actively generating output
+    - User actively typing in the input field
+    - Non-input states (permission prompts, etc.)
+
+    Args:
+        tmux: TmuxUtilities instance
+        message: Message to send
+        session: Target session
+        window: Target window
+        pane: Target pane
+        force: If True, skip safety checks (use with caution!)
+        delay_ms: Delay between text and Enter (default 100ms)
+
+    Returns:
+        Tuple of (success, reason):
+        - (True, "sent") - Message was sent successfully
+        - (False, reason) - Message not sent, reason explains why
+
+    Example:
+        >>> tmux = get_tmux_utilities(detect_current_tmux_session())
+        >>> success, reason = send_message_to_claude(tmux, "continue", window='48')
+        >>> if not success:
+        ...     print(f"Could not send: {reason}")
+    """
+    if not force:
+        # Capture current content to check state
+        target = f"{session or tmux.session_name}:{window or ''}"
+        if pane:
+            target += f".{pane}"
+
+        result = tmux.execute_tmux_command(
+            ['capture-pane', '-p', '-S', '-50'],
+            session, window, pane
+        )
+        if not result or result['returncode'] != 0:
+            return False, "capture_failed"
+
+        content = result.get('stdout', '')
+        safe, reason = check_safe_to_send(content)
+        if not safe:
+            return False, reason
+
+    # Safe to send (or force=True)
+    success = send_text_and_enter(tmux, message, session, window, pane, delay_ms)
+    return (True, "sent") if success else (False, "send_failed")
 
 
 def send_escape(
