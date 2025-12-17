@@ -660,8 +660,48 @@ class TmuxUtilities:
 # Global instance for consistent usage
 _tmux_utils = None
 
+def detect_current_tmux_session() -> Optional[str]:
+    """Detect current tmux session name from environment.
+
+    Returns the session name of the tmux session this process is running in.
+    Useful when you explicitly want to target your own session.
+
+    NOTE: This returns the session of the calling process. If multiple
+    windows have Claude sessions, this doesn't tell you which one -
+    use tmux_list_windows() to discover all Claude sessions.
+
+    Returns:
+        Session name if in tmux, None otherwise.
+
+    Example:
+        >>> session = detect_current_tmux_session()
+        >>> if session:
+        ...     tmux = TmuxUtilities(session_name=session)
+        ...     send_text_and_enter(tmux, "hello", window='48')
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['tmux', 'display-message', '-p', '#{session_name}'],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
 def get_tmux_utilities(session_name: Optional[str] = None) -> TmuxUtilities:
-    """Get or create tmux utilities instance with session-based caching"""
+    """Get or create tmux utilities instance with session-based caching.
+
+    Args:
+        session_name: Target session. Defaults to "clautorun" (safe isolation).
+                     Pass detect_current_tmux_session() to target your own session.
+
+    Returns:
+        TmuxUtilities instance for the specified session.
+    """
     global _tmux_utils
 
     # If no instance exists, create one
