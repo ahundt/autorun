@@ -21,6 +21,7 @@ control sequence parsing, session naming, and command dispatch.
 """
 
 import os
+import re
 import subprocess
 import time
 from typing import Dict, List, Optional, Tuple, Any, Callable, Union
@@ -981,3 +982,137 @@ def _tmux_enhance_title(
 
     # Level 4: Fallback
     return f'{session}:{window}'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROMPT DETECTION - Claude Code CLI prompt type detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Prompt type constants
+PROMPT_TYPE_PLAN_APPROVAL = 'plan_approval'
+PROMPT_TYPE_TOOL_PERMISSION_YN = 'tool_permission_yn'
+PROMPT_TYPE_TOOL_PERMISSION_NUMBERED = 'tool_permission_numbered'
+PROMPT_TYPE_QUESTION = 'question'
+PROMPT_TYPE_INPUT = 'input'
+PROMPT_TYPE_HAPPY_MODE_SWITCH = 'happy_mode_switch'
+PROMPT_TYPE_CLARIFICATION = 'clarification'
+PROMPT_TYPE_ERROR = 'error_prompt'
+
+
+def detect_prompt_type(content: str) -> Optional[str]:
+    """Detect Claude Code CLI prompt type from terminal content.
+
+    Analyzes the last portion of terminal content to determine if Claude Code
+    is waiting for user input and what type of prompt is displayed.
+
+    Args:
+        content: Terminal content string (typically from tmux capture-pane)
+
+    Returns:
+        Prompt type string constant, or None if no prompt detected:
+        - 'plan_approval': Plan/feature approval prompt (Would you like to proceed?)
+        - 'tool_permission_yn': Yes/No tool permission prompt ([Y/n], (yes/no))
+        - 'tool_permission_numbered': Numbered option permission prompt ([1] [2])
+        - 'question': AskUserQuestion multi-choice prompt (❯ with numbered options)
+        - 'input': Main input prompt (standalone > at line end)
+        - 'happy_mode_switch': Happy-cli mode switch prompt (📱 Press space)
+        - 'clarification': Natural language question from Claude (ends with ?)
+        - 'error_prompt': Error state requiring user action
+
+    Example:
+        >>> windows = tmux_list_windows(content_lines=200)
+        >>> for w in windows:
+        ...     prompt = detect_prompt_type(w.get('content', ''))
+        ...     if prompt:
+        ...         print(f"{w['session']}:{w['w']} - {prompt}")
+
+        >>> # Find all windows awaiting input
+        >>> awaiting = [w for w in windows if detect_prompt_type(w.get('content', ''))]
+    """
+    if not content:
+        return None
+
+    # Analyze last 800 chars for prompt detection
+    last_800 = content[-800:]
+    last_lines = [l.strip() for l in last_800.split('\n') if l.strip()][-15:]
+    last_text = '\n'.join(last_lines)
+
+    # 1. Plan/Feature approval - "Would you like to proceed?" with selector
+    if 'Would you like to proceed?' in last_text and '❯' in last_text:
+        return PROMPT_TYPE_PLAN_APPROVAL
+
+    # 2. Tool permission - Yes/No patterns
+    yn_pattern = r'\[Y/n\]|\[y/N\]|\(yes/no\)|\(y/n\)'
+    if re.search(yn_pattern, last_text, re.IGNORECASE):
+        return PROMPT_TYPE_TOOL_PERMISSION_YN
+
+    # 3. Tool permission - Numbered options ([1] Allow once, [2] Allow always)
+    if re.search(r'\[1\].*\[2\]', last_text):
+        return PROMPT_TYPE_TOOL_PERMISSION_NUMBERED
+
+    # 4. AskUserQuestion - Selector with numbered options
+    if '❯' in last_text and re.search(r'[1-4]\.\s+\w', last_text):
+        return PROMPT_TYPE_QUESTION
+
+    # 5. Main input prompt - standalone > at end of line
+    for line in last_lines[-5:]:
+        if line == '>' or line == '> ':
+            return PROMPT_TYPE_INPUT
+
+    # 6. Happy-cli mode switch prompt
+    if '📱 Press space' in last_text:
+        return PROMPT_TYPE_HAPPY_MODE_SWITCH
+
+    # 7. Error state prompts
+    error_patterns = [
+        r'Press Enter to continue',
+        r'Error:.*\?$',
+        r'failed.*retry\?',
+    ]
+    for pattern in error_patterns:
+        if re.search(pattern, last_text, re.IGNORECASE):
+            return PROMPT_TYPE_ERROR
+
+    # 8. Clarification question - natural question from Claude
+    for line in reversed(last_lines[-5:]):
+        if line.endswith('?') and not line.startswith(('#', '//', '⎿', '│')):
+            # Filter out very short or very long lines
+            if 10 < len(line) < 200:
+                return PROMPT_TYPE_CLARIFICATION
+
+    return None
+
+
+def find_windows_awaiting_input(
+    windows: Optional['WindowList'] = None,
+    content_lines: int = DEFAULT_CAPTURE_LINES
+) -> 'WindowList':
+    """Find all windows that are waiting for user input.
+
+    Convenience function that combines tmux_list_windows with detect_prompt_type
+    to return only windows with active prompts.
+
+    Args:
+        windows: Optional pre-fetched WindowList. If None, fetches fresh data.
+        content_lines: Lines to capture if fetching fresh (default: DEFAULT_CAPTURE_LINES)
+
+    Returns:
+        WindowList of windows awaiting input, each with additional 'prompt_type' key.
+
+    Example:
+        >>> awaiting = find_windows_awaiting_input()
+        >>> for w in awaiting:
+        ...     print(f"{w['session']}:{w['w']} - {w['prompt_type']}")
+    """
+    if windows is None:
+        windows = tmux_list_windows(content_lines=content_lines)
+
+    result = WindowList()
+    for w in windows:
+        prompt_type = detect_prompt_type(w.get('content', ''))
+        if prompt_type:
+            w_copy = dict(w)
+            w_copy['prompt_type'] = prompt_type
+            result.append(w_copy)
+
+    return result

@@ -95,6 +95,38 @@ print(json.dumps([{k: v for k, v in w.items() if k != 'content'} for w in window
 | Find awaiting input | Content ends with `>` |
 | Find happy-cli sessions | `windows.contains('title', HAPPY_TITLE_MARKER)` |
 
+### Prompt Detection
+
+```python
+from clautorun.tmux_utils import (
+    detect_prompt_type, find_windows_awaiting_input,
+    PROMPT_TYPE_INPUT, PROMPT_TYPE_PLAN_APPROVAL
+)
+
+# Detect prompt type for a single window
+windows = tmux_list_windows(content_lines=200)
+for w in windows:
+    prompt = detect_prompt_type(w.get('content', ''))
+    if prompt:
+        print(f"{w['session']}:{w['w']} - {prompt}")
+
+# Find all windows awaiting input (convenience function)
+awaiting = find_windows_awaiting_input()
+for w in awaiting:
+    print(f"{w['session']}:{w['w']} - {w['prompt_type']}")
+```
+
+| Prompt Type | Description | Pattern |
+|-------------|-------------|---------|
+| `plan_approval` | Plan/feature approval | "Would you like to proceed?" + ❯ |
+| `tool_permission_yn` | Yes/No permission | [Y/n], (yes/no) |
+| `tool_permission_numbered` | Numbered options | [1] Allow once [2] Allow always |
+| `question` | AskUserQuestion | ❯ with 1-4 numbered options |
+| `input` | Main input prompt | Standalone `>` at line end |
+| `happy_mode_switch` | Mode switch | 📱 Press space |
+| `clarification` | Natural question | Line ending with ? |
+| `error_prompt` | Error state | Press Enter, retry? |
+
 ### Tips
 
 - Use `content_lines=200` for search context
