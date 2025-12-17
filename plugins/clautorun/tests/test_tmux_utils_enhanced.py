@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from clautorun.tmux_utils import (
     tmux_detect_claude_thinking_mode,
-    detect_claude_mode,
-    detect_claude_active,
+    tmux_detect_claude_mode,
+    tmux_detect_claude_active,
     WindowList,
     _tmux_normalize_targets,
     tmux_dangerous_batch_execute,
@@ -97,7 +97,7 @@ Line 4
 
 
 class TestDetectClaudeMode:
-    """Tests for detect_claude_mode function"""
+    """Tests for tmux_detect_claude_mode function"""
 
     @pytest.mark.unit
     def test_default_mode(self):
@@ -105,7 +105,7 @@ class TestDetectClaudeMode:
         content = """Some regular output
 >
 """
-        assert detect_claude_mode(content) == CLAUDE_MODE_DEFAULT
+        assert tmux_detect_claude_mode(content) == CLAUDE_MODE_DEFAULT
 
     @pytest.mark.unit
     def test_plan_mode(self):
@@ -114,7 +114,7 @@ class TestDetectClaudeMode:
 plan mode on
 >
 """
-        assert detect_claude_mode(content) == CLAUDE_MODE_PLAN
+        assert tmux_detect_claude_mode(content) == CLAUDE_MODE_PLAN
 
     @pytest.mark.unit
     def test_bypass_mode(self):
@@ -123,7 +123,7 @@ plan mode on
 bypass permissions on
 >
 """
-        assert detect_claude_mode(content) == CLAUDE_MODE_BYPASS
+        assert tmux_detect_claude_mode(content) == CLAUDE_MODE_BYPASS
 
     @pytest.mark.unit
     def test_accept_edits_mode(self):
@@ -132,13 +132,13 @@ bypass permissions on
 accept edits on
 >
 """
-        assert detect_claude_mode(content) == CLAUDE_MODE_ACCEPT_EDITS
+        assert tmux_detect_claude_mode(content) == CLAUDE_MODE_ACCEPT_EDITS
 
     @pytest.mark.unit
     def test_empty_content(self):
         """Test with empty content returns default"""
-        assert detect_claude_mode("") == CLAUDE_MODE_DEFAULT
-        assert detect_claude_mode(None) == CLAUDE_MODE_DEFAULT
+        assert tmux_detect_claude_mode("") == CLAUDE_MODE_DEFAULT
+        assert tmux_detect_claude_mode(None) == CLAUDE_MODE_DEFAULT
 
 
 class TestWindowListHelperMethods:

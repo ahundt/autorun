@@ -46,16 +46,16 @@ control sequence parsing, session naming, and command dispatch.
 #
 # DETECTION FUNCTIONS:
 #
-#   detect_claude_mode(content) -> str
+#   tmux_detect_claude_mode(content) -> str
 #       Detect CLI mode from terminal content.
 #
 #   tmux_detect_claude_thinking_mode(content) -> bool
 #       Detect if thinking mode is enabled.
 #
-#   detect_claude_active(content) -> bool
+#   tmux_detect_claude_active(content) -> bool
 #       Detect if Claude is actively generating.
 #
-#   detect_prompt_type(content) -> str|None
+#   tmux_detect_prompt_type(content) -> str|None
 #       Detect prompt type ('input', 'plan_approval', 'tool_permission', etc.)
 #
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1072,11 +1072,11 @@ def tmux_list_windows(
                     tmux, win_session, win_index, content_lines
                 )
                 # Detect prompt type for filtering (e.g., windows.filter(prompt_type='input'))
-                win['prompt_type'] = detect_prompt_type(win['content'])
+                win['prompt_type'] = tmux_detect_prompt_type(win['content'])
                 # Detect if Claude is actively working
-                win['is_active'] = detect_claude_active(win['content'])
+                win['is_active'] = tmux_detect_claude_active(win['content'])
                 # Detect Claude Code CLI mode (plan/bypass/default/accept_edits)
-                win['claude_mode'] = detect_claude_mode(win['content'])
+                win['claude_mode'] = tmux_detect_claude_mode(win['content'])
                 # Detect if thinking mode is enabled
                 win['is_thinking'] = tmux_detect_claude_thinking_mode(win['content'])
                 # Check if this is a Claude Code session (process tree contains claude/happy)
@@ -1173,7 +1173,7 @@ PROMPT_TYPE_CLARIFICATION = 'clarification'
 PROMPT_TYPE_ERROR = 'error_prompt'
 
 
-def detect_prompt_type(content: str) -> Optional[str]:
+def tmux_detect_prompt_type(content: str) -> Optional[str]:
     """Detect Claude Code CLI prompt type from terminal content.
 
     Analyzes the last portion of terminal content to determine if Claude Code
@@ -1200,12 +1200,12 @@ def detect_prompt_type(content: str) -> Optional[str]:
     Example:
         >>> windows = tmux_list_windows(content_lines=200)
         >>> for w in windows:
-        ...     prompt = detect_prompt_type(w.get('content', ''))
+        ...     prompt = tmux_detect_prompt_type(w.get('content', ''))
         ...     if prompt:
         ...         print(f"{w['session']}:{w['w']} - {prompt}")
 
         >>> # Find all windows awaiting input
-        >>> awaiting = [w for w in windows if detect_prompt_type(w.get('content', ''))]
+        >>> awaiting = [w for w in windows if tmux_detect_prompt_type(w.get('content', ''))]
     """
     if not content:
         return None
@@ -1265,7 +1265,7 @@ def detect_prompt_type(content: str) -> Optional[str]:
     return None
 
 
-def detect_claude_active(content: str) -> bool:
+def tmux_detect_claude_active(content: str) -> bool:
     """Detect if Claude is actively generating output.
 
     Looks for happy-cli status indicators when Claude is working:
@@ -1327,7 +1327,7 @@ CLAUDE_MODE_CYCLE = [CLAUDE_MODE_DEFAULT, CLAUDE_MODE_PLAN, CLAUDE_MODE_ACCEPT_E
 # Note: bypass mode only available if --dangerously-skip-permissions was passed
 
 
-def detect_claude_mode(content: str) -> str:
+def tmux_detect_claude_mode(content: str) -> str:
     """Detect current Claude Code CLI mode from terminal content.
 
     Modes are shown in the status bar and can be cycled with Tab (toggle
@@ -1344,7 +1344,7 @@ def detect_claude_mode(content: str) -> str:
         - 'accept_edits': Accept edits on - auto-accept file edits
 
     Example:
-        >>> mode = detect_claude_mode(window['content'])
+        >>> mode = tmux_detect_claude_mode(window['content'])
         >>> if mode == CLAUDE_MODE_PLAN:
         ...     print("Plan mode active")
     """
@@ -1477,11 +1477,11 @@ def check_safe_to_send(content: str) -> tuple[bool, str]:
         return False, "no_content"
 
     # Check if Claude is actively generating
-    if detect_claude_active(content):
+    if tmux_detect_claude_active(content):
         return False, "active"
 
     # Check prompt type
-    prompt_type = detect_prompt_type(content)
+    prompt_type = tmux_detect_prompt_type(content)
 
     if prompt_type is None:
         return False, "no_prompt"
@@ -1732,7 +1732,7 @@ def cycle_to_mode(
         # bypass mode cannot be cycled to - requires startup flag
         return False
 
-    current_mode = detect_claude_mode(current_content)
+    current_mode = tmux_detect_claude_mode(current_content)
     if current_mode == target_mode:
         return True
 
@@ -1773,7 +1773,7 @@ def find_windows_awaiting_input(
 
     result = WindowList()
     for w in windows:
-        prompt_type = detect_prompt_type(w.get('content', ''))
+        prompt_type = tmux_detect_prompt_type(w.get('content', ''))
         if prompt_type:
             w_copy = dict(w)
             w_copy['prompt_type'] = prompt_type
@@ -1840,10 +1840,10 @@ def tmux_get_claude_window_status(
     result['success'] = True
 
     # Analyze content
-    result['claude_mode'] = detect_claude_mode(content)
+    result['claude_mode'] = tmux_detect_claude_mode(content)
     result['is_thinking'] = tmux_detect_claude_thinking_mode(content)
-    result['is_active'] = detect_claude_active(content)
-    result['prompt_type'] = detect_prompt_type(content)
+    result['is_active'] = tmux_detect_claude_active(content)
+    result['prompt_type'] = tmux_detect_prompt_type(content)
 
     return result
 
