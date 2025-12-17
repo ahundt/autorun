@@ -1131,13 +1131,20 @@ def detect_claude_active(content: str) -> bool:
     if not content:
         return False
 
-    last_500 = content[-500:]
+    # Check last 15 lines for status line
+    # Real status line starts at column 0 (no indentation), pasted content is indented
+    # Example: "✻ Processing… (esc to interrupt · 2s · ↑ 0 tokens)"
+    last_lines = content.rstrip().split('\n')[-15:]
 
-    # Both "esc to interrupt" AND token counter must be present
-    has_esc = 'esc to interrupt' in last_500
-    has_tokens = re.search(r'[\d.]+k?\s*tokens', last_500) is not None
+    for line in last_lines:
+        # Skip indented lines (pasted content)
+        if line.startswith(' ') or line.startswith('\t'):
+            continue
+        # Check for both indicators on same unindented line
+        if 'esc to interrupt' in line and re.search(r'[\d.]+k?\s*tokens', line):
+            return True
 
-    return has_esc and has_tokens
+    return False
 
 
 def find_windows_awaiting_input(
