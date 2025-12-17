@@ -1132,11 +1132,11 @@ def detect_claude_active(content: str) -> bool:
         return False
 
     # Check last 15 lines for status line
-    # Real status line starts with a status symbol: ✻ ✢ · ∴ etc.
-    # Example: "✻ Processing… (esc to interrupt · 2s · ↑ 0 tokens)"
+    # Real status line starts with a status symbol: ✳ · ✻ ✢ ∴ etc.
+    # Example: "✳ Schlepping… (esc to interrupt · 7s · ↓ 44 tokens · thinking)"
     # Pasted content is typically indented with spaces
     status_symbols = (
-        '✻✢·∴'           # happy-cli status prefixes
+        '✳·✻✢∴'          # Claude Code status prefixes (✳ primary)
         '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'  # dots spinner (default)
         '⣾⣽⣻⢿⡿⣟⣯⣷'    # dots2 spinner
         '⠄⠆⠇⠋⠙⠚⠞⠖⠦⠴⠲⠳⠓⠸⠰⠠'  # dots3/4 variants
