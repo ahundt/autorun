@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Export Plan Script - Copies the most recent plan file to project notes.
+Export Plan Script - Copies the session's plan file to project notes.
 
 Called by PostToolUse hook when ExitPlanMode is triggered.
 Copies plan from ~/.claude/plans/ to configurable location.
+
+Session Isolation:
+  Uses transcript_path from hook input to identify which plan file
+  belongs to the current session. Falls back to most recent file
+  only if transcript parsing fails.
 
 Template Variables:
   {YYYY}     - 4-digit year (2025)
@@ -57,7 +62,11 @@ def is_enabled() -> bool:
 
 
 def get_most_recent_plan() -> Path | None:
-    """Find the most recently modified plan file."""
+    """Find the most recently modified plan file.
+
+    Note: This is a fallback method. Prefer get_plan_from_transcript() when
+    transcript_path is available, as it correctly identifies the session's plan.
+    """
     plans_dir = Path.home() / ".claude" / "plans"
     if not plans_dir.exists():
         return None
@@ -69,6 +78,66 @@ def get_most_recent_plan() -> Path | None:
     # Sort by modification time, most recent first
     plan_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return plan_files[0]
+
+
+def get_plan_from_transcript(transcript_path: str) -> Path | None:
+    """Extract plan file path from session transcript.
+
+    Parses the JSONL transcript to find file-history-snapshot entries
+    that track which plan file was edited in this session. This ensures
+    the correct plan is exported when multiple sessions are active.
+
+    Args:
+        transcript_path: Path to the session's JSONL transcript file.
+
+    Returns:
+        Path to the plan file edited in this session, or None if not found.
+    """
+    plans_dir = Path.home() / ".claude" / "plans"
+    transcript = Path(transcript_path)
+
+    if not transcript.exists():
+        return None
+
+    found_plans = set()
+    try:
+        with open(transcript, 'r', encoding='utf-8') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") == "file-history-snapshot":
+                        tracked = entry.get("snapshot", {}).get("trackedFileBackups", {})
+                        for file_path in tracked.keys():
+                            # Use proper path comparison to avoid false positives
+                            # e.g., don't match /plans-backup/ when looking for /plans/
+                            try:
+                                path_obj = Path(file_path)
+                                if path_obj.parent == plans_dir and file_path.endswith(".md"):
+                                    found_plans.add(file_path)
+                            except (ValueError, TypeError):
+                                continue
+                except json.JSONDecodeError:
+                    continue
+    except IOError:
+        return None
+
+    if not found_plans:
+        return None
+
+    # Return the plan file (usually only one per session)
+    # If multiple, use modification time as tiebreaker
+    valid_plans = []
+    for p in found_plans:
+        path = Path(p)
+        if path.exists():
+            valid_plans.append(path)
+    if not valid_plans:
+        return None
+
+    valid_plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return valid_plans[0]
 
 
 def extract_useful_name(plan_path: Path) -> str:
@@ -214,8 +283,18 @@ def main():
     # Get project directory from hook input or current working directory
     project_dir = Path(hook_input.get("cwd", os.getcwd()))
 
-    # Find most recent plan
-    plan_path = get_most_recent_plan()
+    # Get transcript path for session-aware plan selection
+    transcript_path = hook_input.get("transcript_path")
+
+    # Try to get plan from session transcript first (fixes cross-session bug)
+    plan_path = None
+    if transcript_path:
+        plan_path = get_plan_from_transcript(transcript_path)
+
+    # Fall back to most recent plan if transcript parsing failed
+    if not plan_path:
+        plan_path = get_most_recent_plan()
+
     if not plan_path:
         result = {
             "continue": True,
