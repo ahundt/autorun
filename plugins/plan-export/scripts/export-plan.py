@@ -23,6 +23,7 @@ Template Variables:
   {original} - Original plan filename (without .md)
 
 Configuration (~/.claude/plan-export.config.json):
+  enabled          - Enable/disable plan export (default: true)
   output_dir       - Directory for exported plans (default: "notes")
   filename_pattern - Filename template (default: "{datetime}_{name}")
   extension        - File extension (default: ".md")
@@ -39,8 +40,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Default configuration
-# Note: Plugin installed = enabled. Uninstall plugin to disable.
 DEFAULT_CONFIG = {
+    "enabled": True,
     "output_dir": "notes",
     "filename_pattern": "{datetime}_{name}",
     "extension": ".md",
@@ -66,6 +67,11 @@ def load_config() -> dict:
         except (json.JSONDecodeError, IOError):
             pass
     return config
+
+
+def is_enabled() -> bool:
+    """Check if plan export is enabled."""
+    return load_config().get("enabled", True)
 
 
 def get_most_recent_plan() -> Path | None:
@@ -329,6 +335,15 @@ def main():
         hook_input = json.load(sys.stdin)
     except json.JSONDecodeError:
         hook_input = {}
+
+    # Check if enabled
+    if not is_enabled():
+        result = {
+            "continue": True,
+            "suppressOutput": True
+        }
+        print(json.dumps(result))
+        return
 
     # Get project directory from hook input or current working directory
     project_dir = Path(hook_input.get("cwd", os.getcwd()))
