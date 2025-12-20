@@ -10,6 +10,20 @@ Session Isolation:
   belongs to the current session. Falls back to most recent file
   only if transcript parsing fails.
 
+Approval Detection:
+  Uses permission_mode field from PostToolUse hook to determine if the
+  user approved the plan. Based on Claude Code hooks documentation and
+  GitHub issue #5036, tool_response is unreliable for approval detection.
+
+  Permission modes:
+    - "acceptEdits"      → Approved (user accepted edits)
+    - "bypassPermissions" → Approved (user bypassed permissions)
+    - "plan"             → Approved (user exited plan mode)
+    - "default"          → Approved (user exited plan mode)
+
+  Rationale: Exiting plan mode by any method indicates intent to proceed.
+  Only explicit cancellation prevents plan export (and doesn't trigger hook).
+
 Template Variables:
   {YYYY}     - 4-digit year (2025)
   {YY}       - 2-digit year (25)
@@ -357,9 +371,26 @@ def main():
     # Get tool_response to detect if plan was approved
     tool_response = hook_input.get("tool_response", {})
 
-    # Detect if plan was approved
-    # tool_response contains "User has approved your plan" when approved
-    is_approved = "approved" in str(tool_response).lower()
+    # Detect if plan was approved using permission_mode field
+    # Based on Claude Code hooks documentation and GitHub issue #5036:
+    # - tool_response is unreliable for approval detection
+    # - permission_mode field indicates user's approval context
+    permission_mode = hook_input.get("permission_mode", "default")
+
+    # Check permission_mode for approval signals
+    if permission_mode in ["acceptEdits", "bypassPermissions"]:
+        # User explicitly accepted edits or bypassed permissions
+        is_approved = True
+    elif permission_mode == "plan":
+        # User is in plan mode - exiting plan mode is implicit approval
+        is_approved = True
+    else:
+        # Default mode - treat as approved (user exited plan mode)
+        # Rationale: Exiting plan mode indicates intent to proceed
+        is_approved = True
+
+    # Note: Only explicit cancellation (which doesn't trigger PostToolUse)
+    # prevents plan export. Exiting plan mode by any method indicates approval.
 
     # Debug logging to diagnose approval detection (if enabled in config)
     config = load_config()
@@ -369,6 +400,7 @@ def main():
             with open(debug_log, "a") as f:
                 f.write(f"\n{'='*60}\n")
                 f.write(f"Timestamp: {datetime.now()}\n")
+                f.write(f"permission_mode: {permission_mode}\n")
                 f.write(f"is_approved: {is_approved}\n")
                 f.write(f"\ntool_response type: {type(tool_response)}\n")
                 f.write(f"tool_response: {json.dumps(tool_response, indent=2)}\n")
