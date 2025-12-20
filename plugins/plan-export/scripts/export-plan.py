@@ -15,9 +15,19 @@ Template Variables:
   {YY}       - 2-digit year (25)
   {MM}       - Month 01-12
   {DD}       - Day 01-31
+  {HH}       - Hour 00-23
+  {mm}       - Minute 00-59
   {date}     - Full date YYYY_MM_DD
+  {datetime} - Full datetime YYYY_MM_DD_HHmm
   {name}     - Extracted plan name from heading
   {original} - Original plan filename (without .md)
+
+Configuration (~/.claude/plan-export.config.json):
+  output_dir       - Directory for exported plans (default: "notes")
+  filename_pattern - Filename template (default: "{datetime}_{name}")
+  extension        - File extension (default: ".md")
+  export_rejected  - Save rejected plans (default: true)
+  rejected_subdir  - Subdirectory for rejected plans (default: "rejected")
 """
 
 import json
@@ -29,11 +39,13 @@ from datetime import datetime
 from pathlib import Path
 
 # Default configuration
+# Note: Plugin installed = enabled. Uninstall plugin to disable.
 DEFAULT_CONFIG = {
-    "enabled": True,
     "output_dir": "notes",
-    "filename_pattern": "{date}_{name}",
-    "extension": ".md"
+    "filename_pattern": "{datetime}_{name}",
+    "extension": ".md",
+    "export_rejected": True,
+    "rejected_subdir": "rejected"
 }
 
 
@@ -54,11 +66,6 @@ def load_config() -> dict:
         except (json.JSONDecodeError, IOError):
             pass
     return config
-
-
-def is_enabled() -> bool:
-    """Check if plan export is enabled."""
-    return load_config().get("enabled", True)
 
 
 def get_most_recent_plan() -> Path | None:
@@ -199,7 +206,10 @@ def expand_template(template: str, plan_path: Path, plan_name: str) -> str:
       {YY}       - 2-digit year
       {MM}       - Month 01-12
       {DD}       - Day 01-31
+      {HH}       - Hour 00-23
+      {mm}       - Minute 00-59
       {date}     - Full date YYYY_MM_DD
+      {datetime} - Full datetime YYYY_MM_DD_HHmm
       {name}     - Extracted plan name
       {original} - Original filename without extension
     """
@@ -209,7 +219,10 @@ def expand_template(template: str, plan_path: Path, plan_name: str) -> str:
         "{YY}": now.strftime("%y"),
         "{MM}": now.strftime("%m"),
         "{DD}": now.strftime("%d"),
+        "{HH}": now.strftime("%H"),
+        "{mm}": now.strftime("%M"),
         "{date}": now.strftime("%Y_%m_%d"),
+        "{datetime}": now.strftime("%Y_%m_%d_%H%M"),
         "{name}": plan_name,
         "{original}": plan_path.stem,
     }
@@ -263,6 +276,52 @@ def export_plan(plan_path: Path, project_dir: Path) -> dict:
     }
 
 
+def export_rejected_plan(plan_path: Path, project_dir: Path) -> dict:
+    """Export a rejected plan to the rejected subdirectory.
+
+    Rejected plans are saved to a subdirectory (default: "rejected") within
+    the normal output directory.
+
+    Returns a dict with status information for the hook response.
+    """
+    config = load_config()
+    output_dir = config.get("output_dir", "notes")
+    rejected_subdir = config.get("rejected_subdir", "rejected")
+    filename_pattern = config.get("filename_pattern", "{datetime}_{name}")
+    extension = config.get("extension", ".md")
+
+    # Extract useful name for template
+    useful_name = extract_useful_name(plan_path)
+
+    # Build path: notes/rejected/
+    expanded_dir = expand_template(output_dir, plan_path, useful_name)
+    note_dir = project_dir / expanded_dir / rejected_subdir
+    note_dir.mkdir(parents=True, exist_ok=True)
+
+    # Expand template in filename
+    base_filename = expand_template(filename_pattern, plan_path, useful_name)
+    base_filename = sanitize_filename(base_filename)
+    dest_filename = f"{base_filename}{extension}"
+    dest_path = note_dir / dest_filename
+
+    # Handle filename collision by adding a suffix
+    counter = 1
+    while dest_path.exists():
+        dest_filename = f"{base_filename}_{counter}{extension}"
+        dest_path = note_dir / dest_filename
+        counter += 1
+
+    # Copy the plan file
+    shutil.copy2(plan_path, dest_path)
+
+    return {
+        "success": True,
+        "source": str(plan_path),
+        "destination": str(dest_path),
+        "message": f"Rejected plan saved to {dest_path.relative_to(project_dir)}"
+    }
+
+
 def main():
     """Main entry point - called by PostToolUse hook."""
     # Read hook input from stdin
@@ -271,20 +330,18 @@ def main():
     except json.JSONDecodeError:
         hook_input = {}
 
-    # Check if enabled
-    if not is_enabled():
-        result = {
-            "continue": True,
-            "suppressOutput": True
-        }
-        print(json.dumps(result))
-        return
-
     # Get project directory from hook input or current working directory
     project_dir = Path(hook_input.get("cwd", os.getcwd()))
 
     # Get transcript path for session-aware plan selection
     transcript_path = hook_input.get("transcript_path")
+
+    # Get tool_response to detect if plan was approved
+    tool_response = hook_input.get("tool_response", {})
+
+    # Detect if plan was approved
+    # tool_response contains "User has approved your plan" when approved
+    is_approved = "approved" in str(tool_response).lower()
 
     # Try to get plan from session transcript first (fixes cross-session bug)
     plan_path = None
@@ -303,9 +360,23 @@ def main():
         print(json.dumps(result))
         return
 
-    # Export the plan
+    config = load_config()
+
+    # Export based on approval status
     try:
-        export_result = export_plan(plan_path, project_dir)
+        if is_approved:
+            export_result = export_plan(plan_path, project_dir)
+        elif config.get("export_rejected", True):
+            export_result = export_rejected_plan(plan_path, project_dir)
+        else:
+            # Rejected plans disabled, skip export
+            result = {
+                "continue": True,
+                "suppressOutput": True
+            }
+            print(json.dumps(result))
+            return
+
         result = {
             "continue": True,
             "systemMessage": export_result["message"]
