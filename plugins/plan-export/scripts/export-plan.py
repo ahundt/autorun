@@ -23,12 +23,14 @@ Template Variables:
   {original} - Original plan filename (without .md)
 
 Configuration (~/.claude/plan-export.config.json):
-  enabled          - Enable/disable plan export (default: true)
-  output_dir       - Directory for exported plans (default: "notes")
-  filename_pattern - Filename template (default: "{datetime}_{name}")
-  extension        - File extension (default: ".md")
-  export_rejected  - Save rejected plans (default: true)
-  rejected_subdir  - Subdirectory for rejected plans (default: "rejected")
+  enabled                  - Enable/disable plan export (default: true)
+  output_plan_dir          - Directory for exported plans (default: "notes")
+  filename_pattern         - Filename template (default: "{datetime}_{name}")
+  extension                - File extension (default: ".md")
+  export_rejected          - Save rejected plans (default: true)
+  output_rejected_plan_dir - Directory for rejected plans (default: "notes/rejected")
+  debug_logging            - Enable debug logging to diagnose issues (default: false)
+  notify_claude            - Show export confirmation message to Claude (default: true)
 """
 
 import json
@@ -42,11 +44,13 @@ from pathlib import Path
 # Default configuration
 DEFAULT_CONFIG = {
     "enabled": True,
-    "output_dir": "notes",
+    "output_plan_dir": "notes",
     "filename_pattern": "{datetime}_{name}",
     "extension": ".md",
     "export_rejected": True,
-    "rejected_subdir": "rejected"
+    "output_rejected_plan_dir": "notes/rejected",
+    "debug_logging": False,
+    "notify_claude": True
 }
 
 
@@ -245,15 +249,15 @@ def export_plan(plan_path: Path, project_dir: Path) -> dict:
     Returns a dict with status information for the hook response.
     """
     config = load_config()
-    output_dir = config.get("output_dir", "notes")
-    filename_pattern = config.get("filename_pattern", "{date}_{name}")
+    output_plan_dir = config.get("output_plan_dir", "notes")
+    filename_pattern = config.get("filename_pattern", "{datetime}_{name}")
     extension = config.get("extension", ".md")
 
     # Extract useful name for template
     useful_name = extract_useful_name(plan_path)
 
-    # Expand templates in output_dir (supports {YYYY}/{MM} style paths)
-    expanded_dir = expand_template(output_dir, plan_path, useful_name)
+    # Expand templates in output_plan_dir (supports {YYYY}/{MM} style paths)
+    expanded_dir = expand_template(output_plan_dir, plan_path, useful_name)
     note_dir = project_dir / expanded_dir
     note_dir.mkdir(parents=True, exist_ok=True)
 
@@ -283,25 +287,24 @@ def export_plan(plan_path: Path, project_dir: Path) -> dict:
 
 
 def export_rejected_plan(plan_path: Path, project_dir: Path) -> dict:
-    """Export a rejected plan to the rejected subdirectory.
+    """Export a rejected plan to the rejected plan directory.
 
-    Rejected plans are saved to a subdirectory (default: "rejected") within
-    the normal output directory.
+    Rejected plans are saved to the configured rejected plan directory
+    (default: "notes/rejected").
 
     Returns a dict with status information for the hook response.
     """
     config = load_config()
-    output_dir = config.get("output_dir", "notes")
-    rejected_subdir = config.get("rejected_subdir", "rejected")
+    output_rejected_plan_dir = config.get("output_rejected_plan_dir", "notes/rejected")
     filename_pattern = config.get("filename_pattern", "{datetime}_{name}")
     extension = config.get("extension", ".md")
 
     # Extract useful name for template
     useful_name = extract_useful_name(plan_path)
 
-    # Build path: notes/rejected/
-    expanded_dir = expand_template(output_dir, plan_path, useful_name)
-    note_dir = project_dir / expanded_dir / rejected_subdir
+    # Expand templates in output_rejected_plan_dir (supports {YYYY}/{MM} style paths)
+    expanded_dir = expand_template(output_rejected_plan_dir, plan_path, useful_name)
+    note_dir = project_dir / expanded_dir
     note_dir.mkdir(parents=True, exist_ok=True)
 
     # Expand template in filename
@@ -358,6 +361,23 @@ def main():
     # tool_response contains "User has approved your plan" when approved
     is_approved = "approved" in str(tool_response).lower()
 
+    # Debug logging to diagnose approval detection (if enabled in config)
+    config = load_config()
+    if config.get("debug_logging", False):
+        try:
+            debug_log = Path.home() / ".claude" / "plan-export-debug.log"
+            with open(debug_log, "a") as f:
+                f.write(f"\n{'='*60}\n")
+                f.write(f"Timestamp: {datetime.now()}\n")
+                f.write(f"is_approved: {is_approved}\n")
+                f.write(f"\ntool_response type: {type(tool_response)}\n")
+                f.write(f"tool_response: {json.dumps(tool_response, indent=2)}\n")
+                f.write(f"\ntool_input: {json.dumps(hook_input.get('tool_input', {}), indent=2)}\n")
+                f.write(f"{'='*60}\n")
+        except Exception as e:
+            # Don't let logging errors break the export
+            pass
+
     # Try to get plan from session transcript first (fixes cross-session bug)
     plan_path = None
     if transcript_path:
@@ -392,11 +412,19 @@ def main():
             print(json.dumps(result))
             return
 
-        result = {
-            "continue": True,
-            "systemMessage": export_result["message"]
-        }
+        # Conditionally show export message to Claude based on notify_claude setting
+        if config.get("notify_claude", True):
+            result = {
+                "continue": True,
+                "systemMessage": export_result["message"]
+            }
+        else:
+            result = {
+                "continue": True,
+                "suppressOutput": True
+            }
     except Exception as e:
+        # Always show errors regardless of notify_claude setting
         result = {
             "continue": True,
             "systemMessage": f"Plan export failed: {e}"
