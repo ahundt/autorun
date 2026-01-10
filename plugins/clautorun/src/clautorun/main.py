@@ -890,6 +890,13 @@ def stop_handler(ctx):
                 countdown_msg = f"Stage 2 complete. Continue working for {remaining_calls} more cycles before Stage 3 instructions are revealed."
                 return build_hook_response(True, "", countdown_msg)
 
+            # Block premature stage 3 attempt in stage 2 (also recognize descriptive completion_marker)
+            # Check BEFORE is_premature_stop to prevent dual-marker bypass
+            elif CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
+                log_info(f"Premature stage 3 attempt detected in stage 2 for session {session_id}")
+                stage2_continuation = f"You must complete Stage 2 first. Output **{CONFIG['stage2_confirmation']}** when done."
+                return build_hook_response(True, "", stage2_continuation)
+
             # Handle premature stop in stage 2
             elif is_premature_stop(ctx, state):
                 log_info(f"Premature stop detected in Stage 2 for session {session_id}")
@@ -920,10 +927,13 @@ def stop_handler(ctx):
 
             # Continue countdown and provide status updates
             elif remaining_calls > 0:
-                if hook_call_count % 2 == 0:  # Provide updates every 2 calls
+                # Alternating behavior: Status on even calls, recovery injection on odd calls
+                # This ensures AI can recover if it genuinely stops during countdown period
+                if hook_call_count % 2 == 0:  # Provide simple status updates every 2 calls
                     status_msg = f"Stage 3 countdown: {remaining_calls} calls remaining. Continue with evaluation."
                     return build_hook_response(True, "", status_msg)
                 else:
+                    # Recovery mechanism: Inject full task context if AI stops working
                     return inject_continue_prompt(state)
             else:
                 # Reveal stage 3 instructions

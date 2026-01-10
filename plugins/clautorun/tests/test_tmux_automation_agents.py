@@ -404,7 +404,7 @@ class TestCommandWorkflowIntegration:
         assert 'name' in manifest
         assert 'description' in manifest
         assert 'commands' in manifest
-        assert manifest['name'] == 'clautorun'
+        assert manifest['name'] == 'cr'
 
         # Test command directory exists
         commands_dir = os.path.join(os.path.dirname(__file__), '..', 'commands')

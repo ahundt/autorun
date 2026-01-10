@@ -414,15 +414,19 @@ def handle_userpromptsubmit_hook(payload: dict, session_id: str) -> dict:
                     state["file_policy"] = command.upper()
 
             return {
-                "additionalContext": response,
+                "continue": False,
+                "response": response,
                 "systemMessage": f"[clautorun] {command} executed"
             }
 
         except Exception as e:
             log_info(f"Command error: {e}")
-            return {"systemMessage": f"[clautorun] Error: {e}"}
+            return {
+                "continue": False,
+                "systemMessage": f"[clautorun] Error: {e}"
+            }
 
-    return {}
+    return {"continue": True, "response": ""}
 
 
 def main():
@@ -438,7 +442,7 @@ def main():
         try:
             payload = json.loads(input_data)
         except json.JSONDecodeError as e:
-            print(json.dumps({"systemMessage": f"Invalid JSON: {e}"}))
+            print(json.dumps({"continue": True, "error": f"Invalid JSON: {e}"}))
             sys.stdout.flush()
             return
 
@@ -463,13 +467,13 @@ def main():
             elif 'transcript_path' in payload or 'reason' in payload:
                 result = handle_stop_hook(payload, session_id)
             else:
-                result = {}
+                result = {"continue": True, "response": ""}
 
         print(json.dumps(result))
         sys.stdout.flush()
 
     except Exception as e:
-        print(json.dumps({"systemMessage": f"clautorun error: {e}"}))
+        print(json.dumps({"continue": True, "error": f"clautorun error: {e}"}))
         sys.stdout.flush()
 
 

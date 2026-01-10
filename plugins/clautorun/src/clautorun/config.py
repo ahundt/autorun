@@ -59,9 +59,12 @@ CONFIG = {
     # ─── Injection Template ───────────────────────────────────────────────────
     "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
 
+**THREE-STAGE COMPLETION SYSTEM:**
+This system ensures thorough, high-quality work through a structured three-stage process. Each stage builds upon the previous one, with explicit requirements for advancement.
+
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
     * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
-2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop}** and **{stage1_confirmation}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
+2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop}**, **{stage1_confirmation}**, **{stage2_confirmation}**, and **{stage3_confirmation}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
 3.  **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
     * **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
     * **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
@@ -71,11 +74,15 @@ CONFIG = {
         4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop}**
-5.  **STAGE 1 - CURRENT OBJECTIVE:** {stage1_instruction}
-    * When Stage 1 is complete, output **{stage1_confirmation}** to advance
-    * (Stage 2 and 3 instructions will be revealed as you progress)
-6.  **FINAL OUTPUT TO ADVANCE:** When Stage 1 tasks are complete and verified, output the exact string: **{stage1_confirmation}**
-7.  **FILE CREATION POLICY:** {policy_instructions}""",
+5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {stage1_instruction}
+    * When Stage 1 is complete, output **{stage1_confirmation}** to advance to Stage 2
+6.  **STAGE 2 - CRITICAL EVALUATION:** {stage2_instruction}
+    * When Stage 2 is complete, output **{stage2_confirmation}** to advance to Stage 3
+7.  **STAGE 3 - FINAL VERIFICATION:** {stage3_instruction}
+    * Stage 3 instructions: {stage3_instructions}
+    * When Stage 3 is complete, output **{stage3_confirmation}** for final completion
+8.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM:** Only when all three stages are complete and verified, output **{stage3_confirmation}** to stop the system
+9.  **FILE CREATION POLICY:** {policy_instructions}""",
 
     # ─── Recheck Template ─────────────────────────────────────────────────────
     "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.

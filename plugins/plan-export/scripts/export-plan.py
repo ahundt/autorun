@@ -195,12 +195,12 @@ def extract_useful_name(plan_path: Path) -> str:
                 name = re.sub(r"^#+\s*", "", line)
                 name = sanitize_filename(name)
                 if name:
-                    return name[:50]  # Limit length
+                    return name  # Don't truncate - preserve full words
 
             # Use first non-empty line if no heading found
             name = sanitize_filename(line)
             if name:
-                return name[:50]
+                return name  # Don't truncate - preserve full words
     except IOError:
         pass
 
@@ -209,14 +209,37 @@ def extract_useful_name(plan_path: Path) -> str:
 
 
 def sanitize_filename(name: str) -> str:
-    """Convert a string to a safe filename component."""
+    """Convert a string to a safe filename component.
+
+    Rules:
+    - Preserve full words (no truncation)
+    - Detect majority separator (underscore vs dash) and use that consistently
+    - Elide redundant separators to single instance
+    - Remove unsafe characters
+    """
     # Remove or replace unsafe characters (extended set for safety)
     name = re.sub(r'[<>:"/\\|?*&@#$%^!`~\[\]{}();\']+', "", name)
-    # Replace spaces, underscores, and other separators with single underscore
-    name = re.sub(r"[\s_.,]+", "_", name)
-    name = re.sub(r"-+", "-", name)
-    # Remove leading/trailing underscores and hyphens
-    name = name.strip("_-")
+
+    # Count separators to determine majority preference
+    underscore_count = name.count('_')
+    dash_count = name.count('-')
+
+    # Determine which separator to use (prefer the one that appears more)
+    if underscore_count >= dash_count:
+        # Prefer underscores
+        name = re.sub(r"[\s.,-]+", "_", name)
+        # Collapse multiple underscores
+        name = re.sub(r"_+", "_", name)
+        # Remove leading/trailing underscores
+        name = name.strip("_")
+    else:
+        # Prefer dashes
+        name = re.sub(r"[\s_.,]+", "-", name)
+        # Collapse multiple dashes
+        name = re.sub(r"-+", "-", name)
+        # Remove leading/trailing dashes
+        name = name.strip("-")
+
     # Convert to lowercase for consistency
     name = name.lower()
     return name
