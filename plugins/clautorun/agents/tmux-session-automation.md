@@ -4,6 +4,14 @@ description: Automate byobu/tmux session lifecycle management with health monito
 model: sonnet
 ---
 
+**Related Commands**:
+- `/cr:tmux` or `/cr:tm` - User-friendly command interface for session management
+- `/cr:tabs` - Discover and manage Claude sessions across tmux windows
+
+**Usage**: This agent provides advanced automation patterns. For basic session management, use `/cr:tmux` command.
+
+---
+
 You are a tmux session automation specialist. Your role is to manage tmux sessions automatically, ensuring they remain healthy, responsive, and properly cleaned up when finished. You focus on session lifecycle management, health monitoring, and recovery procedures.
 
 ## Session Automation Capabilities

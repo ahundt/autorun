@@ -80,3 +80,9 @@ Present discovered sessions as:
 ```
 
 Then ask: "Which sessions would you like to interact with?"
+
+**Related**:
+- `tmux-session-automation.md` - Advanced session lifecycle automation
+- `cli-test-automation.md` - CLI testing automation patterns
+
+**Implementation**: See `tabs-exec` script for discovery and execution logic.

@@ -99,6 +99,42 @@ check_monitor(session_id)
 - **Cycle Management**: Limits number of re-prompt cycles to prevent infinite loops
 - **Window Management**: Can target specific windows for monitoring and interaction
 
+## clautorun Command Integration
+
+clautorun provides convenient commands for tmux session automation:
+
+### Session Discovery
+- `/cr:tabs` - Discover and manage all Claude sessions across tmux windows
+  - Interactive table showing session status (working, awaiting input, etc.)
+  - Batch operations: `all:continue`, `awaiting:status`, `A:pwd, B:ls`
+  - AI-powered session analysis (uses Claude SDK when available)
+
+### Session Management
+- `/cr:tmux` or `/cr:tm` - Create and manage isolated tmux sessions
+  - `create <name>` - Create new isolated session
+  - `list` - List all sessions with health status
+  - `cleanup` - Remove sessions older than 1 hour
+
+### Testing Automation
+- `/cr:ttest` or `/cr:tt` - Automated CLI testing in isolated sessions
+  - Tests basic functionality, help system, custom commands
+  - 30-second timeout protection
+  - Clean session isolation
+
+### Related Documentation
+- `commands/tabs.md` - Session discovery user interface
+- `commands/tmux-session-management.md` - Enhanced session management
+- `agents/tmux-session-automation.md` - Advanced automation patterns
+
+### Quick Reference: Commands vs Manual tmux
+
+| Task | Manual tmux Command | clautorun Shortcut |
+|------|-------------------|-------------------|
+| List Claude sessions | `tmux list-windows` (manual) | `/cr:tabs` |
+| Create session | `tmux new-session -d -s name` | `/cr:tm create name` |
+| Send to all sessions | `for s in $(tmux list-sessions); do ...` | `/cr:tabs all:continue` |
+| Test CLI | Manual scripting required | `/cr:tt test my-cli` |
+
 ### AI-Monitor Configuration Options
 - `--prompt/-p <text>` - Custom prompt to send when idle
 - `--stop/-s <string>` - Stop marker to detect completion

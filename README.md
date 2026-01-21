@@ -616,6 +616,24 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
   - Supports batch actions: `all:continue`, `awaiting:continue`, `A:git status, B:pwd`
   - Interactive workflow with user approval before executing commands
 
+#### Session Status Types
+
+When `/cr:tabs` discovers sessions, it displays these status indicators:
+
+| Status | Description | Action |
+|--------|-------------|--------|
+| `awaiting input` | Claude waiting for user prompt | Can send commands |
+| `working` | Claude actively generating | Use `:escape` to stop |
+| `plan approval` | Awaiting plan approval | Respond with approval |
+| `tool permission` | Awaiting tool permission | Use `:y` or `:n` |
+| `idle` | Session inactive, no Claude | Safe to send commands |
+| `error` | Error state detected | Investigate before acting |
+
+**See also**:
+- `/cr:tmux` or `/cr:tm` - Create and manage isolated tmux sessions
+- `/cr:ttest` or `/cr:tt` - Automated CLI testing in isolated sessions
+- `tmux-session-automation.md` agent - Advanced session lifecycle automation
+
 ### Usage Examples
 
 ```bash
@@ -649,6 +667,22 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 /cr:tabs
 # Shows table of sessions (A, B, C...) with status
 # Then respond with selections like: "A, B:git status, all:continue"
+
+# Advanced session discovery examples
+/cr:tabs                    # Show all Claude sessions with AI analysis
+# Output: Table with sessions labeled A, B, C... with status and purpose
+
+# Continue all sessions awaiting input
+/cr:tabs awaiting:continue
+
+# Run different commands on specific sessions
+/cr:tabs A:git status, B:pwd, C:ls -la
+
+# Emergency stop all active sessions
+/cr:tabs all:escape
+
+# Check status of all sessions
+/cr:tabs all:pwd
 ```
 
 ### Legacy Commands (Backward Compatible)

@@ -50,3 +50,9 @@ Removes sessions older than 1 hour automatically.
 Commands will **NEVER** interfere with your current Claude Code session. All commands target isolated "clautorun" sessions by default.
 
 This provides **safe, reliable** session management that's **easy to use correctly and hard to use incorrectly**.
+
+**Advanced Automation**: See `tmux-session-automation.md` agent for:
+- Health monitoring and automatic recovery
+- Extended session lifecycle management
+- Integration with ai-monitor for autonomous workflows
+

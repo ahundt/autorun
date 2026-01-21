@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plan-export"
+version = "1.0.0"
+description = "Automatically exports plan files to project notes when exiting plan mode"
+authors = [{name = "athundt"}]
+license = {text = "MIT"}
+keywords = ["plan-mode", "notes", "export", "archive", "claude-code"]
+readme = "README.md"
+requires-python = ">=3.8"
+
+[project.urls]
+Homepage = "https://github.com/ahundt/clautorun"
+Repository = "https://github.com/ahundt/clautorun.git"
