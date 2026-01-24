@@ -170,7 +170,7 @@ class TestGlobalStateEdgeCases:
     def test_missing_global_blocks_key(self):
         """Test config file without global_blocked_patterns key."""
         with open(self.temp_config_file, 'w') as f:
-            json.dump({"version": "2.0", "other_key": "value"}, f)
+            json.dump({"version": "0.6.0", "other_key": "value"}, f)
 
         # Should return empty list
         blocks = get_global_blocks()

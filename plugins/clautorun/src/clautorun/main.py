@@ -398,9 +398,9 @@ def add_global_block(pattern: str, suggestion: Optional[str] = None) -> bool:
             with open(GLOBAL_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
         except (json.JSONDecodeError, IOError):
-            config = {"version": "2.0", "global_blocked_patterns": []}
+            config = {"version": "0.6.0", "global_blocked_patterns": []}
     else:
-        config = {"version": "2.0", "global_blocked_patterns": []}
+        config = {"version": "0.6.0", "global_blocked_patterns": []}
 
     patterns = config.get("global_blocked_patterns", [])
 

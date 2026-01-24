@@ -177,7 +177,7 @@ Ensure core functionality is working before final completion.""",
         "/afj": "JUSTIFY",
         "/afst": "STATUS",
 
-        # ─── Command Blocking (NEW in v2.0) ───────────────────────────────────────
+        # ─── Command Blocking (NEW in v0.6.0) ───────────────────────────────────────
         "/cr:no": "BLOCK_PATTERN",
         "/cr:ok": "ALLOW_PATTERN",
         "/cr:clear": "CLEAR_PATTERN",
@@ -188,7 +188,7 @@ Ensure core functionality is working before final completion.""",
 }
 
 # =============================================================================
-# Command Blocking System v2.0
+# Command Blocking System v0.6.0
 # =============================================================================
 
 DEFAULT_INTEGRATIONS = {
