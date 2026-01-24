@@ -193,27 +193,32 @@ Ensure core functionality is working before final completion.""",
 
 DEFAULT_INTEGRATIONS = {
     "rm": {
-        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)",
+        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /cr:ok rm",
         "severity": "high",
         "commands": ["trash {args}"]
     },
     "rm -rf": {
-        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)",
+        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /cr:ok rm -rf",
         "severity": "critical",
         "commands": ["trash {args}"]
     },
+    "git reset --hard": {
+        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes. Consider safer alternatives:\n  - To unstage files: git restore --staged <file>\n  - To discard changes: git restore <file>\n  - To view changes: git status, git diff\n\nThis command CANNOT be undone. Ensure you have a backup first.\n\nTo allow in this session: /cr:ok 'git reset --hard'",
+        "severity": "critical",
+        "commands": None
+    },
     "dd if=": {
-        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead",
+        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow in this session: /cr:ok dd if=",
         "severity": "critical",
         "commands": None
     },
     "mkfs": {
-        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted",
+        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted.\n\nTo allow in this session: /cr:ok mkfs",
         "severity": "critical",
         "commands": None
     },
     "fdisk": {
-        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations",
+        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /cr:ok fdisk",
         "severity": "high",
         "commands": None
     }

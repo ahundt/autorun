@@ -666,6 +666,7 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 **Default Integrations:**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
 - `rm -rf` → Dangerous, suggests trash CLI alternatives
+- `git reset --hard` → CRITICAL: Permanently discards uncommitted changes, suggests safer git alternatives
 - `dd if=` → Disk write warning, suggests backup tools
 - `mkfs` → Filesystem warning, suggests backup first
 - `fdisk` → Partition warning, suggests GUI alternatives
@@ -1533,9 +1534,11 @@ clautorun works well with these complementary tools for a complete development w
 - Session-level commands: `/cr:no <pattern>`, `/cr:ok <pattern>`, `/cr:clear`, `/cr:status`
 - Global-level commands: `/cr:globalno <pattern>`, `/cr:globalok <pattern>`, `/cr:globalstatus`
 - Supports any command pattern (not just `rm`)
+- All block messages include "To allow in this session: /cr:ok <pattern>" instruction
 - Default integrations include installation instructions:
   - `rm` → trash CLI (`brew install trash` on macOS, or `go install github.com/andraschume/trash-cli@latest` on Linux)
   - `rm -rf` → trash CLI with warning about permanent deletion
+  - `git reset --hard` → CRITICAL: Suggests safer git alternatives (git restore, git status)
   - `dd if=` → Suggests backup tools (rsync, ddrescue)
   - `mkfs` → Suggests GUI partition managers (GNOME Disks, gparted)
   - `fdisk` → Suggests GUI alternatives with backup reminder
