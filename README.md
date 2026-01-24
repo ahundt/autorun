@@ -485,6 +485,47 @@ byobu-new-session clautorun-work
 # Detach with Ctrl+D, reattach anytime with: byobu-attach clautorun-work
 ```
 
+## Development
+
+### Repository Structure
+
+**Git Repository (Development Location):**
+- Edit source files in your clautorun git repository
+- Run tests from the plugin directory
+- Commit changes to git
+- Push changes to GitHub for sharing
+
+**Plugin Cache (Runtime Location - READ ONLY):**
+- Claude Code installs plugins to a cache directory
+- Changes in cache do NOT persist
+- For reference only, NOT for development
+
+**Typical Development Workflow:**
+```bash
+# Navigate to your clautorun repository
+cd /path/to/clautorun
+
+# Edit files in the repository
+# Run tests
+uv run pytest tests/
+
+# Commit changes
+git add .
+git commit -m "Description of changes"
+
+# Update plugin (or reinstall for local development)
+/plugin update clautorun
+# OR for local development: /plugin install clautorun@clautorun-dev
+```
+
+### Active vs Deprecated
+
+**✅ clautorun plugin v0.6.0 (Current)**
+- Installed via `/plugin install https://github.com/ahundt/clautorun.git`
+- Commands: `/cr:st`, `/cr:a`, `/cr:j`, `/cr:f`, `/cr:go`, `/cr:gp`, `/cr:x`, `/cr:sos`, `/cr:tm`, `/cr:tt`, `/cr:tabs`
+- **NEW v0.6.0:** `/cr:no`, `/cr:ok`, `/cr:clear`, `/cr:globalno`, `/cr:globalok`, `/cr:globalstatus` (Command Blocking)
+- Active and maintained
+
 ## 🔧 Advanced Setup (Optional)
 
 ### Development Installation (Contributors)
@@ -567,6 +608,11 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 | `/cr:tm` | `/cr:tmux` | - | Tmux session management |
 | `/cr:tt` | `/cr:ttest` | - | Tmux test workflow |
 | `/cr:tabs` | - | - | Discover and manage Claude sessions across tmux |
+| `/cr:no <p>` | - | - | Block command pattern in session |
+| `/cr:ok <p>` | - | - | Allow command pattern in session |
+| `/cr:clear` | - | - | Clear session blocks |
+| `/cr:globalno <p>` | - | - | Block command pattern globally |
+| `/cr:globalok <p>` | - | - | Allow command pattern globally |
 
 ### AutoFile Commands (File Creation Control)
 
@@ -586,6 +632,53 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 - **/cr:st** or **/cr:status** - Display current AutoFile policy and settings
   - Shows current policy level and name
   - Displays current enforcement status
+
+### Command Blocking Commands (NEW in v0.6.0)
+
+**General-purpose command blocking** - Block dangerous commands per-session or globally
+
+**Session Commands:**
+- **/cr:no \<pattern>** - Block pattern in this session
+- **/cr:ok \<pattern>** - Allow pattern in this session
+- **/cr:clear [pattern]** - Clear blocks (or specific pattern)
+- **/cr:status** - Show blocked patterns
+
+**Global Commands:**
+- **/cr:globalno \<pattern>** - Block pattern globally (all sessions)
+- **/cr:globalok \<pattern>** - Allow pattern globally
+- **/cr:globalstatus** - Show global blocks
+
+**Examples:**
+```bash
+# Block rm in this session
+/cr:no rm
+
+# Block dangerous dd commands globally
+/cr:globalno dd if=
+
+# Allow rm in this session only
+/cr:ok rm
+
+# Show status
+/cr:status
+```
+
+**Default Integrations:**
+- `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
+- `rm -rf` → Dangerous, suggests trash CLI alternatives
+- `dd if=` → Disk write warning, suggests backup tools
+- `mkfs` → Filesystem warning, suggests backup first
+- `fdisk` → Partition warning, suggests GUI alternatives
+
+**Installing trash CLI:**
+- macOS: `brew install trash`
+- Linux: `go install github.com/andraschume/trash-cli@latest`
+- Restores files from: `trash-restore` or system trash
+
+**State Hierarchy:**
+1. Session blocks (highest priority)
+2. Global blocks (fallback)
+3. Default integrations (built-in suggestions)
 
 ### Autorun Commands (Autonomous Execution)
 
@@ -1418,6 +1511,55 @@ See the comprehensive [Testing](#testing) section above for all testing commands
 ```bash
 source .venv/bin/activate  # Must be done in each new terminal
 ```
+
+## Companion Tools
+
+clautorun works well with these complementary tools for a complete development workflow. These tools solve different problems than clautorun and can be used alongside it.
+
+### Git Workflow Utilities
+
+**git-transfer-commits** - Cross-repository commit transfer
+- Transfer commits between repositories while preserving metadata
+- Uses `git format-patch` + `git am` for safe transfers
+- Useful for moving commits from backup/polluted repos to fresh clones
+- Usage: `/git-transfer-commits`
+
+**Why this is separate:** Git commit transfer is a cross-repository operation, while clautorun handles intra-repository session automation. Different domains, separate tools.
+
+### Security Hooks
+
+**Command Blocking System (Integrated in clautorun v0.6.0)** - General-purpose command blocking
+- **Built into clautorun** - No separate hook installation needed
+- Session-level commands: `/cr:no <pattern>`, `/cr:ok <pattern>`, `/cr:clear`, `/cr:status`
+- Global-level commands: `/cr:globalno <pattern>`, `/cr:globalok <pattern>`, `/cr:globalstatus`
+- Supports any command pattern (not just `rm`)
+- Default integrations include installation instructions:
+  - `rm` → trash CLI (`brew install trash` on macOS, or `go install github.com/andraschume/trash-cli@latest` on Linux)
+  - `rm -rf` → trash CLI with warning about permanent deletion
+  - `dd if=` → Suggests backup tools (rsync, ddrescue)
+  - `mkfs` → Suggests GUI partition managers (GNOME Disks, gparted)
+  - `fdisk` → Suggests GUI alternatives with backup reminder
+
+**Relationship to AutoFile:** AutoFile policies control ALL file creation (Write tool), while Command Blocking only affects specific Bash commands. Complementary scopes, no overlap.
+
+**Hookify Rules** - Pattern-based safety and guidance
+- `hookify.secrets.local.md` - Blocks hardcoded secrets
+- `hookify.dangerous-rm.local.md` - Warns about `rm -rf`
+- `hookify.block-sed-use-edit-tools.local.md` - Blocks sed with edit tools
+- `hookify.use-bun-not-npm.local.md` - Encourages bun over npm
+- `hookify.block-gh-pr-issue-create-comment.local.md` - Blocks direct GitHub API calls
+- Managed via `/hookify` command
+
+**Relationship to clautorun:** Hookify is a separate Claude Code plugin for creating custom hooks based on patterns. Can work alongside clautorun for additional safety.
+
+### Session Discovery
+
+**session-explorer** - Find and analyze Claude sessions
+- Discover sessions across tmux windows
+- Analyze conversation history
+- Usage: `/session-explorer`
+
+**Why this is separate:** Session discovery is an analysis tool for finding existing sessions, while clautorun creates and manages new autonomous sessions. Different purposes.
 
 ## Troubleshooting
 

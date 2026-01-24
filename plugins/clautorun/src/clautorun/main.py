@@ -23,8 +23,10 @@ import time
 import threading
 import asyncio
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
+import re as regex_module
 
 # Import Agent SDK
 try:
@@ -260,6 +262,264 @@ def session_state(session_id: str):
             state.sync()
             state.close()
 
+# =============================================================================
+# Command Blocking State Management
+# =============================================================================
+
+# Global config file for blocking patterns
+GLOBAL_CONFIG_FILE = STATE_DIR.parent / "config" / "command-blocks.json"
+
+
+def get_session_blocks(session_id: str) -> List[Dict]:
+    """
+    Get blocked patterns for a session.
+
+    Args:
+        session_id: Claude session identifier
+
+    Returns:
+        List of blocked pattern dictionaries with pattern, suggestion, added_at
+    """
+    with session_state(session_id) as state:
+        return state.get("session_blocked_patterns", [])
+
+
+def add_session_block(session_id: str, pattern: str, suggestion: Optional[str] = None) -> bool:
+    """
+    Add a blocked pattern to session state.
+
+    Args:
+        session_id: Claude session identifier
+        pattern: Pattern string to block
+        suggestion: Optional suggestion message
+
+    Returns:
+        True if added, False if already exists
+    """
+    from .config import DEFAULT_INTEGRATIONS
+
+    with session_state(session_id) as state:
+        patterns = state.get("session_blocked_patterns", [])
+
+        # Check if pattern already exists
+        for p in patterns:
+            if p["pattern"] == pattern:
+                return False
+
+        # Use default suggestion if not provided
+        if suggestion is None:
+            integration = DEFAULT_INTEGRATIONS.get(pattern, {})
+            suggestion = integration.get("suggestion", f"Pattern '{pattern}' is blocked")
+
+        patterns.append({
+            "pattern": pattern,
+            "suggestion": suggestion,
+            "added_at": datetime.now().isoformat()
+        })
+        state["session_blocked_patterns"] = patterns
+        return True
+
+
+def remove_session_block(session_id: str, pattern: str) -> bool:
+    """
+    Remove a blocked pattern from session state.
+
+    Args:
+        session_id: Claude session identifier
+        pattern: Pattern string to remove
+
+    Returns:
+        True if removed, False if not found
+    """
+    with session_state(session_id) as state:
+        patterns = state.get("session_blocked_patterns", [])
+        original_length = len(patterns)
+        patterns = [p for p in patterns if p["pattern"] != pattern]
+        state["session_blocked_patterns"] = patterns
+        return len(patterns) < original_length
+
+
+def clear_session_blocks(session_id: str, pattern: Optional[str] = None) -> int:
+    """
+    Clear session blocks (all or specific pattern).
+
+    Args:
+        session_id: Claude session identifier
+        pattern: Optional specific pattern to clear, None clears all
+
+    Returns:
+        Number of patterns cleared
+    """
+    with session_state(session_id) as state:
+        if pattern is None:
+            count = len(state.get("session_blocked_patterns", []))
+            state["session_blocked_patterns"] = []
+            return count
+        else:
+            return 1 if remove_session_block(session_id, pattern) else 0
+
+
+def get_global_blocks() -> List[Dict]:
+    """
+    Get globally blocked patterns.
+
+    Returns:
+        List of blocked pattern dictionaries
+    """
+    if not GLOBAL_CONFIG_FILE.exists():
+        return []
+
+    try:
+        with open(GLOBAL_CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+            return config.get("global_blocked_patterns", [])
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def add_global_block(pattern: str, suggestion: Optional[str] = None) -> bool:
+    """
+    Add a globally blocked pattern.
+
+    Args:
+        pattern: Pattern string to block
+        suggestion: Optional suggestion message
+
+    Returns:
+        True if added, False if already exists
+    """
+    from .config import DEFAULT_INTEGRATIONS
+
+    GLOBAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing config
+    if GLOBAL_CONFIG_FILE.exists():
+        try:
+            with open(GLOBAL_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            config = {"version": "2.0", "global_blocked_patterns": []}
+    else:
+        config = {"version": "2.0", "global_blocked_patterns": []}
+
+    patterns = config.get("global_blocked_patterns", [])
+
+    # Check if pattern already exists
+    for p in patterns:
+        if p["pattern"] == pattern:
+            return False
+
+    # Use default suggestion if not provided
+    if suggestion is None:
+        integration = DEFAULT_INTEGRATIONS.get(pattern, {})
+        suggestion = integration.get("suggestion", f"Pattern '{pattern}' is blocked")
+
+    patterns.append({
+        "pattern": pattern,
+        "suggestion": suggestion,
+        "added_at": datetime.now().isoformat()
+    })
+
+    config["global_blocked_patterns"] = patterns
+
+    with open(GLOBAL_CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+
+    return True
+
+
+def remove_global_block(pattern: str) -> bool:
+    """
+    Remove a globally blocked pattern.
+
+    Args:
+        pattern: Pattern string to remove
+
+    Returns:
+        True if removed, False if not found
+    """
+    if not GLOBAL_CONFIG_FILE.exists():
+        return False
+
+    with open(GLOBAL_CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+
+    patterns = config.get("global_blocked_patterns", [])
+    original_length = len(patterns)
+    patterns = [p for p in patterns if p["pattern"] != pattern]
+
+    config["global_blocked_patterns"] = patterns
+
+    with open(GLOBAL_CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+
+    return len(patterns) < original_length
+
+
+def command_matches_pattern(command: str, pattern: str) -> bool:
+    """
+    Check if a command matches a blocked pattern.
+
+    Args:
+        command: Full command string
+        pattern: Pattern to match against
+
+    Returns:
+        True if command matches pattern
+    """
+    command = command.strip()
+    pattern = pattern.strip()
+
+    if not command or not pattern:
+        return False
+
+    # Exact match
+    if command == pattern:
+        return True
+
+    # Command name match (pattern is just the command)
+    # Split by shell operators and spaces
+    command_parts = regex_module.split(r'[|&;\s]+', command)
+    if pattern in command_parts:
+        return True
+
+    # Substring match for patterns with spaces (e.g., "dd if=")
+    if ' ' in pattern:
+        if pattern in command:
+            return True
+
+    # Pattern starts with command name
+    if command.startswith(pattern + ' '):
+        return True
+
+    return False
+
+
+def should_block_command(session_id: str, command: str) -> Optional[Dict]:
+    """
+    Check if a command should be blocked.
+
+    Args:
+        session_id: Claude session identifier
+        command: Command string to check
+
+    Returns:
+        Block dict with 'pattern' and 'suggestion' if blocked, None otherwise
+    """
+    # Check session blocks first (highest priority)
+    for block in get_session_blocks(session_id):
+        if command_matches_pattern(command, block["pattern"]):
+            return block
+
+    # Check global blocks (fallback)
+    for block in get_global_blocks():
+        if command_matches_pattern(command, block["pattern"]):
+            return block
+
+    # Not blocked
+    return None
+
+
 # Response builders - follow autorun5.py pattern exactly (lines 118-128)
 def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
     """Build standardized JSON hook response - autorun5.py line 118-121"""
@@ -411,6 +671,315 @@ COMMAND_HANDLERS = {
 }
 
 
+# =============================================================================
+# Command Blocking Handlers
+# =============================================================================
+
+def handle_block_pattern(state):
+    """
+    Handle /cr:no <pattern> command.
+
+    Blocks a command pattern in the current session.
+
+    Usage:
+        /cr:no rm              # Block rm command
+        /cr:no dd if=          # Block dd with input
+        /cr:no --force         # Block force flags
+
+    Examples:
+        /cr:no rm
+        /cr:no "rm -rf"
+        /cr:no dd if=
+    """
+    from .config import DEFAULT_INTEGRATIONS
+
+    prompt = state.get("activation_prompt", "")
+    session_id = state.get("session_id", "")
+
+    # Extract pattern from prompt
+    # Format: "/cr:no <pattern>"
+    # Use split with maxsplit=1 to preserve patterns with spaces
+    parts = prompt.split(None, 1)
+    if len(parts) < 2:
+        return f"❌ Usage: /cr:no <pattern>\n" \
+               f"Example: /cr:no rm\n" \
+               f"         /cr:no dd if=\n" \
+               f"         /cr:no --force"
+
+    pattern = parts[1].strip()
+
+    # Add block to session state
+    added = add_session_block(session_id, pattern)
+
+    if added:
+        # Get suggestion for display
+        integration = DEFAULT_INTEGRATIONS.get(pattern, {})
+        suggestion = integration.get("suggestion", f"Pattern '{pattern}' blocked")
+
+        return f"✅ Blocked: {pattern}\n" \
+               f"💡 {suggestion}\n\n" \
+               f"Session blocks: {len(get_session_blocks(session_id))}\n" \
+               f"Commands: /cr:ok {pattern} | /cr:clear | /cr:status"
+    else:
+        return f"⚠️ Pattern '{pattern}' is already blocked in this session.\n" \
+               f"Commands: /cr:status | /cr:clear {pattern}"
+
+
+def handle_allow_pattern(state):
+    """
+    Handle /cr:ok <pattern> command.
+
+    Allows a previously blocked command pattern in the current session.
+
+    Usage:
+        /cr:ok rm              # Allow rm command
+        /cr:ok dd if=          # Allow dd with input
+
+    Examples:
+        /cr:ok rm
+        /cr:ok "rm -rf"
+    """
+    prompt = state.get("activation_prompt", "")
+    session_id = state.get("session_id", "")
+
+    # Extract pattern from prompt
+    # Use split with maxsplit=1 to preserve patterns with spaces
+    parts = prompt.split(None, 1)
+    if len(parts) < 2:
+        return f"❌ Usage: /cr:ok <pattern>\n" \
+               f"Example: /cr:ok rm"
+
+    pattern = parts[1].strip()
+
+    # Remove block from session state
+    removed = remove_session_block(session_id, pattern)
+
+    if removed:
+        return f"✅ Allowed: {pattern}\n\n" \
+               f"Session blocks: {len(get_session_blocks(session_id))}\n" \
+               f"Commands: /cr:no {pattern} | /cr:status"
+    else:
+        return f"⚠️ Pattern '{pattern}' was not blocked in this session.\n" \
+               f"Commands: /cr:status | /cr:no {pattern}"
+
+
+def handle_clear_pattern(state):
+    """
+    Handle /cr:clear [pattern] command.
+
+    Clears session blocks (all or specific pattern).
+    Falls back to global defaults.
+
+    Usage:
+        /cr:clear             # Clear all session blocks
+        /cr:clear rm          # Clear specific pattern
+
+    Examples:
+        /cr:clear
+        /cr:clear rm
+    """
+    prompt = state.get("activation_prompt", "")
+    session_id = state.get("session_id", "")
+
+    # Extract optional pattern
+    # Use split with maxsplit=1 to preserve patterns with spaces
+    parts = prompt.split(None, 1)
+    pattern = parts[1].strip() if len(parts) > 1 else None
+
+    # Clear blocks
+    count = clear_session_blocks(session_id, pattern)
+
+    if pattern:
+        return f"🔄 Cleared: {pattern}\n" \
+               f"Using global defaults now.\n" \
+               f"Session blocks: {len(get_session_blocks(session_id))}"
+    else:
+        # Get global block count
+        global_count = len(get_global_blocks())
+
+        return f"🔄 Cleared all session blocks.\n" \
+               f"Using global defaults ({global_count} patterns).\n" \
+               f"Commands: /cr:status | /cr:globalstatus"
+
+
+def handle_block_status(state):
+    """
+    Handle /cr:status command.
+
+    Shows current blocked patterns for session and global.
+
+    Usage:
+        /cr:status
+
+    Example output:
+        Session blocks (2):
+          - rm → Use 'trash' instead
+          - dd if= → Avoid direct disk writes
+
+        Global blocks (1):
+          - --force → Avoid force flags
+    """
+    session_id = state.get("session_id", "")
+
+    # Get session blocks
+    session_blocks = get_session_blocks(session_id)
+    global_blocks = get_global_blocks()
+
+    # Build status message
+    lines = ["📊 Command Blocking Status\n"]
+
+    if session_blocks:
+        lines.append(f"Session blocks ({len(session_blocks)}):")
+        for block in session_blocks:
+            lines.append(f"  - {block['pattern']}")
+            if block.get('suggestion'):
+                lines.append(f"    → {block['suggestion']}")
+    else:
+        lines.append("Session blocks: None (using global defaults)")
+
+    lines.append("")
+
+    if global_blocks:
+        lines.append(f"Global blocks ({len(global_blocks)}):")
+        for block in global_blocks:
+            lines.append(f"  - {block['pattern']}")
+            if block.get('suggestion'):
+                lines.append(f"    → {block['suggestion']}")
+    else:
+        lines.append("Global blocks: None")
+
+    lines.append("")
+    lines.append("Commands: /cr:no <pattern> | /cr:ok <pattern> | /cr:clear | /cr:globalno <pattern>")
+
+    return "\n".join(lines)
+
+
+def handle_global_block_pattern(state):
+    """
+    Handle /cr:globalno <pattern> command.
+
+    Sets a global default to block a pattern.
+    Affects all sessions that don't have session-specific overrides.
+
+    Usage:
+        /cr:globalno rm        # Block rm globally
+        /cr:globalno dd if=    # Block dangerous dd commands
+
+    Examples:
+        /cr:globalno rm
+        /cr:globalno --force
+    """
+    from .config import DEFAULT_INTEGRATIONS
+
+    prompt = state.get("activation_prompt", "")
+
+    # Extract pattern from prompt
+    # Use split with maxsplit=1 to preserve patterns with spaces
+    parts = prompt.split(None, 1)
+    if len(parts) < 2:
+        return f"❌ Usage: /cr:globalno <pattern>\n" \
+               f"Example: /cr:globalno rm"
+
+    pattern = parts[1].strip()
+
+    # Add global block
+    added = add_global_block(pattern)
+
+    if added:
+        # Get suggestion for display
+        integration = DEFAULT_INTEGRATIONS.get(pattern, {})
+        suggestion = integration.get("suggestion", f"Pattern '{pattern}' blocked")
+
+        return f"✅ Global block: {pattern}\n" \
+               f"💡 {suggestion}\n\n" \
+               f"Global blocks: {len(get_global_blocks())}\n" \
+               f"Commands: /cr:globalok {pattern} | /cr:globalstatus"
+    else:
+        return f"⚠️ Pattern '{pattern}' is already globally blocked.\n" \
+               f"Commands: /cr:globalstatus"
+
+
+def handle_global_allow_pattern(state):
+    """
+    Handle /cr:globalok <pattern> command.
+
+    Removes a global block for a pattern.
+
+    Usage:
+        /cr:globalok rm        # Allow rm globally
+
+    Examples:
+        /cr:globalok rm
+        /cr:globalok --force
+    """
+    prompt = state.get("activation_prompt", "")
+
+    # Extract pattern from prompt
+    # Use split with maxsplit=1 to preserve patterns with spaces
+    parts = prompt.split(None, 1)
+    if len(parts) < 2:
+        return f"❌ Usage: /cr:globalok <pattern>\n" \
+               f"Example: /cr:globalok rm"
+
+    pattern = parts[1].strip()
+
+    # Remove global block
+    removed = remove_global_block(pattern)
+
+    if removed:
+        return f"✅ Global allow: {pattern}\n\n" \
+               f"Global blocks: {len(get_global_blocks())}\n" \
+               f"Commands: /cr:globalno {pattern} | /cr:globalstatus"
+    else:
+        return f"⚠️ Pattern '{pattern}' was not globally blocked.\n" \
+               f"Commands: /cr:globalstatus"
+
+
+def handle_global_block_status(state):
+    """
+    Handle /cr:globalstatus command.
+
+    Shows globally blocked patterns.
+
+    Usage:
+        /cr:globalstatus
+
+    Example output:
+        Global blocks (2):
+          - rm → Use 'trash' instead
+          - dd if= → Avoid direct disk writes
+    """
+    global_blocks = get_global_blocks()
+
+    # Build status message
+    lines = ["🌐 Global Command Blocks\n"]
+
+    if global_blocks:
+        lines.append(f"Global blocks ({len(global_blocks)}):")
+        for block in global_blocks:
+            lines.append(f"  - {block['pattern']}")
+            if block.get('suggestion'):
+                lines.append(f"    → {block['suggestion']}")
+    else:
+        lines.append("Global blocks: None")
+
+    lines.append("")
+    lines.append("Commands: /cr:globalno <pattern> | /cr:globalok <pattern> | /cr:status")
+
+    return "\n".join(lines)
+
+
+# Update COMMAND_HANDLERS to include blocking handlers
+COMMAND_HANDLERS.update({
+    "BLOCK_PATTERN": handle_block_pattern,
+    "ALLOW_PATTERN": handle_allow_pattern,
+    "CLEAR_PATTERN": handle_clear_pattern,
+    "GLOBAL_BLOCK_PATTERN": handle_global_block_pattern,
+    "GLOBAL_ALLOW_PATTERN": handle_global_allow_pattern,
+    "GLOBAL_BLOCK_STATUS": handle_global_block_status,
+})
+
+
 # Claude Code hook handlers - ultra-compact
 @handler("UserPromptSubmit")
 def claude_code_handler(ctx):
@@ -446,7 +1015,31 @@ def claude_code_handler(ctx):
 
 @handler("PreToolUse")
 def pretooluse_handler(ctx):
-    """PreToolUse hook - enhanced policy enforcement based on test expectations"""
+    """PreToolUse hook - command blocking and file policy enforcement"""
+    # =========================================================================
+    # NEW: Command blocking check (highest priority)
+    # =========================================================================
+    if ctx.tool_name == "Bash":
+        command = ctx.tool_input.get("command", "")
+
+        # Check if command should be blocked
+        block_info = should_block_command(ctx.session_id, command)
+
+        if block_info:
+            # Command is blocked
+            pattern = block_info["pattern"]
+            suggestion = block_info.get("suggestion", f"Pattern '{pattern}' is blocked")
+
+            return build_pretooluse_response(
+                decision="deny",
+                reason=f"Command blocked: {pattern}\n{suggestion}\n\n"
+                       f"To allow in this session: /cr:ok {pattern}\n"
+                       f"To show status: /cr:status"
+            )
+
+    # =========================================================================
+    # EXISTING: AutoFile policy enforcement
+    # =========================================================================
     # Extract file path - autorun5.py line 117
     file_path = ctx.tool_input.get("file_path", "")
 

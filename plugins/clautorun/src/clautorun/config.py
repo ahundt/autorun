@@ -175,6 +175,46 @@ Ensure core functionality is working before final completion.""",
         "/afs": "SEARCH",
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
-        "/afst": "STATUS"
+        "/afst": "STATUS",
+
+        # ─── Command Blocking (NEW in v2.0) ───────────────────────────────────────
+        "/cr:no": "BLOCK_PATTERN",
+        "/cr:ok": "ALLOW_PATTERN",
+        "/cr:clear": "CLEAR_PATTERN",
+        "/cr:globalno": "GLOBAL_BLOCK_PATTERN",
+        "/cr:globalok": "GLOBAL_ALLOW_PATTERN",
+        "/cr:globalstatus": "GLOBAL_BLOCK_STATUS"
+    }
+}
+
+# =============================================================================
+# Command Blocking System v2.0
+# =============================================================================
+
+DEFAULT_INTEGRATIONS = {
+    "rm": {
+        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)",
+        "severity": "high",
+        "commands": ["trash {args}"]
+    },
+    "rm -rf": {
+        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)",
+        "severity": "critical",
+        "commands": ["trash {args}"]
+    },
+    "dd if=": {
+        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead",
+        "severity": "critical",
+        "commands": None
+    },
+    "mkfs": {
+        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted",
+        "severity": "critical",
+        "commands": None
+    },
+    "fdisk": {
+        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations",
+        "severity": "high",
+        "commands": None
     }
 }
