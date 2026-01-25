@@ -1436,6 +1436,16 @@ def stop_handler(ctx):
         # Increment hook call count for stage 3 countdown
         state['hook_call_count'] = state.get('hook_call_count', 0) + 1
 
+        # Check for plan acceptance trigger - activate autorun if plan was just accepted
+        # Only trigger on main agent Stop, not SubagentStop (subagents may echo plan content)
+        plan_marker = CONFIG.get("plan_accepted_marker", "PLAN ACCEPTED")
+        hook_event = getattr(ctx, 'hook_event_name', 'Stop')
+        is_main_agent_stop = hook_event == "Stop"
+        if is_main_agent_stop and plan_marker in transcript and state.get("session_status") != "active":
+            log_info(f"Plan acceptance detected, activating autorun for session {session_id}")
+            injection = handle_activate(state, "Execute the accepted plan per the Plan Acceptance and Execution Protocol")
+            return build_hook_response(True, "", injection)
+
         # Only intervene in active autorun sessions
         if state.get("session_status") != "active":
             # Normal cleanup for non-autorun sessions

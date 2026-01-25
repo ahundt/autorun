@@ -51,6 +51,10 @@ CONFIG = {
     # It should describe WHAT the AI is doing, not just be a state variable name.
     "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
 
+    # ─── Plan Acceptance Trigger ───────────────────────────────────────────
+    # NOTE: When Claude outputs this string after plan approval, autorun activates automatically
+    "plan_accepted_marker": "PLAN ACCEPTED",
+
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,

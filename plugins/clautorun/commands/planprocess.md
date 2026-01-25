@@ -51,7 +51,7 @@ After every step and sub-step of your plan you must say "Wait," and execute this
 
 1. **Elaborate and Refine Best Practices**: Elaborate and refine best practices lists (create new lists if none exist yet) based on current context - keep refining as new circumstances develop.
 2. **Comprehensive Critique**: Harshly and constructively critique your work overall and line by line against every single best practice and criteria.
-3. **Pre-mortem Analysis**: Identify potential failure modes and weaknesses, assume the final outcome was a disaster, determine what went wrong, and how those outcomes can be prevented.
+3. **Pre-mortem Analysis**: Identify potential failure modes, edge cases, and weaknesses. Assume the final outcome was a disaster, determine what went wrong, and how those outcomes can be prevented.
 4. **Multiple Solution Generation**: Propose multiple new and/or best practice superb quality concrete solutions (high level and specific quoted implementations) to each identified issue in each of your task, your critiques, and in the pre-mortem analysis.
 5. **Synthesized Solution Building**: Synthesize insights from all cumulative context including all previous critiques, the original work (if applicable), all previous proposed solutions, and all accumulated best practices to create refined solutions that incorporate lessons learned from the complete analysis.
 6. **Sequential Quality Enhancement**: Each proposal must be superb quality, building on the benefits of previous iterations.
