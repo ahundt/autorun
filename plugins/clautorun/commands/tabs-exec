@@ -14,6 +14,7 @@ import sys
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
@@ -261,9 +262,9 @@ def extract_directory(content: str) -> str:
         match = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
         if match:
             path = match.group(1)
-            # Basic validation
+            # Basic validation - let format_output handle truncation
             if path.startswith(('~', '/')):
-                return path[:30]
+                return path
 
     return "unknown"
 
@@ -278,7 +279,7 @@ def extract_purpose(content: str) -> str:
         line_lower = line.lower()
         if not any(line_lower.startswith(p.lower()) for p in skip_patterns):
             if len(line) > 10:
-                return line[:40] + ('...' if len(line) > 40 else '')
+                return line  # Let format_output handle truncation
 
     return "unknown"
 
@@ -296,37 +297,56 @@ def get_default_actions(status: str) -> List[str]:
 
 
 def format_output(sessions: List[Dict]) -> str:
-    """Format sessions for display."""
+    """Format sessions for display with dynamic column widths."""
+    # Get terminal width, default to 120 if unavailable
+    term_width = shutil.get_terminal_size((120, 24)).columns
+
+    # Fixed columns: ID(3) + Target(14) + Status(10) + Awaiting(8) + Actions(18) + separators(6) = 59
+    fixed_width = 59
+    remaining = max(term_width - fixed_width, 45)  # Minimum 45 chars for dir+purpose
+
+    # Split remaining between directory (40%) and purpose (60%)
+    dir_width = max(remaining * 2 // 5, 15)
+    purpose_width = max(remaining - dir_width, 20)
+
     lines = []
-    lines.append(f"\n{'=' * 80}")
+    lines.append(f"\n{'=' * term_width}")
     lines.append(f" Claude Sessions ({len(sessions)} found)")
-    lines.append(f"{'=' * 80}\n")
+    lines.append(f"{'=' * term_width}\n")
 
-    # Header
-    lines.append(f"{'ID':<3} {'Target':<14} {'Directory':<20} {'Purpose':<25} {'Status':<10} {'Awaiting':<8} Actions")
-    lines.append(f"{'-' * 3} {'-' * 14} {'-' * 20} {'-' * 25} {'-' * 10} {'-' * 8} {'-' * 18}")
+    # Header with dynamic widths
+    lines.append(f"{'ID':<3} {'Target':<14} {'Directory':<{dir_width}} {'Purpose':<{purpose_width}} {'Status':<10} {'Awaiting':<8} Actions")
+    lines.append(f"{'-' * 3} {'-' * 14} {'-' * dir_width} {'-' * purpose_width} {'-' * 10} {'-' * 8} {'-' * 18}")
 
-    # Rows
+    # Rows with proper truncation matching column width
     for i, s in enumerate(sessions):
         letter = chr(65 + i)
         awaiting = 'yes' if s.get('awaiting') else 'no'
         actions = ', '.join(s.get('actions', [])[:2])
-        directory = s.get('directory', 'unknown')[:19]
-        purpose = s.get('purpose', 'unknown')[:24]
+
+        # Truncate to column width - 1 to leave room for space separator
+        directory = s.get('directory', 'unknown')
+        if len(directory) > dir_width:
+            directory = directory[:dir_width-1] + '~'  # Use ~ to indicate truncation
+
+        purpose = s.get('purpose', 'unknown')
+        if len(purpose) > purpose_width:
+            purpose = purpose[:purpose_width-1] + '~'
+
         status = s.get('status', 'unknown')[:9]
 
         lines.append(
-            f"{letter:<3} {s['tmux_target']:<14} {directory:<20} {purpose:<25} {status:<10} {awaiting:<8} {actions}"
+            f"{letter:<3} {s['tmux_target']:<14} {directory:<{dir_width}} {purpose:<{purpose_width}} {status:<10} {awaiting:<8} {actions}"
         )
 
     # Selection syntax help
-    lines.append(f"\n{'-' * 80}")
+    lines.append(f"\n{'-' * term_width}")
     lines.append("Selection syntax:")
     lines.append("  'A,C' or 'AC'              Execute default action for selected")
     lines.append("  'A:git status, B:pwd'      Execute custom commands")
     lines.append("  'all:continue'             Execute on all sessions")
     lines.append("  'awaiting:continue'        Execute on sessions awaiting input")
-    lines.append(f"{'-' * 80}\n")
+    lines.append(f"{'-' * term_width}")
 
     return '\n'.join(lines)
 
