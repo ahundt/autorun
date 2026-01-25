@@ -520,11 +520,48 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
     return None
 
 
-# Response builders - follow autorun5.py pattern exactly (lines 118-128)
-def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
-    """Build standardized JSON hook response - autorun5.py line 118-121"""
-    return {"continue": continue_execution, "stopReason": stop_reason,
-            "suppressOutput": False, "systemMessage": system_message}
+# =============================================================================
+# CLAUDE CODE HOOK RESPONSE SEMANTICS
+# Documentation: https://code.claude.com/docs/en/hooks
+# =============================================================================
+#
+# COMMON FIELDS (all hooks):
+#   "continue": true      - Claude continues after hook runs (DEFAULT)
+#   "continue": false     - Claude STOPS processing after hooks run
+#   "stopReason": "..."   - Message shown when continue is false
+#   "systemMessage": "..."- Warning/info message shown to user
+#   "suppressOutput": bool- Whether to suppress tool output
+#
+# STOP/SUBAGENTSTOP SPECIFIC FIELDS:
+#   "decision": "block"   - PREVENTS Claude from stopping (makes it CONTINUE)
+#   "reason": "..."       - REQUIRED when blocking - tells Claude what to do next
+#
+# CRITICAL: For Stop hooks to keep Claude working:
+#   - Use continue=True + decision="block" + reason="instructions"
+#   - Do NOT use continue=False thinking it "blocks the stop" - that makes Claude STOP!
+#
+# See stop_handler() at line ~1431 for usage examples.
+# =============================================================================
+
+def build_hook_response(continue_execution=True, stop_reason="", system_message="",
+                        decision=None, reason=None):
+    """Build standardized JSON hook response.
+
+    For Stop/SubagentStop hooks that need to keep Claude working:
+    - Set continue_execution=True (default)
+    - Set decision="block" to prevent the stop
+    - Set reason="..." with instructions for Claude
+
+    See documentation block above for full semantics.
+    """
+    response = {"continue": continue_execution, "stopReason": stop_reason,
+                "suppressOutput": False, "systemMessage": system_message}
+    # Stop-hook-specific fields for blocking stops
+    if decision is not None:
+        response["decision"] = decision
+    if reason is not None:
+        response["reason"] = reason
+    return response
 
 def build_pretooluse_response(decision="allow", reason=""):
     """Build PreToolUse hook response - autorun5.py line 123-128"""
@@ -1158,9 +1195,13 @@ def inject_continue_prompt(state):
         except Exception as e:
             log_info(f"Failed to record injection attempt: {e}")
 
+    # Keep Claude working by blocking the stop - see docs at build_hook_response() (~line 546)
     return build_hook_response(
         continue_execution=True,
-        system_message=continue_message
+        stop_reason="",
+        system_message=continue_message,
+        decision="block",
+        reason=continue_message
     )
 
 def inject_verification_prompt(state):
@@ -1252,9 +1293,13 @@ def inject_verification_prompt(state):
         except Exception as e:
             log_info(f"Failed to record verification injection attempt: {e}")
 
+    # Keep Claude working by blocking the stop - see docs at build_hook_response() (~line 546)
     return build_hook_response(
         continue_execution=True,
-        system_message=verification_prompt
+        stop_reason="",
+        system_message=verification_prompt,
+        decision="block",
+        reason=verification_prompt
     )
 
 def analyze_verification_results(state, transcript):
@@ -1426,7 +1471,16 @@ def should_trigger_verification(state):
 @handler("Stop")
 @handler("SubagentStop")
 def stop_handler(ctx):
-    """Enhanced stop handler with three-stage completion system and AI monitor lifecycle management"""
+    """Enhanced stop handler with three-stage completion system and AI monitor lifecycle management.
+
+    STOP HOOK SEMANTICS - See documentation at build_hook_response() (~line 546)
+
+    To KEEP CLAUDE WORKING from a Stop hook:
+      return build_hook_response(True, "", msg, decision="block", reason=msg)
+
+    To ALLOW CLAUDE TO STOP:
+      return build_hook_response()  # defaults work
+    """
     session_id = getattr(ctx, 'session_id', 'default')
     transcript = str(getattr(ctx, 'session_transcript', []))
 
@@ -1444,7 +1498,11 @@ def stop_handler(ctx):
         if is_main_agent_stop and plan_marker in transcript and state.get("session_status") != "active":
             log_info(f"Plan acceptance detected, activating autorun for session {session_id}")
             injection = handle_activate(state, "Execute the accepted plan per the Plan Acceptance and Execution Protocol")
-            return build_hook_response(True, "", injection)
+            # KEEP CLAUDE WORKING: decision="block" prevents Claude from stopping
+            # continue=True allows hook processing to complete, decision="block" prevents the Stop event
+            # reason=injection tells Claude what to do next
+            # See https://code.claude.com/docs/en/hooks and build_hook_response() (~line 546)
+            return build_hook_response(True, "", injection, decision="block", reason=injection)
 
         # Only intervene in active autorun sessions
         if state.get("session_status") != "active":
@@ -1464,15 +1522,17 @@ def stop_handler(ctx):
                 state["stage1_completed"] = True
                 state["stage1_completion_timestamp"] = time.time()
 
-                # Inject stage 2 instructions
+                # KEEP CLAUDE WORKING: Inject stage 2 instructions
+                # decision="block" prevents Stop, reason tells Claude what to do next
                 stage2_prompt = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
-                return build_hook_response(True, "", stage2_prompt)
+                return build_hook_response(True, "", stage2_prompt, decision="block", reason=stage2_prompt)
 
             # Handle premature stage 3 attempt in stage 1 (also recognize descriptive completion_marker)
             elif CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 1 for session {session_id}")
+                # KEEP CLAUDE WORKING: Block premature completion, redirect to stage 1
                 stage1_continuation = f"You must complete Stage 1 first. Output **{CONFIG['stage1_confirmation']}** when done."
-                return build_hook_response(True, "", stage1_continuation)
+                return build_hook_response(True, "", stage1_continuation, decision="block", reason=stage1_continuation)
 
             # Handle premature stop (no completion markers)
             elif is_premature_stop(ctx, state):
@@ -1488,23 +1548,26 @@ def stop_handler(ctx):
                 state["stage2_completion_timestamp"] = time.time()
                 state["hook_call_count"] = 0  # Reset countdown for stage 3
 
-                # Start countdown for stage 3
+                # KEEP CLAUDE WORKING: Start countdown for stage 3
+                # decision="block" prevents Stop, reason tells Claude what to do next
                 remaining_calls = CONFIG["stage3_countdown_calls"]
                 countdown_msg = f"Stage 2 complete. Continue working for {remaining_calls} more cycles before Stage 3 instructions are revealed."
-                return build_hook_response(True, "", countdown_msg)
+                return build_hook_response(True, "", countdown_msg, decision="block", reason=countdown_msg)
 
             # Block premature stage 3 attempt in stage 2 (also recognize descriptive completion_marker)
             # Check BEFORE is_premature_stop to prevent dual-marker bypass
             elif CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 2 for session {session_id}")
+                # KEEP CLAUDE WORKING: Block premature completion, redirect to stage 2
                 stage2_continuation = f"You must complete Stage 2 first. Output **{CONFIG['stage2_confirmation']}** when done."
-                return build_hook_response(True, "", stage2_continuation)
+                return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation)
 
             # Handle premature stop in stage 2
             elif is_premature_stop(ctx, state):
                 log_info(f"Premature stop detected in Stage 2 for session {session_id}")
+                # KEEP CLAUDE WORKING: Resume stage 2 work
                 stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
-                return build_hook_response(True, "", stage2_continuation)
+                return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation)
 
         # STAGE 2 COMPLETED: Countdown to stage 3
         elif current_stage == "STAGE2_COMPLETED":
@@ -1516,16 +1579,19 @@ def stop_handler(ctx):
                 if remaining_calls > 0:
                     # Early attempt - reset to STAGE2 (not INITIAL) to preserve progress
                     log_info(f"Early stage 3 attempt detected, {remaining_calls} calls remaining")
+                    # KEEP CLAUDE WORKING: Too early for stage 3, redirect back to stage 2
                     reset_msg = f"Too early for Stage 3. Continue with Stage 2: {CONFIG['stage2_instruction']}"
                     state["autorun_stage"] = "STAGE2"
                     # Don't reset stage1_completed - preserve progress
-                    return build_hook_response(True, "", reset_msg)
+                    return build_hook_response(True, "", reset_msg, decision="block", reason=reset_msg)
                 else:
                     log_info(f"Stage 3 completion detected for session {session_id}")
                     # Proper stage 3 completion - stop monitor and cleanup
                     log_info("Stopping AI monitor after successful stage 3 completion")
                     _manage_monitor(state, 'stop')
                     state.clear()
+                    # ALLOW CLAUDE TO STOP: All stages complete, we WANT Claude to stop here
+                    # continue=False means Claude will stop (this is the desired behavior)
                     return build_hook_response(False, "", "✅ Three-stage completion successful!")
 
             # Continue countdown and provide status updates
@@ -1533,15 +1599,16 @@ def stop_handler(ctx):
                 # Alternating behavior: Status on even calls, recovery injection on odd calls
                 # This ensures AI can recover if it genuinely stops during countdown period
                 if hook_call_count % 2 == 0:  # Provide simple status updates every 2 calls
+                    # KEEP CLAUDE WORKING: Countdown status, continue working
                     status_msg = f"Stage 3 countdown: {remaining_calls} calls remaining. Continue with evaluation."
-                    return build_hook_response(True, "", status_msg)
+                    return build_hook_response(True, "", status_msg, decision="block", reason=status_msg)
                 else:
                     # Recovery mechanism: Inject full task context if AI stops working
                     return inject_continue_prompt(state)
             else:
-                # Reveal stage 3 instructions
+                # KEEP CLAUDE WORKING: Reveal stage 3 instructions and continue
                 stage3_instructions = f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
-                return build_hook_response(True, "", stage3_instructions)
+                return build_hook_response(True, "", stage3_instructions, decision="block", reason=stage3_instructions)
 
         # Fallback: unknown stage or state
         log_info(f"Unknown state in three-stage stop_handler: stage={current_stage}, session={session_id}")
