@@ -3,9 +3,61 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-**clautorun** - Reduce User Interruptions While Claude Completes Tasks
+**clautorun** - Reduce interruptions while Claude completes tasks autonomously.
 
-Reduce user interruptions while Claude completes tasks. Maintain work across crashes and disconnections.
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Quick Start](#quick-start)
+- [Command Reference](#command-reference)
+  - [AutoFile Policy Commands](#autofile-commands-file-creation-control)
+  - [Autorun Commands](#autorun-commands-autonomous-execution)
+  - [Plan Management Commands](#plan-management-commands)
+  - [Command Blocking](#command-blocking-commands-new-in-v060)
+  - [Tmux Session Commands](#tmux-automation-commands)
+  - [Legacy Commands](#legacy-commands-backward-compatible)
+- [How It Works](#how-it-works)
+  - [Three-Stage Autorun System](#three-stage-autorun-system)
+  - [AutoFile Policy System](#autofile-policy-system)
+  - [Command Blocking System](#command-blocking-v060)
+- [Tmux Integration](#why-byobu--tmux-integration)
+- [Development](#development)
+- [Testing](#testing)
+- [Plugin Architecture](#plugin-architecture-and-integration-guide)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing-and-sharing)
+- [License](#license)
+
+## Key Features
+
+- **Autonomous Execution**: Claude continues working without constant "continue" prompts
+- **Three-Stage Verification**: Ensures tasks are actually complete before stopping
+- **File Policy Control**: Prevent AI from creating unnecessary files
+- **Command Blocking**: Block dangerous commands with safer alternatives (v0.6.0)
+- **Plan Management**: Create, refine, update, and execute structured plans
+- **Session Management**: Work with tmux/byobu for crash-safe sessions
+
+## Quick Start
+
+```bash
+# Install from GitHub
+/plugin install https://github.com/ahundt/clautorun.git
+
+# Verify installation
+/cr:st
+# Expected: "AutoFile policy: allow-all"
+
+# Start autonomous task
+/cr:go Build a REST API with authentication and tests
+
+# Set file policy (prevent file clutter)
+/cr:f                    # Strict: only modify existing files
+/cr:j                    # Justify: require justification for new files
+/cr:a                    # Allow: create files freely (default)
+
+# Emergency stop
+/cr:sos
+```
 
 ## What clautorun Does For You
 
@@ -47,7 +99,7 @@ Reduce user interruptions while Claude completes tasks. Maintain work across cra
 
 ### Ensure Complete Tasks (clautorun feature)
 - **Current Behavior**: AI may claim task completion after implementing only partial requirements
-- **clautorun Action**: Hook system implements two-stage verification by detecting completion markers and re-injecting the original task
+- **clautorun Action**: Hook system implements three-stage verification by detecting completion markers and re-injecting the original task
 - **Mechanism**: When AI outputs a completion marker, the hook detects this first completion and re-injects the original task with a verification checklist. Only after a second completion marker does the system allow the session to end
 - **Benefit**: Reduce incomplete features and ensure all requirements are implemented
 
@@ -77,7 +129,7 @@ Reduce user interruptions while Claude completes tasks. Maintain work across cra
 **clautorun Enhanced Capabilities:**
 - **Automatic Continuation**: Keeps Claude working without manually typing continue
 - **File Policy Enforcement**: Three-tier system to prevent file clutter
-- **Two-Stage Verification**: Helps ensure tasks are complete
+- **Three-Stage Verification**: Helps ensure tasks are complete
 - **Session State Management**: Robust state isolation and recovery
 - **Targeted Session Safety**: Commands never affect current Claude Code session
 
@@ -93,7 +145,7 @@ Reduce user interruptions while Claude completes tasks. Maintain work across cra
 - Reduced data loss during crashes or disconnections
 - Decreased need for manual intervention
 - File creation policies to reduce unnecessary files
-- Two-stage verification to help ensure task completion
+- Three-stage verification to help ensure task completion
 
 ### Testing
 
@@ -302,187 +354,104 @@ graph TD
 - Best for prototyping and new project setup
 - All tools pass through without intervention
 
-## 🎯 What It Does
+## How It Works
 
-- **Autonomous Task Completion**: Keeps Claude working on tasks without interrupting you
-- **Smart File Management**: Prevents AI from creating meaningless files
-- **Session Persistence**: Keeps work alive across crashes and disconnections
-- **Remote Control**: Monitor and manage AI sessions from anywhere
-- **Two-Stage Verification**: Ensures tasks are actually complete, not just "good enough"
-
-## AUTORUN LIFECYCLE FLOW
+### Three-Stage Autorun System
 
 ```mermaid
 graph TD
-    A[User sends /autorun command] --> B[UserPromptSubmit Hook]
-    B --> C[Activate session state]
-    C --> D[Start ai-monitor process]
-    D --> E[AI works autonomously]
-    E --> F{Stop Hook triggered}
-    F --> G[First completion detected?]
-    G -->|No| H[Re-inject continue instructions]
-    H --> E
-    G -->|Yes| I[Re-inject verification prompt]
-    I --> J[AI performs verification]
-    J --> K{Second completion detected?}
-    K -->|No| L[Continue verification work]
-    L --> J
-    K -->|Yes| M[Cleanup and exit]
+    A["/cr:go task description"] --> B[Stage 1: Initial Implementation]
+    B --> C{AUTORUN_STAGE1_COMPLETE?}
+    C -->|No| D[Continue working]
+    D --> B
+    C -->|Yes| E[Stage 2: Critical Evaluation]
+    E --> F{AUTORUN_STAGE2_COMPLETE?}
+    F -->|No| G[Continue evaluation]
+    G --> E
+    F -->|Yes| H[Stage 3: Final Verification]
+    H --> I{AUTORUN_STAGE3_COMPLETE?}
+    I -->|No| J[Continue verification]
+    J --> H
+    I -->|Yes| K[Task Complete - Session Ends]
 ```
 
-**Stage 1: Initial Activation**
-1. User sends `/autorun <task description>`
-2. Hook creates session state with original prompt
-3. ai-monitor started for persistent session tracking
-4. AI receives full autonomous instructions
+**Stage 1 - Initial Implementation**: Claude works on the task, outputs `AUTORUN_STAGE1_COMPLETE` when done.
 
-**Stage 2: Work Extension**
-1. AI stops working (timeout, completion claim, etc.)
-2. Hook detects stop and analyzes transcript
-3. If no completion marker, re-injects continue instructions
-4. AI resumes work with full context
+**Stage 2 - Critical Evaluation**: Claude critically evaluates work, identifies gaps, outputs `AUTORUN_STAGE2_COMPLETE` when satisfied.
 
-**Stage 3: Verification**
-1. AI outputs completion marker
-2. Hook detects first completion and re-injects verification prompt
-3. AI performs thorough verification of original requirements
-4. AI must verify all requirements are met
+**Stage 3 - Final Verification**: Claude verifies all requirements met, outputs `AUTORUN_STAGE3_COMPLETE` to finish.
 
-**Stage 4: Final Completion**
-1. AI completes verification with second completion marker
-2. Hook verifies two-stage completion
-3. Cleanup processes and state files
-4. Allow final session exit
+### How It Works
 
-### Verification Example
-**Before**: Claude stops after basic login form
-**After**:
-- First completion: "Login form done!" → System: "Did you add tests? Error handling? Database migrations?"
-- Second completion: "Full auth system with tests complete!" → System: "✅ Task verified, exiting"
-
-### Two-Stage Verification Process
-
-#### Stage 1: Initial Completion
-**Trigger**: AI outputs completion marker in transcript
-```
-"User authentication system is complete! AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
-```
-
-**System Response**: Re-inject original task with verification checklist
-```
-AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification.
-
-Original Task: /clautorun /autorun Implement user authentication with JWT, database, tests, and API docs
-
-CRITICAL VERIFICATION INSTRUCTIONS:
-1. Carefully review ALL aspects of the original task above
-2. Verify EVERY requirement has been fully met and tested
-3. Check for any incomplete, partial, or missed elements
-4. Test any implemented functionality thoroughly
-5. Double-check your work against the original requirements
-6. Verify all files are in their correct final state
-7. Ensure no temporary or incomplete work remains
-```
-
-#### Stage 2: Verification Completion
-**Trigger**: AI outputs completion marker after thorough verification
-```
-"Full authentication system with comprehensive testing and documentation is verified complete!
-AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY"
-```
-
-**System Response**: Allow final exit with cleanup
-- Clean up session state files
-- Allow graceful session termination
+1. User sends `/cr:go <task description>` (or legacy `/autorun`)
+2. UserPromptSubmit hook activates session state with three-stage tracking
+3. AI works autonomously through each stage
+4. At each stage boundary, the system validates completion markers
+5. Only after all three stages complete does the session end
+6. Emergency stop (`/cr:sos`) immediately halts at any point
 
 ### Safety Mechanisms
-- **Maximum recheck limit**: Prevents infinite loops (default: 3 attempts)
-- **Emergency stop**: `/estop` immediately terminates any runaway process
+- **Maximum recheck limit**: Prevents infinite loops (default: 3 attempts per stage)
+- **Emergency stop**: `/cr:sos` immediately terminates any runaway process
+- **Plan acceptance**: Plans can auto-trigger autorun via "PLAN ACCEPTED" marker
 - **State validation**: Ensures session integrity throughout process
-- **Atomic operations**: Prevents corruption during concurrent access
 
-## ⚡ Quick Start (5 Minutes)
+### Verification Example
 
-### Prerequisites: Install Terminal Multiplexers
+**Before clautorun**: Claude stops after implementing basic login form
+**With clautorun three-stage verification**:
+1. Stage 1: "Login form implemented!" → `AUTORUN_STAGE1_COMPLETE`
+2. Stage 2: "Critically evaluated - added error handling, tests missing" → continues working → `AUTORUN_STAGE2_COMPLETE`
+3. Stage 3: "Verified: Form works, tests pass, error handling complete" → `AUTORUN_STAGE3_COMPLETE` → Session ends
 
-**First, install the tools that give you terminal superpowers:**
+## Tmux Integration
 
-**What are Terminal Multiplexers?**
-Terminal multiplexers are programs that let you create multiple virtual terminal sessions within a single terminal window. Think of them like having multiple tabs in your browser, but for the command line. They keep your sessions running even when you close your terminal or lose connection.
+For crash-safe sessions that survive disconnections, use **byobu** (recommended) with clautorun.
 
-**byobu** (Recommended - easiest):
-- **What is byobu?** A user-friendly wrapper around tmux that makes terminal multiplexing easy with intuitive keyboard shortcuts and status bars
-- **Why byobu?** Simpler interface than raw tmux, designed for humans, includes helpful keyboard shortcut reminders
-- **Installation:**
-  ```bash
-  # Ubuntu/Debian: sudo apt install byobu
-  # macOS: brew install byobu
-  # Or install from: https://byobu.co/
-  ```
+### Install byobu (Recommended)
 
-**tmux** (byobu backend - installed automatically with byobu):
-- **What is tmux?** Terminal Multiplexer - the powerful engine that byobu uses for session management
-- **Why tmux?** Industry standard, extremely reliable, perfect for remote servers and long-running processes
-- **Installation:**
-  ```bash
-  # Ubuntu/Debian: sudo apt install tmux
-  # macOS: brew install tmux
-  # Documentation: https://github.com/tmux/tmux/wiki
-  ```
-
-**What is Homebrew (brew)?**
-Homebrew is a free and open-source package manager for macOS and Linux that makes it easy to install software. If you don't have it:
-- **Install Homebrew:** `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
-
-### Plugin Installation (Choose Method)
-
-**Option A: GitHub Installation (Production - Recommended)**
-```bash
-# Install directly from GitHub
-/plugin install https://github.com/ahundt/clautorun.git
-```
-
-**Option B: Local Development Installation (Testing Changes)**
-```bash
-# Navigate to clautorun directory
-cd /path/to/clautorun
-
-# Add local development marketplace
-/plugin marketplace add ./clautorun
-
-# Install local development version
-/plugin install clautorun@clautorun-dev
-```
-
-**Which to Choose:**
-- **Option A**: For stable production use with released versions
-- **Option B**: For testing changes before pushing to GitHub
-
-### Verify Installation
+**[byobu](https://www.byobu.org/)** is a user-friendly terminal multiplexer that wraps tmux with helpful defaults and keyboard shortcuts.
 
 ```bash
-# Check plugin is installed
-/plugin
+# macOS
+brew install byobu
 
-# Test functionality
-/clautorun /afst
+# Ubuntu/Debian
+sudo apt install byobu
 ```
 
-**Expected output:**
-```
-AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.
-```
+**Why byobu?**
+- Simpler than raw tmux - designed for humans
+- **F3/F4** or **Cmd+Left/Right** to switch between tabs (windows)
+- Helpful status bar and keyboard shortcut reminders (press F1 for help)
+- Session persistence across disconnections
+- Multiple windows/panes in one terminal
+- Remote session access via SSH/Mosh
 
-### Start Your First Extended Session
+**Resources:**
+- [byobu.org](https://www.byobu.org/) - Official site and documentation
+- [byobu Quick Start](https://www.byobu.org/documentation) - Getting started guide
+- [Ubuntu byobu Guide](https://help.ubuntu.com/community/Byobu) - Community documentation
+
+### Start a Crash-Safe Session
 
 ```bash
-# Create a byobu session for crash-safe AI work
+# Create byobu session
 byobu-new-session clautorun-work
 
-# Start autonomous work (runs for hours instead of minutes)
-/clautorun /autorun Build a complete web application with authentication
+# Start autonomous work
+/cr:go Build a complete web application with authentication
 
-# Detach with Ctrl+D, reattach anytime with: byobu-attach clautorun-work
+# Detach: Ctrl+A, D (or close terminal)
+# Reattach anytime: byobu-attach clautorun-work
+```
+
+### Remote Access with Mosh (Optional)
+
+For better mobile/unreliable connections, use [Mosh](https://mosh.org/) instead of SSH:
+```bash
+# Install: brew install mosh (macOS) or sudo apt install mosh (Linux)
+mosh user@server    # Then: byobu-attach clautorun-work
 ```
 
 ## Development
@@ -605,6 +574,10 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 | `/cr:gp` | `/cr:proc` | `/autoproc` | Procedural autonomous workflow |
 | `/cr:x` | `/cr:stop` | `/autostop` | Graceful stop |
 | `/cr:sos` | `/cr:estop` | `/estop` | Emergency stop |
+| `/cr:pn` | `/cr:plannew` | - | Create new structured plan |
+| `/cr:pr` | `/cr:planrefine` | - | Refine and improve existing plan |
+| `/cr:pu` | `/cr:planupdate` | - | Update plan with new information |
+| `/cr:pp` | `/cr:planprocess` | - | Execute plan with development process |
 | `/cr:tm` | `/cr:tmux` | - | Tmux session management |
 | `/cr:tt` | `/cr:ttest` | - | Tmux test workflow |
 | `/cr:tabs` | - | - | Discover and manage Claude sessions across tmux |
@@ -685,7 +658,7 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 
 - **/cr:go** or **/cr:run** \<prompt> - Start autonomous workflow with extended work sessions
   - Reduces manual "continue" prompts significantly
-  - Enables two-stage verification to prevent premature exits
+  - Enables three-stage verification to prevent premature exits
   - Takes task description as argument (required)
 
 - **/cr:gp** or **/cr:proc** \<prompt> - Procedural autonomous workflow
@@ -699,6 +672,33 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 - **/cr:sos** or **/cr:estop** - Emergency stop - immediately halt any runaway process
   - Stops all processes immediately without waiting
   - Use for critical situations or when something goes wrong
+
+### Plan Management Commands
+
+Structured planning for complex development tasks.
+
+| Short | Long | Description |
+|-------|------|-------------|
+| `/cr:pn` | `/cr:plannew` | Create a new structured plan |
+| `/cr:pr` | `/cr:planrefine` | Refine and improve an existing plan |
+| `/cr:pu` | `/cr:planupdate` | Update plan with new information |
+| `/cr:pp` | `/cr:planprocess` | Execute plan with development process |
+
+- **/cr:pn** or **/cr:plannew** - Create a new development plan
+  - Generates structured plan with checkboxes and dependencies
+  - Includes task breakdown and verification criteria
+
+- **/cr:pr** or **/cr:planrefine** - Refine an existing plan
+  - Critically evaluates and improves plan quality
+  - Identifies gaps and adds missing steps
+
+- **/cr:pu** or **/cr:planupdate** - Update plan with new context
+  - Incorporates new requirements or changes
+  - Maintains plan consistency
+
+- **/cr:pp** or **/cr:planprocess** - Execute development process
+  - Follows the plan with Sequential Improvement Methodology
+  - Auto-triggers autorun when plan is approved ("PLAN ACCEPTED" marker)
 
 ### Tmux Automation Commands
 
@@ -1717,23 +1717,4 @@ $ARGUMENTS - analyze and resolve technical issues using systematic debugging met
 2. Use systematic debugging approach
 3. Document findings and solutions
 ```
-
-
-
-
-## ⚙️ How It Works
-
-### Autorun: Reduce Interventions
-1. AI claims task complete → System re-injects original task for verification
-2. AI completes verification → System allows final exit
-3. Result: Extended work sessions with fewer interruptions
-
-### AutoFile: Prevent File Chaos
-1. **Level 3 (`/afa` allow-all)**: Create files freely (new projects)
-2. **Level 2 (`/afj` justify-create)**: Must explain why each file is needed
-3. **Level 1 (`/afs` strict-search)**: Only modify existing files (refactoring)
-
-
-
-
 
