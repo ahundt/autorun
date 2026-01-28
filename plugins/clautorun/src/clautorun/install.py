@@ -113,10 +113,12 @@ class ClautorunInstaller:
         self.plugin_name = "clautorun"
         self.plugin_install_dir = self.plugins_dir / self.plugin_name
 
-        # Get the location of the clautorun project root
+        # Get the location of the clautorun plugin directory
+        # install.py is at: ~/.claude/clautorun/plugins/clautorun/src/clautorun/install.py
+        # So parent.parent.parent = ~/.claude/clautorun/plugins/clautorun/ (plugin dir)
         try:
             import clautorun
-            # If installed as package, find the project root
+            # If installed as package, find the plugin directory
             self.package_dir = Path(clautorun.__file__).parent.parent.parent
         except ImportError:
             # Fallback for development/relative imports
@@ -124,6 +126,13 @@ class ClautorunInstaller:
 
         self.plugin_source_dir = self.package_dir
         self.plugin_manifest = self.package_dir / ".claude-plugin" / "plugin.json"
+
+        # Marketplace root is the repository root containing plugins/ subdirectory
+        # ~/.claude/clautorun/plugins/clautorun/ → ~/.claude/clautorun/
+        self.marketplace_root = self.package_dir.parent.parent
+
+        # Cache directory where Claude Code actually installs plugins
+        self.cache_dir = self.plugins_dir / "cache" / "clautorun" / self.plugin_name
 
     def detect_claude_code_installation(self) -> bool:
         """Detect if Claude Code is installed"""
@@ -344,7 +353,7 @@ class ClautorunInstaller:
             return False
 
     def try_claude_plugin_install(self) -> bool:
-        """Try to install using Claude Code's plugin system first"""
+        """Try to install/update using Claude Code's plugin system first"""
         try:
             # Check if we're in a Claude Code session by trying to run claude command
             result = subprocess.run(
@@ -356,9 +365,6 @@ class ClautorunInstaller:
 
             if result.returncode == 0:
                 print("🤖 Claude Code detected, attempting plugin installation...")
-
-                # Try local marketplace method first since it works more reliably
-                print("🔄 Adding local marketplace...")
 
                 # Check if marketplace already exists
                 list_result = subprocess.run(
@@ -373,58 +379,63 @@ class ClautorunInstaller:
                     print("✅ clautorun marketplace already configured")
                     marketplace_available = True
                 else:
-                    # Add local marketplace
+                    # Add local marketplace from REPO ROOT (not plugin directory)
+                    # Marketplace root: ~/.claude/clautorun (contains plugins/ subdirectory)
+                    print(f"🔄 Adding local marketplace from: {self.marketplace_root}")
                     marketplace_result = subprocess.run(
-                        ["claude", "plugin", "marketplace", "add", str(self.plugin_source_dir)],
+                        ["claude", "plugin", "marketplace", "add", str(self.marketplace_root)],
                         capture_output=True,
                         text=True,
                         timeout=15
                     )
 
-                    # Marketplace is available if it was just added successfully
-                    marketplace_available = marketplace_result.returncode == 0
+                    if marketplace_result.returncode == 0:
+                        print("✅ Local marketplace added successfully")
+                        marketplace_available = True
+                    else:
+                        print(f"⚠️  Failed to add marketplace: {marketplace_result.stderr}")
 
-                # Try to install from marketplace if it's available
+                # Try to update first (if already installed), then install
                 if marketplace_available:
-                    # Install from local marketplace - try both formats
-                    local_install_result = subprocess.run(
+                    # First try update (faster, preserves settings)
+                    print("🔄 Attempting plugin update...")
+                    update_result = subprocess.run(
+                        ["claude", "plugin", "update", "clautorun@clautorun"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+
+                    if update_result.returncode == 0:
+                        print("✅ Successfully updated plugin from local marketplace")
+                        return True
+                    else:
+                        print(f"ℹ️  Update not available (may not be installed yet): {update_result.stderr.strip()}")
+
+                    # Try fresh install
+                    print("🔄 Attempting fresh plugin install...")
+                    install_result = subprocess.run(
                         ["claude", "plugin", "install", "clautorun@clautorun"],
                         capture_output=True,
                         text=True,
-                        timeout=15
+                        timeout=30
                     )
 
-                    if local_install_result.returncode == 0:
+                    if install_result.returncode == 0:
                         print("✅ Successfully installed via local marketplace")
                         return True
                     else:
-                        print(f"⚠️  Local marketplace installation (named) failed: {local_install_result.stderr}")
+                        print(f"⚠️  Local marketplace installation failed: {install_result.stderr}")
 
-                        # Try with dev-marketplace naming
-                        dev_install_result = subprocess.run(
-                            ["claude", "plugin", "install", "clautorun@dev-marketplace"],
+                        # List available marketplaces for debugging
+                        list_result = subprocess.run(
+                            ["claude", "plugin", "marketplace", "list"],
                             capture_output=True,
                             text=True,
-                            timeout=15
+                            timeout=10
                         )
-
-                        if dev_install_result.returncode == 0:
-                            print("✅ Successfully installed via dev-marketplace")
-                            return True
-                        else:
-                            print(f"⚠️  Dev-marketplace installation failed: {dev_install_result.stderr}")
-
-                            # List available marketplaces for debugging
-                            list_result = subprocess.run(
-                                ["claude", "plugin", "marketplace", "list"],
-                                capture_output=True,
-                                text=True,
-                                timeout=10
-                            )
-                            if list_result.returncode == 0:
-                                print(f"📋 Available marketplaces: {list_result.stdout}")
-                            else:
-                                print("⚠️  Could not list marketplaces")
+                        if list_result.returncode == 0:
+                            print(f"📋 Available marketplaces:\n{list_result.stdout}")
 
                 # If local marketplace fails, try GitHub installation as fallback
                 print("🔄 Trying GitHub installation as fallback...")
@@ -452,49 +463,138 @@ class ClautorunInstaller:
         if not self.validate_plugin_structure():
             return False
 
-        # First, try Claude Code's plugin system
+        # First, try Claude Code's plugin system (preferred)
         if self.try_claude_plugin_install():
             return True
 
-        print("🔄 Falling back to manual installation...")
+        print("🔄 Falling back to manual cache installation...")
 
-        if not self.create_directories():
-            return False
+        # Manual fallback: install directly to the cache directory
+        # This ensures Claude Code will find and use the plugin
+        return self.install_to_cache()
 
-        # Check if we need to update existing installation
-        if self.plugin_install_dir.exists():
-            if self.is_plugin_installed():
-                print("✅ Plugin is already properly installed")
-                return True
-            else:
-                self.backup_existing_plugin()
-                shutil.rmtree(self.plugin_install_dir)
-
+    def install_to_cache(self) -> bool:
+        """Install plugin directly to Claude Code's cache directory"""
         try:
-            # Copy entire plugin directory
-            shutil.copytree(self.plugin_source_dir, self.plugin_install_dir,
-                          ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc', '.coverage'))
+            # Read version from plugin.json
+            version = "0.6.0"  # Default
+            try:
+                with open(self.plugin_manifest) as f:
+                    data = json.load(f)
+                    version = data.get("version", version)
+            except (json.JSONDecodeError, OSError):
+                pass
 
-            print(f"✅ Manually installed plugin to: {self.plugin_install_dir}")
+            # Target: ~/.claude/plugins/cache/clautorun/clautorun/<version>/
+            cache_version_dir = self.cache_dir / version
+
+            # Create parent directories
+            cache_version_dir.parent.mkdir(parents=True, exist_ok=True)
+
+            # Backup existing cache if present
+            if cache_version_dir.exists():
+                backup_path = cache_version_dir.with_suffix('.backup')
+                if backup_path.exists():
+                    shutil.rmtree(backup_path)
+                print(f"📦 Backing up existing cache to: {backup_path}")
+                shutil.move(str(cache_version_dir), str(backup_path))
+
+            # Copy plugin to cache
+            shutil.copytree(
+                self.plugin_source_dir,
+                cache_version_dir,
+                ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc', '.coverage', '.venv')
+            )
+
+            print(f"✅ Installed plugin to cache: {cache_version_dir}")
+
+            # Update installed_plugins.json to register the plugin
+            if self.update_installed_plugins_json(cache_version_dir, version):
+                print("✅ Registered plugin in installed_plugins.json")
+            else:
+                print("⚠️  Could not update installed_plugins.json (plugin may not be recognized)")
+
             return True
 
         except (OSError, PermissionError) as e:
-            print(f"❌ Failed to install plugin: {e}")
+            print(f"❌ Failed to install to cache: {e}")
+            return False
+
+    def update_installed_plugins_json(self, install_path: Path, version: str) -> bool:
+        """Update installed_plugins.json to register the manually installed plugin"""
+        try:
+            installed_plugins_file = self.plugins_dir / "installed_plugins.json"
+
+            # Load existing or create new
+            if installed_plugins_file.exists():
+                with open(installed_plugins_file) as f:
+                    data = json.load(f)
+            else:
+                data = {"version": 2, "plugins": {}}
+
+            # Get current timestamp
+            from datetime import datetime
+            timestamp = datetime.utcnow().isoformat() + "Z"
+
+            # Add/update clautorun entry
+            plugin_key = "clautorun@clautorun"
+            data["plugins"][plugin_key] = [{
+                "scope": "user",
+                "installPath": str(install_path),
+                "version": version,
+                "installedAt": timestamp,
+                "lastUpdated": timestamp,
+                "gitCommitSha": "manual-install"
+            }]
+
+            # Write back
+            with open(installed_plugins_file, 'w') as f:
+                json.dump(data, f, indent=2)
+
+            return True
+
+        except (json.JSONDecodeError, OSError, PermissionError) as e:
+            print(f"⚠️  Could not update installed_plugins.json: {e}")
             return False
 
     def remove_plugin(self) -> bool:
-        """Remove the plugin directory"""
-        if not self.plugin_install_dir.exists():
-            print("ℹ️  Plugin is not installed")
-            return True
+        """Remove the plugin from both cache and legacy manual install locations"""
+        removed_any = False
 
-        try:
-            shutil.rmtree(self.plugin_install_dir)
-            print("✅ Removed plugin directory")
-            return True
-        except (OSError, PermissionError) as e:
-            print(f"❌ Failed to remove plugin: {e}")
-            return False
+        # Remove from cache (current location)
+        if self.cache_dir.exists():
+            try:
+                shutil.rmtree(self.cache_dir)
+                print(f"✅ Removed plugin from cache: {self.cache_dir}")
+                removed_any = True
+            except (OSError, PermissionError) as e:
+                print(f"❌ Failed to remove from cache: {e}")
+
+        # Remove legacy manual install location if it exists
+        if self.plugin_install_dir.exists():
+            try:
+                shutil.rmtree(self.plugin_install_dir)
+                print(f"✅ Removed legacy plugin directory: {self.plugin_install_dir}")
+                removed_any = True
+            except (OSError, PermissionError) as e:
+                print(f"❌ Failed to remove legacy directory: {e}")
+
+        if not removed_any:
+            print("ℹ️  Plugin is not installed in any location")
+
+        return True
+
+    def sync_to_cache(self) -> bool:
+        """
+        Sync source to cache without going through plugin system.
+
+        This is useful for development when you want to quickly test changes
+        without restarting Claude Code or running full plugin commands.
+
+        Usage: uv run clautorun sync
+        """
+        print("🔄 Syncing source to cache...")
+        return self.install_to_cache()
 
     def verify_installation(self) -> bool:
         """Verify that the plugin is properly installed (marketplace or manual)"""
@@ -815,13 +915,19 @@ Examples:
   clautorun-install install --force  # Force reinstall both
   clautorun-install uninstall        # Remove plugin and UV tools
   clautorun-install check            # Check installation status
+  clautorun-install sync             # Sync source to cache (dev workflow)
 
 Installation includes:
-  1. Claude Code plugin (via marketplace)
-     - Provides: /afs, /afa, /afj, /afst, /autorun, /autoproc commands
+  1. Claude Code plugin (via marketplace or cache fallback)
+     - Provides: /afs, /afa, /afj, /afst, /autorun, /autoproc, /cr:* commands
   2. UV global tools
      - clautorun-interactive: Interactive command processor
      - clautorun-install: This installer tool
+
+Development workflow:
+  1. Edit source files in ~/.claude/clautorun/plugins/clautorun/
+  2. Run: clautorun-install sync    # Sync to cache
+  3. Restart Claude Code to pick up changes
 
   With UV environment:
   source .venv/bin/activate
@@ -833,7 +939,7 @@ Installation includes:
         "action",
         nargs="?",
         default="install",
-        choices=["install", "uninstall", "check", "status"],
+        choices=["install", "uninstall", "check", "status", "sync"],
         help="Action to perform (default: install)"
     )
 
@@ -855,6 +961,8 @@ Installation includes:
         success = installer.check()
     elif args.action == "status":
         success = installer.check()
+    elif args.action == "sync":
+        success = installer.sync_to_cache()
     else:
         parser.print_help()
         success = False

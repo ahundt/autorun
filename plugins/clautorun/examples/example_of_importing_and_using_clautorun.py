@@ -8,7 +8,7 @@ from the clautorun package.
 
 Instead of:
   from clautorun.main import CONFIG, stop_handler
-  from clautorun.agent_sdk_hook import HOOK_HANDLERS
+  from clautorun.main import HANDLERS as HOOK_HANDLERS
 
 You can now simply use:
   from clautorun import CONFIG, stop_handler, hook_handlers

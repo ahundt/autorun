@@ -19,7 +19,7 @@ clautorun_path = str(Path(__file__).parent.parent / "src" / "clautorun")
 if clautorun_path not in sys.path:
     sys.path.insert(0, clautorun_path)
 
-import clautorun.claude_code_plugin as plugin_module
+import clautorun.main as plugin_module
 
 
 class TestPluginIntegration:

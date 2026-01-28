@@ -44,7 +44,7 @@ claude-code = [
 ]
 
 [project.scripts]
-clautorun = "clautorun.claude_code_plugin:main"
+clautorun = "clautorun.main:main"
 clautorun-interactive = "clautorun.main:main"
 clautorun-install = "clautorun.install:main"
 
@@ -96,9 +96,6 @@ omit = [
     "src/clautorun/python_check.py",
     "src/clautorun/diagnostics.py",
     "src/clautorun/__main__.py",
-    # Plugin entry points (require Claude Code runtime)
-    "src/clautorun/agent_sdk_hook.py",
-    "src/clautorun/claude_code_plugin.py",
     # External system integration (requires tmux)
     "src/clautorun/tmux_injector.py",
     "src/clautorun/tmux_utils.py",

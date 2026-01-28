@@ -96,7 +96,7 @@ def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module
     print("   # Verify plugin is working:")
     print("   uv run clautorun check")
     print("   # Test plugin functionality:")
-    print("   echo '{\"prompt\": \"/afst\", \"session_id\": \"test\"}' | uv run python src/clautorun/claude_code_plugin.py")
+    print("   echo '{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"/afst\", \"session_id\": \"test\"}' | uv run python src/clautorun/main.py")
     print()
     print("🔧 ALTERNATIVE SOLUTIONS:")
     print("5. INSTALL FROM GITHUB (production):")

@@ -72,9 +72,7 @@ Before finishing, verify:
 - [ ] Goals unchanged (or change discussed with user)
 - [ ] CLAUDE.md philosophy preserved (TDD, DRY, KISS, etc.)
 
-## 5. CLAUDE.md Philosophy
-
-Every plan element must address:
+## 5. Principles - Every plan element must address:
 
 - [ ] TDD: Tests written first? Test location specified?
 - [ ] DRY: No code duplication? Reusing existing utilities?

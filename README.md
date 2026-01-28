@@ -264,10 +264,10 @@ uv run python src/clautorun/main.py
 # Then try: /afs, /afa, /afj, /afst, quit
 
 # Test hook integration
-echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/clautorun/agent_sdk_hook.py
+echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/clautorun/main.py
 
-# Test plugin mode
-echo '{"prompt": "/afa"}' | uv run python src/clautorun/claude_code_plugin.py
+# Test plugin mode (same as hook integration now)
+echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/afa", "session_id": "test"}' | uv run python src/clautorun/main.py
 ```
 
 ## Why Byobu + tmux Integration
@@ -891,7 +891,7 @@ JSON (JavaScript Object Notation) is a lightweight data format that's easy for h
 **Setup:**
 ```bash
 # Copy to hooks directory
-cp src/clautorun/agent_sdk_hook.py ~/.claude/hooks/clautorun_hook.py
+cp src/clautorun/main.py ~/.claude/hooks/clautorun_hook.py
 ```
 
 **Update settings.json:**
@@ -1035,11 +1035,9 @@ clautorun/
 ├── src/
 │   └── clautorun/
 │       ├── __init__.py          # Package exports
-│       ├── main.py              # Core command processing logic
-│       ├── agent_sdk_hook.py    # Hook integration
+│       ├── main.py              # Hook handler and interactive CLI (source of truth)
 │       ├── mcp_server.py        # MCP server for external apps
 │       ├── install.py           # Plugin installation management
-│       └── claude_code_plugin.py # Legacy plugin (moved to commands/)
 ├── tests/
 │   ├── test_autorun_compatibility.py  # Command compatibility tests
 │   ├── test_interactive.py           # Interactive mode tests
@@ -1059,7 +1057,7 @@ clautorun/
 **Plugin Components:**
 - **Agents** (`agents/` directory): Specialized automation agents for tmux and CLI workflows
 - **Commands** (`commands/` directory): Claude Code slash commands using markdown files and executable scripts
-- **Hooks** (`agent_sdk_hook.py`): Event handlers for PreToolUse and UserPromptSubmit events
+- **Hooks** (`main.py`): Event handlers for UserPromptSubmit, PreToolUse, Stop, and SubagentStop events
 - **MCP Servers** (`mcp_server.py`): Model Context Protocol integration for external applications
 
 **Plugin Manifest** (`.claude-plugin/plugin.json`):
@@ -1270,7 +1268,7 @@ clautorun-interactive
 **Entry Points** (from `pyproject.toml`):
 ```toml
 [project.scripts]
-clautorun = "clautorun.claude_code_plugin:main"
+clautorun = "clautorun.main:main"
 clautorun-interactive = "clautorun.main:main"
 clautorun-install = "clautorun.install:main"
 ```

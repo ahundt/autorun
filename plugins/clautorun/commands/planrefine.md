@@ -113,9 +113,7 @@ The goal is to work towards your overall goal with sufficiently detailed and ver
 - Consider parallel evaluation of solutions where appropriate
 - Establish clear quality gates to prevent perfectionism paralysis
 
-## 6. CLAUDE.md Philosophy
-
-Every plan element must address:
+## 6. Principles - Every plan element must address:
 
 - [ ] TDD: Tests written first? Test location specified?
 - [ ] DRY: No code duplication? Reusing existing utilities?
@@ -131,7 +129,7 @@ Every plan element must address:
 All outputs must include:
 
 - Absolute file paths: `/path/to/file.ts`
-- Line references: `file.ts:42-56`
+- Line range references: `file.ts:42-56`
 - Exact function/class names: `handleRequest()` in `handler.ts:15`
 - Specific error messages with codes: `"socket hang up (ECONNRESET)"`
 - Testable verification commands

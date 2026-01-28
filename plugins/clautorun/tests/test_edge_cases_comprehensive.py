@@ -21,7 +21,7 @@ def test_plugin_edge_cases():
     """Test edge cases for claude_code_plugin.py"""
     print("🔍 Testing Plugin Edge Cases...")
 
-    from clautorun.claude_code_plugin import main
+    from clautorun.main import main
 
     test_cases = [
         # Empty input

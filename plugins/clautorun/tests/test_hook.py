@@ -14,7 +14,8 @@ from io import StringIO
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.agent_sdk_hook import main, build_hook_response
+from clautorun.main import main
+from clautorun import build_hook_response
 
 
 class TestHookIntegration:

@@ -144,22 +144,22 @@ def test_main_py_ai_monitor_workflow():
     print("✅ main.py implements complete AI monitor workflow")
 
 def test_agent_sdk_hook_ai_monitor_workflow():
-    """Test that agent_sdk_hook.py properly delegates to main.py AI monitor workflow"""
+    """Test that main.py handlers implement AI monitor workflow"""
     try:
-        from clautorun.agent_sdk_hook import agent_sdk_user_prompt_submit, agent_sdk_stop_event, agent_sdk_pre_tool_use
+        from clautorun.main import claude_code_handler, stop_handler, pretooluse_handler
         from clautorun import CONFIG
     except ImportError as e:
-        print(f"❌ Could not import agent_sdk_hook: {e}")
+        print(f"❌ Could not import main.py handlers: {e}")
         return False
 
-    print("Testing agent_sdk_hook.py AI monitor workflow...")
+    print("Testing main.py AI monitor workflow...")
 
     # Test that agent_sdk_hook delegates to main.py for Stage 1 activation
     ctx = Mock()
     ctx.prompt = "/autorun build a website"
     ctx.session_id = "test_session_hook"
 
-    response = agent_sdk_user_prompt_submit(ctx)
+    response = claude_code_handler(ctx)
 
     assert not response["continue"], "Should handle /autorun command locally"
     # Check both possible response keys (response for hook, systemMessage for direct calls)
@@ -182,7 +182,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
-        response = agent_sdk_stop_event(ctx)
+        response = stop_handler(ctx)
 
         assert response["continue"], "Should continue execution"
         # Implementation uses three-stage completion system, not "AUTORUN TASK VERIFICATION"
@@ -204,7 +204,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
     mock_session_manager.__exit__ = MagicMock(return_value=None)
 
     with patch('clautorun.main.session_state', return_value=mock_session_manager):
-        response = agent_sdk_pre_tool_use(ctx)
+        response = pretooluse_handler(ctx)
 
         assert response["continue"], "Should allow tool execution but deny file creation"
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny", "Should deny file creation in SEARCH mode"
@@ -219,7 +219,7 @@ def test_hook_integration_completeness():
     print("Testing hook integration completeness...")
 
     try:
-        from clautorun.agent_sdk_hook import HOOK_HANDLERS
+        from clautorun.main import HANDLERS as HOOK_HANDLERS
         from clautorun import CONFIG
     except ImportError as e:
         print(f"❌ Could not import required modules: {e}")
@@ -232,7 +232,7 @@ def test_hook_integration_completeness():
     print("✅ All required hook events are handled")
 
     # Verify that the hook handlers are not just placeholders
-    from clautorun.agent_sdk_hook import agent_sdk_stop_event, agent_sdk_pre_tool_use
+    from clautorun.agent_sdk_hook import stop_handler, pretooluse_handler
 
     # Mock context
     ctx = Mock()
@@ -240,14 +240,14 @@ def test_hook_integration_completeness():
     ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"]]
 
     # Test stop handler does something meaningful
-    response = agent_sdk_stop_event(ctx)
+    response = stop_handler(ctx)
     assert isinstance(response, dict), "Stop handler should return a dict"
     assert "continue" in response, "Stop handler should return continue key"
 
     # Test PreToolUse handler does something meaningful
     ctx.tool_name = "Write"
     ctx.tool_input = {"file_path": "test.py"}
-    response = agent_sdk_pre_tool_use(ctx)
+    response = pretooluse_handler(ctx)
     assert isinstance(response, dict), "PreToolUse handler should return a dict"
     assert "hookSpecificOutput" in response, "PreToolUse handler should return hookSpecificOutput"
 

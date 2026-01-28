@@ -13,7 +13,7 @@ def test_session_creation_edge_cases():
     """Test edge cases in session creation"""
     print("🔍 Testing Session Creation Edge Cases...")
 
-    from clautorun.claude_code_plugin import session_state
+    from clautorun import session_state
 
     edge_cases = [
         ("", "Empty session ID"),
@@ -51,7 +51,7 @@ def test_session_state_persistence_edge_cases():
     """Test session state persistence edge cases"""
     print("\n🔍 Testing Session State Persistence Edge Cases...")
 
-    from clautorun.claude_code_plugin import session_state
+    from clautorun import session_state
 
     # Test session isolation
     session_ids = ["session1", "session2", "", " ", "session\nwith\nnewlines"]
@@ -117,7 +117,7 @@ def test_session_termination_edge_cases():
     """Test session termination edge cases"""
     print("\n🔍 Testing Session Termination Edge Cases...")
 
-    from clautorun.claude_code_plugin import session_state
+    from clautorun import session_state
 
     # Test normal session termination
     try:
@@ -155,7 +155,7 @@ def test_memory_leak_edge_cases():
     """Test for memory leaks in session management"""
     print("\n🔍 Testing Memory Leak Edge Cases...")
 
-    from clautorun.claude_code_plugin import session_state
+    from clautorun import session_state
 
     # Test rapid session creation and destruction
     try:
@@ -180,7 +180,7 @@ def test_session_security_edge_cases():
     """Test security-related session edge cases"""
     print("\n🔍 Testing Session Security Edge Cases...")
 
-    from clautorun.claude_code_plugin import session_state
+    from clautorun import session_state
 
     # Test session ID injection attempts
     malicious_ids = [
@@ -209,7 +209,7 @@ def test_session_recovery_edge_cases():
     """Test session recovery scenarios"""
     print("\n🔍 Testing Session Recovery Edge Cases...")
 
-    from clautorun.claude_code_plugin import session_state
+    from clautorun import session_state
 
     # Test session data corruption scenarios
     try:

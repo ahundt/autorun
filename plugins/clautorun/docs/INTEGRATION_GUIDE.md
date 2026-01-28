@@ -32,7 +32,7 @@ AGENT_MODE=SDK_ONLY python -m clautorun
 **Setup**:
 ```bash
 # Create symlink to commands directory
-ln -sf /path/to/clautorun/claude_code_plugin.py /Users/athundt/.claude/hooks/
+ln -sf /path/to/clautorun/main.py /Users/athundt/.claude/hooks/
 
 # Use as slash command
 /agent-sdk-interceptor sdk-only
@@ -88,9 +88,9 @@ python mcp_server.py --server
 **Use Case**: Drop-in replacement for existing autorun system
 **Setup**:
 ```bash
-# Replace autorun5.py with agent_sdk_hook.py
+# Replace autorun5.py with main.py
 cp autorun5.py autorun5.py.backup
-cp agent_sdk_hook.py /Users/athundt/.claude/hooks/autorun5.py
+cp main.py /Users/athundt/.claude/hooks/autorun5.py
 ```
 
 **Pros**:

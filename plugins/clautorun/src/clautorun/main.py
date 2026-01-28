@@ -18,16 +18,18 @@
 
 PRIMARY HOOK HANDLER for Claude Code plugin system.
 - Called directly by hooks.json via: python3 ${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py
-- Contains complete three-stage verification logic (1827 lines)
-- Handles: UserPromptSubmit, PreToolUse, Stop, SubagentStop events
-- Entry point: clautorun-interactive (UV command)
-- Mode: HOOK_INTEGRATION mode (default) for Claude Code hooks
+- Contains complete three-stage verification logic with verification_engine and ai_monitor
+- Handles all hook events: UserPromptSubmit, PreToolUse, Stop, SubagentStop
+- Entry points: clautorun and clautorun-interactive (UV commands)
+- Modes: HOOK_INTEGRATION (default) and INTERACTIVE (Agent SDK client)
 
-DO NOT confuse with:
-- claude_code_plugin.py: Legacy CLI command tool (duplicates logic for backward compatibility)
-- agent_sdk_hook.py: Alternative delegation pattern (thin wrapper)
+Features:
+- RequirementVerificationEngine for evidence-based task completion verification
+- AI Monitor for session lifecycle management and crash detection
+- Agent SDK Client (ClaudeSDKClient) for bidirectional communication
+- Enhanced transcript analysis with requirement extraction
 
-This file is the canonical implementation. All hook logic updates go here first.
+This is the canonical implementation. All hook logic resides here.
 """
 import os
 import json
