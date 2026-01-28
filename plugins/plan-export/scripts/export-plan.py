@@ -467,11 +467,12 @@ def main():
             print(json.dumps(result))
             return
 
-        # Conditionally show export message to Claude based on notify_claude setting
+        # Conditionally show export message to Claude AND user via additionalContext
         if config.get("notify_claude", True):
             result = {
                 "continue": True,
-                "systemMessage": export_result["message"]
+                "systemMessage": export_result["message"],
+                "additionalContext": f"\n\n📋 {export_result['message']}\n"
             }
         else:
             result = {

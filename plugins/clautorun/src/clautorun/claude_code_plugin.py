@@ -20,6 +20,14 @@ import os
 import time
 from pathlib import Path
 
+# CRITICAL: Add plugin source to Python path for imports when called as hook
+# Claude Code sets CLAUDE_PLUGIN_ROOT before executing hook commands
+PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+if PLUGIN_ROOT:
+    src_dir = os.path.join(PLUGIN_ROOT, 'src')
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
 # Import robust session manager with centralized error handling
 try:
     from .session_manager import session_state, shared_session_state, SessionStateError, SessionTimeoutError
