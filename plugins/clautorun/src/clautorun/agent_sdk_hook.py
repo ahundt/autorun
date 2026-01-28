@@ -13,7 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Hook integration that fully implements autorun5.py AI monitor functionality using clautorun package"""
+"""Clautorun Hook Delegation Pattern - Alternative Architecture
+
+ALTERNATIVE HOOK PATTERN using delegation to main.py handlers.
+- Thin wrapper (83 lines) that delegates all hook logic to main.py
+- Demonstrates clean delegation pattern vs inline duplication
+- NOT currently used by hooks.json (main.py called directly instead)
+
+Delegation Pattern:
+- agent_sdk_user_prompt_submit() → claude_code_handler() [main.py]
+- agent_sdk_pre_tool_use() → pretooluse_handler() [main.py]
+- agent_sdk_stop_event() → stop_handler() [main.py]
+
+This file shows best practice for creating thin hook wrappers.
+Could replace claude_code_plugin.py if CLI tool needs were separated.
+
+Current hook configuration: hooks.json calls main.py directly (simpler).
+"""
 import json
 import sys
 

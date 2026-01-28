@@ -14,7 +14,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Ultra-compact Agent SDK - Enhanced autorun command interceptor with efficient dispatch"""
+"""Clautorun Hook Handler - Source of Truth
+
+PRIMARY HOOK HANDLER for Claude Code plugin system.
+- Called directly by hooks.json via: python3 ${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py
+- Contains complete three-stage verification logic (1827 lines)
+- Handles: UserPromptSubmit, PreToolUse, Stop, SubagentStop events
+- Entry point: clautorun-interactive (UV command)
+- Mode: HOOK_INTEGRATION mode (default) for Claude Code hooks
+
+DO NOT confuse with:
+- claude_code_plugin.py: Legacy CLI command tool (duplicates logic for backward compatibility)
+- agent_sdk_hook.py: Alternative delegation pattern (thin wrapper)
+
+This file is the canonical implementation. All hook logic updates go here first.
+"""
 import os
 import json
 import shelve
@@ -27,6 +41,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict
 import re as regex_module
+
+# CRITICAL: Add plugin source to Python path for imports when called as hook
+# Claude Code sets CLAUDE_PLUGIN_ROOT before executing hook commands
+PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+if PLUGIN_ROOT:
+    src_dir = os.path.join(PLUGIN_ROOT, 'src')
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
 
 # Import Agent SDK
 try:
@@ -366,6 +388,9 @@ def get_global_blocks() -> List[Dict]:
     Returns:
         List of blocked pattern dictionaries
     """
+    # Ensure defaults are initialized on first access
+    initialize_default_blocks()
+
     if not GLOBAL_CONFIG_FILE.exists():
         return []
 
@@ -375,6 +400,48 @@ def get_global_blocks() -> List[Dict]:
             return config.get("global_blocked_patterns", [])
     except (json.JSONDecodeError, IOError):
         return []
+
+
+def initialize_default_blocks() -> bool:
+    """
+    Initialize default blocked patterns from DEFAULT_INTEGRATIONS on first run.
+
+    Returns:
+        True if initialized, False if already initialized
+    """
+    from .config import DEFAULT_INTEGRATIONS
+
+    GLOBAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check if already initialized
+    if GLOBAL_CONFIG_FILE.exists():
+        try:
+            with open(GLOBAL_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                if config.get("initialized_defaults", False):
+                    return False
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Initialize with defaults
+    config = {
+        "version": "0.6.0",
+        "initialized_defaults": True,
+        "global_blocked_patterns": []
+    }
+
+    for pattern, integration in DEFAULT_INTEGRATIONS.items():
+        config["global_blocked_patterns"].append({
+            "pattern": pattern,
+            "suggestion": integration.get("suggestion", f"Pattern '{pattern}' is blocked"),
+            "severity": integration.get("severity", "high"),
+            "added_at": datetime.now().isoformat()
+        })
+
+    with open(GLOBAL_CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+
+    return True
 
 
 def add_global_block(pattern: str, suggestion: Optional[str] = None) -> bool:

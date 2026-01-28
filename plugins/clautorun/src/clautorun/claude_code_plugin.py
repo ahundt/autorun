@@ -13,20 +13,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Claude Code plugin for Agent SDK command interception"""
+"""Clautorun CLI Command Tool - Legacy Entry Point
+
+CLI COMMAND TOOL for UV-installed 'clautorun' command.
+- Entry point: UV 'clautorun' command (pyproject.toml)
+- Contains duplicated hook handler logic for standalone CLI usage
+- Called via: ~/.local/bin/clautorun (UV-installed command)
+
+DO NOT use this file for Claude Code hooks.
+USE main.py instead - it is the source of truth (1827 lines vs 488 here).
+
+This file exists for backward compatibility with existing CLI workflows.
+Hook handlers here (lines 248-437) duplicate main.py and are NOT maintained.
+
+For hooks, see: hooks.json should call main.py, not this file.
+"""
 import json
 import sys
 import os
 import time
 from pathlib import Path
-
-# CRITICAL: Add plugin source to Python path for imports when called as hook
-# Claude Code sets CLAUDE_PLUGIN_ROOT before executing hook commands
-PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
-if PLUGIN_ROOT:
-    src_dir = os.path.join(PLUGIN_ROOT, 'src')
-    if src_dir not in sys.path:
-        sys.path.insert(0, src_dir)
 
 # Import robust session manager with centralized error handling
 try:

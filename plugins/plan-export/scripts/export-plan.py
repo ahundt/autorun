@@ -445,7 +445,8 @@ def main():
     if not plan_path:
         result = {
             "continue": True,
-            "systemMessage": "No plan files found to export."
+            "systemMessage": "No plan files found to export.",
+            "additionalContext": "\n\n📋 No plan files found to export.\n"
         }
         print(json.dumps(result))
         return
@@ -483,7 +484,8 @@ def main():
         # Always show errors regardless of notify_claude setting
         result = {
             "continue": True,
-            "systemMessage": f"Plan export failed: {e}"
+            "systemMessage": f"Plan export failed: {e}",
+            "additionalContext": f"\n\n❌ Plan export failed: {e}\n"
         }
 
     print(json.dumps(result))
