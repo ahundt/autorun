@@ -673,35 +673,60 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
   - Shows current policy level and name
   - Displays current enforcement status
 
-### Command Blocking Commands (NEW in v0.6.0)
+
+### Command Blocking Commands (ENHANCED in v0.6.0+)
 
 **General-purpose command blocking** - Block dangerous commands per-session or globally
 
 **Session Commands:**
-- **/cr:no \<pattern>** - Block pattern in this session
+- **/cr:no \<pattern> [description]** - Block pattern in this session
 - **/cr:ok \<pattern>** - Allow pattern in this session
 - **/cr:clear [pattern]** - Clear blocks (or specific pattern)
 - **/cr:status** - Show blocked patterns
 
 **Global Commands:**
-- **/cr:globalno \<pattern>** - Block pattern globally (all sessions)
+- **/cr:globalno \<pattern> [description]** - Block pattern globally (all sessions)
 - **/cr:globalok \<pattern>** - Allow pattern globally
 - **/cr:globalstatus** - Show global blocks
 
+**Pattern Type Prefixes (NEW):**
+- **regex:\<pattern>** - Use regular expression matching
+- **glob:\<pattern>** - Use glob pattern matching
+- **/\<pattern>/** - Auto-detects regex when pattern contains metacharacters
+- *(default)* - Literal substring matching
+
+**Custom Descriptions (NEW):**
+Add custom descriptions when blocking patterns to provide specific guidance to users.
+
 **Examples:**
 ```bash
-# Block rm in this session
+# Basic blocking (uses DEFAULT_INTEGRATIONS for suggestions)
 /cr:no rm
 
-# Block dangerous dd commands globally
-/cr:globalno dd if=
+# Custom description for specific guidance
+/cr:no "exec(" unsafe exec function - use alternatives
 
-# Allow rm in this session only
-/cr:ok rm
+# Regex pattern matching for flexible patterns
+/cr:no regex:eval\( dangerous eval usage - blocked for security
 
-# Show status
-/cr:status
+# Glob pattern matching for wildcards
+/cr:no glob:*.tmp temporary files are not allowed in this session
+
+# Global blocking with custom description
+/cr:globalno "git reset --hard" PERMANENTLY DESTRUCTIVE - use git restore instead
+
+# Auto-detect regex when pattern contains metacharacters
+/cr:no /eval\(.*assert/ matches eval( or assert(
 ```
+
+**Pattern Type Examples:**
+
+| Type | Prefix | Description | Example Pattern | Matches |
+|------|--------|-------------|---------------|--------|
+| Literal | *(none)* | Substring/part matching (default) | `rm` | `rm file.txt` |
+| Regex | `regex:` | Regular expression | `regex:eval\(` | `code(eval(x))` |
+| Glob | `glob:` | Glob pattern matching | `glob:*.tmp` | `file.tmp` |
+| Auto | `/.../` | Auto-detects regex | `/eval\(./` | `eval(...` |
 
 **Default Integrations:**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
@@ -720,6 +745,9 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 1. Session blocks (highest priority)
 2. Global blocks (fallback)
 3. Default integrations (built-in suggestions)
+
+**Backward Compatibility:**
+All existing patterns without type prefixes default to literal matching. Existing blocks continue to work as before.
 
 ### Autorun Commands (Autonomous Execution)
 
