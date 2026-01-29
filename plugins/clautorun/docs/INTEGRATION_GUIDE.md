@@ -83,14 +83,13 @@ python mcp_server.py --server
 - Requires MCP client
 - Additional setup complexity
 
-### 4. Hook Replacement (Enhanced autorun5.py)
+### 4. Hook Integration (main.py)
 
-**Use Case**: Drop-in replacement for existing autorun system
+**Use Case**: Direct hook integration with Claude Code
 **Setup**:
 ```bash
-# Replace autorun5.py with main.py
-cp autorun5.py autorun5.py.backup
-cp main.py /Users/athundt/.claude/hooks/autorun5.py
+# hooks.json already configured to call main.py directly
+# See hooks.json for configuration
 ```
 
 **Pros**:
@@ -154,7 +153,7 @@ AGENT_MODE=SDK_ONLY          # Maximum efficiency
 AGENT_MODE=HYBRID           # SDK + hooks
 
 # Hook integration
-USE_EXISTING_HOOKS=true     # Call existing autorun5.py
+USE_EXISTING_HOOKS=true     # Use main.py for all hooks
 USE_EXISTING_HOOKS=false    # Pure SDK operation
 
 # Debugging

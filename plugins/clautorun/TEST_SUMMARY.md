@@ -15,8 +15,8 @@ The clautorun project includes a comprehensive pytest testing suite covering cor
 - Policy management
 - Basic functionality validation
 
-**Autorun5 Compatibility Tests** (`test_autorun_compatibility.py`)
-- String compatibility with autorun5.py
+**Core Configuration Tests** (`test_core_configuration.py`)
+- Configuration string verification
 - Policy descriptions and blocked messages
 - Injection and recheck templates
 - Command mapping consistency
@@ -89,7 +89,7 @@ make test-compatibility # Compatibility tests only
 
 The testing system prioritizes:
 1. **Core functionality reliability** - All essential features tested
-2. **Compatibility assurance** - Matches autorun5.py behavior exactly
+2. **Configuration correctness** - All values match documented specifications
 3. **Regression prevention** - Comprehensive coverage of command patterns
 4. **Maintainability** - Clean, readable test structure
 

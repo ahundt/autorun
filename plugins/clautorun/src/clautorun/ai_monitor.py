@@ -46,7 +46,7 @@ def setup_clautorun_logging():
         ]
     )
 
-# Monitor state using shelve (like autorun5.py)
+# Monitor state using shelve for persistence
 @contextmanager
 def monitor_state(session_id):
     s = shelve.open(str(STATE_DIR / f"monitor-{session_id}.db"), writeback=True)
@@ -104,7 +104,7 @@ WIN_OPS = {
 
 # Monitor control functions (library interface)
 def start_monitor(session_id, prompt="Continue working", stop_marker=None, max_cycles=5, prompt_on_start=False, start_window=None):
-    """Start monitoring session (library interface for autorun5.py)"""
+    """Start monitoring session for autonomous execution"""
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
     if pf.exists():
         try:

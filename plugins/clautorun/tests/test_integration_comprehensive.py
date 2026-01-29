@@ -232,7 +232,7 @@ def test_hook_integration_completeness():
     print("✅ All required hook events are handled")
 
     # Verify that the hook handlers are not just placeholders
-    from clautorun.agent_sdk_hook import stop_handler, pretooluse_handler
+    from clautorun.main import stop_handler, pretooluse_handler
 
     # Mock context
     ctx = Mock()

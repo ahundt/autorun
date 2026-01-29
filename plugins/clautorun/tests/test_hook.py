@@ -42,7 +42,7 @@ class TestHookIntegration:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        assert output["continue"] is True, "Policy command should continue to AI (autorun5.py behavior)"
+        assert output["continue"] is True, "Policy command should continue to AI (main.py behavior)"
         assert "allow-all" in output["systemMessage"], "Response should contain policy info"
 
     @pytest.mark.hook

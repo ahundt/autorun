@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from clautorun import CONFIG, COMMAND_HANDLERS
 
 def test_command_processing():
-    """Test the command processing logic like autorun5.py"""
+    """Test the command processing logic with efficient dispatch"""
     print("🧪 Testing clautorun command processing")
     print("=" * 45)
 
@@ -59,7 +59,7 @@ def test_command_processing():
         print("⚡ Speed: Instant responses (no AI delay)")
 
 def test_command_detection():
-    """Test efficient command detection - autorun5.py line 144 pattern"""
+    """Test efficient command detection - O(1) lookup pattern"""
     print("\n🔍 Testing command detection efficiency")
     print("=" * 45)
 
@@ -77,7 +77,7 @@ def test_command_detection():
     ]
 
     for prompt, should_detect in test_cases:
-        # Same efficient detection as autorun5.py line 144
+        # Same efficient detection as main.py command dispatch
         command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
 
         detected = command is not None
@@ -85,7 +85,7 @@ def test_command_detection():
 
         print(f"   {status} '{prompt}' → {'Detected' if detected else 'Not detected'}")
 
-    print("\n⚡ Command detection: O(1) efficiency - same as autorun5.py")
+    print("\n⚡ Command detection: O(1) efficiency - same as main.py")
 
 if __name__ == "__main__":
     test_command_processing()

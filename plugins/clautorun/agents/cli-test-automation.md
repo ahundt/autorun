@@ -227,7 +227,7 @@ def analyze_test_results_in_session(session_name="clautorun"):
 
 ### Claude Code Plugin Testing
 ```python
-def test_claude_code_plugin(plugin_name="clautorun"):
+def test_clautorun_main(plugin_name="clautorun"):
     """Test Claude Code plugin installation and functionality"""
     tmux = get_tmux_utilities("clautorun")
     test_results = {}

@@ -188,7 +188,7 @@ def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Op
     except Exception as e:
         log_info(f"Failed to update injection outcome: {e}")
 
-# State management - copied from autorun5.py
+# State management - core session infrastructure
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -229,7 +229,7 @@ _session_backends = {}
 
 @contextmanager
 def session_state(session_id: str):
-    """Session state with shelve - copied from autorun5.py with thread-safe backend selection"""
+    """Session state with shelve - thread-safe backend selection for concurrent access"""
     # Thread-safe backend selection (happens once per session_id)
     with _backend_selection_lock:
         if session_id not in _session_backends:
@@ -633,16 +633,16 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
     return response
 
 def build_pretooluse_response(decision="allow", reason=""):
-    """Build PreToolUse hook response - autorun5.py line 123-128"""
+    """Build PreToolUse hook response for permission decisions"""
     return {"continue": True, "stopReason": "", "suppressOutput": False,
             "systemMessage": json.dumps(reason)[1:-1] if reason else "",
             "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                   "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
 
-# Ultra-efficient dispatch system - using autorun5.py patterns
+# Ultra-efficient dispatch system - O(1) command lookup via decorator pattern
 HANDLERS = {}
 def handler(name):
-    """Decorator to register handlers - copied from autorun5.py"""
+    """Decorator to register command handlers in dispatch table"""
     def dec(f):
         HANDLERS[name] = f
         return f
@@ -669,7 +669,7 @@ def _manage_monitor(state: dict, action: str):
             state["ai_monitor_pid"] = None
 
 
-# Command handlers - copied from autorun5.py
+# Command handlers - core policy and control commands
 def handle_search(state):
     """Handle SEARCH command - update state and return response"""
     state["file_policy"] = "SEARCH"
@@ -730,7 +730,7 @@ def handle_activate(state, prompt=""):
         except Exception as e:
             log_info(f"tmux session setup failed: {e}")
 
-    # Clear and setup state like autorun5.py
+    # Clear and setup session state for new command
     state.clear()
     state.update({
         "session_status": "active",
@@ -762,7 +762,7 @@ def handle_activate(state, prompt=""):
 
     return injection
 
-# Command handlers - clean dispatch like autorun5.py
+# Additional control commands
 COMMAND_HANDLERS = {
     "SEARCH": handle_search,
     "ALLOW": handle_allow,
@@ -1089,11 +1089,11 @@ COMMAND_HANDLERS.update({
 # Claude Code hook handlers - ultra-compact
 @handler("UserPromptSubmit")
 def claude_code_handler(ctx):
-    """Claude Code UserPromptSubmit hook - sync version like autorun5.py"""
+    """Claude Code UserPromptSubmit hook - sync command processing"""
     prompt = ctx.prompt.strip()
     session_id = ctx.session_id
 
-    # Efficient command detection - autorun5.py line 144 pattern
+    # Efficient command detection - O(1) lookup via command_mappings
     command = next((v for k, v in CONFIG["command_mappings"].items() if k == prompt), None)
     if not command:
         # Check for commands that support arguments (autorun)
@@ -1146,7 +1146,7 @@ def pretooluse_handler(ctx):
     # =========================================================================
     # EXISTING: AutoFile policy enforcement
     # =========================================================================
-    # Extract file path - autorun5.py line 117
+    # Extract file path from Write tool input
     file_path = ctx.tool_input.get("file_path", "")
 
     # Debug logging using log_info for consistent logging
@@ -1691,7 +1691,7 @@ def main():
     operation_mode = os.getenv("AGENT_MODE", "HOOK_INTEGRATION").upper()
 
     if operation_mode == "HOOK_INTEGRATION":
-        # Run as Claude Code hook - same as autorun5.py main()
+        # Run as Claude Code hook - handle all hook events
         try:
             payload = json.loads(sys.stdin.read())
             event = payload.get("hook_event_name", "?")
@@ -1702,7 +1702,7 @@ def main():
             with open(debug_log, "a") as f:
                 f.write(f"[{time.strftime('%H:%M:%S')}] HOOK_CALLED: {event} | session: {_session_id} | prompt: {payload.get('prompt', '')[:50]}...\n")
 
-            # Context object - same as autorun5.py
+            # Context object for event handling
             class Ctx:
                 def __init__(self, p):
                     self.hook_event_name = p.get("hook_event_name", "")
@@ -1728,7 +1728,7 @@ def main():
         run_interactive_sdk(operation_mode)
 
 def run_interactive_sdk(operation_mode: str):
-    """Run interactive Agent SDK with clean async/sync separation - autorun5.py efficiency"""
+    """Run interactive Agent SDK with clean async/sync separation"""
     print("🚀 Agent SDK Command Interceptor - Interactive Mode")
     print("=" * 55)
     print("Commands handled locally (no AI tokens):")
@@ -1744,7 +1744,7 @@ def run_interactive_sdk(operation_mode: str):
     print("Type commands (e.g., '/afs', '/afa', '/afj', '/afst') or 'quit' to exit")
     print("Non-commands will be processed by Claude Code via Agent SDK\n")
 
-    # Initialize session state - autorun5.py pattern
+    # Initialize session state for interactive mode
     session_id = "interactive_session"
     with session_state(session_id) as state:
         state["file_policy"] = "ALLOW"
@@ -1773,14 +1773,14 @@ def run_interactive_sdk(operation_mode: str):
             if not user_input:
                 continue
 
-            # Efficient command detection - autorun5.py line 144 pattern
+            # Efficient command detection - O(1) lookup via command_mappings
             command = next((v for k, v in CONFIG["command_mappings"].items() if k == user_input), None)
             if not command:
                 # Check for commands that support arguments (autorun)
                 command = next((v for k, v in CONFIG["command_mappings"].items() if user_input.startswith(k)), None)
 
             if command and command in COMMAND_HANDLERS:
-                # Handle locally using dispatch pattern - autorun5.py efficiency
+                # Handle locally using dispatch table lookup
                 with session_state(session_id) as state:
                     if command == "activate":
                         # Pass the full prompt for activation

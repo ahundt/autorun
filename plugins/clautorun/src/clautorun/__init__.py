@@ -25,7 +25,7 @@ Features:
 - Zero AI token consumption for autorun commands
 - Interactive mode with smart Ctrl+C handling
 - Multiple integration methods (hooks, MCP, plugin)
-- Efficient dispatch patterns matching autorun5.py
+- Efficient command dispatch via decorator pattern
 - Full compatibility with existing autorun workflows
 """
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test complete autorun5.py compatibility - verify all strings and behavior match exactly
+Test core configuration constants and values
 """
 import sys
 from pathlib import Path
@@ -75,7 +75,7 @@ def test_completion_marker():
     print("✅ Completion marker correctly configured with descriptive string")
 
 def test_policy_descriptions():
-    """Test all policy descriptions match autorun5.py exactly"""
+    """Test all policy descriptions match documented specifications"""
     expected_policies = {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
@@ -86,10 +86,10 @@ def test_policy_descriptions():
         actual_tuple = CONFIG["policies"][policy]
         assert actual_tuple == expected_tuple, f"Policy {policy} mismatch: expected {expected_tuple}, got {actual_tuple}"
 
-    print("✅ All policy descriptions match autorun5.py exactly")
+    print("✅ All policy descriptions match specifications")
 
 def test_policy_blocked_messages():
-    """Test policy blocked messages match autorun5.py exactly"""
+    """Test policy blocked messages match documented format"""
     expected_blocked = {
         "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using Glob patterns like "*related-topic*", 3) Use Grep to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
         "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using Glob/Grep related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
@@ -99,7 +99,7 @@ def test_policy_blocked_messages():
         actual_message = CONFIG["policy_blocked"][policy]
         assert actual_message == expected_message, f"Policy blocked {policy} mismatch"
 
-    print("✅ All policy blocked messages match autorun5.py exactly")
+    print("✅ All policy blocked messages match specifications")
 
 def test_injection_template():
     """Test injection template contains all required components for three-stage system"""
@@ -131,7 +131,7 @@ def test_injection_template():
     print("✅ Injection template contains all three-stage system components")
 
 def test_recheck_template():
-    """Test recheck template matches autorun5.py exactly"""
+    """Test recheck template matches expected format"""
     template = CONFIG["recheck_template"]
 
     # Check for key recheck phrases
@@ -149,7 +149,7 @@ def test_recheck_template():
     assert "{recheck_count}" in template, "Missing recheck_count placeholder"
     assert "{max_recheck_count}" in template, "Missing max_recheck_count placeholder"
 
-    print("✅ Recheck template matches autorun5.py exactly")
+    print("✅ Recheck template matches expected format")
 
 def test_command_mappings():
     """Test command mappings are correctly configured"""
@@ -212,11 +212,11 @@ def test_new_cr_command_mappings():
     print("✅ All /cr: prefix commands correctly configured (short + long forms)")
 
 def test_config_values():
-    """Test configuration values match autorun5.py exactly"""
+    """Test configuration values are correct"""
     assert CONFIG["max_recheck_count"] == 3, f"max_recheck_count should be 3, got {CONFIG['max_recheck_count']}"
     assert CONFIG["monitor_stop_delay_seconds"] == 300, f"monitor_stop_delay_seconds should be 300, got {CONFIG['monitor_stop_delay_seconds']}"
 
-    print("✅ Configuration values match autorun5.py exactly")
+    print("✅ All configuration values are correct")
 
 def test_command_handlers():
     """Test command handlers produce correct responses"""
@@ -302,7 +302,7 @@ def test_handler_variations_available():
     print("✅ All required handler variations available")
 
 def test_log_function():
-    """Test log_info function works like autorun5.py"""
+    """Test log_info function writes to correct log files"""
     try:
         log_info("Test log message")
         print("✅ Log info function works correctly")
