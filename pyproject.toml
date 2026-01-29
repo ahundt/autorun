@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clautorun-marketplace"
+version = "0.6.0"
+description = "UV workspace marketplace for clautorun plugins: clautorun, plan-export, pdf-extractor"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Andrew Hundt", email = "ATHundt@gmail.com"},
+]
+keywords = ["claude", "claude-code", "marketplace", "plugin-workspace", "clautorun", "plan-export", "pdf-extractor"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.14.1",
+]
+all = [
+    "clautorun>=0.6.0",
+    "plan-export>=1.0.0",
+    "pdf-extractor>=0.1.0",
+]
+
+[project.scripts]
+clautorun-marketplace = "clautorun_marketplace:main"
+
+[project.urls]
+Homepage = "https://github.com/ahundt/clautorun"
+Repository = "https://github.com/ahundt/clautorun.git"
+Issues = "https://github.com/ahundt/clautorun/issues"
+
+[tool.uv.workspace]
+members = [
+    "plugins/clautorun",
+    "plugins/plan-export",
+    "plugins/pdf-extractor",
+]
+
+[tool.uv.sources]
+clautorun = { workspace = true }
+plan-export = { workspace = true }
+pdf-extractor = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clautorun_marketplace"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+    "/pyproject.toml",
+]
+
+[tool.setuptools]
+# This package uses hatchling, not setuptools
+# This section is for metadata compatibility only
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+]

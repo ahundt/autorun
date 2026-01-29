@@ -1,0 +1,14 @@
+{
+  "marketplaces": [
+    {
+      "name": "clautorun-dev",
+      "path": "./plugins",
+      "description": "Local development marketplace for clautorun plugins",
+      "plugins": [
+        "clautorun",
+        "plan-export",
+        "pdf-extractor"
+      ]
+    }
+  ]
+}

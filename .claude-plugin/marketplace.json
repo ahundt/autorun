@@ -1,10 +1,11 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "clautorun",
+  "name": "clautorun-dev",
   "version": "1.0.0",
   "description": "Automation suite: clautorun (file policies, autonomous sessions) + plan-export (plan archiving) + pdf-extractor (PDF data extraction)",
   "owner": {
-    "name": "ahundt"
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com"
   },
   "plugins": [
     {
@@ -12,9 +13,10 @@
       "description": "Autonomous task automation with file creation policies and session persistence",
       "source": "./plugins/clautorun",
       "category": "productivity",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "author": {
-        "name": "Andrew Hundt"
+        "name": "Andrew Hundt",
+        "email": "ATHundt@gmail.com"
       }
     },
     {
@@ -24,7 +26,8 @@
       "category": "productivity",
       "version": "1.0.0",
       "author": {
-        "name": "athundt"
+        "name": "Andrew Hundt",
+        "email": "ATHundt@gmail.com"
       }
     },
     {
@@ -34,7 +37,8 @@
       "category": "data-processing",
       "version": "0.1.0",
       "author": {
-        "name": "Andrew Hundt"
+        "name": "Andrew Hundt",
+        "email": "ATHundt@gmail.com"
       }
     }
   ]

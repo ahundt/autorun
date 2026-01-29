@@ -59,6 +59,73 @@
 /cr:sos
 ```
 
+## UV Installation (Recommended)
+
+The clautorun marketplace includes 3 plugins: **clautorun**, **plan-export**, and **pdf-extractor**.
+
+### GitHub Installation
+
+Install the entire marketplace directly from GitHub:
+
+```bash
+# Install all 3 plugins from GitHub
+uv pip install git+https://github.com/ahundt/clautorun.git
+
+# Register plugins with Claude Code
+clautorun-marketplace
+```
+
+### Local Installation
+
+Install from a local clone:
+
+```bash
+# Clone repository
+git clone https://github.com/ahundt/clautorun.git
+cd clautorun
+
+# Install marketplace
+uv pip install .
+
+# Register plugins with Claude Code
+clautorun-marketplace
+```
+
+### Development Installation
+
+For contributors and developers:
+
+```bash
+# Clone repository
+git clone https://github.com/ahundt/clautorun.git
+cd clautorun
+
+# Create UV workspace and install dependencies
+uv sync --all-extras
+
+# Register plugins with Claude Code
+uv run clautorun-marketplace
+
+# Or use the installer with marketplace flag
+uv run clautorun-install install --marketplace
+```
+
+### Verification
+
+After installation, verify plugins are registered:
+
+```bash
+# Check installed plugins
+claude plugin marketplace list
+
+# See all available commands
+/help
+
+# Test clautorun
+/cr:st
+# Expected: "AutoFile policy: allow-all"
+```
+
 ## What clautorun Does For You
 
 **Problem Statement**: Claude Code sessions can end unexpectedly during extended tasks, requiring manual intervention to continue work. AI creates numerous experimental files during development, leading to cluttered project directories. Network disconnections or application crashes terminate active sessions, losing all in-progress work.

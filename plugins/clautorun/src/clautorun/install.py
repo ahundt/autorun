@@ -898,7 +898,114 @@ class ClautorunInstaller:
 
         return all_good
 
-    
+
+class MarketplaceInstaller:
+    """Installs the full clautorun marketplace (all 3 plugins)"""
+
+    def __init__(self):
+        self.home_dir = Path.home()
+        self.claude_dir = self.home_dir / ".claude"
+        self.plugins_dir = self.claude_dir / "plugins"
+
+        # Get the location of the clautorun plugin directory
+        # install.py is at: ~/.claude/clautorun/plugins/clautorun/src/clautorun/install.py
+        try:
+            import clautorun
+            self.package_dir = Path(clautorun.__file__).parent.parent.parent
+        except ImportError:
+            self.package_dir = Path(__file__).parent.parent.parent
+
+        # Marketplace root is the repository root containing plugins/ subdirectory
+        self.marketplace_root = self.package_dir.parent.parent
+        self.plugins_directory = self.marketplace_root / "plugins"
+
+        # Plugins to install from the marketplace
+        self.plugins = ["clautorun", "plan-export", "pdf-extractor"]
+
+    def install_marketplace(self) -> bool:
+        """Install the full marketplace with all plugins"""
+        print(f"📦 clautorun-marketplace v0.6.0")
+        print(f"📍 Marketplace root: {self.marketplace_root}")
+        print(f"📍 Plugins directory: {self.plugins_directory}")
+        print()
+
+        # Step 1: Add the marketplace root (where .claude-plugin/marketplace.json is) as a marketplace
+        print(f"🔧 Adding clautorun-dev marketplace...")
+        try:
+            result = subprocess.run(
+                ["claude", "plugin", "marketplace", "add", str(self.marketplace_root)],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode == 0:
+                print(f"   ✅ Added clautorun-dev marketplace")
+            else:
+                # Marketplace might already exist, that's ok
+                if "already" in result.stderr.lower() or "exists" in result.stderr.lower():
+                    print(f"   ℹ️  clautorun-dev marketplace already exists")
+                else:
+                    print(f"   ⚠️  Marketplace add: {result.stderr.strip()}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+            print(f"   ⚠️  Could not add marketplace: {e}")
+            # Continue anyway - might still work
+
+        print()
+
+        # Step 2: Install each plugin from the marketplace
+        success_count = 0
+        failed = []
+
+        for plugin_name in self.plugins:
+            print(f"🔧 Installing {plugin_name}...")
+
+            # Install plugin from marketplace
+            try:
+                result = subprocess.run(
+                    ["claude", "plugin", "install", f"{plugin_name}@clautorun-dev"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+
+                if result.returncode == 0:
+                    print(f"   ✅ Installed {plugin_name} plugin")
+                    success_count += 1
+                else:
+                    # Plugin might already be installed
+                    if "already" in result.stderr.lower() or "exists" in result.stderr.lower():
+                        print(f"   ℹ️  {plugin_name} plugin already installed")
+                        success_count += 1
+                    else:
+                        print(f"   ❌ Failed to install {plugin_name}: {result.stderr.strip()}")
+                        failed.append(plugin_name)
+            except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
+                print(f"   ❌ Installation failed for {plugin_name}: {e}")
+                failed.append(plugin_name)
+
+            print()
+
+        # Summary
+        print("=" * 60)
+        if success_count == len(self.plugins):
+            print(f"✅ Successfully installed all {success_count} plugins!")
+        else:
+            print(f"⚠️  Installed {success_count}/{len(self.plugins)} plugins")
+
+        if failed:
+            print(f"❌ Failed plugins: {', '.join(failed)}")
+
+        print()
+        print("Available commands:")
+        print("  /cr:*             - clautorun commands (autorun, file policies, tmux)")
+        print("  /plan-export:*    - plan export commands")
+        print("  /pdf-extractor:*  - PDF extraction commands")
+        print()
+        print("Run '/help' to see all available commands.")
+
+        return success_count == len(self.plugins)
+
 
 def main():
     """Main installation CLI"""
@@ -949,7 +1056,19 @@ Development workflow:
         help="Force action (overwrite existing files)"
     )
 
+    parser.add_argument(
+        "--marketplace", "-m",
+        action="store_true",
+        help="Install the full marketplace (all 3 plugins: clautorun, plan-export, pdf-extractor)"
+    )
+
     args = parser.parse_args()
+
+    # Use marketplace installer if --marketplace flag is set
+    if args.marketplace and args.action == "install":
+        marketplace_installer = MarketplaceInstaller()
+        success = marketplace_installer.install_marketplace()
+        sys.exit(0 if success else 1)
 
     installer = ClautorunInstaller()
 
