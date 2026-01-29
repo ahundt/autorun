@@ -585,6 +585,15 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
         if command_matches_pattern(command, block["pattern"]):
             return block
 
+    # Check default integrations (built-in safety rules)
+    for pattern, config in CONFIG["default_integrations"].items():
+        if command_matches_pattern(command, pattern):
+            return {
+                "pattern": pattern,
+                "suggestion": config["suggestion"],
+                "severity": config["severity"]
+            }
+
     # Not blocked
     return None
 
@@ -634,7 +643,8 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
 
 def build_pretooluse_response(decision="allow", reason=""):
     """Build PreToolUse hook response for permission decisions"""
-    return {"continue": True, "stopReason": "", "suppressOutput": False,
+    continue_execution = (decision == "allow")
+    return {"continue": continue_execution, "stopReason": "", "suppressOutput": False,
             "systemMessage": json.dumps(reason)[1:-1] if reason else "",
             "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                   "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}

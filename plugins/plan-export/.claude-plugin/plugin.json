@@ -7,6 +7,5 @@
   },
   "license": "MIT",
   "keywords": ["plan-mode", "notes", "export", "archive"],
-  "commands": "./commands/",
-  "hooks": "./hooks/hooks.json"
+  "commands": "./commands/"
 }
