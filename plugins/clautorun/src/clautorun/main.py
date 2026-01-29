@@ -1374,8 +1374,12 @@ def pretooluse_handler(ctx):
                 return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
 
         elif file_policy == "JUSTIFY":
-            justification_found = state.get("autofile_justification_detected", False) or \
-                                "AUTOFILE_JUSTIFICATION" in str(ctx.session_transcript)
+            # Check for justification in state flag, transcript, OR Write tool content
+            justification_found = (
+                state.get("autofile_justification_detected", False) or
+                "AUTOFILE_JUSTIFICATION" in str(ctx.session_transcript) or
+                "AUTOFILE_JUSTIFICATION" in str(ctx.tool_input.get("content", ""))
+            )
             if not justification_found:
                 return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
 
