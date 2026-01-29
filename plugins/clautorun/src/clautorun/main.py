@@ -302,13 +302,19 @@ def get_session_blocks(session_id: str) -> List[Dict]:
         session_id: Claude session identifier
 
     Returns:
-        List of blocked pattern dictionaries with pattern, suggestion, added_at
+        List of blocked pattern dictionaries with pattern, suggestion, pattern_type, added_at
+        Note: For backward compatibility, missing pattern_type defaults to "literal"
     """
     with session_state(session_id) as state:
-        return state.get("session_blocked_patterns", [])
+        patterns = state.get("session_blocked_patterns", [])
+        # Ensure pattern_type exists for backward compatibility
+        for p in patterns:
+            if "pattern_type" not in p:
+                p["pattern_type"] = "literal"
+        return patterns
 
 
-def add_session_block(session_id: str, pattern: str, suggestion: Optional[str] = None) -> bool:
+def add_session_block(session_id: str, pattern: str, suggestion: Optional[str] = None, pattern_type: str = "literal") -> bool:
     """
     Add a blocked pattern to session state.
 
@@ -316,6 +322,7 @@ def add_session_block(session_id: str, pattern: str, suggestion: Optional[str] =
         session_id: Claude session identifier
         pattern: Pattern string to block
         suggestion: Optional suggestion message
+        pattern_type: Pattern matching type ("literal", "regex", "glob")
 
     Returns:
         True if added, False if already exists
@@ -338,6 +345,7 @@ def add_session_block(session_id: str, pattern: str, suggestion: Optional[str] =
         patterns.append({
             "pattern": pattern,
             "suggestion": suggestion,
+            "pattern_type": pattern_type,
             "added_at": datetime.now().isoformat()
         })
         state["session_blocked_patterns"] = patterns
@@ -388,7 +396,8 @@ def get_global_blocks() -> List[Dict]:
     Get globally blocked patterns.
 
     Returns:
-        List of blocked pattern dictionaries
+        List of blocked pattern dictionaries with pattern, suggestion, pattern_type, added_at
+        Note: For backward compatibility, missing pattern_type defaults to "literal"
     """
     # Ensure defaults are initialized on first access
     initialize_default_blocks()
@@ -399,7 +408,12 @@ def get_global_blocks() -> List[Dict]:
     try:
         with open(GLOBAL_CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            return config.get("global_blocked_patterns", [])
+            patterns = config.get("global_blocked_patterns", [])
+            # Ensure pattern_type exists for backward compatibility
+            for p in patterns:
+                if "pattern_type" not in p:
+                    p["pattern_type"] = "literal"
+            return patterns
     except (json.JSONDecodeError, IOError):
         return []
 
@@ -446,13 +460,14 @@ def initialize_default_blocks() -> bool:
     return True
 
 
-def add_global_block(pattern: str, suggestion: Optional[str] = None) -> bool:
+def add_global_block(pattern: str, suggestion: Optional[str] = None, pattern_type: str = "literal") -> bool:
     """
     Add a globally blocked pattern.
 
     Args:
         pattern: Pattern string to block
         suggestion: Optional suggestion message
+        pattern_type: Pattern matching type ("literal", "regex", "glob")
 
     Returns:
         True if added, False if already exists
@@ -486,6 +501,7 @@ def add_global_block(pattern: str, suggestion: Optional[str] = None) -> bool:
     patterns.append({
         "pattern": pattern,
         "suggestion": suggestion,
+        "pattern_type": pattern_type,
         "added_at": datetime.now().isoformat()
     })
 
@@ -525,23 +541,123 @@ def remove_global_block(pattern: str) -> bool:
     return len(patterns) < original_length
 
 
-def command_matches_pattern(command: str, pattern: str) -> bool:
+def parse_pattern_and_description(args: str) -> tuple[str, str | None, str]:
+    """
+    Parse pattern and optional description from command arguments.
+
+    Supports multiple formats:
+    1. /cr:no pattern                    # No description, uses DEFAULT_INTEGRATIONS
+    2. /cr:no "pattern with spaces"      # Quoted pattern, no description
+    3. /cr:no "pattern" description      # Quoted pattern with custom description
+    4. /cr:no pattern description text   # Unquoted pattern with description
+
+    Pattern type prefixes (opt-in):
+    5. /cr:no regex:pattern              # Regex pattern matching
+    6. /cr:no glob:pattern               # Glob pattern matching
+    7. /cr:no "/regex.*$/"               # Auto-detect regex using /pattern/ syntax
+
+    Args:
+        args: Command arguments after the command name
+
+    Returns:
+        Tuple of (pattern, description, pattern_type)
+        - pattern: The pattern string to match
+        - description: Custom description or None
+        - pattern_type: One of "literal", "regex", "glob"
+
+    Examples:
+        >>> parse_pattern_and_description("rm")
+        ('rm', None, 'literal')
+        >>> parse_pattern_and_description('"rm -rf"')
+        ('rm -rf', None, 'literal')
+        >>> parse_pattern_and_description('"exec(" unsafe function')
+        ('exec(', 'unsafe function', 'literal')
+        >>> parse_pattern_and_description('regex:exec\\(')
+        ('exec\\(', None, 'regex')
+        >>> parse_pattern_and_description('glob:*.tmp')
+        ('*.tmp', None, 'glob')
+    """
+    import shlex
+
+    args = args.strip()
+    if not args:
+        raise ValueError("No pattern provided")
+
+    pattern_type = "literal"  # Default to literal matching
+
+    # Check for regex: prefix
+    if args.startswith("regex:"):
+        pattern_type = "regex"
+        args = args[6:].lstrip()
+
+    # Check for glob: prefix
+    elif args.startswith("glob:"):
+        pattern_type = "glob"
+        args = args[5:].lstrip()
+
+    # Use shlex to parse quoted strings
+    try:
+        parts = shlex.split(args)
+    except ValueError:
+        # Fallback to simple split if shlex fails
+        parts = args.split(None, 1)
+
+    if not parts:
+        raise ValueError("No pattern provided")
+
+    pattern = parts[0]
+
+    # Check for /pattern/ regex syntax (auto-detect) on first token
+    # This must happen after splitting to handle descriptions correctly
+    if pattern_type == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
+        potential_regex = pattern[1:-1]
+        # Simple heuristic: if it has regex metacharacters, treat as regex
+        regex_chars = set(r"[]{}()*+?|^$.\" ")
+        if any(c in potential_regex for c in regex_chars):
+            pattern_type = "regex"
+            pattern = potential_regex
+
+    # Everything after the pattern is the description
+    description = None
+    if len(parts) > 1:
+        description = " ".join(parts[1:])
+
+    return pattern, description, pattern_type
+
+
+def command_matches_pattern(command: str, pattern: str, pattern_type: str = "literal") -> bool:
     """
     Check if a command matches a blocked pattern.
 
     Args:
         command: Full command string
         pattern: Pattern to match against
+        pattern_type: One of "literal", "regex", "glob" (default: "literal")
 
     Returns:
         True if command matches pattern
     """
+    import fnmatch
+
     command = command.strip()
     pattern = pattern.strip()
 
     if not command or not pattern:
         return False
 
+    # Regex matching
+    if pattern_type == "regex":
+        try:
+            return bool(regex_module.search(pattern, command))
+        except regex_module.error:
+            # Invalid regex, fall back to literal substring match
+            return pattern in command
+
+    # Glob matching
+    if pattern_type == "glob":
+        return fnmatch.fnmatch(command, pattern)
+
+    # Literal matching (default) - existing behavior
     # Exact match
     if command == pattern:
         return True
@@ -573,16 +689,18 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
         command: Command string to check
 
     Returns:
-        Block dict with 'pattern' and 'suggestion' if blocked, None otherwise
+        Block dict with 'pattern', 'suggestion', 'pattern_type' if blocked, None otherwise
     """
     # Check session blocks first (highest priority)
     for block in get_session_blocks(session_id):
-        if command_matches_pattern(command, block["pattern"]):
+        pattern_type = block.get("pattern_type", "literal")
+        if command_matches_pattern(command, block["pattern"], pattern_type):
             return block
 
     # Check global blocks (fallback)
     for block in get_global_blocks():
-        if command_matches_pattern(command, block["pattern"]):
+        pattern_type = block.get("pattern_type", "literal")
+        if command_matches_pattern(command, block["pattern"], pattern_type):
             return block
 
     # Check default integrations (built-in safety rules)
@@ -591,7 +709,8 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
             return {
                 "pattern": pattern,
                 "suggestion": config["suggestion"],
-                "severity": config["severity"]
+                "severity": config["severity"],
+                "pattern_type": "literal"
             }
 
     # Not blocked
@@ -793,19 +912,24 @@ COMMAND_HANDLERS = {
 
 def handle_block_pattern(state):
     """
-    Handle /cr:no <pattern> command.
+    Handle /cr:no <pattern> [description] command.
 
     Blocks a command pattern in the current session.
 
     Usage:
-        /cr:no rm              # Block rm command
-        /cr:no dd if=          # Block dd with input
-        /cr:no --force         # Block force flags
+        /cr:no rm                                  # Block rm command (uses DEFAULT_INTEGRATIONS)
+        /cr:no dd if=                              # Block dd with input
+        /cr:no "exec(" unsafe function             # Block with custom description
+        /cr:no regex:\\b(eval|assert)\\(            # Block with regex pattern
+        /cr:no glob:*.tmp temporary files           # Block with glob pattern
 
     Examples:
         /cr:no rm
         /cr:no "rm -rf"
         /cr:no dd if=
+        /cr:no "exec(" unsafe eval function - use alternatives
+        /cr:no regex:eval\\( dangerous eval usage
+        /cr:no glob:*.tmp no temporary files allowed
     """
     from .config import DEFAULT_INTEGRATIONS
 
@@ -813,26 +937,38 @@ def handle_block_pattern(state):
     session_id = state.get("session_id", "")
 
     # Extract pattern from prompt
-    # Format: "/cr:no <pattern>"
-    # Use split with maxsplit=1 to preserve patterns with spaces
+    # Format: "/cr:no <pattern> [description]"
     parts = prompt.split(None, 1)
     if len(parts) < 2:
-        return f"❌ Usage: /cr:no <pattern>\n" \
-               f"Example: /cr:no rm\n" \
-               f"         /cr:no dd if=\n" \
-               f"         /cr:no --force"
+        return f"❌ Usage: /cr:no <pattern> [description]\n" \
+               f"\n" \
+               f"Examples:\n" \
+               f"  /cr:no rm\n" \
+               f"  /cr:no dd if=\n" \
+               f'  /cr:no "exec(" unsafe function\n' \
+               f"  /cr:no regex:eval\\( dangerous\n" \
+               f"  /cr:no glob:*.tmp temporary files"
 
-    pattern = parts[1].strip()
+    try:
+        pattern, description, pattern_type = parse_pattern_and_description(parts[1])
+    except ValueError as e:
+        return f"❌ Error: {e}\n\n" \
+               f"Usage: /cr:no <pattern> [description]"
 
     # Add block to session state
-    added = add_session_block(session_id, pattern)
+    added = add_session_block(session_id, pattern, description, pattern_type)
 
     if added:
-        # Get suggestion for display
-        integration = DEFAULT_INTEGRATIONS.get(pattern, {})
-        suggestion = integration.get("suggestion", f"Pattern '{pattern}' blocked")
+        # Build suggestion for display
+        if description:
+            suggestion = description
+        else:
+            integration = DEFAULT_INTEGRATIONS.get(pattern, {})
+            suggestion = integration.get("suggestion", f"Pattern '{pattern}' blocked")
 
-        return f"✅ Blocked: {pattern}\n" \
+        type_indicator = f" ({pattern_type})" if pattern_type != "literal" else ""
+
+        return f"✅ Blocked: {pattern}{type_indicator}\n" \
                f"💡 {suggestion}\n\n" \
                f"Session blocks: {len(get_session_blocks(session_id))}\n" \
                f"Commands: /cr:ok {pattern} | /cr:clear | /cr:status"
@@ -947,7 +1083,9 @@ def handle_block_status(state):
     if session_blocks:
         lines.append(f"Session blocks ({len(session_blocks)}):")
         for block in session_blocks:
-            lines.append(f"  - {block['pattern']}")
+            pattern_type = block.get('pattern_type', 'literal')
+            type_suffix = f" ({pattern_type})" if pattern_type != 'literal' else ""
+            lines.append(f"  - {block['pattern']}{type_suffix}")
             if block.get('suggestion'):
                 lines.append(f"    → {block['suggestion']}")
     else:
@@ -958,7 +1096,9 @@ def handle_block_status(state):
     if global_blocks:
         lines.append(f"Global blocks ({len(global_blocks)}):")
         for block in global_blocks:
-            lines.append(f"  - {block['pattern']}")
+            pattern_type = block.get('pattern_type', 'literal')
+            type_suffix = f" ({pattern_type})" if pattern_type != 'literal' else ""
+            lines.append(f"  - {block['pattern']}{type_suffix}")
             if block.get('suggestion'):
                 lines.append(f"    → {block['suggestion']}")
     else:
@@ -966,47 +1106,70 @@ def handle_block_status(state):
 
     lines.append("")
     lines.append("Commands: /cr:no <pattern> | /cr:ok <pattern> | /cr:clear | /cr:globalno <pattern>")
+    lines.append("")
+    lines.append("Pattern types: literal (default) | regex:<pattern> | glob:<pattern>")
 
     return "\n".join(lines)
 
 
 def handle_global_block_pattern(state):
     """
-    Handle /cr:globalno <pattern> command.
+    Handle /cr:globalno <pattern> [description] command.
 
     Sets a global default to block a pattern.
     Affects all sessions that don't have session-specific overrides.
 
     Usage:
-        /cr:globalno rm        # Block rm globally
-        /cr:globalno dd if=    # Block dangerous dd commands
+        /cr:globalno rm                                  # Block rm globally (uses DEFAULT_INTEGRATIONS)
+        /cr:globalno dd if=                              # Block dangerous dd commands
+        /cr:globalno "exec(" unsafe function             # Block with custom description
+        /cr:globalno regex:\\b(eval|assert)\\(            # Block with regex pattern
+        /cr:globalno glob:*.tmp temporary files           # Block with glob pattern
 
     Examples:
         /cr:globalno rm
         /cr:globalno --force
+        /cr:globalno "exec(" unsafe exec function blocked
+        /cr:globalno regex:eval\\( dangerous eval usage
+        /cr:globalno glob:*.tmp no temporary files
     """
     from .config import DEFAULT_INTEGRATIONS
 
     prompt = state.get("activation_prompt", "")
 
     # Extract pattern from prompt
-    # Use split with maxsplit=1 to preserve patterns with spaces
+    # Format: "/cr:globalno <pattern> [description]"
     parts = prompt.split(None, 1)
     if len(parts) < 2:
-        return f"❌ Usage: /cr:globalno <pattern>\n" \
-               f"Example: /cr:globalno rm"
+        return f"❌ Usage: /cr:globalno <pattern> [description]\n" \
+               f"\n" \
+               f"Examples:\n" \
+               f"  /cr:globalno rm\n" \
+               f"  /cr:globalno dd if=\n" \
+               f'  /cr:globalno "exec(" unsafe function\n' \
+               f"  /cr:globalno regex:eval\\( dangerous\n" \
+               f"  /cr:globalno glob:*.tmp temporary files"
 
-    pattern = parts[1].strip()
+    try:
+        pattern, description, pattern_type = parse_pattern_and_description(parts[1])
+    except ValueError as e:
+        return f"❌ Error: {e}\n\n" \
+               f"Usage: /cr:globalno <pattern> [description]"
 
     # Add global block
-    added = add_global_block(pattern)
+    added = add_global_block(pattern, description, pattern_type)
 
     if added:
-        # Get suggestion for display
-        integration = DEFAULT_INTEGRATIONS.get(pattern, {})
-        suggestion = integration.get("suggestion", f"Pattern '{pattern}' blocked")
+        # Build suggestion for display
+        if description:
+            suggestion = description
+        else:
+            integration = DEFAULT_INTEGRATIONS.get(pattern, {})
+            suggestion = integration.get("suggestion", f"Pattern '{pattern}' blocked")
 
-        return f"✅ Global block: {pattern}\n" \
+        type_indicator = f" ({pattern_type})" if pattern_type != "literal" else ""
+
+        return f"✅ Global block: {pattern}{type_indicator}\n" \
                f"💡 {suggestion}\n\n" \
                f"Global blocks: {len(get_global_blocks())}\n" \
                f"Commands: /cr:globalok {pattern} | /cr:globalstatus"
