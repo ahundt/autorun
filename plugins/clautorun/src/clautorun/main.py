@@ -761,9 +761,13 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
     return response
 
 def build_pretooluse_response(decision="allow", reason=""):
-    """Build PreToolUse hook response for permission decisions"""
-    continue_execution = (decision == "allow")
-    return {"continue": continue_execution, "stopReason": "", "suppressOutput": False,
+    """Build PreToolUse hook response for permission decisions
+
+    The 'continue' field should always be True for PreToolUse hooks to allow
+    the conversation to continue. The 'permissionDecision' field controls
+    whether the specific tool is allowed or denied.
+    """
+    return {"continue": True, "stopReason": "", "suppressOutput": False,
             "systemMessage": json.dumps(reason)[1:-1] if reason else "",
             "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                   "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
