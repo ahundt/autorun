@@ -72,7 +72,7 @@ Install the entire marketplace directly from GitHub:
 uv pip install git+https://github.com/ahundt/clautorun.git
 
 # Register plugins with Claude Code
-clautorun-marketplace
+uv run clautorun-marketplace
 ```
 
 ### Local Installation
@@ -88,8 +88,10 @@ cd clautorun
 uv pip install .
 
 # Register plugins with Claude Code
-clautorun-marketplace
+uv run clautorun-marketplace
 ```
+
+> **Note:** Use `uv run clautorun-marketplace` to ensure the command runs in the correct UV environment. If `clautorun-marketplace` is in your PATH, you can run it directly without `uv run`.
 
 ### Development Installation
 
