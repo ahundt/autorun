@@ -24,26 +24,15 @@ flowchart TD
     subgraph SETTINGS["⚙️ SETTINGS - Adjust Anytime"]
         direction TB
 
-        subgraph FILE_SET["Prevent or Allow AI<br/>from Creating Files"]
-            direction LR
-            F1["/cr:a<br/>Allow all file creation"]:::settingBox
-            F2["/cr:j<br/>Require justification<br/>before creating files"]:::settingBox
-            F3["/cr:f<br/>Find existing only<br/>(block all new files)"]:::settingBox
-            F4["/cr:st<br/>Show current policy"]:::settingBox
-            F1 --- F2 --- F3 --- F4
+        subgraph FILE_SET["Prevent or Allow AI from Creating Files"]
+            F1["<b>File Controls:</b><br/><br/>/cr:a - Allow all file creation<br/>/cr:j - Require justification before creating files<br/>/cr:f - Find existing only (block all new files)<br/>/cr:st - Show current policy"]:::settingBox
         end
 
         FILE_SET --> BLOCK_SET
 
         subgraph BLOCK_SET["Block AI's Destructive Commands"]
             direction LR
-            B1["/cr:no <pattern> 'why blocked'<br/>Block in this session"]:::settingBox
-            B2["/cr:ok <pattern><br/>Allow in this session"]:::settingBox
-            B3["/cr:clear [pattern]<br/>Clear session blocks"]:::settingBox
-            B4["/cr:globalno <pattern> 'why'<br/>Block in ALL sessions"]:::settingBox
-            B5["/cr:globalok <pattern><br/>Allow in ALL sessions"]:::settingBox
-            B6["/cr:globalstatus<br/>Show global blocks"]:::settingBox
-            B1 --- B2 --- B3 --- B4 --- B5 --- B6
+            B1["<b>Command Blocking:</b><br/><br/>/cr:no <pattern> 'why blocked'<br/>Block in this session<br/><br/>/cr:ok <pattern><br/>Allow in this session<br/><br/>/cr:clear [pattern]<br/>Clear session blocks<br/><br/>/cr:globalno <pattern> 'why blocked'<br/>Block in ALL sessions<br/><br/>/cr:globalok <pattern><br/>Allow in ALL sessions<br/><br/>/cr:globalstatus<br/>Show global blocks"]:::settingBox
         end
     end
 
@@ -66,26 +55,14 @@ flowchart TD
     %% ========================================
     %%  STEP 3: AI WORKS
     %% ========================================
-    AI_ENGINE["🤖 STEP 3<br/><br/>AI WORKS AUTONOMOUSLY"]:::aiBox
-
-    LOOP["🔄 Loops until complete:<br/><br/>1️⃣ IMPLEMENT<br/>2️⃣ EVALUATE<br/>3️⃣ VERIFY<br/><br/>(You can step away!)"]:::aiBox
+    AI_ENGINE["🤖 STEP 3<br/><br/>AI WORKS AUTONOMOUSLY<br/><br/>🔄 Loops until complete:<br/><br/>1️⃣ IMPLEMENT<br/>2️⃣ EVALUATE<br/>3️⃣ VERIFY<br/><br/>(You can step away!)"]:::aiBox
 
     %% ========================================
-    %%  STEP 4: MONITOR & CONTROL
+    %%  MONITOR & CONTROL (Optional)
     %% ========================================
-    CONTROL["🎮 STEP 4<br/><br/>MONITOR & CONTROL<br/><br/>(While AI Works)"]:::stepBox
-
     subgraph CONTROL_OPTIONS[" "]
         direction LR
-        C1["/cr:tabs<br/>List all sessions<br/>with status info"]:::choiceBox
-
-        C2["/cr:tm [list|create|cleanup]<br/>Manage tmux sessions"]:::choiceBox
-
-        C3["/cr:x<br/>Stop after current task"]:::choiceBox
-
-        C4["/cr:sos<br/>EMERGENCY STOP NOW"]:::safeBox
-
-        C1 --- C2 --- C3 --- C4
+        C1["<b>tmux/byobu:</b><br/><br/>/cr:tabs - List all sessions<br/>/cr:tm [list|create|cleanup] - Manage sessions"]:::choiceBox
     end
 
     %% ========================================
@@ -99,15 +76,10 @@ flowchart TD
     INSTALL --> INSTALL_CMD
     INSTALL_CMD --> WORKFLOW
 
-    SETTINGS -.->|"adjust anytime"| LOOP
+    SETTINGS -.->|"adjust anytime"| AI_ENGINE
 
     WORKFLOW --> WORKFLOW_OPTIONS
     WORKFLOW_OPTIONS --> AI_ENGINE
 
-    AI_ENGINE --> LOOP
-    LOOP --> CONTROL
-
-    CONTROL --> CONTROL_OPTIONS
-
-    C4 -.->|"STOP NOW"| LOOP
-    LOOP -->|"done"| COMPLETE
+    AI_ENGINE --> CONTROL_OPTIONS
+    AI_ENGINE -->|"done"| COMPLETE
