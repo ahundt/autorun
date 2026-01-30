@@ -1,14 +1,14 @@
 ---
 description: Show current AutoFile policy and settings
-allowed-tools: Bash(*)
 ---
 
 # AutoFile Status
 
-Run this command and display the result to the user:
+Displays the current AutoFile policy for this session.
 
-```bash
-echo '{"prompt": "/cr:status", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"
-```
+**Policy Levels**:
+- **allow-all** - No restrictions on file creation (default)
+- **justify-create** - Requires justification tag for new files
+- **strict-search** - Only modify existing files, no new file creation
 
-Display ONLY the output of the above command. Do not add any additional commentary.
+UserPromptSubmit hook will display the current policy.

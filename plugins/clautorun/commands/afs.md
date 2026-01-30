@@ -1,14 +1,13 @@
 ---
 description: Set AutoFile policy to strict-search mode (only modify existing files)
-allowed-tools: Bash(*)
 ---
 
 # AutoFile Strict Search Mode
 
-Run this command and display the result to the user:
+Policy set to: **strict-search**
 
-```bash
-echo '{"prompt": "/afs", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"
-```
+**ONLY modify existing files** - all new file creation is blocked.
 
-Display ONLY the output of the above command. Do not add any additional commentary.
+You must use Glob/Grep to find existing files first, then modify them. This prevents file clutter during refactoring.
+
+UserPromptSubmit hook has updated the session policy.

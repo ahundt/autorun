@@ -1,14 +1,18 @@
 ---
 description: Require justification before creating new files
-allowed-tools: Bash(*)
 ---
 
 # AutoFile Justify Mode
 
-Run this command and display the result to the user:
+Policy set to: **justify-create**
 
-```bash
-echo '{"prompt": "/cr:justify", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"
+Search for existing files first before creating new ones. New file creation requires the `<AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>` tag in your reasoning.
+
+**Example**:
+```
+<AUTOFILE_JUSTIFICATION>
+Creating new config file because existing config.json doesn't support feature X
+</AUTOFILE_JUSTIFICATION>
 ```
 
-Display ONLY the output of the above command. Do not add any additional commentary.
+UserPromptSubmit hook has updated the session policy.
