@@ -132,6 +132,25 @@ class TestCommandHandlers:
             assert len(result) > 0, f"Handler {policy} should return non-empty string"
 
     @pytest.mark.unit
+    def test_policy_handlers_use_config_values(self):
+        """Test policy handlers return strings derived from CONFIG (DRY).
+
+        This verifies the DRY principle - handlers should use CONFIG['policies']
+        tuple unpacking rather than hardcoded strings.
+        """
+        for policy in ["SEARCH", "ALLOW", "JUSTIFY"]:
+            handler = COMMAND_HANDLERS[policy]
+            result = handler({})
+
+            # Verify the exact format matches CONFIG
+            expected_name, expected_desc = CONFIG["policies"][policy]
+            expected_format = f"AutoFile policy: {expected_name} - {expected_desc}"
+            assert result == expected_format, \
+                f"Handler {policy} should return CONFIG-derived string.\n" \
+                f"Expected: {expected_format}\n" \
+                f"Got: {result}"
+
+    @pytest.mark.unit
     def test_status_handler(self):
         """Test status handler works without session state"""
         handler = COMMAND_HANDLERS["STATUS"]

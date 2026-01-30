@@ -789,6 +789,28 @@ def build_pretooluse_response(decision="allow", reason=""):
             "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                   "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
 
+
+def has_valid_justification(*texts: str) -> bool:
+    """
+    Check if any provided text contains a valid AUTOFILE_JUSTIFICATION tag.
+
+    Validates that the content between tags is not:
+    - The default placeholder "reason"
+    - Empty or whitespace-only
+
+    Args:
+        *texts: One or more strings to search (transcript, file content, etc.)
+
+    Returns:
+        True if valid justification found, False otherwise
+    """
+    combined = " ".join(texts)
+    excluded = {"reason", ""}
+    pattern = r'<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>'
+    matches = regex_module.findall(pattern, combined, regex_module.DOTALL | regex_module.IGNORECASE)
+    return any(m.strip().lower() not in excluded for m in matches)
+
+
 # Ultra-efficient dispatch system - O(1) command lookup via decorator pattern
 HANDLERS = {}
 def handler(name):
@@ -823,17 +845,20 @@ def _manage_monitor(state: dict, action: str):
 def handle_search(state):
     """Handle SEARCH command - update state and return response"""
     state["file_policy"] = "SEARCH"
-    return f"AutoFile policy: strict-search - {CONFIG['policies']['SEARCH'][1]}"
+    policy_name, policy_desc = CONFIG['policies']['SEARCH']
+    return f"AutoFile policy: {policy_name} - {policy_desc}"
 
 def handle_allow(state):
     """Handle ALLOW command - update state and return response"""
     state["file_policy"] = "ALLOW"
-    return f"AutoFile policy: allow-all - {CONFIG['policies']['ALLOW'][1]}"
+    policy_name, policy_desc = CONFIG['policies']['ALLOW']
+    return f"AutoFile policy: {policy_name} - {policy_desc}"
 
 def handle_justify(state):
     """Handle JUSTIFY command - update state and return response"""
     state["file_policy"] = "JUSTIFY"
-    return f"AutoFile policy: justify-create - {CONFIG['policies']['JUSTIFY'][1]}"
+    policy_name, policy_desc = CONFIG['policies']['JUSTIFY']
+    return f"AutoFile policy: {policy_name} - {policy_desc}"
 
 def handle_status(state):
     """Handle STATUS command - return current policy"""
@@ -1360,8 +1385,10 @@ def pretooluse_handler(ctx):
                 if file_policy == "SEARCH":
                     return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
                 elif file_policy == "JUSTIFY":
-                    justification_found = state.get("autofile_justification_detected", False) or \
-                                        "AUTOFILE_JUSTIFICATION" in str(ctx.session_transcript)
+                    justification_found = (
+                        state.get("autofile_justification_detected", False) or
+                        has_valid_justification(str(ctx.session_transcript))
+                    )
                     if not justification_found:
                         return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
                 # ALLOW policy or default - allow
@@ -1394,8 +1421,7 @@ def pretooluse_handler(ctx):
             # Check for justification in state flag, transcript, OR Write tool content
             justification_found = (
                 state.get("autofile_justification_detected", False) or
-                "AUTOFILE_JUSTIFICATION" in str(ctx.session_transcript) or
-                "AUTOFILE_JUSTIFICATION" in str(ctx.tool_input.get("content", ""))
+                has_valid_justification(str(ctx.session_transcript), str(ctx.tool_input.get("content", "")))
             )
             if not justification_found:
                 return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
