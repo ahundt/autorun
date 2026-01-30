@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py",
+            "command": "cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun",
             "timeout": 10
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py",
+            "command": "cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun",
             "timeout": 10
           }
         ]
