@@ -209,6 +209,31 @@ def update_injection_outcome(state, outcome: InjectionOutcome, error_message: Op
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
+def sanitize_log_message(message: str, max_length: int = 10000) -> str:
+    """Sanitize message for safe logging - prevents log injection attacks.
+
+    Security: Untrusted data (transcripts, prompts, model outputs) must be
+    sanitized before logging to prevent log injection via embedded newlines.
+
+    Args:
+        message: Raw message string (may contain newlines, control chars)
+        max_length: Maximum message length (truncates if exceeded)
+
+    Returns:
+        Sanitized string safe for single-line log entry
+    """
+    if not isinstance(message, str):
+        message = str(message)
+    # Replace newlines and carriage returns with escaped versions
+    message = message.replace('\r\n', '\\r\\n').replace('\n', '\\n').replace('\r', '\\r')
+    # Replace other control characters that could affect log parsing
+    message = ''.join(c if c.isprintable() or c == ' ' else f'\\x{ord(c):02x}' for c in message)
+    # Truncate excessively long messages
+    if len(message) > max_length:
+        message = message[:max_length] + "... (truncated)"
+    return message
+
+
 def log_info(message):
     """Log info message to file with DEBUG environment variable control"""
     # Only log if DEBUG environment variable is set to true
@@ -222,17 +247,20 @@ def log_info(message):
         # Ensure directory exists
         STATE_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Sanitize message to prevent log injection
+        safe_message = sanitize_log_message(message)
+
         # Log to main autorun log
         with open(STATE_DIR / "autorun.log", "a") as f:
             log_time = time.strftime('%Y-%m-%d %H:%M:%S')
             pid = os.getpid()
-            f.write(f"[{log_time}] {pid}: {message}\n")
+            f.write(f"[{log_time}] {pid}: {safe_message}\n")
             f.flush()
 
         # Separate log for PreToolUse debugging
         if "PreToolUse" in message:
             with open(STATE_DIR / "pretooluse_debug.log", "a") as debug_f:
-                debug_f.write(f"[{log_time}] {pid}: {message}\n")
+                debug_f.write(f"[{log_time}] {pid}: {safe_message}\n")
                 debug_f.flush()
 
     except Exception as e:
@@ -642,6 +670,55 @@ def parse_pattern_and_description(args: str) -> tuple[str, str | None, str]:
     return pattern, description, pattern_type
 
 
+def is_safe_regex_pattern(pattern: str, max_length: int = 200) -> bool:
+    """Validate regex pattern for safety against ReDoS attacks.
+
+    Security: User-provided regex patterns can cause catastrophic backtracking
+    (ReDoS). This function rejects patterns with known dangerous constructs.
+
+    Args:
+        pattern: Regex pattern to validate
+        max_length: Maximum allowed pattern length
+
+    Returns:
+        True if pattern is considered safe, False otherwise
+
+    Dangerous patterns blocked:
+        - Nested quantifiers: (a+)+, (a*)+, (a+)*, etc.
+        - Overlapping alternations with quantifiers
+        - Excessively long patterns
+    """
+    if len(pattern) > max_length:
+        return False
+
+    # Detect nested quantifiers - the primary cause of catastrophic backtracking
+    # Pattern: quantifier followed by another quantifier on the same group
+    # Examples: (a+)+, (a*)+, (a+)*, (a?)*, (.+)+, ((a+))+, etc.
+    nested_quantifier_patterns = [
+        r'\([^)]*[+*?]\)[+*?]',       # (x+)+, (x*)+, etc.
+        r'\([^)]*[+*?]\)\{',           # (x+){n}, (x*){n}, etc.
+        r'\[[^\]]*\][+*?][+*?]',       # [abc]+*, etc.
+        r'[+*?]\{[0-9,]+\}[+*?]',      # a{2,}+, etc.
+        r'\)\)+[+*?]',                 # ))+ nested groups with quantifier
+        r'\([^)]*\([^)]*[+*?]\)',      # ((x+)) nested capturing groups
+    ]
+
+    for dangerous_pattern in nested_quantifier_patterns:
+        try:
+            if regex_module.search(dangerous_pattern, pattern):
+                return False
+        except regex_module.error:
+            return False
+
+    # Also try to compile to catch syntax errors early
+    try:
+        regex_module.compile(pattern)
+    except regex_module.error:
+        return False
+
+    return True
+
+
 def command_matches_pattern(command: str, pattern: str, pattern_type: str = "literal") -> bool:
     """
     Check if a command matches a blocked pattern.
@@ -653,6 +730,10 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
 
     Returns:
         True if command matches pattern
+
+    Security:
+        Regex patterns are validated against ReDoS attacks before execution.
+        Invalid or dangerous patterns fall back to literal substring matching.
     """
     import fnmatch
 
@@ -662,8 +743,13 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
     if not command or not pattern:
         return False
 
-    # Regex matching
+    # Regex matching with ReDoS protection
     if pattern_type == "regex":
+        # Validate pattern safety before execution
+        if not is_safe_regex_pattern(pattern):
+            log_info(f"Unsafe regex pattern rejected (ReDoS protection): {pattern[:50]}")
+            # Fall back to literal matching for safety
+            return pattern in command
         try:
             return bool(regex_module.search(pattern, command))
         except regex_module.error:
@@ -1403,11 +1489,27 @@ def pretooluse_handler(ctx):
             log_info("PreToolUse SEARCH Policy Debug:")
             log_info(f"  Current Policy: {file_policy}")
             log_info(f"  File Path: {file_path}")
-            log_info(f"  Path Exists: {Path(file_path).exists() if file_path else 'No file path'}")
+
+            # Security: Normalize and validate path before existence check
+            # This prevents some path traversal edge cases, though Claude Code's
+            # sandbox provides the primary protection against unauthorized access.
+            file_exists = False
+            if file_path:
+                try:
+                    # Resolve to absolute path (normalizes ../.. sequences)
+                    resolved_path = Path(file_path).resolve()
+                    file_exists = resolved_path.exists() and resolved_path.is_file()
+                    log_info(f"  Resolved Path: {resolved_path}")
+                    log_info(f"  Path Exists (file): {file_exists}")
+                except (OSError, ValueError) as e:
+                    # Invalid path - treat as non-existent
+                    log_info(f"  Path resolution error: {e}")
+                    file_exists = False
+
             log_info(f"  Session State: {state}")
 
             # SEARCH policy blocks new file creation but allows editing existing files
-            if file_path and Path(file_path).exists():
+            if file_path and file_exists:
                 # File exists - allow editing
                 log_info("  Decision: ALLOW (Existing file modification)")
                 return build_pretooluse_response("allow", "Existing file modification allowed under SEARCH policy")
@@ -1922,9 +2024,11 @@ def main():
             _session_id = payload.get("session_id", "?")
 
             # DEBUG: Log all hook calls to track when script is called
+            # Security: Sanitize prompt to prevent log injection
             debug_log = STATE_DIR / "hook_debug.log"
+            safe_prompt = sanitize_log_message(payload.get('prompt', '')[:100], max_length=100)
             with open(debug_log, "a") as f:
-                f.write(f"[{time.strftime('%H:%M:%S')}] HOOK_CALLED: {event} | session: {_session_id} | prompt: {payload.get('prompt', '')[:50]}...\n")
+                f.write(f"[{time.strftime('%H:%M:%S')}] HOOK_CALLED: {event} | session: {_session_id} | prompt: {safe_prompt}...\n")
 
             # Context object for event handling
             class Ctx:

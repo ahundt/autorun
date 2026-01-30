@@ -272,3 +272,97 @@ class TestBasicFunctionality:
                     pytest.fail(f"Handler {handler_name} should accept at least one argument")
                 else:
                     raise
+
+
+class TestSecurityFunctions:
+    """Test security-related functions"""
+
+    @pytest.mark.unit
+    def test_sanitize_log_message_newlines(self):
+        """Test that newlines are escaped in log messages"""
+        from clautorun.main import sanitize_log_message
+
+        # Test newline injection attack
+        malicious = "normal\n[FAKE] Injected log entry\nmore"
+        result = sanitize_log_message(malicious)
+        assert '\n' not in result, "Newlines should be escaped"
+        assert '\\n' in result, "Newlines should be replaced with \\n"
+
+    @pytest.mark.unit
+    def test_sanitize_log_message_carriage_return(self):
+        """Test that carriage returns are escaped"""
+        from clautorun.main import sanitize_log_message
+
+        malicious = "normal\r\n[FAKE]\rmore"
+        result = sanitize_log_message(malicious)
+        assert '\r' not in result, "Carriage returns should be escaped"
+        assert '\n' not in result, "Newlines should be escaped"
+
+    @pytest.mark.unit
+    def test_sanitize_log_message_truncation(self):
+        """Test that long messages are truncated"""
+        from clautorun.main import sanitize_log_message
+
+        long_message = "a" * 20000
+        result = sanitize_log_message(long_message, max_length=100)
+        assert len(result) < 150, "Message should be truncated"
+        assert "truncated" in result, "Should indicate truncation"
+
+    @pytest.mark.unit
+    def test_is_safe_regex_rejects_nested_quantifiers(self):
+        """Test ReDoS protection rejects dangerous patterns"""
+        from clautorun.main import is_safe_regex_pattern
+
+        # Dangerous patterns with nested quantifiers
+        dangerous_patterns = [
+            "(a+)+",      # Classic ReDoS
+            "(a*)+",
+            "(a+)*",
+            "([a-z]+)*",
+            "((a+))+",
+        ]
+
+        for pattern in dangerous_patterns:
+            assert is_safe_regex_pattern(pattern) is False, \
+                f"Dangerous pattern should be rejected: {pattern}"
+
+    @pytest.mark.unit
+    def test_is_safe_regex_accepts_safe_patterns(self):
+        """Test that safe regex patterns are accepted"""
+        from clautorun.main import is_safe_regex_pattern
+
+        safe_patterns = [
+            r"rm\s+-rf",
+            r"git\s+reset",
+            r"eval\(",
+            r"[a-z]+",
+            r"\d{3}-\d{4}",
+        ]
+
+        for pattern in safe_patterns:
+            assert is_safe_regex_pattern(pattern) is True, \
+                f"Safe pattern should be accepted: {pattern}"
+
+    @pytest.mark.unit
+    def test_is_safe_regex_rejects_long_patterns(self):
+        """Test that excessively long patterns are rejected"""
+        from clautorun.main import is_safe_regex_pattern
+
+        long_pattern = "a" * 300
+        assert is_safe_regex_pattern(long_pattern) is False, \
+            "Long pattern should be rejected"
+
+    @pytest.mark.unit
+    def test_is_safe_regex_rejects_invalid_patterns(self):
+        """Test that invalid regex syntax is rejected"""
+        from clautorun.main import is_safe_regex_pattern
+
+        invalid_patterns = [
+            "[unclosed",
+            "(unclosed",
+            "**invalid",
+        ]
+
+        for pattern in invalid_patterns:
+            assert is_safe_regex_pattern(pattern) is False, \
+                f"Invalid pattern should be rejected: {pattern}"
