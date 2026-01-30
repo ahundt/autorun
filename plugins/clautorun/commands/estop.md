@@ -1,16 +1,11 @@
 ---
 description: Emergency stop - immediately halt all autonomous operations
-allowed-tools: Bash(*)
 ---
 
 # Emergency Stop
 
-Run this command and display the result to the user:
+**⚠️ WARNING**: This will immediately halt all autonomous operations.
 
-```bash
-echo '{"prompt": "/cr:estop", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"
-```
+Use this when you need to stop all activity immediately. For graceful stop that allows current task to complete, use `/cr:x` or `/cr:stop`.
 
-**WARNING**: This will immediately halt all autonomous operations.
-
-Display ONLY the output of the above command. Do not add any additional commentary.
+UserPromptSubmit hook has processed the emergency stop command.

@@ -1,14 +1,11 @@
 ---
 description: Graceful stop - finish current task then stop autorun
-allowed-tools: Bash(*)
 ---
 
 # Graceful Stop
 
-Run this command and display the result to the user:
+Stops autorun after completing the current task.
 
-```bash
-echo '{"prompt": "/cr:stop", "session_id": "default"}' | "${CLAUDE_PLUGIN_ROOT}/commands/clautorun" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('response','No response'))"
-```
+The session will finish its current work before stopping. Use `/cr:sos` or `/cr:estop` for immediate emergency stop.
 
-Display ONLY the output of the above command. Do not add any additional commentary.
+UserPromptSubmit hook has processed the stop command.
