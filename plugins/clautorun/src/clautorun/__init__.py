@@ -178,18 +178,21 @@ except ImportError:
         "recheck_template": "Recheck template placeholder"
     }
 
-    # Fallback COMMAND_HANDLERS for tests
+    # Fallback COMMAND_HANDLERS for tests - use CONFIG for DRY compliance
     def handle_search(state):
         state["file_policy"] = "SEARCH"
-        return "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
+        policy_name, policy_desc = CONFIG["policies"]["SEARCH"]
+        return f"AutoFile policy: {policy_name} - {policy_desc}"
 
     def handle_allow(state):
         state["file_policy"] = "ALLOW"
-        return "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
+        policy_name, policy_desc = CONFIG["policies"]["ALLOW"]
+        return f"AutoFile policy: {policy_name} - {policy_desc}"
 
     def handle_justify(state):
         state["file_policy"] = "JUSTIFY"
-        return "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
+        policy_name, policy_desc = CONFIG["policies"]["JUSTIFY"]
+        return f"AutoFile policy: {policy_name} - {policy_desc}"
 
     def handle_status(state):
         current_policy = state.get("file_policy", "ALLOW")

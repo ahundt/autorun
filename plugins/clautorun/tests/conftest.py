@@ -35,6 +35,8 @@ except ImportError:
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from clautorun import CONFIG
+
 
 
 def should_keep_test_artifacts():
@@ -169,14 +171,10 @@ def mock_session_state_factory():
 
 @pytest.fixture
 def policy_responses():
-    """Expected policy response strings for testing file policy commands.
-
-    These match the responses from CONFIG["policies"] in config.py.
-    """
+    """Expected policy response strings - generated from CONFIG."""
     return {
-        "SEARCH": "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.",
-        "ALLOW": "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.",
-        "JUSTIFY": "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.",
+        policy: f"AutoFile policy: {CONFIG['policies'][policy][0]} - {CONFIG['policies'][policy][1]}"
+        for policy in ["SEARCH", "ALLOW", "JUSTIFY"]
     }
 
 
@@ -193,12 +191,12 @@ def sample_commands():
 
 @pytest.fixture
 def expected_responses():
-    """Expected responses for commands"""
+    """Expected responses for commands - generated from CONFIG."""
     return {
-        "/afs": "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.",
-        "/afa": "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files.",
-        "/afj": "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.",
-        "/afst": "Current policy: allow-all",
+        "/afs": f"AutoFile policy: {CONFIG['policies']['SEARCH'][0]} - {CONFIG['policies']['SEARCH'][1]}",
+        "/afa": f"AutoFile policy: {CONFIG['policies']['ALLOW'][0]} - {CONFIG['policies']['ALLOW'][1]}",
+        "/afj": f"AutoFile policy: {CONFIG['policies']['JUSTIFY'][0]} - {CONFIG['policies']['JUSTIFY'][1]}",
+        "/afst": f"Current policy: {CONFIG['policies']['ALLOW'][0]}",
         "/autostop": "Autorun stopped",
         "/estop": "Emergency stop activated"
     }

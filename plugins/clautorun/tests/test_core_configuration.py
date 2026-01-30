@@ -310,6 +310,71 @@ def test_log_function():
         print(f"❌ Log info function error: {e}")
         raise
 
+def test_commands_clautorun_fallback_config():
+    """Test that commands/clautorun fallback CONFIG matches main CONFIG.
+
+    The commands/clautorun script has a fallback CONFIG in the except ImportError
+    block that is used when the clautorun package cannot be imported. This test
+    verifies that the fallback values match the main CONFIG to ensure consistency.
+
+    DRY principle: Both should derive from the same source of truth.
+    """
+    import ast
+    import re
+
+    # Read the commands/clautorun file
+    commands_path = Path(__file__).parent.parent / "commands" / "clautorun"
+    with open(commands_path, 'r') as f:
+        content = f.read()
+
+    # Find the fallback CONFIG in the except ImportError block
+    # Pattern: "except ImportError:" followed by CONFIG = { ... }
+    except_match = re.search(r'except\s+ImportError\s*:', content)
+    assert except_match, "Could not find except ImportError block in commands/clautorun"
+
+    # Find CONFIG = { after the except block
+    content_after_except = content[except_match.end():]
+    config_match = re.search(r'CONFIG\s*=\s*\{', content_after_except)
+    assert config_match, "Could not find CONFIG = { after except ImportError"
+
+    # Find matching closing brace by counting braces
+    start_pos = config_match.end() - 1  # Position of opening brace (relative to content_after_except)
+    brace_count = 0
+    end_pos = start_pos
+    for i, char in enumerate(content_after_except[start_pos:]):
+        if char == '{':
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                end_pos = start_pos + i + 1
+                break
+
+    fallback_str = content_after_except[start_pos:end_pos]
+
+    # Use ast.literal_eval for safe parsing of Python literals
+    fallback_config = ast.literal_eval(fallback_str)
+
+    # Verify critical values match main CONFIG
+    # Note: fallback uses "emergency_stop_phrase" but main CONFIG uses "emergency_stop"
+    assert fallback_config["completion_marker"] == CONFIG["completion_marker"], \
+        f"completion_marker mismatch: fallback={fallback_config['completion_marker']}, CONFIG={CONFIG['completion_marker']}"
+
+    assert fallback_config["emergency_stop_phrase"] == CONFIG["emergency_stop"], \
+        f"emergency_stop_phrase mismatch: fallback={fallback_config['emergency_stop_phrase']}, CONFIG={CONFIG['emergency_stop']}"
+
+    # Verify policies match
+    for policy_key in ["ALLOW", "JUSTIFY", "SEARCH"]:
+        assert policy_key in fallback_config["policies"], f"Missing policy {policy_key} in fallback"
+        fallback_name, fallback_desc = fallback_config["policies"][policy_key]
+        config_name, config_desc = CONFIG["policies"][policy_key]
+        assert fallback_name == config_name, \
+            f"Policy {policy_key} name mismatch: fallback={fallback_name}, CONFIG={config_name}"
+        assert fallback_desc == config_desc, \
+            f"Policy {policy_key} description mismatch: fallback={fallback_desc}, CONFIG={config_desc}"
+
+    print("✅ commands/clautorun fallback CONFIG matches main CONFIG")
+
 def main():
     """Run all compatibility tests"""
     print("🧪 Testing clautorun three-stage system compatibility")
@@ -328,6 +393,7 @@ def main():
     test_command_handlers()
     test_handler_variations_available()
     test_log_function()
+    test_commands_clautorun_fallback_config()
 
     print("\n🎯 All tests passed! clautorun three-stage system verified")
     print("📋 Verification complete:")

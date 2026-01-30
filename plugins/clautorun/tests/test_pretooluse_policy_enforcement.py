@@ -9,10 +9,102 @@ from unittest.mock import Mock
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import pretooluse_handler, session_state, CONFIG, _session_backends
+from clautorun.main import pretooluse_handler, session_state, CONFIG, _session_backends, has_valid_justification
 
 # Import conftest utilities for cleanup - cleanup happens via pytest_sessionfinish
 from conftest import register_test_session
+
+
+class TestHasValidJustification:
+    """Test the has_valid_justification function for correct justification detection"""
+
+    def test_default_placeholder_rejected(self):
+        """Default 'reason' placeholder should be rejected as invalid"""
+        # This is the instruction text that AI may repeat - should NOT count as valid
+        instruction = "Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
+        assert has_valid_justification(instruction) is False
+
+    def test_valid_justification_accepted(self):
+        """Real justification content should be accepted"""
+        valid = "<AUTOFILE_JUSTIFICATION>Config file for user settings</AUTOFILE_JUSTIFICATION>"
+        assert has_valid_justification(valid) is True
+
+    def test_empty_content_rejected(self):
+        """Empty content between tags should be rejected"""
+        assert has_valid_justification("<AUTOFILE_JUSTIFICATION></AUTOFILE_JUSTIFICATION>") is False
+        assert has_valid_justification("<AUTOFILE_JUSTIFICATION>   </AUTOFILE_JUSTIFICATION>") is False
+        assert has_valid_justification("<AUTOFILE_JUSTIFICATION>\n\t</AUTOFILE_JUSTIFICATION>") is False
+
+    def test_case_insensitive_matching(self):
+        """Tags should be matched case-insensitively"""
+        assert has_valid_justification("<autofile_justification>Valid reason</autofile_justification>") is True
+        assert has_valid_justification("<AUTOFILE_JUSTIFICATION>Valid reason</AUTOFILE_JUSTIFICATION>") is True
+        assert has_valid_justification("<AutoFile_Justification>Valid reason</AutoFile_Justification>") is True
+
+    def test_multiple_sources_combined(self):
+        """Multiple text sources should be combined for searching (DRY verification)"""
+        # Valid justification in second source
+        assert has_valid_justification("no tag here", "<AUTOFILE_JUSTIFICATION>Valid</AUTOFILE_JUSTIFICATION>") is True
+        # No valid justification in either source
+        assert has_valid_justification("no tag here", "also no tag") is False
+        # Default placeholder in first, nothing in second
+        assert has_valid_justification("<AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>", "other text") is False
+
+    def test_no_false_positives_from_instruction_text(self):
+        """Instruction text with default placeholder should not trigger false positive"""
+        # Full instruction text from config
+        instruction = "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
+        assert has_valid_justification(instruction) is False
+
+    def test_multiline_justification_content(self):
+        """Multiline content should be handled correctly"""
+        multiline = """<AUTOFILE_JUSTIFICATION>
+        This is a multi-line justification
+        with detailed reasoning
+        </AUTOFILE_JUSTIFICATION>"""
+        assert has_valid_justification(multiline) is True
+
+    def test_multiple_tags_any_valid_passes(self):
+        """If multiple tags exist, any valid one should pass"""
+        mixed = """
+        <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>
+        <AUTOFILE_JUSTIFICATION>This is a real justification</AUTOFILE_JUSTIFICATION>
+        """
+        assert has_valid_justification(mixed) is True
+
+    def test_multiple_tags_all_invalid_fails(self):
+        """If multiple tags exist but all are invalid, should fail"""
+        all_invalid = """
+        <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>
+        <AUTOFILE_JUSTIFICATION></AUTOFILE_JUSTIFICATION>
+        <AUTOFILE_JUSTIFICATION>   </AUTOFILE_JUSTIFICATION>
+        """
+        assert has_valid_justification(all_invalid) is False
+
+    def test_no_tag_present(self):
+        """Text without any justification tag should return False"""
+        assert has_valid_justification("No justification tag here at all") is False
+        assert has_valid_justification("") is False
+        assert has_valid_justification("   ") is False
+
+    def test_realistic_transcript_with_valid_justification(self):
+        """Realistic transcript with valid justification should pass"""
+        transcript = """
+        User: Create a configuration file
+        AI: I'll search for existing config files first...
+        AI: No existing config found. Creating new file.
+        <AUTOFILE_JUSTIFICATION>No existing configuration file found after searching with Glob. This new file is needed to store user preferences.</AUTOFILE_JUSTIFICATION>
+        """
+        assert has_valid_justification(transcript) is True
+
+    def test_realistic_transcript_with_only_instruction_echo(self):
+        """Transcript where AI just echoes instructions should fail"""
+        transcript = """
+        User: Create a file
+        AI: Per the JUSTIFY policy, I need to Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files.
+        AI: Creating new_file.txt
+        """
+        assert has_valid_justification(transcript) is False
 
 
 class TestPreToolUsePolicyEnforcement:

@@ -81,6 +81,14 @@ pwd
 # Should be: /Users/athundt/.claude/clautorun/plugins/clautorun/
 ```
 
+## Dynamic Content in Slash Commands
+
+Markdown commands can include dynamic bash output using `!` prefix ([docs](https://docs.anthropic.com/en/docs/claude-code/slash-commands)). To access CONFIG:
+
+```bash
+!`python3 -c "import sys; sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/src'); from clautorun.config import CONFIG; print(CONFIG['key'])"`
+```
+
 ## If You See This File in Cache Location
 
 1. Navigate to git repository: `cd /Users/athundt/.claude/clautorun/plugins/clautorun/`
