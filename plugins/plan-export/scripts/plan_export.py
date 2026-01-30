@@ -55,6 +55,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Import SessionLock for session-isolated plan export
+# This prevents race conditions when multiple sessions export simultaneously
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
+from clautorun.session_manager import SessionLock, SessionTimeoutError
+
 # Default configuration
 DEFAULT_CONFIG = {
     "enabled": True,
@@ -90,6 +95,18 @@ def load_config() -> dict:
 def is_enabled() -> bool:
     """Check if plan export is enabled."""
     return load_config().get("enabled", True)
+
+
+def log_warning(message: str) -> None:
+    """Log warning message to debug log if enabled."""
+    config = load_config()
+    if config.get("debug_logging", False):
+        try:
+            debug_log = Path.home() / ".claude" / "plan-export-debug.log"
+            with open(debug_log, "a") as f:
+                f.write(f"[{datetime.now()}] WARNING: {message}\n")
+        except Exception:
+            pass  # Don't let logging break the export
 
 
 def get_most_recent_plan() -> Path | None:
@@ -169,6 +186,125 @@ def get_plan_from_transcript(transcript_path: str) -> Path | None:
 
     valid_plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return valid_plans[0]
+
+
+def get_plan_from_metadata(plan_path: Path) -> str | None:
+    """Extract session_id from plan file metadata.
+
+    Plan files exported by this plugin include YAML frontmatter with:
+    - session_id: The session that created this plan
+    - original_path: The original plan file path
+    - export_timestamp: When the plan was exported
+
+    This provides recoverability when transcript parsing fails or when
+    sessions are resumed in new Claude Code instances.
+
+    Args:
+        plan_path: Path to the plan file to check.
+
+    Returns:
+        The session_id from metadata, or None if not found.
+    """
+    try:
+        content = plan_path.read_text(encoding="utf-8")
+
+        # Check for YAML frontmatter (starts with ---)
+        if not content.startswith("---"):
+            return None
+
+        # Extract frontmatter (between first and second ---)
+        frontmatter_end = content.find("\n---", 4)
+        if frontmatter_end == -1:
+            return None
+
+        frontmatter = content[4:frontmatter_end].strip()
+
+        # Parse simple YAML-like metadata
+        for line in frontmatter.split("\n"):
+            if line.startswith("session_id:"):
+                session_id = line.split(":", 1)[1].strip()
+                # Remove quotes if present
+                session_id = session_id.strip('"\'')
+                return session_id
+
+    except (IOError, UnicodeDecodeError):
+        pass
+
+    return None
+
+
+def find_plan_by_session_id(session_id: str) -> Path | None:
+    """Find a plan file by searching for session_id in metadata.
+
+    This is a fallback method when transcript parsing fails but
+    the plan file has embedded metadata from a previous export.
+
+    Args:
+        session_id: The session ID to search for.
+
+    Returns:
+        Path to the plan file, or None if not found.
+    """
+    plans_dir = Path.home() / ".claude" / "plans"
+    if not plans_dir.exists():
+        return None
+
+    plan_files = list(plans_dir.glob("*.md"))
+    if not plan_files:
+        return None
+
+    # Check each plan file for matching session_id in metadata
+    for plan_path in plan_files:
+        metadata_session_id = get_plan_from_metadata(plan_path)
+        if metadata_session_id == session_id:
+            return plan_path
+
+    return None
+
+
+def embed_plan_metadata(plan_path: Path, session_id: str, export_destination: Path) -> None:
+    """Embed metadata into exported plan file for recoverability.
+
+    Adds YAML frontmatter to the exported plan file containing:
+    - session_id: The session that created this plan
+    - original_path: The source plan file path
+    - export_timestamp: When the plan was exported
+    - export_destination: Where the plan was exported to
+
+    This metadata enables:
+    - Finding the correct plan when sessions are resumed
+    - Recoverability when transcript parsing fails
+    - Debugging and audit trail
+
+    Args:
+        plan_path: The source plan file path.
+        session_id: The current session ID.
+        export_destination: Where the plan is being exported to.
+    """
+    try:
+        content = export_destination.read_text(encoding="utf-8")
+
+        # Check if metadata already exists
+        if content.startswith("---"):
+            # Already has metadata, skip
+            return
+
+        # Create YAML frontmatter
+        metadata = f"""---
+session_id: {session_id}
+original_path: {plan_path}
+export_timestamp: {datetime.now().isoformat()}
+export_destination: {export_destination}
+---
+
+"""
+
+        # Prepend metadata to content
+        export_destination.write_text(metadata + content, encoding="utf-8")
+
+    except (IOError, UnicodeDecodeError):
+        # Don't fail export if metadata embedding fails
+        pass
 
 
 def extract_useful_name(plan_path: Path) -> str:
@@ -280,8 +416,13 @@ def expand_template(template: str, plan_path: Path, plan_name: str) -> str:
     return result
 
 
-def export_plan(plan_path: Path, project_dir: Path) -> dict:
+def export_plan(plan_path: Path, project_dir: Path, session_id: str = None) -> dict:
     """Export the plan file to the configured location.
+
+    Args:
+        plan_path: The source plan file to export.
+        project_dir: The project directory where notes will be saved.
+        session_id: The current session ID (for metadata embedding).
 
     Returns a dict with status information for the hook response.
     """
@@ -315,6 +456,10 @@ def export_plan(plan_path: Path, project_dir: Path) -> dict:
     # Copy the plan file
     shutil.copy2(plan_path, dest_path)
 
+    # Embed metadata for recoverability (if session_id provided)
+    if session_id:
+        embed_plan_metadata(plan_path, session_id, dest_path)
+
     return {
         "success": True,
         "source": str(plan_path),
@@ -323,11 +468,16 @@ def export_plan(plan_path: Path, project_dir: Path) -> dict:
     }
 
 
-def export_rejected_plan(plan_path: Path, project_dir: Path) -> dict:
+def export_rejected_plan(plan_path: Path, project_dir: Path, session_id: str = None) -> dict:
     """Export a rejected plan to the rejected plan directory.
 
     Rejected plans are saved to the configured rejected plan directory
     (default: "notes/rejected").
+
+    Args:
+        plan_path: The source plan file to export.
+        project_dir: The project directory where notes will be saved.
+        session_id: The current session ID (for metadata embedding).
 
     Returns a dict with status information for the hook response.
     """
@@ -360,6 +510,10 @@ def export_rejected_plan(plan_path: Path, project_dir: Path) -> dict:
     # Copy the plan file
     shutil.copy2(plan_path, dest_path)
 
+    # Embed metadata for recoverability (if session_id provided)
+    if session_id:
+        embed_plan_metadata(plan_path, session_id, dest_path)
+
     return {
         "success": True,
         "source": str(plan_path),
@@ -381,6 +535,18 @@ def main():
         result = {
             "continue": True,
             "suppressOutput": True
+        }
+        print(json.dumps(result))
+        return
+
+    # Extract and validate session_id from hook input
+    # Session ID is required for session-isolated plan export to prevent race conditions
+    session_id = hook_input.get("session_id", "unknown")
+    if session_id == "unknown":
+        result = {
+            "continue": True,
+            "systemMessage": "Warning: session_id missing from hook input",
+            "additionalContext": "\n⚠️ Export skipped: session_id required for safe export\n"
         }
         print(json.dumps(result))
         return
@@ -433,42 +599,64 @@ def main():
             # Don't let logging errors break the export
             pass
 
-    # Try to get plan from session transcript first (fixes cross-session bug)
-    plan_path = None
-    if transcript_path:
-        plan_path = get_plan_from_transcript(transcript_path)
+    # Wrap entire plan selection + export in session lock for race condition safety
+    # This prevents multiple sessions from exporting simultaneously and causing cross-contamination
+    STATE_DIR = Path.home() / ".claude" / "sessions"
+    LOCK_TIMEOUT = 10.0  # Seconds
 
-    # Fall back to most recent plan if transcript parsing failed
-    if not plan_path:
-        plan_path = get_most_recent_plan()
-
-    if not plan_path:
-        result = {
-            "continue": True,
-            "systemMessage": "No plan files found to export.",
-            "additionalContext": "\n\n📋 No plan files found to export.\n"
-        }
-        print(json.dumps(result))
-        return
-
-    config = load_config()
-
-    # Export based on approval status
     try:
-        if is_approved:
-            export_result = export_plan(plan_path, project_dir)
-        elif config.get("export_rejected", True):
-            export_result = export_rejected_plan(plan_path, project_dir)
-        else:
-            # Rejected plans disabled, skip export
-            result = {
-                "continue": True,
-                "suppressOutput": True
-            }
-            print(json.dumps(result))
-            return
+        with SessionLock(session_id, timeout=LOCK_TIMEOUT, state_dir=STATE_DIR):
+            # === BEGIN CRITICAL SECTION ===
+            # Mutually exclusive per session - prevents race conditions
+
+            # Step 1: Get plan path (session-isolated)
+            plan_path = None
+            if transcript_path:
+                plan_path = get_plan_from_transcript(transcript_path)
+
+            # Fallback 1: Try to find plan by session_id in metadata
+            # This handles session resume scenarios where transcript parsing fails
+            if not plan_path:
+                config = load_config()
+                if config.get("debug_logging", False):
+                    log_warning(f"Session {session_id}: transcript parsing failed, trying metadata fallback")
+                plan_path = find_plan_by_session_id(session_id)
+
+            # Fallback 2: Most recent plan (original behavior)
+            if not plan_path:
+                config = load_config()
+                if config.get("debug_logging", False):
+                    log_warning(f"Session {session_id}: metadata search failed, using most recent plan")
+                plan_path = get_most_recent_plan()
+
+            if not plan_path:
+                result = {
+                    "continue": True,
+                    "systemMessage": "No plan files found to export.",
+                    "additionalContext": "\n📋 No plan files found to export.\n"
+                }
+                print(json.dumps(result))
+                return
+
+            # Step 2: Export (atomic with selection due to lock)
+            # Pass session_id for metadata embedding in exported file
+            config = load_config()
+            if is_approved:
+                export_result = export_plan(plan_path, project_dir, session_id=session_id)
+            elif config.get("export_rejected", True):
+                export_result = export_rejected_plan(plan_path, project_dir, session_id=session_id)
+            else:
+                result = {"continue": True, "suppressOutput": True}
+                print(json.dumps(result))
+                return
+
+            # === END CRITICAL SECTION ===
+
+        # Lock released automatically here
 
         # Conditionally show export message to Claude AND user via additionalContext
+        # Reload config to ensure we have the latest settings
+        config = load_config()
         if config.get("notify_claude", True):
             result = {
                 "continue": True,
@@ -480,15 +668,26 @@ def main():
                 "continue": True,
                 "suppressOutput": True
             }
+        print(json.dumps(result))
+
+    except SessionTimeoutError as e:
+        # Another export in progress for this session
+        result = {
+            "continue": True,
+            "systemMessage": f"Export skipped: {e}",
+            "additionalContext": f"\n⚠️ Export skipped: Another operation in progress\n"
+        }
+        print(json.dumps(result))
+        return
+
     except Exception as e:
-        # Always show errors regardless of notify_claude setting
         result = {
             "continue": True,
             "systemMessage": f"Plan export failed: {e}",
-            "additionalContext": f"\n\n❌ Plan export failed: {e}\n"
+            "additionalContext": f"\n❌ Plan export failed: {e}\n"
         }
-
-    print(json.dumps(result))
+        print(json.dumps(result))
+        return
 
 
 if __name__ == "__main__":

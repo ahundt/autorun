@@ -30,7 +30,7 @@ Add to your `~/.claude/settings.json` under `hooks`:
     "hooks": [
       {
         "type": "command",
-        "command": "python3 ~/.claude/plugins/repos/plan-export/scripts/export-plan.py",
+        "command": "python3 ~/.claude/plugins/repos/plan-export/scripts/plan_export.py",
         "timeout": 30
       }
     ]
@@ -141,6 +141,6 @@ plan-export/
 │   └── hooks.json
 ├── scripts/
 │   ├── config.py
-│   └── export-plan.py
+│   └── plan_export.py
 └── README.md
 ```

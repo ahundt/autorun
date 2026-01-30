@@ -1,17 +1,111 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "plan-export"
-version = "1.0.0"
-description = "Automatically exports plan files to project notes when exiting plan mode"
-authors = [{name = "athundt"}]
-license = {text = "MIT"}
-keywords = ["plan-mode", "notes", "export", "archive", "claude-code"]
+version = "1.1.0"
+description = "Export Claude Code plans to project notes with race condition protection"
+authors = [{name = "Andrew Hundt", email = "ATHundt@gmail.com"}]
+license = {text = "Apache-2.0"}
+keywords = ["plan-mode", "notes", "export", "archive", "claude-code", "race-condition", "session-lock"]
 readme = "README.md"
 requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0",
+    "pytest-tempdir>=0.12.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/ahundt/clautorun"
-Repository = "https://github.com/ahundt/clautorun.git"
+Repository = "https://github.com/ahundt/clautorun"
+
+# UV-specific configuration
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0",
+    "pytest-tempdir>=0.12.0",
+]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "--disable-warnings",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "stress: marks tests as stress tests",
+    "race: marks tests as race condition tests",
+    "baseline: marks tests as baseline functionality tests",
+    "concurrent: marks tests as concurrent execution tests",
+    "multi_process: marks tests as multi-process tests",
+    "stale_lock: marks tests as stale lock recovery tests",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["scripts"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+
+# Ruff configuration
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+known-first-party = ["export_plan_module", "clautorun"]

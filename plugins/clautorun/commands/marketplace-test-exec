@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""
+Marketplace Plugin Testing System
+
+Runs tests across all installed Claude Code marketplace plugins and provides
+a comprehensive report of the results.
+
+Usage:
+    ./marketplace-test-exec                    # Test all marketplace plugins
+    ./marketplace-test-exec --plugin plan-export # Test specific plugin
+    ./marketplace-test-exec --parallel          # Run tests in parallel
+    ./marketplace-test-exec --coverage          # Include coverage reports
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+
+class MarketplaceTester:
+    """Test runner for marketplace plugins."""
+
+    def __init__(self, parallel: bool = False, coverage: bool = False):
+        self.parallel = parallel
+        self.coverage = coverage
+        self.results = []
+
+    def discover_plugins(self) -> List[Path]:
+        """Discover all marketplace plugins."""
+        plugins_dir = Path.home() / ".claude" / "plugins" / "repos"
+        if not plugins_dir.exists():
+            print(f"❌ Marketplace plugins directory not found: {plugins_dir}")
+            return []
+
+        return [p for p in plugins_dir.iterdir() if p.is_dir()]
+
+    def plugin_has_tests(self, plugin_dir: Path) -> bool:
+        """Check if plugin has tests directory."""
+        tests_dir = plugin_dir / "tests"
+        return tests_dir.exists() and tests_dir.is_dir()
+
+    def run_plugin_tests(self, plugin_dir: Path) -> Dict:
+        """Run tests for a single plugin."""
+        plugin_name = plugin_dir.name
+        start_time = time.time()
+
+        result = {
+            "name": plugin_name,
+            "path": str(plugin_dir),
+            "has_tests": False,
+            "tested": False,
+            "passed": False,
+            "total_tests": 0,
+            "passed_tests": 0,
+            "failed_tests": 0,
+            "duration": 0.0,
+            "error": None,
+            "output": ""
+        }
+
+        # Check if plugin has tests
+        if not self.plugin_has_tests(plugin_dir):
+            result["has_tests"] = False
+            return result
+
+        result["has_tests"] = True
+
+        # Check for pytest configuration
+        has_pytest_ini = (plugin_dir / "pytest.ini").exists()
+        has_pyproject = (plugin_dir / "pyproject.toml").exists()
+
+        if not (has_pytest_ini or has_pyproject):
+            result["error"] = "No pytest configuration found"
+            return result
+
+        # Build pytest command
+        cmd = [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"]
+
+        if self.parallel:
+            cmd.extend(["-n", "auto"])
+
+        if self.coverage:
+            cmd.extend(["--cov", "--cov-report=term-missing"])
+
+        # Change to plugin directory
+        original_dir = os.getcwd()
+        try:
+            os.chdir(plugin_dir)
+
+            # Run pytest
+            output = []
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+
+            # Capture output (limit to prevent memory issues)
+            for line in process.stdout:
+                output.append(line)
+                if len(output) > 1000:  # Limit output
+                    output.pop(0)
+
+            process.wait()
+            exit_code = process.returncode
+
+            result["tested"] = True
+            result["output"] = "".join(output[-100:])  # Last 100 lines
+            result["duration"] = time.time() - start_time
+
+            # Parse pytest output for test counts
+            # Look for pattern like "13 passed in 2.34s"
+            for line in output:
+                if "passed" in line:
+                    try:
+                        # Extract numbers from output
+                        parts = line.split()
+                        for i, part in enumerate(parts):
+                            if part.isdigit():
+                                result["total_tests"] = int(part)
+                                if i > 0 and parts[i-1] == "passed":
+                                    result["passed_tests"] = int(part)
+                    except (ValueError, IndexError):
+                        pass
+
+            result["failed_tests"] = result["total_tests"] - result["passed_tests"]
+            result["passed"] = (exit_code == 0)
+
+        except Exception as e:
+            result["error"] = str(e)
+        finally:
+            os.chdir(original_dir)
+
+        return result
+
+    def print_report(self):
+        """Print comprehensive test report."""
+        print("\n" + "=" * 60)
+        print("MARKETPLACE PLUGIN TEST REPORT")
+        print("=" * 60)
+
+        tested_plugins = [r for r in self.results if r["tested"]]
+        plugins_with_tests = [r for r in self.results if r["has_tests"]]
+        passed_plugins = [r for r in tested_plugins if r["passed"]]
+        failed_plugins = [r for r in tested_plugins if not r["passed"]]
+
+        print(f"\nPlugins with tests: {len(plugins_with_tests)}")
+        print(f"Plugins tested: {len(tested_plugins)}")
+        print(f"Plugins passed: {len(passed_plugins)}")
+        print(f"Plugins failed: {len(failed_plugins)}")
+
+        total_duration = sum(r["duration"] for r in tested_plugins)
+        print(f"\nTotal execution time: {total_duration:.1f}s")
+
+        print("\n" + "=" * 60)
+        print("PLUGIN RESULTS")
+        print("=" * 60)
+
+        for result in self.results:
+            if not result["has_tests"]:
+                continue
+
+            status = "⚠️  " if result.get("error") else ("✅ " if result["passed"] else "❌ ")
+            print(f"\n{status}{result['name']}", end="")
+
+            if result.get("error"):
+                print(f": {result['error']}")
+            elif result["tested"]:
+                tests_info = f" ({result['passed_tests']}/{result['total_tests']} tests)"
+                duration_info = f" [{result['duration']:.1f}s]"
+                print(f"{tests_info}{duration_info}")
+
+                if not result["passed"]:
+                    # Show failed test details
+                    print(f"  Failed: {result['failed_tests']} test(s)")
+
+        print("\n" + "=" * 60)
+
+        # Print detailed output for failed plugins
+        if failed_plugins:
+            print("\nFAILED TEST DETAILS")
+            print("=" * 60)
+            for result in failed_plugins:
+                print(f"\n{result['name']}:")
+                print(result['output'])
+
+        print("\n" + "=" * 60)
+
+        # UV compatibility check
+        print("\nUV COMPATIBILITY CHECK")
+        print("=" * 60)
+
+        uv_compatible = 0
+        has_pyproject = 0
+
+        for result in self.results:
+            if not result["has_tests"]:
+                continue
+
+            plugin_dir = Path(result["path"])
+            pyproject = plugin_dir / "pyproject.toml"
+
+            if pyproject.exists():
+                has_pyproject += 1
+                try:
+                    content = pyproject.read_text()
+                    if "[tool.uv]" in content:
+                        uv_compatible += 1
+                        print(f"✅ {result['name']}: UV compatible")
+                    else:
+                        print(f"⚠️  {result['name']}: Has pyproject.toml but no [tool.uv]")
+                except Exception:
+                    print(f"⚠️  {result['name']}: Could not read pyproject.toml")
+
+        print(f"\nPyProject.toml files: {has_pyproject}/{len(plugins_with_tests)}")
+        print(f"UV compatible: {uv_compatible}/{len(plugins_with_tests)}")
+
+    def run_all(self, plugin_filter: str = None):
+        """Run tests for all plugins."""
+        plugins = self.discover_plugins()
+
+        if not plugins:
+            print("No marketplace plugins found")
+            return
+
+        print(f"Discovered {len(plugins)} marketplace plugins")
+
+        for plugin_dir in plugins:
+            if plugin_filter and plugin_filter not in plugin_dir.name:
+                continue
+
+            result = self.run_plugin_tests(plugin_dir)
+            self.results.append(result)
+
+        self.print_report()
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Run tests for all Claude Code marketplace plugins"
+    )
+    parser.add_argument(
+        "--plugin",
+        help="Test only the specified plugin (e.g., plan-export)"
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run tests in parallel using pytest-xdist"
+    )
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Include coverage reports"
+    )
+
+    args = parser.parse_args()
+
+    tester = MarketplaceTester(parallel=args.parallel, coverage=args.coverage)
+    tester.run_all(plugin_filter=args.plugin)
+
+    # Exit with error code if any tests failed
+    failed = any(r.get("tested") and not r.get("passed") for r in tester.results)
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

@@ -34,6 +34,11 @@ SHARED_ACCESS_TIMEOUT = 5.0
 LOCK_RETRY_DELAY = 0.01
 MAX_LOCK_RETRIES = 100
 
+# Global lock registry for reentrant lock support
+# Format: {lock_file_path: [(pid, thread_id, ref_count), ...]}
+_lock_registry: Dict[str, list] = {}
+_registry_lock = threading.Lock()
+
 class SessionStateError(Exception):
     """Concrete session state error with specific details"""
     pass
@@ -47,7 +52,12 @@ class SessionBackendError(SessionStateError):
     pass
 
 class SessionLock:
-    """RAII-style session lock with automatic acquisition and release"""
+    """RAII-style session lock with automatic acquisition and release.
+
+    Supports reentrant locking: the same process/thread can acquire the same
+    lock multiple times without blocking. The lock is only released when the
+    outermost lock context exits.
+    """
 
     def __init__(self, session_id: str, timeout: float, state_dir: Path):
         self.session_id = session_id
@@ -58,12 +68,70 @@ class SessionLock:
         self.acquired = False
         self.start_time = time.time()
         self.process_id = os.getpid()
+        self.thread_id = threading.get_ident()
+        self._is_reentrant = False  # Track if this is a reentrant acquisition
+
+    def _is_lock_held_by_current_thread(self) -> bool:
+        """Check if the lock is already held by the current thread."""
+        with _registry_lock:
+            lock_holders = _lock_registry.get(str(self.lock_file), [])
+            for holder in lock_holders:
+                if holder[0] == self.process_id and holder[1] == self.thread_id:
+                    return True
+            return False
+
+    def _register_lock(self):
+        """Register that this thread holds the lock."""
+        with _registry_lock:
+            lock_key = str(self.lock_file)
+            if lock_key not in _lock_registry:
+                _lock_registry[lock_key] = []
+
+            # Check if this thread already holds the lock
+            for holder in _lock_registry[lock_key]:
+                if holder[0] == self.process_id and holder[1] == self.thread_id:
+                    holder[2] += 1  # Increment reference count
+                    self._is_reentrant = True
+                    return
+
+            # New lock holder
+            _lock_registry[lock_key].append([self.process_id, self.thread_id, 1])
+
+    def _unregister_lock(self):
+        """Unregister that this thread releases the lock."""
+        with _registry_lock:
+            lock_key = str(self.lock_file)
+            if lock_key not in _lock_registry:
+                return
+
+            # Find and update/remove this thread's hold
+            for i, holder in enumerate(_lock_registry[lock_key]):
+                if holder[0] == self.process_id and holder[1] == self.thread_id:
+                    if holder[2] > 1:
+                        # Decrement reference count (reentrant lock)
+                        holder[2] -= 1
+                        return
+                    else:
+                        # Remove from registry
+                        _lock_registry[lock_key].pop(i)
+                        break
+
+            # Clean up empty registry entries
+            if not _lock_registry[lock_key]:
+                del _lock_registry[lock_key]
 
     def __enter__(self):
         """Acquire lock with concrete timeout behavior"""
         try:
             # Create lock file directory
             self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Check for reentrant acquisition (same thread)
+            if self._is_lock_held_by_current_thread():
+                # Already held by this thread, just track it
+                self._register_lock()
+                self.acquired = True
+                return None
 
             # Open lock file with concrete error handling
             try:
@@ -82,6 +150,9 @@ class SessionLock:
 
             # Acquire exclusive lock with retry logic
             self._acquire_lock()
+
+            # Register this lock holder
+            self._register_lock()
 
             return self.lock_fd
 
@@ -102,7 +173,6 @@ class SessionLock:
             try:
                 fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 self.acquired = True
-                time.time() - start_time
                 return
             except (IOError, OSError) as e:
                 if e.errno == errno.EAGAIN:
@@ -123,6 +193,14 @@ class SessionLock:
 
     def _cleanup(self):
         """Guaranteed cleanup of lock resources"""
+        # Unregister from lock registry first
+        self._unregister_lock()
+
+        # If this was a reentrant acquisition (no fd), skip fd cleanup
+        if self._is_reentrant:
+            self.acquired = False
+            return
+
         if self.lock_fd:
             try:
                 if self.acquired:
@@ -138,10 +216,14 @@ class SessionLock:
 
             self.lock_fd = None
 
-        # Remove lock file
+        # Remove lock file (only if not held by others)
         try:
-            if self.lock_file.exists():
-                self.lock_file.unlink()
+            with _registry_lock:
+                lock_key = str(self.lock_file)
+                # Only remove if no one holds it anymore
+                if lock_key not in _lock_registry or not _lock_registry[lock_key]:
+                    if self.lock_file.exists():
+                        self.lock_file.unlink()
         except Exception:
             pass
 
