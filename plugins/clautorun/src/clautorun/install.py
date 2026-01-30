@@ -375,9 +375,12 @@ class ClautorunInstaller:
                 )
 
                 marketplace_available = False
+                marketplace_needs_refresh = False
+
                 if list_result.returncode == 0 and "clautorun" in list_result.stdout:
                     print("✅ clautorun marketplace already configured")
                     marketplace_available = True
+                    marketplace_needs_refresh = True  # Refresh to pick up latest changes
                 else:
                     # Add local marketplace from REPO ROOT (not plugin directory)
                     # Marketplace root: ~/.claude/clautorun (contains plugins/ subdirectory)
@@ -395,12 +398,26 @@ class ClautorunInstaller:
                     else:
                         print(f"⚠️  Failed to add marketplace: {marketplace_result.stderr}")
 
+                # Refresh marketplace to pick up latest plugin changes
+                if marketplace_available and marketplace_needs_refresh:
+                    print("🔄 Refreshing marketplace to pick up latest changes...")
+                    refresh_result = subprocess.run(
+                        ["claude", "plugin", "marketplace", "update", "clautorun-dev"],
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+                    if refresh_result.returncode == 0:
+                        print("✅ Marketplace refreshed successfully")
+                    else:
+                        print(f"ℹ️  Marketplace refresh: {refresh_result.stderr.strip()}")
+
                 # Try to update first (if already installed), then install
                 if marketplace_available:
                     # First try update (faster, preserves settings)
                     print("🔄 Attempting plugin update...")
                     update_result = subprocess.run(
-                        ["claude", "plugin", "update", "clautorun@clautorun"],
+                        ["claude", "plugin", "update", "clautorun@clautorun-dev"],
                         capture_output=True,
                         text=True,
                         timeout=30
@@ -415,7 +432,7 @@ class ClautorunInstaller:
                     # Try fresh install
                     print("🔄 Attempting fresh plugin install...")
                     install_result = subprocess.run(
-                        ["claude", "plugin", "install", "clautorun@clautorun"],
+                        ["claude", "plugin", "install", "clautorun@clautorun-dev"],
                         capture_output=True,
                         text=True,
                         timeout=30
@@ -437,20 +454,10 @@ class ClautorunInstaller:
                         if list_result.returncode == 0:
                             print(f"📋 Available marketplaces:\n{list_result.stdout}")
 
-                # If local marketplace fails, try GitHub installation as fallback
-                print("🔄 Trying GitHub installation as fallback...")
-                github_result = subprocess.run(
-                    ["claude", "plugin", "install", "https://github.com/ahundt/clautorun.git"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-
-                if github_result.returncode == 0:
-                    print("✅ Successfully installed via GitHub repository")
-                    return True
-                else:
-                    print(f"⚠️  GitHub installation failed: {github_result.stderr}")
+                # Note: GitHub direct URL installation is not supported by Claude Code
+                # Plugin installation requires the marketplace to be added first via:
+                # claude plugin marketplace add https://github.com/ahundt/clautorun.git
+                # Then install via: claude plugin install clautorun@<marketplace-name>
 
             return False
 
@@ -477,7 +484,7 @@ class ClautorunInstaller:
         """Install plugin directly to Claude Code's cache directory"""
         try:
             # Read version from plugin.json
-            version = "0.6.0"  # Default
+            version = "0.6.1"  # Default
             try:
                 with open(self.plugin_manifest) as f:
                     data = json.load(f)
@@ -924,7 +931,7 @@ class MarketplaceInstaller:
 
     def install_marketplace(self) -> bool:
         """Install the full marketplace with all plugins"""
-        print(f"📦 clautorun-marketplace v0.6.0")
+        print(f"📦 clautorun-marketplace v0.6.1")
         print(f"📍 Marketplace root: {self.marketplace_root}")
         print(f"📍 Plugins directory: {self.plugins_directory}")
         print()
