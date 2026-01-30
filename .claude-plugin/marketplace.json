@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "clautorun-dev",
+  "name": "clautorun",
   "version": "1.0.0",
   "description": "Automation suite: clautorun (file policies, autonomous sessions) + plan-export (plan archiving) + pdf-extractor (PDF data extraction)",
   "owner": {
