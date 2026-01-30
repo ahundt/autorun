@@ -458,7 +458,7 @@ def initialize_default_blocks() -> bool:
 
     # Initialize with defaults
     config = {
-        "version": "0.6.0",
+        "version": "0.6.1",
         "initialized_defaults": True,
         "global_blocked_patterns": []
     }
@@ -499,9 +499,9 @@ def add_global_block(pattern: str, suggestion: Optional[str] = None, pattern_typ
             with open(GLOBAL_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
         except (json.JSONDecodeError, IOError):
-            config = {"version": "0.6.0", "global_blocked_patterns": []}
+            config = {"version": "0.6.1", "global_blocked_patterns": []}
     else:
-        config = {"version": "0.6.0", "global_blocked_patterns": []}
+        config = {"version": "0.6.1", "global_blocked_patterns": []}
 
     patterns = config.get("global_blocked_patterns", [])
 
