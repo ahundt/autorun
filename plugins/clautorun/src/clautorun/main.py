@@ -60,11 +60,8 @@ if __name__ == '__main__' and __package__ is None:
 
 # Package and external imports (after sys.path is configured)
 import json
-import shelve
 import time
-import threading
 import asyncio
-from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict
 import re as regex_module
@@ -267,69 +264,10 @@ def log_info(message):
         # Fallback logging to stderr in case of write failure
         print(f"Log write failed: {e}", file=sys.stderr)
 
-# Global lock to ensure only one backend selection happens at a time
-_backend_selection_lock = threading.Lock()
-# Registry to track which backend works for each session_id
-_session_backends = {}
-
-@contextmanager
-def session_state(session_id: str):
-    """Session state with shelve - thread-safe backend selection for concurrent access"""
-    # Thread-safe backend selection (happens once per session_id)
-    with _backend_selection_lock:
-        if session_id not in _session_backends:
-            # Test different backends and pick one that works for this platform
-            try:
-                # Try default shelve backend first - but be more robust about testing
-                test_db = STATE_DIR / f"test_backend_{session_id}.db"
-                test_state = shelve.open(str(test_db), writeback=True)
-                test_state["test"] = "test"  # Actually write something to test
-                test_state.sync()
-                test_state.close()
-                os.remove(test_db)  # Clean up test file
-                _session_backends[session_id] = "default"
-                log_info(f"Session {session_id}: Using default shelve backend")
-            except Exception as e:
-                log_info(f"Session {session_id}: Default backend failed: {e}")
-                try:
-                    # Try dumbdbm fallback
-                    test_db = STATE_DIR / f"test_dumbdbm_{session_id}.db"
-                    test_state = shelve.open(str(test_db), writeback=True)
-                    test_state["test"] = "test"  # Actually write something to test
-                    test_state.sync()
-                    test_state.close()
-                    os.remove(test_db)  # Clean up test file
-                    _session_backends[session_id] = "dumbdbm"
-                    log_info(f"Session {session_id}: Using dumbdbm backend")
-                except Exception as e2:
-                    log_info(f"Session {session_id}: Dumbdbm failed: {e2}")
-                    # Try to use default shelve anyway without testing (some systems have issues with test/create/delete)
-                    try:
-                        _session_backends[session_id] = "default"
-                        log_info(f"Session {session_id}: Trying default shelve without test")
-                    except Exception:
-                        # Last resort: use in-memory with thread-safe dict
-                        _session_backends[session_id] = "memory"
-                        log_info(f"Session {session_id}: Using in-memory fallback")
-
-    # Use the selected backend consistently for this session_id
-    backend = _session_backends[session_id]
-
-    state = None
-    try:
-        if backend == "default":
-            state = shelve.open(str(STATE_DIR / f"{session_id}.db"), writeback=True)
-        elif backend == "dumbdbm":
-            state = shelve.open(str(STATE_DIR / f"{session_id}_dumb.db"), writeback=True)
-        else:  # memory
-            state = {}
-
-        yield state
-
-    finally:
-        if state and hasattr(state, 'sync'):
-            state.sync()
-            state.close()
+# Import robust session state management from session_manager module
+# This provides RAII-based session state with proper file locking and backend selection
+# Fixes Issue #29 (process-local _session_backends) and Issue #28 (filename extensions)
+from clautorun.session_manager import session_state
 
 # =============================================================================
 # Command Blocking State Management
@@ -1464,24 +1402,10 @@ def pretooluse_handler(ctx):
     with session_state(session_id) as state:
         file_policy = state.get("file_policy", "ALLOW")
 
-        # For non-Write tools, only apply policy if there's no file path
+        # For non-Write tools, always allow - file policies only apply to file creation
+        # The Write tool is the only tool that creates files, so other tools don't need policy checks
         if ctx.tool_name != "Write":
-            if not file_path:
-                # No file path - apply policy restrictions
-                if file_policy == "SEARCH":
-                    return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
-                elif file_policy == "JUSTIFY":
-                    justification_found = (
-                        state.get("autofile_justification_detected", False) or
-                        has_valid_justification(str(ctx.session_transcript))
-                    )
-                    if not justification_found:
-                        return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
-                # ALLOW policy or default - allow
-                return build_pretooluse_response("allow", "Non-Write tool without file path allowed")
-            else:
-                # Non-Write tool with file path - always allow
-                return build_pretooluse_response("allow", "Non-Write tool with file path allowed")
+            return build_pretooluse_response("allow", "Non-Write tool allowed - file policies only apply to Write tool")
 
         # Write tools - always apply policy
         if file_policy == "SEARCH":
