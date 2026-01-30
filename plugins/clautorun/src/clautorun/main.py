@@ -32,41 +32,33 @@ Features:
 This is the canonical implementation. All hook logic resides here.
 """
 
-# PHASE 1: Stdlib imports for path setup (MUST BE FIRST)
+# Standard library imports for path configuration
 import os
 import sys
 from pathlib import Path
 
-# PHASE 2: Setup Python import path (BEFORE any clautorun imports)
-# This MUST happen before importing config, ai_monitor, verification_engine, etc.
+# Configure sys.path before importing clautorun packages
+# Enables relative imports across different execution contexts:
+# - Hook execution: Uses CLAUDE_PLUGIN_ROOT environment variable
+# - Module execution: Works with python3 -m clautorun
+# - Script execution: Uses __file__ introspection
 
-# Strategy 1: Use CLAUDE_PLUGIN_ROOT if available (hook execution context)
 _plugin_root = os.environ.get('CLAUDE_PLUGIN_ROOT')
 if _plugin_root:
     _src_dir = os.path.join(_plugin_root, 'src')
     if _src_dir not in sys.path:
         sys.path.insert(0, _src_dir)
-
-# Strategy 2: Use __file__ as fallback (always available)
-# This handles direct script execution: python3 path/to/main.py
-if not _plugin_root:
-    # Navigate from: src/clautorun/main.py -> src/
+else:
+    # Fallback for direct script execution
     _src_dir = str(Path(__file__).parent.parent)
     if _src_dir not in sys.path:
         sys.path.insert(0, _src_dir)
 
-# CRITICAL: Fix __package__ for direct script execution
-# When running as a script (not module), Python doesn't set __package__
-# This breaks relative imports. Set it manually to enable relative imports.
+# Enable relative imports when running as main script
 if __name__ == '__main__' and __package__ is None:
-    # Set package name based on directory structure
     __package__ = 'clautorun'
-    # Ensure parent directory is in sys.path for absolute imports
-    _parent_dir = str(Path(__file__).parent.parent)
-    if _parent_dir not in sys.path:
-        sys.path.insert(0, _parent_dir)
 
-# PHASE 3: All other imports (now sys.path is correctly configured)
+# Package and external imports (after sys.path is configured)
 import json
 import shelve
 import time
