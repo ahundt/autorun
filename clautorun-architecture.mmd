@@ -1,5 +1,5 @@
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '18px', 'fontFamily': 'Arial'}}}%%
-flowchart LR
+flowchart TD
     %% ========================================
     %%  STYLING
     %% ========================================
@@ -14,147 +14,138 @@ flowchart LR
     %% ========================================
     %%  STEP 1: INSTALL
     %% ========================================
-    subgraph STEP1[" "]
-        direction TB
-        INSTALL["💿 STEP 1<br/><br/>INSTALL CLAUTORUN<br/><br/>(one-time setup)"]:::stepBox
-        INSTALL_CMD["/plugin install clautorun"]:::choiceBox
-        INSTALL_INFO["📌 Adds plugin to Claude Code"]:::infoBox
-        INSTALL --> INSTALL_CMD
-        INSTALL_CMD --> INSTALL_INFO
-    end
+    INSTALL["💿 STEP 1<br/><br/>INSTALL CLAUTORUN<br/><br/>(one-time setup)"]:::stepBox
+    INSTALL_CMD["/plugin install clautorun"]:::choiceBox
+    INSTALL_INFO["📌 Adds plugin to Claude Code"]:::infoBox
 
     %% ========================================
     %%  STEP 2: CONTROL FILE CREATION
     %% ========================================
-    subgraph STEP2[" "]
-        direction TB
-        POLICY["📁 STEP 2<br/><br/>CONTROL FILE CREATION<br/><br/>(default: AI can create any file)"]:::stepBox
+    POLICY["📁 STEP 2<br/><br/>CONTROL FILE CREATION<br/><br/>(default: AI can create any file)"]:::stepBox
 
-        P1["✅ /cr:a - ALLOW ALL<br/><br/>🆕 New projects<br/>🆕 Prototyping<br/>🆕 Starting from scratch"]:::choiceBox
-        P2["⚠️ /cr:j - ASK FIRST<br/><br/>🔒 AI explains why<br/>🔒 Before creating files<br/>🔒 Balanced approach"]:::choiceBox
-        P3["🔒 /cr:f - EDIT ONLY<br/><br/>🚫 NO new files<br/>🚫 Refactoring existing code<br/>🚫 Bug fixes only"]:::choiceBox
-        P4["📊 /cr:st - SHOW CURRENT SETTING"]:::choiceBox
+    subgraph POLICY_OPTIONS[" "]
+        direction LR
+        P1["✅ /cr:a<br/>ALLOW ALL<br/><br/>🆕 New projects<br/>🆕 Prototyping<br/>🆕 Starting from scratch"]:::choiceBox
+        P2["⚠️ /cr:j<br/>ASK FIRST<br/><br/>🔒 AI explains why<br/>🔒 Before creating files<br/>🔒 Balanced approach"]:::choiceBox
+        P3["🔒 /cr:f<br/>EDIT ONLY<br/><br/>🚫 NO new files<br/>🚫 Refactoring existing code<br/>🚫 Bug fixes only"]:::choiceBox
+        P4["📊 /cr:st<br/>SHOW STATUS"]:::choiceBox
 
-        POLICY --> P1
-        POLICY --> P2
-        POLICY --> P3
-        POLICY --> P4
-
-        WHEN["💡 CHANGE ANYTIME<br/><br/>Start: /cr:a (create freely)<br/>Refactor: /cr:f (edit only)<br/>Add features: /cr:a (create again)"]:::infoBox
-        P4 --> WHEN
+        P1 --- P2 --- P3 --- P4
     end
+
+    WHEN["💡 CHANGE ANYTIME<br/><br/>Start: /cr:a (create freely)<br/>Refactor: /cr:f (edit only)<br/>Add features: /cr:a (create again)"]:::infoBox
 
     %% ========================================
     %%  STEP 3: CHOOSE HOW AI WORKS
     %% ========================================
-    subgraph STEP3[" "]
-        direction TB
-        WORKFLOW["🚀 STEP 3<br/><br/>START YOUR TASK"]:::stepBox
+    WORKFLOW["🚀 STEP 3<br/><br/>START YOUR TASK"]:::stepBox
 
-        W1["⚡ /cr:go your task here<br/><br/>🤖 AI works alone<br/>🤖 Fewer interruptions<br/>🤖 Best for: clear tasks<br/><br/>Example: /cr:go Add login form"]:::choiceBox
+    subgraph WORKFLOW_OPTIONS[" "]
+        direction LR
+        W1["⚡ /cr:go<br/>AUTONOMOUS<br/><br/>🤖 AI works alone<br/>🤖 Fewer interruptions<br/>🤖 Best for: clear tasks<br/><br/>Example: /cr:go Add login form"]:::choiceBox
 
-        W2["🔍 /cr:gp your task here<br/><br/>📋 Structured process<br/>📋 Quality checks<br/>📋 Best for: complex tasks<br/><br/>Example: /cr:gp Build API with tests"]:::choiceBox
+        W2["🔍 /cr:gp<br/>PROCEDURAL<br/><br/>📋 Structured process<br/>📋 Quality checks<br/>📋 Best for: complex tasks<br/><br/>Example: /cr:gp Build API"]:::choiceBox
 
-        W3["📝 PLAN FIRST (for big tasks)<br/><br/>/cr:pn - Create plan<br/>/cr:pr - Improve plan<br/>/cr:pu - Update plan<br/>/cr:pp - Execute plan<br/><br/>Best for: Multi-step projects"]:::choiceBox
+        W3["📝 PLAN FIRST<br/><br/>/cr:pn - New plan<br/>/cr:pr - Refine plan<br/>/cr:pu - Update plan<br/>/cr:pp - Execute plan<br/><br/>Best for: Multi-step projects"]:::choiceBox
 
-        WORKFLOW --> W1
-        WORKFLOW --> W2
-        WORKFLOW --> W3
+        W1 --- W2 --- W3
     end
 
     %% ========================================
     %%  STEP 4: AI WORKS (What happens next)
     %% ========================================
-    subgraph STEP4[" "]
-        direction TB
-        AI_ENGINE["🤖 STEP 4<br/><br/>AI WORKS AUTONOMOUSLY<br/><br/>(You can step away!)"]:::aiBox
+    AI_ENGINE["🤖 STEP 4<br/><br/>AI WORKS AUTONOMOUSLY<br/><br/>(You can step away!)"]:::aiBox
 
-        LOOP["🔄 THREE-STAGE LOOP<br/><br/>1️⃣ IMPLEMENT - Build it<br/>2️⃣ EVALUATE - Check quality<br/>3️⃣ VERIFY - Confirm it works<br/><br/>🔄 Loops until task is complete<br/>✅ Then stops automatically"]:::aiBox
+    LOOP["🔄 THREE-STAGE LOOP<br/><br/>1️⃣ IMPLEMENT - Build it<br/>2️⃣ EVALUATE - Check quality<br/>3️⃣ VERIFY - Confirm it works<br/><br/>🔄 Loops until task is complete<br/>✅ Then stops automatically"]:::aiBox
 
-        AI_ENGINE --> LOOP
-
-        EXAMPLE["📌 Example flow:<br/>AI creates login form → Checks it →<br/>Finds missing validation → Improves it →<br/>Checks again → Verifies tests pass → Done!"]:::infoBox
-        LOOP --> EXAMPLE
-    end
+    EXAMPLE["📌 Example flow:<br/>AI creates login form → Checks it →<br/>Finds missing validation → Improves it →<br/>Checks again → Verifies tests pass → Done!"]:::infoBox
 
     %% ========================================
     %%  SAFETY LAYERS (Always protecting you)
     %% ========================================
-    subgraph GUARDS["🛡️ BUILT-IN PROTECTIONS (Always Active)"]
+    subgraph GUARDS["🛡️ BUILT-IN PROTECTIONS"]
         direction LR
 
         subgraph FILE_GUARD["📄 File Protection"]
+            direction TB
             FG1["When AI tries to create files..."]:::guardBox
             FG2["🔒 Blocks if policy says 'edit only'<br/>✅ Allows if policy says 'allow all'<br/>⚠️ Asks for reason if policy says 'ask first'"]:::guardBox
             FG1 --> FG2
         end
 
-        subgraph CMD_GUARD["⚠️ Dangerous Command Blocks"]
-            CG1["/cr:no rm - Block delete commands<br/>/cr:no git reset - Block destructive git<br/>/cr:ok - Allow specific command<br/>/cr:clear - Remove all blocks"]:::guardBox
+        subgraph CMD_GUARD["⚠️ Command Blocking"]
+            direction TB
+            CG1["/cr:no rm - Block delete<br/>/cr:no git reset - Block destructive<br/>/cr:ok - Allow specific<br/>/cr:clear - Remove blocks"]:::guardBox
         end
+
+        FILE_GUARD --- CMD_GUARD
     end
 
     %% ========================================
     %%  STEP 5: WATCH & CONTROL (Optional)
     %% ========================================
-    subgraph STEP5[" "]
-        direction TB
-        CONTROL["🎮 STEP 5<br/><br/>WATCH & CONTROL<br/><br/>(while AI works - optional)"]:::stepBox
+    CONTROL["🎮 STEP 5<br/><br/>WATCH & CONTROL<br/><br/>(while AI works - optional)"]:::stepBox
 
-        C1["👀 /cr:tabs - SEE ALL AI SESSIONS<br/><br/>📊 Shows every Claude session running<br/>📊 See what each session is working on<br/>📊 Send commands to any session<br/><br/>Example: See 3 sessions building<br/>different parts of your project"]:::choiceBox
+    subgraph CONTROL_OPTIONS[" "]
+        direction LR
+        C1["👀 /cr:tabs<br/>SEE SESSIONS<br/><br/>📊 See all AI sessions<br/>📊 What each is doing<br/>📊 Send commands<br/><br/>Example: Monitor 3 sessions<br/>building different parts"]:::choiceBox
 
-        C2["🖥️ /cr:tm - MANAGE TMUX SESSIONS<br/><br/>+ Create isolated workspace<br/>+ List all sessions<br/>+ Clean up old sessions<br/><br/>Use for: Separate test environment"]:::choiceBox
+        C2["🖥️ /cr:tm<br/>MANAGE TMUX<br/><br/>+ Create workspace<br/>+ List sessions<br/>+ Clean up old<br/><br/>Use: Isolated test env"]:::choiceBox
 
-        C3["🛑 /cr:x - STOP POLITELY<br/><br/>AI finishes current task<br/>Then stops<br/><br/>Use: Task is done or wrong"]:::choiceBox
+        C3["🛑 /cr:x<br/>STOP POLITELY<br/><br/>AI finishes current<br/>Then stops"]:::choiceBox
 
-        C4["🚨 /cr:sos - EMERGENCY STOP<br/><br/>⚠️ STOPS IMMEDIATELY<br/>⚠️ Doesn't wait for anything<br/><br/>Use: Something went wrong"]:::safeBox
+        C4["🚨 /cr:sos<br/>EMERGENCY STOP<br/><br/>⚠️ STOPS NOW<br/>⚠️ Doesn't wait"]:::safeBox
 
-        CONTROL --> C1
-        CONTROL --> C2
-        CONTROL --> C3
-        CONTROL --> C4
+        C1 --- C2 --- C3 --- C4
     end
 
     %% ========================================
     %%  STEP 6: SURVIVE CRASHES
     %% ========================================
-    subgraph STEP6[" "]
-        direction TB
-        RECOVERY["🕸️ STEP 6<br/><br/>CRASH RECOVERY<br/><br/>(if you disconnect)"]:::safeBox
+    RECOVERY["🕸️ STEP 6<br/><br/>CRASH RECOVERY<br/><br/>(if you disconnect)"]:::safeBox
 
-        R1["💾 SESSION SAVED IN TMUX<br/><br/>Your work keeps running<br/>Even if you lose internet<br/>Even if computer crashes"]:::choiceBox
+    subgraph RECOVERY_OPTIONS[" "]
+        direction LR
+        R1["💾 SESSION SAVED<br/><br/>Work keeps running<br/>Even if you lose internet<br/>Even if computer crashes"]:::choiceBox
 
-        R2["📱 RECONNECT FROM ANYWHERE<br/><br/>SSH from your phone<br/>Mosh for bad connections<br/>Pick up where you left off"]:::choiceBox
+        R2["📱 RECONNECT<br/>FROM ANYWHERE<br/><br/>SSH from your phone<br/>Mosh for bad connections<br/>Pick up where you left off"]:::choiceBox
 
-        R3["✅ WORK RESUMES AUTOMATICALLY<br/><br/>AI continues working<br/>Nothing was lost<br/>Seamless experience"]:::choiceBox
+        R3["✅ WORK RESUMES<br/>AUTOMATICALLY<br/><br/>AI continues working<br/>Nothing was lost<br/>Seamless experience"]:::choiceBox
 
-        RECOVERY --> R1
-        RECOVERY --> R2
-        RECOVERY --> R3
+        R1 --- R2 --- R3
     end
 
     %% ========================================
     %%  SUCCESS!
     %% ========================================
-    COMPLETE["✅ TASK COMPLETE!<br/><br/>🎉 AI did the work<br/>🎉 Files created/modified<br/>🎉 You can review the results"]:::doneBox
+    COMPLETE["✅ TASK COMPLETE!<br/><br/>🎉 AI did the work<br/>🎉 Files created/modified<br/>🎉 Review the results"]:::doneBox
 
     %% ========================================
-    %%  FLOW CONNECTIONS
+    %%  FLOW CONNECTIONS (Top to Bottom)
     %% ========================================
-    INSTALL_CMD -->|1→2| POLICY
-    P1 -->|2→3| WORKFLOW
-    P2 -->|2→3| WORKFLOW
-    P3 -->|2→3| WORKFLOW
-    W1 -->|3→4| AI_ENGINE
-    W2 -->|3→4| AI_ENGINE
-    W3 -->|3→4| AI_ENGINE
-    LOOP -->|4→5| CONTROL
-    LOOP -.->|protected by| GUARDS
-    LOOP -->|task done| COMPLETE
+    INSTALL --> INSTALL_CMD --> INSTALL_INFO
+    INSTALL_INFO --> POLICY
 
-    %% Safety connections
-    GUARDS -.->|always on| LOOP
-    C1 -->|optional| RECOVERY
-    C2 -->|optional| RECOVERY
-    RECOVERY -.->|resume| LOOP
-    C4 -.->|STOP NOW| LOOP
+    POLICY --> POLICY_OPTIONS
+    POLICY_OPTIONS --> WHEN
+    WHEN --> WORKFLOW
+
+    WORKFLOW --> WORKFLOW_OPTIONS
+    WORKFLOW_OPTIONS --> AI_ENGINE
+
+    AI_ENGINE --> LOOP
+    LOOP --> EXAMPLE
+
+    LOOP -.->|"protected by"| GUARDS
+
+    LOOP --> CONTROL
+    CONTROL --> CONTROL_OPTIONS
+
+    CONTROL_OPTIONS -.->|"optional"| RECOVERY
+    RECOVERY --> RECOVERY_OPTIONS
+
+    RECOVERY_OPTIONS -.->|"resume"| LOOP
+    C4 -.->|"STOP NOW"| LOOP
+    GUARDS -.->|"always on"| LOOP
+
+    LOOP -->|"task done"| COMPLETE
