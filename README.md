@@ -3,6 +3,8 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
+![clautorun Architecture](clautorun-architecture.png)
+
 **clautorun** - Reduce interruptions while Claude completes tasks autonomously.
 
 ## Table of Contents
