@@ -1,4 +1,4 @@
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '18px', 'fontFamily': 'Arial', 'maxTextWidth': 300}}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '18px', 'fontFamily': 'Arial', 'maxTextWidth': 300, 'subgraphBkg': '#f7fafc', 'lineColor': '#a0aec0'}}}%%
 flowchart TD
     %% ========================================
     %%  STYLING
@@ -10,6 +10,7 @@ flowchart TD
     classDef safeBox fill:#ed8936,stroke:#c05621,stroke-width:3px,color:#fff,font-size:16px,font-weight:bold;
     classDef doneBox fill:#48bb78,stroke:#276749,stroke-width:4px,color:#fff,font-size:18px,font-weight:bold;
     classDef settingBox fill:#718096,stroke:#4a5568,stroke-width:2px,color:#fff,font-size:15px,font-weight:bold;
+    classDef settingsPanel fill:#e2e8f0,stroke:#a0aec0,stroke-width:2px,color:#2d3748,font-size:15px,font-weight:bold;
 
     %% ========================================
     %%  STEP 1: INSTALL
@@ -32,13 +33,15 @@ flowchart TD
             F1 --- F2 --- F3 --- F4
         end
 
+        FILE_SET --> BLOCK_SET
+
         subgraph BLOCK_SET["Block AI's Destructive Commands"]
             direction LR
-            B1["/cr:no <pattern> [desc]<br/>Block in this session"]:::settingBox
+            B1["/cr:no <pattern> 'why blocked'<br/>Block in this session"]:::settingBox
             B2["/cr:ok <pattern><br/>Allow in this session"]:::settingBox
             B3["/cr:clear [pattern]<br/>Clear session blocks"]:::settingBox
-            B4["/cr:globalno <p> [desc]<br/>Block in ALL sessions"]:::settingBox
-            B5["/cr:globalok <p><br/>Allow in ALL sessions"]:::settingBox
+            B4["/cr:globalno <pattern> 'why'<br/>Block in ALL sessions"]:::settingBox
+            B5["/cr:globalok <pattern><br/>Allow in ALL sessions"]:::settingBox
             B6["/cr:globalstatus<br/>Show global blocks"]:::settingBox
             B1 --- B2 --- B3 --- B4 --- B5 --- B6
         end
