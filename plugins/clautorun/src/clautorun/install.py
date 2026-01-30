@@ -402,7 +402,7 @@ class ClautorunInstaller:
                 if marketplace_available and marketplace_needs_refresh:
                     print("🔄 Refreshing marketplace to pick up latest changes...")
                     refresh_result = subprocess.run(
-                        ["claude", "plugin", "marketplace", "update", "clautorun-dev"],
+                        ["claude", "plugin", "marketplace", "update", "clautorun"],
                         capture_output=True,
                         text=True,
                         timeout=15
@@ -417,7 +417,7 @@ class ClautorunInstaller:
                     # First try update (faster, preserves settings)
                     print("🔄 Attempting plugin update...")
                     update_result = subprocess.run(
-                        ["claude", "plugin", "update", "clautorun@clautorun-dev"],
+                        ["claude", "plugin", "update", "clautorun@clautorun"],
                         capture_output=True,
                         text=True,
                         timeout=30
@@ -432,7 +432,7 @@ class ClautorunInstaller:
                     # Try fresh install
                     print("🔄 Attempting fresh plugin install...")
                     install_result = subprocess.run(
-                        ["claude", "plugin", "install", "clautorun@clautorun-dev"],
+                        ["claude", "plugin", "install", "clautorun@clautorun"],
                         capture_output=True,
                         text=True,
                         timeout=30
@@ -514,6 +514,26 @@ class ClautorunInstaller:
             )
 
             print(f"✅ Installed plugin to cache: {cache_version_dir}")
+
+            # Verify critical directories were copied (Unix glob * doesn't match hidden dirs)
+            claude_plugin_dir = cache_version_dir / ".claude-plugin"
+            hooks_dir = cache_version_dir / "hooks"
+
+            if not claude_plugin_dir.exists():
+                print("⚠️  WARNING: .claude-plugin/ was not copied - copying now...")
+                shutil.copytree(
+                    self.plugin_source_dir / ".claude-plugin",
+                    claude_plugin_dir
+                )
+                print("✅ Copied .claude-plugin/ directory")
+
+            if not hooks_dir.exists():
+                print("⚠️  WARNING: hooks/ was not copied - copying now...")
+                shutil.copytree(
+                    self.plugin_source_dir / "hooks",
+                    hooks_dir
+                )
+                print("✅ Copied hooks/ directory")
 
             # Update installed_plugins.json to register the plugin
             if self.update_installed_plugins_json(cache_version_dir, version):
@@ -937,7 +957,7 @@ class MarketplaceInstaller:
         print()
 
         # Step 1: Add the marketplace root (where .claude-plugin/marketplace.json is) as a marketplace
-        print(f"🔧 Adding clautorun-dev marketplace...")
+        print(f"🔧 Adding clautorun marketplace...")
         try:
             result = subprocess.run(
                 ["claude", "plugin", "marketplace", "add", str(self.marketplace_root)],
@@ -947,11 +967,11 @@ class MarketplaceInstaller:
             )
 
             if result.returncode == 0:
-                print(f"   ✅ Added clautorun-dev marketplace")
+                print(f"   ✅ Added clautorun marketplace")
             else:
                 # Marketplace might already exist, that's ok
                 if "already" in result.stderr.lower() or "exists" in result.stderr.lower():
-                    print(f"   ℹ️  clautorun-dev marketplace already exists")
+                    print(f"   ℹ️  clautorun marketplace already exists")
                 else:
                     print(f"   ⚠️  Marketplace add: {result.stderr.strip()}")
         except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
@@ -970,7 +990,7 @@ class MarketplaceInstaller:
             # Install plugin from marketplace
             try:
                 result = subprocess.run(
-                    ["claude", "plugin", "install", f"{plugin_name}@clautorun-dev"],
+                    ["claude", "plugin", "install", f"{plugin_name}@clautorun"],
                     capture_output=True,
                     text=True,
                     timeout=60
