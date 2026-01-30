@@ -9,7 +9,7 @@ from unittest.mock import Mock
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import pretooluse_handler, session_state, CONFIG, _session_backends, has_valid_justification
+from clautorun.main import pretooluse_handler, session_state, CONFIG, has_valid_justification
 
 # Import conftest utilities for cleanup - cleanup happens via pytest_sessionfinish
 from conftest import register_test_session
@@ -118,10 +118,6 @@ class TestPreToolUsePolicyEnforcement:
         # Register for cleanup via conftest.pytest_sessionfinish
         register_test_session(self.session_id)
 
-        # Clear any cached backend for this session
-        if self.session_id in _session_backends:
-            del _session_backends[self.session_id]
-
     # Note: No teardown_method needed - cleanup handled by conftest.pytest_sessionfinish
 
     def create_mock_context(self, tool_name, file_path=None, session_transcript=None):
@@ -157,31 +153,24 @@ class TestPreToolUsePolicyEnforcement:
                 assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_non_write_tools_without_file_paths_policy_enforced(self):
-        """Test that non-Write tools without file paths undergo policy checking"""
+        """Test that non-Write tools ALWAYS bypass policy checks (Issue #3 fix)"""
         non_write_tools = ["Read", "Edit", "Bash", "Glob", "Grep"]
         policies = ["ALLOW", "SEARCH", "JUSTIFY"]
 
         for tool in non_write_tools:
             for policy in policies:
-                # Set policy
+                # Set policy (even strictest policies shouldn't affect non-Write tools)
                 with session_state(self.session_id) as state:
                     state["file_policy"] = policy
 
                 ctx = self.create_mock_context(tool, None)  # No file_path
                 result = pretooluse_handler(ctx)
 
-                # Policy should be checked for non-Write tools without file paths
-                if policy == "ALLOW":
-                    assert result["continue"] is True
-                    assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
-                elif policy == "SEARCH":
-                    assert result["continue"] is True
-                    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-                    assert "STRICT SEARCH" in result["systemMessage"]
-                elif policy == "JUSTIFY":
-                    assert result["continue"] is True
-                    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-                    assert "JUSTIFIED" in result["systemMessage"]
+                # Non-Write tools should ALWAYS be allowed, regardless of policy
+                # This is the fix for Issue #3: PreToolUse was incorrectly blocking non-Write tools
+                assert result["continue"] is True
+                assert result["hookSpecificOutput"]["permissionDecision"] == "allow", \
+                    f"{tool} should bypass {policy} policy but got: {result['hookSpecificOutput']['permissionDecision']}"
 
     def test_write_tools_without_file_paths_policy_enforced(self):
         """Test that Write tools without file paths undergo policy checking"""
