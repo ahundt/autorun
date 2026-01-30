@@ -1444,7 +1444,21 @@ def pretooluse_handler(ctx):
                 return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
 
         elif file_policy == "JUSTIFY":
-            # Check for justification in state flag, transcript, OR Write tool content
+            # JUSTIFY policy: Allow existing file modifications, require justification for NEW files only
+            # Check if file exists first
+            file_exists = False
+            if file_path:
+                try:
+                    resolved_path = Path(file_path).resolve()
+                    file_exists = resolved_path.exists() and resolved_path.is_file()
+                except (OSError, ValueError):
+                    file_exists = False
+
+            # If file exists, allow modification without justification
+            if file_exists:
+                return build_pretooluse_response("allow", "Existing file modification allowed under JUSTIFY policy")
+
+            # For NEW files, check for justification in state flag, transcript, OR Write tool content
             justification_found = (
                 state.get("autofile_justification_detected", False) or
                 has_valid_justification(str(ctx.session_transcript), str(ctx.tool_input.get("content", "")))
