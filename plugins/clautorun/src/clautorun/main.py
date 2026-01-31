@@ -721,6 +721,66 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
     return False
 
 
+# =============================================================================
+# Predicate Functions for Conditional Command Blocking
+# =============================================================================
+# These predicates return True to block (condition met), False to allow.
+# Used by DEFAULT_INTEGRATIONS entries with "when" field.
+# =============================================================================
+
+def _has_unstaged_changes(command: str) -> bool:
+    """Return True to block if there are unstaged changes (work to lose)."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only"],
+            capture_output=True, text=True, timeout=2
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return True  # Fail-safe: block on error
+
+
+def _file_has_unstaged_changes(command: str) -> bool:
+    """Return True to block if specific file has unstaged changes."""
+    try:
+        import shlex
+        parts = shlex.split(command)
+        file_path = parts[-1] if len(parts) > 1 else None
+        # Handle "git checkout -- file" pattern
+        if "--" in parts:
+            idx = parts.index("--")
+            file_path = parts[idx + 1] if idx + 1 < len(parts) else None
+        if not file_path:
+            return True  # Can't determine file, fail-safe: block
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--", file_path],
+            capture_output=True, text=True, timeout=2
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return True  # Fail-safe: block on error
+
+
+def _stash_exists(command: str) -> bool:
+    """Return True to block if stash has entries (something to lose)."""
+    try:
+        result = subprocess.run(
+            ["git", "stash", "list"],
+            capture_output=True, text=True, timeout=2
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return True  # Fail-safe: block on error
+
+
+# Predicate lookup table
+_PREDICATES = {
+    "_has_unstaged_changes": _has_unstaged_changes,
+    "_file_has_unstaged_changes": _file_has_unstaged_changes,
+    "_stash_exists": _stash_exists,
+}
+
+
 def should_block_command(session_id: str, command: str) -> Optional[Dict]:
     """
     Check if a command should be blocked.
@@ -747,12 +807,23 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
     # Check default integrations (built-in safety rules)
     for pattern, config in CONFIG["default_integrations"].items():
         if command_matches_pattern(command, pattern):
-            return {
+            # Check predicate if present (when field)
+            when_name = config.get("when")
+            if when_name and when_name in _PREDICATES:
+                if not _PREDICATES[when_name](command):
+                    continue  # Predicate says allow (no changes to lose)
+
+            result = {
                 "pattern": pattern,
                 "suggestion": config["suggestion"],
-                "severity": config["severity"],
                 "pattern_type": "literal"
             }
+            # Add optional fields if present
+            if config.get("commands"):
+                result["commands"] = config["commands"]
+            if config.get("commands_description"):
+                result["commands_description"] = config["commands_description"]
+            return result
 
     # Not blocked
     return None
