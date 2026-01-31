@@ -18,34 +18,38 @@
 Clautorun v0.7 Daemon Entry Point
 
 Run with: python -m clautorun.daemon
+
+Shutdown Mechanisms:
+- SIGTERM/SIGINT: Handled via loop.add_signal_handler() for async safety
+- Idle timeout: Watchdog shuts down after 30min of inactivity
+- atexit: Fallback cleanup for unexpected termination
+
+The daemon sets up signal handlers internally via ClautorunDaemon._setup_signal_handlers(),
+so no external signal handling is needed here.
 """
 import asyncio
-import signal
-from .core import app, ClautorunDaemon, SOCKET_PATH, logger
+import sys
+from .core import app, ClautorunDaemon, SOCKET_PATH, LOCK_PATH, logger
 
 
 def main():
     """
-    Daemon entry point with signal handling.
+    Daemon entry point.
 
-    Registers SIGTERM/SIGINT handlers for graceful shutdown.
-    Ensures socket cleanup on exit.
+    Signal handling is done internally by ClautorunDaemon via:
+    - loop.add_signal_handler() for SIGTERM, SIGINT, SIGHUP
+    - atexit registration for cleanup on unexpected exit
+    - Shutdown event for coordinated async termination
+
+    The main function just needs to:
+    1. Import plugins to register handlers
+    2. Create and start the daemon
+    3. Handle any startup errors
     """
-    daemon = None
-
-    # Handle signals for graceful shutdown
-    def signal_handler(sig, frame):
-        nonlocal daemon
-        if daemon is not None:
-            logger.info(f"Received signal {sig}")
-            daemon.stop()
-
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-
     # Import plugins to register handlers (deferred to avoid circular imports)
     try:
         from . import plugins  # noqa: F401
+        logger.info("Plugins loaded successfully")
     except ImportError as e:
         logger.warning(f"plugins.py not found or import error: {e} - daemon has no handlers")
 
@@ -54,11 +58,24 @@ def main():
     try:
         asyncio.run(daemon.start())
     except KeyboardInterrupt:
-        pass
+        logger.info("Keyboard interrupt received")
+    except Exception as e:
+        logger.error(f"Daemon error: {e}", exc_info=True)
+        sys.exit(1)
     finally:
-        # Ensure socket cleanup
-        if SOCKET_PATH.exists():
-            SOCKET_PATH.unlink()
+        # Safety cleanup - daemon.async_stop() should have already cleaned up,
+        # but ensure files are removed if something went wrong
+        try:
+            if SOCKET_PATH.exists():
+                SOCKET_PATH.unlink()
+                logger.debug("Final cleanup: removed socket")
+            if LOCK_PATH.exists():
+                LOCK_PATH.unlink()
+                logger.debug("Final cleanup: removed lock")
+        except OSError as e:
+            logger.warning(f"Final cleanup error: {e}")
+
+    logger.info("Daemon exited")
 
 
 if __name__ == "__main__":
