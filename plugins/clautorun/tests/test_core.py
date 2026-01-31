@@ -702,6 +702,102 @@ class TestClautorunDaemon:
                     result = daemon._socket_connect_test()
                     assert result is True
 
+    def test_shutdown_event_initialized_to_none(self):
+        """Daemon should initialize with shutdown_event as None."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        assert daemon._shutdown_event is None
+
+    def test_watchdog_task_initialized_to_none(self):
+        """Daemon should initialize with watchdog_task as None."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        assert daemon._watchdog_task is None
+
+    def test_loop_initialized_to_none(self):
+        """Daemon should initialize with loop as None."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        assert daemon._loop is None
+
+    def test_cleanup_registered_starts_false(self):
+        """Daemon should start with cleanup not registered."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        assert daemon._cleanup_registered is False
+
+    def test_cleanup_files_handles_missing_socket(self):
+        """_cleanup_files should handle missing socket gracefully."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        # Should not raise even if socket doesn't exist
+        daemon._cleanup_files()
+
+    def test_cleanup_files_handles_missing_lock(self):
+        """_cleanup_files should handle missing lock gracefully."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        daemon._lock_fd = None
+        # Should not raise
+        daemon._cleanup_files()
+
+    def test_stop_signals_shutdown_event(self):
+        """stop() should set shutdown event if it exists."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        daemon._shutdown_event = asyncio.Event()
+        daemon.running = True
+
+        daemon.stop()
+
+        assert daemon._shutdown_event.is_set()
+        assert daemon.running is False
+
+    @pytest.mark.asyncio
+    async def test_async_stop_sets_running_false(self):
+        """async_stop should set running to False."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        daemon.running = True
+        daemon._shutdown_event = asyncio.Event()
+
+        await daemon.async_stop()
+
+        assert daemon.running is False
+
+    @pytest.mark.asyncio
+    async def test_async_stop_sets_shutdown_event(self):
+        """async_stop should set shutdown event."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        daemon.running = True
+        daemon._shutdown_event = asyncio.Event()
+
+        await daemon.async_stop()
+
+        assert daemon._shutdown_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_async_stop_cancels_watchdog(self):
+        """async_stop should cancel watchdog task."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        daemon.running = True
+        daemon._shutdown_event = asyncio.Event()
+
+        # Create a mock watchdog task
+        async def mock_watchdog():
+            await asyncio.sleep(100)
+
+        daemon._watchdog_task = asyncio.create_task(mock_watchdog())
+
+        await daemon.async_stop()
+
+        assert daemon._watchdog_task.cancelled() or daemon._watchdog_task.done()
+
+    @pytest.mark.asyncio
+    async def test_async_stop_idempotent(self):
+        """async_stop should be safe to call multiple times."""
+        daemon = ClautorunDaemon(ClautorunApp())
+        daemon.running = True
+        daemon._shutdown_event = asyncio.Event()
+
+        # Call async_stop twice
+        await daemon.async_stop()
+        await daemon.async_stop()  # Should not raise
+
+        assert daemon.running is False
+
 
 # ============================================================================
 # Session Identity Resolution Tests

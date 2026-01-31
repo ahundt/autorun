@@ -30,6 +30,7 @@ import os
 import re
 import json
 import asyncio
+import signal
 import subprocess
 import time
 import copy
@@ -592,7 +593,13 @@ class ClautorunDaemon:
     Lifecycle:
     - Tracks active Claude session PIDs via active_pids set
     - Watchdog runs every 60s: cleans dead PIDs, idle shutdown after 30min
-    - Signal handlers (SIGTERM/SIGINT) trigger graceful stop()
+    - Signal handlers (SIGTERM/SIGINT) trigger graceful async_stop()
+    - atexit registration ensures cleanup on unexpected exit
+
+    Shutdown Mechanism:
+    - Signals (SIGTERM/SIGINT): Handled via loop.add_signal_handler() for async safety
+    - Watchdog timeout: Calls async_stop() directly from async context
+    - atexit: Fallback cleanup for unexpected termination
     """
 
     def __init__(self, app: ClautorunApp):
@@ -608,7 +615,11 @@ class ClautorunDaemon:
         self.active_pids: Set[int] = set()
         self._server = None
         self._lock_fd = None
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._shutdown_event: Optional[asyncio.Event] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.store = ThreadSafeDB()
+        self._cleanup_registered = False
 
     def _pid_exists(self, pid: int) -> bool:
         """Check if process with given PID exists."""
@@ -669,39 +680,120 @@ class ClautorunDaemon:
 
         - Cleans up dead PIDs (crashed Claude sessions)
         - Shuts down when all sessions exit AND idle timeout reached
+        - Checks shutdown event for graceful termination
         """
-        while self.running:
-            await asyncio.sleep(60)
-            now = time.time()
+        try:
+            while self.running:
+                # Use wait_for with shutdown event for responsive shutdown
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait() if self._shutdown_event else asyncio.sleep(60),
+                        timeout=60.0
+                    )
+                    # If shutdown event was set, exit loop
+                    if self._shutdown_event and self._shutdown_event.is_set():
+                        break
+                except asyncio.TimeoutError:
+                    pass  # Normal timeout, continue with cleanup
 
-            # Clean dead PIDs
-            dead = {pid for pid in self.active_pids if not self._pid_exists(pid)}
-            if dead:
-                logger.info(f"Cleaned {len(dead)} dead PIDs: {dead}")
-            self.active_pids -= dead
+                if not self.running:
+                    break
 
-            # Shutdown when no active sessions AND idle timeout
-            if not self.active_pids and (now - self.last_activity > IDLE_TIMEOUT):
-                logger.info("Idle timeout reached, shutting down")
-                self.stop()
-                break
+                now = time.time()
+
+                # Clean dead PIDs
+                dead = {pid for pid in self.active_pids if not self._pid_exists(pid)}
+                if dead:
+                    logger.info(f"Cleaned {len(dead)} dead PIDs: {dead}")
+                self.active_pids -= dead
+
+                # Shutdown when no active sessions AND idle timeout
+                if not self.active_pids and (now - self.last_activity > IDLE_TIMEOUT):
+                    logger.info("Idle timeout reached, shutting down")
+                    await self.async_stop()
+                    break
+        except asyncio.CancelledError:
+            logger.info("Watchdog task cancelled")
+            raise
+
+    async def async_stop(self):
+        """
+        Async graceful shutdown with proper cleanup ordering.
+
+        Cleans up in order:
+        1. Set shutdown flag and event
+        2. Cancel watchdog task
+        3. Close server and wait for connections to drain
+        4. Remove socket file
+        5. Release and remove lockfile
+        """
+        if not self.running:
+            return  # Already stopping/stopped
+
+        logger.info("Daemon stopping (async)")
+        self.running = False
+
+        # Signal shutdown event
+        if self._shutdown_event:
+            self._shutdown_event.set()
+
+        # Cancel watchdog task
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+
+        # Close server gracefully
+        if self._server:
+            self._server.close()
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Server close timed out")
+
+        # Cleanup files
+        self._cleanup_files()
 
     def stop(self):
         """
-        Graceful shutdown with socket and lock cleanup.
+        Synchronous stop - schedules async_stop on the event loop.
 
-        Cleans up:
-        - Socket file
-        - Server connection
-        - Lockfile descriptor (releases lock)
+        Use this from signal handlers or non-async contexts.
+        For async contexts, use async_stop() directly.
         """
-        logger.info("Daemon stopping")
+        logger.info("Daemon stopping (sync)")
         self.running = False
-        if SOCKET_PATH.exists():
-            SOCKET_PATH.unlink()
-        if self._server:
-            self._server.close()
-        # Release lockfile
+
+        # Signal shutdown event
+        if self._shutdown_event:
+            self._shutdown_event.set()
+
+        # Schedule async cleanup if we have a loop
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(self.async_stop())
+            )
+        else:
+            # Fallback to sync cleanup if no loop
+            self._cleanup_files()
+
+    def _cleanup_files(self):
+        """
+        Cleanup socket and lock files.
+
+        Safe to call multiple times.
+        """
+        # Remove socket file
+        try:
+            if SOCKET_PATH.exists():
+                SOCKET_PATH.unlink()
+                logger.debug(f"Removed socket: {SOCKET_PATH}")
+        except OSError as e:
+            logger.warning(f"Failed to remove socket: {e}")
+
+        # Release and remove lockfile
         if self._lock_fd:
             import fcntl
             try:
@@ -710,6 +802,14 @@ class ClautorunDaemon:
             except (IOError, OSError):
                 pass
             self._lock_fd = None
+
+        # Remove lock file
+        try:
+            if LOCK_PATH.exists():
+                LOCK_PATH.unlink()
+                logger.debug(f"Removed lock: {LOCK_PATH}")
+        except OSError as e:
+            logger.warning(f"Failed to remove lock file: {e}")
 
     def _acquire_daemon_lock(self) -> bool:
         """
@@ -769,19 +869,92 @@ class ClautorunDaemon:
             logger.info("Removing stale socket")
             SOCKET_PATH.unlink()
 
+    def _register_atexit_cleanup(self):
+        """Register atexit handler for cleanup on unexpected exit."""
+        if self._cleanup_registered:
+            return
+        import atexit
+        atexit.register(self._cleanup_files)
+        self._cleanup_registered = True
+        logger.debug("Registered atexit cleanup handler")
+
+    def _setup_signal_handlers(self):
+        """
+        Set up async-safe signal handlers.
+
+        Uses loop.add_signal_handler() for proper asyncio integration.
+        Handles SIGTERM, SIGINT, and SIGHUP.
+        """
+        if not self._loop:
+            return
+
+        def handle_signal(sig_name: str):
+            """Signal handler that schedules async shutdown."""
+            logger.info(f"Received {sig_name}")
+            asyncio.create_task(self.async_stop())
+
+        try:
+            self._loop.add_signal_handler(
+                signal.SIGTERM,
+                lambda: handle_signal("SIGTERM")
+            )
+            self._loop.add_signal_handler(
+                signal.SIGINT,
+                lambda: handle_signal("SIGINT")
+            )
+            # SIGHUP for graceful restart (just log for now)
+            self._loop.add_signal_handler(
+                signal.SIGHUP,
+                lambda: logger.info("Received SIGHUP (ignored)")
+            )
+            logger.debug("Signal handlers registered")
+        except NotImplementedError:
+            # Windows doesn't support add_signal_handler
+            logger.warning("Async signal handlers not supported on this platform")
+
     async def start(self):
-        """Start daemon server."""
+        """
+        Start daemon server with proper lifecycle management.
+
+        Sets up:
+        - Shutdown event for coordinated termination
+        - Signal handlers for SIGTERM/SIGINT
+        - atexit cleanup registration
+        - Watchdog task for PID cleanup and idle shutdown
+        """
         self._cleanup_stale_socket()
 
+        # Get event loop reference for signal handling
+        self._loop = asyncio.get_running_loop()
+
+        # Create shutdown coordination event
+        self._shutdown_event = asyncio.Event()
+
+        # Register cleanup handlers
+        self._register_atexit_cleanup()
+        self._setup_signal_handlers()
+
+        # Start server
         self._server = await asyncio.start_unix_server(
             self.handle_client, str(SOCKET_PATH)
         )
         self.running = True
-        asyncio.create_task(self.watchdog())
+
+        # Start watchdog as tracked task
+        self._watchdog_task = asyncio.create_task(self.watchdog())
 
         logger.info(f"Daemon started on {SOCKET_PATH}")
-        async with self._server:
-            await self._server.serve_forever()
+
+        try:
+            async with self._server:
+                # Wait for shutdown event instead of serve_forever
+                # This allows graceful termination
+                await self._shutdown_event.wait()
+        except asyncio.CancelledError:
+            logger.info("Server task cancelled")
+        finally:
+            # Ensure cleanup happens
+            await self.async_stop()
 
 
 # Global app instance
