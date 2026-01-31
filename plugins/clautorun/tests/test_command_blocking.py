@@ -389,5 +389,86 @@ class TestDefaultIntegrations:
             assert "severity" in config
 
 
+class TestGitCommandIntegrations:
+    """Test git command DEFAULT_INTEGRATIONS for safety suggestions."""
+
+    def test_git_reset_hard_integration_exists(self):
+        """Test that git reset --hard has a default integration."""
+        assert "git reset --hard" in DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git reset --hard"]["severity"] == "critical"
+
+    def test_git_reset_hard_suggests_stash(self):
+        """Test that git reset --hard suggests stash as primary alternative."""
+        suggestion = DEFAULT_INTEGRATIONS["git reset --hard"]["suggestion"]
+        assert "git stash" in suggestion
+        assert "RECOMMENDED" in suggestion
+
+    def test_git_reset_hard_suggests_backup_branch(self):
+        """Test that git reset --hard suggests creating backup branch as fallback."""
+        suggestion = DEFAULT_INTEGRATIONS["git reset --hard"]["suggestion"]
+        assert "backup/" in suggestion
+        assert "git checkout -b" in suggestion
+
+    def test_git_reset_hard_has_date_format_in_branch_name(self):
+        """Test that backup branch suggestion uses concrete date-based naming."""
+        suggestion = DEFAULT_INTEGRATIONS["git reset --hard"]["suggestion"]
+        # Check for date format pattern
+        assert "%Y%m%d" in suggestion or "$(date" in suggestion
+
+    def test_git_checkout_dot_integration_exists(self):
+        """Test that git checkout . has a default integration."""
+        assert "git checkout ." in DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git checkout ."]["severity"] == "high"
+
+    def test_git_checkout_dot_suggests_stash(self):
+        """Test that git checkout . suggests stash as primary alternative."""
+        suggestion = DEFAULT_INTEGRATIONS["git checkout ."]["suggestion"]
+        assert "git stash" in suggestion
+
+    def test_git_clean_f_integration_exists(self):
+        """Test that git clean -f has a default integration."""
+        assert "git clean -f" in DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git clean -f"]["severity"] == "high"
+
+    def test_git_clean_f_suggests_dry_run(self):
+        """Test that git clean -f suggests dry-run preview first."""
+        suggestion = DEFAULT_INTEGRATIONS["git clean -f"]["suggestion"]
+        assert "git clean -n" in suggestion
+        assert "dry-run" in suggestion.lower() or "preview" in suggestion.lower()
+
+    def test_git_clean_f_suggests_stash_untracked(self):
+        """Test that git clean -f suggests stashing untracked files."""
+        suggestion = DEFAULT_INTEGRATIONS["git clean -f"]["suggestion"]
+        assert "stash" in suggestion.lower()
+        assert "-u" in suggestion  # -u flag for untracked files
+
+    def test_git_reset_head_integration_exists(self):
+        """Test that git reset HEAD~ has a default integration."""
+        assert "git reset HEAD~" in DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git reset HEAD~"]["severity"] == "medium"
+
+    def test_git_reset_head_suggests_soft_reset(self):
+        """Test that git reset HEAD~ suggests soft reset alternative."""
+        suggestion = DEFAULT_INTEGRATIONS["git reset HEAD~"]["suggestion"]
+        assert "--soft" in suggestion
+
+    def test_git_reset_head_suggests_revert(self):
+        """Test that git reset HEAD~ suggests revert as safer option."""
+        suggestion = DEFAULT_INTEGRATIONS["git reset HEAD~"]["suggestion"]
+        assert "git revert" in suggestion
+
+    def test_git_reset_head_mentions_reflog_recovery(self):
+        """Test that git reset HEAD~ mentions reflog for recovery."""
+        suggestion = DEFAULT_INTEGRATIONS["git reset HEAD~"]["suggestion"]
+        assert "reflog" in suggestion
+
+    def test_all_git_suggestions_have_allow_instruction(self):
+        """Test that all git command suggestions include allow instruction."""
+        git_patterns = [p for p in DEFAULT_INTEGRATIONS.keys() if p.startswith("git")]
+        for pattern in git_patterns:
+            suggestion = DEFAULT_INTEGRATIONS[pattern]["suggestion"]
+            assert "/cr:ok" in suggestion, f"Missing /cr:ok instruction in {pattern}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
