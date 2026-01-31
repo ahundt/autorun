@@ -1,0 +1,788 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Copyright 2025 Andrew Hundt <ATHundt@gmail.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+Clautorun v0.7 Core - Click/Typer-style Decorator Framework
+
+Provides:
+- LazyTranscript: Deferred string conversion for performance
+- ThreadSafeDB: In-memory cache layer for daemon performance
+- EventContext: Rich context with magic __getattr__/__setattr__ state access
+- ClautorunApp: Click-style decorator registration
+- ClautorunDaemon: AsyncIO Unix socket server
+
+Reuses session_manager.py entirely (421 lines of battle-tested RAII code).
+"""
+import os
+import re
+import json
+import asyncio
+import subprocess
+import time
+import copy
+import logging
+import threading
+from pathlib import Path
+from typing import Any, Optional, Dict, List, Callable, Set
+from functools import lru_cache
+
+# Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
+from .session_manager import session_state
+from .config import CONFIG
+
+# === CONFIGURATION ===
+HOME_DIR = Path.home() / ".clautorun"
+HOME_DIR.mkdir(mode=0o700, exist_ok=True)
+SOCKET_PATH = HOME_DIR / "daemon.sock"
+LOCK_PATH = HOME_DIR / "daemon.lock"
+LOG_FILE = HOME_DIR / "daemon.log"
+IDLE_TIMEOUT = 1800  # 30 minutes
+
+# === LOGGING ===
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+logger = logging.getLogger("clautorun")
+
+
+# === THREAD-SAFE DB WRAPPER (In-memory cache layer for daemon performance) ===
+class ThreadSafeDB:
+    """
+    Thread-safe in-memory cache on top of session_manager.py's persistent storage.
+
+    Architecture (3 layers for optimal performance):
+        1. EventContext: Magic syntax (ctx.file_policy)
+        2. ThreadSafeDB: In-memory cache (daemon lifetime, fast reads)
+        3. session_state(): Persistent shelve with RAII locks (survives daemon restart)
+
+    Attributes:
+        _lock: RLock for thread-safe access
+        _cache: In-memory dict cache
+
+    Benefits:
+        - First access: Reads from shelve (~7-17ms)
+        - Subsequent: Reads from memory cache (<1ms)
+        - Daemon restart: Cache rebuilds from persistent shelve
+    """
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._cache: Dict[str, Any] = {}
+
+    def get(self, key: str, default=None) -> Any:
+        """Get value with two-tier lookup: memory cache -> persistent shelve."""
+        with self._lock:
+            # Fast path: Check memory cache first
+            if key in self._cache:
+                return self._cache[key]
+
+            # Slow path: Load from persistent shelve
+            try:
+                # Use rsplit to handle session_ids containing ":"
+                parts = key.rsplit(":", 1)
+                session_id = parts[0] if len(parts) > 1 else "__default__"
+                field = parts[-1]
+                with session_state(session_id) as state:
+                    value = state.get(field, default)
+                    # Cache for next access
+                    if value is not None:
+                        self._cache[key] = value
+                    return value
+            except Exception as e:
+                logger.error(f"ThreadSafeDB.get error: {e}")
+                return default
+
+    def set(self, key: str, value: Any):
+        """Set value in both memory cache and persistent shelve."""
+        # Deep copy only mutable types for clean serialization
+        if isinstance(value, (list, dict, set)):
+            value = copy.deepcopy(value)
+
+        with self._lock:
+            # Update memory cache
+            self._cache[key] = value
+
+            # Persist to shelve via session_state() RAII wrapper
+            try:
+                # Use rsplit to handle session_ids containing ":"
+                parts = key.rsplit(":", 1)
+                session_id = parts[0] if len(parts) > 1 else "__default__"
+                field = parts[-1]
+                with session_state(session_id) as state:
+                    state[field] = value
+            except Exception as e:
+                logger.error(f"ThreadSafeDB.set error: {e}")
+
+
+# === TRI-LAYER IDENTITY RESOLUTION (Optional, for resume robustness) ===
+def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
+    """
+    Resolve stable session key for resume robustness.
+
+    Priority:
+    1. CLAUTORUN_SESSION_ID env var (explicit override)
+    2. JSONL history file scan (survives claude --resume)
+    3. session_id from payload (fallback)
+
+    Usage: Enable with CLAUTORUN_USE_IDENTITY=1
+    """
+    import platform
+
+    # Layer 1: Explicit env var
+    if env_id := os.environ.get("CLAUTORUN_SESSION_ID"):
+        return f"explicit:{env_id}"
+
+    # Layer 2: JSONL file (for resume robustness)
+    if os.environ.get("CLAUTORUN_USE_IDENTITY") == "1":
+        if platform.system() == "Linux":
+            try:
+                fd_dir = Path(f"/proc/{pid}/fd")
+                for fd in fd_dir.iterdir():
+                    target = fd.readlink()
+                    if ".jsonl" in str(target) and ".claude" in str(target):
+                        return f"history:{Path(target).name}"
+            except (PermissionError, FileNotFoundError, OSError):
+                pass
+        elif platform.system() == "Darwin":
+            try:
+                result = subprocess.run(
+                    ["lsof", "-p", str(pid), "-Fn"],
+                    capture_output=True, text=True, timeout=2.0
+                )
+                for line in result.stdout.splitlines():
+                    if line.startswith("n") and ".jsonl" in line and ".claude" in line:
+                        return f"history:{Path(line[1:]).name}"
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+    # Layer 3: Fallback to session_id from payload
+    return fallback_id
+
+
+# === LAZY TRANSCRIPT ===
+class LazyTranscript:
+    """
+    Lazy string conversion for session_transcript.
+    Only converts to string when searched, saving 10-50ms per hook call.
+
+    Usage:
+        transcript = LazyTranscript(ctx.session_transcript)
+        if transcript.contains("AUTOFILE_JUSTIFICATION"):
+            ...
+    """
+    __slots__ = ('_raw', '_text', '_converted')
+
+    def __init__(self, raw_transcript: List[Dict[str, Any]]):
+        self._raw = raw_transcript
+        self._text: Optional[str] = None
+        self._converted = False
+
+    @property
+    def text(self) -> str:
+        if not self._converted:
+            self._text = json.dumps(self._raw) if self._raw else ""
+            self._converted = True
+        return self._text or ""
+
+    def contains(self, pattern: str) -> bool:
+        """Case-insensitive substring search."""
+        return pattern.lower() in self.text.lower()
+
+    @lru_cache(maxsize=16)
+    def search_regex(self, pattern: str) -> Optional[re.Match]:
+        """Cached regex search."""
+        return re.search(pattern, self.text, re.DOTALL | re.IGNORECASE)
+
+    def has_justification(self) -> bool:
+        """Check for valid AUTOFILE_JUSTIFICATION tag."""
+        match = self.search_regex(r'<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>')
+        if match:
+            content = match.group(1).strip().lower()
+            return content not in {"", "reason"}  # Exclude placeholders
+        return False
+
+
+# === MAGIC STATE CONTEXT ===
+class EventContext:
+    """
+    Rich context with MAGIC STATE PERSISTENCE.
+
+    Any attribute access transparently reads/writes to Shelve via session_manager.py.
+    ZERO boilerplate per field - just use ctx.file_policy = "SEARCH" and it persists!
+
+    Usage:
+        ctx.file_policy = "SEARCH"  # Saves automatically
+        if ctx.autorun_active:      # Loads automatically
+            ...
+    """
+    # Reserved attributes (not persisted)
+    __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
+                 '_tool_result', '_session_transcript', '_state', '_transcript', '_store')
+
+    # Stage constants for type consistency
+    STAGE_INACTIVE = 0
+    STAGE_1 = 1
+    STAGE_2 = 2
+    STAGE_2_COMPLETED = 3
+    STAGE_3 = 4
+
+    # Default values for magic state (used when key not in shelve)
+    _DEFAULTS = {
+        'file_policy': 'ALLOW',
+        'session_status': '',
+        'autorun_active': False,
+        'autorun_stage': 0,
+        'autorun_task': '',
+        'autorun_mode': 'standard',
+        'activation_prompt': '',
+        'session_blocked_patterns': [],
+        'recheck_count': 0,
+        'hook_call_count': 0,
+        'ai_monitor_pid': None,
+        'plan_active': False,
+        'plan_type': '',
+    }
+
+    def __init__(self, session_id: str, event: str, prompt: str = "",
+                 tool_name: str = None, tool_input: Dict = None,
+                 tool_result: str = None, session_transcript: List = None,
+                 store: 'ThreadSafeDB' = None):
+        object.__setattr__(self, '_session_id', session_id)
+        object.__setattr__(self, '_event', event)
+        object.__setattr__(self, '_prompt', prompt)
+        object.__setattr__(self, '_tool_name', tool_name)
+        object.__setattr__(self, '_tool_input', tool_input or {})
+        object.__setattr__(self, '_tool_result', tool_result)
+        object.__setattr__(self, '_session_transcript', session_transcript or [])
+        object.__setattr__(self, '_state', {})
+        object.__setattr__(self, '_transcript', None)
+        object.__setattr__(self, '_store', store)
+
+    # === Read-only accessors for payload data ===
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def event(self) -> str:
+        return self._event
+
+    @property
+    def prompt(self) -> str:
+        return self._prompt
+
+    @property
+    def tool_name(self) -> str:
+        return self._tool_name
+
+    @property
+    def tool_input(self) -> Dict:
+        return self._tool_input
+
+    @property
+    def tool_result(self) -> str:
+        return self._tool_result
+
+    # === MAGIC STATE: __getattr__ / __setattr__ ===
+    def __getattr__(self, name: str):
+        """
+        Magic getter - reads from Shelve automatically.
+
+        ctx.file_policy  ->  shelve[session_id:file_policy] or default
+        """
+        # Check local cache first (for this request)
+        state = object.__getattribute__(self, '_state')
+        if name in state:
+            return state[name]
+
+        # Load from Shelve
+        store = object.__getattribute__(self, '_store')
+        session_id = object.__getattribute__(self, '_session_id')
+        if store:
+            key = f"{session_id}:{name}"
+            value = store.get(key)
+            if value is not None:
+                state[name] = value
+                return value
+
+        # Return default
+        defaults = object.__getattribute__(self, '_DEFAULTS')
+        return defaults.get(name)
+
+    def __setattr__(self, name: str, value):
+        """
+        Magic setter - writes to Shelve automatically.
+
+        ctx.file_policy = "SEARCH"  ->  shelve[session_id:file_policy] = "SEARCH"
+
+        Handles list/dict with deep copy for clean serialization.
+        """
+        # Deep copy lists/dicts to ensure clean serialization
+        if isinstance(value, (list, dict)):
+            value = copy.deepcopy(value)
+
+        # Update local cache
+        state = object.__getattribute__(self, '_state')
+        state[name] = value
+
+        # Persist to Shelve
+        store = object.__getattribute__(self, '_store')
+        session_id = object.__getattribute__(self, '_session_id')
+        if store:
+            key = f"{session_id}:{name}"
+            store.set(key, value)
+
+    # === Computed Properties (not persisted) ===
+    @property
+    def transcript(self) -> LazyTranscript:
+        t = object.__getattribute__(self, '_transcript')
+        if t is None:
+            t = LazyTranscript(self._session_transcript)
+            object.__setattr__(self, '_transcript', t)
+        return t
+
+    @property
+    def has_justification(self) -> bool:
+        return self.transcript.has_justification()
+
+    @property
+    def file_exists(self) -> bool:
+        file_path = self._tool_input.get("file_path", "")
+        if not file_path:
+            return False
+        try:
+            return Path(file_path).resolve().exists()
+        except (OSError, ValueError):
+            return False
+
+    # === UNIFIED RESPONSE BUILDER (DRY: single method handles all events) ===
+    @staticmethod
+    def _escape_for_json(s: str) -> str:
+        """
+        Escape string for safe JSON embedding.
+
+        Args:
+            s: String to escape (will be converted if not string)
+
+        Returns:
+            str: JSON-escaped string without surrounding quotes
+        """
+        if not isinstance(s, str):
+            s = str(s)
+        return json.dumps(s)[1:-1]
+
+    def respond(self, decision: str = "allow", reason: str = "") -> dict:
+        """
+        Unified response builder - automatically formats for event type.
+
+        Args:
+            decision: One of "allow", "deny", "block"
+            reason: Message to include in response
+
+        Returns:
+            dict: Claude Code compliant hook response
+
+        Usage:
+            return ctx.respond("allow")
+            return ctx.respond("deny", "File creation blocked")
+            return ctx.respond("block", injection_prompt)  # For Stop events
+        """
+        reason_escaped = self._escape_for_json(reason) if reason else ""
+
+        # PreToolUse needs hookSpecificOutput
+        if self._event == "PreToolUse":
+            return {
+                "continue": True,
+                "stopReason": "",
+                "suppressOutput": False,
+                "systemMessage": reason_escaped,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": decision,
+                    "permissionDecisionReason": reason_escaped
+                }
+            }
+
+        # Stop/SubagentStop with "block" decision
+        if decision == "block":
+            return {
+                "continue": False,
+                "stopReason": "",
+                "suppressOutput": False,
+                "systemMessage": reason,
+                "decision": "block",
+                "reason": reason
+            }
+
+        # Default hook response
+        return {
+            "continue": decision != "deny",
+            "stopReason": reason if decision == "deny" else "",
+            "suppressOutput": False,
+            "systemMessage": reason if decision != "deny" else ""
+        }
+
+    def command_response(self, response_text: str) -> Dict:
+        """
+        Response for locally-handled commands (UserPromptSubmit).
+
+        Commands handled locally should NOT continue to AI.
+
+        Args:
+            response_text: The command output message
+
+        Returns:
+            dict: Hook response with continue=False and response text
+
+        Usage:
+            return ctx.command_response("✅ AutoFile policy: strict-search")
+        """
+        return {
+            "continue": False,
+            "stopReason": "",
+            "suppressOutput": False,
+            "systemMessage": response_text,
+            "response": response_text  # Backward compatibility with tests
+        }
+
+    # === Convenience aliases ===
+    def allow(self, reason: str = "") -> Dict:
+        return self.respond("allow", reason)
+
+    def deny(self, reason: str) -> Dict:
+        return self.respond("deny", reason)
+
+    def block(self, reason: str) -> Dict:
+        return self.respond("block", reason)
+
+
+# === CLAUTORUN APP (Click-style Registration + Unified Dispatch) ===
+class ClautorunApp:
+    """
+    Click/Typer-style decorator framework with unified dispatch.
+
+    DRY Features:
+    - Single @app.command() decorator for all command types
+    - Single @app.on() decorator for all event chains
+    - Single _run_chain() method for all chain execution
+    - Automatic command matching via CONFIG + aliases
+
+    Usage:
+        @app.command("/cr:a", "/cr:allow", "/afa", "ALLOW")
+        def handle_allow(ctx): ctx.file_policy = "ALLOW"; return "Done"
+
+        @app.on("PreToolUse")
+        def enforce_policy(ctx): return ctx.deny("Blocked") if blocked else None
+    """
+
+    def __init__(self):
+        self.command_handlers: Dict[str, Callable] = {}
+        self.chains: Dict[str, List[Callable]] = {
+            "PreToolUse": [],
+            "Stop": [],
+            "SessionStart": [],
+            "PostToolUse": [],
+        }
+
+    def command(self, *aliases: str):
+        """Register command handler with multiple aliases (DRY: single decorator)."""
+        def decorator(func: Callable):
+            for alias in aliases:
+                self.command_handlers[alias] = func
+            return func
+        return decorator
+
+    # Semantic aliases - all point to same decorator
+    policy = block = workflow = command
+
+    def on(self, event: str):
+        """Register chain handler for event (DRY: single decorator)."""
+        def decorator(func: Callable):
+            # SubagentStop shares Stop chain
+            target = "Stop" if event == "SubagentStop" else event
+            if target in self.chains:
+                self.chains[target].append(func)
+            return func
+        return decorator
+
+    def _run_chain(self, ctx: EventContext, chain_name: str) -> Optional[Dict]:
+        """
+        Run a handler chain, return first non-None result (DRY: single chain runner).
+
+        Used by all event types - eliminates duplicate chain execution code.
+        """
+        for handler in self.chains.get(chain_name, []):
+            result = handler(ctx)
+            if result is not None:
+                return result
+        return None
+
+    def _find_command(self, prompt: str) -> Optional[tuple]:
+        """
+        Find matching command handler (DRY: single lookup logic).
+
+        Returns (handler, matched_alias) or None.
+        """
+        # Check CONFIG command_mappings
+        command = CONFIG["command_mappings"].get(prompt)
+        if command and command in self.command_handlers:
+            return (self.command_handlers[command], command)
+
+        # Check direct aliases
+        for alias, handler in self.command_handlers.items():
+            if prompt == alias or prompt.startswith(f"{alias} "):
+                return (handler, alias)
+
+        return None
+
+    def dispatch(self, ctx: EventContext) -> Dict:
+        """
+        Unified dispatch - routes all events through consistent pattern.
+
+        DRY: Single method handles all event types with minimal branching.
+        """
+        event = ctx.event
+
+        # UserPromptSubmit: Check commands first
+        if event == "UserPromptSubmit":
+            match = self._find_command(ctx.prompt.strip())
+            if match:
+                handler, alias = match
+                ctx.activation_prompt = ctx.prompt
+                response_text = handler(ctx)
+                # Commands handled locally should NOT continue to AI
+                return ctx.command_response(response_text)
+            # Non-commands continue to AI
+            return ctx.respond("allow")
+
+        # Chain events: Run appropriate chain
+        chain_name = "Stop" if event in ("Stop", "SubagentStop") else event
+        if chain_name in self.chains:
+            result = self._run_chain(ctx, chain_name)
+            if result is not None:
+                return result
+
+        # Default: allow
+        return ctx.respond("allow")
+
+
+# === DAEMON ===
+class ClautorunDaemon:
+    """
+    AsyncIO Unix socket daemon for fast hook handling.
+
+    Replaces per-invocation process startup (50-150ms) with
+    persistent daemon (1-5ms response time).
+
+    Lifecycle:
+    - Tracks active Claude session PIDs via active_pids set
+    - Watchdog runs every 60s: cleans dead PIDs, idle shutdown after 30min
+    - Signal handlers (SIGTERM/SIGINT) trigger graceful stop()
+    """
+
+    def __init__(self, app: ClautorunApp):
+        """
+        Initialize daemon with app and shared state.
+
+        Args:
+            app: ClautorunApp instance with registered handlers
+        """
+        self.app = app
+        self.running = False
+        self.last_activity = time.time()
+        self.active_pids: Set[int] = set()
+        self._server = None
+        self._lock_fd = None
+        self.store = ThreadSafeDB()
+
+    def _pid_exists(self, pid: int) -> bool:
+        """Check if process with given PID exists."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    async def handle_client(self, reader: asyncio.StreamReader,
+                           writer: asyncio.StreamWriter):
+        """Handle single hook request."""
+        self.last_activity = time.time()
+        response = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
+
+        try:
+            data = await reader.readuntil(b'\n')
+            payload = json.loads(data.decode())
+
+            # Track the Claude session PID (injected by client)
+            pid = payload.get("_pid")
+            if pid and pid not in self.active_pids:
+                self.active_pids.add(pid)
+                logger.info(f"New session PID: {pid} (active: {len(self.active_pids)})")
+
+            # Resolve session identity (supports tri-layer for resume robustness)
+            raw_session_id = payload.get("session_id", "")
+            session_id = resolve_session_key(pid, payload.get("_cwd", ""), raw_session_id)
+
+            # Build context with shared store for magic state persistence
+            ctx = EventContext(
+                session_id=session_id,
+                event=payload.get("hook_event_name", payload.get("type", "")),
+                prompt=payload.get("prompt", ""),
+                tool_name=payload.get("tool_name", payload.get("tool")),
+                tool_input=payload.get("tool_input", {}),
+                tool_result=payload.get("tool_result"),
+                session_transcript=payload.get("session_transcript", []),
+                store=self.store
+            )
+
+            # Dispatch
+            response = self.app.dispatch(ctx)
+
+        except Exception as e:
+            logger.error(f"Handler error: {e}", exc_info=True)
+            response["systemMessage"] = f"Daemon error (fail-open): {e}"
+
+        finally:
+            writer.write(json.dumps(response).encode() + b'\n')
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+    async def watchdog(self):
+        """
+        PID-aware lifecycle management.
+
+        - Cleans up dead PIDs (crashed Claude sessions)
+        - Shuts down when all sessions exit AND idle timeout reached
+        """
+        while self.running:
+            await asyncio.sleep(60)
+            now = time.time()
+
+            # Clean dead PIDs
+            dead = {pid for pid in self.active_pids if not self._pid_exists(pid)}
+            if dead:
+                logger.info(f"Cleaned {len(dead)} dead PIDs: {dead}")
+            self.active_pids -= dead
+
+            # Shutdown when no active sessions AND idle timeout
+            if not self.active_pids and (now - self.last_activity > IDLE_TIMEOUT):
+                logger.info("Idle timeout reached, shutting down")
+                self.stop()
+                break
+
+    def stop(self):
+        """
+        Graceful shutdown with socket and lock cleanup.
+
+        Cleans up:
+        - Socket file
+        - Server connection
+        - Lockfile descriptor (releases lock)
+        """
+        logger.info("Daemon stopping")
+        self.running = False
+        if SOCKET_PATH.exists():
+            SOCKET_PATH.unlink()
+        if self._server:
+            self._server.close()
+        # Release lockfile
+        if self._lock_fd:
+            import fcntl
+            try:
+                fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
+                self._lock_fd.close()
+            except (IOError, OSError):
+                pass
+            self._lock_fd = None
+
+    def _acquire_daemon_lock(self) -> bool:
+        """
+        Acquire exclusive daemon lock using lockfile.
+
+        Returns:
+            bool: True if lock acquired, False if another daemon running
+
+        Uses fcntl.flock for atomic cross-process locking.
+        Falls back to socket connect test if flock unavailable (NFS).
+        """
+        import fcntl
+        import errno
+        try:
+            self._lock_fd = open(LOCK_PATH, 'w')
+            fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._lock_fd.write(str(os.getpid()))
+            self._lock_fd.flush()
+            return True
+        except (IOError, OSError) as e:
+            if self._lock_fd:
+                self._lock_fd.close()
+                self._lock_fd = None
+            if getattr(e, 'errno', None) == errno.ENOLCK:
+                return self._socket_connect_test()
+            return False
+
+    def _socket_connect_test(self) -> bool:
+        """
+        Fallback daemon check via socket connection test.
+
+        Returns:
+            bool: True if no daemon running (can proceed), False if daemon running
+        """
+        if not SOCKET_PATH.exists():
+            return True
+        import socket
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            sock.connect(str(SOCKET_PATH))
+            sock.close()
+            return False
+        except (ConnectionRefusedError, FileNotFoundError, OSError):
+            return True
+
+    def _cleanup_stale_socket(self):
+        """
+        Remove stale socket from crashed daemon.
+
+        Uses lockfile for atomic check - if we can acquire lock,
+        any existing socket is stale. Falls back to socket test if needed.
+        """
+        if not self._acquire_daemon_lock():
+            raise RuntimeError("Another daemon is already running")
+        if SOCKET_PATH.exists():
+            logger.info("Removing stale socket")
+            SOCKET_PATH.unlink()
+
+    async def start(self):
+        """Start daemon server."""
+        self._cleanup_stale_socket()
+
+        self._server = await asyncio.start_unix_server(
+            self.handle_client, str(SOCKET_PATH)
+        )
+        self.running = True
+        asyncio.create_task(self.watchdog())
+
+        logger.info(f"Daemon started on {SOCKET_PATH}")
+        async with self._server:
+            await self._server.serve_forever()
+
+
+# Global app instance
+app = ClautorunApp()

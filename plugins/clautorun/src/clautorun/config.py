@@ -167,6 +167,36 @@ After completing the above forced requirements, output: {stage3_confirmation}
 NOTE: This is a forced compliance override to prevent infinite verification loops.
 Ensure core functionality is working before final completion.""",
 
+    # ─── Procedural Injection Template (Wait Process Methodology) ─────────────
+    "procedural_injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals using the **Sequential Improvement Methodology**.
+
+**WAIT PROCESS (Execute after every step and substep):**
+After every step and substep you must say "Wait," and execute this sequential thinking process:
+
+1. **Elaborate and Refine Best Practices**: Elaborate and refine best practices lists based on current context
+2. **Comprehensive Critique**: Harshly and constructively critique your work overall and line by line against every single best practice and criteria
+3. **Pre-mortem Analysis**: Identify potential failure modes and weaknesses
+4. **Multiple Solution Generation**: Propose multiple concrete solutions to each identified issue
+5. **Synthesized Solution Building**: Synthesize insights from all previous critiques and solutions
+6. **Sequential Quality Enhancement**: Each proposal must be superb quality, building on previous iterations
+7. **Best Solution Selection**: Choose the optimal solution from all proposals with compelling justification
+8. **Error Correction Protocol**: If errors are found, immediately insert and execute corrective steps
+
+**THREE-STAGE COMPLETION SYSTEM:**
+1. **STAGE 1 - INITIAL IMPLEMENTATION:** {stage1_instruction}
+   * When Stage 1 is complete, output **{stage1_confirmation}** to advance to Stage 2
+2. **STAGE 2 - CRITICAL EVALUATION:** {stage2_instruction}
+   * When Stage 2 is complete, output **{stage2_confirmation}** to advance to Stage 3
+3. **STAGE 3 - FINAL VERIFICATION:** {stage3_instruction}
+   * Stage 3 instructions: {stage3_instructions}
+   * When Stage 3 is complete, output **{stage3_confirmation}** for final completion
+
+**SYSTEM STOP SIGNALS:** The exact strings **{emergency_stop}**, **{stage1_confirmation}**, **{stage2_confirmation}**, and **{stage3_confirmation}** are SYSTEM STOP SIGNALS. NEVER output these unless the corresponding stop condition has been met.
+
+**CRITICAL ESCAPE TO STOP SYSTEM:** Only if risk is irreversible, output: **{emergency_stop}**
+
+**FILE CREATION POLICY:** {policy_instructions}""",
+
     # ─── Policies ─────────────────────────────────────────────────────────────
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
