@@ -193,8 +193,13 @@ class TestGlobalBlockManagement:
         self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
+        # Also patch initialize_default_blocks to prevent auto-initialization
+        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher.start()
+
     def teardown_method(self):
         """Clean up temporary directory."""
+        self.init_patcher.stop()
         self.patcher.stop()
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir)
@@ -262,11 +267,16 @@ class TestBlockPrecedence:
         self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
+        # Also patch initialize_default_blocks to prevent auto-initialization
+        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher.start()
+
         # Clear session blocks
         clear_session_blocks(self.test_session_id)
 
     def teardown_method(self):
         """Clean up patches and session blocks."""
+        self.init_patcher.stop()
         self.patcher.stop()
         clear_session_blocks(self.test_session_id)
         if Path(self.temp_dir).exists():
@@ -301,7 +311,7 @@ class TestBlockPrecedence:
 
     def test_no_block_when_none_set(self):
         """Test that commands are allowed when no blocks are set."""
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        block_info = should_block_command(self.test_session_id, "echo hello")
 
         assert block_info is None
 
@@ -329,10 +339,16 @@ class TestShouldBlockCommand:
     def setup_method(self):
         """Set up test session."""
         self.test_session_id = "test-should-block"
+
+        # Patch initialize_default_blocks to prevent auto-initialization
+        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher.start()
+
         clear_session_blocks(self.test_session_id)
 
     def teardown_method(self):
         """Clean up session blocks."""
+        self.init_patcher.stop()
         clear_session_blocks(self.test_session_id)
 
     def test_blocked_command_returns_info(self):
@@ -348,7 +364,7 @@ class TestShouldBlockCommand:
 
     def test_unblocked_command_returns_none(self):
         """Test that unblocked commands return None."""
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        block_info = should_block_command(self.test_session_id, "echo hello")
 
         assert block_info is None
 
@@ -369,24 +385,23 @@ class TestDefaultIntegrations:
         """Test that rm has a default integration."""
         assert "rm" in DEFAULT_INTEGRATIONS
         assert "suggestion" in DEFAULT_INTEGRATIONS["rm"]
-        assert "severity" in DEFAULT_INTEGRATIONS["rm"]
+        assert "commands_description" in DEFAULT_INTEGRATIONS["rm"]
 
     def test_rm_rf_integration_exists(self):
         """Test that rm -rf has a default integration."""
         assert "rm -rf" in DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["rm -rf"]["severity"] == "critical"
+        assert "commands_description" in DEFAULT_INTEGRATIONS["rm -rf"]
 
     def test_dd_integration_exists(self):
         """Test that dd if= has a default integration."""
         assert "dd if=" in DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["dd if="]["severity"] == "critical"
+        assert "suggestion" in DEFAULT_INTEGRATIONS["dd if="]
 
     def test_suggestions_contain_helpful_info(self):
         """Test that default suggestions are helpful."""
         for pattern, config in DEFAULT_INTEGRATIONS.items():
             assert "suggestion" in config
             assert len(config["suggestion"]) > 0
-            assert "severity" in config
 
 
 class TestGitCommandIntegrations:
@@ -395,7 +410,7 @@ class TestGitCommandIntegrations:
     def test_git_reset_hard_integration_exists(self):
         """Test that git reset --hard has a default integration."""
         assert "git reset --hard" in DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["git reset --hard"]["severity"] == "critical"
+        assert "commands_description" in DEFAULT_INTEGRATIONS["git reset --hard"]
 
     def test_git_reset_hard_suggests_stash(self):
         """Test that git reset --hard suggests stash as primary alternative."""
@@ -418,7 +433,7 @@ class TestGitCommandIntegrations:
     def test_git_checkout_dot_integration_exists(self):
         """Test that git checkout . has a default integration."""
         assert "git checkout ." in DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["git checkout ."]["severity"] == "high"
+        assert "when" in DEFAULT_INTEGRATIONS["git checkout ."]
 
     def test_git_checkout_dot_suggests_stash(self):
         """Test that git checkout . suggests stash as primary alternative."""
@@ -428,7 +443,7 @@ class TestGitCommandIntegrations:
     def test_git_clean_f_integration_exists(self):
         """Test that git clean -f has a default integration."""
         assert "git clean -f" in DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["git clean -f"]["severity"] == "high"
+        assert "commands_description" in DEFAULT_INTEGRATIONS["git clean -f"]
 
     def test_git_clean_f_suggests_dry_run(self):
         """Test that git clean -f suggests dry-run preview first."""
@@ -445,7 +460,7 @@ class TestGitCommandIntegrations:
     def test_git_reset_head_integration_exists(self):
         """Test that git reset HEAD~ has a default integration."""
         assert "git reset HEAD~" in DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["git reset HEAD~"]["severity"] == "medium"
+        assert "suggestion" in DEFAULT_INTEGRATIONS["git reset HEAD~"]
 
     def test_git_reset_head_suggests_soft_reset(self):
         """Test that git reset HEAD~ suggests soft reset alternative."""
@@ -468,6 +483,156 @@ class TestGitCommandIntegrations:
         for pattern in git_patterns:
             suggestion = DEFAULT_INTEGRATIONS[pattern]["suggestion"]
             assert "/cr:ok" in suggestion, f"Missing /cr:ok instruction in {pattern}"
+
+
+class TestGitBlockingTargeting:
+    """Test that git blocking only targets damaging commands, not safe ones."""
+
+    def test_git_checkout_branch_is_safe(self):
+        """Test that git checkout <branch> is NOT blocked (only checkout . is)."""
+        # The pattern "git checkout ." should NOT match "git checkout main"
+        pattern = "git checkout ."
+        safe_commands = [
+            "git checkout main",
+            "git checkout feature-branch",
+            "git checkout -b new-branch",
+            "git checkout HEAD~1",
+        ]
+        for cmd in safe_commands:
+            # Pattern should not be a substring of safe commands
+            assert pattern not in cmd, f"Pattern '{pattern}' incorrectly matches safe command: {cmd}"
+
+    def test_git_checkout_dot_is_blocked(self):
+        """Test that git checkout . variations ARE blocked."""
+        pattern = "git checkout ."
+        dangerous_commands = [
+            "git checkout .",
+            "git checkout . --",
+        ]
+        for cmd in dangerous_commands:
+            assert pattern in cmd, f"Pattern '{pattern}' should match dangerous command: {cmd}"
+
+    def test_git_reset_branch_is_safe(self):
+        """Test that git reset <ref> (without --hard) is less dangerous."""
+        # git reset HEAD~ keeps changes (not hard reset), so no commands_description
+        assert "git reset HEAD~" in DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git reset HEAD~"]["commands"] is None
+
+    def test_git_stash_is_not_blocked(self):
+        """Test that git stash (the safe alternative) is NOT in blocking list."""
+        assert "git stash" not in DEFAULT_INTEGRATIONS
+        assert "git stash push" not in DEFAULT_INTEGRATIONS
+        assert "git stash pop" not in DEFAULT_INTEGRATIONS
+
+    def test_git_restore_is_not_blocked(self):
+        """Test that git restore (the safe alternative) is NOT blocked."""
+        assert "git restore" not in DEFAULT_INTEGRATIONS
+
+    def test_git_revert_is_not_blocked(self):
+        """Test that git revert (safe - creates new commit) is NOT blocked."""
+        assert "git revert" not in DEFAULT_INTEGRATIONS
+
+    def test_safe_git_commands_not_in_integrations(self):
+        """Test that common safe git commands are NOT in DEFAULT_INTEGRATIONS."""
+        safe_commands = [
+            "git status",
+            "git diff",
+            "git log",
+            "git branch",
+            "git add",
+            "git commit",
+            "git push",
+            "git pull",
+            "git fetch",
+            "git merge",
+            "git stash",
+            "git restore",
+            "git revert",
+        ]
+        for cmd in safe_commands:
+            assert cmd not in DEFAULT_INTEGRATIONS, f"Safe command '{cmd}' should NOT be blocked"
+
+
+class TestPredicateFunctions:
+    """Test predicate-based conditional blocking."""
+
+    def setup_method(self):
+        """Set up test session."""
+        self.test_session_id = "test-predicates"
+
+        # Patch initialize_default_blocks to prevent auto-initialization
+        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher.start()
+
+        clear_session_blocks(self.test_session_id)
+
+    def teardown_method(self):
+        """Clean up session blocks."""
+        self.init_patcher.stop()
+        clear_session_blocks(self.test_session_id)
+
+    def test_predicate_returns_true_blocks(self):
+        """Test that when predicate returns True, command is blocked."""
+        from clautorun.main import _PREDICATES, should_block_command
+
+        # Mock predicate to return True (block)
+        with patch.dict(_PREDICATES, {"_has_unstaged_changes": lambda cmd: True}):
+            block_info = should_block_command(self.test_session_id, "git checkout .")
+            assert block_info is not None
+            assert block_info["pattern"] == "git checkout ."
+
+    def test_predicate_returns_false_allows(self):
+        """Test that when predicate returns False, command is allowed."""
+        from clautorun.main import _PREDICATES, should_block_command
+
+        # Mock predicate to return False (allow)
+        with patch.dict(_PREDICATES, {"_has_unstaged_changes": lambda cmd: False}):
+            block_info = should_block_command(self.test_session_id, "git checkout .")
+            assert block_info is None  # Not blocked
+
+    def test_no_predicate_always_blocks(self):
+        """Test that entries without 'when' field always block."""
+        # "rm" has no "when" field, should always block
+        from clautorun.main import should_block_command
+
+        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        assert block_info is not None
+        assert block_info["pattern"] == "rm"
+
+    def test_stash_drop_blocked_when_stash_exists(self):
+        """Test git stash drop is blocked when stash has entries."""
+        from clautorun.main import _PREDICATES, should_block_command
+
+        # Mock stash exists
+        with patch.dict(_PREDICATES, {"_stash_exists": lambda cmd: True}):
+            block_info = should_block_command(self.test_session_id, "git stash drop")
+            assert block_info is not None
+            assert block_info["pattern"] == "git stash drop"
+            assert "commands_description" in block_info
+
+    def test_stash_drop_allowed_when_no_stash(self):
+        """Test git stash drop is allowed when stash is empty."""
+        from clautorun.main import _PREDICATES, should_block_command
+
+        # Mock no stash entries
+        with patch.dict(_PREDICATES, {"_stash_exists": lambda cmd: False}):
+            block_info = should_block_command(self.test_session_id, "git stash drop")
+            assert block_info is None  # Not blocked
+
+    def test_commands_description_included_in_block_info(self):
+        """Test that commands_description is included in block info when present."""
+        from clautorun.main import should_block_command, get_global_blocks
+
+        # Use a unique session to ensure we hit DEFAULT_INTEGRATIONS, not session blocks
+        unique_session = "test-commands-desc-" + str(id(self))
+        clear_session_blocks(unique_session)
+
+        # Mock empty global blocks to ensure we hit DEFAULT_INTEGRATIONS
+        with patch('clautorun.main.get_global_blocks', return_value=[]):
+            block_info = should_block_command(unique_session, "rm file.txt")
+            assert block_info is not None
+            assert "commands_description" in block_info
+            assert block_info["commands_description"] == "Move to trash (recoverable)"
 
 
 if __name__ == "__main__":

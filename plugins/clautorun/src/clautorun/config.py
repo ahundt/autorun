@@ -28,52 +28,67 @@ Usage:
 
 # =============================================================================
 # Command Blocking System v0.6.0
-#=============================================================================
+# =============================================================================
+# Fields:
+#   suggestion: Message shown when command is blocked
+#   commands: Alternative commands to suggest (can use {args} placeholder)
+#   commands_description: Explains what the alternative command does
+#   when: Predicate name - returns True to block, False to allow (absent = always block)
+# =============================================================================
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /cr:ok rm",
-        "severity": "high",
-        "commands": ["trash {args}"]
+        "commands": ["trash {args}"],
+        "commands_description": "Move to trash (recoverable)",
     },
     "rm -rf": {
         "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /cr:ok rm -rf",
-        "severity": "critical",
-        "commands": ["trash {args}"]
+        "commands": ["trash {args}"],
+        "commands_description": "Move to trash (recoverable)",
     },
     "git reset --hard": {
         "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective restore** (to discard specific files only):\n   git restore <file>           # discard working tree changes\n   git restore --staged <file>  # unstage but keep changes\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow in this session: /cr:ok 'git reset --hard'",
-        "severity": "critical",
-        "commands": ["git stash push -m 'WIP: {args}'"]
+        "commands": ["git stash push -m 'WIP: {args}'"],
+        "commands_description": "Stash changes (recoverable)",
     },
     "git checkout .": {
         "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective restore** (discard specific files only):\n   git restore <file>\n\n**View what would be lost:**\n   git diff\n\nTo allow in this session: /cr:ok 'git checkout .'",
-        "severity": "high",
-        "commands": ["git stash push -m 'WIP: {args}'"]
+        "commands": ["git stash push -m 'WIP: {args}'"],
+        "commands_description": "Stash changes (recoverable)",
+        "when": "_has_unstaged_changes",
+    },
+    "git checkout --": {
+        "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow in this session: /cr:ok 'git checkout --'",
+        "commands": ["git stash push {file} -m 'WIP: {file}'"],
+        "commands_description": "Stash file changes (recoverable)",
+        "when": "_file_has_unstaged_changes",
+    },
+    "git stash drop": {
+        "suggestion": "CAUTION: 'git stash drop' permanently deletes stashed changes.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply stash instead** (keeps changes):\n   git stash pop    # apply and remove from stash\n   git stash apply  # apply and keep in stash\n\n2. **View stash contents first**:\n   git stash show -p  # see what's in the stash\n\nTo allow in this session: /cr:ok 'git stash drop'",
+        "commands": ["git stash pop"],
+        "commands_description": "Apply stash instead (keeps changes)",
+        "when": "_stash_exists",
     },
     "git clean -f": {
         "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow in this session: /cr:ok 'git clean -f'",
-        "severity": "high",
-        "commands": ["git clean -n"]
+        "commands": ["git clean -n"],
+        "commands_description": "Dry-run preview (shows what would be deleted)",
     },
     "git reset HEAD~": {
         "suggestion": "CAUTION: 'git reset HEAD~' undoes commits (mixed reset by default).\n\n**SAFER ALTERNATIVES:**\n\n1. **Soft reset** (keeps all changes staged):\n   git reset --soft HEAD~1\n\n2. **Create backup branch first**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-before-reset\n   git checkout -\n   git reset HEAD~1\n\n3. **Revert instead** (creates new commit, preserves history):\n   git revert HEAD\n\n**Recovery if you already reset:**\n   git reflog  # find the commit hash\n   git reset --hard <hash>  # restore to that point\n\nTo allow in this session: /cr:ok 'git reset HEAD~'",
-        "severity": "medium",
-        "commands": None
+        "commands": None,
     },
     "dd if=": {
         "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow in this session: /cr:ok dd if=",
-        "severity": "critical",
-        "commands": None
+        "commands": None,
     },
     "mkfs": {
         "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted.\n\nTo allow in this session: /cr:ok mkfs",
-        "severity": "critical",
-        "commands": None
+        "commands": None,
     },
     "fdisk": {
         "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /cr:ok fdisk",
-        "severity": "high",
-        "commands": None
+        "commands": None,
     }
 }
 

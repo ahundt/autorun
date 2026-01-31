@@ -1174,6 +1174,12 @@ clautorun/
 
 This section outlines the essential design principles, patterns, and architectural decisions that guide clautorun development.
 
+#### **DRY Code Patterns**
+
+**Factory Functions**: `_make_policy_handler(name)` and `_make_block_op(scope, op)` in `plugins.py` generate handlers from data, reducing 180+ lines to ~25 lines.
+
+**Data-Driven Registration**: `_BLOCK_COMMANDS` tuple list + loop registers commands without repetition.
+
 #### **RAII Pattern Implementation**
 
 clautorun uses Resource Acquisition Is Initialization (RAII) patterns for robust resource management:
