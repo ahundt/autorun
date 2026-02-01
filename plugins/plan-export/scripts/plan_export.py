@@ -54,11 +54,21 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+from contextlib import nullcontext
 
-# Import SessionLock for session-isolated plan export
-# This prevents race conditions when multiple sessions export simultaneously
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
-from clautorun.session_manager import SessionLock, SessionTimeoutError
+# Import SessionLock for race condition safety
+# Falls back to no-lock behavior if clautorun not available (bootstrap scenario)
+HAS_SESSION_LOCK = False
+SessionLock = None
+SessionTimeoutError = Exception
+
+try:
+    # Path when script is in plugins/plan-export/scripts/
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
+    from clautorun.session_manager import SessionLock, SessionTimeoutError
+    HAS_SESSION_LOCK = True
+except ImportError:
+    pass  # Use fallback no-lock behavior - acceptable for single-session use
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -605,7 +615,10 @@ def main():
     LOCK_TIMEOUT = 10.0  # Seconds
 
     try:
-        with SessionLock(session_id, timeout=LOCK_TIMEOUT, state_dir=STATE_DIR):
+        # Wrap lock usage conditionally without extracting function
+        lock_context = SessionLock(session_id, timeout=LOCK_TIMEOUT, state_dir=STATE_DIR) if HAS_SESSION_LOCK else nullcontext()
+
+        with lock_context:
             # === BEGIN CRITICAL SECTION ===
             # Mutually exclusive per session - prevents race conditions
 

@@ -192,7 +192,7 @@ byobu send-keys -t "clautorun" "/plugin marketplace add /Users/athundt/.claude/c
 sleep 3
 
 # Install plugin
-byobu send-keys -t "clautorun" "/plugin install clautorun@clautorun-dev" C-m
+byobu send-keys -t "clautorun" "/plugin install clautorun@clautorun" C-m
 sleep 5
 
 # Test commands

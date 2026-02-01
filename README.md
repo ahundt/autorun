@@ -555,7 +555,7 @@ git commit -m "Description of changes"
 
 # Update plugin (or reinstall for local development)
 /plugin update clautorun
-# OR for local development: /plugin install clautorun@clautorun-dev
+# OR for local development: /plugin install clautorun@clautorun
 ```
 
 ### Active vs Deprecated
@@ -584,7 +584,7 @@ uv sync --extra dev
 /plugin marketplace add ./clautorun
 
 # Install your local development version
-/plugin install clautorun@clautorun-dev
+/plugin install clautorun@clautorun
 ```
 
 **Contributor Workflow:**
@@ -1563,13 +1563,13 @@ This means Python code CAN communicate with Claude Code directly, but the docume
 /plugin marketplace add ./clautorun
 
 # Install or update local development version
-/plugin install clautorun@clautorun-dev
+/plugin install clautorun@clautorun
 
 # List available marketplaces
 /plugin marketplace list
 
 # Remove local marketplace when done
-/plugin marketplace remove clautorun-dev
+/plugin marketplace remove clautorun
 ```
 
 **General Management:**
@@ -1684,7 +1684,7 @@ claude --debug
 # Reinstall plugin (local development version)
 /plugin uninstall clautorun
 /plugin marketplace add ./clautorun
-/plugin install clautorun@clautorun-dev
+/plugin install clautorun@clautorun
 
 # Check plugin structure after installation
 ls -la ~/.claude/plugins/clautorun/.claude-plugin/

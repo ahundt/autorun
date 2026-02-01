@@ -36,9 +36,9 @@ dev = [
 Homepage = "https://github.com/ahundt/clautorun"
 Repository = "https://github.com/ahundt/clautorun"
 
-# UV-specific configuration
-[tool.uv]
-dev-dependencies = [
+# Development dependency group (PEP 735)
+[dependency-groups]
+dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-xdist>=3.3.0",

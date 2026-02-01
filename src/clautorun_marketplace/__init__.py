@@ -33,7 +33,7 @@ def main():
     plugins = ["clautorun", "plan-export", "pdf-extractor"]
 
     # Step 1: Add the marketplace root (where .claude-plugin/marketplace.json is) as a marketplace
-    print(f"🔧 Adding clautorun-dev marketplace...")
+    print(f"🔧 Adding clautorun marketplace...")
     try:
         result = subprocess.run(
             ["claude", "plugin", "marketplace", "add", str(marketplace_root)],
@@ -43,11 +43,11 @@ def main():
         )
 
         if result.returncode == 0:
-            print(f"   ✅ Added clautorun-dev marketplace")
+            print(f"   ✅ Added clautorun marketplace")
         else:
             # Marketplace might already exist, that's ok
             if "already" in result.stderr.lower() or "exists" in result.stderr.lower():
-                print(f"   ℹ️  clautorun-dev marketplace already exists")
+                print(f"   ℹ️  clautorun marketplace already exists")
             else:
                 print(f"   ⚠️  Marketplace add: {result.stderr.strip()}")
     except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError) as e:
@@ -66,7 +66,7 @@ def main():
         # Install plugin from marketplace
         try:
             result = subprocess.run(
-                ["claude", "plugin", "install", f"{plugin_name}@clautorun-dev"],
+                ["claude", "plugin", "install", f"{plugin_name}@clautorun"],
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -107,9 +107,11 @@ def main():
     print()
     print("Run '/help' to see all available commands.")
 
-    return success_count == len(plugins)
+    # Return exit code (0 = success, 1 = failure)
+    # Note: The auto-generated entry point does sys.exit(main()), so we must
+    # return an integer exit code, not a boolean (sys.exit(True) == sys.exit(1))
+    return 0 if success_count == len(plugins) else 1
 
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    sys.exit(main())
