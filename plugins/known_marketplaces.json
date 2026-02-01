@@ -1,7 +1,7 @@
 {
   "marketplaces": [
     {
-      "name": "clautorun-dev",
+      "name": "clautorun",
       "path": "./plugins",
       "description": "Local development marketplace for clautorun plugins",
       "plugins": [
