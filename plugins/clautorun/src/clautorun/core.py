@@ -257,6 +257,7 @@ class EventContext:
         'ai_monitor_pid': None,
         'plan_active': False,
         'plan_type': '',
+        'plan_arguments': '',  # v0.7: Store original user request from $ARGUMENTS
     }
 
     def __init__(self, session_id: str, event: str, prompt: str = "",

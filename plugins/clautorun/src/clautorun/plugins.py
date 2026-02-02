@@ -523,31 +523,56 @@ def build_injection_prompt(ctx: EventContext) -> str:
     )
 
 
-# === STOP HOOK HANDLERS ===
+# === POSTTOOLUSE HOOK HANDLERS ===
 
-@app.on("Stop")
-def autorun_plan_acceptance(ctx: EventContext) -> Optional[Dict]:
-    """Detect plan acceptance and auto-activate autorun."""
+@app.on("PostToolUse")
+def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
+    """Detect plan approval via ExitPlanMode tool PostToolUse event.
+
+    ExitPlanMode tool result contains approval message like:
+    "User has approved your plan. You can now start coding..."
+
+    This is more reliable than text matching for "PLAN ACCEPTED" because:
+    1. Hooks into the actual approval mechanism (ExitPlanMode tool)
+    2. Tool result confirms user interaction occurred
+    3. Avoids false positives from text in discussion
+
+    Sources:
+    - https://github.com/Piebald-AI/claude-code-system-prompts
+    - https://github.com/anthropics/claude-code/issues/9701
+    """
+    # Only handle ExitPlanMode tool
+    if ctx.tool_name != "ExitPlanMode":
+        return None
+
+    # Skip if already in autorun
     if ctx.autorun_active:
         return None
 
-    result = ctx.tool_result or ""
-    transcript = ctx.transcript.text
-    plan_marker = CONFIG.get("plan_accepted_marker", "PLAN ACCEPTED")
+    # Check tool result for approval indicators
+    tool_result = ctx.tool_result or ""
 
-    if ctx.event == "Stop" and plan_marker in (result + transcript):
-        ctx.autorun_active = True
-        ctx.autorun_stage = EventContext.STAGE_1
-        ctx.autorun_task = "Execute the accepted plan"
-        ctx.autorun_mode = "standard"
-        ctx.recheck_count = 0
-        ctx.hook_call_count = 0
+    # ExitPlanMode returns "User has approved your plan..." on success
+    approval_indicators = ["approved your plan", "can now start coding"]
+    if not any(ind in tool_result.lower() for ind in approval_indicators):
+        return None  # Not approved or rejected
 
-        injection = build_injection_prompt(ctx)
-        return ctx.block(injection)
+    # User approved - activate autorun with preserved context
+    original_request = ctx.plan_arguments or "Execute the accepted plan"
 
-    return None
+    # Same state setup as existing autorun_plan_acceptance()
+    ctx.autorun_active = True
+    ctx.autorun_task = original_request
+    ctx.autorun_stage = EventContext.STAGE_1
+    ctx.autorun_mode = "standard"
+    ctx.recheck_count = 0
+    ctx.hook_call_count = 0
 
+    injection = build_injection_prompt(ctx)
+    return ctx.block(injection)
+
+
+# === STOP HOOK HANDLERS ===
 
 @app.on("Stop")
 def autorun_injection(ctx: EventContext) -> Optional[Dict]:
@@ -640,6 +665,7 @@ def _make_plan_handler(plan_type: str, emoji: str):
     def handler(ctx: EventContext) -> str:
         ctx.plan_active = True
         ctx.plan_type = plan_type
+        ctx.plan_arguments = ctx.arguments  # v0.7: Preserve original user request
 
         if plan_type == "new":
             template = """📋 **Plan Creation Workflow**

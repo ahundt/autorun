@@ -485,7 +485,7 @@ class TestHandlerRegistration:
 
     def test_stop_chain_has_handlers(self):
         """Stop chain should have handlers."""
-        assert len(app.chains["Stop"]) >= 2  # Plan acceptance and injection
+        assert len(app.chains["Stop"]) >= 1  # v0.7: autorun_injection only (plan approval via PostToolUse)
 
 
 # ============================================================================

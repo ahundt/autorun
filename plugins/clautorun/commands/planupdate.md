@@ -149,9 +149,7 @@ Before finishing, verify:
 
 ## 10. Plan Acceptance and Execution Protocol
 
-If user wants to proceed with remaining items, output:
-
-**PLAN ACCEPTED - Activating Autonomous Execution Protocol**
+If user wants to proceed with remaining items, call the **ExitPlanMode** tool. The PostToolUse hook will detect approval and automatically activate the execution protocol.
 
 Then transition to execution:
 
