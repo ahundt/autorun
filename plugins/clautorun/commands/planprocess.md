@@ -11,6 +11,24 @@ $ARGUMENTS
 
 **IMPORTANT:** If you are not already in plan mode, use the `EnterPlanMode` tool NOW before proceeding. Planning commands require plan mode for proper operation.
 
+## 0.1. Task Hydration & User Request (MANDATORY FIRST)
+
+**Before any planning work:**
+
+1. **Record User Request**: In your plan output, include:
+   ```
+   ## User Request
+   > $ARGUMENTS
+   ```
+   (Quote only the user's custom text from $ARGUMENTS, not this instruction file)
+
+2. **Create Tasks for Major Steps**: For each numbered step in Section 1:
+   - `TaskCreate` with subject "Step N: [name]", activeForm "[verb]ing..."
+
+3. **Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
+
+4. **Track Progress**: Set `in_progress` when starting, `completed` when done
+
 ## MODE: PLANNING (Not Execution Until Approved)
 
 Execute rigorous methodology step by step. Do NOT execute code changes until plan is approved. Make sure the code is clean and robust and concise. Has the full plan file been brought up to date to only cover the latest plan and all the best insights and details? Is the plan really a clean way to do the plan that integrates beautifully with the existing code and patterns? Have you consolidated the whole plan to match the best approach while being TDD DRY OODA KISS YAGNI SOLID RAII WOLOG per CLAUDE.md philosophy and definition of concrete with code and specific file function and line references? Is it superbly designed for the user and maintainer audiences? Are the different backends handled as transparently and seamlessly as possible in a way that is transparent and reusable and robust to future changes to the underlying APIs and backends?
@@ -24,6 +42,15 @@ Execute rigorous methodology step by step. Do NOT execute code changes until pla
     - Existing implementations and patterns in the codebase
     - Related components and dependencies
     - Testing patterns and conventions
+
+   **CRITICAL - Verify Subagent Findings:**
+   After each subagent completes:
+   1. Use Read tool to verify EVERY file reference the subagent mentions
+   2. Confirm code snippets match actual file content
+   3. Do NOT trust subagent claims without verification
+   4. CITE file:line for all verified findings
+   5. If subagent finding cannot be verified, mark as "[UNVERIFIED]"
+
 5. **Critique Work**: Critique your work overall and line by line.
 6. **Propose Multiple Solutions**: Propose multiple solutions to each issue and choose the best solution - this needs to make a compelling case.
 7. **Launch Plan Subagent**: Use the Task tool with Plan subagent to design the implementation approach based on exploration results.
@@ -31,7 +58,19 @@ Execute rigorous methodology step by step. Do NOT execute code changes until pla
 9. **Use Actual Quotes**: Use actual quotes and file:line references whenever possible.
 10. **Thread Management**: Each thread of updates needs a unique name, with an incrementing version number (`<taskname>-v1`, `<taskname>-v2`, ...).
 11. **MANDATORY WAIT PROCESS TRIGGER**: After every step and sub-step of your plan, both during creation and execution, you must say "Wait," and execute **Your Wait Process** "out loud" step by step and substep by substep.
-12. **Final Verification**: Check your work. Do not hallucinate.
+12. **Final Verification - Completeness Check**:
+    - **Verify ALL cases from $ARGUMENTS:**
+      - [ ] Primary use case implemented
+      - [ ] ALL edge cases from requirements included
+      - [ ] ALL languages/platforms mentioned covered
+      - [ ] ALL file types/formats specified handled
+      - [ ] ALL user examples addressed
+      - [ ] No requirements silently dropped
+    - Check your work. Do not hallucinate.
+    - Verify all file references with Read tool
+    - Confirm code examples are syntactically correct
+    - Ensure no steps were skipped (check TaskList)
+    - **If ANY case missing**: Return to the step where it should be added. Do NOT proceed with incomplete plan.
 13. **Plan Output**: Create concrete step by step plan with checkbox checklist items broken down step by step and substep by substep and add everything to your todo list.
 
 ## 2. Subagent Usage Guidelines
@@ -45,7 +84,30 @@ Execute rigorous methodology step by step. Do NOT execute code changes until pla
 
 **Parallel execution**: Launch multiple subagents in a single message when their tasks are independent.
 
-## 3. Your Wait Process (Sequential Improvement Methodology)
+## 3. Plan Output Format
+
+Create plan with:
+
+1. **Summary**: 2-3 sentences describing the goal and approach
+2. **Checklist**: Concrete checkbox items with file:line references
+3. **Dependencies**: What must be done first?
+4. **Risks**: What could go wrong?
+5. **Verification Steps**: How to test each step?
+
+**Required**: ALL technical proposals MUST include code examples.
+
+**Code Block Format:**
+```language
+// File: /absolute/path/to/file.ext
+// Line: XX-YY (where this code goes)
+// Purpose: Brief description
+
+[actual code here - not pseudocode]
+```
+
+**Requirement**: Every implementation step must have at least one code block showing the exact change.
+
+## 4. Your Wait Process (Sequential Improvement Methodology)
 
 After every step and sub-step of your plan you must say "Wait," and execute this sequential thinking process:
 
@@ -58,7 +120,7 @@ After every step and sub-step of your plan you must say "Wait," and execute this
 7. **Best Solution Selection**: Choose the optimal solution from all proposals including the original and synthesized, or combinations of all proposals, in ranked order with compelling justification.
 8. **Error Correction Protocol**: If the wait process identifies errors, immediately write it in your todo list and execute corrective steps to redo the work correctly.
 
-## 4. Checkbox Management Logic
+## 5. Checkbox Management Logic
 
 - **Create plan with checkbox items** → Execute Wait Process (both during creation and execution)
   - put all checkbox items in your todo list
@@ -68,7 +130,7 @@ After every step and sub-step of your plan you must say "Wait," and execute this
 - **Check off boxes only when**: Execution is complete AND the task is complete including after the error correction protocol is complete (this is a todo list)
 - **If wait process finds errors**: Continue working until error correction protocol resolves all issues, then check off
 
-## 5. Quality Standards & Limitations
+## 6. Quality Standards & Limitations
 
 The goal is to work towards your overall goal with sufficiently detailed and verifiable outcomes:
 
@@ -85,7 +147,7 @@ The goal is to work towards your overall goal with sufficiently detailed and ver
 - Consider parallel evaluation of solutions where appropriate
 - Establish clear quality gates to prevent perfectionism paralysis
 
-## 6. CLAUDE.md Philosophy
+## 7. CLAUDE.md Philosophy
 
 Every plan element must address:
 
@@ -98,7 +160,7 @@ Every plan element must address:
 - [ ] RAII: Resources properly managed?
 - [ ] WOLOG: Without loss of generality?
 
-## 7. Definition of Concrete
+## 8. Definition of Concrete
 
 All outputs must include:
 
@@ -108,7 +170,7 @@ All outputs must include:
 - Specific error messages with codes: `"socket hang up (ECONNRESET)"`
 - Testable verification commands
 
-## 8. Plan Acceptance and Execution Protocol
+## 9. Plan Acceptance and Execution Protocol
 
 When user approves the plan, output:
 

@@ -11,6 +11,24 @@ $ARGUMENTS
 
 **IMPORTANT:** If you are not already in plan mode, use the `EnterPlanMode` tool NOW before proceeding. Planning commands require plan mode for proper operation.
 
+## 0.1. Task Hydration & User Request (MANDATORY FIRST)
+
+**Before any planning work:**
+
+1. **Record User Request**: In your plan output, include:
+   ```
+   ## User Request
+   > $ARGUMENTS
+   ```
+   (Quote only the user's custom text from $ARGUMENTS, not this instruction file)
+
+2. **Create Tasks for Major Steps**: For each numbered step in Section 1:
+   - `TaskCreate` with subject "Step N: [name]", activeForm "[verb]ing..."
+
+3. **Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
+
+4. **Track Progress**: Set `in_progress` when starting, `completed` when done
+
 ## MODE: PLAN CREATION (Not Execution)
 
 You are creating a NEW plan document from scratch. There is no existing plan to reference. Do NOT execute code changes until plan is approved.
@@ -24,6 +42,15 @@ You are creating a NEW plan document from scratch. There is no existing plan to 
     - Existing implementations and patterns in the codebase
     - Related components and dependencies
     - Testing patterns and conventions
+
+   **CRITICAL - Verify Subagent Findings:**
+   After each subagent completes:
+   1. Use Read tool to verify EVERY file reference the subagent mentions
+   2. Confirm code snippets match actual file content
+   3. Do NOT trust subagent claims without verification
+   4. CITE file:line for all verified findings
+   5. If subagent finding cannot be verified, mark as "[UNVERIFIED]"
+
 5. **Requirements Discovery**:
     1. **Clarify the Goal**: What specific outcome does this plan achieve?
     2. **Identify Stakeholders**: Who benefits? (users, developers, maintainers)
@@ -42,7 +69,19 @@ You are creating a NEW plan document from scratch. There is no existing plan to 
 12. **Use Actual Quotes**: Use actual quotes and file:line references whenever possible.
 13. **Thread Management**: Each thread of updates needs a unique name, with an incrementing version number (`<taskname>-v1`, `<taskname>-v2`, ...).
 14. **MANDATORY WAIT PROCESS TRIGGER**: After every step and sub-step of your plan, both during creation and execution, you must say "Wait," and execute **Your Wait Process** "out loud" step by step and substep by substep.
-15. **Final Verification**: Check your work. Do not hallucinate.
+15. **Final Verification - Completeness Check**:
+    - **Verify ALL cases from $ARGUMENTS:**
+      - [ ] Primary use case implemented
+      - [ ] ALL edge cases from requirements included
+      - [ ] ALL languages/platforms mentioned covered
+      - [ ] ALL file types/formats specified handled
+      - [ ] ALL user examples addressed
+      - [ ] No requirements silently dropped
+    - Check your work. Do not hallucinate.
+    - Verify all file references with Read tool
+    - Confirm code examples are syntactically correct
+    - Ensure no steps were skipped (check TaskList)
+    - **If ANY case missing**: Return to the step where it should be added. Do NOT proceed with incomplete plan.
 
 ## 2. Subagent Usage Guidelines
 
@@ -62,6 +101,19 @@ Create plan with:
 3. **Dependencies**: What must be done first?
 4. **Risks**: What could go wrong?
 5. **Verification Steps**: How to test each step?
+
+**Required**: ALL technical proposals MUST include code examples.
+
+**Code Block Format:**
+```language
+// File: /absolute/path/to/file.ext
+// Line: XX-YY (where this code goes)
+// Purpose: Brief description
+
+[actual code here - not pseudocode]
+```
+
+**Requirement**: Every implementation step must have at least one code block showing the exact change.
 
 ## 4. Your Wait Process (Sequential Improvement Methodology)
 
