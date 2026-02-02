@@ -44,8 +44,8 @@ claude-code = [
 ]
 
 [project.scripts]
-clautorun = "clautorun.main:main"
-clautorun-interactive = "clautorun.main:main"
+clautorun = "clautorun.__main__:main"
+clautorun-interactive = "clautorun.__main__:main"
 clautorun-install = "clautorun.install:main"
 claude-session-tools = "clautorun.claude_session_tools:main"
 
