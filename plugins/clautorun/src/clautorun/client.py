@@ -62,9 +62,14 @@ def run_client():
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
-            # Auto-start daemon
+            # Auto-start daemon - use -c to run directly (works with editable installs)
+            # Get the src directory: __file__ is src/clautorun/client.py, so parent.parent is src/
+            src_dir = Path(__file__).parent.parent
+            daemon_code = "import sys; sys.path.insert(0, '{0}'); from clautorun.daemon import main; main()".format(
+                str(src_dir)
+            )
             subprocess.Popen(
-                [sys.executable, "-m", "clautorun.daemon"],
+                [sys.executable, "-c", daemon_code],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True
