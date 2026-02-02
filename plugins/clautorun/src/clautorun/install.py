@@ -251,30 +251,46 @@ class ClautorunInstaller:
             return None
 
     def substitute_plugin_paths(self) -> bool:
-        """Substitute ${CLAUDE_PLUGIN_ROOT} with actual path in plugin.json"""
-        try:
-            plugin_json_path = self.plugin_source_dir / ".claude-plugin" / "plugin.json"
-            if not plugin_json_path.exists():
-                print(f"❌ Plugin manifest not found: {plugin_json_path}")
+        """Substitute ${CLAUDE_PLUGIN_ROOT} with actual path in plugin.json and hooks.json"""
+        substituted_any = False
+        files_to_process = [
+            ("plugin manifest", self.plugin_source_dir / ".claude-plugin" / "plugin.json"),
+            ("hooks config", self.plugin_source_dir / "hooks" / "hooks.json"),
+        ]
+
+        for description, file_path in files_to_process:
+            if not file_path.exists():
+                print(f"⚠️  {description} not found: {file_path}")
+                continue
+
+            try:
+                # Read the file
+                with open(file_path, 'r') as f:
+                    content = f.read()
+
+                # Check if substitution is needed
+                if "${CLAUDE_PLUGIN_ROOT}" not in content:
+                    print(f"✅ {description} already has paths substituted: {file_path}")
+                    continue
+
+                # Substitute ${CLAUDE_PLUGIN_ROOT} with actual path
+                content = content.replace("${CLAUDE_PLUGIN_ROOT}", str(self.plugin_source_dir))
+
+                # Write the modified content back
+                with open(file_path, 'w') as f:
+                    f.write(content)
+
+                print(f"✅ Substituted plugin paths in {description}: {file_path}")
+                substituted_any = True
+
+            except (OSError, PermissionError) as e:
+                print(f"❌ Failed to substitute plugin paths in {description}: {e}")
                 return False
 
-            # Read the plugin.json file
-            with open(plugin_json_path, 'r') as f:
-                content = f.read()
-
-            # Substitute ${CLAUDE_PLUGIN_ROOT} with actual path
-            content = content.replace("${CLAUDE_PLUGIN_ROOT}", str(self.plugin_source_dir))
-
-            # Write the modified content back
-            with open(plugin_json_path, 'w') as f:
-                f.write(content)
-
-            print(f"✅ Substituted plugin paths in {plugin_json_path}")
-            return True
-
-        except (OSError, PermissionError) as e:
-            print(f"❌ Failed to substitute plugin paths: {e}")
-            return False
+        return substituted_any or any(
+            (self.plugin_source_dir / ".claude-plugin" / "plugin.json").exists(),
+            (self.plugin_source_dir / "hooks" / "hooks.json").exists()
+        )
 
     def validate_plugin_structure(self) -> bool:
         """Check if plugin has proper structure"""
