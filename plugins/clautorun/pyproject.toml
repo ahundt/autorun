@@ -47,6 +47,7 @@ claude-code = [
 clautorun = "clautorun.main:main"
 clautorun-interactive = "clautorun.main:main"
 clautorun-install = "clautorun.install:main"
+claude-session-tools = "clautorun.claude_session_tools:main"
 
 [project.urls]
 Homepage = "https://github.com/ahundt/clautorun"

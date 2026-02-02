@@ -36,6 +36,18 @@ dev = [
 Homepage = "https://github.com/ahundt/clautorun"
 Repository = "https://github.com/ahundt/clautorun"
 
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/commands",
+    "/scripts",
+    "/tests",
+    "/README.md",
+    "/pyproject.toml",
+]
+
 # Development dependency group (PEP 735)
 [dependency-groups]
 dev = [
