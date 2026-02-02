@@ -1,6 +1,18 @@
 ---
 name: claude-code-session-explorer
 description: This skill should be used when the user asks to "find Claude sessions", "explore session history", "search Claude sessions", "analyze session", "list sessions", "extract session content", "find tool usage in sessions", "session timeline", mentions "Claude Code session.jsonl files", or needs to explore, search, or analyze Claude Code session histories stored in ~/.claude/projects/.
+version: "1.0.0"
+
+# VISIBILITY & TRIGGERING
+user-invocable: true              # User can type /cr:claude-code-session-explorer
+disable-model-invocation: false   # AI can call this autonomously when needed
+
+# EXECUTION CONTEXT - Tools this skill can use
+allowed-tools:
+  - Bash                          # For running session_explorer.py
+  - Read                          # For reading session files
+  - Grep                          # For searching session content
+  - Glob                          # For finding session files
 ---
 
 # Session Explorer - Find and Analyze Claude Code Sessions
