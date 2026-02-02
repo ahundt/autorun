@@ -643,6 +643,7 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 | `/cr:st` | `/cr:status` | `/afst` | Show current policy status |
 | `/cr:go` | `/cr:run` | `/autorun` | Start autonomous task execution |
 | `/cr:gp` | `/cr:proc` | `/autoproc` | Procedural autonomous workflow |
+| `/cr:gc` | `/cr:commit` | - | Display Git Commit Requirements (17-step process) |
 | `/cr:ph` | `/cr:philosophy` | - | Display Universal System Design Philosophy (17 principles) |
 | `/cr:pn` | `/cr:plannew` | - | Create new structured plan |
 | `/cr:x` | `/cr:stop` | `/autostop` | Graceful stop |
@@ -799,6 +800,24 @@ Structured planning for complex development tasks.
 - **/cr:pp** or **/cr:planprocess** - Execute development process
   - Follows the plan with Sequential Improvement Methodology
   - Auto-triggers autorun when plan is approved ("PLAN ACCEPTED" marker)
+
+### Commit Command
+
+- **/cr:gc** or **/cr:commit** - Display Git Commit Requirements
+  - 17-step process for high-quality commit messages
+  - Subject line formats, message structure, content requirements
+  - Security checks, validation checklist, pitfalls & solutions
+  - Use before every git commit and during PR review
+
+**When to use:**
+- **Before committing:** Always review requirements before making git commits
+- **PR review:** Verify commit messages follow guidelines
+- **Training:** Learn commit message best practices
+
+**Key requirements:**
+1. **Concrete & Actionable** - Use specific, measurable descriptions
+2. **Subject Line Format** - Follow `<files>:` or `type(scope):` convention
+3. **Security Check** - Explicitly check for secrets before committing
 
 ### Philosophy Command
 
