@@ -118,8 +118,9 @@ CONFIG = {
     # It should describe WHAT the AI is doing, not just be a state variable name.
     "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
 
-    # ─── Plan Acceptance Trigger ───────────────────────────────────────────
-    # NOTE: When Claude outputs this string after plan approval, autorun activates automatically
+    # ─── Plan Acceptance ───────────────────────────────────────────────────
+    # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
+    # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py
     "plan_accepted_marker": "PLAN ACCEPTED",
 
     # ─── Timing ───────────────────────────────────────────────────────────────

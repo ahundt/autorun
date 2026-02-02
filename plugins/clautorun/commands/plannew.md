@@ -230,9 +230,7 @@ After outputting "Wait," execute these 8 steps:
 
 ## 9. Plan Acceptance and Execution Protocol
 
-When user approves, output:
-
-**PLAN ACCEPTED - Activating Autonomous Execution Protocol**
+When the plan is ready for user approval, call the **ExitPlanMode** tool. The PostToolUse hook will detect approval and automatically activate the execution protocol.
 
 Then transition to execution:
 

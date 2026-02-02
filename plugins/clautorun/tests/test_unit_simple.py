@@ -264,8 +264,9 @@ class TestBasicFunctionality:
                     test_state = {"session_id": "test_session"}
                     result = handler_func(test_state, "/autorun test")
                 else:
-                    # Other handlers need state dict
-                    result = handler_func({})
+                    # Other handlers need state dict with session_id
+                    test_state = {"session_id": "test_session"}
+                    result = handler_func(test_state)
                 assert result is not None, f"Handler {handler_name} should return something"
             except TypeError as e:
                 if "missing" in str(e) and "positional argument" in str(e):

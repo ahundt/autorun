@@ -204,7 +204,10 @@ class TestHookErrorHandling:
         invalid_json = "not valid json {"
 
         with patch('sys.stdin', StringIO(invalid_json)):
-            main()
+            # main() outputs graceful response then exits with code 1
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -237,7 +240,10 @@ class TestHookErrorHandling:
     def test_hook_handles_empty_input(self, capsys):
         """Test hook handles empty input gracefully"""
         with patch('sys.stdin', StringIO("")):
-            main()
+            # main() outputs graceful response then exits with code 1
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
         # Should not crash and produce some output

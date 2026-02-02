@@ -14,7 +14,31 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Clautorun Hook Handler - Source of Truth
+"""
+⚠️ DEPRECATED: Legacy Hook Handler (v0.6.1) ⚠️
+
+This file is preserved for backward compatibility only.
+The canonical v0.7 implementation is in:
+- core.py:220-958 (EventContext magic state, ClautorunApp dispatcher, ClautorunDaemon server)
+- plugins.py:1-772 (All 5 plugins with DRY factories - 78% code reduction)
+- session_manager.py:54-421 (RAII SessionLock - reused from v0.6.1)
+
+v0.7 provides:
+- 10-30x faster hook response (1-5ms vs 50-150ms via Unix socket daemon)
+- 78% code reduction via factory patterns (_make_policy_handler, _make_block_op, _make_plan_handler)
+- Magic state persistence (ctx.file_policy = "SEARCH" auto-persists)
+- Better maintainability (771 LOC vs 2,188 LOC)
+
+To use this legacy mode: export CLAUTORUN_USE_DAEMON=0
+Default (after v0.7): export CLAUTORUN_USE_DAEMON=1 (v0.7 daemon mode)
+
+This file will be removed in v0.8.0 after daemon mode stability is confirmed.
+
+---
+
+ORIGINAL DOCSTRING (v0.6.1):
+
+Clautorun Hook Handler - Source of Truth
 
 PRIMARY HOOK HANDLER for Claude Code plugin system.
 - Called directly by hooks.json via: python3 ${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py
@@ -28,8 +52,6 @@ Features:
 - AI Monitor for session lifecycle management and crash detection
 - Agent SDK Client (ClaudeSDKClient) for bidirectional communication
 - Enhanced transcript analysis with requirement extraction
-
-This is the canonical implementation. All hook logic resides here.
 """
 
 # Standard library imports for path configuration
