@@ -1,32 +1,32 @@
 {
-  "description": "clautorun v0.7 - unified daemon-based hook handler (UV-first)",
+  "description": "clautorun v0.7 - unified daemon-based hook handler (CLI entry point)",
   "hooks": {
     "UserPromptSubmit": [
       {
         "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
-        "hooks": [{ "type": "command", "command": "cd ${CLAUDE_PLUGIN_ROOT} && uv run python3 -m clautorun || cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "claude-session-tools", "timeout": 10 }]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Write|Bash",
-        "hooks": [{ "type": "command", "command": "cd ${CLAUDE_PLUGIN_ROOT} && uv run python3 -m clautorun || cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "claude-session-tools", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "ExitPlanMode",
-        "hooks": [{ "type": "command", "command": "cd ${CLAUDE_PLUGIN_ROOT} && uv run python3 -m clautorun || cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "claude-session-tools", "timeout": 10 }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "cd ${CLAUDE_PLUGIN_ROOT} && uv run python3 -m clautorun || cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "claude-session-tools", "timeout": 10 }]
       }
     ],
     "SubagentStop": [
       {
-        "hooks": [{ "type": "command", "command": "cd ${CLAUDE_PLUGIN_ROOT} && uv run python3 -m clautorun || cd ${CLAUDE_PLUGIN_ROOT}/src && PYTHONPATH=. python3 -m clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "claude-session-tools", "timeout": 10 }]
       }
     ]
   }
