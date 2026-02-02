@@ -33,6 +33,8 @@ __version__ = "0.6.1"
 __author__ = "Andrew Hundt"
 __email__ = "ATHundt@gmail.com"
 
+import json
+
 # Minimal exports to avoid circular imports
 __all__ = [
     "__version__",
@@ -241,14 +243,21 @@ except ImportError:
 try:
     from .main import build_hook_response
 except ImportError:
-    def build_hook_response(continue_execution=True, stop_reason="", system_message=""):
-        """Fallback build_hook_response function - matches main.py signature"""
-        return {
-            "continue": continue_execution,
-            "stopReason": stop_reason,
-            "suppressOutput": False,
-            "systemMessage": system_message
-        }
+    def build_hook_response(continue_execution=True, stop_reason="", system_message="",
+                            decision=None, reason=None):
+        """Fallback build_hook_response function - matches main.py signature.
+
+        DRY: This is a fallback for tests if main.py import fails.
+        Source of truth: main.py:877-895
+        """
+        response = {"continue": continue_execution, "stopReason": stop_reason,
+                    "suppressOutput": False, "systemMessage": system_message}
+        # Stop-hook-specific fields for blocking stops
+        if decision is not None:
+            response["decision"] = decision
+        if reason is not None:
+            response["reason"] = reason
+        return response
 
 try:
     from .main import claude_code_handler
@@ -302,5 +311,12 @@ except ImportError:
         return {}
 
     def build_pretooluse_response(decision="allow", reason=""):
-        """Fallback build_pretooluse_response function"""
-        return {"decision": decision, "reason": reason}
+        """Fallback build_pretooluse_response function - matches main.py signature.
+
+        DRY: This is a fallback for tests if main.py import fails.
+        Source of truth: main.py:897-907
+        """
+        return {"continue": True, "stopReason": "", "suppressOutput": False,
+                "systemMessage": json.dumps(reason)[1:-1] if reason else "",
+                "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                      "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
