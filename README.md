@@ -643,9 +643,10 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 | `/cr:st` | `/cr:status` | `/afst` | Show current policy status |
 | `/cr:go` | `/cr:run` | `/autorun` | Start autonomous task execution |
 | `/cr:gp` | `/cr:proc` | `/autoproc` | Procedural autonomous workflow |
+| `/cr:ph` | `/cr:philosophy` | - | Display Universal System Design Philosophy (17 principles) |
+| `/cr:pn` | `/cr:plannew` | - | Create new structured plan |
 | `/cr:x` | `/cr:stop` | `/autostop` | Graceful stop |
 | `/cr:sos` | `/cr:estop` | `/estop` | Emergency stop |
-| `/cr:pn` | `/cr:plannew` | - | Create new structured plan |
 | `/cr:pr` | `/cr:planrefine` | - | Refine and improve existing plan |
 | `/cr:pu` | `/cr:planupdate` | - | Update plan with new information |
 | `/cr:pp` | `/cr:planprocess` | - | Execute plan with development process |
@@ -798,6 +799,25 @@ Structured planning for complex development tasks.
 - **/cr:pp** or **/cr:planprocess** - Execute development process
   - Follows the plan with Sequential Improvement Methodology
   - Auto-triggers autorun when plan is approved ("PLAN ACCEPTED" marker)
+
+### Philosophy Command
+
+- **/cr:ph** or **/cr:philosophy** - Display Universal System Design Philosophy
+  - 17 core principles for exceptional systems
+  - Ordered from most fundamental to most specific
+  - Use during planning, code review, and architecture decisions
+  - Focus areas: Automatic/Correct, Concrete Communication, Lean Solutions
+
+**When to use:**
+- **Before planning:** Apply principles when designing new features
+- **During code review:** Verify implementations follow guidelines
+- **Architecture decisions:** Reference technical and communication principles
+
+**Key principles:**
+1. **Automatic and Correct** - Make things "just work"
+2. **Concrete Communication** - Specific, actionable messages
+3. **One Problem, One Solution** - Avoid over-engineering
+4. **Solve Problems FOR Users** - Don't just report, fix automatically
 
 ### Tmux Automation Commands
 
