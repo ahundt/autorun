@@ -6,7 +6,10 @@ set -e
 
 DAYS="${1:-2}"  # Default to 2 days
 OUTPUT="${2:-recent_sessions.md}"
-PROJECT_DIR="${3:-$HOME/.claude/projects/-Users-athundt-source-general-processtree}"
+# Default: encode current working directory as Claude project path
+# CLAUDE_PROJECT_DIR > explicit arg > cwd-based encoding
+_CWD_ENCODED=$(echo "${CLAUDE_PROJECT_DIR:-$(pwd)}" | sed 's|/|-|g')
+PROJECT_DIR="${3:-$HOME/.claude/projects/$_CWD_ENCODED}"
 
 echo "# Recent Sessions Export (Last $DAYS Days)" > "$OUTPUT"
 echo "" >> "$OUTPUT"

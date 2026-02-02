@@ -6,7 +6,10 @@ set -e
 
 SESSION_ID="$1"
 OUTPUT="$2"
-PROJECT_DIR="${3:-$HOME/.claude/projects/-Users-athundt-source-general-processtree}"
+# Default: encode current working directory as Claude project path
+# CLAUDE_PROJECT_DIR > explicit arg > cwd-based encoding
+_CWD_ENCODED=$(echo "${CLAUDE_PROJECT_DIR:-$(pwd)}" | sed 's|/|-|g')
+PROJECT_DIR="${3:-$HOME/.claude/projects/$_CWD_ENCODED}"
 SESSION_FILE="$PROJECT_DIR/$SESSION_ID.jsonl"
 
 if [[ -z "$SESSION_ID" ]] || [[ -z "$OUTPUT" ]]; then

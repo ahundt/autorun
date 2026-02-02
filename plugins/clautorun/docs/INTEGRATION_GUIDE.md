@@ -32,7 +32,7 @@ AGENT_MODE=SDK_ONLY python -m clautorun
 **Setup**:
 ```bash
 # Create symlink to commands directory
-ln -sf /path/to/clautorun/main.py /Users/athundt/.claude/hooks/
+ln -sf /path/to/clautorun/main.py ~/.claude/hooks/
 
 # Use as slash command
 /agent-sdk-interceptor sdk-only

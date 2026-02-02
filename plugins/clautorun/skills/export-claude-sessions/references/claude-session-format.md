@@ -18,7 +18,7 @@ Claude session files are **newline-delimited JSON** (JSONL format):
 
 **Path encoding:** Special characters in project paths are encoded:
 - `/` → `-`
-- Example: `/Users/athundt/source/processtree` → `-Users-athundt-source-processtree`
+- Example: `/Users/<user>/source/myproject` → `-Users-<user>-source-myproject`
 
 ### Subagent Sessions
 ```
@@ -34,7 +34,7 @@ Claude session files are **newline-delimited JSON** (JSONL format):
   "sessionId": "73722f5a-92c5-4c44-8a6a-3665ad8b1cce",
   "timestamp": "2026-01-24T03:08:02.764Z",
   "gitBranch": "main",
-  "cwd": "/Users/athundt/project",
+  "cwd": "/home/<user>/myproject",
   "message": {
     "role": "user",
     "content": "message text"  // or array format (see below)
