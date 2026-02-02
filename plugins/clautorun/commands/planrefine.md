@@ -11,6 +11,24 @@ $ARGUMENTS
 
 **IMPORTANT:** If you are not already in plan mode, use the `EnterPlanMode` tool NOW before proceeding. Planning commands require plan mode for proper operation.
 
+## 0.1. Task Hydration & User Request (MANDATORY FIRST)
+
+**Before any planning work:**
+
+1. **Record User Request**: In your plan output, include:
+   ```
+   ## User Request
+   > $ARGUMENTS
+   ```
+   (Quote only the user's custom text from $ARGUMENTS, not this instruction file)
+
+2. **Create Tasks for Major Steps**: For each numbered step in Section 1:
+   - `TaskCreate` with subject "Step N: [name]", activeForm "[verb]ing..."
+
+3. **Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
+
+4. **Track Progress**: Set `in_progress` when starting, `completed` when done
+
 ## MODE: PLAN REFINEMENT (Not Execution)
 
 You are refining an EXISTING plan with deep critique and mandatory code verification. Do NOT execute code changes until plan is approved.
@@ -21,11 +39,14 @@ You are refining an EXISTING plan with deep critique and mandatory code verifica
 - Do NOT replace the entire plan
 - Do NOT skip sections
 - Do NOT make changes without citing code evidence
+- Do NOT delete essential content
+- Do NOT remove working functionality
 
 **Required Actions:**
 - Critique each section individually
 - Verify code proposals against actual codebase
 - Propose modifications with file:line evidence
+- PRESERVE all existing sections unless explicitly asked to remove
 
 ## 1. Your Process
 
@@ -36,6 +57,15 @@ You are refining an EXISTING plan with deep critique and mandatory code verifica
     - Verify all code references in the plan match actual codebase
     - Find related implementations that the plan may have missed
     - Check existing patterns and conventions
+
+   **CRITICAL - Verify Subagent Findings:**
+   After each subagent completes:
+   1. Use Read tool to verify EVERY file reference the subagent mentions
+   2. Confirm code snippets match actual file content
+   3. Do NOT trust subagent claims without verification
+   4. CITE file:line for all verified findings
+   5. If subagent finding cannot be verified, mark as "[UNVERIFIED]"
+
 5. **Code Verification (MANDATORY)**: For EACH code reference in the plan:
     1. READ the actual file using Read tool
     2. VERIFY the plan's description matches actual code
@@ -61,7 +91,19 @@ You are refining an EXISTING plan with deep critique and mandatory code verifica
 12. **Synthesize Refinements**: Priority rank refinements, output as tracked changes.
 13. **Thread Management**: Each thread of updates needs a unique name, with an incrementing version number (`<taskname>-v1`, `<taskname>-v2`, ...).
 14. **MANDATORY WAIT PROCESS TRIGGER**: After every step and sub-step of your plan, both during creation and execution, you must say "Wait," and execute **Your Wait Process** "out loud" step by step and substep by substep.
-15. **Final Verification**: Check your work. Do not hallucinate.
+15. **Final Verification - Completeness Check**:
+    - **Verify ALL cases from $ARGUMENTS:**
+      - [ ] Primary use case implemented
+      - [ ] ALL edge cases from requirements included
+      - [ ] ALL languages/platforms mentioned covered
+      - [ ] ALL file types/formats specified handled
+      - [ ] ALL user examples addressed
+      - [ ] No requirements silently dropped
+    - Check your work. Do not hallucinate.
+    - Verify all file references with Read tool
+    - Confirm code examples are syntactically correct
+    - Ensure no steps were skipped (check TaskList)
+    - **If ANY case missing**: Return to the step where it should be added. Do NOT proceed with incomplete plan.
 
 ## 2. Subagent Usage Guidelines
 
@@ -73,7 +115,29 @@ You are refining an EXISTING plan with deep critique and mandatory code verifica
 
 **Parallel execution**: Launch multiple subagents in a single message when their tasks are independent.
 
-## 3. Your Wait Process (Sequential Improvement Methodology)
+## 3. Refined Plan Output Format
+
+Refinements must include:
+
+1. **Summary of Changes**: What is being improved and why
+2. **Tracked Changes**: Show before/after for each modification
+3. **Code Evidence**: file:line references for all claims
+4. **Impact Assessment**: What does this change affect?
+
+**Required**: ALL technical proposals MUST include code examples.
+
+**Code Block Format:**
+```language
+// File: /absolute/path/to/file.ext
+// Line: XX-YY (where this code goes)
+// Purpose: Brief description
+
+[actual code here - not pseudocode]
+```
+
+**Requirement**: Every implementation step must have at least one code block showing the exact change.
+
+## 4. Your Wait Process (Sequential Improvement Methodology)
 
 After every step and sub-step of your plan you must say "Wait," and execute this sequential thinking process:
 
@@ -86,7 +150,7 @@ After every step and sub-step of your plan you must say "Wait," and execute this
 7. **Best Solution Selection**: Choose the optimal solution from all proposals including the original and synthesized, or combinations of all proposals, in ranked order with compelling justification.
 8. **Error Correction Protocol**: If the wait process identifies errors, immediately write it in your todo list and execute corrective steps to redo the work correctly.
 
-## 4. Checkbox Management Logic
+## 5. Checkbox Management Logic
 
 - **Create plan with checkbox items** → Execute Wait Process (both during creation and execution)
   - put all checkbox items in your todo list
@@ -96,7 +160,7 @@ After every step and sub-step of your plan you must say "Wait," and execute this
 - **Check off boxes only when**: Execution is complete AND the task is complete including after the error correction protocol is complete (this is a todo list)
 - **If wait process finds errors**: Continue working until error correction protocol resolves all issues, then check off
 
-## 5. Quality Standards & Limitations
+## 6. Quality Standards & Limitations
 
 The goal is to work towards your overall goal with sufficiently detailed and verifiable outcomes:
 
@@ -113,7 +177,7 @@ The goal is to work towards your overall goal with sufficiently detailed and ver
 - Consider parallel evaluation of solutions where appropriate
 - Establish clear quality gates to prevent perfectionism paralysis
 
-## 6. Principles - Every plan element must address:
+## 7. Principles - Every plan element must address:
 
 - [ ] TDD: Tests written first? Test location specified?
 - [ ] DRY: No code duplication? Reusing existing utilities?
@@ -124,7 +188,7 @@ The goal is to work towards your overall goal with sufficiently detailed and ver
 - [ ] RAII: Resources properly managed?
 - [ ] WOLOG: Without loss of generality?
 
-## 7. Definition of Concrete
+## 8. Definition of Concrete
 
 All outputs must include:
 
@@ -134,7 +198,7 @@ All outputs must include:
 - Specific error messages with codes: `"socket hang up (ECONNRESET)"`
 - Testable verification commands
 
-## 8. Plan Acceptance and Execution Protocol
+## 9. Plan Acceptance and Execution Protocol
 
 When user approves the refined plan, output:
 

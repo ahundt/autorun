@@ -11,6 +11,24 @@ $ARGUMENTS
 
 **IMPORTANT:** If you are not already in plan mode, use the `EnterPlanMode` tool NOW before proceeding. Planning commands require plan mode for proper operation.
 
+## 0.1. Task Hydration & User Request (MANDATORY FIRST)
+
+**Before any planning work:**
+
+1. **Record User Request**: In your plan output, include:
+   ```
+   ## User Request
+   > $ARGUMENTS
+   ```
+   (Quote only the user's custom text from $ARGUMENTS, not this instruction file)
+
+2. **Create Tasks for Major Steps**: For each numbered step in Section 1:
+   - `TaskCreate` with subject "Step N: [name]", activeForm "[verb]ing..."
+
+3. **Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
+
+4. **Track Progress**: Set `in_progress` when starting, `completed` when done
+
 ## MODE: PLAN SYNC (Not Execution)
 
 You are syncing plan status with the current codebase state. This is a QUICK update - not a full refinement. Do NOT execute code changes until user approves proceeding.
@@ -63,7 +81,20 @@ Changes Made:
 2. [specific change with justification]
 ```
 
-## 4. Quality Gate
+## 4. Wait Process (Abbreviated)
+
+After status changes, briefly verify:
+1. Accuracy of status assignments
+2. Nothing missed in checklist
+3. Task list updated via `TaskUpdate`
+
+## 5. Checkbox Management
+
+- Use `TaskUpdate` to track: `pending` → `in_progress` → `completed`
+- Add blocker descriptions when status is `BLOCKED`
+- Check off boxes only when verification complete
+
+## 6. Quality Gate
 
 Before finishing, verify:
 
@@ -72,7 +103,7 @@ Before finishing, verify:
 - [ ] Goals unchanged (or change discussed with user)
 - [ ] CLAUDE.md philosophy preserved (TDD, DRY, KISS, etc.)
 
-## 5. Principles - Every plan element must address:
+## 7. Principles - Every plan element must address:
 
 - [ ] TDD: Tests written first? Test location specified?
 - [ ] DRY: No code duplication? Reusing existing utilities?
@@ -83,7 +114,7 @@ Before finishing, verify:
 - [ ] RAII: Resources properly managed?
 - [ ] WOLOG: Without loss of generality?
 
-## 6. Definition of Concrete
+## 8. Definition of Concrete
 
 All outputs must include:
 
@@ -93,7 +124,7 @@ All outputs must include:
 - Specific error messages with codes: `"socket hang up (ECONNRESET)"`
 - Testable verification commands
 
-## 7. Plan Acceptance and Execution Protocol
+## 9. Plan Acceptance and Execution Protocol
 
 If user wants to proceed with remaining items, output:
 
