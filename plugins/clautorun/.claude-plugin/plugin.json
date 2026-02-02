@@ -9,7 +9,7 @@
   "homepage": "https://github.com/ahundt/clautorun#readme",
   "repository": "https://github.com/ahundt/clautorun.git",
   "license": "Apache-2.0",
-  "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "autonomous-sessions", "extended-workflow", "no-new-files", "justify-new-files", "session-explorer"],
+  "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "autonomous-sessions", "extended-workflow", "no-new-files", "justify-new-files", "claude-session-tools"],
   "commands": "./commands/",
   "skills": "./skills/"
 }
