@@ -127,8 +127,8 @@ cat session.jsonl | head -1 | jq '{
 Find Claude Code sessions modified in last N days:
 
 ```bash
-# Last 2 days
-find ~/.claude/projects/-Users-athundt-source-general-processtree/ -name "*.jsonl" -mtime -2 -type f
+# Last 2 days (replace <PROJECT> with your encoded project path)
+find ~/.claude/projects/<PROJECT>/ -name "*.jsonl" -mtime -2 -type f
 
 # Exclude subagent sessions
 find ~/.claude/projects/*/  -name "*.jsonl" -mtime -2 -type f | grep -v "/subagents/"

@@ -207,11 +207,16 @@ Use distinctive markers to find specific changes:
 
 Sessions are stored as `.jsonl` files (JSON Lines format) at:
 ```
-~/.claude/projects/-Users-athundt-source-<PROJECT>/
+~/.claude/projects/<ENCODED-PATH>/
   ├── <SESSION-ID>.jsonl
   ├── agent-<ID>.jsonl
   └── ...
 ```
+
+The `<ENCODED-PATH>` is the project directory path with `/` replaced by `-`:
+- macOS: `/Users/<user>/project` → `-Users-<user>-project`
+- Linux: `/home/<user>/project` → `-home-<user>-project`
+- Windows: `C:\Users\<user>\project` → `C--Users-<user>-project`
 
 Each line is a complete JSON object:
 

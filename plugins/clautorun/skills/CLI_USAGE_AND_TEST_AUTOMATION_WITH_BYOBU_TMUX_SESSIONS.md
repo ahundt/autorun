@@ -176,8 +176,8 @@ python3 ai_monitor.py "clautorun" --prompt "Continue working autonomously" --sto
 # Create session for clautorun testing (default: clautorun)
 byobu new-session -d -s "clautorun"
 
-# Navigate to project
-byobu send-keys -t "clautorun" "cd /Users/athundt/.claude/clautorun" C-m
+# Navigate to project (replace with your clautorun directory)
+byobu send-keys -t "clautorun" "cd \$HOME/.claude/clautorun" C-m
 
 # Start Claude Code
 byobu send-keys -t "clautorun" "claude" C-m
@@ -187,8 +187,8 @@ sleep 5
 byobu send-keys -t "clautorun" "/model haiku" C-m
 sleep 2
 
-# Install plugin locally
-byobu send-keys -t "clautorun" "/plugin marketplace add /Users/athundt/.claude/clautorun" C-m
+# Install plugin locally (replace with your clautorun directory)
+byobu send-keys -t "clautorun" "/plugin marketplace add \$HOME/.claude/clautorun" C-m
 sleep 3
 
 # Install plugin

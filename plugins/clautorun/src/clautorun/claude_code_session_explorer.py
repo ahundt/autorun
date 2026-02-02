@@ -22,7 +22,86 @@ import re
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterator, Tuple
+import getpass
+
+# Configurable limits via environment variables (default values in parentheses)
+PREVIEW_LIMIT = int(os.environ.get('SESSION_EXPLORER_PREVIEW_LIMIT', '100'))
+CONTEXT_LIMIT = int(os.environ.get('SESSION_EXPLORER_CONTEXT_LIMIT', '500'))
+DISPLAY_LIMIT = int(os.environ.get('SESSION_EXPLORER_DISPLAY_LIMIT', '150'))
+EXTRACT_LIMIT = int(os.environ.get('SESSION_EXPLORER_EXTRACT_LIMIT', '300'))
+TOOL_CONTENT_LIMIT = int(os.environ.get('SESSION_EXPLORER_TOOL_CONTENT_LIMIT', '200'))
+
+# Get username for path handling
+def get_username() -> str:
+    """Get current username for path handling."""
+    return getpass.getuser()
+
+def extract_project_name(dir_name: str) -> str:
+    """Extract human-readable project name from encoded directory name.
+
+    Claude encodes paths like /Users/name/source/project as:
+    -Users-name-source-project
+
+    This extracts just the meaningful project part.
+    """
+    # Remove common prefixes dynamically
+    username = get_username()
+    prefixes = [
+        f'-Users-{username}-source-',
+        f'-Users-{username}-',
+        '-Users-',
+    ]
+    result = dir_name
+    for prefix in prefixes:
+        if result.startswith(prefix):
+            result = result[len(prefix):]
+            break
+    return result
+
+def find_project_dir(projects_dir: Path, project_name: str) -> Optional[Path]:
+    """Find the project directory that matches the given project name."""
+    username = get_username()
+
+    # Try common patterns
+    patterns = [
+        f'-Users-{username}-source-{project_name}',
+        f'-Users-{username}-{project_name}',
+    ]
+
+    for pattern in patterns:
+        candidate = projects_dir / pattern
+        if candidate.exists():
+            return candidate
+
+    # Fallback: search for partial match
+    for project_dir in projects_dir.glob('-Users-*'):
+        if project_name in project_dir.name:
+            return project_dir
+
+    return None
+
+
+def iter_all_sessions(project_filter: Optional[str] = None) -> Iterator[Tuple[str, Path]]:
+    """Iterate over all sessions, yielding (project_name, session_file) tuples.
+
+    This DRY function replaces 4 repeated code blocks that iterate over all
+    projects and sessions. Use this instead of manually iterating.
+
+    Args:
+        project_filter: Optional string to filter projects by name (case-insensitive substring match)
+
+    Yields:
+        Tuple of (project_name, session_file_path) for each session
+    """
+    projects_dir = Path.home() / '.claude' / 'projects'
+    for project_dir in projects_dir.glob('-Users-*'):
+        project_name = extract_project_name(project_dir.name)
+        if project_filter and project_filter.lower() not in project_name.lower():
+            continue
+        for session_file in project_dir.glob('*.jsonl'):
+            yield project_name, session_file
+
 
 # Correction indicators - patterns that suggest user is correcting Claude
 CORRECTION_PATTERNS = [
@@ -91,7 +170,7 @@ def extract_tool_results(session_file, tool_type=None, pattern=None):
                                             'timestamp': obj.get('timestamp'),
                                             'type': 'tool_result',
                                             'tool': name,
-                                            'content': content_text[:200],
+                                            'content': content_text[:TOOL_CONTENT_LIMIT],
                                             'line': line_num
                                         })
             except:
@@ -158,7 +237,7 @@ def extract_content_type(session_file, content_type):
                                             })
 
                 elif content_type == 'all':
-                    results.append({'timestamp': timestamp, 'type': msg_type, 'content': str(obj)[:200]})
+                    results.append({'timestamp': timestamp, 'type': msg_type, 'content': str(obj)[:TOOL_CONTENT_LIMIT]})
             except:
                 pass
     return results
@@ -169,7 +248,7 @@ def search_sessions(pattern, all_projects=True):
     results = defaultdict(list)
 
     for project_dir in projects_dir.glob('-Users-*'):
-        project_name = project_dir.name.replace('-Users-athundt-source-', '')
+        project_name = extract_project_name(project_dir.name)
         for session_file in project_dir.glob('*.jsonl'):
             try:
                 with open(session_file, 'r') as f:
@@ -178,7 +257,7 @@ def search_sessions(pattern, all_projects=True):
                             results[project_name].append({
                                 'session': session_file.stem,
                                 'line': line_num,
-                                'preview': line[:100]
+                                'preview': line[:PREVIEW_LIMIT]
                             })
             except:
                 pass
@@ -188,9 +267,9 @@ def search_sessions(pattern, all_projects=True):
 def list_project_sessions(project_name):
     """List all sessions for a project"""
     projects_dir = Path.home() / '.claude' / 'projects'
-    project_dir = projects_dir / f'-Users-athundt-source-{project_name}'
+    project_dir = find_project_dir(projects_dir, project_name)
 
-    if not project_dir.exists():
+    if project_dir is None or not project_dir.exists():
         return []
 
     sessions = []
@@ -358,7 +437,7 @@ def find_corrections(session_file: str) -> List[Dict[str, Any]]:
                             'file': session_file,
                             'line': line_num,
                             'category': category,
-                            'text': text[:300],
+                            'text': text[:EXTRACT_LIMIT],
                             'timestamp': msg.get('timestamp')
                         })
                 except json.JSONDecodeError:
@@ -409,7 +488,7 @@ def search_command_patterns(session_file: str, patterns: List[str], context_afte
                             context_messages.append({
                                 'line': ctx_line,
                                 'type': ctx_msg.get('type', 'unknown'),
-                                'text': extract_message_text(ctx_msg)[:500]
+                                'text': extract_message_text(ctx_msg)[:CONTEXT_LIMIT]
                             })
 
                     matches.append({
@@ -486,7 +565,11 @@ def main():
         content_type = sys.argv[4]
 
         projects_dir = Path.home() / '.claude' / 'projects'
-        session_file = projects_dir / f'-Users-athundt-source-{project}' / f'{session_id}.jsonl'
+        project_dir = find_project_dir(projects_dir, project)
+        if project_dir is None:
+            print(f"Project not found: {project}")
+            return
+        session_file = project_dir / f'{session_id}.jsonl'
 
         if not session_file.exists():
             print(f"Session not found: {session_file}")
@@ -501,10 +584,10 @@ def main():
             print("=" * 70)
             content = item.get('content', '')
             if isinstance(content, str):
-                print(content[:300])
+                print(content[:EXTRACT_LIMIT])
             else:
-                print(str(content)[:300])
-            if len(str(content)) > 300:
+                print(str(content)[:EXTRACT_LIMIT])
+            if len(str(content)) > EXTRACT_LIMIT:
                 print(f"\n... ({len(str(content))} total characters)")
             print()
 
@@ -519,7 +602,11 @@ def main():
         session_id = sys.argv[3]
 
         projects_dir = Path.home() / '.claude' / 'projects'
-        session_file = projects_dir / f'-Users-athundt-source-{project}' / f'{session_id}.jsonl'
+        project_dir = find_project_dir(projects_dir, project)
+        if project_dir is None:
+            print(f"Project not found: {project}")
+            return
+        session_file = project_dir / f'{session_id}.jsonl'
 
         if not session_file.exists():
             print(f"Session not found")
@@ -542,40 +629,35 @@ def main():
         tool = sys.argv[2]
         pattern = sys.argv[3] if len(sys.argv) > 3 else None
 
-        projects_dir = Path.home() / '.claude' / 'projects'
         print(f"Searching for {tool} usage" + (f" with pattern '{pattern}'" if pattern else "") + ":\n")
 
-        for project_dir in projects_dir.glob('-Users-*'):
-            project_name = project_dir.name.replace('-Users-athundt-source-', '')
-            found = 0
-            for session_file in project_dir.glob('*.jsonl'):
-                results = extract_tool_results(str(session_file), tool)
-                if results:
-                    if not found:
-                        print(f"Project: {project_name}")
-                        found += 1
-                    for result in results[:2]:
-                        print(f"  {session_file.stem}: {result.get('tool')} at line {result.get('line')}")
+        # Group results by project for organized output
+        project_results = defaultdict(list)
+        for project_name, session_file in iter_all_sessions():
+            results = extract_tool_results(str(session_file), tool)
+            if results:
+                for result in results[:2]:
+                    project_results[project_name].append(
+                        f"  {session_file.stem}: {result.get('tool')} at line {result.get('line')}"
+                    )
+
+        for project_name, lines in project_results.items():
+            print(f"Project: {project_name}")
+            for line in lines:
+                print(line)
 
     elif command == 'corrections':
         # Find user correction patterns
         project_filter = sys.argv[2] if len(sys.argv) > 2 else None
-
-        projects_dir = Path.home() / '.claude' / 'projects'
         all_corrections = []
 
         print("Searching for user correction patterns...\n")
 
-        for project_dir in projects_dir.glob('-Users-*'):
-            project_name = project_dir.name.replace('-Users-athundt-source-', '').replace('-Users-athundt-', '')
-            if project_filter and project_filter.lower() not in project_name.lower():
-                continue
-
-            for session_file in project_dir.glob('*.jsonl'):
-                corrections = find_corrections(str(session_file))
-                for c in corrections:
-                    c['project'] = project_name
-                all_corrections.extend(corrections)
+        for project_name, session_file in iter_all_sessions(project_filter):
+            corrections = find_corrections(str(session_file))
+            for c in corrections:
+                c['project'] = project_name
+            all_corrections.extend(corrections)
 
         # Group by category
         by_category = defaultdict(list)
@@ -590,7 +672,7 @@ def main():
                 print(f"### {category.upper()} ({len(items)} instances)")
                 for i, item in enumerate(items[:5], 1):
                     print(f"\n{i}. {item['project']} - Line {item['line']}")
-                    print(f"   {item['text'][:150]}...")
+                    print(f"   {item['text'][:DISPLAY_LIMIT]}...")
                 if len(items) > 5:
                     print(f"   ... and {len(items) - 5} more")
                 print()
@@ -603,19 +685,15 @@ def main():
 
         pattern = sys.argv[2]
         context = int(sys.argv[3]) if len(sys.argv) > 3 else 5
-
-        projects_dir = Path.home() / '.claude' / 'projects'
         all_matches = []
 
         print(f"Searching for pattern: {pattern}\n")
 
-        for project_dir in projects_dir.glob('-Users-*'):
-            project_name = project_dir.name.replace('-Users-athundt-source-', '').replace('-Users-athundt-', '')
-            for session_file in project_dir.glob('*.jsonl'):
-                matches = search_command_patterns(str(session_file), [pattern], context)
-                for m in matches:
-                    m['project'] = project_name
-                all_matches.extend(matches)
+        for project_name, session_file in iter_all_sessions():
+            matches = search_command_patterns(str(session_file), [pattern], context)
+            for m in matches:
+                m['project'] = project_name
+            all_matches.extend(matches)
 
         print(f"Found {len(all_matches)} matches\n")
 
@@ -623,7 +701,7 @@ def main():
             print(f"### Match {i}: {match['project']} (line {match['line']})")
             print(f"Pattern: {match['pattern']}")
             for ctx in match['context'][:3]:
-                print(f"  [{ctx['type']}] {ctx['text'][:100]}...")
+                print(f"  [{ctx['type']}] {ctx['text'][:PREVIEW_LIMIT]}...")
             print()
 
         if len(all_matches) > 10:
@@ -631,18 +709,15 @@ def main():
 
     elif command == 'planning-usage':
         # Analyze planning command usage across sessions
-        projects_dir = Path.home() / '.claude' / 'projects'
         all_matches = []
 
         print("Analyzing planning command usage...\n")
 
-        for project_dir in projects_dir.glob('-Users-*'):
-            project_name = project_dir.name.replace('-Users-athundt-source-', '').replace('-Users-athundt-', '')
-            for session_file in project_dir.glob('*.jsonl'):
-                matches = search_command_patterns(str(session_file), PLANNING_COMMANDS, 5)
-                for m in matches:
-                    m['project'] = project_name
-                all_matches.extend(matches)
+        for project_name, session_file in iter_all_sessions():
+            matches = search_command_patterns(str(session_file), PLANNING_COMMANDS, 5)
+            for m in matches:
+                m['project'] = project_name
+            all_matches.extend(matches)
 
         # Count by pattern
         pattern_counts = defaultdict(int)
