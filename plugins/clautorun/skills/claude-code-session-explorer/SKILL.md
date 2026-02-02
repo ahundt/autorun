@@ -27,7 +27,9 @@ General-purpose tool for exploring, searching, and analyzing Claude Code session
 - `/cr:claude-code-session-explorer analyze <PROJECT> <SESSION-ID>` - Analyze session structure
 - `/cr:claude-code-session-explorer cross-ref <PROJECT> <SESSION-ID> <FILE>` - Cross-reference with file
 - `/cr:claude-code-session-explorer find-tool <TOOL> <PATTERN>` - Find specific tool usage
-- `/cr:claude-code-session-explorer help <OPERATION>` - Get help on specific operation
+- `/cr:claude-code-session-explorer corrections [PROJECT]` - Find user correction patterns
+- `/cr:claude-code-session-explorer find-commands <PATTERN> [CONTEXT]` - Search for command patterns
+- `/cr:claude-code-session-explorer planning-usage` - Analyze planning command usage
 
 ## Arguments
 
@@ -47,6 +49,13 @@ Supported operations:
 - **cross-ref <PROJECT> <SESSION-ID> <FILE>**: Cross-reference session changes with file
 - **find-tool <TOOL> [PATTERN]**: Find usage of specific tools (Read, Edit, Bash, Grep, etc.)
 - **timeline <PROJECT> <SESSION-ID>**: Show chronological timeline of events
+- **corrections [PROJECT]**: Find user correction patterns across sessions
+  - Categories: `regression`, `skip_step`, `misunderstanding`, `incomplete`
+  - Detects patterns like "you forgot", "wrong", "actually", "nono", etc.
+- **find-commands <PATTERN> [CONTEXT]**: Search for command patterns with context
+  - Context: Number of following messages to include (default: 5)
+- **planning-usage**: Analyze planning command usage across all sessions
+  - Shows frequency by command and by project
 
 ### Examples
 
