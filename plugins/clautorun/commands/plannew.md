@@ -33,7 +33,7 @@ All outputs should include where applicable:
 3. **Function/class names**: `handleRequest()` in `handler.ts:15-28`
 4. **Error messages**: `"socket hang up (ECONNRESET)"`
 5. **Testable commands**: `npm test -- --grep "auth"`
-6. **Sources and references**: All sources used (web URIs, file:// URIs, web searches, documentation, research papers) must be recorded with full URIs and cited in plan output
+6. **Sources and references**: External sources (web URIs, external file URIs, web searches, documentation, research papers) must be recorded with full URIs and cited in plan output
 
 ### 1.3 Quality Standards
 

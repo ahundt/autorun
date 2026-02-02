@@ -26,7 +26,7 @@ $ARGUMENTS
 
 ### 1.2 Definition of Concrete
 
-Outputs include: File paths, line range references (`file.ts:42-56`), function names, error messages, testable commands, URIs (web and file://).
+Outputs include: File paths, line range references (`file.ts:42-56`), function names, error messages, testable commands, external source URIs.
 
 ---
 
@@ -91,18 +91,22 @@ For each plan item, output ONE status:
 
 ## 5. Wait Process (Abbreviated)
 
-After status changes, verify:
+**Note**: This is a one-time verification after all status changes, not executed per-item like full planning modes.
+
+After completing all status changes, verify:
 1. Accuracy of status assignments
 2. Nothing missed in checklist
 3. TaskList updated via `TaskUpdate`
 
 ---
 
-## 6. Checkbox Management
+## 6. Status Tracking
+
+**Note**: planupdate is a quick sync - just track status, no Wait Process per item.
 
 1. Use `TaskUpdate` to track: `pending` → `in_progress` → `completed`
 2. Add blocker descriptions when status is `BLOCKED`
-3. Check off boxes only when verification complete
+3. Mark complete only when verification done
 
 ---
 
@@ -161,9 +165,15 @@ Then transition to execution:
    - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP`
    - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY`
 
-3. **Safety Protocol**: Execute **ONLY IF** high-risk/irreversible actions (e.g., database ops, deletions).
-   1. Assess Risk → 2. Mitigation (backup **before** proceeding, verify, evaluate options) → 3. Escape Pre-check
+3. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
+   1. **Assess Risk**: Evaluate if action is irreversible or could cause state corruption.
+   2. **Mitigation Action**: If high-risk, execute these steps and explicitly state your actions:
+      1. **INITIATE SAFETY PROTOCOL**: Announce 'INITIATE SAFETY PROTOCOL' to begin assessment.
+      2. **Secure State**: Create environment backup or state checkpoint **before** proceeding.
+      3. **Verify Integrity**: Verify checkpoint succeeded.
+      4. **CONSIDER OPTIONS**: List options, evaluate failure modes, select best.
+   3. **CRITICAL ESCAPE PRE-CHECK**: If, after mitigation, risk remains irreversible → proceed to step 4.
 
-4. **CRITICAL ESCAPE**: Only if irreversible, catastrophic, or cannot be mitigated, output: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
+4. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
 
-5. **FINAL OUTPUT ON SUCCESS**: When 100% complete and verified, remember you are often overconfident—double-check task sources, then output: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM**: When 100% complete and verified, remember you are often overconfident—double-check the resources from which you receive or retrieve new tasks and think if anything was missed, then output exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
