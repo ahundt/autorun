@@ -7,144 +7,163 @@ argument-hint: [plan file]
 
 $ARGUMENTS
 
-## 0. Plan Mode Check
+---
 
-**IMPORTANT:** If you are not already in plan mode, use the `EnterPlanMode` tool NOW before proceeding. Planning commands require plan mode for proper operation.
+## 1. Foundation (Reference)
 
-## 0.1. Task Hydration & User Request (MANDATORY FIRST)
+### 1.1 Key Principles
 
-**Before any planning work:**
+| Acronym | Meaning |
+|---------|---------|
+| TDD | Test-Driven Development |
+| DRY | Don't Repeat Yourself |
+| OODA | Observe-Orient-Decide-Act |
+| KISS | Keep It Simple, Stupid |
+| YAGNI | You Aren't Gonna Need It |
+| SOLID | Single responsibility, Open/closed, Liskov, Interface segregation, Dependency inversion |
+| RAII | Resource Acquisition Is Initialization |
+| WOLOG | Without Loss Of Generality |
 
-1. **Record User Request**: In your plan output, include:
-   ```
+### 1.2 Definition of Concrete
+
+Outputs include: File paths, line range references (`file.ts:42-56`), function names, error messages, testable commands, URIs (web and file://).
+
+---
+
+## 2. Setup
+
+### 2.1 Plan Mode Check
+
+**IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW.
+
+### 2.2 Planning Task Setup (MANDATORY FIRST)
+
+1. **Quote User Request**: In your plan output, include:
+   ```markdown
    ## User Request
    > $ARGUMENTS
    ```
    (Quote only the user's custom text from $ARGUMENTS, not this instruction file)
 
-2. **Create Tasks for Major Steps**: For each numbered step in Section 1:
-   - `TaskCreate` with subject "Step N: [name]", activeForm "[verb]ing..."
+2. **Create [PLANNING] Tasks** for checklist items:
+   `TaskCreate(subject="[PLANNING] Status: [item]", activeForm="Checking [item]...")`
 
 3. **Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
 
-4. **Track Progress**: Set `in_progress` when starting, `completed` when done
+4. **Track Progress**: `TaskUpdate(taskId, status="in_progress")` → `TaskUpdate(taskId, status="completed")`
 
-## MODE: PLAN SYNC (Not Execution)
+---
 
-You are syncing plan status with the current codebase state. This is a QUICK update - not a full refinement. Do NOT execute code changes until user approves proceeding.
+## 3. MODE: PLAN SYNC (Not Execution)
 
-## CRITICAL CONSTRAINTS: Sync, Don't Replace
+Quick update syncing plan status with codebase state. Not a full refinement. Do NOT execute code changes until user approves proceeding.
+
+### Constraints: Sync, Don't Replace
 
 **DO:**
-- Check if planned items are already complete in the codebase
-- Update file paths if files have moved
-- Add newly discovered dependencies or blockers
-- Mark items as done if code already exists
-- Note any blockers or changes
+1. Check if planned items already complete
+2. Update file paths if files moved
+3. Add newly discovered dependencies/blockers
+4. Mark items done if code exists
+5. Note blockers or changes
 
 **DO NOT:**
-- Rewrite the entire plan
-- Remove sections without explicit justification
-- Change goals without discussion
-- Skip the verification step
+1. Rewrite entire plan
+2. Remove sections without explicit justification
+3. Change goals without discussion
+4. Skip verification
 
-## 1. Quick Checklist
+---
+
+## 4. Quick Checklist
 
 For each plan item, output ONE status:
 
-- `DONE: [item] - verified at file.ts:42`
-- `PENDING: [item] - no changes needed`
-- `BLOCKED: [item] - blocked by [reason]`
-- `OUTDATED: [item] - path changed to [new path]`
-- `REMOVED: [item] - reason: [justification]`
+| Status | Format | Example |
+|--------|--------|---------|
+| DONE | `DONE: [item] - verified at file.ts:42-56` | `DONE: Add auth - verified at auth.ts:15-28` |
+| PENDING | `PENDING: [item] - no changes needed` | `PENDING: Add tests - no changes needed` |
+| BLOCKED | `BLOCKED: [item] - blocked by [reason]` | `BLOCKED: Deploy - blocked by failing tests` |
+| OUTDATED | `OUTDATED: [item] - path changed to [new]` | `OUTDATED: handler.js - path changed to handler.ts` |
+| REMOVED | `REMOVED: [item] - reason: [justification]` | `REMOVED: Legacy API - reason: deprecated in v2` |
 
-## 2. Subagent Usage Guidelines
+---
 
-**For quick updates, use subagents sparingly:**
-- **Explore subagent**: Launch ONE Explore subagent if you need to verify multiple file paths efficiently
-- **Avoid Plan subagents**: This is a quick sync, not a full planning exercise
+## 5. Wait Process (Abbreviated)
 
-**Keep it lightweight**: The goal is to sync status, not redesign the plan.
+After status changes, verify:
+1. Accuracy of status assignments
+2. Nothing missed in checklist
+3. TaskList updated via `TaskUpdate`
 
-## 3. Output Summary
+---
+
+## 6. Checkbox Management
+
+1. Use `TaskUpdate` to track: `pending` → `in_progress` → `completed`
+2. Add blocker descriptions when status is `BLOCKED`
+3. Check off boxes only when verification complete
+
+---
+
+## 7. Output Summary
 
 ```text
 Plan Update Summary:
-- Completed: X items
-- Pending: X items
-- Blocked: X items
-- Outdated: X items (paths updated)
-- Removed: X items (with justification)
+1. Completed: X items
+2. Pending: X items
+3. Blocked: X items
+4. Outdated: X items (paths updated)
+5. Removed: X items (with justification)
 
 Changes Made:
 1. [specific change with justification]
 2. [specific change with justification]
 ```
 
-## 4. Wait Process (Abbreviated)
+---
 
-After status changes, briefly verify:
-1. Accuracy of status assignments
-2. Nothing missed in checklist
-3. Task list updated via `TaskUpdate`
-
-## 5. Checkbox Management
-
-- Use `TaskUpdate` to track: `pending` → `in_progress` → `completed`
-- Add blocker descriptions when status is `BLOCKED`
-- Check off boxes only when verification complete
-
-## 6. Quality Gate
+## 8. Quality Gate
 
 Before finishing, verify:
 
-- [ ] No sections were removed without explicit justification
-- [ ] All file paths verified with Glob/Read
-- [ ] Goals unchanged (or change discussed with user)
-- [ ] CLAUDE.md philosophy preserved (TDD, DRY, KISS, etc.)
+1. [ ] No sections removed without explicit justification
+2. [ ] All file paths verified with Glob/Read
+3. [ ] Goals unchanged (or change discussed with user)
+4. [ ] Principles preserved per §1.1
 
-## 7. Principles - Every plan element must address:
+---
 
-- [ ] TDD: Tests written first? Test location specified?
-- [ ] DRY: No code duplication? Reusing existing utilities?
-- [ ] OODA: Observe-Orient-Decide-Act cycle followed?
-- [ ] KISS: Simplest solution that works?
-- [ ] YAGNI: No premature optimization or over-engineering?
-- [ ] SOLID: Single responsibility? Open/closed? Interface segregation?
-- [ ] RAII: Resources properly managed?
-- [ ] WOLOG: Without loss of generality?
+## 9. Subagent Guidelines
 
-## 8. Definition of Concrete
+**Use sparingly** - this is a quick sync:
+- Launch ONE Explore subagent if verifying multiple file paths efficiently
+- Avoid Plan subagents - not a full planning exercise
+- Goal: Sync status, not redesign
 
-All outputs must include:
+---
 
-- Absolute file paths: `/path/to/file.ts`
-- Line references: `file.ts:42-56`
-- Exact function/class names: `handleRequest()` in `handler.ts:15`
-- Specific error messages with codes: `"socket hang up (ECONNRESET)"`
-- Testable verification commands
-
-## 9. Plan Acceptance and Execution Protocol
+## 10. Plan Acceptance and Execution Protocol
 
 If user wants to proceed with remaining items, output:
 
 **PLAN ACCEPTED - Activating Autonomous Execution Protocol**
 
-Then immediately transition to execution mode:
+Then transition to execution:
 
 1. **MANDATORY EXECUTION MODE (Goal and Capabilities)**
-    1. Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your task and goals.
-    2. Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
-    3. **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
-    4. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
-2. **SIGNAL RULE TO STOP SYSTEM:** The exact strings **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP** and **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
-3. **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
-    1. **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
-    2. **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
-        1. **INITIATE SAFETY PROTOCOL:** Announce 'INITIATE SAFETY PROTOCOL' to begin structured assessment.
-        2. **Secure State:** Execute the recovery command(s) to create an **environment backup** or **state checkpoint** (using available systems and tools) *before* proceeding.
-        3. **Verify Integrity:** Run a quick non-destructive check to ensure the state checkpoint was successful.
-        4. **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
-    3. **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **CRITICAL ESCAPE TO STOP SYSTEM**.
-4. **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
-5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100% complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+   1. Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your task and goals.
+   2. Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
+   3. **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
+   4. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
+
+2. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
+   - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP`
+   - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY`
+
+3. **Safety Protocol**: Execute **ONLY IF** high-risk/irreversible actions (e.g., database ops, deletions).
+   1. Assess Risk → 2. Mitigation (backup **before** proceeding, verify, evaluate options) → 3. Escape Pre-check
+
+4. **CRITICAL ESCAPE**: Only if irreversible, catastrophic, or cannot be mitigated, output: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
+
+5. **FINAL OUTPUT ON SUCCESS**: When 100% complete and verified, remember you are often overconfident—double-check task sources, then output: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
