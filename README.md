@@ -560,7 +560,7 @@ git commit -m "Description of changes"
 
 ### Active vs Deprecated
 
-**✅ clautorun plugin v0.6.0 (Current)**
+**✅ clautorun plugin v0.7.0 (Current)**
 - Installed via `/plugin install https://github.com/ahundt/clautorun.git`
 - Commands: `/cr:st`, `/cr:a`, `/cr:j`, `/cr:f`, `/cr:go`, `/cr:gp`, `/cr:x`, `/cr:sos`, `/cr:tm`, `/cr:tt`, `/cr:tabs`
 - **NEW v0.6.0:** `/cr:no`, `/cr:ok`, `/cr:clear`, `/cr:globalno`, `/cr:globalok`, `/cr:globalstatus` (Command Blocking)

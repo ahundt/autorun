@@ -24,7 +24,7 @@ def main():
 
     plugins_dir = marketplace_root / "plugins"
 
-    print(f"📦 clautorun-marketplace v0.6.0")
+    print(f"📦 clautorun-marketplace v0.7.0")
     print(f"📍 Marketplace root: {marketplace_root}")
     print(f"📍 Plugins directory: {plugins_dir}")
     print()
