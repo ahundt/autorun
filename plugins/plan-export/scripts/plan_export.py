@@ -622,22 +622,35 @@ def main():
             # === BEGIN CRITICAL SECTION ===
             # Mutually exclusive per session - prevents race conditions
 
-            # Step 1: Get plan path (session-isolated)
+            # Step 1: Get plan path from tool_response (most reliable - direct from Claude Code)
+            # ExitPlanMode returns {filePath: "/path/to/plan.md", plan: "content..."}
             plan_path = None
-            if transcript_path:
-                plan_path = get_plan_from_transcript(transcript_path)
+            if isinstance(tool_response, dict):
+                file_path = tool_response.get("filePath")
+                if file_path:
+                    candidate = Path(file_path)
+                    if candidate.exists():
+                        plan_path = candidate
+                        if config.get("debug_logging", False):
+                            log_warning(f"Session {session_id}: using tool_response.filePath: {file_path}")
+                    elif config.get("debug_logging", False):
+                        log_warning(f"Session {session_id}: tool_response.filePath doesn't exist: {file_path}")
 
-            # Fallback 1: Try to find plan by session_id in metadata
+            # Fallback 1: Parse transcript to find plan file
+            if not plan_path and transcript_path:
+                plan_path = get_plan_from_transcript(transcript_path)
+                if plan_path and config.get("debug_logging", False):
+                    log_warning(f"Session {session_id}: using transcript parsing: {plan_path}")
+
+            # Fallback 2: Try to find plan by session_id in metadata
             # This handles session resume scenarios where transcript parsing fails
             if not plan_path:
-                config = load_config()
                 if config.get("debug_logging", False):
                     log_warning(f"Session {session_id}: transcript parsing failed, trying metadata fallback")
                 plan_path = find_plan_by_session_id(session_id)
 
-            # Fallback 2: Most recent plan (original behavior)
+            # Fallback 3: Most recent plan (original behavior - last resort)
             if not plan_path:
-                config = load_config()
                 if config.get("debug_logging", False):
                     log_warning(f"Session {session_id}: metadata search failed, using most recent plan")
                 plan_path = get_most_recent_plan()
