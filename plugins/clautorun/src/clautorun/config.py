@@ -269,6 +269,16 @@ After every step and substep you must say "Wait," and execute this sequential th
         "/cr:tmux": "tmux_session", # Tmux session management
         "/cr:ttest": "tmux_test",   # Tmux test workflow (ttest to avoid collision with test.md)
 
+        # ─── Plan Commands ─────────────────────────────────────────────────────
+        "/cr:pn": "NEW_PLAN",
+        "/cr:pr": "REFINE_PLAN",
+        "/cr:pu": "UPDATE_PLAN",
+        "/cr:pp": "PROCESS_PLAN",
+        "/cr:plannew": "NEW_PLAN",
+        "/cr:planrefine": "REFINE_PLAN",
+        "/cr:planupdate": "UPDATE_PLAN",
+        "/cr:planprocess": "PROCESS_PLAN",
+
         # ─── Legacy Commands (backward compatibility) ─────────────────────────
         "/autorun": "activate",
         "/autoproc": "activate",

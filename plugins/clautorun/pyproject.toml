@@ -31,6 +31,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Robust bash command parsing (recommended, installs by default with uv)
+bashlex = ["bashlex>=0.18"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -38,10 +40,17 @@ dev = [
     "pytest-mock>=3.10.0",
     "black>=23.0.0",
     "mypy>=1.0.0",
+    "bashlex>=0.18",
 ]
 claude-code = [
     "claude-agent-sdk>=0.1.4",
 ]
+# All optional features
+all = ["bashlex>=0.18"]
+
+[tool.uv]
+# Install bashlex by default with uv pip install
+default-extras = ["bashlex"]
 
 [project.scripts]
 clautorun = "clautorun.__main__:main"
