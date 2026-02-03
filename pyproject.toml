@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clautorun-marketplace"
-version = "0.6.0"
+version = "0.7.0"
 description = "UV workspace marketplace for clautorun plugins: clautorun, plan-export, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,7 +37,7 @@ dev = [
     "ruff>=0.14.1",
 ]
 all = [
-    "clautorun>=0.6.0",
+    "clautorun>=0.7.0",
     "plan-export>=1.0.0",
     "pdf-extractor>=0.1.0",
 ]
