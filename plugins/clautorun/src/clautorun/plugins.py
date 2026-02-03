@@ -37,6 +37,7 @@ from typing import Optional, Dict
 from .core import app, EventContext, logger
 from .config import CONFIG, DEFAULT_INTEGRATIONS
 from .session_manager import session_state
+from .command_detection import command_matches_pattern
 
 
 # ============================================================================
@@ -203,11 +204,7 @@ def _match(cmd: str, pattern: str, ptype: str = "literal") -> bool:
         return False
 
     if ptype == "literal":
-        return (
-            pattern in cmd or
-            cmd == pattern or
-            cmd.startswith(pattern + ' ')
-        )
+        return command_matches_pattern(cmd, pattern)
 
     if ptype == "regex":
         try:
@@ -408,7 +405,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
     # Default integrations (rm, git reset, etc.)
     for k, v in DEFAULT_INTEGRATIONS.items():
-        if k in cmd:
+        if command_matches_pattern(cmd, k):
             return ctx.deny(v["suggestion"])
 
     return None
