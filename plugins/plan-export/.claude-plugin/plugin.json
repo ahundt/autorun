@@ -1,6 +1,6 @@
 {
   "name": "plan-export",
-  "version": "1.0.0",
+  "version": "0.7.0",
   "description": "Automatically exports plan files to project notes when exiting plan mode. Creates note/YYYY_MM_DD_<name>.md files.",
   "author": {
     "name": "athundt"

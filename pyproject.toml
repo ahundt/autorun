@@ -38,8 +38,8 @@ dev = [
 ]
 all = [
     "clautorun>=0.7.0",
-    "plan-export>=1.0.0",
-    "pdf-extractor>=0.1.0",
+    "plan-export>=0.7.0",
+    "pdf-extractor>=0.7.0",
 ]
 
 [project.scripts]

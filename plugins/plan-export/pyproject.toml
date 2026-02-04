@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "plan-export"
-version = "1.1.0"
+version = "0.7.0"
 description = "Export Claude Code plans to project notes with race condition protection"
 authors = [{name = "Andrew Hundt", email = "ATHundt@gmail.com"}]
 license = {text = "Apache-2.0"}
