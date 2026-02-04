@@ -126,6 +126,7 @@ See `plugins/clautorun/src/clautorun/config.py:38-93` for DEFAULT_INTEGRATIONS l
 | `plugins/clautorun/src/clautorun/config.py` | Single source of truth for CONFIG (stages, policies, templates) |
 | `plugins/clautorun/src/clautorun/main.py` | Hook handler and CLI entry point |
 | `plugins/clautorun/src/clautorun/plugins.py` | Command handlers and dispatch logic |
+| `plugins/clautorun/src/clautorun/integrations.py` | Unified command integrations (superset of hookify) |
 | `plugins/clautorun/commands/clautorun` | Plugin command script |
 | `plugins/clautorun/.claude-plugin/plugin.json` | Plugin manifest |
 

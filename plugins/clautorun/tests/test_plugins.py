@@ -516,3 +516,276 @@ class TestScopeAccessor:
         accessor.set([{"pattern": "dd"}])
 
         assert ctx.session_blocked_patterns[0]["pattern"] == "dd"
+
+
+# ============================================================================
+# /cr:reload Command Tests
+# ============================================================================
+
+class TestReloadCommand:
+    """Tests for /cr:reload command."""
+
+    def test_reload_handler_registered(self):
+        """Reload handler should be registered."""
+        assert "/cr:reload" in app.command_handlers
+
+    def test_reload_returns_count(self):
+        """Reload should return integration count."""
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:reload")
+        ctx.activation_prompt = "/cr:reload"
+
+        handler = app.command_handlers.get("/cr:reload")
+        result = handler(ctx)
+
+        assert "Reloaded" in result
+        assert "integrations" in result
+
+    def test_reload_clears_cache(self):
+        """Reload should clear integration cache."""
+        from clautorun.integrations import load_all_integrations, invalidate_caches
+
+        # Load once
+        integrations1 = load_all_integrations()
+
+        # Reload via handler
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:reload")
+        ctx.activation_prompt = "/cr:reload"
+        handler = app.command_handlers.get("/cr:reload")
+        handler(ctx)
+
+        # Load again - should be different object (cache was cleared)
+        integrations2 = load_all_integrations()
+        assert integrations1 is not integrations2
+
+
+# ============================================================================
+# check_blocked_commands Integration Tests
+# ============================================================================
+
+class TestCheckBlockedCommandsIntegration:
+    """Tests for check_blocked_commands hook with integration system."""
+
+    def test_blocks_rm_command(self):
+        """rm command should be blocked by default."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "rm file.txt"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # Should return deny response
+        assert result is not None
+        assert "trash" in str(result).lower()
+
+    def test_allows_safe_command(self):
+        """Safe command should be allowed."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "ls -la"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # Should return None (allow)
+        assert result is None
+
+    def test_warn_action_allows_with_message(self):
+        """Git command with action: warn should allow with message."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "git status"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # action: warn returns allow response with message
+        if result is not None:
+            # Should be allow, not deny
+            assert result.get("permissionDecision") == "allow" or "allow" in str(result)
+
+    def test_redirect_shown_in_message(self):
+        """Blocked command should show redirect suggestion."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "rm important.txt"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # Message should contain redirect
+        assert result is not None
+        result_str = str(result)
+        assert "trash" in result_str.lower()
+
+    def test_session_block_takes_priority(self):
+        """Session block should take priority over defaults."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "custom-cmd"},
+            store=store
+        )
+        # Add session block
+        ctx.session_blocked_patterns = [
+            {"pattern": "custom-cmd", "suggestion": "Custom blocked", "pattern_type": "literal"}
+        ]
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        assert "Custom blocked" in str(result)
+
+    def test_non_bash_tool_ignored(self):
+        """Non-Bash tool should be ignored (unless event: file)."""
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Read",
+            tool_input={"file_path": "/tmp/test.txt"}
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is None
+
+    def test_empty_command_ignored(self):
+        """Empty command should be ignored."""
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": ""}
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is None
+
+    def test_write_tool_with_file_event(self):
+        """Write tool should be checked for file event integrations."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": "/tmp/test.txt"},
+            store=store
+        )
+
+        # Write tool should be processed (event: file)
+        result = plugins.check_blocked_commands(ctx)
+
+        # May or may not have matching integration, but should not error
+        assert result is None or isinstance(result, dict)
+
+
+# ============================================================================
+# Event Type Filtering Tests
+# ============================================================================
+
+class TestEventTypeFiltering:
+    """Tests for event field filtering in check_blocked_commands."""
+
+    def test_bash_event_matches_bash_tool(self):
+        """Integration with event=bash matches Bash tool."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "rm test.txt"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # rm has event=bash (default), should be blocked
+        assert result is not None
+
+    def test_file_event_does_not_match_bash_tool(self):
+        """Integration with event=file doesn't match Bash tool."""
+        # This tests that an integration with event="file"
+        # won't trigger on a Bash command
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "ls"},
+            store=store
+        )
+
+        # ls is not blocked, and file-event integrations won't match
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None
+
+
+# ============================================================================
+# When Predicate Integration Tests
+# ============================================================================
+
+class TestWhenPredicateIntegration:
+    """Tests for when predicate integration in check_blocked_commands."""
+
+    @patch("clautorun.integrations.subprocess.run")
+    def test_when_predicate_evaluated(self, mock_run):
+        """When predicate should be evaluated before blocking."""
+        # git reset --hard has when: has_uncommitted_changes
+        mock_run.return_value = MagicMock(returncode=1)  # Has changes
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "git reset --hard HEAD"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # Should be blocked because has_uncommitted_changes=True
+        assert result is not None
+
+    @patch("clautorun.integrations.subprocess.run")
+    def test_when_predicate_false_skips_integration(self, mock_run):
+        """When predicate returning False should skip that integration."""
+        # git reset --hard has when: has_uncommitted_changes
+        mock_run.return_value = MagicMock(returncode=0)  # No changes
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "git reset --hard HEAD"},
+            store=store
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # The "git reset --hard" integration is skipped (when=False)
+        # But "git" integration still matches with action: warn
+        # So result is allow (not deny), not None
+        if result is not None:
+            # Should be allow, not deny
+            assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"

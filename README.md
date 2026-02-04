@@ -1174,11 +1174,15 @@ clautorun/
 │   └── clautorun/
 │       ├── __init__.py          # Package exports
 │       ├── main.py              # Hook handler and interactive CLI (source of truth)
+│       ├── plugins.py           # Command handlers and dispatch logic
+│       ├── integrations.py      # Unified command integrations (superset of hookify)
+│       ├── config.py            # CONFIG constants and DEFAULT_INTEGRATIONS
 │       ├── mcp_server.py        # MCP server for external apps
 │       ├── install.py           # Plugin installation management
 ├── tests/
 │   ├── test_autorun_compatibility.py  # Command compatibility tests
 │   ├── test_interactive.py           # Interactive mode tests
+│   ├── test_integrations.py          # Integration system tests (101 tests)
 │   ├── simple_test.py                # Basic functionality tests
 │   ├── test_interceptor.py           # Hook integration tests
 │   └── test_pretooluse_policy_enforcement.py # PreToolUse policy tests
