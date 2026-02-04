@@ -592,8 +592,57 @@ def get_stage3_instructions(ctx: EventContext) -> str:
     return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
 
 
-def build_injection_prompt(ctx: EventContext) -> str:
-    """Build injection prompt with template selection."""
+def _build_progressive_stage_section(ctx: EventContext) -> str:
+    """
+    Build stage section with PROGRESSIVE DISCLOSURE.
+
+    Only reveals the CURRENT stage instruction + completion string.
+    This prevents AI from prematurely outputting Stage 2/3 strings.
+
+    Args:
+        ctx: Event context with autorun_stage
+
+    Returns:
+        str: Stage section showing only current stage
+    """
+    stage = getattr(ctx, 'autorun_stage', EventContext.STAGE_1)
+
+    if stage in (EventContext.STAGE_INACTIVE, EventContext.STAGE_1):
+        # Stage 1: Show only Stage 1
+        return f"""5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {CONFIG['stage1_instruction']}
+    * When Stage 1 is complete, output **{CONFIG['stage1_message']}** to advance to Stage 2
+    * You will receive Stage 2 instructions after outputting this confirmation"""
+
+    elif stage == EventContext.STAGE_2:
+        # Stage 2: Show Stage 2 (Stage 1 already revealed)
+        return f"""5.  **STAGE 2 - CRITICAL EVALUATION:** {CONFIG['stage2_instruction']}
+    * When Stage 2 is complete, output **{CONFIG['stage2_message']}** to advance to Stage 3
+    * You will receive Stage 3 instructions after outputting this confirmation"""
+
+    elif stage in (EventContext.STAGE_2_COMPLETED, EventContext.STAGE_3):
+        # Stage 3: Show Stage 3 (countdown complete or in Stage 3)
+        stage3_instructions = get_stage3_instructions(ctx)
+        return f"""5.  **STAGE 3 - FINAL VERIFICATION:** {CONFIG['stage3_instruction']}
+    * {stage3_instructions}
+    * When Stage 3 is complete, output **{CONFIG['stage3_message']}** for final completion"""
+
+    else:
+        # Fallback: Show Stage 1
+        return f"""5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {CONFIG['stage1_instruction']}
+    * When Stage 1 is complete, output **{CONFIG['stage1_message']}** to advance to Stage 2"""
+
+
+def build_injection_prompt(ctx: EventContext, use_progressive_disclosure: bool = True) -> str:
+    """
+    Build injection prompt with optional progressive disclosure.
+
+    Args:
+        ctx: Event context
+        use_progressive_disclosure: If True, only show current stage (default: True)
+
+    Returns:
+        str: Formatted injection prompt
+    """
     # Force compliance if over limit
     if ctx.recheck_count > CONFIG["max_recheck_count"]:
         return CONFIG["forced_compliance_template"].format(
@@ -606,17 +655,49 @@ def build_injection_prompt(ctx: EventContext) -> str:
     template_key = "procedural_injection_template" if ctx.autorun_mode == "procedural" else "injection_template"
     template = CONFIG.get(template_key, CONFIG["injection_template"])
 
-    return template.format(
-        emergency_stop=CONFIG["emergency_stop"],
-        stage1_message=CONFIG["stage1_message"],
-        stage2_message=CONFIG["stage2_message"],
-        stage3_message=CONFIG["stage3_message"],
-        stage1_instruction=CONFIG["stage1_instruction"],
-        stage2_instruction=CONFIG["stage2_instruction"],
-        stage3_instruction=CONFIG["stage3_instruction"],
-        stage3_instructions=get_stage3_instructions(ctx),
-        policy_instructions=desc
-    )
+    if use_progressive_disclosure:
+        # Build base template (sections 1-4: safety protocol)
+        base_template = """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
+
+**THREE-STAGE COMPLETION SYSTEM:**
+This system ensures thorough, high-quality work through a structured three-stage process. You will receive stage instructions progressively.
+
+1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
+    * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
+2.  **SYSTEM STOP SIGNAL RULE:** The exact string **{emergency_stop}** is a **SYSTEM STOP SIGNAL**. You MUST **NEVER** output this string unless catastrophic/irreversible risk exists. Accidental output will immediately halt the entire system.
+3.  **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
+    * **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
+    * **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
+        1.  **INITIATE SAFETY PROTOCOL:** Announce 'INITIATE SAFETY PROTOCOL' to begin structured assessment.
+        2.  **Secure State:** Execute the recovery command(s) to create an **environment backup** or **state checkpoint** (using available systems and tools) *before* proceeding.
+        3.  **Verify Integrity:** Run a quick non-destructive check to ensure the state checkpoint was successful.
+        4.  **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
+    * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
+4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop}**
+
+{progressive_stage_section}
+
+6.  **FILE CREATION POLICY:** {policy_instructions}"""
+
+        progressive_stage_section = _build_progressive_stage_section(ctx)
+        return base_template.format(
+            emergency_stop=CONFIG["emergency_stop"],
+            progressive_stage_section=progressive_stage_section,
+            policy_instructions=desc
+        )
+    else:
+        # Original full template showing all three stages
+        return template.format(
+            emergency_stop=CONFIG["emergency_stop"],
+            stage1_message=CONFIG["stage1_message"],
+            stage2_message=CONFIG["stage2_message"],
+            stage3_message=CONFIG["stage3_message"],
+            stage1_instruction=CONFIG["stage1_instruction"],
+            stage2_instruction=CONFIG["stage2_instruction"],
+            stage3_instruction=CONFIG["stage3_instruction"],
+            stage3_instructions=get_stage3_instructions(ctx),
+            policy_instructions=desc
+        )
 
 
 # === POSTTOOLUSE HOOK HANDLERS ===
@@ -755,16 +836,47 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
 # ============================================================================
 # PLAN MANAGEMENT PLUGIN
 # ============================================================================
-# NOTE: Plan commands (/cr:pn, /cr:pr, /cr:pu, /cr:pp) are NOT registered here.
-# They are handled as Claude Code skills (in skills/ directory).
-#
-# Previously, registering them with app.command() caused "Operation stopped by hook"
-# because ctx.command_response() returns continue=False, which blocks Claude Code
-# from processing the skill.
-#
-# The plan command mappings in config.py remain for reference, but the actual
-# handling is done by Claude Code's skill system.
-# ============================================================================
+
+def _make_plan_handler(md_filename: str):
+    """
+    Factory: Generate plan command handler that reads and returns markdown content.
+
+    This provides a Python-level workaround for symlink discovery issues.
+    Claude Code doesn't always discover symlinked commands properly, so we
+    create explicit handlers that read the markdown files.
+
+    Args:
+        md_filename: Name of markdown file in commands/ directory (e.g., "plannew.md")
+
+    Returns:
+        Callable: Handler function that returns markdown file content
+    """
+    def handler(ctx: EventContext) -> str:
+        from pathlib import Path
+        commands_dir = Path(__file__).parent.parent.parent / "commands"
+        md_path = commands_dir / md_filename
+
+        if not md_path.exists():
+            return f"❌ Error: Plan command file not found: {md_filename}"
+
+        try:
+            return md_path.read_text(encoding='utf-8')
+        except Exception as e:
+            return f"❌ Error reading plan command: {e}"
+
+    return handler
+
+
+# Data-driven registration: symlink aliases for plan commands
+_PLAN_ALIASES = {
+    "NEW_PLAN":     ("/cr:pn", "/cr:plannew", "plannew.md"),
+    "REFINE_PLAN":  ("/cr:pr", "/cr:planrefine", "planrefine.md"),
+    "UPDATE_PLAN":  ("/cr:pu", "/cr:planupdate", "planupdate.md"),
+    "PROCESS_PLAN": ("/cr:pp", "/cr:planprocess", "planprocess.md"),
+}
+
+for plan_type, (short_cmd, long_cmd, md_file) in _PLAN_ALIASES.items():
+    app.command(short_cmd, long_cmd, plan_type)(_make_plan_handler(md_file))
 
 
 # ============================================================================
