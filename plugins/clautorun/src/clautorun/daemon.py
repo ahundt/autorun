@@ -28,8 +28,80 @@ The daemon sets up signal handlers internally via ClautorunDaemon._setup_signal_
 so no external signal handling is needed here.
 """
 import asyncio
+import shutil
+import subprocess
 import sys
+import threading
 from .core import app, ClautorunDaemon, SOCKET_PATH, LOCK_PATH, logger
+
+
+def _bootstrap_optional_deps():
+    """
+    Non-blocking background install of optional dependencies.
+
+    Bootstrap order:
+    1. Install UV via pip if UV not available (UV is 10-100x faster)
+    2. Install bashlex for better command parsing (shlex fallback works without it)
+
+    Runs in background thread so daemon starts immediately.
+    """
+    def _ensure_uv():
+        """Install UV via pip if not available."""
+        if shutil.which('uv'):
+            return True  # UV already available
+
+        # Try to install UV via pip
+        pip_cmd = None
+        if shutil.which('pip3'):
+            pip_cmd = ['pip3', 'install', '--user', '-q', 'uv']
+        elif shutil.which('pip'):
+            pip_cmd = ['pip', 'install', '--user', '-q', 'uv']
+
+        if pip_cmd:
+            try:
+                subprocess.run(pip_cmd, capture_output=True, timeout=120)
+                logger.info("Installed UV for fast package management")
+                return True
+            except Exception as e:
+                logger.debug(f"UV install failed: {e}")
+        return False
+
+    def _install_bashlex():
+        """Install bashlex for better command parsing."""
+        # Skip if already available
+        try:
+            import bashlex  # noqa: F401
+            return
+        except ImportError:
+            pass
+
+        # Prefer UV (much faster than pip)
+        if shutil.which('uv'):
+            cmd = ['uv', 'pip', 'install', '-q', 'bashlex']
+        elif shutil.which('pip3'):
+            cmd = ['pip3', 'install', '--user', '-q', 'bashlex']
+        elif shutil.which('pip'):
+            cmd = ['pip', 'install', '--user', '-q', 'bashlex']
+        else:
+            logger.debug("No package manager found, skipping bashlex install")
+            return
+
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=60)
+            logger.info("Installed bashlex for improved command parsing")
+        except subprocess.TimeoutExpired:
+            logger.debug("bashlex install timed out, using shlex fallback")
+        except Exception as e:
+            logger.debug(f"bashlex install failed: {e}, using shlex fallback")
+
+    def _install():
+        """Bootstrap all optional dependencies."""
+        _ensure_uv()  # Install UV first (makes subsequent installs faster)
+        _install_bashlex()
+
+    # Run in background thread - don't block daemon startup
+    thread = threading.Thread(target=_install, daemon=True, name="bootstrap-deps")
+    thread.start()
 
 
 def main():
@@ -46,6 +118,9 @@ def main():
     2. Create and start the daemon
     3. Handle any startup errors
     """
+    # Bootstrap optional dependencies in background (non-blocking)
+    _bootstrap_optional_deps()
+
     # Import plugins to register handlers (deferred to avoid circular imports)
     try:
         from . import plugins  # noqa: F401
