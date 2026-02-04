@@ -169,6 +169,15 @@ _injection_monitor: Optional[InjectionEffectivenessMonitor] = None
 # Import centralized configuration (DRY principle)
 from .config import CONFIG
 
+# Import robust command detection (fixes substring matching bug)
+# Uses bashlex AST parsing when available, falls back to shlex
+try:
+    from .command_detection import command_matches_pattern as ast_command_matches_pattern
+    AST_COMMAND_DETECTION_AVAILABLE = True
+except ImportError:
+    AST_COMMAND_DETECTION_AVAILABLE = False
+    ast_command_matches_pattern = None
+
 # Global tmux utilities instance for session management
 _tmux_utilities = None
 
@@ -720,7 +729,15 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
     if pattern_type == "glob":
         return fnmatch.fnmatch(command, pattern)
 
-    # Literal matching (default) - existing behavior
+    # Literal matching (default) - use AST-based detection to avoid substring bugs
+    # The AST-based function correctly handles:
+    # - "/cr:plannew" does NOT match "rm" (substring in "plannew")
+    # - "sudo rm file" DOES match "rm" (command position)
+    # - "echo rm" does NOT match "rm" (argument position)
+    if AST_COMMAND_DETECTION_AVAILABLE:
+        return ast_command_matches_pattern(command, pattern)
+
+    # Fallback if AST detection unavailable: use safer heuristics
     # Exact match
     if command == pattern:
         return True
@@ -731,7 +748,7 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
     if pattern in command_parts:
         return True
 
-    # Substring match for patterns with spaces (e.g., "dd if=")
+    # Multi-word pattern match (e.g., "dd if=")
     if ' ' in pattern:
         if pattern in command:
             return True
