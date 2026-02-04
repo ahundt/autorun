@@ -197,9 +197,58 @@ def test_correct_source_used_first(self):
 
 ---
 
+## Comprehensive Edge Case Tests
+
+**Test File:** `plugins/plan-export/tests/test_edge_cases.py` (48 tests)
+
+### Edge Cases Discovered During Testing
+
+| Function | Edge Case | Behavior |
+|----------|-----------|----------|
+| `get_plan_from_transcript` | Uses `snapshot.trackedFileBackups` | Not `files` key |
+| `embed_plan_metadata` | Modifies export destination | Not source plan file |
+| `embed_plan_metadata` | Skips if frontmatter exists | Content starts with `---` |
+| `extract_useful_name` | Processes whole file | Doesn't skip YAML frontmatter |
+| `expand_template` | Uses `{original}` | Not `{original_name}` |
+| `export_plan` | Returns `destination` key | Not `exported_to` |
+| `load_config` | Uses `Path.home()` | Must patch at module level |
+
+### Test Categories (48 tests total)
+
+| Category | Tests | Description |
+|----------|-------|-------------|
+| TestLoadConfig | 3 | Config file missing, invalid JSON, valid JSON |
+| TestIsEnabled | 3 | True, False, missing defaults to True |
+| TestGetMostRecentPlan | 4 | Dir missing, empty, single file, multiple files |
+| TestGetPlanFromTranscript | 5 | Missing, no entries, with entry, file missing, invalid JSON |
+| TestGetPlanFromMetadata | 4 | No frontmatter, no session_id, with session_id, quoted |
+| TestFindPlanBySessionId | 3 | Dir missing, no match, match found |
+| TestEmbedPlanMetadata | 2 | No metadata, existing metadata |
+| TestExtractUsefulName | 3 | With heading, no heading, empty |
+| TestSanitizeFilename | 3 | Special chars, spaces, alphanumeric |
+| TestExpandTemplate | 3 | Date, name, original placeholders |
+| TestExportPlan | 2 | Creates file, embeds metadata |
+| TestExportRejectedPlan | 1 | Creates in rejected dir |
+| TestMainApprovalDetection | 4 | acceptEdits, bypassPermissions, plan, unknown |
+| TestMainDisabledExport | 1 | Disabled returns early |
+| TestMainNoSessionId | 1 | Unknown session_id warning |
+| TestMainNoPlanFound | 1 | All fallbacks fail |
+| TestErrorHandling | 3 | IOError handling |
+| TestFullExportFlow | 2 | Approved and rejected flows |
+
+### Running Edge Case Tests
+
+```bash
+uv run pytest plugins/plan-export/tests/test_edge_cases.py -v
+```
+
+---
+
 ## References
 
 - **Commit**: `905b584` - fix(plan-export): use tool_response.filePath for correct plan file export
 - **Claude Code Hooks Docs**: https://code.claude.com/docs/en/hooks
-- **Test File**: `plugins/plan-export/tests/test_tool_response_filepath.py`
+- **Test Files**:
+  - `plugins/plan-export/tests/test_tool_response_filepath.py` (13 tests)
+  - `plugins/plan-export/tests/test_edge_cases.py` (48 tests)
 - **Debug Log**: `~/.claude/clautorun/logs/plan-export-debug.log` (when debug_logging enabled)
