@@ -140,8 +140,13 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     if not ctx.autorun_active:
         return None  # No gating - existing behavior preserved
 
-    # When autorun IS active, check if AI has output Stage 3 confirmation
+    # When autorun IS active, check BOTH transcript AND current stage
+    # Bug #9 Fix: Verify we're actually in Stage 3, not just that string appears in transcript
+    # from previous session or user input
     transcript = ctx.transcript.text
+    stage = ctx.autorun_stage
+
+    # First check: Stage 3 message must be in transcript
     if CONFIG["stage3_message"] not in transcript:
         return ctx.deny(
             f"Cannot exit plan mode yet. Complete plan verification first.\n\n"
@@ -152,7 +157,17 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
             f"3. Stage 3: {CONFIG['stage3_instruction']}"
         )
 
-    return None  # Allow ExitPlanMode - Stage 3 confirmation found
+    # Second check: Current autorun session must have actually completed Stage 2
+    # STAGE_2_COMPLETED means AI output stage2_message and countdown is complete
+    if stage != EventContext.STAGE_2_COMPLETED:
+        return ctx.deny(
+            f"Stage 3 not reached in current autorun session.\n\n"
+            f"Current stage: {stage} (expected: {EventContext.STAGE_2_COMPLETED})\n\n"
+            f"The stage3_message was found in transcript, but current session hasn't progressed to Stage 3.\n"
+            f"Complete Stage 1 and Stage 2 in this session before exiting plan mode."
+        )
+
+    return None  # Allow ExitPlanMode - both checks pass
 
 
 # ============================================================================
@@ -522,7 +537,8 @@ def _is_procedural_mode(prompt: str) -> bool:
 @app.command("/cr:go", "/cr:run", "/cr:gp", "/cr:proc", "/autorun", "/autoproc", "activate")
 def handle_activate(ctx: EventContext) -> str:
     """Activate autorun with task description."""
-    prompt = ctx.activation_prompt or ctx.prompt
+    # Bug #10 Fix: Ensure prompt is string to avoid TypeError on None
+    prompt = ctx.activation_prompt or ctx.prompt or ""
     task = prompt.split(maxsplit=1)[1] if " " in prompt else ""
 
     is_procedural = _is_procedural_mode(prompt)
@@ -769,6 +785,16 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
     combined = result + transcript
     stage = ctx.autorun_stage
 
+    # === EMERGENCY STOP CHECK (Bug #6 Fix) ===
+    # CRITICAL: Emergency stop must immediately halt autorun
+    # Without this check, emergency_stop string is recognized by is_premature_stop()
+    # but doesn't actually stop the system - it falls through to fallback injection.
+    if CONFIG["emergency_stop"] in combined:
+        ctx.autorun_active = False
+        ctx.autorun_stage = EventContext.STAGE_INACTIVE
+        stop_external_monitor(ctx)
+        return None  # Allow Claude to stop - emergency protocol triggered
+
     # Track hook calls for countdown
     ctx.hook_call_count = (ctx.hook_call_count or 0) + 1
 
@@ -783,6 +809,10 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
             msg = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
             return inject(msg)
 
+        # Bug #7 Fix: Warn about premature stage2_message
+        if CONFIG["stage2_message"] in combined:
+            return inject(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when Stage 1 is done.")
+
         if CONFIG["stage3_message"] in combined:
             return inject(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when done.")
 
@@ -794,9 +824,13 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
     elif stage == EventContext.STAGE_2:
         if CONFIG["stage2_message"] in combined:
             ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
-            ctx.hook_call_count = 0
+            ctx.hook_call_count = -1  # Bug #8 Fix: Reset to -1 so next increment makes it 0
             remaining = CONFIG.get("stage3_countdown_calls", 3)
             return inject(f"Stage 2 complete. Continue for {remaining} more cycles before Stage 3.")
+
+        # Bug #7 Fix: Warn about regression to stage1_message
+        if CONFIG["stage1_message"] in combined:
+            return inject(f"Already in Stage 2. Continue with critical evaluation. Output **{CONFIG['stage2_message']}** when complete.")
 
         if CONFIG["stage3_message"] in combined:
             return inject(f"Complete Stage 2 first. Output **{CONFIG['stage2_message']}** when done.")
