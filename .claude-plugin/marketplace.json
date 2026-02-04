@@ -13,7 +13,7 @@
       "description": "Autonomous task automation with file creation policies and session persistence",
       "source": "./plugins/clautorun",
       "category": "productivity",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"

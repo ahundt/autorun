@@ -500,7 +500,7 @@ class ClautorunInstaller:
         """Install plugin directly to Claude Code's cache directory"""
         try:
             # Read version from plugin.json
-            version = "0.6.1"  # Default
+            version = "0.7.0"  # Default
             try:
                 with open(self.plugin_manifest) as f:
                     data = json.load(f)
@@ -967,7 +967,7 @@ class MarketplaceInstaller:
 
     def install_marketplace(self) -> bool:
         """Install the full marketplace with all plugins"""
-        print(f"📦 clautorun-marketplace v0.6.1")
+        print(f"📦 clautorun-marketplace v0.7.0")
         print(f"📍 Marketplace root: {self.marketplace_root}")
         print(f"📍 Plugins directory: {self.plugins_directory}")
         print()
