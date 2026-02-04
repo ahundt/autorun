@@ -9,7 +9,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Bash",
+        "matcher": "Write|Bash|ExitPlanMode",
         "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ],
