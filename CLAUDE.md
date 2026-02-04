@@ -131,7 +131,7 @@ See `plugins/clautorun/src/clautorun/config.py:38-93` for DEFAULT_INTEGRATIONS l
 
 ---
 
-## plan-export Plugin (v1.0.0)
+## plan-export Plugin (v0.7.0)
 
 Auto-exports plan files to `notes/YYYY_MM_DD_<name>.md` when exiting plan mode.
 

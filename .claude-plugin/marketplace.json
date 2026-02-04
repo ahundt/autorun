@@ -24,7 +24,7 @@
       "description": "Automatically exports plan files to project notes when exiting plan mode",
       "source": "./plugins/plan-export",
       "category": "productivity",
-      "version": "1.0.0",
+      "version": "0.7.0",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"
@@ -35,7 +35,7 @@
       "description": "PDF data extraction with 9 backend support (markitdown, docling, marker, pdfplumber, pdfminer, pypdf2, pymupdf4llm, pdfbox, pdftotext)",
       "source": "./plugins/pdf-extractor",
       "category": "data-processing",
-      "version": "0.1.0",
+      "version": "0.7.0",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"
