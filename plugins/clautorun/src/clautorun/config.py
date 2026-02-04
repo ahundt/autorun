@@ -100,7 +100,7 @@ DEFAULT_INTEGRATIONS = {
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",
-        "suggestion": "📋 Check ~/.claude/CLAUDE.md for git command requirements.\n\nKey rules:\n- Use concrete terms (specific file paths, exact error messages)\n- No vague language ('improve', 'enhance', 'update')\n- Include technical details (line numbers, function names, test results)\n- Reference specific sources when making claims",
+        "suggestion": "📋 Check CLAUDE.md for git command requirements.\n\nKey rules:\n1. Use concrete terms (specific file paths, exact error messages)\n2. No vague language ('improve', 'enhance', 'update')\n3. Include technical details (line numbers, function names, test results)\n4. Reference specific sources when making claims",
     },
 }
 
@@ -108,16 +108,50 @@ DEFAULT_INTEGRATIONS = {
 # Configuration - Three-stage completion system with clear instruction/confirmation naming
 CONFIG = {
     # ─── Stage 1: Initial Work ────────────────────────────────────────────────
-    "stage1_instruction": "starting tasks, analyzing user requirements, and developing comprehensive plan",
-    "stage1_confirmation": "AUTORUN_STAGE1_COMPLETE",
+    # What we inject to AI (descriptive text explaining what Stage 1 is)
+    "stage1_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan",
+    # What AI outputs when Stage 1 complete (ALL-CAPS confirmation)
+    "stage1_message": "AUTORUN_INITIAL_TASKS_COMPLETED",
+
+    # What we inject to guide AI through Stage 1 (detailed methodology)
+    "stage1_instruction": """
+1. Read through ENTIRE task description carefully
+2. Identify all requirements, constraints, and success criteria
+3. List any ambiguities requiring clarification
+4. Create task checkbox structure with concrete outcomes
+5. Verify bias mitigation: not skipping steps, checking own work
+6. Execute the task with full tool permissions (Bash, Edit, Write, etc.)
+7. After EVERY step, say "Wait," and execute the Wait Process""",
 
     # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
-    "stage2_instruction": "Critically evaluate previous work and continue tasks as needed",
-    "stage2_confirmation": "AUTORUN_STAGE2_COMPLETE",
+    # What we inject to AI (descriptive text - same as output for Stage 2)
+    "stage2_completion": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
+    # What AI outputs when Stage 2 complete (same as completion for Stage 2)
+    "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
+
+    # What we inject to guide AI through Stage 2 (detailed methodology)
+    "stage2_instruction": """
+1. Critique work overall and line-by-line against best practices
+2. Pre-mortem analysis: identify potential failure modes and weaknesses
+3. Propose ≥3 concrete solutions to each identified issue
+4. Synthesize insights from all critiques and solutions
+5. Choose optimal solution with compelling justification
+6. If errors found, execute corrective steps immediately""",
 
     # ─── Stage 3: Final Verification ──────────────────────────────────────────
-    "stage3_instruction": "Verify all tasks completed, critically evaluated, corrected and verified",
-    "stage3_confirmation": "AUTORUN_STAGE3_COMPLETE",
+    # What we inject to AI (compound descriptive text explaining Stage 3)
+    "stage3_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
+    # What AI outputs when Stage 3 complete (ALL-CAPS confirmation)
+    "stage3_message": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+
+    # What we inject to guide AI through Stage 3 (detailed methodology)
+    "stage3_instruction": """
+1. Verify ALL requirements from original request are met
+2. Confirm no tasks silently dropped or skipped
+3. Double-check (AI is often overconfident)
+4. Verify all file references match actual codebase
+5. Confirm code examples are syntactically correct
+6. If ANY requirement missing, return to relevant stage""",
 
     # ─── Descriptive Completion Markers ──────────────────────────────────────
     # NOTE: These are DESCRIPTIVE strings the AI outputs to communicate what it accomplished.
@@ -148,7 +182,7 @@ This system ensures thorough, high-quality work through a structured three-stage
 
 1.  **MANDATORY PROCESS TO CONTINUE EXECUTION:** Cautiously and deliberately continue working **carefully, patiently, concretely, and safely**, non-stop, autonomously, and non-interactively per your instructions and CLAUDE.md philosophy and definition of concrete.
     * **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
-2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop}**, **{stage1_confirmation}**, **{stage2_confirmation}**, and **{stage3_confirmation}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
+2.  **SYSTEM STOP SIGNAL RULE:** The exact strings **{emergency_stop}**, **{stage1_message}**, **{stage2_message}**, and **{stage3_message}** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
 3.  **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
     * **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
     * **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
@@ -159,13 +193,13 @@ This system ensures thorough, high-quality work through a structured three-stage
     * **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4.  **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **{emergency_stop}**
 5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {stage1_instruction}
-    * When Stage 1 is complete, output **{stage1_confirmation}** to advance to Stage 2
+    * When Stage 1 is complete, output **{stage1_message}** to advance to Stage 2
 6.  **STAGE 2 - CRITICAL EVALUATION:** {stage2_instruction}
-    * When Stage 2 is complete, output **{stage2_confirmation}** to advance to Stage 3
+    * When Stage 2 is complete, output **{stage2_message}** to advance to Stage 3
 7.  **STAGE 3 - FINAL VERIFICATION:** {stage3_instruction}
     * Stage 3 instructions: {stage3_instructions}
-    * When Stage 3 is complete, output **{stage3_confirmation}** for final completion
-8.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM:** Only when all three stages are complete and verified, output **{stage3_confirmation}** to stop the system
+    * When Stage 3 is complete, output **{stage3_message}** for final completion
+8.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM:** Only when all three stages are complete and verified, output **{stage3_message}** to stop the system
 9.  **FILE CREATION POLICY:** {policy_instructions}""",
 
     # ─── Recheck Template ─────────────────────────────────────────────────────

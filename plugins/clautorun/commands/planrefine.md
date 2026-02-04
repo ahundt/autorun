@@ -265,19 +265,25 @@ Then transition to execution:
    3. **Permissions Granted:** You have full permission to use all tools (Bash, Edit, Write, etc.) without requiring any further permission prompts.
    4. **Bias Mitigation:** Be cautious, humble, patient, and scrupulous; avoid overconfidence and check your assumptions and your work, explore your environment to ensure you understand the system tasks goals and what is already done, verifying because you are often overconfident, duplicate work, and falsely claim incomplete tasks are "complete" or "production ready".
 
-2. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
-   - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP`
-   - `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY`
+2. **THREE-STAGE COMPLETION SYSTEM** - Execute all three stages during planning:
+   - **Stage 1**: Inventory existing plan, verify code references
+     → Output **AUTORUN_INITIAL_TASKS_COMPLETED** when Stage 1 done
+   - **Stage 2**: Section-by-section critique, propose multiple solutions
+     → Output **CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED** when Stage 2 done
+   - **Stage 3**: Final verification, synthesize refinements
+     → Output **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** when Stage 3 done
+   - **ExitPlanMode**: ONLY allowed after Stage 3 complete
 
-3. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
+3. **SYSTEM STOP SIGNALS** - NEVER output unless condition met:
+   - `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` - Emergency stop
+
+4. **Safety Protocol**: Execute **ONLY IF** task involves high-risk or irreversible destructive actions (e.g., database operations, file deletion, state modification).
    1. **Assess Risk**: Evaluate if action is irreversible or could cause state corruption.
    2. **Mitigation Action**: If high-risk, execute these steps and explicitly state your actions:
       1. **INITIATE SAFETY PROTOCOL**: Announce 'INITIATE SAFETY PROTOCOL' to begin assessment.
       2. **Secure State**: Create environment backup or state checkpoint **before** proceeding.
       3. **Verify Integrity**: Verify checkpoint succeeded.
       4. **CONSIDER OPTIONS**: List options, evaluate failure modes, select best.
-   3. **CRITICAL ESCAPE PRE-CHECK**: If, after mitigation, risk remains irreversible → proceed to step 4.
+   3. **CRITICAL ESCAPE PRE-CHECK**: If, after mitigation, risk remains irreversible → proceed to step 5.
 
-4. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
-
-5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM**: When 100% complete and verified, remember you are often overconfident—double-check the resources from which you receive or retrieve new tasks and think if anything was missed, then output exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**
+5. **CRITICAL ESCAPE TO STOP SYSTEM**: Only if irreversible, catastrophic, or cannot be mitigated, immediately output exact string to halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**

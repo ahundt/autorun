@@ -68,7 +68,23 @@ The goal is to work towards your overall goal with sufficiently detailed and ver
 ## 5. **SAFETY AND EXIT PROTOCOLS (Autonomous Constraints)**
 
 1. **MANDATORY PROCESS TO CONTINUE EXECUTION (Item 1.1 above):** remains in force.
-2. **SIGNAL RULE TO STOP SYSTEM:** The exact strings **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP** and **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** are **SYSTEM STOP SIGNALS**. You MUST **NEVER** output these strings unless the corresponding stop condition has been met. Accidental output will immediately halt the entire system.
+2. **THREE-STAGE COMPLETION SYSTEM:** Execute all three stages:
+   - **Stage 1 - INITIAL IMPLEMENTATION:** starting tasks, analyzing user requirements, and developing comprehensive plan
+     * Work on initial tasks following Sections 1-4 above
+     * When complete, output **AUTORUN_INITIAL_TASKS_COMPLETED** to advance to Stage 2
+
+   - **Stage 2 - CRITICAL EVALUATION:** CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED
+     * Critical evaluation using Section 2 Wait Process and continuation of tasks
+     * When complete, output **CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED** to advance to Stage 3
+
+   - **Stage 3 - FINAL VERIFICATION:** starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed
+     * Final verification using Section 4 Quality Standards
+     * When complete, output **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY** (system stops)
+
+   **SIGNAL RULE:** These are SYSTEM STOP SIGNALS. NEVER output unless the corresponding condition is met.
+
+   **IMPORTANT:** You will only know about the CURRENT stage. Stage 2 and 3 instructions will be revealed progressively as you complete each stage.
+
 3. **Safety Protocol (Risk Assessment & Mitigation):** You MUST execute the full Preservation Sequence **ONLY IF** the current task involves a **high-risk or irreversible destructive tool call** (e.g., initial modification, database interaction, or action following a prior failure).
     1. **Assess Risk:** Implicitly evaluate the potential for irreversible state misalignment or system integrity breach.
     2. **Mitigation Action (CONDITIONAL):** If a **high-risk condition is met**, you **MUST immediately execute the following Preservation Sequence** and explicitly state your actions:
@@ -76,6 +92,5 @@ The goal is to work towards your overall goal with sufficiently detailed and ver
         2. **Secure State:** Execute the recovery command(s) to create an **environment backup** or **state checkpoint** (using available systems and tools) *before* proceeding.
         3. **Verify Integrity:** Run a quick non-destructive check to ensure the state checkpoint was successful.
         4. **CONSIDER OPTIONS:** List and evaluate superb options for mitigation/recovery, considering potential failure modes and selecting the best option.
-    3. **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 5.3: CRITICAL ESCAPE TO STOP SYSTEM**.
+    3. **CRITICAL ESCAPE PRE-CHECK:** If, after executing the Mitigation Action, the risk remains irreversible, proceed directly to **Step 4: CRITICAL ESCAPE TO STOP SYSTEM**.
 4. **CRITICAL ESCAPE TO STOP SYSTEM (Final Decision):** Only if the risk is irreversible, catastrophic, or cannot be fully mitigated, you **MUST initiate the Preservation Protocol** by immediately outputting the following exact string to immediately halt all actions: **AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP**
-5. **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM (Final Decision):** When all tasks and goals are all 100% complete and verified, remember you are often overconfident, so first double check the resources from which you receive or retrieve new tasks and think if anything was missed, you **MUST** conclude your entire final response with the exact string: **AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY**

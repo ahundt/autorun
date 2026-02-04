@@ -129,6 +129,32 @@ def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
     return None
 
 
+@app.on("PreToolUse")
+def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
+    """Only allow ExitPlanMode after planning Stage 3 is complete (when autorun active)."""
+    if ctx.tool_name != "ExitPlanMode":
+        return None
+
+    # REGRESSION PROTECTION: Only gate when autorun is active
+    # If autorun NOT active (normal /cr:plannew without /cr:go), allow ExitPlanMode as before
+    if not ctx.autorun_active:
+        return None  # No gating - existing behavior preserved
+
+    # When autorun IS active, check if AI has output Stage 3 confirmation
+    transcript = ctx.transcript.text
+    if CONFIG["stage3_message"] not in transcript:
+        return ctx.deny(
+            f"Cannot exit plan mode yet. Complete plan verification first.\n\n"
+            f"Current requirement: Output **{CONFIG['stage3_message']}** when Stage 3 is complete.\n\n"
+            f"Continue with plan verification using the three-stage system:\n"
+            f"1. Stage 1: {CONFIG['stage1_instruction']}\n"
+            f"2. Stage 2: {CONFIG['stage2_instruction']}\n"
+            f"3. Stage 3: {CONFIG['stage3_instruction']}"
+        )
+
+    return None  # Allow ExitPlanMode - Stage 3 confirmation found
+
+
 # ============================================================================
 # COMMAND BLOCKING PLUGIN (DRY Mega-Factory + Security)
 # ============================================================================
@@ -573,7 +599,7 @@ def build_injection_prompt(ctx: EventContext) -> str:
         return CONFIG["forced_compliance_template"].format(
             activation_prompt=ctx.autorun_task or "",
             verification_requirements="",
-            stage3_confirmation=CONFIG["stage3_confirmation"]
+            stage3_confirmation=CONFIG["stage3_message"]
         )
 
     _, desc = CONFIG["policies"].get(ctx.file_policy, ("", ""))
@@ -582,9 +608,9 @@ def build_injection_prompt(ctx: EventContext) -> str:
 
     return template.format(
         emergency_stop=CONFIG["emergency_stop"],
-        stage1_confirmation=CONFIG["stage1_confirmation"],
-        stage2_confirmation=CONFIG["stage2_confirmation"],
-        stage3_confirmation=CONFIG["stage3_confirmation"],
+        stage1_message=CONFIG["stage1_message"],
+        stage2_message=CONFIG["stage2_message"],
+        stage3_message=CONFIG["stage3_message"],
         stage1_instruction=CONFIG["stage1_instruction"],
         stage2_instruction=CONFIG["stage2_instruction"],
         stage3_instruction=CONFIG["stage3_instruction"],
@@ -639,7 +665,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     ctx.hook_call_count = 0
 
     injection = build_injection_prompt(ctx)
-    return ctx.block(injection)
+    return ctx.allow(injection)  # FIX: allow, not block - AI continues with injected instructions
 
 
 # === STOP HOOK HANDLERS ===
@@ -671,13 +697,13 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
 
     # === STAGE 1: Initial work ===
     if stage == EventContext.STAGE_1:
-        if CONFIG["stage1_confirmation"] in combined:
+        if CONFIG["stage1_message"] in combined:
             ctx.autorun_stage = EventContext.STAGE_2
-            msg = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
+            msg = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
             return inject(msg)
 
-        if CONFIG["stage3_confirmation"] in combined:
-            return inject(f"Complete Stage 1 first. Output **{CONFIG['stage1_confirmation']}** when done.")
+        if CONFIG["stage3_message"] in combined:
+            return inject(f"Complete Stage 1 first. Output **{CONFIG['stage1_message']}** when done.")
 
         if is_premature_stop(ctx):
             ctx.recheck_count = (ctx.recheck_count or 0) + 1
@@ -685,24 +711,24 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
 
     # === STAGE 2: Critical evaluation ===
     elif stage == EventContext.STAGE_2:
-        if CONFIG["stage2_confirmation"] in combined:
+        if CONFIG["stage2_message"] in combined:
             ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
             ctx.hook_call_count = 0
             remaining = CONFIG.get("stage3_countdown_calls", 3)
             return inject(f"Stage 2 complete. Continue for {remaining} more cycles before Stage 3.")
 
-        if CONFIG["stage3_confirmation"] in combined:
-            return inject(f"Complete Stage 2 first. Output **{CONFIG['stage2_confirmation']}** when done.")
+        if CONFIG["stage3_message"] in combined:
+            return inject(f"Complete Stage 2 first. Output **{CONFIG['stage2_message']}** when done.")
 
         if is_premature_stop(ctx):
-            return inject(f"Continue Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete.")
+            return inject(f"Continue Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete.")
 
     # === STAGE 2 COMPLETED: Countdown to stage 3 ===
     elif stage == EventContext.STAGE_2_COMPLETED:
         countdown_max = CONFIG.get("stage3_countdown_calls", 3)
         remaining = countdown_max - ctx.hook_call_count
 
-        if CONFIG["stage3_confirmation"] in combined:
+        if CONFIG["stage3_message"] in combined:
             if remaining > 0:
                 ctx.autorun_stage = EventContext.STAGE_2
                 return inject(f"Too early for Stage 3. Continue Stage 2: {CONFIG['stage2_instruction']}")
