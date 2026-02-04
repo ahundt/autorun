@@ -12,26 +12,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from clautorun import CONFIG, COMMAND_HANDLERS, log_info
 
 def test_three_stage_confirmations():
-    """Test three-stage confirmation markers are properly configured"""
-    # Stage 1
+    """Test three-stage confirmation markers are properly configured with DESCRIPTIVE strings"""
+    # Stage 1 - dual-key pattern
     assert "stage1_instruction" in CONFIG, "Missing stage1_instruction"
-    assert "stage1_confirmation" in CONFIG, "Missing stage1_confirmation"
-    assert CONFIG["stage1_confirmation"] == "AUTORUN_STAGE1_COMPLETE", \
-        f"Stage 1 confirmation mismatch: {CONFIG['stage1_confirmation']}"
+    assert "stage1_completion" in CONFIG, "Missing stage1_completion"
+    assert "stage1_message" in CONFIG, "Missing stage1_message"
+    assert CONFIG["stage1_message"] == "AUTORUN_INITIAL_TASKS_COMPLETED", \
+        f"Stage 1 message mismatch: {CONFIG['stage1_message']}"
 
-    # Stage 2
+    # Stage 2 - dual-key pattern
     assert "stage2_instruction" in CONFIG, "Missing stage2_instruction"
-    assert "stage2_confirmation" in CONFIG, "Missing stage2_confirmation"
-    assert CONFIG["stage2_confirmation"] == "AUTORUN_STAGE2_COMPLETE", \
-        f"Stage 2 confirmation mismatch: {CONFIG['stage2_confirmation']}"
+    assert "stage2_completion" in CONFIG, "Missing stage2_completion"
+    assert "stage2_message" in CONFIG, "Missing stage2_message"
+    assert CONFIG["stage2_message"] == "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED", \
+        f"Stage 2 message mismatch: {CONFIG['stage2_message']}"
 
-    # Stage 3
+    # Stage 3 - dual-key pattern
     assert "stage3_instruction" in CONFIG, "Missing stage3_instruction"
-    assert "stage3_confirmation" in CONFIG, "Missing stage3_confirmation"
-    assert CONFIG["stage3_confirmation"] == "AUTORUN_STAGE3_COMPLETE", \
-        f"Stage 3 confirmation mismatch: {CONFIG['stage3_confirmation']}"
+    assert "stage3_completion" in CONFIG, "Missing stage3_completion"
+    assert "stage3_message" in CONFIG, "Missing stage3_message"
+    assert CONFIG["stage3_message"] == "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY", \
+        f"Stage 3 message mismatch: {CONFIG['stage3_message']}"
 
-    print("✅ Three-stage confirmation markers properly configured")
+    print("✅ Three-stage confirmation markers properly configured with DESCRIPTIVE ALL-CAPS strings")
 
 def test_emergency_stop():
     """Test emergency stop key exists with correct DESCRIPTIVE value.
@@ -118,14 +121,14 @@ def test_injection_template():
     for phrase in required_phrases:
         assert phrase in template, f"Missing required phrase in injection template: '{phrase}'"
 
-    # Check for three-stage placeholders
+    # Check for three-stage placeholders (updated for dual-key pattern)
     assert "{emergency_stop}" in template, "Missing emergency_stop placeholder"
     assert "{stage1_instruction}" in template, "Missing stage1_instruction placeholder"
-    assert "{stage1_confirmation}" in template, "Missing stage1_confirmation placeholder"
+    assert "{stage1_message}" in template, "Missing stage1_message placeholder"
     assert "{stage2_instruction}" in template, "Missing stage2_instruction placeholder"
-    assert "{stage2_confirmation}" in template, "Missing stage2_confirmation placeholder"
+    assert "{stage2_message}" in template, "Missing stage2_message placeholder"
     assert "{stage3_instruction}" in template, "Missing stage3_instruction placeholder"
-    assert "{stage3_confirmation}" in template, "Missing stage3_confirmation placeholder"
+    assert "{stage3_message}" in template, "Missing stage3_message placeholder"
     assert "{policy_instructions}" in template, "Missing policy_instructions placeholder"
 
     print("✅ Injection template contains all three-stage system components")

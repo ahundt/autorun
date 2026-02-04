@@ -964,7 +964,7 @@ def _manage_monitor(state: dict, action: str):
             ai_monitor.stop_monitor(session_id)
         pid = ai_monitor.start_monitor(
             session_id=session_id, prompt="continue working",
-            stop_marker=CONFIG["stage3_confirmation"], max_cycles=20, prompt_on_start=True
+            stop_marker=CONFIG["stage3_message"], max_cycles=20, prompt_on_start=True
         )
         log_info(f"Started ai-monitor for session {session_id} with PID: {pid}")
         state["ai_monitor_pid"] = pid
@@ -1060,11 +1060,11 @@ def handle_activate(state, prompt=""):
     injection = CONFIG["injection_template"].format(
         emergency_stop=CONFIG["emergency_stop"],
         stage1_instruction=CONFIG["stage1_instruction"],
-        stage1_confirmation=CONFIG["stage1_confirmation"],
+        stage1_message=CONFIG["stage1_message"],
         stage2_instruction=CONFIG["stage2_instruction"],
-        stage2_confirmation=CONFIG["stage2_confirmation"],
+        stage2_message=CONFIG["stage2_message"],
         stage3_instruction=CONFIG["stage3_instruction"],
-        stage3_confirmation=CONFIG["stage3_confirmation"],
+        stage3_message=CONFIG["stage3_message"],
         stage3_instructions=get_stage3_instructions(state),
         policy_instructions=policy_instructions
     )
@@ -1602,11 +1602,11 @@ def inject_continue_prompt(state):
     continue_message = CONFIG["injection_template"].format(
         emergency_stop=CONFIG["emergency_stop"],
         stage1_instruction=CONFIG["stage1_instruction"],
-        stage1_confirmation=CONFIG["stage1_confirmation"],
+        stage1_message=CONFIG["stage1_message"],
         stage2_instruction=CONFIG["stage2_instruction"],
-        stage2_confirmation=CONFIG["stage2_confirmation"],
+        stage2_message=CONFIG["stage2_message"],
         stage3_instruction=CONFIG["stage3_instruction"],
-        stage3_confirmation=CONFIG["stage3_confirmation"],
+        stage3_message=CONFIG["stage3_message"],
         stage3_instructions=get_stage3_instructions(state),
         policy_instructions=policy_instructions
     )
@@ -1703,7 +1703,7 @@ def inject_verification_prompt(state):
 
     verification_prompt = template.format(
         activation_prompt=state.get("activation_prompt", "original task"),
-        stage3_confirmation=CONFIG["stage3_confirmation"],
+        stage3_message=CONFIG["stage3_message"],
         recheck_count=verification_attempts,
         max_recheck_count=CONFIG["max_recheck_count"],
         verification_requirements=verification_requirements
@@ -1874,9 +1874,9 @@ def is_premature_stop(ctx, state):
     # NOTE: Markdown command files use the descriptive "completion_marker" string,
     # while the three-stage hook system uses stage1/2/3_confirmation strings.
     # The hook system recognizes BOTH for compatibility.
-    if (CONFIG["stage1_confirmation"] in transcript or
-        CONFIG["stage2_confirmation"] in transcript or
-        CONFIG["stage3_confirmation"] in transcript or
+    if (CONFIG["stage1_message"] in transcript or
+        CONFIG["stage2_message"] in transcript or
+        CONFIG["stage3_message"] in transcript or
         CONFIG["completion_marker"] in transcript):
         return False  # Proper completion of some stage
 
@@ -1897,7 +1897,7 @@ def get_stage3_instructions(state):
         if remaining_calls > 0:
             return f"After {remaining_calls} more hook calls, Stage 3 instructions will be revealed. Continue with evaluation."
         else:
-            return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
+            return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_message']}** to complete."
     else:
         return "Complete Stage 1 before proceeding to Stage 2."
 
@@ -1959,7 +1959,7 @@ def stop_handler(ctx):
         # STAGE 1: Initial work - check for stage 1 confirmation
         if current_stage == "INITIAL":
             # Check for stage 1 confirmation (AI outputs this to complete stage 1)
-            if CONFIG["stage1_confirmation"] in transcript:
+            if CONFIG["stage1_message"] in transcript:
                 log_info(f"Stage 1 completion detected for session {session_id}")
                 state["autorun_stage"] = "STAGE2"
                 state["stage1_completed"] = True
@@ -1967,14 +1967,14 @@ def stop_handler(ctx):
 
                 # KEEP CLAUDE WORKING: Inject stage 2 instructions
                 # decision="block" prevents Stop, reason tells Claude what to do next
-                stage2_prompt = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
+                stage2_prompt = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
                 return build_hook_response(True, "", stage2_prompt, decision="block", reason=stage2_prompt)
 
             # Handle premature stage 3 attempt in stage 1 (also recognize descriptive completion_marker)
-            elif CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
+            elif CONFIG["stage3_message"] in transcript or CONFIG["completion_marker"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 1 for session {session_id}")
                 # KEEP CLAUDE WORKING: Block premature completion, redirect to stage 1
-                stage1_continuation = f"You must complete Stage 1 first. Output **{CONFIG['stage1_confirmation']}** when done."
+                stage1_continuation = f"You must complete Stage 1 first. Output **{CONFIG['stage1_message']}** when done."
                 return build_hook_response(True, "", stage1_continuation, decision="block", reason=stage1_continuation)
 
             # Handle premature stop (no completion markers)
@@ -1985,7 +1985,7 @@ def stop_handler(ctx):
         # STAGE 2: Critical evaluation
         elif current_stage == "STAGE2":
             # Check for stage 2 confirmation (AI outputs this to complete stage 2)
-            if CONFIG["stage2_confirmation"] in transcript:
+            if CONFIG["stage2_message"] in transcript:
                 log_info(f"Stage 2 completion detected for session {session_id}")
                 state["autorun_stage"] = "STAGE2_COMPLETED"
                 state["stage2_completion_timestamp"] = time.time()
@@ -1999,17 +1999,17 @@ def stop_handler(ctx):
 
             # Block premature stage 3 attempt in stage 2 (also recognize descriptive completion_marker)
             # Check BEFORE is_premature_stop to prevent dual-marker bypass
-            elif CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
+            elif CONFIG["stage3_message"] in transcript or CONFIG["completion_marker"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 2 for session {session_id}")
                 # KEEP CLAUDE WORKING: Block premature completion, redirect to stage 2
-                stage2_continuation = f"You must complete Stage 2 first. Output **{CONFIG['stage2_confirmation']}** when done."
+                stage2_continuation = f"You must complete Stage 2 first. Output **{CONFIG['stage2_message']}** when done."
                 return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation)
 
             # Handle premature stop in stage 2
             elif is_premature_stop(ctx, state):
                 log_info(f"Premature stop detected in Stage 2 for session {session_id}")
                 # KEEP CLAUDE WORKING: Resume stage 2 work
-                stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_confirmation']}** when complete."
+                stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
                 return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation)
 
         # STAGE 2 COMPLETED: Countdown to stage 3
@@ -2018,7 +2018,7 @@ def stop_handler(ctx):
             remaining_calls = CONFIG["stage3_countdown_calls"] - hook_call_count
 
             # Check if stage 3 confirmation was attempted (also recognize descriptive completion_marker)
-            if CONFIG["stage3_confirmation"] in transcript or CONFIG["completion_marker"] in transcript:
+            if CONFIG["stage3_message"] in transcript or CONFIG["completion_marker"] in transcript:
                 if remaining_calls > 0:
                     # Early attempt - reset to STAGE2 (not INITIAL) to preserve progress
                     log_info(f"Early stage 3 attempt detected, {remaining_calls} calls remaining")
@@ -2050,7 +2050,7 @@ def stop_handler(ctx):
                     return inject_continue_prompt(state)
             else:
                 # KEEP CLAUDE WORKING: Reveal stage 3 instructions and continue
-                stage3_instructions = f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
+                stage3_instructions = f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_message']}** to complete."
                 return build_hook_response(True, "", stage3_instructions, decision="block", reason=stage3_instructions)
 
         # Fallback: unknown stage or state
