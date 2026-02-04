@@ -217,7 +217,7 @@ CRITICAL VERIFICATION INSTRUCTIONS:
 7. Ensure no temporary or incomplete work remains
 {verification_requirements}
 
-Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {stage3_confirmation}
+Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all requirements, output: {stage3_message}
 
 If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
 
@@ -239,7 +239,7 @@ SYSTEM OVERRIDE INSTRUCTIONS:
 3. Add any missing documentation or comments
 4. Perform final validation and cleanup
 
-After completing the above forced requirements, output: {stage3_confirmation}
+After completing the above forced requirements, output: {stage3_message}
 
 NOTE: This is a forced compliance override to prevent infinite verification loops.
 Ensure core functionality is working before final completion.""",
@@ -261,14 +261,14 @@ After every step and substep you must say "Wait," and execute this sequential th
 
 **THREE-STAGE COMPLETION SYSTEM:**
 1. **STAGE 1 - INITIAL IMPLEMENTATION:** {stage1_instruction}
-   * When Stage 1 is complete, output **{stage1_confirmation}** to advance to Stage 2
+   * When Stage 1 is complete, output **{stage1_message}** to advance to Stage 2
 2. **STAGE 2 - CRITICAL EVALUATION:** {stage2_instruction}
-   * When Stage 2 is complete, output **{stage2_confirmation}** to advance to Stage 3
+   * When Stage 2 is complete, output **{stage2_message}** to advance to Stage 3
 3. **STAGE 3 - FINAL VERIFICATION:** {stage3_instruction}
    * Stage 3 instructions: {stage3_instructions}
-   * When Stage 3 is complete, output **{stage3_confirmation}** for final completion
+   * When Stage 3 is complete, output **{stage3_message}** for final completion
 
-**SYSTEM STOP SIGNALS:** The exact strings **{emergency_stop}**, **{stage1_confirmation}**, **{stage2_confirmation}**, and **{stage3_confirmation}** are SYSTEM STOP SIGNALS. NEVER output these unless the corresponding stop condition has been met.
+**SYSTEM STOP SIGNALS:** The exact strings **{emergency_stop}**, **{stage1_message}**, **{stage2_message}**, and **{stage3_message}** are SYSTEM STOP SIGNALS. NEVER output these unless the corresponding stop condition has been met.
 
 **CRITICAL ESCAPE TO STOP SYSTEM:** Only if risk is irreversible, output: **{emergency_stop}**
 
