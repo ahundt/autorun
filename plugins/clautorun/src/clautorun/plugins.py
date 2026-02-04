@@ -654,72 +654,18 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
 
 
 # ============================================================================
-# PLAN MANAGEMENT PLUGIN (DRY Factory Pattern)
+# PLAN MANAGEMENT PLUGIN
 # ============================================================================
-
-def _make_plan_handler(plan_type: str, emoji: str):
-    """Factory: 1 function generates 4 plan handlers."""
-    def handler(ctx: EventContext) -> str:
-        ctx.plan_active = True
-        ctx.plan_type = plan_type
-        ctx.plan_arguments = ctx.arguments  # v0.7: Preserve original user request
-
-        if plan_type == "new":
-            template = """📋 **Plan Creation Workflow**
-
-1. Write areas of expertise needed
-2. Act as expert in those areas
-3. For each area, write 10 best practices
-4. Explore context and avoid duplication
-5. Critique your work overall and line by line
-6. Propose multiple solutions to each issue
-7. Choose the best solution with compelling justification
-8. Use the Wait Process after each step
-
-Say "Wait," after every step and execute the Sequential Improvement Methodology."""
-
-        elif plan_type == "refine":
-            template = """🔍 **Plan Refinement**
-
-Critically evaluate and improve the existing plan:
-1. Review each step against best practices
-2. Identify gaps and weaknesses
-3. Propose improvements for each issue
-4. Use the Wait Process for quality enhancement"""
-
-        elif plan_type == "update":
-            template = """🔄 **Plan Update**
-
-Sync plan with current codebase state:
-1. Check what has changed since plan creation
-2. Update affected steps
-3. Add new steps if needed
-4. Remove obsolete steps"""
-
-        else:  # process
-            template = """⚙️ **Plan Process**
-
-Execute plan with Sequential Improvement Methodology:
-1. Follow each step carefully
-2. Say "Wait," after every step
-3. Execute Wait Process (critique, solutions, best solution)
-4. Correct errors immediately
-5. Continue until plan complete"""
-
-        return f"{emoji} {plan_type.title()} Plan\n\n{template}"
-
-    return handler
-
-
-_PLAN_COMMANDS = [
-    ("/cr:pn", "/cr:plannew", "new", "📋"),
-    ("/cr:pr", "/cr:planrefine", "refine", "🔍"),
-    ("/cr:pu", "/cr:planupdate", "update", "🔄"),
-    ("/cr:pp", "/cr:planprocess", "process", "⚙️"),
-]
-
-for short, long, ptype, emoji in _PLAN_COMMANDS:
-    app.command(short, long)(_make_plan_handler(ptype, emoji))
+# NOTE: Plan commands (/cr:pn, /cr:pr, /cr:pu, /cr:pp) are NOT registered here.
+# They are handled as Claude Code skills (in skills/ directory).
+#
+# Previously, registering them with app.command() caused "Operation stopped by hook"
+# because ctx.command_response() returns continue=False, which blocks Claude Code
+# from processing the skill.
+#
+# The plan command mappings in config.py remain for reference, but the actual
+# handling is done by Claude Code's skill system.
+# ============================================================================
 
 
 # ============================================================================
