@@ -38,6 +38,7 @@ from .core import app, EventContext, logger
 from .config import CONFIG, DEFAULT_INTEGRATIONS
 from .session_manager import session_state
 from .command_detection import command_matches_pattern
+from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
 
 
 # ============================================================================
@@ -383,17 +384,37 @@ for scope, cmd, op in _BLOCK_COMMANDS:
     app.command(cmd)(_make_block_op(scope, op))
 
 
+@app.command("/cr:reload")
+def handle_reload(ctx: EventContext) -> str:
+    """Force reload of integration files."""
+    invalidate_caches()
+    count = len(load_all_integrations())
+    return f"✅ Reloaded {count} integrations from Python defaults + user files"
+
+
 @app.on("PreToolUse")
 def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
-    """Check blocked patterns: session -> global -> defaults (priority order)."""
-    if ctx.tool_name != "Bash":
+    """
+    Unified command integrations (superset of hookify).
+
+    Priority: Session blocks > Global blocks > User files > Python defaults
+    Features: action (block/warn), redirect with {args}, when predicates, conditions
+    Supports: Bash commands (event: bash), Write/Edit operations (event: file)
+    """
+    # Determine event type and command/path
+    if ctx.tool_name == "Bash":
+        event_type = "bash"
+        cmd = ctx.tool_input.get("command", "")
+    elif ctx.tool_name in ("Write", "Edit"):
+        event_type = "file"
+        cmd = ctx.tool_input.get("file_path", "")
+    else:
         return None
 
-    cmd = ctx.tool_input.get("command", "")
     if not cmd:
         return None
 
-    # Check session blocks first
+    # Check session blocks first (highest priority)
     for b in ScopeAccessor(ctx, "session").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
             return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:ok {b['pattern']}")
@@ -403,10 +424,62 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
             return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:globalok {b['pattern']}")
 
-    # Default integrations (rm, git reset, etc.)
-    for k, v in DEFAULT_INTEGRATIONS.items():
-        if command_matches_pattern(cmd, k):
-            return ctx.deny(v["suggestion"])
+    # User files + Python defaults (sorted by specificity) - FIX Bug 2
+    try:
+        for intg in load_all_integrations():  # O(1) cached
+            # Check event type (bash/file/stop/all)
+            if intg.event not in ("all", event_type):
+                continue
+
+            # Check tool matcher (hookify compat)
+            if intg.tool_matcher != "*":
+                allowed_tools = intg.tool_matcher.split("|")
+                if ctx.tool_name not in allowed_tools:
+                    continue
+
+            # Check when predicate - FIX Bug 1
+            try:
+                if not check_when_predicate(intg.when, ctx):
+                    continue
+            except Exception as e:
+                logger.warning(f"When predicate '{intg.when}' failed: {e}")
+                continue  # Skip on error
+
+            # Check hookify conditions (AND-ed)
+            if intg.conditions:
+                try:
+                    if not check_conditions(intg.conditions, ctx):
+                        continue
+                except Exception as e:
+                    logger.warning(f"Conditions check failed: {e}")
+                    continue
+
+            # Check patterns (OR-ed)
+            for pattern in intg.patterns:
+                try:
+                    if command_matches_pattern(cmd, pattern):  # O(1) cached
+                        # Build message (add redirect if present)
+                        msg = intg.message
+                        if intg.redirect:
+                            # Substitute {args} with actual args
+                            args = cmd.split(maxsplit=1)[1] if " " in cmd else ""
+                            redirect_cmd = intg.redirect.replace("{args}", args)
+                            msg += f"\n\nUse instead: `{redirect_cmd}`"
+
+                        # Apply action (warn = allow + message, block = deny)
+                        if intg.action == "warn":
+                            # Log warning to AI but allow command
+                            logger.info(f"Integration warning for '{pattern}': {intg.name}")
+                            return ctx.respond("allow", msg)
+                        else:
+                            # Block command
+                            return ctx.deny(msg)
+                except Exception as e:
+                    logger.warning(f"Pattern match error for '{pattern}': {e}")
+                    continue
+    except Exception as e:
+        logger.error(f"Error in check_blocked_commands: {e}")
+        # Fail-open: allow command on error (never crash Claude Code)
 
     return None
 
