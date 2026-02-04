@@ -1,32 +1,32 @@
 {
-  "description": "clautorun v0.7 - unified daemon-based hook handler (UV-installed CLI)",
+  "description": "clautorun v0.7 - unified daemon-based hook handler",
   "hooks": {
     "UserPromptSubmit": [
       {
         "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
-        "hooks": [{ "type": "command", "command": "clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Write|Bash",
-        "hooks": [{ "type": "command", "command": "clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "ExitPlanMode",
-        "hooks": [{ "type": "command", "command": "clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ],
     "SubagentStop": [
       {
-        "hooks": [{ "type": "command", "command": "clautorun", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ]
   }
