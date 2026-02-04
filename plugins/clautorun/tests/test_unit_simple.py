@@ -19,23 +19,29 @@ class TestConfiguration:
     @pytest.mark.unit
     def test_three_stage_confirmations(self):
         """Test three-stage confirmation markers are present and correct"""
-        # Stage 1
+        # Stage 1 - dual-key pattern
         assert "stage1_instruction" in CONFIG
-        assert "stage1_confirmation" in CONFIG
-        assert isinstance(CONFIG["stage1_confirmation"], str)
-        assert len(CONFIG["stage1_confirmation"]) > 0
+        assert "stage1_completion" in CONFIG  # Text injected TO AI
+        assert "stage1_message" in CONFIG     # AI outputs BACK
+        assert isinstance(CONFIG["stage1_message"], str)
+        assert len(CONFIG["stage1_message"]) > 0
+        assert "AUTORUN_INITIAL_TASKS_COMPLETED" in CONFIG["stage1_message"]
 
-        # Stage 2
+        # Stage 2 - dual-key pattern
         assert "stage2_instruction" in CONFIG
-        assert "stage2_confirmation" in CONFIG
-        assert isinstance(CONFIG["stage2_confirmation"], str)
-        assert len(CONFIG["stage2_confirmation"]) > 0
+        assert "stage2_completion" in CONFIG  # Text injected TO AI
+        assert "stage2_message" in CONFIG     # AI outputs BACK
+        assert isinstance(CONFIG["stage2_message"], str)
+        assert len(CONFIG["stage2_message"]) > 0
+        assert "CRITICALLY_EVALUATING" in CONFIG["stage2_message"]
 
-        # Stage 3
+        # Stage 3 - dual-key pattern
         assert "stage3_instruction" in CONFIG
-        assert "stage3_confirmation" in CONFIG
-        assert isinstance(CONFIG["stage3_confirmation"], str)
-        assert len(CONFIG["stage3_confirmation"]) > 0
+        assert "stage3_completion" in CONFIG  # Text injected TO AI
+        assert "stage3_message" in CONFIG     # AI outputs BACK
+        assert isinstance(CONFIG["stage3_message"], str)
+        assert len(CONFIG["stage3_message"]) > 0
+        assert "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY" in CONFIG["stage3_message"]
 
     @pytest.mark.unit
     def test_emergency_stop(self):
@@ -75,15 +81,15 @@ class TestConfiguration:
         assert "injection_template" in CONFIG
         template = CONFIG["injection_template"]
 
-        # Check for required three-stage placeholders
+        # Check for required three-stage placeholders (updated for dual-key pattern)
         required_placeholders = [
             "{emergency_stop}",
             "{stage1_instruction}",
-            "{stage1_confirmation}",
+            "{stage1_message}",  # Updated: AI output confirmation
             "{stage2_instruction}",
-            "{stage2_confirmation}",
+            "{stage2_message}",  # Updated: AI output confirmation
             "{stage3_instruction}",
-            "{stage3_confirmation}",
+            "{stage3_message}",  # Updated: AI output confirmation
             "{policy_instructions}"
         ]
 
@@ -230,8 +236,8 @@ class TestBasicFunctionality:
 
     @pytest.mark.unit
     def test_configuration_constants_are_strings(self):
-        """Test configuration constants are strings"""
-        for key in ["stage1_confirmation", "stage2_confirmation", "stage3_confirmation", "emergency_stop"]:
+        """Test configuration constants are strings (updated for dual-key pattern)"""
+        for key in ["stage1_message", "stage2_message", "stage3_message", "emergency_stop"]:
             assert key in CONFIG
             assert isinstance(CONFIG[key], str)
             assert len(CONFIG[key]) > 0

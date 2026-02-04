@@ -29,7 +29,7 @@ def test_premature_stop_detection():
     assert is_premature_stop(ctx, state), "Should detect premature stop when no completion marker"
 
     # Test with stage 1 confirmation
-    ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"]]
+    ctx.session_transcript = ["Some work", CONFIG["stage1_message"]]
     assert not is_premature_stop(ctx, state), "Should not detect premature stop when stage 1 confirmation present"
 
     # Test with emergency stop
@@ -80,11 +80,11 @@ def test_continue_prompt_injection():
     # Should use the full injection template with critical stop signal instructions
     assert "UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION" in response["systemMessage"], "Should contain full injection template"
     assert "SYSTEM STOP SIGNAL RULE" in response["systemMessage"], "Should contain critical stop signal instructions"
-    assert CONFIG["stage1_confirmation"] in response["systemMessage"], "Should contain stage 1 confirmation"
+    assert CONFIG["stage1_message"] in response["systemMessage"], "Should contain stage 1 confirmation"
     assert CONFIG["emergency_stop"] in response["systemMessage"], "Should contain emergency stop"
     assert "THREE-STAGE COMPLETION SYSTEM" in response["systemMessage"], "Should contain three-stage system instructions"
-    assert CONFIG["stage2_confirmation"] in response["systemMessage"], "Should contain stage 2 confirmation"
-    assert CONFIG["stage3_confirmation"] in response["systemMessage"], "Should contain stage 3 confirmation"
+    assert CONFIG["stage2_message"] in response["systemMessage"], "Should contain stage 2 confirmation"
+    assert CONFIG["stage3_message"] in response["systemMessage"], "Should contain stage 3 confirmation"
     assert "FILE CREATION POLICY" in response["systemMessage"], "Should contain file creation policy instructions"
 
     print("✅ test_continue_prompt_injection passed")
@@ -176,7 +176,7 @@ def test_stop_handler_with_successful_completion():
     # Mock context with successful stage 3 completion
     ctx = Mock()
     ctx.session_id = "test_session"
-    ctx.session_transcript = ["Some work", CONFIG["stage3_confirmation"]]
+    ctx.session_transcript = ["Some work", CONFIG["stage3_message"]]
 
     # Mock session state in STAGE2_COMPLETED with countdown completed
     mock_state = {
@@ -307,9 +307,9 @@ def test_template_parameter_substitution():
     # Verify all parameters were substituted
     assert CONFIG["emergency_stop"] in system_message
     assert CONFIG["stage1_instruction"] in system_message
-    assert CONFIG["stage1_confirmation"] in system_message
-    assert CONFIG["stage2_confirmation"] in system_message
-    assert CONFIG["stage3_confirmation"] in system_message
+    assert CONFIG["stage1_message"] in system_message
+    assert CONFIG["stage2_message"] in system_message
+    assert CONFIG["stage3_message"] in system_message
     assert "Complete Stage 1 before proceeding to Stage 2" in system_message
     assert CONFIG["policies"]["ALLOW"][1] in system_message
 
@@ -342,7 +342,7 @@ def test_session_state_isolation():
     # Mock context for session 2 - with stage 1 confirmation
     ctx2 = Mock()
     ctx2.session_id = "session_2"
-    ctx2.session_transcript = ["Different work", CONFIG["stage1_confirmation"]]
+    ctx2.session_transcript = ["Different work", CONFIG["stage1_message"]]
 
     # Mock session states
     mock_state_1 = {
@@ -371,7 +371,7 @@ def test_session_state_isolation():
         # Reset mock for session 2
         mock_session.return_value.__enter__.return_value = mock_state_2
 
-        # Session 2 with stage1_confirmation should advance to STAGE2
+        # Session 2 with stage1_message should advance to STAGE2
         response2 = stop_handler(ctx2)
         assert response2["continue"]
         assert "STAGE 2:" in response2["systemMessage"]
@@ -422,7 +422,7 @@ def test_edge_case_transcript_scenarios():
     assert is_premature_stop(ctx, state), "Empty transcript should be considered premature stop"
 
     # Test with stage confirmation in middle (current behavior: any confirmation is valid)
-    ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"], "More work after marker"]
+    ctx.session_transcript = ["Some work", CONFIG["stage1_message"], "More work after marker"]
     assert not is_premature_stop(ctx, state), "Any stage confirmation in transcript should be considered valid completion"
 
     # Test with emergency stop marker in middle (current behavior: any emergency stop is valid)
@@ -430,11 +430,11 @@ def test_edge_case_transcript_scenarios():
     assert not is_premature_stop(ctx, state), "Any emergency stop in transcript should be considered valid stop"
 
     # Test with both markers (emergency should take precedence)
-    ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"], CONFIG["emergency_stop"]]
+    ctx.session_transcript = ["Some work", CONFIG["stage1_message"], CONFIG["emergency_stop"]]
     assert not is_premature_stop(ctx, state), "Emergency stop in transcript should be considered valid stop"
 
     # Test with mixed case markers (case sensitivity should be enforced)
-    ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"].lower()]
+    ctx.session_transcript = ["Some work", CONFIG["stage1_message"].lower()]
     assert is_premature_stop(ctx, state), "Lowercase confirmation marker should not match"
 
     # Test with partial marker that doesn't contain full marker
@@ -469,7 +469,7 @@ def test_file_policy_integration():
 
         # Verify critical components are still present
         assert CONFIG["emergency_stop"] in system_message
-        assert CONFIG["stage1_confirmation"] in system_message
+        assert CONFIG["stage1_message"] in system_message
 
     print("✅ test_file_policy_integration passed")
 
@@ -601,7 +601,7 @@ def test_three_stage_completion_flow():
         mock_session.return_value.__exit__.return_value = None
 
         # Stage 1: Complete initial tasks
-        ctx.session_transcript = ["Work done", CONFIG["stage1_confirmation"]]
+        ctx.session_transcript = ["Work done", CONFIG["stage1_message"]]
         response = stop_handler(ctx)
 
         assert response["continue"], "Should continue to stage 2"
@@ -671,7 +671,7 @@ def test_premature_stage_3_attempt_handling():
 
     ctx = Mock()
     ctx.session_id = "test_session"
-    ctx.session_transcript = ["Some work", CONFIG["stage3_confirmation"]]
+    ctx.session_transcript = ["Some work", CONFIG["stage3_message"]]
 
     mock_state = {
         "session_status": "active",
@@ -687,7 +687,7 @@ def test_premature_stage_3_attempt_handling():
 
         assert response["continue"], "Should continue execution"
         assert "You must complete Stage 1 first" in response["systemMessage"], "Should require stage 1 completion"
-        assert CONFIG["stage1_confirmation"] in response["systemMessage"], "Should provide stage 1 completion instructions"
+        assert CONFIG["stage1_message"] in response["systemMessage"], "Should provide stage 1 completion instructions"
 
     print("✅ test_premature_stage_3_attempt_handling passed")
 
@@ -711,7 +711,7 @@ def test_three_stage_ai_monitor_coordination():
         mock_ai_monitor.start_monitor.assert_called_once_with(
             session_id="test_session_three_stage",
             prompt="continue working",
-            stop_marker=CONFIG["stage3_confirmation"],
+            stop_marker=CONFIG["stage3_message"],
             max_cycles=20,
             prompt_on_start=True
         )

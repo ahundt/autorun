@@ -64,7 +64,7 @@ def test_stage2_blocks_premature_stage3_marker():
             session_id=session_id,
             transcript=[
                 "Working on critical evaluation",
-                CONFIG["stage3_confirmation"],  # Premature!
+                CONFIG["stage3_message"],  # Premature!
                 "Done with evaluation"
             ]
         )
@@ -103,7 +103,7 @@ def test_stage1_blocks_premature_stage3_marker():
             session_id=session_id,
             transcript=[
                 "Starting work",
-                CONFIG["stage3_confirmation"]  # Premature!
+                CONFIG["stage3_message"]  # Premature!
             ]
         )
 
@@ -213,7 +213,7 @@ def test_stage2_normal_completion_still_works():
             session_id=session_id,
             transcript=[
                 "Working on critical evaluation",
-                CONFIG["stage2_confirmation"],  # Proper stage 2 completion!
+                CONFIG["stage2_message"],  # Proper stage 2 completion!
                 "Done with evaluation"
             ]
         )

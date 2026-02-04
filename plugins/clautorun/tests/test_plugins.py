@@ -338,7 +338,7 @@ class TestAutorunPlugin:
         """is_premature_stop should return False when stage marker found."""
         ctx = EventContext(
             session_id="test", event="Stop",
-            session_transcript=[{"content": CONFIG["stage1_confirmation"]}]
+            session_transcript=[{"content": CONFIG["stage1_message"]}]
         )
         ctx.autorun_active = True
 
@@ -375,7 +375,7 @@ class TestAutorunPlugin:
         store = ThreadSafeDB()
         ctx = EventContext(
             session_id="test", event="Stop",
-            session_transcript=[{"content": CONFIG["stage1_confirmation"]}],
+            session_transcript=[{"content": CONFIG["stage1_message"]}],
             store=store
         )
         ctx.autorun_active = True
