@@ -221,17 +221,47 @@ class TestHooksJson:
 
 
 # =============================================================================
-# Test: daemon.py Bootstrap
+# Test: daemon.py Bootstrap Structure
 # =============================================================================
 
 
-class TestDaemonBootstrap:
-    """Test daemon bootstrap for optional dependencies."""
+class TestDaemonBootstrapStructure:
+    """Test daemon bootstrap has correct structure (testable module-level functions)."""
 
     def test_has_bootstrap_function(self):
         """daemon.py has _bootstrap_optional_deps function."""
         content = DAEMON_PY.read_text()
         assert "_bootstrap_optional_deps" in content
+
+    def test_has_get_pip_command_function(self):
+        """daemon.py has _get_pip_command() helper (DRY)."""
+        content = DAEMON_PY.read_text()
+        assert "def _get_pip_command(" in content
+
+    def test_has_ensure_uv_function(self):
+        """daemon.py has _ensure_uv() at module level (testable)."""
+        content = DAEMON_PY.read_text()
+        # Should be module-level, not nested
+        assert "\ndef _ensure_uv(" in content
+
+    def test_has_install_bashlex_function(self):
+        """daemon.py has _install_bashlex() at module level (testable)."""
+        content = DAEMON_PY.read_text()
+        assert "\ndef _install_bashlex(" in content
+
+    def test_has_install_clautorun_function(self):
+        """daemon.py has _install_clautorun() to enable fast CLI path."""
+        content = DAEMON_PY.read_text()
+        assert "def _install_clautorun(" in content
+
+    def test_has_get_plugin_root_function(self):
+        """daemon.py has _get_plugin_root() to find local install path."""
+        content = DAEMON_PY.read_text()
+        assert "def _get_plugin_root(" in content
+
+
+class TestDaemonBootstrapBehavior:
+    """Test daemon bootstrap behavior."""
 
     def test_bootstrap_runs_in_background(self):
         """Bootstrap runs in background thread."""
@@ -242,7 +272,6 @@ class TestDaemonBootstrap:
     def test_bootstrap_installs_uv_if_missing(self):
         """Bootstrap installs UV via pip if UV not available."""
         content = DAEMON_PY.read_text()
-        # Should check for UV and install if missing
         assert "pip" in content and "uv" in content
 
     def test_bootstrap_prefers_uv(self):
@@ -259,6 +288,39 @@ class TestDaemonBootstrap:
         """Bootstrap is called in daemon main()."""
         content = DAEMON_PY.read_text()
         assert "_bootstrap_optional_deps()" in content
+
+
+class TestDaemonBootstrapClautorun:
+    """Test clautorun CLI installation in bootstrap."""
+
+    def test_checks_if_clautorun_already_installed(self):
+        """_install_clautorun() skips if CLI already available."""
+        content = DAEMON_PY.read_text()
+        assert "shutil.which('clautorun')" in content
+
+    def test_installs_from_local_path(self):
+        """_install_clautorun() uses local plugin path, not GitHub."""
+        content = DAEMON_PY.read_text()
+        # Should use _get_plugin_root() or similar for local path
+        assert "_get_plugin_root" in content
+        # Should NOT install from GitHub
+        assert "github.com/ahundt/clautorun" not in content
+
+    def test_uses_uv_tool_install(self):
+        """_install_clautorun() uses 'uv tool install' for global CLI."""
+        content = DAEMON_PY.read_text()
+        assert "uv" in content and "tool" in content and "install" in content
+
+    def test_install_order_uv_then_clautorun_then_bashlex(self):
+        """Bootstrap order: UV -> clautorun -> bashlex."""
+        content = DAEMON_PY.read_text()
+        # Find the _bootstrap_optional_deps function or install orchestration
+        uv_idx = content.find("_ensure_uv")
+        clautorun_idx = content.find("_install_clautorun")
+        bashlex_idx = content.find("_install_bashlex")
+        # UV should be installed before clautorun, clautorun before bashlex
+        assert uv_idx < clautorun_idx < bashlex_idx, \
+            f"Wrong order: uv={uv_idx}, clautorun={clautorun_idx}, bashlex={bashlex_idx}"
 
 
 # =============================================================================
