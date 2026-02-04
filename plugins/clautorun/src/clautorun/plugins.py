@@ -572,9 +572,9 @@ def is_premature_stop(ctx: EventContext) -> bool:
     combined = result + transcript
 
     return not any(marker in combined for marker in [
-        CONFIG["stage1_confirmation"],
-        CONFIG["stage2_confirmation"],
-        CONFIG["stage3_confirmation"],
+        CONFIG["stage1_message"],
+        CONFIG["stage2_message"],
+        CONFIG["stage3_message"],
         CONFIG.get("completion_marker", ""),
         CONFIG["emergency_stop"]
     ])
@@ -589,7 +589,7 @@ def get_stage3_instructions(ctx: EventContext) -> str:
     if remaining > 0:
         return f"After {remaining} more hook calls, Stage 3 instructions will be revealed. Continue with evaluation."
 
-    return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_confirmation']}** to complete."
+    return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_message']}** to complete."
 
 
 def _build_progressive_stage_section(ctx: EventContext) -> str:
@@ -648,7 +648,7 @@ def build_injection_prompt(ctx: EventContext, use_progressive_disclosure: bool =
         return CONFIG["forced_compliance_template"].format(
             activation_prompt=ctx.autorun_task or "",
             verification_requirements="",
-            stage3_confirmation=CONFIG["stage3_message"]
+            stage3_message=CONFIG["stage3_message"]
         )
 
     _, desc = CONFIG["policies"].get(ctx.file_policy, ("", ""))
@@ -757,9 +757,9 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
     Sophisticated three-stage autorun with alternating recovery behavior.
 
     Stage Flow:
-    1. STAGE_1 -> stage1_confirmation -> STAGE_2
-    2. STAGE_2 -> stage2_confirmation -> STAGE_2_COMPLETED
-    3. STAGE_2_COMPLETED -> countdown -> stage3_confirmation -> Complete
+    1. STAGE_1 -> stage1_message -> STAGE_2
+    2. STAGE_2 -> stage2_message -> STAGE_2_COMPLETED
+    3. STAGE_2_COMPLETED -> countdown -> stage3_message -> Complete
     """
     if not ctx.autorun_active:
         return None
@@ -913,7 +913,7 @@ def _manage_monitor(ctx: EventContext, action: str) -> Optional[int]:
         pid = ai_monitor.start_monitor(
             session_id=session_id,
             prompt="continue working",
-            stop_marker=CONFIG["stage3_confirmation"],
+            stop_marker=CONFIG["stage3_message"],
             max_cycles=20,
             prompt_on_start=True
         )

@@ -129,27 +129,63 @@ try:
     from .main import COMMAND_HANDLERS, log_info
 
 except ImportError:
-    # Complete fallback CONFIG for tests - matches main.py three-stage system
+    # Complete fallback CONFIG for tests - matches config.py three-stage system
     CONFIG = {
         # ─── Stage 1: Initial Work ────────────────────────────────────────────────
-        "stage1_instruction": "starting tasks, analyzing user requirements, and developing comprehensive plan",
-        "stage1_confirmation": "AUTORUN_STAGE1_COMPLETE",
+        # What we inject to AI (descriptive text explaining what Stage 1 is)
+        "stage1_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan",
+        # What AI outputs when Stage 1 complete (ALL-CAPS confirmation)
+        "stage1_message": "AUTORUN_INITIAL_TASKS_COMPLETED",
+
+        # What we inject to guide AI through Stage 1 (detailed methodology)
+        "stage1_instruction": """
+1. Read through ENTIRE task description carefully
+2. Identify all requirements, constraints, and success criteria
+3. List any ambiguities requiring clarification
+4. Create task checkbox structure with concrete outcomes
+5. Verify bias mitigation: not skipping steps, checking own work
+6. Execute the task with full tool permissions (Bash, Edit, Write, etc.)
+7. After EVERY step, say "Wait," and execute the Wait Process""",
 
         # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
-        "stage2_instruction": "Critically evaluate previous work and continue tasks as needed",
-        "stage2_confirmation": "AUTORUN_STAGE2_COMPLETE",
+        # What we inject to AI (descriptive text - same as output for Stage 2)
+        "stage2_completion": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
+        # What AI outputs when Stage 2 complete (same as completion for Stage 2)
+        "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
+
+        # What we inject to guide AI through Stage 2 (detailed methodology)
+        "stage2_instruction": """
+1. Critique work overall and line-by-line against best practices
+2. Pre-mortem analysis: identify potential failure modes and weaknesses
+3. Propose ≥3 concrete solutions to each identified issue
+4. Synthesize insights from all critiques and solutions
+5. Choose optimal solution with compelling justification
+6. If errors found, execute corrective steps immediately""",
 
         # ─── Stage 3: Final Verification ──────────────────────────────────────────
-        "stage3_instruction": "Verify all tasks completed, critically evaluated, corrected and verified",
-        "stage3_confirmation": "AUTORUN_STAGE3_COMPLETE",
+        # What we inject to AI (compound descriptive text explaining Stage 3)
+        "stage3_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
+        # What AI outputs when Stage 3 complete (ALL-CAPS confirmation)
+        "stage3_message": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
+
+        # What we inject to guide AI through Stage 3 (detailed methodology)
+        "stage3_instruction": """
+1. Verify ALL requirements from original request are met
+2. Confirm no tasks silently dropped or skipped
+3. Double-check (AI is often overconfident)
+4. Verify all file references match actual codebase
+5. Confirm code examples are syntactically correct
+6. If ANY requirement missing, return to relevant stage""",
 
         # ─── Descriptive Completion Markers ──────────────────────────────────────
         # NOTE: These are DESCRIPTIVE strings the AI outputs to communicate what it accomplished.
+        # The hook system recognizes BOTH the short stage markers AND these descriptive versions.
         # Markdown command files use these descriptive strings for clarity.
         "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
 
         # ─── Emergency Stop ───────────────────────────────────────────────────────
         # NOTE: This is a DESCRIPTIVE string that the AI outputs to communicate its action.
+        # It should describe WHAT the AI is doing, not just be a state variable name.
         "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
 
         # ─── Timing ───────────────────────────────────────────────────────────────
