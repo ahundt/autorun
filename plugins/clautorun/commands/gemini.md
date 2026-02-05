@@ -94,31 +94,65 @@ gemini "your prompt" 2>&1 | tee notes/$(date +"%Y_%m_%d_%H%M")_review.txt | tail
 # Response is after "ClearcutLogger:" line in output
 ```
 
+### Timestamp Pattern for File References
+
+When saving output to a timestamped file that you'll reference later in a **separate command**, store the timestamp in a variable first:
+
+```bash
+# CORRECT: Timestamp stored, can reference file in later commands
+TS=$(date +"%Y_%m_%d_%H%M")
+gemini -m gemini-3-pro-preview -o json "prompt" 2>/dev/null | tee "notes/${TS}_review.json" | jq -r '.response'
+# Read the same file later
+jq -r '.response' "notes/${TS}_review.json"
+
+# ALSO CORRECT: Single command with fallback (both $(date) expand at parse time)
+gemini -m gemini-3-pro-preview -o json "prompt" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_review.json | jq -r '.response' || cat notes/$(date +"%Y_%m_%d_%H%M")_review.json
+
+# WRONG: Separate commands = different timestamps
+gemini -m gemini-3-pro-preview -o json "prompt" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_review.json | jq -r '.response'
+# This creates a NEW file (different timestamp) - won't find the original
+jq -r '.response' notes/$(date +"%Y_%m_%d_%H%M")_review.json
+```
+
 ## Prompt Structure
 
-Five elements for effective prompts:
+Six elements for effective prompts:
 
 1. **Context**: What you're reviewing (file, algorithm, UI)
 2. **Instructions**: What to check (correctness, edge cases, contrast)
 3. **Locations**: Exact file paths, line numbers
 4. **Cross-references**: Multiple code versions if applicable
 5. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
+6. **Code snippets**: Always request **BEFORE/AFTER** code for each issue with citation as `file_path:function_name:line_start-line_end` (include function if applicable)
 
 **Template** (copy and fill in `<placeholders>`):
 ```bash
-gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue cite: file_path:function_name:line_start-line_end. Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
+gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as file_path:function_name:line_start-line_end (include function if applicable). Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
 ```
 
 **Concrete example**:
 ```bash
-gemini -m gemini-3-pro-preview -o json "Review src/auth/login.py. **Check for**: SQL injection, password handling, session management. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue cite: file_path:function_name:line_start-line_end. Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_login_security_review.json | jq -r '.response'
+gemini -m gemini-3-pro-preview -o json "Review src/auth/login.py. **Check for**: SQL injection, password handling, session management. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code showing the problem, (2) AFTER code with the fix, (3) citation as src/auth/login.py:function_name:line_start-line_end." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_login_security_review.json | jq -r '.response'
 ```
 
 **Example output format**:
 ```
-CRITICAL: SQL injection in src/auth/login.py:authenticate_user:45-52
-  1. User input passed directly to query without sanitization
-  2. Fix: Use parameterized queries
+CRITICAL: SQL injection
+
+Location: src/auth/login.py:authenticate_user:45-52
+
+BEFORE:
+```python
+query = f"SELECT * FROM users WHERE username='{username}'"
+```
+
+AFTER:
+```python
+query = "SELECT * FROM users WHERE username=?"
+cursor.execute(query, (username,))
+```
+
+Explanation: User input passed directly to query string. Fix uses parameterized query.
 ```
 
 ## Gotchas
@@ -165,7 +199,12 @@ Review src/api/handlers.py for security issues.
 **Output**: CRITICAL/IMPORTANT. For each issue cite: file_path:function_name:line_start-line_end with fix suggestions.
 EOF
 
-gemini -m gemini-3-pro-preview -o json "$(cat /tmp/gemini_prompt.txt)" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_api_security_review.json | jq -r '.response'
+# Store timestamp to reference the saved file later
+TS=$(date +"%Y_%m_%d_%H%M")
+gemini -m gemini-3-pro-preview -o json "$(cat /tmp/gemini_prompt.txt)" 2>/dev/null | tee "notes/${TS}_api_security_review.json" | jq -r '.response'
+
+# Read the saved response later
+jq -r '.response' "notes/${TS}_api_security_review.json"
 
 # Cleanup: trash /tmp/gemini_prompt.txt (or delete manually)
 ```
