@@ -34,6 +34,7 @@ from unittest.mock import patch, MagicMock
 from clautorun.main import (
     command_matches_pattern,
     should_block_command,
+    get_command_warning,
     get_session_blocks,
     add_session_block,
     remove_session_block,
@@ -633,6 +634,82 @@ class TestPredicateFunctions:
             assert block_info is not None
             assert "commands_description" in block_info
             assert block_info["commands_description"] == "Move to trash (recoverable)"
+
+
+class TestWarnAction:
+    """Test action: 'warn' behavior (allow + message, not block)."""
+
+    def test_warn_action_does_not_block(self):
+        """Test that action='warn' allows command (git has action: 'warn')."""
+        # git has action: "warn" in DEFAULT_INTEGRATIONS
+        unique_session = "test-warn-" + str(id(self))
+        clear_session_blocks(unique_session)
+
+        with patch('clautorun.main.get_global_blocks', return_value=[]):
+            result = should_block_command(unique_session, "git status")
+            assert result is None, "git status should not be blocked (action: warn)"
+
+    def test_warn_action_returns_warning_message(self):
+        """Test that get_command_warning returns message for warn integrations."""
+        unique_session = "test-warn-msg-" + str(id(self))
+        warning = get_command_warning(unique_session, "git status")
+        assert warning is not None, "git should return a warning message"
+        assert "CLAUDE.md" in warning, "git warning should mention CLAUDE.md"
+
+    def test_block_action_is_blocked(self):
+        """Test that action='block' (default) still blocks commands."""
+        unique_session = "test-block-" + str(id(self))
+        clear_session_blocks(unique_session)
+
+        with patch('clautorun.main.get_global_blocks', return_value=[]):
+            result = should_block_command(unique_session, "rm file.txt")
+            assert result is not None, "rm should be blocked (action: block)"
+            assert result["pattern"] == "rm"
+
+    def test_block_action_has_no_warning(self):
+        """Test that blocked commands don't return warnings."""
+        unique_session = "test-block-nowarn-" + str(id(self))
+        warning = get_command_warning(unique_session, "rm file.txt")
+        assert warning is None, "rm should not have warning (it's blocked)"
+
+    def test_warn_action_git_variants(self):
+        """Test various git commands are warned not blocked."""
+        unique_session = "test-git-variants-" + str(id(self))
+        clear_session_blocks(unique_session)
+
+        git_commands = [
+            "git status",
+            "git log",
+            "git diff",
+            "git add file.txt",
+            "git commit -m 'test'",
+            "git push",
+            "git pull",
+        ]
+
+        with patch('clautorun.main.get_global_blocks', return_value=[]):
+            for cmd in git_commands:
+                result = should_block_command(unique_session, cmd)
+                # Only general git command (action: warn) should match these
+                # They should NOT be blocked
+                assert result is None, f"{cmd} should not be blocked"
+
+    def test_dangerous_git_commands_still_blocked(self):
+        """Test that dangerous git commands with action='block' are still blocked."""
+        unique_session = "test-danger-git-" + str(id(self))
+        clear_session_blocks(unique_session)
+
+        # These have explicit action: block integrations
+        dangerous_commands = [
+            ("git reset --hard HEAD", "git reset --hard"),
+            ("git checkout .", "git checkout ."),
+            ("git clean -f", "git clean -f"),
+        ]
+
+        with patch('clautorun.main.get_global_blocks', return_value=[]):
+            for cmd, expected_pattern in dangerous_commands:
+                result = should_block_command(unique_session, cmd)
+                assert result is not None, f"{cmd} should be blocked"
 
 
 if __name__ == "__main__":
