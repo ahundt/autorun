@@ -46,14 +46,13 @@ class TestEmergencyStop:
     @pytest.mark.unit
     def test_emergency_stop_in_transcript(self):
         """Test emergency stop detected in transcript (not just tool_result)"""
-        ctx = EventContext(session_id="test", event="Stop")
+        # Create session transcript with emergency stop message
+        transcript_data = [
+            {"role": "assistant", "content": f"Some work done. {CONFIG['emergency_stop']}"}
+        ]
+        ctx = EventContext(session_id="test", event="Stop", tool_result="", session_transcript=transcript_data)
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_2
-
-        # Create mock transcript with emergency stop
-        class MockTranscript:
-            text = f"Some work done. {CONFIG['emergency_stop']}"
-        ctx._transcript = MockTranscript()
 
         result = autorun_injection(ctx)
 
@@ -65,11 +64,9 @@ class TestEmergencyStop:
     def test_emergency_stop_works_in_any_stage(self):
         """Test emergency stop works regardless of current stage"""
         for stage in [EventContext.STAGE_1, EventContext.STAGE_2, EventContext.STAGE_2_COMPLETED]:
-            ctx = EventContext(session_id="test", event="Stop")
+            ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["emergency_stop"])
             ctx.autorun_active = True
             ctx.autorun_stage = stage
-            # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["emergency_stop"]
 
             result = autorun_injection(ctx)
 
@@ -83,11 +80,9 @@ class TestStageTransitionValidation:
     @pytest.mark.unit
     def test_premature_stage2_message_in_stage1_warns(self):
         """Test Stage 1 warns if AI outputs stage2_message prematurely"""
-        ctx = EventContext(session_id="test", event="Stop")
+        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage2_message"])  # Wrong marker for Stage 1
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_1
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage2_message"]  # Wrong marker for Stage 1
 
         result = autorun_injection(ctx)
 
@@ -100,11 +95,9 @@ class TestStageTransitionValidation:
     @pytest.mark.unit
     def test_stage1_message_in_stage2_warns_about_regression(self):
         """Test Stage 2 warns if AI outputs stage1_message (regression)"""
-        ctx = EventContext(session_id="test", event="Stop")
+        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage1_message"])  # Regression marker
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_2
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage1_message"]  # Regression marker
 
         result = autorun_injection(ctx)
 
@@ -118,11 +111,9 @@ class TestStageTransitionValidation:
     def test_correct_stage_marker_advances(self):
         """Test correct stage markers still work properly"""
         # Stage 1 → Stage 2
-        ctx = EventContext(session_id="test", event="Stop")
+        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage1_message"])
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_1
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage1_message"]
 
         result = autorun_injection(ctx)
 
@@ -130,9 +121,9 @@ class TestStageTransitionValidation:
         assert ctx.autorun_stage == EventContext.STAGE_2, "Should advance to Stage 2"
 
         # Stage 2 → Stage 2 COMPLETED
+        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage2_message"])
+        ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_2
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage2_message"]
         ctx.hook_call_count = 0  # Reset for test
 
         result = autorun_injection(ctx)
@@ -146,21 +137,20 @@ class TestCountdownOffByOne:
     @pytest.mark.unit
     def test_countdown_shows_correct_remaining_count(self):
         """Test countdown starts at correct value after Stage 2 completion"""
-        ctx = EventContext(session_id="test", event="Stop")
+        # Complete Stage 2
+        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage2_message"])
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_2
-
-        # Complete Stage 2
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["stage2_message"]
         autorun_injection(ctx)
 
         # Check that hook_call_count was reset to -1
         assert ctx.hook_call_count == -1, "Should reset to -1 (not 0)"
 
-        # Next hook call
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=""  # No completion marker
+        # Next hook call - no completion marker
+        ctx = EventContext(session_id="test", event="Stop", tool_result="")
+        ctx.autorun_active = True
+        ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
+        ctx.hook_call_count = -1
         result = autorun_injection(ctx)
 
         # After increment: hook_call_count becomes 0
@@ -175,7 +165,7 @@ class TestCountdownOffByOne:
     @pytest.mark.unit
     def test_countdown_progression(self):
         """Test countdown decrements correctly through multiple hooks"""
-        ctx = EventContext(session_id="test", event="Stop")
+        ctx = EventContext(session_id="test", event="Stop", tool_result="")
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
         ctx.hook_call_count = -1  # Simulate just entering Stage 2 COMPLETED
@@ -183,8 +173,6 @@ class TestCountdownOffByOne:
         countdown_max = CONFIG.get("stage3_countdown_calls", 3)
 
         for expected_remaining in range(countdown_max, 0, -1):
-            # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=""
             result = autorun_injection(ctx)
 
             # Countdown message appears every 2 hooks (hook_call_count % 2 == 0)
@@ -199,35 +187,37 @@ class TestExitPlanModeGate:
     @pytest.mark.unit
     def test_exit_plan_mode_gate_checks_current_stage(self):
         """Test gate validates current stage, not just transcript"""
-        ctx = EventContext(session_id="test", event="PreToolUse", tool_name="ExitPlanMode")
+        # Create session transcript with stage3_message (from previous session)
+        transcript_data = [
+            {"role": "assistant", "content": f"Previous work. {CONFIG['stage3_message']}"}
+        ]
+        ctx = EventContext(session_id="test", event="PreToolUse", tool_name="ExitPlanMode",
+                           session_transcript=transcript_data)
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_1  # Still in Stage 1
-
-        # Create mock transcript with stage3_message (from previous session)
-        class MockTranscript:
-            text = f"Previous work. {CONFIG['stage3_message']}"
-        ctx._transcript = MockTranscript()
 
         result = gate_exit_plan_mode(ctx)
 
         # Should DENY because current stage is not STAGE_2_COMPLETED
         assert result is not None, "Should block ExitPlanMode"
-        assert "decision" in result and result["decision"] == "deny", \
+        # Check for deny decision (result is a dict with continue/hookSpecificOutput structure)
+        assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", \
             "Should deny ExitPlanMode"
-        assert "Stage 3 not reached" in result.get("reason", ""), \
+        reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "Stage 3 not reached" in reason, \
             "Should explain stage not reached"
 
     @pytest.mark.unit
     def test_exit_plan_mode_allowed_when_both_checks_pass(self):
         """Test ExitPlanMode allowed when transcript AND stage both indicate Stage 3"""
-        ctx = EventContext(session_id="test", event="PreToolUse", tool_name="ExitPlanMode")
+        # Create session transcript with stage3_message
+        transcript_data = [
+            {"role": "assistant", "content": f"Work done. {CONFIG['stage3_message']}"}
+        ]
+        ctx = EventContext(session_id="test", event="PreToolUse", tool_name="ExitPlanMode",
+                           session_transcript=transcript_data)
         ctx.autorun_active = True
         ctx.autorun_stage = EventContext.STAGE_2_COMPLETED  # Correct stage
-
-        # Transcript has stage3_message
-        class MockTranscript:
-            text = f"Work done. {CONFIG['stage3_message']}"
-        ctx._transcript = MockTranscript()
 
         result = gate_exit_plan_mode(ctx)
 
@@ -301,10 +291,8 @@ class TestPrematureStopDetection:
     def test_is_premature_stop_false_with_stage_markers(self):
         """Test is_premature_stop returns False when any stage marker present"""
         for marker in [CONFIG["stage1_message"], CONFIG["stage2_message"], CONFIG["stage3_message"]]:
-            ctx = EventContext(session_id="test", event="Stop")
+            ctx = EventContext(session_id="test", event="Stop", tool_result=marker)
             ctx.autorun_active = True
-            # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=marker
 
             assert is_premature_stop(ctx) == False, \
                 f"Should not be premature stop when {marker[:30]}... present"
@@ -312,10 +300,8 @@ class TestPrematureStopDetection:
     @pytest.mark.unit
     def test_is_premature_stop_false_with_emergency_stop(self):
         """Test is_premature_stop returns False when emergency_stop present"""
-        ctx = EventContext(session_id="test", event="Stop")
+        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["emergency_stop"])
         ctx.autorun_active = True
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result=CONFIG["emergency_stop"]
 
         assert is_premature_stop(ctx) == False, \
             "Should not be premature stop when emergency_stop present"
@@ -323,10 +309,8 @@ class TestPrematureStopDetection:
     @pytest.mark.unit
     def test_is_premature_stop_true_without_markers(self):
         """Test is_premature_stop returns True when no markers present"""
-        ctx = EventContext(session_id="test", event="Stop")
+        ctx = EventContext(session_id="test", event="Stop", tool_result="Some work done but no completion marker")
         ctx.autorun_active = True
-        # Note: tool_result is read-only, set via constructor
-        ctx = EventContext(session_id="test", event="Stop", tool_result="Some work done but no completion marker"
 
         # Create mock transcript without markers
         class MockTranscript:
