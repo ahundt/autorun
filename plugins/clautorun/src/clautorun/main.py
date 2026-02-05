@@ -846,6 +846,11 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
     # Check default integrations (built-in safety rules)
     for pattern, config in CONFIG["default_integrations"].items():
         if command_matches_pattern(command, pattern):
+            # Skip if action is "warn" (warn = allow + message, not block)
+            # This allows warn integrations to pass through without blocking
+            if config.get("action") == "warn":
+                continue  # Don't block - warning will be injected separately
+
             # Check predicate if present (when field)
             when_name = config.get("when")
             if when_name and when_name in _PREDICATES:
@@ -865,6 +870,26 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
             return result
 
     # Not blocked
+    return None
+
+
+def get_command_warning(session_id: str, command: str) -> Optional[str]:
+    """
+    Get warning message for command if any warn integration matches.
+
+    This is used to inject warning messages for commands that match
+    integrations with action: "warn" (allow + message).
+
+    Args:
+        session_id: Claude session identifier (for future session-specific warns)
+        command: Command string to check
+
+    Returns:
+        Warning message if a warn integration matches, None otherwise
+    """
+    for pattern, config in CONFIG["default_integrations"].items():
+        if config.get("action") == "warn" and command_matches_pattern(command, pattern):
+            return config.get("suggestion", "")
     return None
 
 
@@ -1495,6 +1520,11 @@ def pretooluse_handler(ctx):
                        f"To allow in this session: /cr:ok {pattern}\n"
                        f"To show status: /cr:status"
             )
+
+        # Check for warnings (allow but show message for action: "warn")
+        warning = get_command_warning(ctx.session_id, command)
+        if warning:
+            return build_pretooluse_response("allow", warning)
 
     # =========================================================================
     # EXISTING: AutoFile policy enforcement
