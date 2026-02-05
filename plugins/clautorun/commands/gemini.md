@@ -1,402 +1,269 @@
 ---
-description: Gemini CLI for visual feedback, code review, and comprehensive analysis - includes output management, critical assessment, and multi-version review patterns
+name: gemini
+description: Gemini CLI reference - visual analysis, code review, multi-model workflows, and cross-referencing patterns
 ---
 
-# Gemini CLI Usage Guide
+# Gemini CLI Reference
 
-Use the `gemini` CLI tool for:
-- Visual analysis (screenshots, UI designs, diagrams)
-- Comprehensive code reviews with cross-referencing
-- Algorithm verification and performance analysis
-- Plan fact-checking against multiple code versions
+Use `gemini` for visual analysis (screenshots, diagrams) and code reviews with cross-referencing.
 
-**Key principle**: Always save output to files using `tee` - Gemini produces large outputs that exceed terminal buffers.
+## Requirements
 
-## Critical Constraints
+**Three hard constraints** - violating any causes silent failures or poor results:
 
-### Directory Requirement
-**Files MUST be in the directory where you run gemini.** Gemini cannot access files outside the project directory or in `/tmp/`.
+### 1. Files Must Be in Current Directory
 
-**Solution:** Copy screenshots to the current working directory before running gemini:
+Gemini cannot access `/tmp/`, parent directories, or absolute paths outside the project.
+
 ```bash
-# Bad - files in /tmp won't be accessible
-./target/release/myapp --screenshot /tmp/screenshot.png
-gemini "analyze screenshot.png"  # FAILS - file not found
+# BAD - files in /tmp won't be accessible
+./myapp --screenshot /tmp/screenshot.png
+gemini -m gemini-3-pro-preview -o json "analyze screenshot.png" 2>/dev/null | jq -r '.response'
+# Result: "File not found" error
 
-# Good - files in current directory
-./target/release/myapp --screenshot ./screenshot.png
-gemini "analyze screenshot.png"  # Works
+# GOOD - files in current directory
+./myapp --screenshot ./screenshot.png
+gemini -m gemini-3-pro-preview -o json "analyze screenshot.png" 2>/dev/null | jq -r '.response'
+# Result: Works correctly
+
+# WORKAROUND - include additional directories
+gemini --include-directories /tmp -o json "analyze /tmp/screenshot.png" 2>/dev/null | jq -r '.response'
 ```
 
-### Ignore Patterns
-Gemini respects `.gitignore` patterns. If your screenshot is being ignored:
-1. Copy to a different filename not matching ignore patterns
-2. Or temporarily add to a non-ignored directory
-3. Or use a filename without common ignored extensions
+### 2. Files Must Not Match .gitignore
 
-## Critical: Managing Large Output
+Gemini silently skips files matching ignore patterns. If your file is being ignored:
 
-Gemini can produce very large outputs (100KB+) that exceed terminal buffers. **Always save output to files**:
+1. Rename to a filename not matching ignore patterns
+2. Move to a non-ignored directory
+3. Use a different extension (e.g., `.png` instead of `.log`)
 
 ```bash
-# Save output to file with tee (see output live AND save it)
-mkdir -p gemini_reviews
-gemini "your detailed prompt" 2>&1 | tee gemini_reviews/$(date +"%Y_%m_%d_%H%M")_review.txt
-
-# Background execution for long reviews
-gemini "your detailed prompt" 2>&1 | tee gemini_reviews/review.txt &
-# Then use TaskOutput or tail to check progress
-
-# Read saved output later (handles large files)
-grep -A10 "CRITICAL\|APPROVED\|BUG" gemini_reviews/review.txt
-tail -200 gemini_reviews/review.txt  # Get conclusions
+# Check if file is ignored
+git check-ignore screenshot.png && echo "IGNORED - gemini won't see it"
 ```
 
-**Why this matters**:
-- Gemini outputs can be 100-300KB with debug logs
-- Terminal output gets truncated
-- Saved files enable searching for specific findings
-- Multiple reviews can be compared side-by-side
+### 3. Use Numbered Lists in Prompts
 
-## CLI Usage
+Gemini produces better structured output when prompts use numbered lists:
 
-### Basic Usage
+1. Number all check items (not bullets)
+2. Request numbered output format
+3. Specify file_path:function_name:line_start-line_end for citations
+
+## Quick Start
+
 ```bash
-# Single image analysis
-gemini "Describe what you see in screenshot.png"
+# Setup (once per project)
+mkdir -p notes
 
-# Specific questions
-gemini "Does screenshot.png show a light or dark theme?"
+# Basic: ask a question, get clean response
+gemini -m gemini-3-pro-preview -o json "What are the top 3 code review checks?" 2>/dev/null | jq -r '.response'
 
-# Multiple files at once (must be in same directory)
-gemini "Compare dark.png and light.png - are both themes consistent?"
+# Save raw JSON to notes, display extracted response
+gemini -m gemini-3-pro-preview -o json "Analyze screenshot.png for accessibility issues" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_accessibility_review.json | jq -r '.response'
+
+# Long response: save raw JSON, show last 30 lines of response
+gemini -m gemini-3-pro-preview -o json "Review src/main.py for bugs and edge cases" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_main_py_review.json | jq -r '.response' | tail -30
+
+# Read saved response later
+jq -r '.response' notes/2024_01_15_1430_accessibility_review.json
 ```
 
-### Prompt Patterns for UI Feedback
+**Why `-o json`**: Debug noise goes to stderr only. Raw JSON saved to notes, extract response with `jq -r '.response'`.
 
-**Theme Verification:**
-```bash
-gemini "Analyze these two theme screenshots: dark-theme.png (dark mode) and light-theme.png (light mode). For each theme check: 1) Are backgrounds appropriate? 2) Is text readable? 3) Do severity badges have proper contrast? 4) Are consumer cards readable? 5) Is each theme internally consistent?"
+**Example raw JSON** (saved to notes):
+```json
+{
+  "session_id": "e491c6ae-7d6b-43fb-8f6a-4d60a93cb813",
+  "response": "1. **Logic & Correctness**: Verifying the code...\n2. **Readability**: Ensuring variable names...",
+  "stats": {
+    "models": {
+      "gemini-2.5-flash-lite": {
+        "tokens": { "input": 4565, "candidates": 62, "total": 4926 }
+      }
+    },
+    "tools": { "totalCalls": 0 }
+  }
+}
 ```
 
-**Layout Review:**
+**Fallback** (no jq):
 ```bash
-gemini "Review the UI layout in screenshot.png: 1) Is spacing consistent? 2) Is alignment correct? 3) Are interactive elements clearly visible?"
+gemini "your prompt" 2>&1 | tee notes/$(date +"%Y_%m_%d_%H%M")_review.txt | tail -50
+# Response is after "ClearcutLogger:" line in output
 ```
 
-**Accessibility Check:**
+## Prompt Structure
+
+Five elements for effective prompts:
+
+1. **Context**: What you're reviewing (file, algorithm, UI)
+2. **Instructions**: What to check (correctness, edge cases, contrast)
+3. **Locations**: Exact file paths, line numbers
+4. **Cross-references**: Multiple code versions if applicable
+5. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
+
+**Template** (copy and fill in `<placeholders>`):
 ```bash
-gemini "Check accessibility in screenshot.png: 1) Is contrast sufficient? 2) Are fonts readable? 3) Are clickable areas large enough?"
+gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue cite: file_path:function_name:line_start-line_end. Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
 ```
 
-### Complex Prompts: Use Files
-
-For long, detailed prompts with special characters, use a file:
-
+**Concrete example**:
 ```bash
-# 1. Write prompt to file (avoids shell escaping issues)
+gemini -m gemini-3-pro-preview -o json "Review src/auth/login.py. **Check for**: SQL injection, password handling, session management. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue cite: file_path:function_name:line_start-line_end. Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_login_security_review.json | jq -r '.response'
+```
+
+**Example output format**:
+```
+CRITICAL: SQL injection in src/auth/login.py:authenticate_user:45-52
+  1. User input passed directly to query without sanitization
+  2. Fix: Use parameterized queries
+```
+
+## Gotchas
+
+### Error Reference
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| "File path is ignored by configured ignore patterns" | .gitignore match | Rename or move file |
+| "File not found" | Outside project directory | Copy to cwd |
+| "Tool not found: run_shell_command" | Gemini internal | Ignore - retries automatically |
+| Output truncated | Exceeds terminal buffer | Use `-o json` with tee |
+
+### Critically Assess All Output
+
+Gemini is a useful second opinion, not a source of truth. **Always verify claims before acting on them.**
+
+**Common issues**:
+1. Math errors (timing estimates off by 10-100x)
+2. Missed edge cases or pathological inputs
+3. Fabricated line numbers or function names
+4. Overconfident "approved" without showing work
+
+**Mitigation**:
+1. Cross-check claims against actual code
+2. Run 2-3 reviews from different angles
+3. Compare results for contradictions
+4. Test suggested fixes before applying
+
+### Complex Prompts
+
+For prompts with special characters or multi-line structure, write to file first:
+```bash
 cat > /tmp/gemini_prompt.txt << 'EOF'
-Comprehensive review of plan.md:
-
-**Cross-reference**:
-- File A: src/module.rs
-- File B: .worktrees/baseline/src/module.rs
-
-Check for bugs, complexity issues, and edge cases.
-Use specific line numbers in your response.
-EOF
-
-# 2. Run gemini with prompt from file
-gemini "$(cat /tmp/gemini_prompt.txt)" 2>&1 | tee gemini_reviews/review.txt
-
-# 3. Cleanup
-rm /tmp/gemini_prompt.txt
-```
-
-**Advantages**:
-- No shell escaping headaches (quotes, backslashes, special chars)
-- Easy to edit and refine prompts
-- Prompts can be version-controlled
-- Reusable prompt templates
-
-### Filtering Debug Output
-
-Gemini outputs verbose debug logs. Filter with:
-```bash
-# Filter out debug messages
-gemini "your prompt" 2>&1 | grep -v "^\[" | grep -v "^Loaded" | grep -v "^Experiments" | grep -v "^Hook" | grep -v "^Session" | grep -v "^Flushing" | grep -v "^Error flushing" | grep -v "^ClearcutLogger" | grep -v "^  " | grep -v "^$" | grep -v "^{$" | grep -v "^}$"
-
-# Or just get the last N lines of actual response
-gemini "your prompt" 2>&1 | tail -50
-```
-
-## Code Review and Analysis
-
-Gemini excels at comprehensive code reviews when given detailed context and specific instructions.
-
-### Effective Code Review Prompts
-
-**Structure your prompts**:
-1. **Context**: What you're reviewing (file, plan, algorithm)
-2. **Specific instructions**: What to check (complexity, correctness, edge cases)
-3. **Code locations**: Exact file paths and line numbers
-4. **Cross-reference sources**: Multiple code versions if applicable
-5. **Output requirements**: Format, severity levels, actionable fixes
-
-**Example: Comprehensive Algorithm Review**
-```bash
-gemini "Review the algorithm in plan_file.md (lines 100-200).
-
-**Code to cross-reference**:
-- Current implementation: src/module.rs
-- Clean baseline: .worktrees/commit-hash/src/module.rs
-- Related logic: src/helpers.rs lines 50-75
+Review src/api/handlers.py for security issues.
 
 **Check for**:
-1. Correctness: Logic errors, off-by-one, wrong operators
-2. Performance: Complexity claims accurate? O(N²) pathological cases?
-3. Edge cases: Empty input, single element, boundary conditions
-4. Memory: Unnecessary allocations? Vec reuse opportunities?
+1. SQL injection in query building
+2. XSS in response rendering
+3. Authentication bypass
 
-**Requirements** (from user guidance):
-- Must be O(N) or better
-- Low memory overhead
-- Easy to use correctly, hard to use incorrectly
+**Cross-reference**: Compare with src/api/validators.py
 
-**Output format**:
-- CRITICAL: Show-stopper bugs
-- IMPORTANT: Correctness issues
-- OPTIMIZATION: Performance improvements
-- VERIFIED: Items confirmed correct
+**Output**: CRITICAL/IMPORTANT. For each issue cite: file_path:function_name:line_start-line_end with fix suggestions.
+EOF
 
-Be specific with line numbers and concrete examples." 2>&1 | tee gemini_reviews/algorithm_review.txt
+gemini -m gemini-3-pro-preview -o json "$(cat /tmp/gemini_prompt.txt)" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_api_security_review.json | jq -r '.response'
+
+# Cleanup: trash /tmp/gemini_prompt.txt (or delete manually)
 ```
 
-### Critical Assessment of Gemini's Output
+## Examples
 
-**IMPORTANT**: Gemini makes mistakes. Always critically review its findings:
-
-1. **Verify Gemini's math**: Complexity claims, performance calculations, timing estimates
-2. **Check Gemini's logic**: Does the suggested fix actually solve the problem?
-3. **Test Gemini's examples**: Run the test scenarios it proposes
-4. **Cross-reference**: Verify Gemini actually read the code (not hallucinating)
-5. **Look for contradictions**: Compare multiple Gemini reviews for consistency
-
-**Red flags** (Gemini might be wrong):
-- Performance numbers that seem unrealistic (too fast or too slow)
-- Suggestions that contradict language best practices
-- Claims without specific line number references
-- "Approved" without showing actual verification work
-
-**Best practice**: Run Gemini 2-3 times with different angles, compare results, and critically assess each finding before applying changes.
-
-## Workflow Examples
-
-### Visual Feedback Workflow
+### Visual Analysis
 
 ```bash
-# 1. Build your app
-cargo build --release
+# 1. Take screenshot IN current directory (not /tmp)
+./myapp --screenshot ./screenshot.png
 
-# 2. Take screenshots IN THE CURRENT DIRECTORY (not /tmp!)
-./target/release/myapp --screenshot ./dark-theme.png
-./target/release/myapp --screenshot ./light-theme.png
+# 2. Run analysis (raw JSON saved to notes)
+gemini -m gemini-3-pro-preview -o json "Analyze screenshot.png: 1) Is contrast sufficient for accessibility? 2) Is text readable? 3) Are interactive elements clearly visible?" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_screenshot_accessibility.json | jq -r '.response'
 
-# 3. Run gemini analysis (save output)
-gemini "Compare dark-theme.png and light-theme.png. Check:
-1) Proper contrast 2) Readable text 3) Theme consistency" 2>&1 | tee gemini_reviews/theme_review.txt
-
-# 4. Read results
-grep -v "^\[" gemini_reviews/theme_review.txt | tail -50
-
-# 5. Clean up screenshots
-rm dark-theme.png light-theme.png
+# 3. Cleanup (optional)
+trash screenshot.png  # or delete manually
 ```
 
-### Code Review Workflow
+### Code Review with Worktree
 
 ```bash
-# 1. Copy plan/document to notes (gemini can access)
-cp /path/to/plan.md notes/plan_for_review.md
-
-# 2. Create baseline worktree if comparing versions
+# 1. Create baseline worktree for comparison
 git worktree add .worktrees/baseline <commit-hash>
+echo ".worktrees/" >> .gitignore
 
-# 3. Run comprehensive review (save to file!)
-gemini "Comprehensive review of notes/plan_for_review.md.
+# 2. Run comparative review (raw JSON saved to notes)
+gemini -m gemini-3-pro-preview -o json "Review src/module.rs against baseline. **Current**: src/module.rs **Baseline**: .worktrees/baseline/src/module.rs Check: 1. Logic errors, off-by-one, wrong operators 2. Edge cases: empty input, boundary conditions 3. Which version is correct where they differ. For each issue cite: file_path:function_name:line_start-line_end from BOTH versions." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_module_rs_worktree_review.json | jq -r '.response' | tail -50
 
-Cross-reference:
-- Baseline code: .worktrees/baseline/src/file.rs
-- Current code: src/file.rs
+# 3. Read full response if needed
+jq -r '.response' notes/2024_01_15_1430_module_rs_worktree_review.json
 
-Check complexity, correctness, edge cases, test coverage.
-Be specific with line numbers." 2>&1 | tee gemini_reviews/code_review.txt
-
-# 4. Extract key findings
-grep -A5 "CRITICAL\|BUG\|OPTIMIZATION" gemini_reviews/code_review.txt
-
-# 5. Cleanup
+# 4. Cleanup
 git worktree remove .worktrees/baseline
 ```
 
-## Advanced Patterns
+## Reference
 
-### Multi-Version Code Review
-
-When reviewing changes against multiple code versions:
+### CLI Options
 
 ```bash
-# 1. Create clean worktree for baseline
-git worktree add .worktrees/baseline-commit <commit-hash>
+# Output format (required for clean extraction)
+gemini -m gemini-3-pro-preview -o json "prompt"                    # JSON output, use with jq
+gemini -o text "prompt"                    # Plain text (default, has debug noise)
 
-# 2. Add worktree to .gitignore
-echo ".worktrees/" >> .gitignore
+# Model selection (omit -m for auto-selection)
+gemini "prompt"                            # Auto: uses gemini-2.5-flash-lite + gemini-3-flash-preview
+gemini -m gemini-3-pro-preview "prompt"    # Quality: best, Speed: slow, Cost: $$$, Status: preview
+gemini -m gemini-3-flash-preview "prompt"  # Quality: high, Speed: fast, Cost: $$, Status: preview
+gemini -m gemini-2.5-pro "prompt"          # Quality: high, Speed: slow, Cost: $$$, Status: released
+gemini -m gemini-2.5-flash "prompt"        # Quality: good, Speed: fast, Cost: $$, Status: released
+gemini -m gemini-2.5-flash-lite "prompt"   # Quality: good, Speed: fastest, Cost: $, Status: released
 
-# 3. Run Gemini with cross-referencing
-gemini "Review plan_file.md against BOTH code versions:
+# Approval modes
+gemini --approval-mode plan "prompt"       # Read-only mode: no file changes (SAFE for reviews)
+gemini --approval-mode auto_edit "prompt"  # Auto-approve edits only
+# NOTE: YOLO mode exists but is BANNED - it auto-accepts destructive actions without confirmation
 
-**Clean baseline**: .worktrees/baseline-commit/src/file.rs
-**Current code**: src/file.rs (may have bugs from previous attempts)
+# Include additional directories (workaround for directory constraint)
+gemini --include-directories /path/to/other/project "analyze file.py"
+gemini --include-directories ../sibling-repo,/tmp "compare files"
 
-Compare the plan's proposed algorithm with:
-1. How the baseline implements it
-2. Any changes in current code
-3. Which version is correct
+# Session management
+gemini --list-sessions                     # List previous sessions
+gemini -r latest "continue previous task"  # Resume most recent session
+gemini -r 3 "continue"                     # Resume session #3
 
-Report discrepancies with line numbers from BOTH versions." 2>&1 | tee gemini_reviews/multi_version_review.txt
-
-# 4. Cleanup when done
-git worktree remove .worktrees/baseline-commit
+# Interactive mode
+gemini                                     # Start interactive session
+gemini -i "start with this prompt"         # Interactive, starting with prompt
 ```
 
-### Iterative Review Pattern
-
-For complex analysis, run multiple focused reviews:
+### Reading Saved Output
 
 ```bash
-# Round 1: Algorithm correctness
-gemini "Focus on algorithm correctness in plan.md lines 100-200.
-Check: logic errors, edge cases, off-by-one errors." | tee gemini_reviews/round1_correctness.txt
+# Full response from a saved review
+jq -r '.response' notes/2024_01_15_1430_login_security_review.json
 
-# Round 2: Performance analysis
-gemini "Focus on performance claims in plan.md lines 300-400.
-Verify: complexity analysis, timing estimates, optimization opportunities.
-Cross-reference: Round 1 findings in gemini_reviews/round1_correctness.txt" | tee gemini_reviews/round2_performance.txt
+# Last 50 lines of response
+jq -r '.response' notes/2024_01_15_1430_login_security_review.json | tail -50
 
-# Round 3: Test coverage
-gemini "Focus on test coverage in plan.md lines 500-700.
-Check: Do tests catch the bugs found in Rounds 1 and 2?
-Reference: gemini_reviews/round1_correctness.txt, gemini_reviews/round2_performance.txt" | tee gemini_reviews/round3_tests.txt
+# Search for issues in response
+jq -r '.response' notes/2024_01_15_1430_login_security_review.json | grep -iE "bug|error|critical|wrong|fail"
 
-# Compare all rounds
-diff <(grep "CRITICAL" gemini_reviews/round1_correctness.txt) \
-     <(grep "CRITICAL" gemini_reviews/round2_performance.txt)
+# Check token usage and tool calls
+jq '{tokens: .tokens, tools: .tools.totalCalls}' notes/2024_01_15_1430_login_security_review.json
+
+# List all saved reviews
+ls -la notes/*_review.json
 ```
 
-**Benefits**:
-- Each review is focused and thorough
-- Later reviews can reference earlier findings
-- Contradictions between rounds reveal uncertainties
-- Saved files enable comparison and tracking
+### Summary
 
-## Prompt Design Best Practices
-
-### Comprehensive Review Template
-
-**For thorough code/plan reviews**, structure prompts with:
-
-```bash
-gemini "I need comprehensive review of <target>.
-
-**CRITICAL INSTRUCTIONS**:
-1. Read ALL context: <list files/sections to read>
-2. Fact-check EVERY claim: <what to verify>
-3. Cross-reference: <list all code versions/files>
-4. Be specific: Line numbers, concrete examples, actionable fixes
-
-**Review Checklist**:
-- Section 1: <What to verify in this section>
-- Section 2: <What to verify in this section>
-- Section 3: <What to verify in this section>
-
-**Output Requirements**:
-- CRITICAL: Show-stopper bugs
-- IMPORTANT: Correctness issues
-- OPTIMIZATION: Performance improvements
-- VERIFIED: Items confirmed correct
-
-Be thorough. I will critically assess YOUR output as well." 2>&1 | tee reviews/comprehensive.txt
-```
-
-### Key Elements for Effective Prompts
-
-1. **Explicit instructions**: Tell Gemini exactly what to do ("READ ALL", "FACT-CHECK EVERY", "CROSS-REFERENCE")
-2. **Specific targets**: File paths, line numbers, function names
-3. **Multiple sources**: Baseline code, current code, related files
-4. **Output structure**: How you want results formatted (severity levels, line numbers)
-5. **Critical tone**: "I will critically assess your output" → Makes Gemini more thorough
-6. **Concrete verification**: "Show your work" → Forces Gemini to provide evidence
-
-### What Makes Gemini Most Effective
-
-**DO**:
-- Provide file paths and line numbers (Gemini can read files in current directory)
-- Ask for specific checks with clear criteria
-- Request concrete examples and test scenarios
-- Save output to files for later analysis
-- Run multiple rounds from different angles
-
-**DON'T**:
-- Trust Gemini blindly (verify its claims)
-- Give vague prompts ("review this code")
-- Expect Gemini to find everything in one pass
-- Assume Gemini's math is correct (double-check calculations)
-- Use files outside project directory (Gemini can't access them)
-
-## Common Errors
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "File path is ignored by configured ignore patterns" | File matches .gitignore | Rename file or move to non-ignored location |
-| "File not found" | File is outside project directory | Copy file to current working directory |
-| "Tool not found: run_shell_command" | Gemini trying to use unavailable tool | Ignore - gemini will retry with available tools |
-| Output truncated in terminal | Output exceeds terminal buffer | Use `| tee file.txt` to save output |
-
-## Quick Reference
-
-### Essential Commands
-
-```bash
-# Visual feedback (save output)
-gemini "analyze screenshot.png" 2>&1 | tee gemini_reviews/visual.txt
-
-# Code review (with cross-referencing)
-gemini "Review notes/plan.md. Cross-ref: src/code.rs and .worktrees/baseline/src/code.rs" 2>&1 | tee gemini_reviews/review.txt
-
-# Complex prompt from file (avoids escaping)
-gemini "$(cat /tmp/prompt.txt)" 2>&1 | tee gemini_reviews/output.txt
-
-# Extract key findings
-grep -A5 "CRITICAL\|BUG" gemini_reviews/output.txt
-
-# Filter debug noise
-tail -100 gemini_reviews/output.txt | grep -v "^\[" | grep -v "^Loaded"
-```
-
-### Critical Success Factors
-
-1. **Always use `| tee file.txt`** - Output can be 100KB+
-2. **Files in current directory** - Gemini can't access /tmp or parent dirs
-3. **Critically assess output** - Gemini makes mistakes, verify its claims
-4. **Multiple rounds** - Run 2-3 reviews from different angles
-5. **Specific prompts** - Provide file paths, line numbers, exact requirements
-6. **Save everything** - Keep reviews for comparison and tracking
-
-### Lessons Learned
-
-- **Performance claims**: Always verify Gemini's timing estimates (can be off by 10-100×)
-- **Complexity analysis**: Check Gemini's Big-O claims (it missed O(N²) pathological cases before)
-- **Test coverage**: Gemini is good at spotting missing tests, use those insights
-- **Cross-referencing**: Providing multiple code versions makes Gemini more thorough
-- **Iterative refinement**: Each Gemini review finds different issues - use multiple rounds
-
+| Requirement | Reason |
+|-------------|--------|
+| Files in cwd | Can't access /tmp or parent dirs |
+| Not gitignored | Silently skipped |
+| `-o json` + `jq` | Clean extraction, no debug noise |
+| `2>/dev/null` | Suppress stderr debug output |
+| Critically assess | Gemini is second opinion, not truth |
+| Multiple rounds | Each pass finds different issues |
