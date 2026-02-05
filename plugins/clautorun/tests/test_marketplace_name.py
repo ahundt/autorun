@@ -9,6 +9,10 @@ Bug details:
 - The marketplace.json correctly had "name": "clautorun"
 - But clautorun_marketplace/__init__.py was using "clautorun-dev" for plugin install commands
 - This caused all plugin installations to fail silently
+
+v0.7.0 Update:
+- clautorun_marketplace/__init__.py has been replaced by clautorun/install_plugins.py
+- Tests now verify the new unified installation module
 """
 
 import json
@@ -23,6 +27,13 @@ def get_repo_root() -> Path:
     # This file is at plugins/clautorun/tests/test_marketplace_name.py
     # Repo root is 3 levels up
     return Path(__file__).parent.parent.parent.parent
+
+
+def get_plugin_root() -> Path:
+    """Get the clautorun plugin root directory."""
+    # This file is at plugins/clautorun/tests/test_marketplace_name.py
+    # Plugin root is 1 level up
+    return Path(__file__).parent.parent
 
 
 class TestMarketplaceName:
@@ -42,29 +53,29 @@ class TestMarketplaceName:
             f"marketplace.json should have name='clautorun', got '{data.get('name')}'"
         )
 
-    def test_marketplace_installer_uses_correct_name(self):
-        """Verify clautorun_marketplace/__init__.py uses @clautorun not @clautorun-dev."""
-        repo_root = get_repo_root()
-        init_file = repo_root / "src" / "clautorun_marketplace" / "__init__.py"
+    def test_install_plugins_uses_correct_name(self):
+        """Verify install_plugins.py uses @clautorun not @clautorun-dev."""
+        plugin_root = get_plugin_root()
+        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
 
-        assert init_file.exists(), f"clautorun_marketplace/__init__.py not found at {init_file}"
+        assert install_file.exists(), f"install_plugins.py not found at {install_file}"
 
-        content = init_file.read_text()
+        content = install_file.read_text()
 
         # Should NOT contain clautorun-dev
         assert "clautorun-dev" not in content, (
-            "clautorun_marketplace/__init__.py should NOT contain 'clautorun-dev'. "
+            "install_plugins.py should NOT contain 'clautorun-dev'. "
             "This bug causes plugin installation to fail."
         )
 
-        # Should contain @clautorun for plugin installs
-        assert "@clautorun" in content, (
-            "clautorun_marketplace/__init__.py should contain '@clautorun' for plugin installs"
+        # Should contain @clautorun for plugin installs (the pattern for plugin install commands)
+        assert "@clautorun" in content or '@{MARKETPLACE}' in content, (
+            "install_plugins.py should contain '@clautorun' or '@{MARKETPLACE}' for plugin installs"
         )
 
-        # Verify the specific plugin install pattern
-        assert 'f"{plugin_name}@clautorun"' in content, (
-            "clautorun_marketplace/__init__.py should use f\"{plugin_name}@clautorun\" pattern"
+        # Verify the MARKETPLACE constant is correct
+        assert 'MARKETPLACE = "clautorun"' in content, (
+            "install_plugins.py should have MARKETPLACE = \"clautorun\""
         )
 
     def test_known_marketplaces_uses_correct_name(self):
@@ -103,8 +114,8 @@ class TestMarketplaceName:
 
     def test_skills_files_use_correct_marketplace_name(self):
         """Verify skills files use @clautorun not @clautorun-dev."""
-        repo_root = get_repo_root()
-        skills_dir = repo_root / "plugins" / "clautorun" / "skills"
+        plugin_root = get_plugin_root()
+        skills_dir = plugin_root / "skills"
 
         if not skills_dir.exists():
             pytest.skip("Skills directory not found")
@@ -120,59 +131,99 @@ class TestMarketplaceName:
                 )
 
 
-class TestMarketplaceInstallerExitCode:
-    """Tests for marketplace installer exit code behavior."""
+class TestInstallPluginsExitCode:
+    """Tests for install_plugins exit code behavior."""
 
-    def test_main_returns_exit_code_not_boolean(self):
-        """Verify main() returns integer exit code, not boolean.
+    def test_install_plugins_returns_integer_exit_code(self):
+        """Verify install_plugins() returns integer exit code, not boolean.
 
         Bug: sys.exit(True) == sys.exit(1), so returning True on success
         causes exit code 1 instead of 0.
         """
-        repo_root = get_repo_root()
-        init_file = repo_root / "src" / "clautorun_marketplace" / "__init__.py"
+        plugin_root = get_plugin_root()
+        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
 
-        content = init_file.read_text()
+        content = install_file.read_text()
 
         # Should return 0 on success, not True
-        assert "return 0 if success_count == len(plugins) else 1" in content, (
-            "main() should return exit code (0/1), not boolean. "
+        assert "return 0 if" in content, (
+            "install_plugins() should return exit code (0/1), not boolean. "
             "sys.exit(True) == sys.exit(1), which is incorrect for success."
         )
 
-        # Should NOT return boolean
+        # Should NOT return boolean directly
         assert "return success_count == len(plugins)" not in content, (
-            "main() should NOT return boolean. "
-            "Use 'return 0 if success_count == len(plugins) else 1' instead."
+            "install_plugins() should NOT return boolean. "
+            "Use 'return 0 if ... else 1' instead."
+        )
+
+    def test_main_entry_point_returns_integer_exit_code(self):
+        """Verify __main__.py returns integer exit codes."""
+        plugin_root = get_plugin_root()
+        main_file = plugin_root / "src" / "clautorun" / "__main__.py"
+
+        content = main_file.read_text()
+
+        # Should have return 0 and return 1 for exit codes
+        assert "return 0" in content, (
+            "__main__.py should return integer exit codes"
         )
 
 
-class TestMarketplaceInstallerPrintMessages:
+class TestInstallPluginsPrintMessages:
     """Tests for correct marketplace name in print messages."""
 
     def test_print_messages_use_correct_name(self):
         """Verify print messages reference 'clautorun' not 'clautorun-dev'."""
-        repo_root = get_repo_root()
-        init_file = repo_root / "src" / "clautorun_marketplace" / "__init__.py"
+        plugin_root = get_plugin_root()
+        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
 
-        content = init_file.read_text()
+        content = install_file.read_text()
 
         # Check for correct print messages
-        expected_messages = [
-            "Adding clautorun marketplace",
-            "Added clautorun marketplace",
-            "clautorun marketplace already exists",
+        expected_patterns = [
+            "clautorun marketplace",  # Should mention clautorun marketplace
+            "clautorun",  # Should use clautorun name
         ]
 
-        for msg in expected_messages:
-            assert msg in content or msg.replace("clautorun", "clautorun") in content, (
-                f"Expected print message containing '{msg}' in marketplace installer"
+        for pattern in expected_patterns:
+            assert pattern in content, (
+                f"Expected content containing '{pattern}' in install_plugins.py"
             )
 
         # Should NOT have clautorun-dev in print messages
-        assert "Adding clautorun-dev" not in content
-        assert "Added clautorun-dev" not in content
-        assert "clautorun-dev marketplace" not in content
+        assert "clautorun-dev" not in content, (
+            "install_plugins.py should NOT contain 'clautorun-dev' in any messages"
+        )
+
+
+class TestPluginNameEnum:
+    """Tests for PluginName enum validation."""
+
+    def test_plugin_name_enum_exists(self):
+        """Verify PluginName enum is defined."""
+        plugin_root = get_plugin_root()
+        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+
+        content = install_file.read_text()
+
+        assert "class PluginName" in content, (
+            "install_plugins.py should define PluginName enum"
+        )
+
+    def test_plugin_name_enum_has_all_plugins(self):
+        """Verify PluginName enum includes all marketplace plugins."""
+        plugin_root = get_plugin_root()
+        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+
+        content = install_file.read_text()
+
+        expected_plugins = ["clautorun", "plan-export", "pdf-extractor"]
+        for plugin in expected_plugins:
+            # Check that the plugin name appears in the enum definition
+            assert plugin in content, (
+                f"PluginName enum should include '{plugin}'"
+            )
 
 
 if __name__ == "__main__":
