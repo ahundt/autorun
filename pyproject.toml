@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clautorun-marketplace"
+name = "clautorun-workspace"
 version = "0.7.0"
-description = "UV workspace marketplace for clautorun plugins: clautorun, plan-export, pdf-extractor"
+description = "UV workspace for clautorun plugins: clautorun, plan-export, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
@@ -24,6 +24,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
+# No dependencies - this is a workspace definition, not a real package
+# CLI entry points come from plugins/clautorun/pyproject.toml
 dependencies = []
 
 [project.optional-dependencies]
@@ -42,8 +44,7 @@ all = [
     "pdf-extractor>=0.7.0",
 ]
 
-[project.scripts]
-clautorun-marketplace = "clautorun_marketplace:main"
+# NO [project.scripts] - scripts come from plugins/clautorun/pyproject.toml
 
 [project.urls]
 Homepage = "https://github.com/ahundt/clautorun"
@@ -62,14 +63,17 @@ clautorun = { workspace = true }
 plan-export = { workspace = true }
 pdf-extractor = { workspace = true }
 
+# Minimal stub package for UV workspace
 [tool.hatch.build.targets.wheel]
-packages = ["src/clautorun_marketplace"]
+packages = ["src/clautorun_workspace"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
+    "/plugins",
     "/README.md",
     "/pyproject.toml",
+    "/.claude-plugin",
 ]
 
 [tool.setuptools]
