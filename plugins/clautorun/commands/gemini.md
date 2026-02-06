@@ -1,6 +1,6 @@
 ---
 name: gemini
-description: Gemini CLI reference - visual analysis, code review, multi-model workflows, and cross-referencing patterns
+description: Use gemini CLI for any combination of: superior vision for analysis of images, diagrams, screenshots, PDFs, documents, video, and audio; code review with detailed citations and cross-referencing patterns; Google search; and multi-model workflows; all for planning, feedback, and getting unstuck
 ---
 
 # Gemini CLI Reference
@@ -58,15 +58,16 @@ Gemini produces better structured output when prompts use numbered lists:
 # Setup (once per project)
 mkdir -p notes
 
+# Consistent date prefixes so files sort chronologically
+TS=$(date +"%Y_%m_%d_%H%M")
+
 # Basic: ask a question, get clean response
 gemini -m gemini-3-pro-preview -o json "What are the top 3 code review checks?" 2>/dev/null | jq -r '.response'
 
 # Save raw JSON to notes, display extracted response (use TS variable to reference later)
-TS=$(date +"%Y_%m_%d_%H%M")
 gemini -m gemini-3-pro-preview -o json "Analyze screenshot.png for accessibility issues" 2>/dev/null | tee "notes/${TS}_accessibility_review.json" | jq -r '.response'
 
 # Long response: save raw JSON, show last 30 lines of response
-TS=$(date +"%Y_%m_%d_%H%M")
 gemini -m gemini-3-pro-preview -o json "Review src/main.py for bugs and edge cases" 2>/dev/null | tee "notes/${TS}_main_py_review.json" | jq -r '.response' | tail -30
 
 # Read saved response later (note: use exact filename from above)
@@ -119,7 +120,7 @@ jq -r '.response' notes/$(date +"%Y_%m_%d_%H%M")_review.json
 
 ## Prompt Structure
 
-Seven elements for effective prompts:
+Eight elements for effective prompts:
 
 1. **Context**: What you're reviewing (file, algorithm, UI)
 2. **Instructions**: What to check (correctness, edge cases, contrast)
@@ -128,6 +129,7 @@ Seven elements for effective prompts:
 5. **Critical Review**: Be harshly critical, constructive, and propose concrete and actionable solutions with justification.
 6. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
 7. **Code snippets**: Always request **BEFORE/AFTER** code for each issue with citation as `file_path:function_name:line_start-line_end` (include function if applicable)
+8. **Academic rigor**: Preserve all references, citations, sources, and urls with academic rigor
 
 ## Cross-Model Critical Review
 
@@ -149,19 +151,19 @@ Every code review finding MUST include:
 
 **Enforcement**: Add to every Gemini prompt:
 ```
-For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) citation as file_path:function_name:line_start-line_end (include function if applicable).
+For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) preserve all references, citations, sources, and urls with academic rigor and format code citations as file_path:function_name:line_start-line_end (include function if applicable).
 ```
 
 This is already in the template above but is repeated here for emphasis: **without BEFORE/AFTER code with exact line citations, reviews are not actionable.**
 
 **Template** (copy and fill in `<placeholders>`):
 ```bash
-gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) citation as file_path:function_name:line_start-line_end (include function if applicable). Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
+gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) preserve all references, citations, sources, and urls with academic rigor and format code citations as file_path:function_name:line_start-line_end (include function if applicable). Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
 ```
 
 **Concrete example**:
 ```bash
-gemini -m gemini-3-pro-preview -o json "Review src/auth/login.py. **Check for**: SQL injection, password handling, session management. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code showing the problem, (2) AFTER code with the fix, (3) citation as src/auth/login.py:function_name:line_start-line_end." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_login_security_review.json | jq -r '.response'
+gemini -m gemini-3-pro-preview -o json "Review src/auth/login.py. **Check for**: SQL injection, password handling, session management. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code showing the problem, (2) AFTER code with the fix, (3) concrete technical justification (4) preserve all references, citations, sources, and urls with academic rigor and format code citations as src/auth/login.py:function_name:line_start-line_end." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_login_security_review.json | jq -r '.response'
 ```
 
 **Example output format**:
@@ -210,7 +212,7 @@ TaskCreate({
 # Also create a task for future review to verify fixes
 TaskCreate({
     "subject": "[GEMINI-REVIEW] Re-run Gemini review after fixes implemented",
-    "description": "After implementing all Gemini findings, re-run: gemini -m gemini-3-pro-preview -o json \"Review src/auth/login.py. **Check for**: Remaining security issues, regressions from fixes, edge cases. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) citation as src/auth/login.py:function_name:line_start-line_end.\" 2>/dev/null | tee notes/$(date +\"%Y_%m_%d_%H%M\")_login_round2_review.json | jq -r '.response'"
+    "description": "After implementing all Gemini findings, re-run: gemini -m gemini-3-pro-preview -o json \"Review src/auth/login.py. **Check for**: Remaining security issues, regressions from fixes, edge cases. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) preserve all references, citations, sources, and urls with academic rigor and format code citations as src/auth/login.py:function_name:line_start-line_end.\" 2>/dev/null | tee notes/$(date +\"%Y_%m_%d_%H%M\")_login_round2_review.json | jq -r '.response'"
 })
 ```
 
@@ -259,7 +261,7 @@ Review src/api/handlers.py for security issues.
 
 **Cross-reference**: Compare with src/api/validators.py
 
-**Output**: CRITICAL/IMPORTANT. For each issue cite: file_path:function_name:line_start-line_end with fix suggestions.
+**Output**: CRITICAL/IMPORTANT. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) preserve all references, citations, sources, and urls with academic rigor and format code citations as file_path:function_name:line_start-line_end. Be harshly critical and propose concrete, actionable solutions.
 EOF
 
 gemini -m gemini-3-pro-preview -o json "$(cat "notes/${TS}_gemini_prompt.txt")" 2>/dev/null | tee "notes/${TS}_api_security_review.json" | jq -r '.response'
@@ -300,7 +302,7 @@ echo ".worktrees/" >> .gitignore
 
 # 2. Run comparative review (use TS variable to reference saved file later)
 TS=$(date +"%Y_%m_%d_%H%M")
-gemini -m gemini-3-pro-preview -o json "Review src/module.rs against baseline. **Current**: src/module.rs **Baseline**: .worktrees/baseline/src/module.rs Check: 1. Logic errors, off-by-one, wrong operators 2. Edge cases: empty input, boundary conditions 3. Which version is correct where they differ. For each issue cite: file_path:function_name:line_start-line_end from BOTH versions." 2>/dev/null | tee "notes/${TS}_module_rs_worktree_review.json" | jq -r '.response' | tail -50
+gemini -m gemini-3-pro-preview -o json "Review src/module.rs against baseline. **Current**: src/module.rs **Baseline**: .worktrees/baseline/src/module.rs Check: 1. Logic errors, off-by-one, wrong operators 2. Edge cases: empty input, boundary conditions 3. Which version is correct where they differ. For each issue cite: file_path:function_name:line_start-line_end from BOTH versions. Preserve all references, citations, sources, and urls with academic rigor." 2>/dev/null | tee "notes/${TS}_module_rs_worktree_review.json" | jq -r '.response' | tail -50
 
 # 3. Read full response if needed
 jq -r '.response' "notes/${TS}_module_rs_worktree_review.json"
