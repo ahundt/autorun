@@ -125,6 +125,19 @@ Six elements for effective prompts:
 5. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
 6. **Code snippets**: Always request **BEFORE/AFTER** code for each issue with citation as `file_path:function_name:line_start-line_end` (include function if applicable)
 
+### 7. BEFORE/AFTER Code Requirement (MANDATORY)
+
+Every code review finding MUST include:
+- **BEFORE**: The current code with the problem (with `file_path:function_name:line_start-line_end`)
+- **AFTER**: The proposed fix with explanation
+
+**Enforcement**: Add to every Gemini prompt:
+```
+For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as file_path:function_name:line_start-line_end (include function if applicable).
+```
+
+This is already in the template above but is repeated here for emphasis: **without BEFORE/AFTER code with exact line citations, reviews are not actionable.**
+
 **Template** (copy and fill in `<placeholders>`):
 ```bash
 gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as file_path:function_name:line_start-line_end (include function if applicable). Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
@@ -165,6 +178,27 @@ Explanation: User input passed directly to query string. Fix uses parameterized 
 | "File not found" | Outside project directory | Copy to cwd |
 | "Tool not found: run_shell_command" | Gemini internal | Ignore - retries automatically |
 | Output truncated | Exceeds terminal buffer | Use `-o json` with tee |
+| Empty output (no error) | Invalid model name with `2>/dev/null` | Verify model name from CLI Options table. Common mistakes: `gemini-3-pro` (use `gemini-3-pro-preview`), `gemini-3-flash` (use `gemini-3-flash-preview`), `gemini-2.0-pro` (use `gemini-2.5-pro`) |
+| "Unknown argument: file" | `--file` flag doesn't exist | Reference files by name in prompt (Gemini reads project files). For files outside project use `--include-directories` |
+
+### Long Prompts
+
+Piping long prompts via heredoc (`cat << 'EOF' | gemini`) can timeout. For prompts longer than a few lines:
+
+```bash
+# Store timestamp for consistent file naming
+TS=$(date +"%Y_%m_%d_%H%M")
+
+# Write prompt to file first
+cat > "notes/${TS}_gemini_prompt.txt" << 'EOF'
+<your long prompt here>
+EOF
+
+# Pass via -p flag or command substitution
+gemini -m gemini-3-pro-preview -o json "$(cat "notes/${TS}_gemini_prompt.txt")" 2>/dev/null | jq -r '.response'
+```
+
+This pattern is already documented in the "Complex Prompts" section below, but is repeated here because heredoc piping is a common first instinct that fails for long prompts.
 
 ### Critically Assess All Output
 
@@ -186,7 +220,9 @@ Gemini is a useful second opinion, not a source of truth. **Always verify claims
 
 For prompts with special characters or multi-line structure, write to file first:
 ```bash
-cat > /tmp/gemini_prompt.txt << 'EOF'
+# Store timestamp to reference the saved files later
+TS=$(date +"%Y_%m_%d_%H%M")
+cat > "notes/${TS}_gemini_prompt.txt" << 'EOF'
 Review src/api/handlers.py for security issues.
 
 **Check for**:
@@ -199,14 +235,12 @@ Review src/api/handlers.py for security issues.
 **Output**: CRITICAL/IMPORTANT. For each issue cite: file_path:function_name:line_start-line_end with fix suggestions.
 EOF
 
-# Store timestamp to reference the saved file later
-TS=$(date +"%Y_%m_%d_%H%M")
-gemini -m gemini-3-pro-preview -o json "$(cat /tmp/gemini_prompt.txt)" 2>/dev/null | tee "notes/${TS}_api_security_review.json" | jq -r '.response'
+gemini -m gemini-3-pro-preview -o json "$(cat "notes/${TS}_gemini_prompt.txt")" 2>/dev/null | tee "notes/${TS}_api_security_review.json" | jq -r '.response'
 
 # Read the saved response later
 jq -r '.response' "notes/${TS}_api_security_review.json"
 
-# Cleanup: trash /tmp/gemini_prompt.txt (or delete manually)
+# Cleanup: trash "notes/${TS}_gemini_prompt.txt" (or delete manually)
 ```
 
 ## Examples
@@ -306,3 +340,46 @@ ls -la notes/*_review.json
 | `2>/dev/null` | Suppress stderr debug output |
 | Critically assess | Gemini is second opinion, not truth |
 | Multiple rounds | Each pass finds different issues |
+
+## Iterative Review Process
+
+Gemini review is NOT one-shot. Follow this cycle:
+
+1. **Run review** → Save to `notes/${TS}_review_round1.json`
+2. **Claude critically reviews** each Gemini finding for validity
+3. **Create tasks** for ALL valid findings with `[GEMINI-CRITICAL/HIGH/MEDIUM/LOW]` prefix
+4. **Implement fixes**
+5. **Re-run Gemini** on same code → Save to `notes/${TS}_review_round2.json`
+6. **Compare** Round 2 vs Round 1 - are previous issues resolved? New ones found?
+7. **Repeat** until Gemini finds no more issues
+8. **Document**: "Gemini review complete after N iterations"
+
+### Task Creation Template
+
+After each Gemini review, create tasks for valid findings:
+```bash
+# Claude should create tasks like:
+TaskCreate({
+    "subject": "[GEMINI-HIGH] SQL injection in login.py:authenticate_user:45-52",
+    "description": "Gemini finding: User input in f-string query\nFile: src/auth/login.py:45-52\nFix: Use parameterized queries"
+})
+
+# Also create a task for future review to verify fixes
+TaskCreate({
+    "subject": "[GEMINI-REVIEW] Re-run Gemini review after fixes implemented",
+    "description": "After implementing all Gemini findings, re-run: gemini -m gemini-3-pro-preview -o json \"Review src/auth/login.py. **Check for**: Remaining security issues, regressions from fixes, edge cases. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as src/auth/login.py:function_name:line_start-line_end.\" 2>/dev/null | tee notes/$(date +\"%Y_%m_%d_%H%M\")_login_round2_review.json | jq -r '.response'"
+})
+```
+
+## Cross-Model Critical Review
+
+When Gemini reviews Claude's work (or vice versa):
+
+1. **Reviewer MUST be skeptical** - verify claims against actual code
+2. **Disagreements documented** with justification from both sides
+3. **Common Gemini mistakes to watch for**:
+   - Fabricated line numbers (always verify)
+   - Math errors in timing estimates (off by 10-100x)
+   - Overconfident "approved" without showing work
+   - Missed edge cases or pathological inputs
+
