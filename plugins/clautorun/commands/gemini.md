@@ -1,15 +1,31 @@
 ---
 name: gemini
-description: Use gemini CLI for any combination of: superior vision for analysis of images, diagrams, screenshots, PDFs, documents, video, and audio; code review with detailed citations and cross-referencing patterns; Google search; and multi-model workflows; all for planning, feedback, and getting unstuck
+description: Use gemini CLI for any combination of: superior vision for analysis of images, diagrams, screenshots, PDFs, documents, video, and audio; code review with detailed citations and cross-referencing patterns; Google search; and multi-model workflows; all for planning, feedback, and getting unstuck.
 ---
 
 # Gemini CLI Reference
 
-Use `gemini` for visual analysis (screenshots, diagrams) and code reviews with cross-referencing.
+Use `gemini` CLI for any combination of: superior vision for analysis of images, diagrams, screenshots, PDFs, documents, video, and audio; code review with detailed citations and cross-referencing patterns; Google search; and multi-model workflows; all for planning, feedback, and getting unstuck.
+
+## Summary
+
+| Requirement | Reason |
+|-------------|--------|
+| Files in cwd (or `notes/`) | Can't access /tmp or parent dirs |
+| Not gitignored | Silently skipped |
+| `-o json` + `jq` | Clean extraction, no debug noise |
+| `2>/dev/null` | Suppress stderr debug output |
+| Timestamp prefix: `${TS}_name.ext` | Files sort chronologically |
+| Video: 1 FPS sampling | High-speed bugs need slow-motion or screenshots |
+| Audio: transcription + diarization | Speaker identification and sentiment analysis |
+| Context: 2M tokens | Hours of video or massive codebases per session |
+| Session resumption (`-r "$SID"`) | Preserves context, avoids re-uploading for iterative review (large media files may expire after 48h) |
+| Critically assess | Gemini is second opinion, not truth |
+| Multiple rounds | Each pass finds different issues, repeat until all parties approve. |
 
 ## Requirements
 
-**Three hard constraints** - violating any causes silent failures or poor results:
+**Four hard constraints** - violating any causes silent failures or poor results:
 
 ### 1. Files Must Be in Current Directory
 
@@ -52,6 +68,23 @@ Gemini produces better structured output when prompts use numbered lists:
 2. Request numbered output format
 3. Specify file_path:function_name:line_start-line_end for citations
 
+### 4. Multimodal Media Constraints
+
+Gemini supports audio and video analysis with specific limitations:
+
+1. **Video Sampling**: Gemini samples at **1 FPS**. For high-speed UI bugs, use slow-motion or provide specific screenshots.
+2. **Audio Processing**: Supports transcription, speaker diarization, and tone/sentiment analysis.
+3. **Context Window**: Supports up to 2M tokens, allowing for hours of video or massive codebases in a single session (large media files may expire after 48h).
+
+```bash
+# Video analysis example
+TS=$(date +"%Y_%m_%d_%H%M")
+gemini -m gemini-3-pro-preview -o json "Analyze notes/${TS}_video.mp4 for UX bottlenecks. Note: Video sampled at 1 FPS, high-speed bugs may need slow-motion." 2>/dev/null | tee "notes/${TS}_video_review.json" | jq -r '.response'
+
+# Audio transcription example
+gemini -m gemini-3-pro-preview -o json "Transcribe notes/${TS}_audio.wav and summarize action items with speaker identification." 2>/dev/null | tee "notes/${TS}_audio_review.json" | jq -r '.response'
+```
+
 ## Quick Start
 
 ```bash
@@ -72,6 +105,18 @@ gemini -m gemini-3-pro-preview -o json "Review src/main.py for bugs and edge cas
 
 # Read saved response later (note: use exact filename from above)
 jq -r '.response' "notes/${TS}_accessibility_review.json"
+
+# Video Analysis (1 FPS sampling - use slow-motion for high-speed UI bugs)
+gemini -m gemini-3-pro-preview -o json "Analyze notes/${TS}_video.mp4 for UX bottlenecks." 2>/dev/null | tee "notes/${TS}_video_review.json" | jq -r '.response'
+
+# Audio Transcription (with speaker diarization and sentiment analysis)
+gemini -m gemini-3-pro-preview -o json "Transcribe notes/${TS}_audio.wav and summarize action items." 2>/dev/null | tee "notes/${TS}_audio_review.json" | jq -r '.response'
+
+# Resume Session (Isolated Workflow - Preferred for Iterative Review)
+# Auto-find most recent review file and extract session_id
+SID=$(jq -r '.session_id' "$(ls -t notes/*_review.json 2>/dev/null | head -1)")
+echo "Resuming session: $SID"
+gemini -r "$SID" -m gemini-3-pro-preview -o json "Follow up with deeper analysis..." 2>/dev/null | jq -r '.response'
 ```
 
 **Why `-o json`**: Debug noise goes to stderr only. Raw JSON saved to notes, extract response with `jq -r '.response'`.
@@ -198,6 +243,22 @@ Gemini review is NOT one-shot. Follow this cycle:
 6. **Compare** Round 2 vs Round 1 - are previous issues resolved? New ones found?
 7. **Repeat** until Gemini finds no more issues
 8. **Document**: "Gemini review complete after N iterations"
+
+### Resume Sessions (Preferred Method)
+
+Instead of re-uploading files for each round, resume sessions for context continuity:
+
+```bash
+# Auto-find most recent round1 file and extract session_id
+SID=$(jq -r '.session_id' "$(ls -t notes/*_round1.json 2>/dev/null | head -1)")
+echo "Resuming session: $SID"
+
+# Resume same session (preserves uploaded files and context)
+TS=$(date +"%Y_%m_%d_%H%M")  # New timestamp for round2 output
+gemini -r "$SID" -m gemini-3-pro-preview -o json "Re-check for remaining issues after fixes." 2>/dev/null | tee "notes/${TS}_review_round2.json" | jq -r '.response'
+```
+
+This is the preferred method for "feeding output back in" - it maintains process isolation and ensures the model has full context from previous rounds.
 
 ### Task Creation Template
 
@@ -338,9 +399,14 @@ gemini --include-directories /path/to/other/project "analyze file.py"
 gemini --include-directories ../sibling-repo,/tmp "compare files"
 
 # Session management
-gemini --list-sessions                     # List previous sessions
-gemini -r latest "continue previous task"  # Resume most recent session
-gemini -r 3 "continue"                     # Resume session #3
+gemini --list-sessions                          # List previous sessions
+gemini -r latest "continue previous task"       # Resume most recent session
+gemini -r 3 "continue"                          # Resume session #3
+gemini -r "$SESSION_ID" -m gemini-3-pro-preview -o json "prompt"  # Resume specific session (PREFERRED for iterative workflows - preserves context and avoids re-uploading files; large media may expire after 48h)
+
+# Session persistence (automatic)
+# Conversations cached for 30 days in ~/.gemini/tmp/
+# Extract session_id from saved JSON: jq -r '.session_id' notes/review.json
 
 # Interactive mode
 gemini                                     # Start interactive session
@@ -365,15 +431,3 @@ jq '{tokens: .tokens, tools: .tools.totalCalls}' notes/2024_01_15_1430_login_sec
 # List all saved reviews
 ls -la notes/*_review.json
 ```
-
-### Summary
-
-| Requirement | Reason |
-|-------------|--------|
-| Files in cwd (or `notes/`) | Can't access /tmp or parent dirs |
-| Not gitignored | Silently skipped |
-| `-o json` + `jq` | Clean extraction, no debug noise |
-| `2>/dev/null` | Suppress stderr debug output |
-| Timestamp prefix: `${TS}_name.ext` | Files sort chronologically |
-| Critically assess | Gemini is second opinion, not truth |
-| Multiple rounds | Each pass finds different issues, repeat until all parties approve. |
