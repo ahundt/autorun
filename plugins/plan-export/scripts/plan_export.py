@@ -165,17 +165,18 @@ def get_plan_from_transcript(transcript_path: str) -> Path | None:
                     continue
                 try:
                     entry = json.loads(line)
-                    if entry.get("type") == "file-history-snapshot":
-                        tracked = entry.get("snapshot", {}).get("trackedFileBackups", {})
-                        for file_path in tracked.keys():
-                            # Use proper path comparison to avoid false positives
-                            # e.g., don't match /plans-backup/ when looking for /plans/
-                            try:
-                                path_obj = Path(file_path)
-                                if path_obj.parent == plans_dir and file_path.endswith(".md"):
-                                    found_plans.add(file_path)
-                            except (ValueError, TypeError):
-                                continue
+                    if entry.get("type") == "assistant":
+                        message = entry.get("message", {})
+                        content = message.get("content", [])
+                        if isinstance(content, list):
+                            for item in content:
+                                if item.get("type") == "tool_use":
+                                    tool_name = item.get("name", "")
+                                    if tool_name in ["Write", "Edit"]:
+                                        tool_input = item.get("input", {})
+                                        file_path = tool_input.get("file_path", "")
+                                        if file_path and file_path.startswith(str(plans_dir)) and file_path.endswith(".md"):
+                                            found_plans.add(file_path)
                 except json.JSONDecodeError:
                     continue
     except IOError:
@@ -669,6 +670,10 @@ def main():
             config = load_config()
             if is_approved:
                 export_result = export_plan(plan_path, project_dir, session_id=session_id)
+                # Verify destination file exists
+                dest_path = Path(export_result.get("destination", ""))
+                if not dest_path.exists():
+                    log_warning(f"Export reported success but file missing: {dest_path}")
             elif config.get("export_rejected", True):
                 export_result = export_rejected_plan(plan_path, project_dir, session_id=session_id)
             else:
