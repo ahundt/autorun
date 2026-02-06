@@ -13,21 +13,22 @@ Use `gemini` for visual analysis (screenshots, diagrams) and code reviews with c
 
 ### 1. Files Must Be in Current Directory
 
-Gemini cannot access `/tmp/`, parent directories, or absolute paths outside the project.
+Gemini can access the current directory and directories added with the `--include-directories /path/to/dir` flag. Gemini by default cannot access `/tmp/`, parent directories, or absolute paths outside the project.
 
 ```bash
-# BAD - files in /tmp won't be accessible
-./myapp --screenshot /tmp/screenshot.png
-gemini -m gemini-3-pro-preview -o json "analyze screenshot.png" 2>/dev/null | jq -r '.response'
-# Result: "File not found" error
-
-# GOOD - files in current directory
-./myapp --screenshot ./screenshot.png
-gemini -m gemini-3-pro-preview -o json "analyze screenshot.png" 2>/dev/null | jq -r '.response'
+TS=$(date +"%Y_%m_%d_%H%M")
+# GOOD - files in notes/ directory with timestamp prefix
+./myapp --screenshot "notes/${TS}_screenshot_good.png"
+gemini -m gemini-3-pro-preview -o json "analyze notes/${TS}_screenshot_good.png" 2>/dev/null | jq -r '.response'
 # Result: Works correctly
 
+# BAD - files in /tmp won't be accessible
+./myapp --screenshot "/tmp/${TS}_screenshot_bad.png"
+gemini -m gemini-3-pro-preview -o json "analyze /tmp/${TS}_screenshot_bad.png" 2>/dev/null | jq -r '.response'
+# Result: "File not found" error
+
 # WORKAROUND - include additional directories
-gemini --include-directories /tmp -o json "analyze /tmp/screenshot.png" 2>/dev/null | jq -r '.response'
+gemini --include-directories /tmp -o json "analyze /tmp/${TS}_screenshot_workaround.png" 2>/dev/null | jq -r '.response'
 ```
 
 ### 2. Files Must Not Match .gitignore
@@ -60,14 +61,16 @@ mkdir -p notes
 # Basic: ask a question, get clean response
 gemini -m gemini-3-pro-preview -o json "What are the top 3 code review checks?" 2>/dev/null | jq -r '.response'
 
-# Save raw JSON to notes, display extracted response
-gemini -m gemini-3-pro-preview -o json "Analyze screenshot.png for accessibility issues" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_accessibility_review.json | jq -r '.response'
+# Save raw JSON to notes, display extracted response (use TS variable to reference later)
+TS=$(date +"%Y_%m_%d_%H%M")
+gemini -m gemini-3-pro-preview -o json "Analyze screenshot.png for accessibility issues" 2>/dev/null | tee "notes/${TS}_accessibility_review.json" | jq -r '.response'
 
 # Long response: save raw JSON, show last 30 lines of response
-gemini -m gemini-3-pro-preview -o json "Review src/main.py for bugs and edge cases" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_main_py_review.json | jq -r '.response' | tail -30
+TS=$(date +"%Y_%m_%d_%H%M")
+gemini -m gemini-3-pro-preview -o json "Review src/main.py for bugs and edge cases" 2>/dev/null | tee "notes/${TS}_main_py_review.json" | jq -r '.response' | tail -30
 
-# Read saved response later
-jq -r '.response' notes/2024_01_15_1430_accessibility_review.json
+# Read saved response later (note: use exact filename from above)
+jq -r '.response' "notes/${TS}_accessibility_review.json"
 ```
 
 **Why `-o json`**: Debug noise goes to stderr only. Raw JSON saved to notes, extract response with `jq -r '.response'`.
@@ -120,7 +123,7 @@ Seven elements for effective prompts:
 
 1. **Context**: What you're reviewing (file, algorithm, UI)
 2. **Instructions**: What to check (correctness, edge cases, contrast)
-3. **Locations**: Exact file paths, line numbers
+3. **Locations**: Exact file paths, line numbers, reference urls, citations, etc.
 4. **Cross-references**: Multiple code versions if applicable
 5. **Critical Review**: Be harshly critical, constructive, and propose concrete and actionable solutions with justification.
 6. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
@@ -130,7 +133,7 @@ Seven elements for effective prompts:
 
 When Gemini reviews Claude's work (or vice versa):
 
-1. **Reviewer MUST be skeptical** - verify claims against actual code
+1. **Reviewer MUST be skeptical** - verify claims against actual evidence and code, see "Critically Assess All Output" in Gotchas.
 2. **Disagreements documented** with justification from both sides
 3. **Common Gemini mistakes to watch for**:
    - Fabricated line numbers (always verify)
@@ -224,25 +227,6 @@ TaskCreate({
 | Empty output (no error) | Invalid model name with `2>/dev/null` | Verify model name from CLI Options table. Common mistakes: `gemini-3-pro` (use `gemini-3-pro-preview`), `gemini-3-flash` (use `gemini-3-flash-preview`), `gemini-2.0-pro` (use `gemini-2.5-pro`) |
 | "Unknown argument: file" | `--file` flag doesn't exist | Reference files by name in prompt (Gemini reads project files). For files outside project use `--include-directories` |
 
-### Long Prompts
-
-Piping long prompts via heredoc (`cat << 'EOF' | gemini`) can timeout. For prompts longer than a few lines:
-
-```bash
-# Store timestamp for consistent file naming
-TS=$(date +"%Y_%m_%d_%H%M")
-
-# Write prompt to file first
-cat > "notes/${TS}_gemini_prompt.txt" << 'EOF'
-<your long prompt here>
-EOF
-
-# Pass via -p flag or command substitution
-gemini -m gemini-3-pro-preview -o json "$(cat "notes/${TS}_gemini_prompt.txt")" 2>/dev/null | jq -r '.response'
-```
-
-This pattern is already documented in the "Complex Prompts" section below, but is repeated here because heredoc piping is a common first instinct that fails for long prompts.
-
 ### Critically Assess All Output
 
 Gemini is a useful second opinion, not a source of truth. **Always verify claims before acting on them.**
@@ -259,9 +243,9 @@ Gemini is a useful second opinion, not a source of truth. **Always verify claims
 3. Compare results for contradictions
 4. Test suggested fixes before applying
 
-### Complex Prompts
+### Long Prompts
 
-For prompts with special characters or multi-line structure, write to file first:
+For prompts with special characters, multi-line structure, or long content: **piping via heredoc (`cat << 'EOF' | gemini`) can timeout**. Write to file first instead:
 ```bash
 # Store timestamp to reference the saved files later
 TS=$(date +"%Y_%m_%d_%H%M")
@@ -291,14 +275,20 @@ jq -r '.response' "notes/${TS}_api_security_review.json"
 ### Visual Analysis
 
 ```bash
-# 1. Take screenshot IN current directory (not /tmp)
-./myapp --screenshot ./screenshot.png
+# Use TS variable for consistent file naming (files sort chronologically)
+TS=$(date +"%Y_%m_%d_%H%M")
 
-# 2. Run analysis (raw JSON saved to notes)
-gemini -m gemini-3-pro-preview -o json "Analyze screenshot.png: 1) Is contrast sufficient for accessibility? 2) Is text readable? 3) Are interactive elements clearly visible?" 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_screenshot_accessibility.json | jq -r '.response'
+# 1. Take screenshot in notes/ directory with timestamp prefix
+./myapp --screenshot "notes/${TS}_screenshot_visual.png"
 
-# 3. Cleanup (optional)
-trash screenshot.png  # or delete manually
+# 2. Run analysis (same TS variable for both files)
+gemini -m gemini-3-pro-preview -o json "Analyze ${TS}_screenshot_visual.png: 1) Is contrast sufficient for accessibility? 2) Is text readable? 3) Are interactive elements clearly visible?" 2>/dev/null | tee "notes/${TS}_screenshot_accessibility.json" | jq -r '.response'
+
+# 3. Read saved response later
+jq -r '.response' "notes/${TS}_screenshot_accessibility.json"
+
+# 4. Cleanup (optional)
+trash "notes/${TS}_screenshot_visual.png"  # or delete manually
 ```
 
 ### Code Review with Worktree
@@ -308,11 +298,12 @@ trash screenshot.png  # or delete manually
 git worktree add .worktrees/baseline <commit-hash>
 echo ".worktrees/" >> .gitignore
 
-# 2. Run comparative review (raw JSON saved to notes)
-gemini -m gemini-3-pro-preview -o json "Review src/module.rs against baseline. **Current**: src/module.rs **Baseline**: .worktrees/baseline/src/module.rs Check: 1. Logic errors, off-by-one, wrong operators 2. Edge cases: empty input, boundary conditions 3. Which version is correct where they differ. For each issue cite: file_path:function_name:line_start-line_end from BOTH versions." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_module_rs_worktree_review.json | jq -r '.response' | tail -50
+# 2. Run comparative review (use TS variable to reference saved file later)
+TS=$(date +"%Y_%m_%d_%H%M")
+gemini -m gemini-3-pro-preview -o json "Review src/module.rs against baseline. **Current**: src/module.rs **Baseline**: .worktrees/baseline/src/module.rs Check: 1. Logic errors, off-by-one, wrong operators 2. Edge cases: empty input, boundary conditions 3. Which version is correct where they differ. For each issue cite: file_path:function_name:line_start-line_end from BOTH versions." 2>/dev/null | tee "notes/${TS}_module_rs_worktree_review.json" | jq -r '.response' | tail -50
 
 # 3. Read full response if needed
-jq -r '.response' notes/2024_01_15_1430_module_rs_worktree_review.json
+jq -r '.response' "notes/${TS}_module_rs_worktree_review.json"
 
 # 4. Cleanup
 git worktree remove .worktrees/baseline
@@ -377,9 +368,10 @@ ls -la notes/*_review.json
 
 | Requirement | Reason |
 |-------------|--------|
-| Files in cwd | Can't access /tmp or parent dirs |
+| Files in cwd (or `notes/`) | Can't access /tmp or parent dirs |
 | Not gitignored | Silently skipped |
 | `-o json` + `jq` | Clean extraction, no debug noise |
 | `2>/dev/null` | Suppress stderr debug output |
+| Timestamp prefix: `${TS}_name.ext` | Files sort chronologically |
 | Critically assess | Gemini is second opinion, not truth |
 | Multiple rounds | Each pass finds different issues, repeat until all parties approve. |
