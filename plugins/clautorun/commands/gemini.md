@@ -116,16 +116,29 @@ jq -r '.response' notes/$(date +"%Y_%m_%d_%H%M")_review.json
 
 ## Prompt Structure
 
-Six elements for effective prompts:
+Seven elements for effective prompts:
 
 1. **Context**: What you're reviewing (file, algorithm, UI)
 2. **Instructions**: What to check (correctness, edge cases, contrast)
 3. **Locations**: Exact file paths, line numbers
 4. **Cross-references**: Multiple code versions if applicable
-5. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
-6. **Code snippets**: Always request **BEFORE/AFTER** code for each issue with citation as `file_path:function_name:line_start-line_end` (include function if applicable)
+5. **Critical Review**: Be harshly critical, constructive, and propose concrete and actionable solutions with justification.
+6. **Output format**: Severity levels (CRITICAL/IMPORTANT/OPTIMIZATION)
+7. **Code snippets**: Always request **BEFORE/AFTER** code for each issue with citation as `file_path:function_name:line_start-line_end` (include function if applicable)
 
-### 7. BEFORE/AFTER Code Requirement (MANDATORY)
+## Cross-Model Critical Review
+
+When Gemini reviews Claude's work (or vice versa):
+
+1. **Reviewer MUST be skeptical** - verify claims against actual code
+2. **Disagreements documented** with justification from both sides
+3. **Common Gemini mistakes to watch for**:
+   - Fabricated line numbers (always verify)
+   - Math errors in timing estimates (off by 10-100x)
+   - Overconfident "approved" without showing work
+   - Missed edge cases or pathological inputs
+
+### BEFORE/AFTER Code Requirement (MANDATORY)
 
 Every code review finding MUST include:
 - **BEFORE**: The current code with the problem (with `file_path:function_name:line_start-line_end`)
@@ -133,14 +146,14 @@ Every code review finding MUST include:
 
 **Enforcement**: Add to every Gemini prompt:
 ```
-For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as file_path:function_name:line_start-line_end (include function if applicable).
+For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) citation as file_path:function_name:line_start-line_end (include function if applicable).
 ```
 
 This is already in the template above but is repeated here for emphasis: **without BEFORE/AFTER code with exact line citations, reviews are not actionable.**
 
 **Template** (copy and fill in `<placeholders>`):
 ```bash
-gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as file_path:function_name:line_start-line_end (include function if applicable). Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
+gemini -m gemini-3-pro-preview -o json "Review <FILE_PATH>. **Check for**: <WHAT_TO_CHECK>. **Cross-reference**: <BASELINE_PATH if comparing versions>. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) citation as file_path:function_name:line_start-line_end (include function if applicable). Be specific with concrete examples." 2>/dev/null | tee notes/$(date +"%Y_%m_%d_%H%M")_<DESCRIPTION>_review.json | jq -r '.response'
 ```
 
 **Concrete example**:
@@ -166,6 +179,36 @@ cursor.execute(query, (username,))
 ```
 
 Explanation: User input passed directly to query string. Fix uses parameterized query.
+```
+
+## Iterative Review Process
+
+Gemini review is NOT one-shot. Follow this cycle:
+
+1. **Run review** → Save to `notes/${TS}_review_round1.json`
+2. **Claude critically reviews** each Gemini finding for validity
+3. **Create tasks** for ALL valid findings with `[GEMINI-CRITICAL/HIGH/MEDIUM/LOW]` prefix
+4. **Implement fixes**
+5. **Re-run Gemini** on same code → Save to `notes/${TS}_review_round2.json`
+6. **Compare** Round 2 vs Round 1 - are previous issues resolved? New ones found?
+7. **Repeat** until Gemini finds no more issues
+8. **Document**: "Gemini review complete after N iterations"
+
+### Task Creation Template
+
+After each Gemini review, create tasks for valid findings:
+```bash
+# Claude should create tasks like:
+TaskCreate({
+    "subject": "[GEMINI-HIGH] SQL injection in login.py:authenticate_user:45-52",
+    "description": "Gemini finding: User input in f-string query\nFile: src/auth/login.py:45-52\nFix: Use parameterized queries"
+})
+
+# Also create a task for future review to verify fixes
+TaskCreate({
+    "subject": "[GEMINI-REVIEW] Re-run Gemini review after fixes implemented",
+    "description": "After implementing all Gemini findings, re-run: gemini -m gemini-3-pro-preview -o json \"Review src/auth/login.py. **Check for**: Remaining security issues, regressions from fixes, edge cases. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification (4) citation as src/auth/login.py:function_name:line_start-line_end.\" 2>/dev/null | tee notes/$(date +\"%Y_%m_%d_%H%M\")_login_round2_review.json | jq -r '.response'"
+})
 ```
 
 ## Gotchas
@@ -339,47 +382,4 @@ ls -la notes/*_review.json
 | `-o json` + `jq` | Clean extraction, no debug noise |
 | `2>/dev/null` | Suppress stderr debug output |
 | Critically assess | Gemini is second opinion, not truth |
-| Multiple rounds | Each pass finds different issues |
-
-## Iterative Review Process
-
-Gemini review is NOT one-shot. Follow this cycle:
-
-1. **Run review** → Save to `notes/${TS}_review_round1.json`
-2. **Claude critically reviews** each Gemini finding for validity
-3. **Create tasks** for ALL valid findings with `[GEMINI-CRITICAL/HIGH/MEDIUM/LOW]` prefix
-4. **Implement fixes**
-5. **Re-run Gemini** on same code → Save to `notes/${TS}_review_round2.json`
-6. **Compare** Round 2 vs Round 1 - are previous issues resolved? New ones found?
-7. **Repeat** until Gemini finds no more issues
-8. **Document**: "Gemini review complete after N iterations"
-
-### Task Creation Template
-
-After each Gemini review, create tasks for valid findings:
-```bash
-# Claude should create tasks like:
-TaskCreate({
-    "subject": "[GEMINI-HIGH] SQL injection in login.py:authenticate_user:45-52",
-    "description": "Gemini finding: User input in f-string query\nFile: src/auth/login.py:45-52\nFix: Use parameterized queries"
-})
-
-# Also create a task for future review to verify fixes
-TaskCreate({
-    "subject": "[GEMINI-REVIEW] Re-run Gemini review after fixes implemented",
-    "description": "After implementing all Gemini findings, re-run: gemini -m gemini-3-pro-preview -o json \"Review src/auth/login.py. **Check for**: Remaining security issues, regressions from fixes, edge cases. **Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) citation as src/auth/login.py:function_name:line_start-line_end.\" 2>/dev/null | tee notes/$(date +\"%Y_%m_%d_%H%M\")_login_round2_review.json | jq -r '.response'"
-})
-```
-
-## Cross-Model Critical Review
-
-When Gemini reviews Claude's work (or vice versa):
-
-1. **Reviewer MUST be skeptical** - verify claims against actual code
-2. **Disagreements documented** with justification from both sides
-3. **Common Gemini mistakes to watch for**:
-   - Fabricated line numbers (always verify)
-   - Math errors in timing estimates (off by 10-100x)
-   - Overconfident "approved" without showing work
-   - Missed edge cases or pathological inputs
-
+| Multiple rounds | Each pass finds different issues, repeat until all parties approve. |
