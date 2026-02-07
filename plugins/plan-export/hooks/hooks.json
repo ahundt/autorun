@@ -1,5 +1,5 @@
 {
-  "description": "Hook to export plan files when exiting plan mode",
+  "description": "Hooks for plan export - includes workaround for fresh context bug",
   "hooks": {
     "PostToolUse": [
       {
@@ -11,6 +11,13 @@
             "timeout": 30
           }
         ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_unexported_plans.py",
+        "timeout": 10
       }
     ]
   }

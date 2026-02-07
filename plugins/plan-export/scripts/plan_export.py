@@ -47,6 +47,7 @@ Configuration (~/.claude/plan-export.config.json):
   notify_claude            - Show export confirmation message to Claude (default: true)
 """
 
+import hashlib
 import json
 import os
 import re
@@ -81,6 +82,58 @@ DEFAULT_CONFIG = {
     "debug_logging": False,
     "notify_claude": True
 }
+
+# Tracking file for preventing double-exports (workaround for fresh context bug)
+TRACKING_FILE = Path.home() / ".claude" / "plan-export-tracking.json"
+
+
+def get_content_hash(file_path: Path) -> str:
+    """Get SHA256 hash of file content for tracking."""
+    try:
+        content = file_path.read_bytes()
+        return hashlib.sha256(content).hexdigest()[:16]
+    except IOError:
+        return ""
+
+
+def load_tracking() -> dict:
+    """Load export tracking data."""
+    if TRACKING_FILE.exists():
+        try:
+            with open(TRACKING_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def save_tracking(tracking: dict) -> None:
+    """Save export tracking data."""
+    try:
+        with open(TRACKING_FILE, "w") as f:
+            json.dump(tracking, f, indent=2)
+    except IOError:
+        pass
+
+
+def record_export(plan_path: Path, dest_path: Path) -> None:
+    """Record a successful export to prevent double-exports.
+
+    This is used by both PostToolUse (normal path) and SessionStart (workaround)
+    to ensure plans are only exported once, even if the fresh context bug is fixed.
+    """
+    content_hash = get_content_hash(plan_path)
+    if not content_hash:
+        return
+
+    tracking = load_tracking()
+    tracking[content_hash] = {
+        "exported_at": datetime.now().isoformat(),
+        "destination": str(dest_path),
+        "source": str(plan_path),
+        "via": "post_tool_use"
+    }
+    save_tracking(tracking)
 
 
 def get_config_path() -> Path:
@@ -467,6 +520,9 @@ def export_plan(plan_path: Path, project_dir: Path, session_id: str = None) -> d
     # Copy the plan file
     shutil.copy2(plan_path, dest_path)
 
+    # Record export to prevent double-exports (workaround for fresh context bug)
+    record_export(plan_path, dest_path)
+
     # Embed metadata for recoverability (if session_id provided)
     if session_id:
         embed_plan_metadata(plan_path, session_id, dest_path)
@@ -520,6 +576,9 @@ def export_rejected_plan(plan_path: Path, project_dir: Path, session_id: str = N
 
     # Copy the plan file
     shutil.copy2(plan_path, dest_path)
+
+    # Record export to prevent double-exports (workaround for fresh context bug)
+    record_export(plan_path, dest_path)
 
     # Embed metadata for recoverability (if session_id provided)
     if session_id:
