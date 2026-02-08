@@ -6,4 +6,4 @@ args: path
 
 # Set Rejected Plan Directory
 
-!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py rejected-dir "$ARGUMENTS"`
+! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py rejected-dir "$ARGUMENTS"

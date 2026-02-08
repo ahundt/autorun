@@ -183,7 +183,7 @@ import logging
 from datetime import datetime
 
 from .core import EventContext, app, logger
-from .session_manager import session_state, SessionTimeoutError
+from .session_manager import session_state, SessionLock, SessionTimeoutError
 
 # Global key for cross-session state (survives Option 1 fresh context)
 GLOBAL_SESSION_ID = "__plan_export__"
@@ -219,9 +219,15 @@ def get_content_hash(file_path) -> str:
         return ""
 
 
-def log_warning(message: str) -> None:
-    """Log message to debug log if debug_logging is enabled."""
-    config = PlanExportConfig.load()
+def log_warning(message: str, config: "PlanExportConfig" = None) -> None:
+    """Log message to debug log if debug_logging is enabled.
+
+    Args:
+        message: Message to log.
+        config: Optional pre-loaded config to avoid disk read. If None, loads from disk.
+    """
+    if config is None:
+        config = PlanExportConfig.load()
     if config.debug_logging:
         try:
             with open(DEBUG_LOG_PATH, "a") as f:
@@ -527,7 +533,7 @@ class PlanExport:
         try:
             project_dir = str(self.project_dir)
         except ValueError:
-            log_warning(f"record_write: cwd not available, skipping {file_path}")
+            log_warning(f"record_write: cwd not available, skipping {file_path}", self.config)
             return
 
         def updater(plans):
@@ -537,7 +543,7 @@ class PlanExport:
                 "recorded_at": datetime.now().isoformat(),
             }
         self.atomic_update_active_plans(updater)
-        log_warning(f"Recorded plan write: {file_path}")
+        log_warning(f"Recorded plan write: {file_path}", self.config)
 
     def get_current_plan(self) -> Optional[Path]:
         """Get current plan file from tool_result or active_plans."""
@@ -655,10 +661,10 @@ class PlanExport:
             self.atomic_update_active_plans(remove_plan)
 
             rel_path = dest_path.relative_to(self.project_dir)
-            log_warning(f"Exported plan to {rel_path}")
-            return {"success": True, "message": f"Plan exported to {rel_path}"}
+            log_warning(f"Exported plan to {rel_path}", self.config)
+            return {"success": True, "message": f"Plan exported to {rel_path}", "destination": str(dest_path)}
         except Exception as e:
-            log_warning(f"Export error: {e}")
+            log_warning(f"Export error: {e}", self.config)
             return {"success": False, "error": str(e)}
 
 
@@ -694,7 +700,7 @@ def export_plan(plan_path, project_dir, session_id: str = None) -> dict:
         return {
             "success": True,
             "source": str(plan_path),
-            "destination": str(project_dir / config.output_plan_dir),
+            "destination": result["destination"],
             "message": result["message"]
         }
     return {
@@ -733,7 +739,7 @@ def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict
         return {
             "success": True,
             "source": str(plan_path),
-            "destination": str(project_dir / config.output_rejected_plan_dir),
+            "destination": result["destination"],
             "message": result["message"]
         }
     return {
@@ -747,7 +753,14 @@ def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict
 def handle_session_start(hook_input: dict) -> None:
     """Handle SessionStart hook - recover unexported plans.
 
-    This is called by the hook script when daemon is not running.
+    CLAUDE CODE BUG WORKAROUND:
+    When a user accepts a plan with Option 1 (fresh context), the PostToolUse
+    hook for ExitPlanMode doesn't fire, leaving the plan unexported.
+
+    This handler catches unexported plans on the next session start by checking
+    for plans tracked via Write/Edit PostToolUse events that have no matching
+    export in the tracking data.
+
     Prints JSON response to stdout for Claude Code.
     """
     from .core import ThreadSafeDB
@@ -764,19 +777,69 @@ def handle_session_start(hook_input: dict) -> None:
 
     config = PlanExportConfig.load()
     if not config.enabled:
+        print(json.dumps({"continue": True, "suppressOutput": True}))
+        return
+
+    if not session_id or session_id == "unknown":
         print(json.dumps({"continue": True}))
         return
 
-    exporter = PlanExport(ctx, config)
-    for plan in exporter.get_unexported():
-        result = exporter.export(plan)
-        if result["success"] and config.notify_claude:
-            print(json.dumps({
-                "continue": True,
-                "systemMessage": f"📋 Recovered: {result['message']}",
-            }))
-            return
-    print(json.dumps({"continue": True}))
+    transcript_path = hook_input.get("transcript_path")
+    if not transcript_path:
+        print(json.dumps({"continue": True}))
+        return
+
+    try:
+        lock_context = SessionLock(session_id, timeout=5.0)
+    except Exception:
+        print(json.dumps({"continue": True}))
+        return
+
+    try:
+        with lock_context:
+            exporter = PlanExport(ctx, config)
+
+            # Try transcript-based recovery first
+            plan_path = get_plan_from_transcript(transcript_path)
+            if not plan_path:
+                print(json.dumps({"continue": True}))
+                return
+
+            # Skip empty plans
+            try:
+                content = plan_path.read_text(encoding="utf-8")
+                if not content.strip():
+                    print(json.dumps({"continue": True}))
+                    return
+            except (IOError, UnicodeDecodeError):
+                print(json.dumps({"continue": True}))
+                return
+
+            # Check if already exported (content-hash dedup)
+            content_hash = get_content_hash(plan_path)
+            tracking = load_tracking()
+            if content_hash in tracking:
+                print(json.dumps({"continue": True}))
+                return
+
+            # Export the plan
+            result = exporter.export(plan_path)
+            if result["success"]:
+                record_export(plan_path, result.get("destination", ""))
+                if config.notify_claude:
+                    print(json.dumps({
+                        "continue": True,
+                        "systemMessage": f"📋 Recovered unexported plan: {result['message']}",
+                    }))
+                    return
+
+            print(json.dumps({"continue": True}))
+
+    except SessionTimeoutError:
+        print(json.dumps({"continue": True}))
+    except Exception as e:
+        log_warning(f"SessionStart handler error: {e}", config)
+        print(json.dumps({"continue": True}))
 
 
 def embed_plan_metadata(plan_path, session_id: str, export_destination) -> None:

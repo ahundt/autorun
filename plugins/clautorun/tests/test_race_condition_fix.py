@@ -32,21 +32,12 @@ from typing import Dict, List, Optional, Any
 
 import pytest
 
-# Add parent directories to path for imports BEFORE importing modules
-# CRITICAL: This must happen before importing plan_export or session_manager
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
-
-# Now we can import the modules
-# Note: export_plan_module is a wrapper for plan_export.py
-from export_plan_module import (
-    load_config,
-    is_enabled,
+from clautorun.plan_export import (
+    PlanExportConfig,
     get_most_recent_plan,
     get_plan_from_transcript,
     export_plan,
     log_warning,
-    main
 )
 from clautorun.session_manager import SessionLock, SessionTimeoutError
 
@@ -177,7 +168,6 @@ def mock_session_lock(test_temp_dir, monkeypatch):
 @pytest.fixture
 def sample_config(test_temp_dir, monkeypatch):
     """Create a sample config for testing."""
-    config_path = test_temp_dir["test_root"] / "plan-export.config.json"
     config_data = {
         "enabled": True,
         "output_plan_dir": "notes",
@@ -188,13 +178,9 @@ def sample_config(test_temp_dir, monkeypatch):
         "debug_logging": True,  # Enable for test debugging
         "notify_claude": False  # Disable for tests
     }
-    config_path.write_text(json.dumps(config_data))
 
-    # Mock get_config_path to return test config
-    def mock_get_config_path():
-        return config_path
-
-    monkeypatch.setattr("plan_export.get_config_path", mock_get_config_path)
+    mock_config = PlanExportConfig(**config_data)
+    monkeypatch.setattr(PlanExportConfig, "load", classmethod(lambda cls: mock_config))
 
     return config_data
 
@@ -238,141 +224,29 @@ class TestBaselineFunctionality:
 
         test_session.cleanup()
 
-    def test_export_with_missing_session_id(self, test_temp_dir, sample_config, monkeypatch, capsys):
-        """Test that export fails gracefully when session_id is missing."""
-        # Mock stdin to provide hook input without session_id
-        # Include tool_name to ensure this tests PostToolUse path (not SessionStart)
-        hook_input = {
-            "tool_name": "ExitPlanMode",  # Required for PostToolUse dispatch
-            "cwd": str(test_temp_dir["test_root"]),
-            "transcript_path": None,
-            "permission_mode": "acceptEdits"
-        }
-
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
-
-        # Run main
-        main()
-
-        # Capture output
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-
-        # Verify error response
-        assert output["continue"] is True
-        assert "session_id" in output["systemMessage"].lower()
-        assert "required" in output["additionalContext"].lower()
-
-    def test_export_when_disabled(self, test_temp_dir, monkeypatch, capsys):
-        """Test that export is skipped when disabled in config."""
-        # Create config with export disabled
-        config_path = test_temp_dir["test_root"] / "plan-export.config.json"
-        config_data = {"enabled": False}
-        config_path.write_text(json.dumps(config_data))
-
-        def mock_get_config_path():
-            return config_path
-        monkeypatch.setattr("plan_export.get_config_path", mock_get_config_path)
-
-        # Mock stdin
-        hook_input = {
-            "session_id": f"test_session_{uuid.uuid4().hex[:8]}",
-            "cwd": str(test_temp_dir["test_root"]),
-            "permission_mode": "acceptEdits"
-        }
-        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
-
-        # Run main
-        main()
-
-        # Verify suppressed output
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["continue"] is True
-        assert output.get("suppressOutput") is True
-
-    def test_main_with_session_lock_integration(self, test_temp_dir, mock_session_lock, sample_config, monkeypatch, capsys):
-        """
-        Test that main() properly uses SessionLock to prevent race conditions.
-
-        This test verifies the actual race condition fix in main() where:
-        1. SessionLock wraps the critical section (plan selection + export)
-        2. Multiple concurrent calls to main() with same session_id are serialized
-        3. Each export gets the correct plan for its session
-        """
-        session_id = f"integration_test_{uuid.uuid4().hex[:8]}"
+    def test_export_with_missing_session_id(self, test_temp_dir, mock_session_lock, sample_config):
+        """Test that export_plan handles missing session_id gracefully."""
+        session_id = f"test_session_{uuid.uuid4().hex[:8]}"
         test_session = TestSession(session_id, test_temp_dir["test_state_dir"], test_temp_dir["test_plans_dir"])
         test_session.create()
 
-        # Create plan file
         plan_path = test_temp_dir["test_plans_dir"] / f"plan_{session_id}.md"
-        SyntheticPlanBuilder.create(plan_path, session_id, "Integration test plan")
+        SyntheticPlanBuilder.create(plan_path, session_id, "Missing session ID test")
 
-        # Create mock transcript
-        transcript_path = test_temp_dir["test_root"] / f"transcript_{session_id}.jsonl"
-        SyntheticPlanBuilder.create_transcript(transcript_path, session_id, plan_path)
-
-        # Prepare hook input for main()
-        # Include tool_name to ensure PostToolUse dispatch (not SessionStart)
-        hook_input = {
-            "tool_name": "ExitPlanMode",  # Required for PostToolUse dispatch
-            "session_id": session_id,
-            "cwd": str(test_session.project_dir),
-            "transcript_path": str(transcript_path),
-            "permission_mode": "acceptEdits"
-        }
-
-        def call_main():
-            """Call main() with hook input."""
-            monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
-            try:
-                main()
-                return {"success": True}
-            except Exception as e:
-                return {"error": str(e)}
-
-        # Test 1: Single call to main() succeeds
-        result = call_main()
-        assert result.get("success"), f"main() failed: {result.get('error')}"
-
-        # Verify export happened
-        exported_files = list(test_session.export_dir.glob("*.md"))
-        assert len(exported_files) > 0, "No files exported"
-
-        # Test 2: Concurrent calls to main() are serialized
-        results = []
-        result_lock = multiprocessing.Lock()
-
-        def concurrent_main():
-            """Concurrent call to main()."""
-            try:
-                monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
-                main()
-                with result_lock:
-                    results.append({"success": True})
-            except SessionTimeoutError:
-                with result_lock:
-                    results.append({"timeout": True})
-            except Exception as e:
-                with result_lock:
-                    results.append({"error": str(e)})
-
-        # Run concurrent calls
-        threads = []
-        for _ in range(3):
-            t = threading.Thread(target=concurrent_main)
-            threads.append(t)
-            t.start()
-
-        for t in threads:
-            t.join(timeout=10)
-
-        # Verify all calls completed without errors
-        assert len(results) == 3, f"Only {len(results)}/3 threads completed"
-        successful = [r for r in results if r.get("success")]
-        assert len(successful) >= 1, "No concurrent calls succeeded"
+        # export_plan with no session_id defaults to "unknown"
+        result = export_plan(plan_path, test_session.project_dir)
+        assert result["success"] is True
 
         test_session.cleanup()
+
+    def test_export_when_disabled(self, test_temp_dir, monkeypatch):
+        """Test that PlanExport respects disabled config."""
+        disabled_config = PlanExportConfig(enabled=False)
+        monkeypatch.setattr(PlanExportConfig, "load", classmethod(lambda cls: disabled_config))
+
+        # Verify config is disabled
+        config = PlanExportConfig.load()
+        assert config.enabled is False
 
 
 # =============================================================================

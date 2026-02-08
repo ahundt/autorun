@@ -28,12 +28,8 @@ from typing import Dict, List
 
 import pytest
 
-# Add parent directories to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
-
-from export_plan_module import (
-    load_config,
+from clautorun.plan_export import (
+    PlanExportConfig,
     export_plan,
     get_plan_from_metadata,
     embed_plan_metadata,

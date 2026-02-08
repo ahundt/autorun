@@ -30,6 +30,7 @@ from clautorun.plan_export import (
     PlanExport,
     PlanExportConfig,
     GLOBAL_SESSION_ID,
+    get_content_hash,
 )
 from clautorun.core import EventContext, ThreadSafeDB
 from clautorun.session_manager import session_state
@@ -156,6 +157,22 @@ class TestPlanExportConfig:
                 config = PlanExportConfig.load()
                 assert config.enabled is True  # Default
 
+    def test_load_migrates_legacy_output_dir_key(self):
+        """load() migrates legacy 'output_dir' key to 'output_plan_dir'."""
+        legacy_config = {"enabled": True, "output_dir": "custom/path"}
+        with patch.object(Path, 'exists', return_value=True):
+            with patch.object(Path, 'read_text', return_value=json.dumps(legacy_config)):
+                config = PlanExportConfig.load()
+                assert config.output_plan_dir == "custom/path"
+
+    def test_load_does_not_migrate_if_output_plan_dir_exists(self):
+        """load() keeps output_plan_dir when both legacy and new keys present."""
+        config_data = {"output_dir": "old/path", "output_plan_dir": "new/path"}
+        with patch.object(Path, 'exists', return_value=True):
+            with patch.object(Path, 'read_text', return_value=json.dumps(config_data)):
+                config = PlanExportConfig.load()
+                assert config.output_plan_dir == "new/path"
+
 
 # =============================================================================
 # TEST: PlanExport State Management
@@ -244,18 +261,18 @@ class TestPlanFileDetection:
 
     def test_content_hash_consistent(self, exporter, temp_project):
         """content_hash returns same hash for same content."""
-        hash1 = exporter.content_hash(temp_project["plan_file"])
-        hash2 = exporter.content_hash(temp_project["plan_file"])
+        hash1 = get_content_hash(temp_project["plan_file"])
+        hash2 = get_content_hash(temp_project["plan_file"])
         assert hash1 == hash2
         assert len(hash1) == 16  # First 16 chars of SHA256
 
     def test_content_hash_different_for_different_content(self, exporter, temp_project):
         """content_hash returns different hash for different content."""
-        hash1 = exporter.content_hash(temp_project["plan_file"])
+        hash1 = get_content_hash(temp_project["plan_file"])
 
         # Modify content
         temp_project["plan_file"].write_text("Different content")
-        hash2 = exporter.content_hash(temp_project["plan_file"])
+        hash2 = get_content_hash(temp_project["plan_file"])
 
         assert hash1 != hash2
 
@@ -362,7 +379,7 @@ class TestExportLogic:
         """export() records content hash to prevent duplicates."""
         exporter.export(temp_project["plan_file"])
 
-        content_hash = exporter.content_hash(temp_project["plan_file"])
+        content_hash = get_content_hash(temp_project["plan_file"])
         tracking = exporter.tracking
 
         assert content_hash in tracking
@@ -626,7 +643,7 @@ class TestErrorHandling:
 
     def test_content_hash_handles_missing_file(self, exporter):
         """content_hash() returns empty string for missing file."""
-        result = exporter.content_hash(Path("/nonexistent/file.md"))
+        result = get_content_hash(Path("/nonexistent/file.md"))
         assert result == ""
 
     def test_record_write_handles_missing_cwd(self, temp_project):
@@ -756,7 +773,7 @@ class TestDoubleExportPrevention:
 
         # Should create second file (collision handling)
         # But tracking should contain the hash
-        content_hash = exporter.content_hash(temp_project["plan_file"])
+        content_hash = get_content_hash(temp_project["plan_file"])
         assert content_hash in exporter.tracking
 
     def test_modified_plan_exported_again(self, exporter, temp_project):
@@ -895,45 +912,33 @@ class TestHookDispatchIntegration:
 
 
 class TestBootstrapFallback:
-    """Tests for fallback behavior when daemon not running."""
+    """Tests for fallback behavior - handle_session_start handles bad input."""
 
-    def test_script_main_handles_empty_input(self):
-        """Script main() handles empty stdin gracefully."""
-        import subprocess
+    def test_handle_session_start_empty_input(self, capsys):
+        """handle_session_start handles empty dict gracefully."""
+        from clautorun.plan_export import handle_session_start, PlanExportConfig
+        from unittest.mock import patch
 
-        script_path = Path(__file__).parent.parent / "scripts" / "plan_export.py"
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+            handle_session_start({})
 
-        # Run script with empty stdin
-        result = subprocess.run(
-            ["python3", str(script_path)],
-            input="",
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        # Should output valid JSON
-        assert result.returncode == 0
-        output = result.stdout.strip()
+        output = capsys.readouterr().out.strip()
         if output:
             parsed = json.loads(output)
-            assert "continue" in parsed
+            assert parsed.get("continue") is True
 
-    def test_script_main_handles_invalid_json(self):
-        """Script main() handles invalid JSON gracefully."""
-        import subprocess
+    def test_handle_session_start_no_transcript(self, capsys):
+        """handle_session_start handles missing transcript gracefully."""
+        from clautorun.plan_export import handle_session_start, PlanExportConfig
+        from unittest.mock import patch
 
-        script_path = Path(__file__).parent.parent / "scripts" / "plan_export.py"
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+            handle_session_start({"session_id": "test", "cwd": "/tmp"})
 
-        result = subprocess.run(
-            ["python3", str(script_path)],
-            input="not valid json",
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        assert result.returncode == 0
+        output = capsys.readouterr().out.strip()
+        if output:
+            parsed = json.loads(output)
+            assert parsed.get("continue") is True
 
 
 # =============================================================================

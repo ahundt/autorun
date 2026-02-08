@@ -6,4 +6,4 @@ args: path
 
 # Set Output Directory
 
-!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py dir "$ARGUMENTS"`
+! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py dir "$ARGUMENTS"

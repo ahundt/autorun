@@ -1,6 +1,6 @@
 # clautorun Marketplace
 
-UV workspace containing 3 Claude Code plugins: **clautorun**, **plan-export**, **pdf-extractor**.
+UV workspace containing 2 Claude Code plugins: **clautorun**, **pdf-extractor**.
 
 ## Installation
 
@@ -14,7 +14,7 @@ git clone https://github.com/ahundt/clautorun.git && cd clautorun
 uv pip install . && uv run clautorun-marketplace
 
 # Verify plugins installed
-claude plugin list  # Should show: cr, plan-export, pdf-extractor
+claude plugin list  # Should show: cr, pdf-extractor
 
 # In a Claude Code session, test:
 # /cr:st  → "AutoFile policy: allow-all"
@@ -32,8 +32,7 @@ claude plugin list  # Should show: cr, plan-export, pdf-extractor
 
 | Plugin | Prefix | Purpose |
 |--------|--------|---------|
-| **clautorun** | `/cr:` | Autonomous execution, file policies, safety guards |
-| **plan-export** | `/plan-export:` | Auto-export plans to `notes/` on ExitPlanMode |
+| **clautorun** | `/cr:` | Autonomous execution, file policies, safety guards, plan export |
 | **pdf-extractor** | `/pdf-extractor:` | Extract text from PDFs (9 backends, GPU support) |
 
 ---
@@ -119,6 +118,20 @@ See `plugins/clautorun/src/clautorun/config.py:38-93` for DEFAULT_INTEGRATIONS l
 | `/cr:tt` | `/cr:ttest` | CLI testing in isolated sessions |
 | `/cr:tabs` | - | Discover Claude sessions across tmux windows |
 
+**Plan Export** — Auto-exports plans to `notes/` on ExitPlanMode, recovers unexported plans on SessionStart:
+
+| Short | Long | Description |
+|-------|------|-------------|
+| `/cr:pe` | `/cr:planexport` | Show plan export status |
+| `/cr:pe-on` | `/cr:planexport-enable` | Enable auto-export |
+| `/cr:pe-off` | `/cr:planexport-disable` | Disable auto-export |
+| `/cr:pe-cfg` | `/cr:planexport-configure` | Interactive configuration |
+| `/cr:pe-dir` | `/cr:planexport-dir` | Set output directory |
+| `/cr:pe-fmt` | `/cr:planexport-pattern` | Set filename pattern |
+| `/cr:pe-reset` | `/cr:planexport-reset` | Reset to defaults |
+| `/cr:pe-rej` | `/cr:planexport-rejected` | Toggle rejected plan export |
+| `/cr:pe-rdir` | `/cr:planexport-rejected-dir` | Set rejected plan output directory |
+
 ### Key Files
 
 | File | Purpose |
@@ -126,36 +139,10 @@ See `plugins/clautorun/src/clautorun/config.py:38-93` for DEFAULT_INTEGRATIONS l
 | `plugins/clautorun/src/clautorun/config.py` | Single source of truth for CONFIG (stages, policies, templates) |
 | `plugins/clautorun/src/clautorun/main.py` | Hook handler and CLI entry point |
 | `plugins/clautorun/src/clautorun/plugins.py` | Command handlers and dispatch logic |
+| `plugins/clautorun/src/clautorun/plan_export.py` | Plan export logic, PlanExport class, daemon handlers |
 | `plugins/clautorun/src/clautorun/integrations.py` | Unified command integrations (superset of hookify) |
-| `plugins/clautorun/commands/clautorun` | Plugin command script |
+| `plugins/clautorun/scripts/plan_export_config.py` | Plan export configuration CLI |
 | `plugins/clautorun/.claude-plugin/plugin.json` | Plugin manifest |
-
----
-
-## plan-export Plugin (v0.7.0)
-
-Auto-exports plan files to `notes/YYYY_MM_DD_<name>.md` when exiting plan mode.
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `/plan-export:enable` | Enable auto-export |
-| `/plan-export:disable` | Disable auto-export |
-| `/plan-export:status` | Show export status |
-| `/plan-export:configure` | Interactive configuration |
-| `/plan-export:dir` | Set output directory |
-| `/plan-export:pattern` | Set filename pattern |
-| `/plan-export:preset` | Apply preset configuration |
-| `/plan-export:presets` | List available presets |
-| `/plan-export:reset` | Reset to defaults |
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `plugins/plan-export/hooks/` | PostToolUse hook for ExitPlanMode detection |
-| `plugins/plan-export/README.md` | Full documentation |
 
 ---
 
@@ -199,7 +186,6 @@ clautorun/                          # Git repository root
 │   │   ├── agents/                 # Tmux automation agents
 │   │   ├── skills/                 # Claude Code skills
 │   │   └── hooks/                  # Event hooks
-│   ├── plan-export/                # Plan export plugin
 │   └── pdf-extractor/              # PDF extraction plugin
 ├── src/clautorun_marketplace/      # Marketplace registration
 ├── pyproject.toml                  # UV workspace config
