@@ -379,6 +379,9 @@ class PlanExportConfig:
         if CONFIG_PATH.exists():
             try:
                 data = json.loads(CONFIG_PATH.read_text())
+                # Migrate legacy key name (config.py used "output_dir" before v0.8)
+                if "output_dir" in data and "output_plan_dir" not in data:
+                    data["output_plan_dir"] = data.pop("output_dir")
                 return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -472,7 +475,7 @@ class PlanExport:
     # --- Template Expansion (preserves all current variables) ---
 
     def expand_template(self, template: str, plan_path: Path, plan_name: str) -> str:
-        """Expand template variables: {YYYY}, {MM}, {DD}, {HH}, {mm}, {date}, {datetime}, {name}, {original}."""
+        """Expand template variables: {YYYY}, {MM}, {DD}, {HH}, {mm}, {ss}, {date}, {datetime}, {name}, {original}."""
         now = datetime.now()
         replacements = {
             "{YYYY}": now.strftime("%Y"),
@@ -481,6 +484,7 @@ class PlanExport:
             "{DD}": now.strftime("%d"),
             "{HH}": now.strftime("%H"),
             "{mm}": now.strftime("%M"),
+            "{ss}": now.strftime("%S"),
             "{date}": now.strftime("%Y_%m_%d"),
             "{datetime}": now.strftime("%Y_%m_%d_%H%M"),
             "{name}": plan_name,
