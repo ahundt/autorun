@@ -63,7 +63,9 @@
 
 ## UV Installation (Recommended)
 
-The clautorun marketplace includes 3 plugins: **clautorun**, **plan-export**, and **pdf-extractor**.
+The clautorun marketplace includes 2 plugins: **clautorun** and **pdf-extractor**.
+
+> **Note:** plan-export functionality is now built into the clautorun plugin. Use `/cr:planexport` commands for plan management.
 
 ### GitHub Installation
 
@@ -74,7 +76,7 @@ Install the entire marketplace directly from GitHub:
 uv pip install git+https://github.com/ahundt/clautorun.git
 
 # Register plugins with Claude Code
-uv run clautorun-marketplace
+clautorun --install
 ```
 
 ### Local Installation
@@ -90,10 +92,10 @@ cd clautorun
 uv pip install .
 
 # Register plugins with Claude Code
-uv run clautorun-marketplace
+clautorun --install
 ```
 
-> **Note:** Use `uv run clautorun-marketplace` to ensure the command runs in the correct UV environment. If `clautorun-marketplace` is in your PATH, you can run it directly without `uv run`.
+> **Note:** Use `clautorun --install` to ensure the command runs in the correct UV environment. If `clautorun-marketplace` is in your PATH, you can run it directly without `uv run`.
 
 ### Development Installation
 
@@ -108,7 +110,7 @@ cd clautorun
 uv sync --all-extras
 
 # Register plugins with Claude Code
-uv run clautorun-marketplace
+clautorun --install
 
 # Or use the installer with marketplace flag
 uv run clautorun-install install --marketplace

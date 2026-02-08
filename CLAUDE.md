@@ -7,11 +7,11 @@ UV workspace containing 2 Claude Code plugins: **clautorun**, **pdf-extractor**.
 ```bash
 # From GitHub (recommended)
 uv pip install git+https://github.com/ahundt/clautorun.git
-uv run clautorun-marketplace
+clautorun --install
 
 # From local clone
 git clone https://github.com/ahundt/clautorun.git && cd clautorun
-uv pip install . && uv run clautorun-marketplace
+uv pip install . && clautorun --install
 
 # Verify plugins installed
 claude plugin list  # Should show: cr, pdf-extractor
