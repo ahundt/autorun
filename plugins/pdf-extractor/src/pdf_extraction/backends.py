@@ -15,11 +15,21 @@ import subprocess
 import tempfile
 import time
 
-import pdfplumber
-import PyPDF2
+# Core dependencies - graceful degradation for missing packages
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
 
-# Core dependencies (always available)
-from pdfminer.high_level import extract_text
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
+
+try:
+    from pdfminer.high_level import extract_text
+except ImportError:
+    extract_text = None
 
 # Optional dependencies - graceful degradation
 try:
@@ -221,21 +231,31 @@ class PdfminerExtractor(BackendExtractor):
     """PDFMiner backend - Pure Python (MIT license)."""
 
     def __init__(self):
-        super().__init__('pdfminer', lambda: extract_text)
+        def create_pdfminer():
+            if extract_text is None:
+                raise ImportError("pdfminer.six not installed")
+            return extract_text
+
+        super().__init__('pdfminer', create_pdfminer)
 
     def _extract_impl(self, pdf_file: str) -> str:
-        return extract_text(pdf_file)
+        return self.converter(pdf_file)
 
 
 class Pypdf2Extractor(BackendExtractor):
-    """PyPDF2 backend - Basic extraction, always available (BSD-3)."""
+    """PyPDF2 backend - Basic extraction (BSD-3)."""
 
     def __init__(self):
-        super().__init__('pypdf2', lambda: PyPDF2)
+        def create_pypdf2():
+            if PyPDF2 is None:
+                raise ImportError("PyPDF2 not installed")
+            return PyPDF2
+
+        super().__init__('pypdf2', create_pypdf2)
 
     def _extract_impl(self, pdf_file: str) -> str:
         with open(pdf_file, 'rb') as pdf:
-            reader = PyPDF2.PdfReader(pdf)
+            reader = self.converter.PdfReader(pdf)
             text_parts = []
             for page in reader.pages:
                 text_parts.append(page.extract_text())
@@ -246,10 +266,15 @@ class PdfplumberExtractor(BackendExtractor):
     """PDFPlumber backend - Excellent for tables (MIT license)."""
 
     def __init__(self):
-        super().__init__('pdfplumber', lambda: pdfplumber)
+        def create_pdfplumber():
+            if pdfplumber is None:
+                raise ImportError("pdfplumber not installed")
+            return pdfplumber
+
+        super().__init__('pdfplumber', create_pdfplumber)
 
     def _extract_impl(self, pdf_file: str) -> str:
-        with pdfplumber.open(pdf_file) as pdf:
+        with self.converter.open(pdf_file) as pdf:
             text_parts = [page.extract_text() for page in pdf.pages]
             return "\n".join(text_parts)
 

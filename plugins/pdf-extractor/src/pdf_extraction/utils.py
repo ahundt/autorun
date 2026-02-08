@@ -3,7 +3,10 @@
 PDF Extraction Utilities - GPU detection, quality metrics, encryption check.
 """
 
-import PyPDF2
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
 
 
 def detect_gpu_availability() -> dict:
@@ -84,8 +87,11 @@ def is_pdf_encrypted(pdf_path: str) -> bool:
         pdf_path: Path to PDF file
 
     Returns:
-        True if encrypted, False otherwise
+        True if encrypted, False otherwise (also False if PyPDF2 not available)
     """
+    if PyPDF2 is None:
+        return False  # Can't check encryption without PyPDF2
+
     try:
         with open(pdf_path, 'rb') as f:
             reader = PyPDF2.PdfReader(f)
