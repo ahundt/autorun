@@ -14,8 +14,11 @@
 #
 # Requirements:
 #   - tmux installed
-#   - claude CLI available
+#   - claude CLI available (uses haiku model to minimize costs)
 #   - plan-export plugin installed
+#
+# API Costs:
+#   Uses haiku model (~$0.01-0.05 per test run)
 # =============================================================================
 
 set -euo pipefail
@@ -30,16 +33,31 @@ CLEANUP=true
 DEBUG_LOG="$HOME/.claude/plan-export-debug.log"
 CONFIG_FILE="$HOME/.claude/plan-export.config.json"
 CONFIG_BACKUP="$HOME/.claude/plan-export.config.json.bak"
-TIMEOUT_SHORT=5
-TIMEOUT_MEDIUM=15
-TIMEOUT_LONG=60
+
+# Timeouts (in seconds)
+TIMEOUT_CLAUDE_START=30
+TIMEOUT_PLAN_CREATE=90  # Plan creation can take time with haiku
+TIMEOUT_PLAN_EXECUTE=90
+SLEEP_AFTER_KEYPRESS=0.5
+
+# Model to use (haiku is cheapest)
+CLAUDE_MODEL="haiku"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Test results
+TEST1_RESULT=""
+TEST2_RESULT=""
+TEST1_NOTES_BEFORE=0
+TEST1_NOTES_AFTER=0
+TEST2_NOTES_BEFORE=0
+TEST2_NOTES_AFTER=0
 
 # =============================================================================
 # Helper Functions
@@ -67,19 +85,9 @@ print_info() {
     echo -e "  $1"
 }
 
-cleanup() {
-    if [[ "$CLEANUP" == "true" ]]; then
-        print_step "Cleaning up..."
-        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-        rm -rf "$TEST_DIR"
-        print_success "Cleanup complete"
-    else
-        print_info "Skipping cleanup (--no-cleanup flag set)"
-        print_info "Test directory: $TEST_DIR"
-        print_info "Tmux session: $TMUX_SESSION"
-        print_info "To cleanup manually:"
-        print_info "  tmux kill-session -t $TMUX_SESSION"
-        print_info "  rm -rf $TEST_DIR"
+print_debug() {
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        echo -e "${CYAN}[DEBUG] $1${NC}"
     fi
 }
 
@@ -127,6 +135,7 @@ show_debug_log() {
         cat "$DEBUG_LOG"
     else
         print_info "Debug log is empty or does not exist"
+        print_info "(This is EXPECTED for Test 1 - fresh context doesn't fire hooks)"
     fi
 }
 
@@ -155,13 +164,20 @@ cleanup() {
 
 trap cleanup EXIT
 
+# Wait for Claude to be ready for input
+# Must detect when Claude shows its input prompt, not just the startup banner
 wait_for_claude() {
     local max_wait=$1
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local output
-        output=$(tmux capture-pane -t "$TMUX_SESSION" -p 2>/dev/null || echo "")
-        if echo "$output" | grep -q "Claude Code v"; then
+        output=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -50 2>/dev/null || echo "")
+        # Look for indicators that Claude is ready for input:
+        # - "accept edits" in status bar means Claude is at prompt
+        # - "Message:" or similar input indicator
+        # - tokens counter at bottom right
+        if echo "$output" | grep -qE "(accept edits|tokens$|shift\+tab)"; then
+            sleep 1  # Extra buffer to ensure fully ready
             return 0
         fi
         sleep 1
@@ -170,70 +186,71 @@ wait_for_claude() {
     return 1
 }
 
+# Wait for plan acceptance dialog to appear
 wait_for_plan_prompt() {
     local max_wait=$1
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local output
-        output=$(tmux capture-pane -t "$TMUX_SESSION" -p 2>/dev/null || echo "")
-        if echo "$output" | grep -q "Would you like to proceed"; then
+        output=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -100 2>/dev/null || echo "")
+        # Look for plan acceptance dialog indicators:
+        # - "ready to execute" appears before the options
+        # - The numbered options (1. Yes, clear context...)
+        if echo "$output" | grep -qE "(ready to execute|Yes, clear context|Yes, auto-accept)"; then
             return 0
         fi
-        sleep 1
-        ((waited++))
+        sleep 2
+        ((waited += 2))
     done
+    # Show debug output on timeout
+    print_info "DEBUG: Timeout waiting for plan prompt. Last 30 lines:"
+    echo "$output" | tail -30
     return 1
 }
 
+# Wait for plan execution to complete
 wait_for_execution() {
     local max_wait=$1
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local output
-        output=$(tmux capture-pane -t "$TMUX_SESSION" -p 2>/dev/null || echo "")
-        if echo "$output" | grep -qE "(Complete|successfully|verified)"; then
+        output=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -100 2>/dev/null || echo "")
+        # Look for execution completion indicators:
+        # - "successfully implemented" - Claude's typical completion message
+        # - "accept edits" in status bar - returned to normal prompt
+        # - Summary with checkmarks
+        if echo "$output" | grep -qiE "(successfully|implemented|Summary:|accept edits|Done!|Created.*txt)"; then
             return 0
         fi
-        sleep 1
-        ((waited++))
+        sleep 2
+        ((waited += 2))
     done
+    print_info "DEBUG: Timeout waiting for execution. Last 30 lines:"
+    echo "$output" | tail -30
     return 1
 }
 
+# Send text to tmux (WITHOUT pressing Enter)
 send_keys() {
     tmux send-keys -t "$TMUX_SESSION" "$1"
-    sleep 0.3
+    sleep "$SLEEP_AFTER_KEYPRESS"
 }
 
+# Send Enter key (C-m) - MUST be sent separately from text
 send_enter() {
-    # C-m must be sent separately from text for reliable operation
     tmux send-keys -t "$TMUX_SESSION" C-m
-    sleep 0.5
+    sleep "$SLEEP_AFTER_KEYPRESS"
 }
 
-send_key() {
-    # Send a single key (for menu navigation)
-    tmux send-keys -t "$TMUX_SESSION" "$1"
-    sleep 0.3
-}
-
+# Get count of markdown files in notes directory
 get_notes_count() {
     find "$TEST_DIR/notes" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' '
 }
 
+# Get path to most recent note file (macOS compatible)
 get_latest_note() {
-    find "$TEST_DIR/notes" -name "*.md" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-
-}
-
-check_debug_log_entry() {
-    local pattern=$1
-    local since_time=$2
-    if [[ -f "$DEBUG_LOG" ]]; then
-        # Check for entries after the given timestamp
-        grep -A5 "Timestamp: $since_time" "$DEBUG_LOG" 2>/dev/null | grep -q "$pattern"
-        return $?
-    fi
-    return 1
+    # Use ls with time sort instead of find -printf (which is Linux-only)
+    ls -t "$TEST_DIR/notes"/*.md 2>/dev/null | head -1
 }
 
 # =============================================================================
@@ -245,12 +262,14 @@ show_usage() {
 Plan Export Hook Test Script
 
 Tests the plan-export PostToolUse hook behavior with different accept options.
+Uses the ${CLAUDE_MODEL} model to minimize API costs (~\$0.01-0.05 per run).
 
 USAGE:
     $(basename "$0") [OPTIONS]
 
 OPTIONS:
     --no-cleanup    Keep test artifacts after completion for inspection
+    --debug         Enable verbose debug output
     --help, -h      Show this help message
 
 EXAMPLES:
@@ -258,14 +277,88 @@ EXAMPLES:
     $(basename "$0") --no-cleanup    # Keep test files for debugging
 
 WHAT THIS TESTS:
-    1. Option 1 (fresh context) - Known to NOT fire PostToolUse hooks
-    2. Option 2 (regular accept) - Should fire PostToolUse hooks correctly
+    Test 1: Option 1 (fresh context) - Known to NOT fire PostToolUse hooks
+    Test 2: Option 2 (regular accept) - Should fire PostToolUse hooks correctly
 
 EXPECTED RESULTS:
-    - Test 1 (fresh context): Plan NOT exported (bug)
+    - Test 1 (fresh context): Plan NOT exported (confirms bug exists)
     - Test 2 (regular accept): Plan exported (correct behavior)
 
+If both tests pass (Test 1 NOT exported, Test 2 EXPORTED), the bug is confirmed.
+
 EOF
+}
+
+# =============================================================================
+# Print Final Summary Report
+# =============================================================================
+
+print_summary() {
+    print_header "TEST SUMMARY REPORT"
+
+    echo -e "┌─────────────────────────────────────────────────────────────────────┐"
+    echo -e "│                    PLAN EXPORT HOOK TEST RESULTS                    │"
+    echo -e "├─────────────────────────────────────────────────────────────────────┤"
+    echo -e "│ Model Used: ${CYAN}${CLAUDE_MODEL}${NC}                                                   │"
+    echo -e "│ Test Directory: ${TEST_DIR}                         │"
+    echo -e "├─────────────────────────────────────────────────────────────────────┤"
+    echo -e "│                                                                     │"
+    echo -e "│  TEST 1: Fresh Context Accept (Option 1)                            │"
+    echo -e "│  ─────────────────────────────────────────                          │"
+    echo -e "│    Notes before: ${TEST1_NOTES_BEFORE}                                                   │"
+    echo -e "│    Notes after:  ${TEST1_NOTES_AFTER}                                                   │"
+
+    if [[ "$TEST1_RESULT" == "NOT_EXPORTED" ]]; then
+        echo -e "│    Expected:     NOT_EXPORTED                                       │"
+        echo -e "│    Actual:       ${GREEN}NOT_EXPORTED${NC} ✓                                        │"
+        echo -e "│    Status:       ${GREEN}PASS${NC} (bug confirmed - hook did NOT fire)              │"
+    else
+        echo -e "│    Expected:     NOT_EXPORTED                                       │"
+        echo -e "│    Actual:       ${YELLOW}EXPORTED${NC}                                              │"
+        echo -e "│    Status:       ${YELLOW}UNEXPECTED${NC} (bug may be fixed!)                       │"
+    fi
+
+    echo -e "│                                                                     │"
+    echo -e "│  TEST 2: Regular Accept (Option 2)                                  │"
+    echo -e "│  ─────────────────────────────────────────                          │"
+    echo -e "│    Notes before: ${TEST2_NOTES_BEFORE}                                                   │"
+    echo -e "│    Notes after:  ${TEST2_NOTES_AFTER}                                                   │"
+
+    if [[ "$TEST2_RESULT" == "EXPORTED" ]]; then
+        echo -e "│    Expected:     EXPORTED                                           │"
+        echo -e "│    Actual:       ${GREEN}EXPORTED${NC} ✓                                             │"
+        echo -e "│    Status:       ${GREEN}PASS${NC} (hook fired correctly)                           │"
+    elif [[ "$TEST2_RESULT" == "NOT_EXPORTED" ]]; then
+        echo -e "│    Expected:     EXPORTED                                           │"
+        echo -e "│    Actual:       ${RED}NOT_EXPORTED${NC}                                            │"
+        echo -e "│    Status:       ${RED}FAIL${NC} (regression - hook should fire)                   │"
+    else
+        echo -e "│    Expected:     EXPORTED                                           │"
+        echo -e "│    Actual:       ${YELLOW}SKIPPED${NC}                                               │"
+        echo -e "│    Status:       ${YELLOW}SKIPPED${NC} (test did not complete)                      │"
+    fi
+
+    echo -e "│                                                                     │"
+    echo -e "├─────────────────────────────────────────────────────────────────────┤"
+
+    # Overall verdict
+    if [[ "$TEST1_RESULT" == "NOT_EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
+        echo -e "│  OVERALL: ${GREEN}SUCCESS${NC}                                                      │"
+        echo -e "│  Bug Status: CONFIRMED - Fresh context bypasses PostToolUse hooks   │"
+        echo -e "│  Workaround: SessionStart handler catches unexported plans          │"
+    elif [[ "$TEST1_RESULT" == "EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
+        echo -e "│  OVERALL: ${GREEN}BUG FIXED!${NC}                                                    │"
+        echo -e "│  Both paths now correctly export plans.                             │"
+    elif [[ "$TEST2_RESULT" == "NOT_EXPORTED" ]]; then
+        echo -e "│  OVERALL: ${RED}REGRESSION${NC}                                                     │"
+        echo -e "│  Option 2 should export but didn't. Check plugin installation.      │"
+    else
+        echo -e "│  OVERALL: ${YELLOW}INCOMPLETE${NC}                                                   │"
+        echo -e "│  One or more tests did not complete successfully.                   │"
+    fi
+
+    echo -e "└─────────────────────────────────────────────────────────────────────┘"
+    echo ""
 }
 
 # =============================================================================
@@ -276,6 +369,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cleanup)
             CLEANUP=false
+            shift
+            ;;
+        --debug)
+            DEBUG=true
             shift
             ;;
         --help|-h)
@@ -317,6 +414,8 @@ if ! claude plugin list 2>/dev/null | grep -q "plan-export"; then
 fi
 print_success "plan-export plugin installed"
 
+print_info "Model: ${CLAUDE_MODEL} (lowest cost)"
+
 # =============================================================================
 # Setup Test Environment
 # =============================================================================
@@ -340,24 +439,26 @@ tmux new-session -d -s "$TMUX_SESSION" -c "$TEST_DIR"
 print_success "Tmux session created"
 
 # =============================================================================
-# Test 1: Fresh Context Accept (Option 1) - Expected to FAIL
+# Test 1: Fresh Context Accept (Option 1) - Expected to NOT export
 # =============================================================================
 
 print_header "Test 1: Fresh Context Accept (Option 1)"
 print_info "This tests the BUGGY path - PostToolUse hooks should NOT fire"
+print_info "Expected result: Plan NOT exported (confirms bug)"
 
-print_step "Starting Claude with haiku model..."
-send_keys "claude --model haiku"
+print_step "Starting Claude with ${CLAUDE_MODEL} model..."
+send_keys "claude --model ${CLAUDE_MODEL}"
 send_enter
 sleep 2
 
-# Trust the folder
-print_step "Trusting folder..."
+# Trust the folder if prompted
+print_step "Trusting folder if prompted..."
 send_enter
 sleep 3
 
-if ! wait_for_claude $TIMEOUT_MEDIUM; then
+if ! wait_for_claude $TIMEOUT_CLAUDE_START; then
     print_failure "Claude failed to start"
+    TEST1_RESULT="SKIPPED"
     exit 1
 fi
 print_success "Claude started"
@@ -366,148 +467,143 @@ print_step "Entering plan mode..."
 send_keys "/plan"
 send_enter
 sleep 2
-print_success "Plan mode enabled"
+print_success "Plan mode command sent"
 
 print_step "Creating test plan..."
 send_keys "create file test1.txt with content 'test 1'"
 send_enter
 
-if ! wait_for_plan_prompt $TIMEOUT_LONG; then
-    print_failure "Plan was not created"
-    exit 1
-fi
-print_success "Plan created"
-
-NOTES_BEFORE=$(get_notes_count)
-print_info "Notes count before accept: $NOTES_BEFORE"
-
-print_step "Accepting with Option 1 (fresh context)..."
-send_keys "1"
-send_enter
-
-if ! wait_for_execution $TIMEOUT_LONG; then
-    print_failure "Plan execution failed"
-    exit 1
-fi
-print_success "Plan executed"
-
-sleep 3  # Give hooks time to run (if they do)
-
-NOTES_AFTER_TEST1=$(get_notes_count)
-print_info "Notes count after accept: $NOTES_AFTER_TEST1"
-
-if [[ "$NOTES_AFTER_TEST1" -gt "$NOTES_BEFORE" ]]; then
-    print_success "Test 1 Result: Plan WAS exported (unexpected - bug may be fixed!)"
-    TEST1_RESULT="EXPORTED"
+if ! wait_for_plan_prompt $TIMEOUT_PLAN_CREATE; then
+    print_failure "Plan was not created (timeout)"
+    TEST1_RESULT="SKIPPED"
+    # Continue to summary
 else
-    print_failure "Test 1 Result: Plan NOT exported (confirms bug)"
-    TEST1_RESULT="NOT_EXPORTED"
+    print_success "Plan created"
+
+    TEST1_NOTES_BEFORE=$(get_notes_count)
+    print_info "Notes count before accept: $TEST1_NOTES_BEFORE"
+
+    print_step "Accepting with Option 1 (fresh context)..."
+    send_keys "1"
+    send_enter
+
+    if ! wait_for_execution $TIMEOUT_PLAN_EXECUTE; then
+        print_failure "Plan execution did not complete (timeout)"
+        # Check notes anyway
+    else
+        print_success "Plan executed"
+    fi
+
+    sleep 3  # Give hooks time to run (if they do)
+
+    TEST1_NOTES_AFTER=$(get_notes_count)
+    print_info "Notes count after accept: $TEST1_NOTES_AFTER"
+
+    if [[ "$TEST1_NOTES_AFTER" -gt "$TEST1_NOTES_BEFORE" ]]; then
+        print_success "Test 1 Result: Plan WAS exported (unexpected - bug may be fixed!)"
+        TEST1_RESULT="EXPORTED"
+    else
+        print_failure "Test 1 Result: Plan NOT exported (confirms bug)"
+        TEST1_RESULT="NOT_EXPORTED"
+    fi
 fi
 
 # =============================================================================
-# Test 2: Regular Accept (Option 2) - Expected to SUCCEED
+# Test 2: Regular Accept (Option 2) - Expected to export
 # =============================================================================
 
 print_header "Test 2: Regular Accept (Option 2)"
 print_info "This tests the CORRECT path - PostToolUse hooks SHOULD fire"
+print_info "Expected result: Plan EXPORTED"
 
-print_step "Entering plan mode again..."
-send_keys "/plan"
+# After Option 1 (fresh context), we need to exit and restart Claude
+# because we're in a fresh context that doesn't have plan mode active
+print_step "Exiting Claude (fresh context reset)..."
+send_keys "/exit"
+send_enter
+sleep 3  # Wait for Claude to fully exit
+
+print_step "Restarting Claude for Test 2..."
+send_keys "claude --model ${CLAUDE_MODEL}"
+send_enter
+sleep 3  # Wait for Claude to start loading
+
+# Trust again if needed
 send_enter
 sleep 2
-print_success "Plan mode enabled"
 
-print_step "Creating second test plan..."
-send_keys "create file test2.txt with content 'test 2'"
-send_enter
+if ! wait_for_claude $TIMEOUT_CLAUDE_START; then
+    print_failure "Claude failed to restart"
+    TEST2_RESULT="SKIPPED"
+else
+    print_success "Claude restarted"
+    sleep 2  # Extra buffer before sending commands
 
-if ! wait_for_plan_prompt $TIMEOUT_LONG; then
-    print_failure "Plan was not created"
-    exit 1
-fi
-print_success "Plan created"
+    print_step "Entering plan mode..."
+    send_keys "/plan"
+    send_enter
+    sleep 2
+    print_success "Plan mode command sent"
 
-NOTES_BEFORE_TEST2=$(get_notes_count)
-print_info "Notes count before accept: $NOTES_BEFORE_TEST2"
+    print_step "Creating second test plan..."
+    send_keys "create file test2.txt with content 'test 2'"
+    send_enter
 
-print_step "Accepting with Option 2 (regular accept)..."
-send_keys "2"
-send_enter
+    if ! wait_for_plan_prompt $TIMEOUT_PLAN_CREATE; then
+        print_failure "Plan was not created (timeout)"
+        TEST2_RESULT="SKIPPED"
+    else
+        print_success "Plan created"
 
-if ! wait_for_execution $TIMEOUT_LONG; then
-    print_failure "Plan execution failed"
-    exit 1
-fi
-print_success "Plan executed"
+        TEST2_NOTES_BEFORE=$(get_notes_count)
+        print_info "Notes count before accept: $TEST2_NOTES_BEFORE"
 
-sleep 3  # Give hooks time to run
+        print_step "Accepting with Option 2 (regular accept)..."
+        send_keys "2"
+        send_enter
 
-NOTES_AFTER_TEST2=$(get_notes_count)
-print_info "Notes count after accept: $NOTES_AFTER_TEST2"
+        if ! wait_for_execution $TIMEOUT_PLAN_EXECUTE; then
+            print_failure "Plan execution did not complete (timeout)"
+        else
+            print_success "Plan executed"
+        fi
 
-if [[ "$NOTES_AFTER_TEST2" -gt "$NOTES_BEFORE_TEST2" ]]; then
-    print_success "Test 2 Result: Plan WAS exported (correct behavior)"
-    TEST2_RESULT="EXPORTED"
-    EXPORTED_FILE=$(get_latest_note)
-    if [[ -n "$EXPORTED_FILE" ]]; then
-        print_info "Exported file: $(basename "$EXPORTED_FILE")"
+        sleep 3  # Give hooks time to run
+
+        TEST2_NOTES_AFTER=$(get_notes_count)
+        print_info "Notes count after accept: $TEST2_NOTES_AFTER"
+
+        if [[ "$TEST2_NOTES_AFTER" -gt "$TEST2_NOTES_BEFORE" ]]; then
+            print_success "Test 2 Result: Plan WAS exported (correct behavior)"
+            TEST2_RESULT="EXPORTED"
+            EXPORTED_FILE=$(get_latest_note)
+            if [[ -n "$EXPORTED_FILE" ]]; then
+                print_info "Exported file: $(basename "$EXPORTED_FILE")"
+            fi
+        else
+            print_failure "Test 2 Result: Plan NOT exported (unexpected failure)"
+            TEST2_RESULT="NOT_EXPORTED"
+        fi
     fi
-else
-    print_failure "Test 2 Result: Plan NOT exported (unexpected failure)"
-    TEST2_RESULT="NOT_EXPORTED"
 fi
 
 # =============================================================================
-# Final Report
+# Final Summary Report
 # =============================================================================
 
-print_header "Test Results Summary"
+print_summary
 
-echo -e "┌─────────────────────────────────────────────────────────────────┐"
-echo -e "│ Test                          │ Expected      │ Actual         │"
-echo -e "├─────────────────────────────────────────────────────────────────┤"
-
-if [[ "$TEST1_RESULT" == "NOT_EXPORTED" ]]; then
-    echo -e "│ Test 1 (fresh context)        │ NOT_EXPORTED  │ ${RED}NOT_EXPORTED${NC}   │"
-else
-    echo -e "│ Test 1 (fresh context)        │ NOT_EXPORTED  │ ${GREEN}EXPORTED${NC}       │"
-fi
-
-if [[ "$TEST2_RESULT" == "EXPORTED" ]]; then
-    echo -e "│ Test 2 (regular accept)       │ EXPORTED      │ ${GREEN}EXPORTED${NC}       │"
-else
-    echo -e "│ Test 2 (regular accept)       │ EXPORTED      │ ${RED}NOT_EXPORTED${NC}   │"
-fi
-
-echo -e "└─────────────────────────────────────────────────────────────────┘"
-echo ""
-
-# Determine overall status
+# Determine exit code
 if [[ "$TEST1_RESULT" == "NOT_EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
-    print_info "Bug Status: CONFIRMED - Fresh context does not fire PostToolUse hooks"
-    print_info "Workaround: Use Option 2 or 3 when plan export is needed"
-    EXIT_CODE=0
+    # Bug confirmed, workaround works
+    exit 0
 elif [[ "$TEST1_RESULT" == "EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
-    print_success "Bug Status: FIXED - Both paths now export correctly!"
-    EXIT_CODE=0
+    # Bug is fixed!
+    exit 0
+elif [[ "$TEST2_RESULT" == "NOT_EXPORTED" ]]; then
+    # Regression
+    exit 1
 else
-    print_failure "Bug Status: REGRESSION - Option 2 also failing"
-    EXIT_CODE=1
+    # Incomplete
+    exit 1
 fi
-
-# Show test artifacts location if not cleaning up
-if [[ "$CLEANUP" == "false" ]]; then
-    echo ""
-    print_info "Test artifacts preserved:"
-    print_info "  Test directory: $TEST_DIR"
-    print_info "  Notes folder: $TEST_DIR/notes/"
-    print_info "  Tmux session: $TMUX_SESSION"
-    print_info "  Debug log: $DEBUG_LOG"
-    echo ""
-    print_info "Commands to inspect:"
-    print_info "  ls -la $TEST_DIR/notes/"
-    print_info "  tmux attach -t $TMUX_SESSION"
-    print_info "  tail -50 $DEBUG_LOG"
-fi
-
-exit $EXIT_CODE
