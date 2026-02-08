@@ -230,22 +230,30 @@ class TestRegressionPrevention:
         )
 
     def test_tool_response_checked_before_transcript(self):
-        """Verify tool_response.filePath is checked before transcript parsing.
+        """Verify tool_response.filePath is checked before transcript parsing in main().
 
         This is the core fix - the bug was that transcript parsing was tried first
         and when it failed, we fell back to most_recent_plan which was wrong.
+
+        Note: We check within main() only because handle_session_start() has its own
+        separate flow that doesn't use tool_response (SessionStart vs PostToolUse).
         """
         script_path = get_plan_export_script()
         content = script_path.read_text()
 
-        # Find the critical section positions
-        tool_response_check = content.find('isinstance(tool_response, dict)')
-        transcript_call = content.find('get_plan_from_transcript(transcript_path)')
+        # Find main() function and check order within it
+        main_start = content.find("def main():")
+        assert main_start > 0, "Should have main() function"
+        main_section = content[main_start:]
 
-        assert tool_response_check > 0, "Should have tool_response isinstance check"
-        assert transcript_call > 0, "Should have transcript parsing call"
+        # Find the critical section positions within main()
+        tool_response_check = main_section.find('isinstance(tool_response, dict)')
+        transcript_call = main_section.find('get_plan_from_transcript(transcript_path)')
+
+        assert tool_response_check > 0, "main() should have tool_response isinstance check"
+        assert transcript_call > 0, "main() should have transcript parsing call"
         assert tool_response_check < transcript_call, (
-            "CRITICAL: tool_response must be checked BEFORE transcript parsing. "
+            "CRITICAL: tool_response must be checked BEFORE transcript parsing in main(). "
             "This was the root cause of the bug - transcript parsing failed and "
             "fell back to most_recent_plan which returned the wrong file."
         )

@@ -1,5 +1,5 @@
 {
-  "description": "Hooks for plan export - includes workaround for fresh context bug",
+  "description": "Hooks for plan export - PostToolUse and SessionStart dispatch to same script",
   "hooks": {
     "PostToolUse": [
       {
@@ -16,7 +16,7 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_unexported_plans.py",
+        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export.py",
         "timeout": 10
       }
     ]

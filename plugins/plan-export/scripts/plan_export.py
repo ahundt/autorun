@@ -2,8 +2,22 @@
 """
 Export Plan Script - Copies the session's plan file to project notes.
 
-Called by PostToolUse hook when ExitPlanMode is triggered.
-Copies plan from ~/.claude/plans/ to configurable location.
+Hook Types Handled:
+  - PostToolUse: Called when ExitPlanMode is triggered (normal path)
+  - SessionStart: Called on session start to catch unexported plans (workaround path)
+
+CLAUDE CODE BUG WORKAROUND (SessionStart path):
+  Bug: Claude Code's "fresh context" option (button 1 in plan accept dialog)
+  does NOT fire PostToolUse hooks for ExitPlanMode. Plans accepted with
+  Option 1 are silently lost because the hook never triggers.
+
+  Workaround: The SessionStart hook checks on each new session whether the
+  previous session had an unexported plan. If found, it exports the plan with
+  a "(From fresh context reset)" note. Content hashing prevents double-export
+  if/when the bug is fixed.
+
+  Evidence: Confirmed via tmux test - Option 1 (fresh context) does not export,
+  Option 2 (regular accept) exports correctly.
 
 Session Isolation:
   Uses transcript_path from hook input to identify which plan file
@@ -108,11 +122,35 @@ def load_tracking() -> dict:
 
 
 def save_tracking(tracking: dict) -> None:
-    """Save export tracking data."""
+    """Save export tracking data atomically.
+
+    Uses temp file + rename pattern to prevent corruption from
+    concurrent writes or crashes mid-write.
+    """
+    import tempfile
     try:
-        with open(TRACKING_FILE, "w") as f:
-            json.dump(tracking, f, indent=2)
-    except IOError:
+        # Ensure parent directory exists
+        TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to temp file first, then atomic rename
+        fd, temp_path = tempfile.mkstemp(
+            dir=TRACKING_FILE.parent,
+            prefix=".plan-export-tracking-",
+            suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(tracking, f, indent=2)
+            # Atomic rename (on POSIX systems)
+            os.replace(temp_path, TRACKING_FILE)
+        except Exception:
+            # Clean up temp file on error
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+    except (IOError, OSError):
         pass
 
 
@@ -592,13 +630,141 @@ def export_rejected_plan(plan_path: Path, project_dir: Path, session_id: str = N
     }
 
 
+def detect_hook_type(hook_input: dict) -> str:
+    """Detect which hook triggered this script.
+
+    PostToolUse: Has tool_name in the input (normal export path)
+    SessionStart: No tool_name (workaround for Claude Code fresh context bug)
+
+    The same script handles both hooks - dispatch happens in main() based on
+    this detection. This single-script approach keeps the logic DRY and ensures
+    consistent tracking behavior across both paths.
+    """
+    if "tool_name" in hook_input:
+        return "PostToolUse"
+    return "SessionStart"
+
+
+def handle_session_start(hook_input: dict) -> None:
+    """Handle SessionStart - WORKAROUND for Claude Code "fresh context" bug.
+
+    CLAUDE CODE BUG:
+        When the user accepts a plan with Option 1 ("fresh context"), Claude Code
+        does NOT fire the PostToolUse hook for ExitPlanMode. This causes plans
+        to be silently lost - never exported to notes/.
+
+        Option 1 = "Continue with fresh context" = PostToolUse NOT fired
+        Option 2 = "Continue with current context" = PostToolUse fired normally
+
+    WORKAROUND:
+        On SessionStart, we check if the transcript shows plan editing activity
+        but no corresponding export in our tracking file. If so, this indicates
+        the user likely used Option 1 (fresh context) and we recover the plan.
+
+    HOW IT WORKS:
+        1. get_plan_from_transcript() finds the exact plan file from Write/Edit
+           tool_use entries in the session transcript
+        2. Content hash tracking prevents double-export if bug is later fixed
+           (both PostToolUse and SessionStart would try to export - hash dedupes)
+        3. SessionLock prevents race conditions with concurrent sessions
+
+    THREAD SAFETY:
+        Uses SessionLock (same as PostToolUse path) to prevent race conditions
+        when multiple sessions start simultaneously or when SessionStart and
+        PostToolUse fire close together.
+
+    EVIDENCE:
+        Bug confirmed via tmux testing - Option 1 does not export, Option 2 does.
+    """
+    if not is_enabled():
+        print(json.dumps({"continue": True, "suppressOutput": True}))
+        return
+
+    session_id = hook_input.get("session_id")
+    if not session_id:
+        print(json.dumps({"continue": True}))
+        return
+
+    transcript_path = hook_input.get("transcript_path")
+    if not transcript_path:
+        print(json.dumps({"continue": True}))
+        return
+
+    # Use SessionLock for thread safety (same as PostToolUse path)
+    STATE_DIR = Path.home() / ".claude" / "sessions"
+    LOCK_TIMEOUT = 10.0
+
+    try:
+        lock_context = SessionLock(session_id, timeout=LOCK_TIMEOUT, state_dir=STATE_DIR) if HAS_SESSION_LOCK else nullcontext()
+
+        with lock_context:
+            # === BEGIN CRITICAL SECTION ===
+
+            # Find plan file for this session
+            plan_path = get_plan_from_transcript(transcript_path)
+            if not plan_path or not plan_path.exists():
+                print(json.dumps({"continue": True}))
+                return
+
+            # Check if already exported (content hash tracking)
+            content_hash = get_content_hash(plan_path)
+            if not content_hash:
+                print(json.dumps({"continue": True}))
+                return
+
+            tracking = load_tracking()
+            if content_hash in tracking:
+                print(json.dumps({"continue": True}))  # Already exported
+                return
+
+            # Verify non-empty
+            try:
+                if not plan_path.read_text(encoding="utf-8").strip():
+                    print(json.dumps({"continue": True}))
+                    return
+            except (IOError, UnicodeDecodeError):
+                print(json.dumps({"continue": True}))
+                return
+
+            # Export the plan
+            project_dir = Path(hook_input.get("cwd", os.getcwd()))
+            result = export_plan(plan_path, project_dir, session_id)
+
+            # === END CRITICAL SECTION ===
+
+        if result["success"]:
+            config = load_config()
+            if config.get("notify_claude", True):
+                print(json.dumps({
+                    "continue": True,
+                    "systemMessage": f"📋 Recovered: {result['message']}",
+                    "additionalContext": f"\n{result['message']}\n(From fresh context reset)\n"
+                }))
+                return
+
+        print(json.dumps({"continue": True}))
+
+    except SessionTimeoutError:
+        # Another operation in progress - skip silently
+        print(json.dumps({"continue": True}))
+    except Exception as e:
+        # Fail open - don't crash Claude
+        log_warning(f"SessionStart handler error: {e}")
+        print(json.dumps({"continue": True}))
+
+
 def main():
-    """Main entry point - called by PostToolUse hook."""
+    """Main entry point - handles PostToolUse and SessionStart."""
     # Read hook input from stdin
     try:
         hook_input = json.load(sys.stdin)
     except json.JSONDecodeError:
         hook_input = {}
+
+    # Dispatch based on hook type
+    if detect_hook_type(hook_input) == "SessionStart":
+        handle_session_start(hook_input)
+        return
 
     # Check if enabled
     if not is_enabled():
