@@ -218,11 +218,21 @@ class TestPluginNameEnum:
 
         content = install_file.read_text()
 
-        expected_plugins = ["clautorun", "plan-export", "pdf-extractor"]
+        # plan-export merged into clautorun in v0.7.0
+        expected_plugins = ["clautorun", "pdf-extractor"]
         for plugin in expected_plugins:
             # Check that the plugin name appears in the enum definition
             assert plugin in content, (
                 f"PluginName enum should include '{plugin}'"
+            )
+
+        # Verify plan-export is NOT in the enum (merged into clautorun)
+        # Check the enum definition specifically to avoid matching comments
+        enum_match = re.search(r'class PluginName.*?(?=\n\n|\nclass |\ndef )', content, re.DOTALL)
+        if enum_match:
+            enum_content = enum_match.group(0)
+            assert 'PLAN_EXPORT' not in enum_content, (
+                "PluginName enum should NOT include PLAN_EXPORT (merged into clautorun)"
             )
 
 
