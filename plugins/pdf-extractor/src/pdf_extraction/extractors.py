@@ -5,7 +5,12 @@ PDF Extraction Functions - Single file and batch extraction.
 
 import os
 
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    # Fallback: no-op progress bar
+    def tqdm(iterable, **kwargs):
+        return iterable
 
 from .backends import BACKEND_REGISTRY
 from .utils import calculate_extraction_quality_metrics, detect_gpu_availability, is_pdf_encrypted
