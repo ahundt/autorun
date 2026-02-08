@@ -56,7 +56,7 @@ Examples:
   clautorun                              # Run as hook handler (default)
   clautorun --install                    # Install all plugins
   clautorun --install clautorun          # Install specific plugin
-  clautorun --install clautorun,plan-export  # Install multiple
+  clautorun --install clautorun,pdf-extractor  # Install multiple
   clautorun --install --force-install    # Force reinstall (dev workflow)
   clautorun --status                     # Show installation status
 
@@ -75,7 +75,7 @@ Legacy commands (still supported):
         nargs="?",
         const="all",
         metavar="PLUGINS",
-        help="Install plugins (default: all, or comma-separated: clautorun,plan-export)",
+        help="Install plugins (default: all, or comma-separated: clautorun,pdf-extractor)",
     )
     install_group.add_argument(
         "--force-install",
@@ -98,6 +98,17 @@ Legacy commands (still supported):
         "--enable-bootstrap",
         action="store_true",
         help="Re-enable automatic bootstrap (removes --no-bootstrap from hooks.json commands)",
+    )
+    install_group.add_argument(
+        "--uninstall",
+        "-u",
+        action="store_true",
+        help="Uninstall plugins and UV tools",
+    )
+    install_group.add_argument(
+        "--sync",
+        action="store_true",
+        help="Sync source to cache (dev workflow)",
     )
 
     # Status/info options
@@ -197,14 +208,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Exit code: 0 = success, 1 = failure
     """
-    # Handle legacy install/uninstall/check commands first (before argparse)
-    if len(sys.argv) > 1 and sys.argv[1] in ["install", "uninstall", "check"]:
-        from .install import main as install_main
-
-        sys.argv = ["clautorun"] + sys.argv[1:]
-        install_main()
-        return 0
-
     parser = create_parser()
     args, remaining = parser.parse_known_args(argv)
 
@@ -233,20 +236,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return show_status()
 
+    # Uninstall mode
+    if args.uninstall:
+        from clautorun.install_plugins import uninstall_plugins
+
+        return uninstall_plugins()
+
+    # Sync mode
+    if args.sync:
+        from clautorun.install_plugins import sync_to_cache
+
+        return sync_to_cache()
+
     # Default: run as hook handler
     return run_hook_handler()
-
-
-# Backward compatibility alias for clautorun-marketplace
-def marketplace_compat() -> int:
-    """Entry point for backward compatibility with clautorun-marketplace command.
-
-    This function is called when users run the old `clautorun-marketplace` command.
-    It simply calls install_plugins() with default arguments.
-    """
-    from clautorun.install_plugins import install_plugins
-
-    return install_plugins()
 
 
 if __name__ == "__main__":
