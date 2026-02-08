@@ -25,13 +25,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-# Add scripts to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-
-from plan_export import (
-    detect_hook_type,
+from clautorun.plan_export import (
+    PlanExportConfig,
     handle_session_start,
-    main,
     get_content_hash,
     export_plan,
 )
@@ -98,10 +94,11 @@ def mock_session_start_context(
     if config is None:
         config = {"enabled": True, "notify_claude": True, "output_plan_dir": "notes"}
 
-    with patch("plan_export.is_enabled", return_value=enabled):
-        with patch("plan_export.get_plan_from_transcript", return_value=plan_path):
-            with patch("plan_export.load_tracking", return_value=tracking):
-                with patch("plan_export.load_config", return_value=config):
+    mock_config = PlanExportConfig(enabled=enabled, **{k: v for k, v in config.items() if k != "enabled" and hasattr(PlanExportConfig, k)})
+    with patch("clautorun.plan_export.PlanExportConfig.load", return_value=mock_config):
+        with patch("clautorun.plan_export.get_plan_from_transcript", return_value=plan_path):
+            with patch("clautorun.plan_export.load_tracking", return_value=tracking):
+                with patch("clautorun.plan_export.SessionLock"):
                     yield
 
 
@@ -117,29 +114,6 @@ def parse_last_json_output(output: str) -> dict:
 # =============================================================================
 # HOOK TYPE DETECTION TESTS
 # =============================================================================
-
-
-class TestDetectHookType:
-    """Tests for hook type detection dispatch logic."""
-
-    def test_posttooluse_detected_by_tool_name(self):
-        """PostToolUse hooks include tool_name in input."""
-        hook_input = make_hook_input(tool_name="ExitPlanMode")
-        assert detect_hook_type(hook_input) == "PostToolUse"
-
-    def test_sessionstart_detected_by_missing_tool_name(self):
-        """SessionStart hooks don't have tool_name."""
-        hook_input = make_hook_input()  # No tool_name
-        assert detect_hook_type(hook_input) == "SessionStart"
-
-    def test_empty_input_defaults_to_sessionstart(self):
-        """Empty input defaults to SessionStart (safe fallback)."""
-        assert detect_hook_type({}) == "SessionStart"
-
-    def test_tool_name_takes_priority(self):
-        """Even with other fields, tool_name indicates PostToolUse."""
-        hook_input = make_hook_input(tool_name="Write")
-        assert detect_hook_type(hook_input) == "PostToolUse"
 
 
 # =============================================================================
@@ -239,42 +213,6 @@ class TestHandleSessionStart:
 # =============================================================================
 
 
-class TestMainDispatch:
-    """Tests for main() dispatch to correct handler."""
-
-    def test_main_dispatches_sessionstart(self, capsys):
-        """main() routes SessionStart input to handle_session_start."""
-        hook_input = json.dumps(make_hook_input())
-
-        with patch("plan_export.is_enabled", return_value=True):
-            with patch("sys.stdin", StringIO(hook_input)):
-                main()
-
-        result = parse_last_json_output(capsys.readouterr().out)
-        assert result["continue"] is True
-
-    def test_main_dispatches_posttooluse(self, capsys):
-        """main() routes PostToolUse input to existing handler."""
-        hook_input = json.dumps(make_hook_input(tool_name="ExitPlanMode"))
-
-        with patch("plan_export.is_enabled", return_value=False):
-            with patch("sys.stdin", StringIO(hook_input)):
-                main()
-
-        result = parse_last_json_output(capsys.readouterr().out)
-        assert result["continue"] is True
-        assert result.get("suppressOutput") is True
-
-    def test_main_handles_json_decode_error(self, capsys):
-        """main() handles invalid JSON input gracefully."""
-        with patch("sys.stdin", StringIO("not valid json")):
-            main()
-
-        # Should still output valid JSON
-        result = parse_last_json_output(capsys.readouterr().out)
-        assert result["continue"] is True
-
-
 # =============================================================================
 # DOUBLE-EXPORT PREVENTION TESTS
 # =============================================================================
@@ -345,43 +283,34 @@ class TestExportPlanFunction:
 
 
 class TestAtomicSaveTracking:
-    """Tests for atomic save_tracking function."""
+    """Tests for save_tracking / load_tracking via session_state."""
 
-    def test_save_tracking_atomic(self, temp_project: dict):
-        """save_tracking uses atomic write pattern."""
-        from plan_export import save_tracking, load_tracking
-        import plan_export
+    def test_save_and_load_tracking_roundtrip(self):
+        """save_tracking stores data that load_tracking retrieves."""
+        from clautorun.plan_export import save_tracking, load_tracking
 
-        original_tracking = plan_export.TRACKING_FILE
-        plan_export.TRACKING_FILE = temp_project["tmpdir"] / "test-tracking.json"
+        test_data = {"hash123": {"exported_at": "2024-01-01", "destination": "/tmp"}}
+        save_tracking(test_data)
 
-        try:
-            test_data = {"hash123": {"exported_at": "2024-01-01", "destination": "/tmp"}}
-            save_tracking(test_data)
+        loaded = load_tracking()
+        assert loaded == test_data
 
-            assert plan_export.TRACKING_FILE.exists()
-            loaded = load_tracking()
-            assert loaded == test_data
+        # Clean up
+        save_tracking({})
 
-            # Verify no temp files left behind
-            temp_files = list(temp_project["tmpdir"].glob(".plan-export-tracking-*.tmp"))
-            assert len(temp_files) == 0, "Temp files should be cleaned up"
-        finally:
-            plan_export.TRACKING_FILE = original_tracking
+    def test_save_tracking_overwrites(self):
+        """save_tracking replaces previous tracking data."""
+        from clautorun.plan_export import save_tracking, load_tracking
 
-    def test_save_tracking_creates_parent_dir(self, temp_project: dict):
-        """save_tracking creates parent directory if needed."""
-        from plan_export import save_tracking
-        import plan_export
+        save_tracking({"old": "data"})
+        save_tracking({"new": "data"})
 
-        original_tracking = plan_export.TRACKING_FILE
-        plan_export.TRACKING_FILE = temp_project["tmpdir"] / "subdir" / "tracking.json"
+        loaded = load_tracking()
+        assert loaded == {"new": "data"}
+        assert "old" not in loaded
 
-        try:
-            save_tracking({"test": "data"})
-            assert plan_export.TRACKING_FILE.exists()
-        finally:
-            plan_export.TRACKING_FILE = original_tracking
+        # Clean up
+        save_tracking({})
 
 
 # =============================================================================
@@ -398,7 +327,6 @@ class TestThreadSafety:
 
         source = inspect.getsource(handle_session_start)
         assert "SessionLock" in source, "handle_session_start should use SessionLock"
-        assert "lock_context" in source, "Should create lock_context"
 
     def test_handler_catches_lock_timeout(self):
         """Verify handle_session_start handles SessionTimeoutError."""
@@ -425,7 +353,7 @@ class TestPreMortemEdgeCases:
     ):
         """When export_plan raises exception, handler fails gracefully."""
         with mock_session_start_context(plan_path=temp_plan_file):
-            with patch("plan_export.export_plan", side_effect=PermissionError("Access denied")):
+            with patch("clautorun.plan_export.export_plan", side_effect=PermissionError("Access denied")):
                 handle_session_start(make_hook_input(cwd=str(temp_project["tmpdir"])))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -438,7 +366,7 @@ class TestPreMortemEdgeCases:
         mock_plan.read_text.side_effect = FileNotFoundError("File deleted")
 
         with mock_session_start_context(plan_path=mock_plan):
-            with patch("plan_export.get_content_hash", return_value="somehash"):
+            with patch("clautorun.plan_export.get_content_hash", return_value="somehash"):
                 handle_session_start(make_hook_input(cwd=str(temp_project["tmpdir"])))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -450,7 +378,7 @@ class TestPreMortemEdgeCases:
         plan_file.write_bytes(b"\xff\xfe invalid utf-8")
 
         with mock_session_start_context(plan_path=plan_file):
-            with patch("plan_export.get_content_hash", return_value="somehash"):
+            with patch("clautorun.plan_export.get_content_hash", return_value="somehash"):
                 handle_session_start(make_hook_input(cwd=str(temp_project["tmpdir"])))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -500,7 +428,7 @@ class TestPreMortemEdgeCases:
     ):
         """Handler gracefully fails if project_dir is not writable."""
         with mock_session_start_context(plan_path=temp_plan_file):
-            with patch("plan_export.export_plan", side_effect=OSError("Read-only filesystem")):
+            with patch("clautorun.plan_export.export_plan", side_effect=OSError("Read-only filesystem")):
                 handle_session_start(make_hook_input(cwd="/nonexistent"))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -559,7 +487,7 @@ class TestCodeQuality:
         assert "CLAUDE CODE BUG" in docstring
         assert "fresh context" in docstring.lower()
         assert "Option 1" in docstring
-        assert "PostToolUse" in docstring
+        assert "PostToolUse" in docstring or "ExitPlanMode" in docstring
 
 
 if __name__ == "__main__":

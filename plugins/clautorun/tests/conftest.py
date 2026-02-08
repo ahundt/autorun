@@ -8,6 +8,25 @@ Environment Variables:
 """
 import pytest
 import tempfile
+
+
+def pytest_configure(config):
+    """Configure pytest with custom markers for plan export tests."""
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+    config.addinivalue_line("markers", "stress: marks tests as stress tests")
+    config.addinivalue_line("markers", "race: marks tests as race condition tests")
+
+
+@pytest.fixture(scope="session")
+def test_timeout():
+    """Default timeout for test operations."""
+    return 10.0
+
+
+@pytest.fixture(scope="session")
+def stress_test_timeout():
+    """Extended timeout for stress tests."""
+    return 60.0
 import shutil
 import sys
 import os

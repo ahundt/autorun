@@ -6,7 +6,7 @@ allowed-tools: Bash(python3:*)
 # Configure Plan Export
 
 Current configuration:
-!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py status`
+! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py status
 
 ## Configuration Options
 

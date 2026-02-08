@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "clautorun-workspace"
 version = "0.7.0"
-description = "UV workspace for clautorun plugins: clautorun, plan-export, pdf-extractor"
+description = "UV workspace for clautorun plugins: clautorun, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Andrew Hundt", email = "ATHundt@gmail.com"},
 ]
-keywords = ["claude", "claude-code", "marketplace", "plugin-workspace", "clautorun", "plan-export", "pdf-extractor"]
+keywords = ["claude", "claude-code", "marketplace", "plugin-workspace", "clautorun", "pdf-extractor"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -40,7 +40,6 @@ dev = [
 ]
 all = [
     "clautorun>=0.7.0",
-    "plan-export>=0.7.0",
     "pdf-extractor>=0.7.0",
 ]
 
@@ -54,13 +53,11 @@ Issues = "https://github.com/ahundt/clautorun/issues"
 [tool.uv.workspace]
 members = [
     "plugins/clautorun",
-    "plugins/plan-export",
     "plugins/pdf-extractor",
 ]
 
 [tool.uv.sources]
 clautorun = { workspace = true }
-plan-export = { workspace = true }
 pdf-extractor = { workspace = true }
 
 # Minimal stub package for UV workspace
