@@ -71,8 +71,13 @@ class TestHookIntegration:
         hook_input_data["prompt"] = "/afs"
         input_json = json.dumps(hook_input_data)
 
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        mock_state = {}
+        with patch('clautorun.main.session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
+
+            with patch('sys.stdin', StringIO(input_json)):
+                main()
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -269,8 +274,13 @@ class TestHookErrorHandling:
             }
             input_json = json.dumps(input_data)
 
-            with patch('sys.stdin', StringIO(input_json)):
-                main()
+            mock_state = {}
+            with patch('clautorun.main.session_state') as mock_session:
+                mock_session.return_value.__enter__.return_value = mock_state
+                mock_session.return_value.__exit__.return_value = None
+
+                with patch('sys.stdin', StringIO(input_json)):
+                    main()
 
             captured = capsys.readouterr()
             output = json.loads(captured.out)
@@ -341,10 +351,15 @@ class TestHookPerformance:
 
         input_json = json.dumps(hook_input_data)
 
+        mock_state = {}
         # Measure response time
         start_time = time.time()
-        with patch('sys.stdin', StringIO(input_json)):
-            main()
+        with patch('clautorun.main.session_state') as mock_session:
+            mock_session.return_value.__enter__.return_value = mock_state
+            mock_session.return_value.__exit__.return_value = None
+
+            with patch('sys.stdin', StringIO(input_json)):
+                main()
         end_time = time.time()
 
         response_time = end_time - start_time
@@ -377,8 +392,13 @@ class TestHookPerformance:
             }
             input_json = json.dumps(input_data)
 
-            with patch('sys.stdin', StringIO(input_json)):
-                main()
+            mock_state = {}
+            with patch('clautorun.main.session_state') as mock_session:
+                mock_session.return_value.__enter__.return_value = mock_state
+                mock_session.return_value.__exit__.return_value = None
+
+                with patch('sys.stdin', StringIO(input_json)):
+                    main()
 
             captured = capsys.readouterr()
             responses.append(json.loads(captured.out))

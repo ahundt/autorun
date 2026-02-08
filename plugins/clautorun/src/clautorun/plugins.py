@@ -893,6 +893,10 @@ def _make_plan_handler(md_filename: str):
         commands_dir = Path(__file__).parent.parent.parent / "commands"
         md_path = commands_dir / md_filename
 
+        # Set plan_active for new plan commands
+        if md_filename == "plannew.md":
+            ctx.plan_active = True
+
         if not md_path.exists():
             return f"❌ Error: Plan command file not found: {md_filename}"
 

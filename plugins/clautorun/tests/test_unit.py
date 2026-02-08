@@ -16,21 +16,21 @@ class TestConfiguration:
         """Test three-stage confirmation markers are present and correct"""
         # Stage 1
         assert "stage1_instruction" in CONFIG
-        assert "stage1_confirmation" in CONFIG
-        assert isinstance(CONFIG["stage1_confirmation"], str)
-        assert len(CONFIG["stage1_confirmation"]) > 0
+        assert "stage1_message" in CONFIG
+        assert isinstance(CONFIG["stage1_message"], str)
+        assert len(CONFIG["stage1_message"]) > 0
 
         # Stage 2
         assert "stage2_instruction" in CONFIG
-        assert "stage2_confirmation" in CONFIG
-        assert isinstance(CONFIG["stage2_confirmation"], str)
-        assert len(CONFIG["stage2_confirmation"]) > 0
+        assert "stage2_message" in CONFIG
+        assert isinstance(CONFIG["stage2_message"], str)
+        assert len(CONFIG["stage2_message"]) > 0
 
         # Stage 3
         assert "stage3_instruction" in CONFIG
-        assert "stage3_confirmation" in CONFIG
-        assert isinstance(CONFIG["stage3_confirmation"], str)
-        assert len(CONFIG["stage3_confirmation"]) > 0
+        assert "stage3_message" in CONFIG
+        assert isinstance(CONFIG["stage3_message"], str)
+        assert len(CONFIG["stage3_message"]) > 0
 
     @pytest.mark.unit
     def test_emergency_stop(self):
@@ -74,11 +74,11 @@ class TestConfiguration:
         required_placeholders = [
             "{emergency_stop}",
             "{stage1_instruction}",
-            "{stage1_confirmation}",
+            "{stage1_message}",
             "{stage2_instruction}",
-            "{stage2_confirmation}",
+            "{stage2_message}",
             "{stage3_instruction}",
-            "{stage3_confirmation}",
+            "{stage3_message}",
             "{policy_instructions}"
         ]
 

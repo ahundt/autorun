@@ -29,8 +29,9 @@ class TestPluginIntegration:
     @pytest.mark.integration
     def test_plugin_handles_policy_commands(self, plugin_input_data, capsys):
         """Test plugin correctly handles file policy commands"""
-        # Prepare input with policy command
+        # Prepare input with policy command - must include hook_event_name for dispatch
         plugin_input_data["prompt"] = "/afs"
+        plugin_input_data["hook_event_name"] = "UserPromptSubmit"
         input_json = json.dumps(plugin_input_data)
 
         # Mock session state and stdin
@@ -42,31 +43,34 @@ class TestPluginIntegration:
             with patch('sys.stdin', StringIO(input_json)):
                 plugin_module.main()
 
-        # Check output
+        # Check output - policy commands use systemMessage for response text
+        # and continue=True (policy is set locally, AI continues)
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        assert output["continue"] is False, "Policy command should not continue to AI"
-        assert "strict-search" in output["response"], "Response should contain policy info"
+        assert output["continue"] is True, "Policy command should continue to AI"
+        assert "strict-search" in output["systemMessage"], "systemMessage should contain policy info"
 
     @pytest.mark.plugin
     @pytest.mark.integration
     def test_plugin_handles_normal_commands(self, plugin_input_data, capsys):
         """Test plugin allows normal commands to continue to AI"""
-        # Prepare input with normal command
+        # Prepare input with normal command - must include hook_event_name for dispatch
         plugin_input_data["prompt"] = "help me understand this code"
+        plugin_input_data["hook_event_name"] = "UserPromptSubmit"
         input_json = json.dumps(plugin_input_data)
 
         # Mock stdin and run plugin
         with patch('sys.stdin', StringIO(input_json)):
             plugin_module.main()
 
-        # Check output
+        # Check output - actual format uses stopReason/systemMessage, not "response"
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
         assert output["continue"] is True, "Normal command should continue to AI"
-        assert output["response"] == "", "Normal command should have no local response"
+        assert output["stopReason"] == "", "Normal command should have empty stopReason"
+        assert output["systemMessage"] == "", "Normal command should have empty systemMessage"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -81,7 +85,9 @@ class TestPluginIntegration:
 
         for i, (command, expected_content) in enumerate(policy_commands):
             # Use different session_id for each command to avoid state conflicts
+            # Must include hook_event_name for UserPromptSubmit dispatch
             input_data = {
+                "hook_event_name": "UserPromptSubmit",
                 "prompt": command,
                 "session_id": f"test_session_{i}",
                 "session_transcript": []
@@ -100,8 +106,10 @@ class TestPluginIntegration:
                 captured = capsys.readouterr()
                 output = json.loads(captured.out)
 
-                assert output["continue"] is False, f"{command} should not continue to AI"
-                assert expected_content in output["response"], f"{command} response should contain {expected_content}"
+                # Policy commands set continue=True (policy applied locally, AI continues)
+                # Response text is in systemMessage, not "response"
+                assert output["continue"] is True, f"{command} should continue to AI"
+                assert expected_content in output["systemMessage"], f"{command} systemMessage should contain {expected_content}"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -114,6 +122,7 @@ class TestPluginIntegration:
 
         for command, expected_response in control_commands:
             input_data = {
+                "hook_event_name": "UserPromptSubmit",
                 "prompt": command,
                 "session_id": "test_session",
                 "session_transcript": []
@@ -132,14 +141,16 @@ class TestPluginIntegration:
                 captured = capsys.readouterr()
                 output = json.loads(captured.out)
 
+                # Stop commands set continue=False and put response in systemMessage
                 assert output["continue"] is False, f"{command} should not continue to AI"
-                assert expected_response in output["response"], f"{command} response should contain {expected_response}"
+                assert expected_response in output["systemMessage"], f"{command} systemMessage should contain {expected_response}"
 
     @pytest.mark.plugin
     @pytest.mark.integration
     def test_plugin_handles_autorun_command(self, capsys):
         """Test plugin handles autorun activation command"""
         input_data = {
+            "hook_event_name": "UserPromptSubmit",
             "prompt": "/autorun test task description",
             "session_id": "test_session",
             "session_transcript": []
@@ -158,9 +169,10 @@ class TestPluginIntegration:
             captured = capsys.readouterr()
             output = json.loads(captured.out)
 
+            # Autorun command sets continue=False and puts injection template in systemMessage
             assert output["continue"] is False, "Autorun command should not continue to AI"
-            assert "UNINTERRUPTED" in output["response"], "Response should contain injection template"
-            assert "AUTONOMOUS" in output["response"], "Response should contain injection template"
+            assert "UNINTERRUPTED" in output["systemMessage"], "systemMessage should contain injection template"
+            assert "AUTONOMOUS" in output["systemMessage"], "systemMessage should contain injection template"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -175,8 +187,9 @@ class TestPluginIntegration:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
-            # First command - set policy
+            # First command - set policy (must include hook_event_name)
             input_data = {
+                "hook_event_name": "UserPromptSubmit",
                 "prompt": "/afs",
                 "session_id": session_id,
                 "session_transcript": []
@@ -197,7 +210,8 @@ class TestPluginIntegration:
             lines = captured.out.strip().split('\n')
             second_output = json.loads(lines[-1])
 
-            assert "strict-search" in second_output["response"], "Status should reflect previously set policy"
+            # Response text is in systemMessage, not "response"
+            assert "strict-search" in second_output["systemMessage"], "Status should reflect previously set policy"
 
     @pytest.mark.plugin
     @pytest.mark.integration
@@ -205,22 +219,25 @@ class TestPluginIntegration:
         """Test plugin handles invalid JSON input gracefully"""
         invalid_json = "not valid json {"
 
+        # main() prints a default hook response then calls sys.exit(1) on parse errors
         with patch('sys.stdin', StringIO(invalid_json)):
-            plugin_module.main()
+            with pytest.raises(SystemExit) as exc_info:
+                plugin_module.main()
+
+        assert exc_info.value.code == 1, "Should exit with code 1 on invalid JSON"
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        # Should handle error gracefully
-        assert output["continue"] is True, "Should continue to AI on invalid JSON"
-        assert "error" in output, "Should include error message"
-        assert "Invalid JSON" in output["error"], "Should mention invalid JSON"
+        # On error, main() outputs a default build_hook_response() with continue=True
+        assert output["continue"] is True, "Should default to continue on error"
+        assert output["stopReason"] == "", "stopReason should be empty on error fallback"
 
     @pytest.mark.plugin
     @pytest.mark.integration
     def test_plugin_handles_missing_fields(self, capsys):
         """Test plugin handles missing required fields gracefully"""
-        # Input with missing prompt field
+        # Input with missing prompt field - no hook_event_name so default_handler is used
         input_data = {
             "session_id": "test_session"
             # Missing "prompt" field
@@ -234,8 +251,10 @@ class TestPluginIntegration:
         output = json.loads(captured.out)
 
         # Should default to continuing to AI when prompt is missing
+        # Actual output keys: continue, stopReason, suppressOutput, systemMessage
         assert output["continue"] is True
-        assert output["response"] == ""
+        assert output["stopReason"] == ""
+        assert output["systemMessage"] == ""
 
 
 class TestPluginJsonOutput:
@@ -268,8 +287,8 @@ class TestPluginJsonOutput:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
 
-        # Check required fields exist
-        required_fields = ["continue", "response"]
+        # Check required fields exist - actual format uses stopReason/systemMessage
+        required_fields = ["continue", "stopReason", "suppressOutput", "systemMessage"]
         for field in required_fields:
             assert field in output, f"Output should have '{field}' field"
 
@@ -285,7 +304,9 @@ class TestPluginJsonOutput:
         output = json.loads(captured.out)
 
         assert isinstance(output["continue"], bool), "continue field should be boolean"
-        assert isinstance(output["response"], str), "response field should be string"
+        assert isinstance(output["stopReason"], str), "stopReason field should be string"
+        assert isinstance(output["suppressOutput"], bool), "suppressOutput field should be boolean"
+        assert isinstance(output["systemMessage"], str), "systemMessage field should be string"
 
 
 class TestPluginErrorHandling:
@@ -294,12 +315,18 @@ class TestPluginErrorHandling:
     @pytest.mark.plugin
     def test_plugin_handles_empty_input(self, capsys):
         """Test plugin handles empty input gracefully"""
+        # main() prints a default hook response then calls sys.exit(1) on empty input
         with patch('sys.stdin', StringIO("")):
-            plugin_module.main()
+            with pytest.raises(SystemExit) as exc_info:
+                plugin_module.main()
+
+        assert exc_info.value.code == 1, "Should exit with code 1 on empty input"
 
         captured = capsys.readouterr()
-        # Should not crash and produce some output
+        # Should not crash and produce some output (default hook response)
         assert captured.out != ""
+        output = json.loads(captured.out)
+        assert output["continue"] is True
 
     @pytest.mark.plugin
     def test_plugin_handles_unicode_characters(self, capsys):

@@ -61,15 +61,15 @@ class TestHookEntryStructure:
         content = HOOK_ENTRY.read_text()
         assert "def try_cli(" in content
 
-    def test_has_run_from_plugin_root_function(self):
-        """hook_entry.py has run_from_plugin_root() fallback."""
+    def test_has_run_fallback_function(self):
+        """hook_entry.py has run_fallback() for direct import fallback."""
         content = HOOK_ENTRY.read_text()
-        assert "def run_from_plugin_root(" in content
+        assert "def run_fallback(" in content
 
-    def test_has_relative_path_fallback(self):
-        """hook_entry.py has get_relative_src_dir() for when PLUGIN_ROOT missing."""
+    def test_has_get_src_dir_fallback(self):
+        """hook_entry.py has get_src_dir() for when PLUGIN_ROOT missing."""
         content = HOOK_ENTRY.read_text()
-        assert "def get_relative_src_dir(" in content
+        assert "def get_src_dir(" in content
 
 
 # =============================================================================
@@ -85,12 +85,12 @@ class TestHookEntryExecutionPriority:
         content = HOOK_ENTRY.read_text()
         assert "shutil.which" in content
 
-    def test_cli_checked_before_plugin_root(self):
-        """main() tries CLI before plugin root."""
+    def test_cli_checked_before_fallback(self):
+        """main() tries CLI before fallback."""
         content = HOOK_ENTRY.read_text()
-        # Check order: try_cli should be called first
+        # Check order: try_cli should be called first in main()
         main_idx = content.find("def main()")
-        assert "try_cli()" in content[main_idx:]
+        assert "try_cli(" in content[main_idx:]
 
     def test_has_timeout_constant(self):
         """hook_entry.py has HOOK_TIMEOUT constant."""

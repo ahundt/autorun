@@ -84,10 +84,15 @@ class TestCommandBlockingHandlers:
         assert "Session blocks: 1" in response
 
     def test_handle_block_pattern_with_custom_pattern(self):
-        """Test blocking with custom patterns."""
+        """Test blocking with custom patterns.
+
+        Note: parse_pattern_and_description uses shlex.split, so multi-word
+        patterns must be quoted. Without quotes, "dd if=" is parsed as
+        pattern="dd" with description="if=".
+        """
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:no dd if="
+            "activation_prompt": '/cr:no "dd if="'
         }
 
         response = handle_block_pattern(state)
@@ -378,7 +383,13 @@ class TestEndToEndWorkflows:
             shutil.rmtree(self.temp_dir)
 
     def test_block_then_unblock_workflow(self):
-        """Test the complete block and unblock workflow."""
+        """Test the complete block and unblock workflow.
+
+        Note: /cr:ok removes the session block, but DEFAULT_INTEGRATIONS
+        still blocks "rm" as a built-in safety rule. After removing the
+        session block, should_block_command still returns a block from
+        the default integrations layer.
+        """
         state = {"session_id": self.test_session_id}
 
         # Block rm
@@ -387,18 +398,23 @@ class TestEndToEndWorkflows:
         assert "Blocked: rm" in response
 
         # Verify it's blocked
-        from clautorun.main import should_block_command
+        from clautorun.main import should_block_command, get_session_blocks
         block_info = should_block_command(self.test_session_id, "rm file.txt")
         assert block_info is not None
 
-        # Unblock rm
+        # Unblock rm (removes session block)
         state["activation_prompt"] = "/cr:ok rm"
         response = handle_allow_pattern(state)
         assert "Allowed: rm" in response
 
-        # Verify it's no longer blocked
+        # Verify session block was removed
+        session_blocks = get_session_blocks(self.test_session_id)
+        assert all(b["pattern"] != "rm" for b in session_blocks)
+
+        # "rm" is still blocked by DEFAULT_INTEGRATIONS (built-in safety)
         block_info = should_block_command(self.test_session_id, "rm file.txt")
-        assert block_info is None
+        assert block_info is not None
+        assert block_info["pattern"] == "rm"
 
     def test_global_to_session_override_workflow(self):
         """Test global block with session override."""

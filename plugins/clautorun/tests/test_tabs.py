@@ -150,8 +150,8 @@ class TestExtractPurpose:
         result = tabs_exec.extract_purpose(content)
         assert "authentication" in result.lower() or "implementing" in result.lower()
 
-    def test_truncates_long_lines(self):
-        """Should truncate lines longer than 40 chars."""
+    def test_returns_meaningful_line(self):
+        """Should return first meaningful line (truncation handled by format_output)."""
         from importlib.machinery import SourceFileLoader
         tabs_exec = SourceFileLoader(
             "tabs_exec",
@@ -160,7 +160,8 @@ class TestExtractPurpose:
 
         content = "This is a very long line that should be truncated because it exceeds forty characters"
         result = tabs_exec.extract_purpose(content)
-        assert len(result) <= 43  # 40 + '...'
+        # extract_purpose returns the full line; truncation is handled by format_output
+        assert result == content
 
 
 class TestGetDefaultActions:

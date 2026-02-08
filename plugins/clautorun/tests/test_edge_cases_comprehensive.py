@@ -64,7 +64,10 @@ def test_plugin_edge_cases():
             with patch('sys.stdin', Mock(read=Mock(return_value=test_case["input"]))):
                 with patch('sys.stdout', Mock()) as mock_stdout:
                     with patch('sys.stderr', Mock()):
-                        main()
+                        try:
+                            main()
+                        except SystemExit:
+                            pass  # main() calls sys.exit(1) on parse errors
 
                         # Check if output was written
                         if mock_stdout.write.called:
@@ -74,16 +77,18 @@ def test_plugin_edge_cases():
                             try:
                                 result = json.loads(output)
                                 assert isinstance(result, dict)
+                                # Hook response format uses 'continue', 'stopReason',
+                                # 'suppressOutput', 'systemMessage' — no 'response' key
                                 assert 'continue' in result
-                                assert 'response' in result
-                                print(f"✅ Test {i}: {test_case['description']} - Valid JSON response")
+                                assert 'stopReason' in result
+                                print(f"  Test {i}: {test_case['description']} - Valid JSON response")
                             except json.JSONDecodeError:
-                                print(f"⚠️ Test {i}: {test_case['description']} - Invalid JSON response")
+                                print(f"  Test {i}: {test_case['description']} - Invalid JSON response")
                         else:
-                            print(f"⚠️ Test {i}: {test_case['description']} - No output")
+                            print(f"  Test {i}: {test_case['description']} - No output")
 
         except Exception as e:
-            print(f"❌ Test {i}: {test_case['description']} - Error: {e}")
+            print(f"  Test {i}: {test_case['description']} - Error: {e}")
 
 def test_injection_monitoring_edge_cases():
     """Test edge cases for injection_monitoring.py"""
