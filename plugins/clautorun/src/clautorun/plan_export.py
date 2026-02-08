@@ -209,12 +209,6 @@ DEBUG_LOG_PATH = Path.home() / ".claude" / "plan-export-debug.log"
 # === Module-level helper functions (DRY - single source of truth) ===
 
 
-def detect_hook_type(hook_input: dict) -> str:
-    """Detect which hook triggered this script."""
-    if "tool_name" in hook_input:
-        return "PostToolUse"
-    return "SessionStart"
-
 
 def get_content_hash(file_path) -> str:
     """Get SHA256 hash of file content (first 16 chars)."""
@@ -225,29 +219,13 @@ def get_content_hash(file_path) -> str:
         return ""
 
 
-def get_config_path() -> Path:
-    """Get config file path."""
-    return CONFIG_PATH
-
-
-def load_config() -> dict:
-    """Load config as dict (for backwards compatibility)."""
-    config = PlanExportConfig.load()
-    return config.to_dict()
-
-
-def is_enabled() -> bool:
-    """Check if plan export is enabled."""
-    return PlanExportConfig.load().enabled
-
-
 def log_warning(message: str) -> None:
-    """Log warning message to debug log."""
+    """Log message to debug log if debug_logging is enabled."""
     config = PlanExportConfig.load()
     if config.debug_logging:
         try:
             with open(DEBUG_LOG_PATH, "a") as f:
-                f.write(f"[{datetime.now()}] WARNING: {message}\n")
+                f.write(f"[{datetime.now()}] {message}\n")
         except IOError:
             pass
 
@@ -465,13 +443,6 @@ class PlanExport:
         """Check if path is a Claude plan file."""
         return "/.claude/plans/" in path and path.endswith(".md")
 
-    def content_hash(self, path: Path) -> str:
-        """SHA256 hash of plan content (first 16 chars)."""
-        try:
-            return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
-        except IOError:
-            return ""
-
     # --- Template Expansion (preserves all current variables) ---
 
     def expand_template(self, template: str, plan_path: Path, plan_name: str) -> str:
@@ -556,7 +527,7 @@ class PlanExport:
         try:
             project_dir = str(self.project_dir)
         except ValueError:
-            self._log(f"record_write: cwd not available, skipping {file_path}")
+            log_warning(f"record_write: cwd not available, skipping {file_path}")
             return
 
         def updater(plans):
@@ -566,7 +537,7 @@ class PlanExport:
                 "recorded_at": datetime.now().isoformat(),
             }
         self.atomic_update_active_plans(updater)
-        self._log(f"Recorded plan write: {file_path}")
+        log_warning(f"Recorded plan write: {file_path}")
 
     def get_current_plan(self) -> Optional[Path]:
         """Get current plan file from tool_result or active_plans."""
@@ -616,7 +587,7 @@ class PlanExport:
             if not path.exists():
                 to_remove.append(path_str)
                 continue
-            if self.content_hash(path) in tracking:
+            if get_content_hash(path) in tracking:
                 to_remove.append(path_str)
                 continue
             result.append(path)
@@ -663,10 +634,10 @@ class PlanExport:
             shutil.copy2(plan_path, dest_path)
 
             # Embed metadata
-            self._embed_metadata(plan_path, dest_path)
+            embed_plan_metadata(plan_path, self.ctx.session_id, dest_path)
 
             # Record hash to prevent duplicates (ATOMIC)
-            content_hash = self.content_hash(plan_path)
+            content_hash = get_content_hash(plan_path)
             dest_str = str(dest_path)
 
             def record_hash(tracking):
@@ -684,38 +655,12 @@ class PlanExport:
             self.atomic_update_active_plans(remove_plan)
 
             rel_path = dest_path.relative_to(self.project_dir)
-            self._log(f"Exported plan to {rel_path}")
+            log_warning(f"Exported plan to {rel_path}")
             return {"success": True, "message": f"Plan exported to {rel_path}"}
         except Exception as e:
-            self._log(f"Export error: {e}")
+            log_warning(f"Export error: {e}")
             return {"success": False, "error": str(e)}
 
-    def _embed_metadata(self, source: Path, dest: Path) -> None:
-        """Add YAML frontmatter with session_id, timestamps."""
-        try:
-            content = dest.read_text(encoding="utf-8")
-            if content.startswith("---"):
-                return  # Already has frontmatter
-            metadata = f"""---
-session_id: {self.ctx.session_id}
-original_path: {source}
-export_timestamp: {datetime.now().isoformat()}
----
-
-"""
-            dest.write_text(metadata + content, encoding="utf-8")
-        except IOError:
-            pass
-
-    def _log(self, message: str) -> None:
-        """Debug logging if enabled."""
-        if self.config.debug_logging:
-            try:
-                log_file = Path.home() / ".claude" / "plan-export-debug.log"
-                with open(log_file, "a") as f:
-                    f.write(f"[{datetime.now()}] {message}\n")
-            except IOError:
-                pass
 
 
 # === Module-level export functions (use after classes are defined) ===
@@ -937,12 +882,8 @@ __all__ = [
     "CONFIG_PATH",
     "PLANS_DIR",
     "DEBUG_LOG_PATH",
-    # Helper functions
-    "detect_hook_type",
+    # Utility functions
     "get_content_hash",
-    "get_config_path",
-    "load_config",
-    "is_enabled",
     "log_warning",
     "get_most_recent_plan",
     "get_plan_from_transcript",
