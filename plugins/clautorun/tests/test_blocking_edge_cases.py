@@ -70,12 +70,11 @@ class TestPatternMatchingEdgeCases:
 
     def test_special_regex_characters(self):
         """Test patterns with special regex characters."""
-        # These should be treated as literal strings, not regex
-        # The pattern matching uses regex split but treats patterns as literals
-        assert command_matches_pattern("grep *.txt", "*.txt") is True
-        # test? IS a separate token in the command (argument to echo), so it matches
-        # This is correct behavior - if you block "test?", it blocks commands using it
-        assert command_matches_pattern("echo test?", "test?") is True
+        # AST-based detection extracts command names, not arguments.
+        # "*.txt" is an argument to grep, not a command name, so it does NOT match.
+        # "test?" is an argument to echo, not a command name, so it does NOT match.
+        assert command_matches_pattern("grep *.txt", "*.txt") is False
+        assert command_matches_pattern("echo test?", "test?") is False
 
     def test_very_long_commands(self):
         """Test matching with very long command strings."""
@@ -157,17 +156,21 @@ class TestGlobalStateEdgeCases:
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir)
 
-    def test_corrupted_json_file(self):
+    @patch('clautorun.main.initialize_default_blocks')
+    def test_corrupted_json_file(self, mock_init):
         """Test handling of corrupted JSON config file."""
         # Create corrupted JSON file
         with open(self.temp_config_file, 'w') as f:
             f.write("{invalid json content")
 
         # Should return empty list, not crash
+        # (initialize_default_blocks is patched out so it won't overwrite
+        # the corrupted file with defaults)
         blocks = get_global_blocks()
         assert blocks == []
 
-    def test_missing_global_blocks_key(self):
+    @patch('clautorun.main.initialize_default_blocks')
+    def test_missing_global_blocks_key(self, mock_init):
         """Test config file without global_blocked_patterns key."""
         with open(self.temp_config_file, 'w') as f:
             json.dump({"version": "0.6.0", "other_key": "value"}, f)
@@ -176,7 +179,8 @@ class TestGlobalStateEdgeCases:
         blocks = get_global_blocks()
         assert blocks == []
 
-    def test_invalid_version_format(self):
+    @patch('clautorun.main.initialize_default_blocks')
+    def test_invalid_version_format(self, mock_init):
         """Test config with invalid or missing version."""
         with open(self.temp_config_file, 'w') as f:
             json.dump({"global_blocked_patterns": []}, f)
@@ -185,7 +189,8 @@ class TestGlobalStateEdgeCases:
         blocks = get_global_blocks()
         assert blocks == []
 
-    def test_block_with_missing_fields(self):
+    @patch('clautorun.main.initialize_default_blocks')
+    def test_block_with_missing_fields(self, mock_init):
         """Test blocks with missing optional fields."""
         with open(self.temp_config_file, 'w') as f:
             json.dump({

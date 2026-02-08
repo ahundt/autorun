@@ -261,6 +261,23 @@ class SessionBackendManager:
         # This should never happen due to memory fallback
         raise SessionBackendError("No available session backend")
 
+    def _cleanup_shelve_files(self, db_path: Path):
+        """Remove all files created by shelve for a given db path.
+
+        shelve may create files with various suffixes (.db, .dir, .bak, .dat)
+        depending on the platform's dbm backend. On macOS with dbm.gnu/ndbm,
+        shelve.open("foo.db") creates "foo.db.db", so os.remove("foo.db") fails.
+        This method uses glob to clean up all related files.
+        """
+        import glob
+        # Match the exact path and any path with additional extensions
+        for pattern in [str(db_path), str(db_path) + ".*", str(db_path) + ".db"]:
+            for filepath in glob.glob(pattern):
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+
     def _test_default_backend(self, session_id: str) -> bool:
         """Test default shelve backend"""
         import shelve
@@ -271,9 +288,10 @@ class SessionBackendManager:
             test_state["test"] = "test"
             test_state.sync()
             test_state.close()
-            os.remove(test_db)
+            self._cleanup_shelve_files(test_db)
             return True
         except Exception:
+            self._cleanup_shelve_files(test_db)
             return False
 
     def _test_dumbdbm_backend(self, session_id: str) -> bool:
@@ -286,9 +304,10 @@ class SessionBackendManager:
             test_state["test"] = "test"
             test_state.sync()
             test_state.close()
-            os.remove(test_db)
+            self._cleanup_shelve_files(test_db)
             return True
         except Exception:
+            self._cleanup_shelve_files(test_db)
             return False
 
     def _test_memory_backend(self, session_id: str) -> bool:

@@ -129,7 +129,11 @@ class TestPreToolUseBlockingFix:
         # Mock that file doesn't exist and policy is SEARCH
         with patch('clautorun.main.Path') as mock_path, \
              patch('clautorun.main.session_state') as mock_session:
-            mock_path.return_value.exists.return_value = False
+            # Mock Path chain: Path(file_path).resolve().exists()
+            mock_resolved = MagicMock()
+            mock_resolved.exists.return_value = False
+            mock_resolved.is_file.return_value = False
+            mock_path.return_value.resolve.return_value = mock_resolved
 
             # Setup mock session state
             mock_state = {"file_policy": "SEARCH"}
@@ -154,7 +158,11 @@ class TestPreToolUseBlockingFix:
         # Mock that file doesn't exist and policy is JUSTIFY
         with patch('clautorun.main.Path') as mock_path, \
              patch('clautorun.main.session_state') as mock_session:
-            mock_path.return_value.exists.return_value = False
+            # Mock Path chain: Path(file_path).resolve().exists()
+            mock_resolved = MagicMock()
+            mock_resolved.exists.return_value = False
+            mock_resolved.is_file.return_value = False
+            mock_path.return_value.resolve.return_value = mock_resolved
 
             # Setup mock session state
             mock_state = {"file_policy": "JUSTIFY", "autofile_justification_detected": False}

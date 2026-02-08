@@ -144,9 +144,9 @@ class TestCONFIGStructure:
 
     def test_stage_confirmations_exist(self):
         """Test all stage confirmations exist"""
-        assert "stage1_confirmation" in CONFIG
-        assert "stage2_confirmation" in CONFIG
-        assert "stage3_confirmation" in CONFIG
+        assert "stage1_message" in CONFIG
+        assert "stage2_message" in CONFIG
+        assert "stage3_message" in CONFIG
 
     def test_stage_instructions_exist(self):
         """Test all stage instructions exist"""
@@ -189,9 +189,9 @@ class TestInjectionTemplates:
         """Test injection template has required placeholders"""
         template = CONFIG["injection_template"]
         required = [
-            "{stage1_instruction}", "{stage1_confirmation}",
-            "{stage2_instruction}", "{stage2_confirmation}",
-            "{stage3_instruction}", "{stage3_confirmation}",
+            "{stage1_instruction}", "{stage1_message}",
+            "{stage2_instruction}", "{stage2_message}",
+            "{stage3_instruction}", "{stage3_message}",
             "{emergency_stop}", "{policy_instructions}"
         ]
         for placeholder in required:
@@ -278,9 +278,12 @@ class TestPretoolUseHandler:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
-            # Mock Path.exists() instead of os.path.exists
+            # Mock Path chain: Path(file_path).resolve().exists()
             with patch('clautorun.main.Path') as mock_path:
-                mock_path.return_value.exists.return_value = False
+                mock_resolved = Mock()
+                mock_resolved.exists.return_value = False
+                mock_resolved.is_file.return_value = False
+                mock_path.return_value.resolve.return_value = mock_resolved
                 response = pretooluse_handler(ctx)
 
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
@@ -433,7 +436,7 @@ class TestIsPrematureStop:
     def test_not_premature_with_stage1_marker(self):
         """Test not premature when stage1 marker present"""
         ctx = Mock()
-        ctx.session_transcript = [f"Task complete {CONFIG['stage1_confirmation']}"]
+        ctx.session_transcript = [f"Task complete {CONFIG['stage1_message']}"]
 
         state = {"session_status": "active"}
 
@@ -443,7 +446,7 @@ class TestIsPrematureStop:
     def test_not_premature_with_stage2_marker(self):
         """Test not premature when stage2 marker present"""
         ctx = Mock()
-        ctx.session_transcript = [f"Stage 2 complete {CONFIG['stage2_confirmation']}"]
+        ctx.session_transcript = [f"Stage 2 complete {CONFIG['stage2_message']}"]
 
         state = {"session_status": "active"}
 
@@ -453,7 +456,7 @@ class TestIsPrematureStop:
     def test_not_premature_with_stage3_marker(self):
         """Test not premature when stage3 marker present"""
         ctx = Mock()
-        ctx.session_transcript = [f"All done {CONFIG['stage3_confirmation']}"]
+        ctx.session_transcript = [f"All done {CONFIG['stage3_message']}"]
 
         state = {"session_status": "active"}
 
@@ -604,8 +607,12 @@ class TestPretoolUseEdgeCases:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
+            # Mock Path chain: Path(file_path).resolve().exists()
             with patch('clautorun.main.Path') as mock_path:
-                mock_path.return_value.exists.return_value = False
+                mock_resolved = Mock()
+                mock_resolved.exists.return_value = False
+                mock_resolved.is_file.return_value = False
+                mock_path.return_value.resolve.return_value = mock_resolved
                 response = pretooluse_handler(ctx)
 
         # Should deny because no justification

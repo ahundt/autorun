@@ -103,7 +103,7 @@ def test_main_py_ai_monitor_workflow():
         "stage1_completed": True,
         "stage2_completion_timestamp": 0
     }
-    ctx.session_transcript = ["Verification work", CONFIG["stage3_confirmation"]]
+    ctx.session_transcript = ["Verification work", CONFIG["stage3_message"]]
 
     with patch('clautorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state_final
@@ -130,7 +130,14 @@ def test_main_py_ai_monitor_workflow():
     mock_session_manager.__enter__ = MagicMock(return_value=mock_state)
     mock_session_manager.__exit__ = MagicMock(return_value=None)
 
-    with patch('clautorun.main.session_state', return_value=mock_session_manager):
+    with patch('clautorun.main.session_state', return_value=mock_session_manager), \
+         patch('clautorun.main.Path') as mock_path:
+        # Mock Path chain: Path(file_path).resolve().exists()
+        mock_resolved = MagicMock()
+        mock_resolved.exists.return_value = False
+        mock_resolved.is_file.return_value = False
+        mock_path.return_value.resolve.return_value = mock_resolved
+
         response = pretooluse_handler(ctx)
 
         print(f"Debug - PreToolUse response: {response}")
@@ -237,7 +244,7 @@ def test_hook_integration_completeness():
     # Mock context
     ctx = Mock()
     ctx.session_id = "test_completeness"
-    ctx.session_transcript = ["Some work", CONFIG["stage1_confirmation"]]
+    ctx.session_transcript = ["Some work", CONFIG["stage1_message"]]
 
     # Test stop handler does something meaningful
     response = stop_handler(ctx)
@@ -261,12 +268,12 @@ def test_readme_workflow_compliance():
     from clautorun import CONFIG
 
     # Verify documented completion marker exists
-    # Three-stage system uses stage confirmations instead of single completion marker
-    assert "stage1_confirmation" in CONFIG, "Missing stage1_confirmation in config"
-    assert "stage2_confirmation" in CONFIG, "Missing stage2_confirmation in config"
-    assert "stage3_confirmation" in CONFIG, "Missing stage3_confirmation in config"
-    assert CONFIG["stage1_confirmation"] == "AUTORUN_STAGE1_COMPLETE", "Incorrect stage1 confirmation"
-    print("✅ Stage confirmations match implementation")
+    # Three-stage system uses stage messages instead of single completion marker
+    assert "stage1_message" in CONFIG, "Missing stage1_message in config"
+    assert "stage2_message" in CONFIG, "Missing stage2_message in config"
+    assert "stage3_message" in CONFIG, "Missing stage3_message in config"
+    assert CONFIG["stage1_message"] == "AUTORUN_INITIAL_TASKS_COMPLETED", "Incorrect stage1 message"
+    print("✅ Stage messages match implementation")
 
     # Verify documented emergency stop phrase exists
     assert "emergency_stop" in CONFIG, "Missing emergency_stop in config"

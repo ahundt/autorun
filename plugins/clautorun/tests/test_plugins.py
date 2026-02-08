@@ -367,7 +367,8 @@ class TestAutorunPlugin:
         ctx.hook_call_count = 0
         ctx.file_policy = "ALLOW"
 
-        result = plugins.build_injection_prompt(ctx)
+        # Progressive disclosure is default; use_progressive_disclosure=False to test template
+        result = plugins.build_injection_prompt(ctx, use_progressive_disclosure=False)
         assert "WAIT PROCESS" in result or "Sequential Improvement" in result
 
     def test_autorun_injection_stage1_to_stage2(self):
@@ -406,7 +407,7 @@ class TestPlanManagementPlugin:
             if cmd == "/cr:pn":
                 result = handler(ctx)
                 assert ctx.plan_active is True
-                assert "Plan Creation" in result
+                assert "Create New Plan" in result
                 break
 
     def test_planrefine_returns_template(self):
