@@ -55,7 +55,7 @@ default-extras = ["bashlex"]
 [project.scripts]
 clautorun = "clautorun.__main__:main"
 clautorun-interactive = "clautorun.__main__:main"
-clautorun-install = "clautorun.install:main"
+clautorun-install = "clautorun.install_plugins:install_main"
 claude-session-tools = "clautorun.claude_session_tools:main"
 
 [project.urls]
