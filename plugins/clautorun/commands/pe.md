@@ -7,4 +7,4 @@ allowed-tools: Bash(python3:*)
 
 Check the current status of plan export configuration.
 
-!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/config.py status`
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py status`
