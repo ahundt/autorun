@@ -28,9 +28,11 @@ TEST_DIR="/tmp/plan-export-test-$$"
 TMUX_SESSION="plan-export-test-$$"
 CLEANUP=true
 DEBUG_LOG="$HOME/.claude/plan-export-debug.log"
+CONFIG_FILE="$HOME/.claude/plan-export.config.json"
+CONFIG_BACKUP="$HOME/.claude/plan-export.config.json.bak"
 TIMEOUT_SHORT=5
 TIMEOUT_MEDIUM=15
-TIMEOUT_LONG=30
+TIMEOUT_LONG=60
 
 # Colors for output
 RED='\033[0;31m'
@@ -75,6 +77,76 @@ cleanup() {
         print_info "Skipping cleanup (--no-cleanup flag set)"
         print_info "Test directory: $TEST_DIR"
         print_info "Tmux session: $TMUX_SESSION"
+        print_info "To cleanup manually:"
+        print_info "  tmux kill-session -t $TMUX_SESSION"
+        print_info "  rm -rf $TEST_DIR"
+    fi
+}
+
+enable_debug_logging() {
+    print_step "Enabling debug logging for plan-export..."
+
+    # Backup existing config if present
+    if [[ -f "$CONFIG_FILE" ]]; then
+        cp "$CONFIG_FILE" "$CONFIG_BACKUP"
+        print_info "Backed up existing config to $CONFIG_BACKUP"
+    fi
+
+    # Clear old debug log
+    : > "$DEBUG_LOG"
+
+    # Create config with debug_logging enabled
+    cat > "$CONFIG_FILE" << 'EOF'
+{
+    "enabled": true,
+    "output_plan_dir": "notes",
+    "filename_pattern": "{datetime}_{name}",
+    "extension": ".md",
+    "export_rejected": true,
+    "output_rejected_plan_dir": "notes/rejected",
+    "debug_logging": true,
+    "notify_claude": true
+}
+EOF
+    print_success "Debug logging enabled"
+}
+
+restore_config() {
+    if [[ -f "$CONFIG_BACKUP" ]]; then
+        mv "$CONFIG_BACKUP" "$CONFIG_FILE"
+        print_info "Restored original config"
+    else
+        # Remove test config if no backup exists
+        rm -f "$CONFIG_FILE"
+    fi
+}
+
+show_debug_log() {
+    print_header "Debug Log Contents"
+    if [[ -f "$DEBUG_LOG" && -s "$DEBUG_LOG" ]]; then
+        cat "$DEBUG_LOG"
+    else
+        print_info "Debug log is empty or does not exist"
+    fi
+}
+
+cleanup() {
+    # Show debug log before cleanup
+    show_debug_log
+
+    # Restore config
+    restore_config
+
+    if [[ "$CLEANUP" == "true" ]]; then
+        print_step "Cleaning up..."
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        rm -rf "$TEST_DIR"
+        print_success "Cleanup complete"
+    else
+        print_info "Skipping cleanup (--no-cleanup flag set)"
+        print_info "Test directory: $TEST_DIR"
+        print_info "Tmux session: $TMUX_SESSION"
+        print_info "Debug log: $DEBUG_LOG"
         print_info "To cleanup manually:"
         print_info "  tmux kill-session -t $TMUX_SESSION"
         print_info "  rm -rf $TEST_DIR"
@@ -130,12 +202,19 @@ wait_for_execution() {
 
 send_keys() {
     tmux send-keys -t "$TMUX_SESSION" "$1"
-    sleep 0.5
+    sleep 0.3
 }
 
 send_enter() {
+    # C-m must be sent separately from text for reliable operation
     tmux send-keys -t "$TMUX_SESSION" C-m
     sleep 0.5
+}
+
+send_key() {
+    # Send a single key (for menu navigation)
+    tmux send-keys -t "$TMUX_SESSION" "$1"
+    sleep 0.3
 }
 
 get_notes_count() {
@@ -243,6 +322,9 @@ print_success "plan-export plugin installed"
 # =============================================================================
 
 print_header "Setting Up Test Environment"
+
+# Enable debug logging first
+enable_debug_logging
 
 print_step "Creating test directory: $TEST_DIR"
 mkdir -p "$TEST_DIR/notes"
