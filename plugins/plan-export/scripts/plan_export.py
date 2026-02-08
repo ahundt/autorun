@@ -1,949 +1,293 @@
 #!/usr/bin/env python3
 """
-Export Plan Script - Copies the session's plan file to project notes.
+Plan Export Script - Daemon client with fallback for plan export.
+
+This script handles PostToolUse and SessionStart hooks for plan export.
+It tries to delegate to the clautorun daemon first (fast path: 1-5ms),
+falling back to direct execution if the daemon isn't running (slow path: 50-150ms).
+
+CLAUDE CODE BUG WORKAROUND:
+    Bug: Claude Code's "fresh context" option (button 1 in plan accept dialog)
+    does NOT fire PostToolUse hooks for ExitPlanMode. Plans accepted with
+    Option 1 are silently lost because the hook never triggers.
+
+    Workaround: The SessionStart hook checks on each new session whether the
+    previous session had an unexported plan. If found, it exports the plan.
+    State is stored in a global shelve (not session-scoped) to survive the
+    session_id change that happens with Option 1.
 
 Hook Types Handled:
-  - PostToolUse: Called when ExitPlanMode is triggered (normal path)
-  - SessionStart: Called on session start to catch unexported plans (workaround path)
-
-CLAUDE CODE BUG WORKAROUND (SessionStart path):
-  Bug: Claude Code's "fresh context" option (button 1 in plan accept dialog)
-  does NOT fire PostToolUse hooks for ExitPlanMode. Plans accepted with
-  Option 1 are silently lost because the hook never triggers.
-
-  Workaround: The SessionStart hook checks on each new session whether the
-  previous session had an unexported plan. If found, it exports the plan with
-  a "(From fresh context reset)" note. Content hashing prevents double-export
-  if/when the bug is fixed.
-
-  Evidence: Confirmed via tmux test - Option 1 (fresh context) does not export,
-  Option 2 (regular accept) exports correctly.
-
-Session Isolation:
-  Uses transcript_path from hook input to identify which plan file
-  belongs to the current session. Falls back to most recent file
-  only if transcript parsing fails.
-
-Approval Detection:
-  Uses permission_mode field from PostToolUse hook to determine if the
-  user approved the plan. Based on Claude Code hooks documentation and
-  GitHub issue #5036, tool_response is unreliable for approval detection.
-
-  Permission modes:
-    - "acceptEdits"      → Approved (user accepted edits)
-    - "bypassPermissions" → Approved (user bypassed permissions)
-    - "plan"             → Approved (user exited plan mode)
-    - "default"          → Approved (user exited plan mode)
-
-  Rationale: Exiting plan mode by any method indicates intent to proceed.
-  Only explicit cancellation prevents plan export (and doesn't trigger hook).
-
-Template Variables:
-  {YYYY}     - 4-digit year (2025)
-  {YY}       - 2-digit year (25)
-  {MM}       - Month 01-12
-  {DD}       - Day 01-31
-  {HH}       - Hour 00-23
-  {mm}       - Minute 00-59
-  {date}     - Full date YYYY_MM_DD
-  {datetime} - Full datetime YYYY_MM_DD_HHmm
-  {name}     - Extracted plan name from heading
-  {original} - Original plan filename (without .md)
+    - PostToolUse(Write/Edit): Track plan file writes for recovery
+    - PostToolUse(ExitPlanMode): Export plan immediately (Option 2 path)
+    - SessionStart: Recover unexported plans (Option 1 workaround)
 
 Configuration (~/.claude/plan-export.config.json):
-  enabled                  - Enable/disable plan export (default: true)
-  output_plan_dir          - Directory for exported plans (default: "notes")
-  filename_pattern         - Filename template (default: "{datetime}_{name}")
-  extension                - File extension (default: ".md")
-  export_rejected          - Save rejected plans (default: true)
-  output_rejected_plan_dir - Directory for rejected plans (default: "notes/rejected")
-  debug_logging            - Enable debug logging to diagnose issues (default: false)
-  notify_claude            - Show export confirmation message to Claude (default: true)
+    enabled                  - Enable/disable plan export (default: true)
+    output_plan_dir          - Directory for exported plans (default: "notes")
+    filename_pattern         - Filename template (default: "{datetime}_{name}")
+    extension                - File extension (default: ".md")
+    export_rejected          - Save rejected plans (default: true)
+    output_rejected_plan_dir - Directory for rejected plans (default: "notes/rejected")
+    debug_logging            - Enable debug logging (default: false)
+    notify_claude            - Show export confirmation message (default: true)
+
+Template Variables:
+    {YYYY}     - 4-digit year (2025)
+    {YY}       - 2-digit year (25)
+    {MM}       - Month 01-12
+    {DD}       - Day 01-31
+    {HH}       - Hour 00-23
+    {mm}       - Minute 00-59
+    {date}     - Full date YYYY_MM_DD
+    {datetime} - Full datetime YYYY_MM_DD_HHmm
+    {name}     - Extracted plan name from heading
+    {original} - Original plan filename (without .md)
 """
 
 import hashlib
 import json
-import os
-import re
-import shutil
+import socket
 import sys
-from datetime import datetime
 from pathlib import Path
-from contextlib import nullcontext
 
-# Import SessionLock for race condition safety
-# Falls back to no-lock behavior if clautorun not available (bootstrap scenario)
-HAS_SESSION_LOCK = False
-SessionLock = None
-SessionTimeoutError = Exception
+# Add clautorun to path for imports
+CLAUTORUN_SRC = Path(__file__).parent.parent.parent / "clautorun" / "src"
+sys.path.insert(0, str(CLAUTORUN_SRC))
 
-try:
-    # Path when script is in plugins/plan-export/scripts/
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
-    from clautorun.session_manager import SessionLock, SessionTimeoutError
-    HAS_SESSION_LOCK = True
-except ImportError:
-    pass  # Use fallback no-lock behavior - acceptable for single-session use
 
-# Default configuration
-DEFAULT_CONFIG = {
-    "enabled": True,
-    "output_plan_dir": "notes",
-    "filename_pattern": "{datetime}_{name}",
-    "extension": ".md",
-    "export_rejected": True,
-    "output_rejected_plan_dir": "notes/rejected",
-    "debug_logging": False,
-    "notify_claude": True
-}
-
-# Tracking file for preventing double-exports (workaround for fresh context bug)
-TRACKING_FILE = Path.home() / ".claude" / "plan-export-tracking.json"
-
-
-def get_content_hash(file_path: Path) -> str:
-    """Get SHA256 hash of file content for tracking."""
-    try:
-        content = file_path.read_bytes()
-        return hashlib.sha256(content).hexdigest()[:16]
-    except IOError:
-        return ""
-
-
-def load_tracking() -> dict:
-    """Load export tracking data."""
-    if TRACKING_FILE.exists():
-        try:
-            with open(TRACKING_FILE) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
-
-
-def save_tracking(tracking: dict) -> None:
-    """Save export tracking data atomically.
-
-    Uses temp file + rename pattern to prevent corruption from
-    concurrent writes or crashes mid-write.
-    """
-    import tempfile
-    try:
-        # Ensure parent directory exists
-        TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write to temp file first, then atomic rename
-        fd, temp_path = tempfile.mkstemp(
-            dir=TRACKING_FILE.parent,
-            prefix=".plan-export-tracking-",
-            suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(tracking, f, indent=2)
-            # Atomic rename (on POSIX systems)
-            os.replace(temp_path, TRACKING_FILE)
-        except Exception:
-            # Clean up temp file on error
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-            raise
-    except (IOError, OSError):
-        pass
-
-
-def record_export(plan_path: Path, dest_path: Path) -> None:
-    """Record a successful export to prevent double-exports.
-
-    This is used by both PostToolUse (normal path) and SessionStart (workaround)
-    to ensure plans are only exported once, even if the fresh context bug is fixed.
-    """
-    content_hash = get_content_hash(plan_path)
-    if not content_hash:
-        return
-
-    tracking = load_tracking()
-    tracking[content_hash] = {
-        "exported_at": datetime.now().isoformat(),
-        "destination": str(dest_path),
-        "source": str(plan_path),
-        "via": "post_tool_use"
-    }
-    save_tracking(tracking)
-
-
-def get_config_path() -> Path:
-    """Get the path to the plugin config file."""
-    return Path.home() / ".claude" / "plan-export.config.json"
-
-
-def load_config() -> dict:
-    """Load the current configuration with defaults."""
-    config = DEFAULT_CONFIG.copy()
-    config_path = get_config_path()
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                user_config = json.load(f)
-            config.update(user_config)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return config
-
-
-def is_enabled() -> bool:
-    """Check if plan export is enabled."""
-    return load_config().get("enabled", True)
-
-
-def log_warning(message: str) -> None:
-    """Log warning message to debug log if enabled."""
-    config = load_config()
-    if config.get("debug_logging", False):
-        try:
-            debug_log = Path.home() / ".claude" / "plan-export-debug.log"
-            with open(debug_log, "a") as f:
-                f.write(f"[{datetime.now()}] WARNING: {message}\n")
-        except Exception:
-            pass  # Don't let logging break the export
-
-
-def get_most_recent_plan() -> Path | None:
-    """Find the most recently modified plan file.
-
-    Note: This is a fallback method. Prefer get_plan_from_transcript() when
-    transcript_path is available, as it correctly identifies the session's plan.
-    """
-    plans_dir = Path.home() / ".claude" / "plans"
-    if not plans_dir.exists():
-        return None
-
-    plan_files = list(plans_dir.glob("*.md"))
-    if not plan_files:
-        return None
-
-    # Sort by modification time, most recent first
-    plan_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return plan_files[0]
-
-
-def get_plan_from_transcript(transcript_path: str) -> Path | None:
-    """Extract plan file path from session transcript.
-
-    Parses the JSONL transcript to find file-history-snapshot entries
-    that track which plan file was edited in this session. This ensures
-    the correct plan is exported when multiple sessions are active.
-
-    Args:
-        transcript_path: Path to the session's JSONL transcript file.
-
-    Returns:
-        Path to the plan file edited in this session, or None if not found.
-    """
-    plans_dir = Path.home() / ".claude" / "plans"
-    transcript = Path(transcript_path)
-
-    if not transcript.exists():
-        return None
-
-    found_plans = set()
-    try:
-        with open(transcript, 'r', encoding='utf-8') as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    entry = json.loads(line)
-                    if entry.get("type") == "assistant":
-                        message = entry.get("message", {})
-                        content = message.get("content", [])
-                        if isinstance(content, list):
-                            for item in content:
-                                if item.get("type") == "tool_use":
-                                    tool_name = item.get("name", "")
-                                    if tool_name in ["Write", "Edit"]:
-                                        tool_input = item.get("input", {})
-                                        file_path = tool_input.get("file_path", "")
-                                        if file_path and file_path.startswith(str(plans_dir)) and file_path.endswith(".md"):
-                                            found_plans.add(file_path)
-                except json.JSONDecodeError:
-                    continue
-    except IOError:
-        return None
-
-    if not found_plans:
-        return None
-
-    # Return the plan file (usually only one per session)
-    # If multiple, use modification time as tiebreaker
-    valid_plans = []
-    for p in found_plans:
-        path = Path(p)
-        if path.exists():
-            valid_plans.append(path)
-    if not valid_plans:
-        return None
-
-    valid_plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return valid_plans[0]
-
-
-def get_plan_from_metadata(plan_path: Path) -> str | None:
-    """Extract session_id from plan file metadata.
-
-    Plan files exported by this plugin include YAML frontmatter with:
-    - session_id: The session that created this plan
-    - original_path: The original plan file path
-    - export_timestamp: When the plan was exported
-
-    This provides recoverability when transcript parsing fails or when
-    sessions are resumed in new Claude Code instances.
-
-    Args:
-        plan_path: Path to the plan file to check.
-
-    Returns:
-        The session_id from metadata, or None if not found.
-    """
-    try:
-        content = plan_path.read_text(encoding="utf-8")
-
-        # Check for YAML frontmatter (starts with ---)
-        if not content.startswith("---"):
-            return None
-
-        # Extract frontmatter (between first and second ---)
-        frontmatter_end = content.find("\n---", 4)
-        if frontmatter_end == -1:
-            return None
-
-        frontmatter = content[4:frontmatter_end].strip()
-
-        # Parse simple YAML-like metadata
-        for line in frontmatter.split("\n"):
-            if line.startswith("session_id:"):
-                session_id = line.split(":", 1)[1].strip()
-                # Remove quotes if present
-                session_id = session_id.strip('"\'')
-                return session_id
-
-    except (IOError, UnicodeDecodeError):
-        pass
-
-    return None
-
-
-def find_plan_by_session_id(session_id: str) -> Path | None:
-    """Find a plan file by searching for session_id in metadata.
-
-    This is a fallback method when transcript parsing fails but
-    the plan file has embedded metadata from a previous export.
-
-    Args:
-        session_id: The session ID to search for.
-
-    Returns:
-        Path to the plan file, or None if not found.
-    """
-    plans_dir = Path.home() / ".claude" / "plans"
-    if not plans_dir.exists():
-        return None
-
-    plan_files = list(plans_dir.glob("*.md"))
-    if not plan_files:
-        return None
-
-    # Check each plan file for matching session_id in metadata
-    for plan_path in plan_files:
-        metadata_session_id = get_plan_from_metadata(plan_path)
-        if metadata_session_id == session_id:
-            return plan_path
-
-    return None
-
-
-def embed_plan_metadata(plan_path: Path, session_id: str, export_destination: Path) -> None:
-    """Embed metadata into exported plan file for recoverability.
-
-    Adds YAML frontmatter to the exported plan file containing:
-    - session_id: The session that created this plan
-    - original_path: The source plan file path
-    - export_timestamp: When the plan was exported
-    - export_destination: Where the plan was exported to
-
-    This metadata enables:
-    - Finding the correct plan when sessions are resumed
-    - Recoverability when transcript parsing fails
-    - Debugging and audit trail
-
-    Args:
-        plan_path: The source plan file path.
-        session_id: The current session ID.
-        export_destination: Where the plan is being exported to.
-    """
-    try:
-        content = export_destination.read_text(encoding="utf-8")
-
-        # Check if metadata already exists
-        if content.startswith("---"):
-            # Already has metadata, skip
-            return
-
-        # Create YAML frontmatter
-        metadata = f"""---
-session_id: {session_id}
-original_path: {plan_path}
-export_timestamp: {datetime.now().isoformat()}
-export_destination: {export_destination}
----
-
-"""
-
-        # Prepend metadata to content
-        export_destination.write_text(metadata + content, encoding="utf-8")
-
-    except (IOError, UnicodeDecodeError):
-        # Don't fail export if metadata embedding fails
-        pass
-
-
-def extract_useful_name(plan_path: Path) -> str:
-    """Extract a useful name from the plan content or filename.
-
-    Tries to find a meaningful name from:
-    1. First heading in the plan
-    2. First non-empty line
-    3. Original filename
-    """
-    try:
-        content = plan_path.read_text(encoding="utf-8")
-        lines = content.strip().split("\n")
-
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines
-            if not line:
-                continue
-
-            # Check for markdown heading
-            if line.startswith("#"):
-                # Remove # prefix and clean up
-                name = re.sub(r"^#+\s*", "", line)
-                name = sanitize_filename(name)
-                if name:
-                    return name  # Don't truncate - preserve full words
-
-            # Use first non-empty line if no heading found
-            name = sanitize_filename(line)
-            if name:
-                return name  # Don't truncate - preserve full words
-    except IOError:
-        pass
-
-    # Fallback to original filename without extension
-    return plan_path.stem
-
-
-def sanitize_filename(name: str) -> str:
-    """Convert a string to a safe filename component.
-
-    Rules:
-    - Preserve full words (no truncation)
-    - Detect majority separator (underscore vs dash) and use that consistently
-    - Elide redundant separators to single instance
-    - Remove unsafe characters
-    """
-    # Remove or replace unsafe characters (extended set for safety)
-    name = re.sub(r'[<>:"/\\|?*&@#$%^!`~\[\]{}();\']+', "", name)
-
-    # Count separators to determine majority preference
-    underscore_count = name.count('_')
-    dash_count = name.count('-')
-
-    # Determine which separator to use (prefer the one that appears more)
-    if underscore_count >= dash_count:
-        # Prefer underscores
-        name = re.sub(r"[\s.,-]+", "_", name)
-        # Collapse multiple underscores
-        name = re.sub(r"_+", "_", name)
-        # Remove leading/trailing underscores
-        name = name.strip("_")
-    else:
-        # Prefer dashes
-        name = re.sub(r"[\s_.,]+", "-", name)
-        # Collapse multiple dashes
-        name = re.sub(r"-+", "-", name)
-        # Remove leading/trailing dashes
-        name = name.strip("-")
-
-    # Convert to lowercase for consistency
-    name = name.lower()
-    return name
-
-
-def expand_template(template: str, plan_path: Path, plan_name: str) -> str:
-    """Expand template variables in a string.
-
-    Variables:
-      {YYYY}     - 4-digit year
-      {YY}       - 2-digit year
-      {MM}       - Month 01-12
-      {DD}       - Day 01-31
-      {HH}       - Hour 00-23
-      {mm}       - Minute 00-59
-      {date}     - Full date YYYY_MM_DD
-      {datetime} - Full datetime YYYY_MM_DD_HHmm
-      {name}     - Extracted plan name
-      {original} - Original filename without extension
-    """
-    now = datetime.now()
-    replacements = {
-        "{YYYY}": now.strftime("%Y"),
-        "{YY}": now.strftime("%y"),
-        "{MM}": now.strftime("%m"),
-        "{DD}": now.strftime("%d"),
-        "{HH}": now.strftime("%H"),
-        "{mm}": now.strftime("%M"),
-        "{date}": now.strftime("%Y_%m_%d"),
-        "{datetime}": now.strftime("%Y_%m_%d_%H%M"),
-        "{name}": plan_name,
-        "{original}": plan_path.stem,
-    }
-
-    result = template
-    for var, value in replacements.items():
-        result = result.replace(var, value)
-    return result
-
-
-def export_plan(plan_path: Path, project_dir: Path, session_id: str = None) -> dict:
-    """Export the plan file to the configured location.
-
-    Args:
-        plan_path: The source plan file to export.
-        project_dir: The project directory where notes will be saved.
-        session_id: The current session ID (for metadata embedding).
-
-    Returns a dict with status information for the hook response.
-    """
-    config = load_config()
-    output_plan_dir = config.get("output_plan_dir", "notes")
-    filename_pattern = config.get("filename_pattern", "{datetime}_{name}")
-    extension = config.get("extension", ".md")
-
-    # Extract useful name for template
-    useful_name = extract_useful_name(plan_path)
-
-    # Expand templates in output_plan_dir (supports {YYYY}/{MM} style paths)
-    expanded_dir = expand_template(output_plan_dir, plan_path, useful_name)
-    note_dir = project_dir / expanded_dir
-    note_dir.mkdir(parents=True, exist_ok=True)
-
-    # Expand template in filename
-    base_filename = expand_template(filename_pattern, plan_path, useful_name)
-    # Sanitize the expanded filename
-    base_filename = sanitize_filename(base_filename)
-    dest_filename = f"{base_filename}{extension}"
-    dest_path = note_dir / dest_filename
-
-    # Handle filename collision by adding a suffix
-    counter = 1
-    while dest_path.exists():
-        dest_filename = f"{base_filename}_{counter}{extension}"
-        dest_path = note_dir / dest_filename
-        counter += 1
-
-    # Copy the plan file
-    shutil.copy2(plan_path, dest_path)
-
-    # Record export to prevent double-exports (workaround for fresh context bug)
-    record_export(plan_path, dest_path)
-
-    # Embed metadata for recoverability (if session_id provided)
-    if session_id:
-        embed_plan_metadata(plan_path, session_id, dest_path)
-
-    return {
-        "success": True,
-        "source": str(plan_path),
-        "destination": str(dest_path),
-        "message": f"Plan exported to {dest_path.relative_to(project_dir)}"
-    }
-
-
-def export_rejected_plan(plan_path: Path, project_dir: Path, session_id: str = None) -> dict:
-    """Export a rejected plan to the rejected plan directory.
-
-    Rejected plans are saved to the configured rejected plan directory
-    (default: "notes/rejected").
-
-    Args:
-        plan_path: The source plan file to export.
-        project_dir: The project directory where notes will be saved.
-        session_id: The current session ID (for metadata embedding).
-
-    Returns a dict with status information for the hook response.
-    """
-    config = load_config()
-    output_rejected_plan_dir = config.get("output_rejected_plan_dir", "notes/rejected")
-    filename_pattern = config.get("filename_pattern", "{datetime}_{name}")
-    extension = config.get("extension", ".md")
-
-    # Extract useful name for template
-    useful_name = extract_useful_name(plan_path)
-
-    # Expand templates in output_rejected_plan_dir (supports {YYYY}/{MM} style paths)
-    expanded_dir = expand_template(output_rejected_plan_dir, plan_path, useful_name)
-    note_dir = project_dir / expanded_dir
-    note_dir.mkdir(parents=True, exist_ok=True)
-
-    # Expand template in filename
-    base_filename = expand_template(filename_pattern, plan_path, useful_name)
-    base_filename = sanitize_filename(base_filename)
-    dest_filename = f"{base_filename}{extension}"
-    dest_path = note_dir / dest_filename
-
-    # Handle filename collision by adding a suffix
-    counter = 1
-    while dest_path.exists():
-        dest_filename = f"{base_filename}_{counter}{extension}"
-        dest_path = note_dir / dest_filename
-        counter += 1
-
-    # Copy the plan file
-    shutil.copy2(plan_path, dest_path)
-
-    # Record export to prevent double-exports (workaround for fresh context bug)
-    record_export(plan_path, dest_path)
-
-    # Embed metadata for recoverability (if session_id provided)
-    if session_id:
-        embed_plan_metadata(plan_path, session_id, dest_path)
-
-    return {
-        "success": True,
-        "source": str(plan_path),
-        "destination": str(dest_path),
-        "message": f"Rejected plan saved to {dest_path.relative_to(project_dir)}"
-    }
-
+# === Backwards-compatible API for tests ===
+# These functions are also available via export_plan_module for cleaner imports
 
 def detect_hook_type(hook_input: dict) -> str:
-    """Detect which hook triggered this script.
-
-    PostToolUse: Has tool_name in the input (normal export path)
-    SessionStart: No tool_name (workaround for Claude Code fresh context bug)
-
-    The same script handles both hooks - dispatch happens in main() based on
-    this detection. This single-script approach keeps the logic DRY and ensures
-    consistent tracking behavior across both paths.
-    """
+    """Detect which hook triggered this script."""
     if "tool_name" in hook_input:
         return "PostToolUse"
     return "SessionStart"
 
 
+def get_content_hash(file_path) -> str:
+    """Get SHA256 hash of file content (first 16 chars)."""
+    try:
+        content = Path(file_path).read_bytes()
+        return hashlib.sha256(content).hexdigest()[:16]
+    except IOError:
+        return ""
+
+
 def handle_session_start(hook_input: dict) -> None:
-    """Handle SessionStart - WORKAROUND for Claude Code "fresh context" bug.
+    """Handle SessionStart - recover unexported plans."""
+    fallback_execution(hook_input)
 
-    CLAUDE CODE BUG:
-        When the user accepts a plan with Option 1 ("fresh context"), Claude Code
-        does NOT fire the PostToolUse hook for ExitPlanMode. This causes plans
-        to be silently lost - never exported to notes/.
 
-        Option 1 = "Continue with fresh context" = PostToolUse NOT fired
-        Option 2 = "Continue with current context" = PostToolUse fired normally
+def export_plan(plan_path, project_dir, session_id: str = None):
+    """Export the plan file - compatibility wrapper for tests."""
+    try:
+        from clautorun.plan_export import PlanExport, PlanExportConfig
+        from clautorun.core import EventContext, ThreadSafeDB
+    except ImportError:
+        return {"success": False, "message": "clautorun not available"}
 
-    WORKAROUND:
-        On SessionStart, we check if the transcript shows plan editing activity
-        but no corresponding export in our tracking file. If so, this indicates
-        the user likely used Option 1 (fresh context) and we recover the plan.
+    store = ThreadSafeDB()
+    ctx = EventContext(
+        session_id=session_id or "unknown",
+        event="PostToolUse",
+        tool_name="ExitPlanMode",
+        tool_input={"cwd": str(project_dir)},
+        store=store
+    )
+    config = PlanExportConfig.load()
+    exporter = PlanExport(ctx, config)
+    result = exporter.export(Path(plan_path))
 
-    HOW IT WORKS:
-        1. get_plan_from_transcript() finds the exact plan file from Write/Edit
-           tool_use entries in the session transcript
-        2. Content hash tracking prevents double-export if bug is later fixed
-           (both PostToolUse and SessionStart would try to export - hash dedupes)
-        3. SessionLock prevents race conditions with concurrent sessions
+    if result["success"]:
+        return {
+            "success": True,
+            "source": str(plan_path),
+            "destination": str(project_dir / config.output_plan_dir),
+            "message": result["message"]
+        }
+    return {
+        "success": False,
+        "source": str(plan_path),
+        "destination": "",
+        "message": result.get("error", "Export failed")
+    }
 
-    THREAD SAFETY:
-        Uses SessionLock (same as PostToolUse path) to prevent race conditions
-        when multiple sessions start simultaneously or when SessionStart and
-        PostToolUse fire close together.
 
-    EVIDENCE:
-        Bug confirmed via tmux testing - Option 1 does not export, Option 2 does.
+# Additional compatibility functions for tests
+def get_config_path():
+    """Get config path - compatibility wrapper."""
+    return Path.home() / ".claude" / "plan-export.config.json"
+
+
+def load_config():
+    """Load config - compatibility wrapper."""
+    try:
+        from clautorun.plan_export import PlanExportConfig
+        config = PlanExportConfig.load()
+        return {
+            "enabled": config.enabled,
+            "output_plan_dir": config.output_plan_dir,
+            "filename_pattern": config.filename_pattern,
+            "extension": config.extension,
+            "export_rejected": config.export_rejected,
+            "output_rejected_plan_dir": config.output_rejected_plan_dir,
+            "debug_logging": config.debug_logging,
+            "notify_claude": config.notify_claude,
+        }
+    except ImportError:
+        return {
+            "enabled": True,
+            "output_plan_dir": "notes",
+            "filename_pattern": "{datetime}_{name}",
+            "extension": ".md",
+            "export_rejected": True,
+            "output_rejected_plan_dir": "notes/rejected",
+            "debug_logging": False,
+            "notify_claude": True,
+        }
+
+
+def is_enabled():
+    """Check if enabled - compatibility wrapper."""
+    return load_config().get("enabled", True)
+
+
+def try_daemon(hook_input: dict) -> bool:
+    """Try to send request to daemon. Returns True if succeeded.
+
+    The daemon handles plan export via @app.on() handlers registered in
+    plugins/clautorun/src/clautorun/plan_export.py. This is the fast path
+    (1-5ms vs 50-150ms for direct execution).
+
+    Args:
+        hook_input: The hook payload from Claude Code
+
+    Returns:
+        True if daemon handled the request, False if not available
     """
-    if not is_enabled():
-        print(json.dumps({"continue": True, "suppressOutput": True}))
-        return
+    try:
+        from clautorun.core import SOCKET_PATH
+    except ImportError:
+        return False
 
-    session_id = hook_input.get("session_id")
-    if not session_id:
-        print(json.dumps({"continue": True}))
-        return
-
-    transcript_path = hook_input.get("transcript_path")
-    if not transcript_path:
-        print(json.dumps({"continue": True}))
-        return
-
-    # Use SessionLock for thread safety (same as PostToolUse path)
-    STATE_DIR = Path.home() / ".claude" / "sessions"
-    LOCK_TIMEOUT = 10.0
+    if not SOCKET_PATH.exists():
+        return False
 
     try:
-        lock_context = SessionLock(session_id, timeout=LOCK_TIMEOUT, state_dir=STATE_DIR) if HAS_SESSION_LOCK else nullcontext()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        sock.connect(str(SOCKET_PATH))
+        sock.sendall(json.dumps(hook_input).encode() + b'\n')
+        response = sock.recv(8192)
+        sock.close()
+        # Forward daemon response to stdout for Claude Code
+        print(response.decode().strip())
+        return True
+    except (ConnectionRefusedError, socket.timeout, OSError, BrokenPipeError):
+        return False
 
-        with lock_context:
-            # === BEGIN CRITICAL SECTION ===
 
-            # Find plan file for this session
-            plan_path = get_plan_from_transcript(transcript_path)
-            if not plan_path or not plan_path.exists():
-                print(json.dumps({"continue": True}))
-                return
+def fallback_execution(hook_input: dict) -> None:
+    """Direct execution when daemon not running.
 
-            # Check if already exported (content hash tracking)
-            content_hash = get_content_hash(plan_path)
-            if not content_hash:
-                print(json.dumps({"continue": True}))
-                return
+    This is the slow path (50-150ms Python startup + imports).
+    Uses the same PlanExport class as the daemon but without caching benefits.
 
-            tracking = load_tracking()
-            if content_hash in tracking:
-                print(json.dumps({"continue": True}))  # Already exported
-                return
+    Args:
+        hook_input: The hook payload from Claude Code
+    """
+    try:
+        from clautorun.plan_export import PlanExport, PlanExportConfig
+        from clautorun.core import EventContext, ThreadSafeDB
+    except ImportError:
+        # clautorun not available - output success and exit
+        print(json.dumps({"continue": True}))
+        return
 
-            # Verify non-empty
-            try:
-                if not plan_path.read_text(encoding="utf-8").strip():
-                    print(json.dumps({"continue": True}))
-                    return
-            except (IOError, UnicodeDecodeError):
-                print(json.dumps({"continue": True}))
-                return
+    config = PlanExportConfig.load()
+    if not config.enabled:
+        print(json.dumps({"continue": True}))
+        return
 
-            # Export the plan
-            project_dir = Path(hook_input.get("cwd", os.getcwd()))
-            result = export_plan(plan_path, project_dir, session_id)
+    # Build EventContext from hook input
+    session_id = hook_input.get("session_id", "unknown")
+    tool_name = hook_input.get("tool_name")
+    tool_input = hook_input.get("tool_input", {})
+    tool_result = hook_input.get("tool_response", hook_input.get("tool_result"))
+    cwd = hook_input.get("cwd")
 
-            # === END CRITICAL SECTION ===
+    # Create a minimal store for the context
+    store = ThreadSafeDB()
 
-        if result["success"]:
-            config = load_config()
-            if config.get("notify_claude", True):
+    ctx = EventContext(
+        session_id=session_id,
+        event=hook_input.get("hook_event_name", ""),
+        tool_name=tool_name,
+        tool_input=tool_input,
+        tool_result=tool_result,
+        store=store
+    )
+
+    # Inject cwd into tool_input for project_dir access
+    if cwd:
+        ctx._tool_input["cwd"] = cwd
+
+    exporter = PlanExport(ctx, config)
+
+    # Dispatch based on hook type
+    if tool_name in ("Write", "Edit"):
+        # Track plan file writes
+        file_path = tool_input.get("file_path", "")
+        exporter.record_write(file_path)
+        print(json.dumps({"continue": True}))
+
+    elif tool_name == "ExitPlanMode":
+        # Export plan (Option 2 - regular accept)
+        plan = exporter.get_current_plan()
+        if plan:
+            result = exporter.export(plan)
+            if result["success"] and config.notify_claude:
                 print(json.dumps({
                     "continue": True,
-                    "systemMessage": f"📋 Recovered: {result['message']}",
-                    "additionalContext": f"\n{result['message']}\n(From fresh context reset)\n"
+                    "systemMessage": f"📋 {result['message']}"
                 }))
                 return
-
         print(json.dumps({"continue": True}))
 
-    except SessionTimeoutError:
-        # Another operation in progress - skip silently
+    elif "session_id" in hook_input and tool_name is None:
+        # SessionStart - recover unexported plans
+        for plan in exporter.get_unexported():
+            result = exporter.export(plan)
+            if result["success"] and config.notify_claude:
+                print(json.dumps({
+                    "continue": True,
+                    "systemMessage": f"📋 Recovered: {result['message']} (from fresh context)"
+                }))
+                return
         print(json.dumps({"continue": True}))
-    except Exception as e:
-        # Fail open - don't crash Claude
-        log_warning(f"SessionStart handler error: {e}")
+
+    else:
         print(json.dumps({"continue": True}))
 
 
 def main():
-    """Main entry point - handles PostToolUse and SessionStart."""
+    """Main entry point - daemon client with fallback."""
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
+        if sys.stdin.isatty():
+            hook_input = {}
+        else:
+            hook_input = json.load(sys.stdin)
     except json.JSONDecodeError:
         hook_input = {}
 
-    # Dispatch based on hook type
-    if detect_hook_type(hook_input) == "SessionStart":
-        handle_session_start(hook_input)
+    # Try daemon first (fast path: 1-5ms)
+    if try_daemon(hook_input):
         return
 
-    # Check if enabled
-    if not is_enabled():
-        result = {
-            "continue": True,
-            "suppressOutput": True
-        }
-        print(json.dumps(result))
-        return
-
-    # Extract and validate session_id from hook input
-    # Session ID is required for session-isolated plan export to prevent race conditions
-    session_id = hook_input.get("session_id", "unknown")
-    if session_id == "unknown":
-        result = {
-            "continue": True,
-            "systemMessage": "Warning: session_id missing from hook input",
-            "additionalContext": "\n⚠️ Export skipped: session_id required for safe export\n"
-        }
-        print(json.dumps(result))
-        return
-
-    # Get project directory from hook input or current working directory
-    project_dir = Path(hook_input.get("cwd", os.getcwd()))
-
-    # Get transcript path for session-aware plan selection
-    transcript_path = hook_input.get("transcript_path")
-
-    # Get tool_response to detect if plan was approved
-    tool_response = hook_input.get("tool_response", {})
-
-    # Detect if plan was approved using permission_mode field
-    # Based on Claude Code hooks documentation and GitHub issue #5036:
-    # - tool_response is unreliable for approval detection
-    # - permission_mode field indicates user's approval context
-    permission_mode = hook_input.get("permission_mode", "default")
-
-    # Check permission_mode for approval signals
-    if permission_mode in ["acceptEdits", "bypassPermissions"]:
-        # User explicitly accepted edits or bypassed permissions
-        is_approved = True
-    elif permission_mode == "plan":
-        # User is in plan mode - exiting plan mode is implicit approval
-        is_approved = True
-    else:
-        # Default mode - treat as approved (user exited plan mode)
-        # Rationale: Exiting plan mode indicates intent to proceed
-        is_approved = True
-
-    # Note: Only explicit cancellation (which doesn't trigger PostToolUse)
-    # prevents plan export. Exiting plan mode by any method indicates approval.
-
-    # Debug logging to diagnose approval detection (if enabled in config)
-    config = load_config()
-    if config.get("debug_logging", False):
-        try:
-            debug_log = Path.home() / ".claude" / "plan-export-debug.log"
-            with open(debug_log, "a") as f:
-                f.write(f"\n{'='*60}\n")
-                f.write(f"Timestamp: {datetime.now()}\n")
-                f.write(f"permission_mode: {permission_mode}\n")
-                f.write(f"is_approved: {is_approved}\n")
-                f.write(f"\ntool_response type: {type(tool_response)}\n")
-                f.write(f"tool_response: {json.dumps(tool_response, indent=2)}\n")
-                f.write(f"\ntool_input: {json.dumps(hook_input.get('tool_input', {}), indent=2)}\n")
-                f.write(f"{'='*60}\n")
-        except Exception as e:
-            # Don't let logging errors break the export
-            pass
-
-    # Wrap entire plan selection + export in session lock for race condition safety
-    # This prevents multiple sessions from exporting simultaneously and causing cross-contamination
-    STATE_DIR = Path.home() / ".claude" / "sessions"
-    LOCK_TIMEOUT = 10.0  # Seconds
-
-    try:
-        # Wrap lock usage conditionally without extracting function
-        lock_context = SessionLock(session_id, timeout=LOCK_TIMEOUT, state_dir=STATE_DIR) if HAS_SESSION_LOCK else nullcontext()
-
-        with lock_context:
-            # === BEGIN CRITICAL SECTION ===
-            # Mutually exclusive per session - prevents race conditions
-
-            # Step 1: Get plan path from tool_response (most reliable - direct from Claude Code)
-            # ExitPlanMode returns {filePath: "/path/to/plan.md", plan: "content..."}
-            plan_path = None
-            if isinstance(tool_response, dict):
-                file_path = tool_response.get("filePath")
-                if file_path:
-                    candidate = Path(file_path)
-                    if candidate.exists():
-                        plan_path = candidate
-                        if config.get("debug_logging", False):
-                            log_warning(f"Session {session_id}: using tool_response.filePath: {file_path}")
-                    elif config.get("debug_logging", False):
-                        log_warning(f"Session {session_id}: tool_response.filePath doesn't exist: {file_path}")
-
-            # Fallback 1: Parse transcript to find plan file
-            if not plan_path and transcript_path:
-                plan_path = get_plan_from_transcript(transcript_path)
-                if plan_path and config.get("debug_logging", False):
-                    log_warning(f"Session {session_id}: using transcript parsing: {plan_path}")
-
-            # Fallback 2: Try to find plan by session_id in metadata
-            # This handles session resume scenarios where transcript parsing fails
-            if not plan_path:
-                if config.get("debug_logging", False):
-                    log_warning(f"Session {session_id}: transcript parsing failed, trying metadata fallback")
-                plan_path = find_plan_by_session_id(session_id)
-
-            # Fallback 3: Most recent plan (original behavior - last resort)
-            if not plan_path:
-                if config.get("debug_logging", False):
-                    log_warning(f"Session {session_id}: metadata search failed, using most recent plan")
-                plan_path = get_most_recent_plan()
-
-            if not plan_path:
-                result = {
-                    "continue": True,
-                    "systemMessage": "No plan files found to export.",
-                    "additionalContext": "\n📋 No plan files found to export.\n"
-                }
-                print(json.dumps(result))
-                return
-
-            # Step 2: Export (atomic with selection due to lock)
-            # Pass session_id for metadata embedding in exported file
-            config = load_config()
-            if is_approved:
-                export_result = export_plan(plan_path, project_dir, session_id=session_id)
-                # Verify destination file exists
-                dest_path = Path(export_result.get("destination", ""))
-                if not dest_path.exists():
-                    log_warning(f"Export reported success but file missing: {dest_path}")
-            elif config.get("export_rejected", True):
-                export_result = export_rejected_plan(plan_path, project_dir, session_id=session_id)
-            else:
-                result = {"continue": True, "suppressOutput": True}
-                print(json.dumps(result))
-                return
-
-            # === END CRITICAL SECTION ===
-
-        # Lock released automatically here
-
-        # Conditionally show export message to Claude AND user via additionalContext
-        # Reload config to ensure we have the latest settings
-        config = load_config()
-        if config.get("notify_claude", True):
-            result = {
-                "continue": True,
-                "systemMessage": export_result["message"],
-                "additionalContext": f"\n\n📋 {export_result['message']}\n"
-            }
-        else:
-            result = {
-                "continue": True,
-                "suppressOutput": True
-            }
-        print(json.dumps(result))
-
-    except SessionTimeoutError as e:
-        # Another export in progress for this session
-        result = {
-            "continue": True,
-            "systemMessage": f"Export skipped: {e}",
-            "additionalContext": f"\n⚠️ Export skipped: Another operation in progress\n"
-        }
-        print(json.dumps(result))
-        return
-
-    except Exception as e:
-        result = {
-            "continue": True,
-            "systemMessage": f"Plan export failed: {e}",
-            "additionalContext": f"\n❌ Plan export failed: {e}\n"
-        }
-        print(json.dumps(result))
-        return
+    # Fallback to direct execution (slow path: 50-150ms)
+    fallback_execution(hook_input)
 
 
 if __name__ == "__main__":

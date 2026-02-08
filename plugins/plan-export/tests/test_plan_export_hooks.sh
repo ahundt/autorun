@@ -2,10 +2,15 @@
 # =============================================================================
 # Plan Export Hook Test Script
 # =============================================================================
-# Tests the plan-export PostToolUse hook behavior with different accept options.
+# Tests the plan-export plugin's handling of the Claude Code fresh context bug.
 #
-# Known Bug: Claude Code's "fresh context" option (button 1) does NOT fire
-# PostToolUse hooks for ExitPlanMode. This script verifies this behavior.
+# Claude Code Bug: Option 1 (fresh context) does NOT fire PostToolUse hooks.
+# Our Workaround: SessionStart handler catches unexported plans on next session.
+#
+# This test verifies:
+#   1. The Claude Code bug exists (informational)
+#   2. Our SessionStart workaround catches unexported plans (MUST PASS)
+#   3. Normal Option 2 path works correctly (MUST PASS)
 #
 # Usage:
 #   ./test_plan_export_hooks.sh              # Run tests with cleanup
@@ -15,10 +20,10 @@
 # Requirements:
 #   - tmux installed
 #   - claude CLI available (uses haiku model to minimize costs)
-#   - plan-export plugin installed
+#   - plan-export plugin installed with SessionStart handler
 #
 # API Costs:
-#   Uses haiku model (~$0.01-0.05 per test run)
+#   Uses haiku model (~$0.02-0.10 per test run)
 # =============================================================================
 
 set -euo pipefail
@@ -36,7 +41,7 @@ CONFIG_BACKUP="$HOME/.claude/plan-export.config.json.bak"
 
 # Timeouts (in seconds)
 TIMEOUT_CLAUDE_START=30
-TIMEOUT_PLAN_CREATE=90  # Plan creation can take time with haiku
+TIMEOUT_PLAN_CREATE=90
 TIMEOUT_PLAN_EXECUTE=90
 SLEEP_AFTER_KEYPRESS=0.5
 
@@ -52,12 +57,17 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Test results
-TEST1_RESULT=""
-TEST2_RESULT=""
-TEST1_NOTES_BEFORE=0
-TEST1_NOTES_AFTER=0
-TEST2_NOTES_BEFORE=0
-TEST2_NOTES_AFTER=0
+CLAUDE_BUG_DETECTED=""      # Is the Claude Code bug present?
+WORKAROUND_WORKS=""         # Does our SessionStart workaround work?
+OPTION2_WORKS=""            # Does normal Option 2 path work?
+
+# Note counts for each phase
+PHASE1_NOTES_BEFORE=0
+PHASE1_NOTES_AFTER=0
+PHASE2_NOTES_BEFORE=0
+PHASE2_NOTES_AFTER=0
+PHASE3_NOTES_BEFORE=0
+PHASE3_NOTES_AFTER=0
 
 # =============================================================================
 # Helper Functions
@@ -85,25 +95,20 @@ print_info() {
     echo -e "  $1"
 }
 
-print_debug() {
-    if [[ "${DEBUG:-false}" == "true" ]]; then
-        echo -e "${CYAN}[DEBUG] $1${NC}"
-    fi
+print_warn() {
+    echo -e "${YELLOW}⚠ $1${NC}"
 }
 
 enable_debug_logging() {
     print_step "Enabling debug logging for plan-export..."
 
-    # Backup existing config if present
     if [[ -f "$CONFIG_FILE" ]]; then
         cp "$CONFIG_FILE" "$CONFIG_BACKUP"
         print_info "Backed up existing config to $CONFIG_BACKUP"
     fi
 
-    # Clear old debug log
     : > "$DEBUG_LOG"
 
-    # Create config with debug_logging enabled
     cat > "$CONFIG_FILE" << 'EOF'
 {
     "enabled": true,
@@ -124,7 +129,6 @@ restore_config() {
         mv "$CONFIG_BACKUP" "$CONFIG_FILE"
         print_info "Restored original config"
     else
-        # Remove test config if no backup exists
         rm -f "$CONFIG_FILE"
     fi
 }
@@ -135,15 +139,11 @@ show_debug_log() {
         cat "$DEBUG_LOG"
     else
         print_info "Debug log is empty or does not exist"
-        print_info "(This is EXPECTED for Test 1 - fresh context doesn't fire hooks)"
     fi
 }
 
 cleanup() {
-    # Show debug log before cleanup
     show_debug_log
-
-    # Restore config
     restore_config
 
     if [[ "$CLEANUP" == "true" ]]; then
@@ -164,20 +164,14 @@ cleanup() {
 
 trap cleanup EXIT
 
-# Wait for Claude to be ready for input
-# Must detect when Claude shows its input prompt, not just the startup banner
 wait_for_claude() {
     local max_wait=$1
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local output
         output=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -50 2>/dev/null || echo "")
-        # Look for indicators that Claude is ready for input:
-        # - "accept edits" in status bar means Claude is at prompt
-        # - "Message:" or similar input indicator
-        # - tokens counter at bottom right
         if echo "$output" | grep -qE "(accept edits|tokens$|shift\+tab)"; then
-            sleep 1  # Extra buffer to ensure fully ready
+            sleep 1
             return 0
         fi
         sleep 1
@@ -186,39 +180,29 @@ wait_for_claude() {
     return 1
 }
 
-# Wait for plan acceptance dialog to appear
 wait_for_plan_prompt() {
     local max_wait=$1
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local output
         output=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -100 2>/dev/null || echo "")
-        # Look for plan acceptance dialog indicators:
-        # - "ready to execute" appears before the options
-        # - The numbered options (1. Yes, clear context...)
         if echo "$output" | grep -qE "(ready to execute|Yes, clear context|Yes, auto-accept)"; then
             return 0
         fi
         sleep 2
         ((waited += 2))
     done
-    # Show debug output on timeout
     print_info "DEBUG: Timeout waiting for plan prompt. Last 30 lines:"
     echo "$output" | tail -30
     return 1
 }
 
-# Wait for plan execution to complete
 wait_for_execution() {
     local max_wait=$1
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local output
         output=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -100 2>/dev/null || echo "")
-        # Look for execution completion indicators:
-        # - "successfully implemented" - Claude's typical completion message
-        # - "accept edits" in status bar - returned to normal prompt
-        # - Summary with checkmarks
         if echo "$output" | grep -qiE "(successfully|implemented|Summary:|accept edits|Done!|Created.*txt)"; then
             return 0
         fi
@@ -230,26 +214,21 @@ wait_for_execution() {
     return 1
 }
 
-# Send text to tmux (WITHOUT pressing Enter)
 send_keys() {
     tmux send-keys -t "$TMUX_SESSION" "$1"
     sleep "$SLEEP_AFTER_KEYPRESS"
 }
 
-# Send Enter key (C-m) - MUST be sent separately from text
 send_enter() {
     tmux send-keys -t "$TMUX_SESSION" C-m
     sleep "$SLEEP_AFTER_KEYPRESS"
 }
 
-# Get count of markdown files in notes directory
 get_notes_count() {
     find "$TEST_DIR/notes" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' '
 }
 
-# Get path to most recent note file (macOS compatible)
 get_latest_note() {
-    # Use ls with time sort instead of find -printf (which is Linux-only)
     ls -t "$TEST_DIR/notes"/*.md 2>/dev/null | head -1
 }
 
@@ -261,30 +240,25 @@ show_usage() {
     cat << EOF
 Plan Export Hook Test Script
 
-Tests the plan-export PostToolUse hook behavior with different accept options.
-Uses the ${CLAUDE_MODEL} model to minimize API costs (~\$0.01-0.05 per run).
+Tests the plan-export plugin's SessionStart workaround for the Claude Code
+fresh context bug. Uses the ${CLAUDE_MODEL} model (~\$0.02-0.10 per run).
 
 USAGE:
     $(basename "$0") [OPTIONS]
 
 OPTIONS:
     --no-cleanup    Keep test artifacts after completion for inspection
-    --debug         Enable verbose debug output
     --help, -h      Show this help message
 
-EXAMPLES:
-    $(basename "$0")                 # Run tests with automatic cleanup
-    $(basename "$0") --no-cleanup    # Keep test files for debugging
-
 WHAT THIS TESTS:
-    Test 1: Option 1 (fresh context) - Known to NOT fire PostToolUse hooks
-    Test 2: Option 2 (regular accept) - Should fire PostToolUse hooks correctly
+    Phase 1: Detect Claude Code bug (Option 1 doesn't fire PostToolUse)
+    Phase 2: Verify our SessionStart workaround catches unexported plans
+    Phase 3: Verify normal Option 2 path still works
 
-EXPECTED RESULTS:
-    - Test 1 (fresh context): Plan NOT exported (confirms bug exists)
-    - Test 2 (regular accept): Plan exported (correct behavior)
-
-If both tests pass (Test 1 NOT exported, Test 2 EXPORTED), the bug is confirmed.
+PASS CRITERIA:
+    - Phase 2 MUST export (our workaround works)
+    - Phase 3 MUST export (baseline functionality)
+    - Phase 1 is informational (documents upstream bug status)
 
 EOF
 }
@@ -297,64 +271,91 @@ print_summary() {
     print_header "TEST SUMMARY REPORT"
 
     echo -e "┌─────────────────────────────────────────────────────────────────────┐"
-    echo -e "│                    PLAN EXPORT HOOK TEST RESULTS                    │"
+    echo -e "│              PLAN EXPORT SESSIONSTART WORKAROUND TEST               │"
     echo -e "├─────────────────────────────────────────────────────────────────────┤"
-    echo -e "│ Model Used: ${CYAN}${CLAUDE_MODEL}${NC}                                                   │"
-    echo -e "│ Test Directory: ${TEST_DIR}                         │"
+    echo -e "│ Model: ${CYAN}${CLAUDE_MODEL}${NC}  │  Test Dir: ${TEST_DIR}       │"
     echo -e "├─────────────────────────────────────────────────────────────────────┤"
     echo -e "│                                                                     │"
-    echo -e "│  TEST 1: Fresh Context Accept (Option 1)                            │"
-    echo -e "│  ─────────────────────────────────────────                          │"
-    echo -e "│    Notes before: ${TEST1_NOTES_BEFORE}                                                   │"
-    echo -e "│    Notes after:  ${TEST1_NOTES_AFTER}                                                   │"
+    echo -e "│  PHASE 1: Claude Code Bug Detection (Option 1 - fresh context)     │"
+    echo -e "│  ───────────────────────────────────────────────────────────────    │"
+    echo -e "│    Notes before Option 1: ${PHASE1_NOTES_BEFORE}                                            │"
+    echo -e "│    Notes after Option 1:  ${PHASE1_NOTES_AFTER}                                            │"
 
-    if [[ "$TEST1_RESULT" == "NOT_EXPORTED" ]]; then
-        echo -e "│    Expected:     NOT_EXPORTED                                       │"
-        echo -e "│    Actual:       ${GREEN}NOT_EXPORTED${NC} ✓                                        │"
-        echo -e "│    Status:       ${GREEN}PASS${NC} (bug confirmed - hook did NOT fire)              │"
+    if [[ "$CLAUDE_BUG_DETECTED" == "YES" ]]; then
+        echo -e "│    Claude Code Bug:       ${YELLOW}PRESENT${NC} (PostToolUse not fired)            │"
+        echo -e "│    Status:                ${CYAN}INFORMATIONAL${NC} (upstream bug, not our fault) │"
+    elif [[ "$CLAUDE_BUG_DETECTED" == "NO" ]]; then
+        echo -e "│    Claude Code Bug:       ${GREEN}FIXED${NC} (PostToolUse now fires!)              │"
+        echo -e "│    Status:                ${GREEN}GREAT NEWS${NC} - bug may be fixed upstream      │"
     else
-        echo -e "│    Expected:     NOT_EXPORTED                                       │"
-        echo -e "│    Actual:       ${YELLOW}EXPORTED${NC}                                              │"
-        echo -e "│    Status:       ${YELLOW}UNEXPECTED${NC} (bug may be fixed!)                       │"
+        echo -e "│    Claude Code Bug:       ${YELLOW}UNKNOWN${NC} (test incomplete)                  │"
     fi
 
     echo -e "│                                                                     │"
-    echo -e "│  TEST 2: Regular Accept (Option 2)                                  │"
-    echo -e "│  ─────────────────────────────────────────                          │"
-    echo -e "│    Notes before: ${TEST2_NOTES_BEFORE}                                                   │"
-    echo -e "│    Notes after:  ${TEST2_NOTES_AFTER}                                                   │"
+    echo -e "│  PHASE 2: SessionStart Workaround (new session catches plan)       │"
+    echo -e "│  ───────────────────────────────────────────────────────────────    │"
+    echo -e "│    Notes before new session: ${PHASE2_NOTES_BEFORE}                                         │"
+    echo -e "│    Notes after new session:  ${PHASE2_NOTES_AFTER}                                         │"
 
-    if [[ "$TEST2_RESULT" == "EXPORTED" ]]; then
-        echo -e "│    Expected:     EXPORTED                                           │"
-        echo -e "│    Actual:       ${GREEN}EXPORTED${NC} ✓                                             │"
-        echo -e "│    Status:       ${GREEN}PASS${NC} (hook fired correctly)                           │"
-    elif [[ "$TEST2_RESULT" == "NOT_EXPORTED" ]]; then
-        echo -e "│    Expected:     EXPORTED                                           │"
-        echo -e "│    Actual:       ${RED}NOT_EXPORTED${NC}                                            │"
-        echo -e "│    Status:       ${RED}FAIL${NC} (regression - hook should fire)                   │"
+    if [[ "$WORKAROUND_WORKS" == "YES" ]]; then
+        echo -e "│    SessionStart Handler:     ${GREEN}WORKING${NC} ✓                                 │"
+        echo -e "│    Status:                   ${GREEN}PASS${NC}                                      │"
+    elif [[ "$WORKAROUND_WORKS" == "NO" ]]; then
+        echo -e "│    SessionStart Handler:     ${RED}BROKEN${NC} ✗                                   │"
+        echo -e "│    Status:                   ${RED}FAIL${NC} - workaround not working!             │"
+    elif [[ "$WORKAROUND_WORKS" == "SKIPPED" ]]; then
+        echo -e "│    SessionStart Handler:     ${YELLOW}SKIPPED${NC} (bug not present)                │"
+        echo -e "│    Status:                   ${CYAN}N/A${NC}                                       │"
     else
-        echo -e "│    Expected:     EXPORTED                                           │"
-        echo -e "│    Actual:       ${YELLOW}SKIPPED${NC}                                               │"
-        echo -e "│    Status:       ${YELLOW}SKIPPED${NC} (test did not complete)                      │"
+        echo -e "│    SessionStart Handler:     ${YELLOW}UNKNOWN${NC}                                  │"
+    fi
+
+    echo -e "│                                                                     │"
+    echo -e "│  PHASE 3: Baseline Check (Option 2 - normal accept)                │"
+    echo -e "│  ───────────────────────────────────────────────────────────────    │"
+    echo -e "│    Notes before Option 2: ${PHASE3_NOTES_BEFORE}                                            │"
+    echo -e "│    Notes after Option 2:  ${PHASE3_NOTES_AFTER}                                            │"
+
+    if [[ "$OPTION2_WORKS" == "YES" ]]; then
+        echo -e "│    PostToolUse Hook:       ${GREEN}WORKING${NC} ✓                                   │"
+        echo -e "│    Status:                 ${GREEN}PASS${NC}                                        │"
+    elif [[ "$OPTION2_WORKS" == "NO" ]]; then
+        echo -e "│    PostToolUse Hook:       ${RED}BROKEN${NC} ✗                                     │"
+        echo -e "│    Status:                 ${RED}FAIL${NC} - basic functionality broken!           │"
+    else
+        echo -e "│    PostToolUse Hook:       ${YELLOW}UNKNOWN${NC}                                    │"
     fi
 
     echo -e "│                                                                     │"
     echo -e "├─────────────────────────────────────────────────────────────────────┤"
 
     # Overall verdict
-    if [[ "$TEST1_RESULT" == "NOT_EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
-        echo -e "│  OVERALL: ${GREEN}SUCCESS${NC}                                                      │"
-        echo -e "│  Bug Status: CONFIRMED - Fresh context bypasses PostToolUse hooks   │"
-        echo -e "│  Workaround: SessionStart handler catches unexported plans          │"
-    elif [[ "$TEST1_RESULT" == "EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
-        echo -e "│  OVERALL: ${GREEN}BUG FIXED!${NC}                                                    │"
-        echo -e "│  Both paths now correctly export plans.                             │"
-    elif [[ "$TEST2_RESULT" == "NOT_EXPORTED" ]]; then
-        echo -e "│  OVERALL: ${RED}REGRESSION${NC}                                                     │"
-        echo -e "│  Option 2 should export but didn't. Check plugin installation.      │"
+    local overall_pass=true
+    local fail_reasons=""
+
+    if [[ "$WORKAROUND_WORKS" == "NO" ]]; then
+        overall_pass=false
+        fail_reasons="SessionStart workaround broken"
+    fi
+    if [[ "$OPTION2_WORKS" == "NO" ]]; then
+        overall_pass=false
+        if [[ -n "$fail_reasons" ]]; then
+            fail_reasons="$fail_reasons, "
+        fi
+        fail_reasons="${fail_reasons}Option 2 baseline broken"
+    fi
+
+    if [[ "$overall_pass" == "true" ]]; then
+        if [[ "$CLAUDE_BUG_DETECTED" == "NO" ]]; then
+            echo -e "│  OVERALL: ${GREEN}ALL TESTS PASSED${NC}                                            │"
+            echo -e "│  Claude Code bug appears FIXED - both paths work!                  │"
+        else
+            echo -e "│  OVERALL: ${GREEN}WORKAROUND VERIFIED${NC}                                         │"
+            echo -e "│  Claude bug present but SessionStart catches unexported plans      │"
+        fi
     else
-        echo -e "│  OVERALL: ${YELLOW}INCOMPLETE${NC}                                                   │"
-        echo -e "│  One or more tests did not complete successfully.                   │"
+        echo -e "│  OVERALL: ${RED}FAILED${NC}                                                        │"
+        echo -e "│  Reason: ${fail_reasons}                                │"
     fi
 
     echo -e "└─────────────────────────────────────────────────────────────────────┘"
@@ -369,10 +370,6 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cleanup)
             CLEANUP=false
-            shift
-            ;;
-        --debug)
-            DEBUG=true
             shift
             ;;
         --help|-h)
@@ -407,7 +404,6 @@ if ! command -v claude &>/dev/null; then
 fi
 print_success "claude CLI found"
 
-# Check plan-export plugin
 if ! claude plugin list 2>/dev/null | grep -q "plan-export"; then
     print_failure "plan-export plugin not installed"
     exit 1
@@ -422,7 +418,6 @@ print_info "Model: ${CLAUDE_MODEL} (lowest cost)"
 
 print_header "Setting Up Test Environment"
 
-# Enable debug logging first
 enable_debug_logging
 
 print_step "Creating test directory: $TEST_DIR"
@@ -430,159 +425,193 @@ mkdir -p "$TEST_DIR/notes"
 echo "# Plan Export Test Project" > "$TEST_DIR/README.md"
 print_success "Test directory created"
 
-print_step "Recording start time for log filtering..."
-START_TIME=$(date "+%Y-%m-%d %H:%M")
-print_info "Start time: $START_TIME"
-
 print_step "Creating tmux session: $TMUX_SESSION"
 tmux new-session -d -s "$TMUX_SESSION" -c "$TEST_DIR"
 print_success "Tmux session created"
 
 # =============================================================================
-# Test 1: Fresh Context Accept (Option 1) - Expected to NOT export
+# PHASE 1: Detect Claude Code Bug (Option 1 - fresh context)
 # =============================================================================
 
-print_header "Test 1: Fresh Context Accept (Option 1)"
-print_info "This tests the BUGGY path - PostToolUse hooks should NOT fire"
-print_info "Expected result: Plan NOT exported (confirms bug)"
+print_header "Phase 1: Claude Code Bug Detection"
+print_info "Testing if Option 1 (fresh context) fires PostToolUse hooks"
+print_info "This detects the upstream Claude Code bug - NOT a failure on our part"
 
 print_step "Starting Claude with ${CLAUDE_MODEL} model..."
 send_keys "claude --model ${CLAUDE_MODEL}"
 send_enter
 sleep 2
 
-# Trust the folder if prompted
 print_step "Trusting folder if prompted..."
 send_enter
 sleep 3
 
 if ! wait_for_claude $TIMEOUT_CLAUDE_START; then
     print_failure "Claude failed to start"
-    TEST1_RESULT="SKIPPED"
-    exit 1
-fi
-print_success "Claude started"
-
-print_step "Entering plan mode..."
-send_keys "/plan"
-send_enter
-sleep 2
-print_success "Plan mode command sent"
-
-print_step "Creating test plan..."
-send_keys "create file test1.txt with content 'test 1'"
-send_enter
-
-if ! wait_for_plan_prompt $TIMEOUT_PLAN_CREATE; then
-    print_failure "Plan was not created (timeout)"
-    TEST1_RESULT="SKIPPED"
-    # Continue to summary
+    CLAUDE_BUG_DETECTED="UNKNOWN"
 else
-    print_success "Plan created"
-
-    TEST1_NOTES_BEFORE=$(get_notes_count)
-    print_info "Notes count before accept: $TEST1_NOTES_BEFORE"
-
-    print_step "Accepting with Option 1 (fresh context)..."
-    send_keys "1"
-    send_enter
-
-    if ! wait_for_execution $TIMEOUT_PLAN_EXECUTE; then
-        print_failure "Plan execution did not complete (timeout)"
-        # Check notes anyway
-    else
-        print_success "Plan executed"
-    fi
-
-    sleep 3  # Give hooks time to run (if they do)
-
-    TEST1_NOTES_AFTER=$(get_notes_count)
-    print_info "Notes count after accept: $TEST1_NOTES_AFTER"
-
-    if [[ "$TEST1_NOTES_AFTER" -gt "$TEST1_NOTES_BEFORE" ]]; then
-        print_success "Test 1 Result: Plan WAS exported (unexpected - bug may be fixed!)"
-        TEST1_RESULT="EXPORTED"
-    else
-        print_failure "Test 1 Result: Plan NOT exported (confirms bug)"
-        TEST1_RESULT="NOT_EXPORTED"
-    fi
-fi
-
-# =============================================================================
-# Test 2: Regular Accept (Option 2) - Expected to export
-# =============================================================================
-
-print_header "Test 2: Regular Accept (Option 2)"
-print_info "This tests the CORRECT path - PostToolUse hooks SHOULD fire"
-print_info "Expected result: Plan EXPORTED"
-
-# After Option 1 (fresh context), we need to exit and restart Claude
-# because we're in a fresh context that doesn't have plan mode active
-print_step "Exiting Claude (fresh context reset)..."
-send_keys "/exit"
-send_enter
-sleep 3  # Wait for Claude to fully exit
-
-print_step "Restarting Claude for Test 2..."
-send_keys "claude --model ${CLAUDE_MODEL}"
-send_enter
-sleep 3  # Wait for Claude to start loading
-
-# Trust again if needed
-send_enter
-sleep 2
-
-if ! wait_for_claude $TIMEOUT_CLAUDE_START; then
-    print_failure "Claude failed to restart"
-    TEST2_RESULT="SKIPPED"
-else
-    print_success "Claude restarted"
-    sleep 2  # Extra buffer before sending commands
+    print_success "Claude started"
 
     print_step "Entering plan mode..."
     send_keys "/plan"
     send_enter
     sleep 2
-    print_success "Plan mode command sent"
 
-    print_step "Creating second test plan..."
-    send_keys "create file test2.txt with content 'test 2'"
+    print_step "Creating test plan (plan1)..."
+    send_keys "create file plan1.txt with content 'plan 1 test'"
     send_enter
 
     if ! wait_for_plan_prompt $TIMEOUT_PLAN_CREATE; then
         print_failure "Plan was not created (timeout)"
-        TEST2_RESULT="SKIPPED"
+        CLAUDE_BUG_DETECTED="UNKNOWN"
     else
         print_success "Plan created"
 
-        TEST2_NOTES_BEFORE=$(get_notes_count)
-        print_info "Notes count before accept: $TEST2_NOTES_BEFORE"
+        PHASE1_NOTES_BEFORE=$(get_notes_count)
+        print_info "Notes count before Option 1: $PHASE1_NOTES_BEFORE"
 
-        print_step "Accepting with Option 2 (regular accept)..."
-        send_keys "2"
+        print_step "Accepting with Option 1 (fresh context)..."
+        send_keys "1"
         send_enter
 
         if ! wait_for_execution $TIMEOUT_PLAN_EXECUTE; then
-            print_failure "Plan execution did not complete (timeout)"
+            print_warn "Plan execution timeout (continuing anyway)"
         else
             print_success "Plan executed"
         fi
 
         sleep 3  # Give hooks time to run
 
-        TEST2_NOTES_AFTER=$(get_notes_count)
-        print_info "Notes count after accept: $TEST2_NOTES_AFTER"
+        PHASE1_NOTES_AFTER=$(get_notes_count)
+        print_info "Notes count after Option 1: $PHASE1_NOTES_AFTER"
 
-        if [[ "$TEST2_NOTES_AFTER" -gt "$TEST2_NOTES_BEFORE" ]]; then
-            print_success "Test 2 Result: Plan WAS exported (correct behavior)"
-            TEST2_RESULT="EXPORTED"
-            EXPORTED_FILE=$(get_latest_note)
-            if [[ -n "$EXPORTED_FILE" ]]; then
-                print_info "Exported file: $(basename "$EXPORTED_FILE")"
-            fi
+        if [[ "$PHASE1_NOTES_AFTER" -gt "$PHASE1_NOTES_BEFORE" ]]; then
+            print_success "PostToolUse hook fired! Claude Code bug may be FIXED"
+            CLAUDE_BUG_DETECTED="NO"
         else
-            print_failure "Test 2 Result: Plan NOT exported (unexpected failure)"
-            TEST2_RESULT="NOT_EXPORTED"
+            print_warn "PostToolUse hook did NOT fire (Claude Code bug confirmed)"
+            CLAUDE_BUG_DETECTED="YES"
+        fi
+    fi
+fi
+
+# =============================================================================
+# PHASE 2: Test SessionStart Workaround
+# =============================================================================
+
+print_header "Phase 2: SessionStart Workaround Test"
+print_info "Starting NEW session to trigger SessionStart hook"
+print_info "This should catch the unexported plan from Phase 1"
+
+# Exit current Claude and start fresh session
+print_step "Exiting Claude..."
+send_keys "/exit"
+send_enter
+sleep 3
+
+PHASE2_NOTES_BEFORE=$(get_notes_count)
+print_info "Notes count before new session: $PHASE2_NOTES_BEFORE"
+
+if [[ "$CLAUDE_BUG_DETECTED" == "NO" ]]; then
+    print_info "Claude bug not detected - SessionStart workaround test skipped"
+    WORKAROUND_WORKS="SKIPPED"
+    PHASE2_NOTES_AFTER=$PHASE2_NOTES_BEFORE
+else
+    print_step "Starting NEW Claude session (triggers SessionStart hook)..."
+    send_keys "claude --model ${CLAUDE_MODEL}"
+    send_enter
+    sleep 2
+
+    # Trust folder
+    send_enter
+    sleep 3
+
+    if ! wait_for_claude $TIMEOUT_CLAUDE_START; then
+        print_failure "Claude failed to restart"
+        WORKAROUND_WORKS="UNKNOWN"
+    else
+        print_success "Claude restarted - SessionStart hook should have fired"
+
+        # Give SessionStart handler time to export
+        sleep 5
+
+        PHASE2_NOTES_AFTER=$(get_notes_count)
+        print_info "Notes count after new session: $PHASE2_NOTES_AFTER"
+
+        if [[ "$PHASE2_NOTES_AFTER" -gt "$PHASE2_NOTES_BEFORE" ]]; then
+            print_success "SessionStart workaround WORKED - plan was exported!"
+            WORKAROUND_WORKS="YES"
+        else
+            print_failure "SessionStart workaround FAILED - plan not exported"
+            WORKAROUND_WORKS="NO"
+        fi
+    fi
+fi
+
+# =============================================================================
+# PHASE 3: Baseline Check (Option 2 - normal accept)
+# =============================================================================
+
+print_header "Phase 3: Baseline Check (Option 2)"
+print_info "Testing that normal Option 2 accept still works correctly"
+
+# If we skipped phase 2, we need to start Claude
+if [[ "$WORKAROUND_WORKS" == "SKIPPED" ]]; then
+    print_step "Starting Claude for baseline test..."
+    send_keys "claude --model ${CLAUDE_MODEL}"
+    send_enter
+    sleep 2
+    send_enter
+    sleep 3
+
+    if ! wait_for_claude $TIMEOUT_CLAUDE_START; then
+        print_failure "Claude failed to start"
+        OPTION2_WORKS="UNKNOWN"
+    else
+        print_success "Claude started"
+    fi
+fi
+
+if [[ "$OPTION2_WORKS" != "UNKNOWN" ]]; then
+    print_step "Entering plan mode..."
+    send_keys "/plan"
+    send_enter
+    sleep 2
+
+    print_step "Creating test plan (plan2)..."
+    send_keys "create file plan2.txt with content 'plan 2 test'"
+    send_enter
+
+    if ! wait_for_plan_prompt $TIMEOUT_PLAN_CREATE; then
+        print_failure "Plan was not created (timeout)"
+        OPTION2_WORKS="UNKNOWN"
+    else
+        print_success "Plan created"
+
+        PHASE3_NOTES_BEFORE=$(get_notes_count)
+        print_info "Notes count before Option 2: $PHASE3_NOTES_BEFORE"
+
+        print_step "Accepting with Option 2 (regular accept)..."
+        send_keys "2"
+        send_enter
+
+        if ! wait_for_execution $TIMEOUT_PLAN_EXECUTE; then
+            print_warn "Plan execution timeout"
+        else
+            print_success "Plan executed"
+        fi
+
+        sleep 3
+
+        PHASE3_NOTES_AFTER=$(get_notes_count)
+        print_info "Notes count after Option 2: $PHASE3_NOTES_AFTER"
+
+        if [[ "$PHASE3_NOTES_AFTER" -gt "$PHASE3_NOTES_BEFORE" ]]; then
+            print_success "Option 2 PostToolUse hook works correctly"
+            OPTION2_WORKS="YES"
+        else
+            print_failure "Option 2 PostToolUse hook FAILED"
+            OPTION2_WORKS="NO"
         fi
     fi
 fi
@@ -593,17 +622,28 @@ fi
 
 print_summary
 
-# Determine exit code
-if [[ "$TEST1_RESULT" == "NOT_EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
-    # Bug confirmed, workaround works
-    exit 0
-elif [[ "$TEST1_RESULT" == "EXPORTED" && "$TEST2_RESULT" == "EXPORTED" ]]; then
-    # Bug is fixed!
-    exit 0
-elif [[ "$TEST2_RESULT" == "NOT_EXPORTED" ]]; then
-    # Regression
-    exit 1
-else
-    # Incomplete
+# =============================================================================
+# Determine Exit Code
+# =============================================================================
+
+# Exit 0 = all critical tests passed
+# Exit 1 = critical test failed (our code is broken)
+
+if [[ "$WORKAROUND_WORKS" == "NO" ]]; then
+    print_failure "CRITICAL: SessionStart workaround is broken!"
     exit 1
 fi
+
+if [[ "$OPTION2_WORKS" == "NO" ]]; then
+    print_failure "CRITICAL: Basic Option 2 functionality is broken!"
+    exit 1
+fi
+
+if [[ "$WORKAROUND_WORKS" == "YES" || "$WORKAROUND_WORKS" == "SKIPPED" ]] && [[ "$OPTION2_WORKS" == "YES" ]]; then
+    print_success "All critical tests passed"
+    exit 0
+fi
+
+# Unknown state - treat as failure
+print_warn "Tests incomplete - treating as failure"
+exit 1

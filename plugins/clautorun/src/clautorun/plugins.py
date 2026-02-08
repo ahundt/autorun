@@ -40,6 +40,9 @@ from .session_manager import session_state
 from .command_detection import command_matches_pattern
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
 
+# Import plan_export to register its @app.on() handlers with daemon
+from . import plan_export  # noqa: F401
+
 
 # ============================================================================
 # FILE POLICY PLUGIN (DRY Factory Pattern)
