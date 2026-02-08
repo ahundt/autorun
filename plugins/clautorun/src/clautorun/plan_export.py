@@ -19,16 +19,70 @@ Plan export integration for clautorun - fixes fresh context bug.
 
 PURPOSE:
     Export Claude Code plan files to project notes/ directory on plan acceptance.
-    Workaround for Claude Code bug where Option 1 ("fresh context") does NOT
-    fire PostToolUse hooks for ExitPlanMode.
+    Workaround for Claude Code bug where Option 1 ("Continue with fresh context"
+    button in plan accept dialog) does NOT fire PostToolUse hooks for ExitPlanMode.
+    Plans accepted with Option 1 were silently lost because the hook never triggered.
+
+CLAUDE CODE BUG (upstream, not in this code):
+    Bug Location: Claude Code's plan acceptance dialog, Option 1 handler
+    Bug Behavior: When user accepts a plan with Option 1 ("Continue with fresh context"):
+        1. Claude Code clears the conversation context
+        2. A NEW session_id is assigned (different from the planning session)
+        3. PostToolUse hook for ExitPlanMode is NEVER fired (BUG!)
+        4. The plan file exists at ~/.claude/plans/<name>.md but is never exported
+        5. Result: Plan is silently lost - no hook, no export, no notification
+
+    This is a bug in Claude Code itself, not in this plugin. This module implements
+    a WORKAROUND by tracking plan writes and recovering unexported plans on SessionStart.
+
+WHY "MOST RECENT PLAN" IS WRONG:
+    A naive solution would be "just export the most recent plan file". This fails because:
+    1. Multiple simultaneous sessions exist (different terminal windows)
+    2. Threading issues exist (race conditions between sessions)
+    3. Old sessions can be completed AFTER new ones start
+    4. The "most recent" plan might belong to a DIFFERENT session/project
+    5. Claude Code runs in VS Code, Claude App, and terminals - not just one context
+
+KEY INSIGHT - Plan File Path is the Stable Identifier:
+    What DOES persist across Option 1 clears:
+    - The terminal window has a continuous lifetime
+    - The plan file path (e.g., ~/.claude/plans/foo.md) stays the SAME
+    - The working directory (project cwd) stays the SAME
+    - Content hash can detect if already exported
+
+    Solution: Track {plan_path → (cwd, session_id)} mappings in a GLOBAL store
+    (not session-scoped) that survives the session_id change.
 
 REQUIREMENTS:
     1. Export plans to notes/ with configurable filename pattern
     2. Handle multiple simultaneous sessions (different terminals, VS Code, Claude App)
     3. Survive session clears (Option 1 creates new session_id)
     4. Prevent duplicate exports (content hash tracking)
-    5. Preserve all 8 config options from original plan_export.py
+    5. Preserve all 8 config options
     6. Support template variables: {YYYY}, {MM}, {DD}, {HH}, {mm}, {date}, {datetime}, {name}, {original}
+    7. Terminal-agnostic: Works in VS Code extension, Claude App, and CLI terminals
+
+CONFIGURATION (~/.claude/plan-export.config.json):
+    enabled                  - Enable/disable plan export (default: true)
+    output_plan_dir          - Directory for exported plans (default: "notes")
+    filename_pattern         - Filename template (default: "{datetime}_{name}")
+    extension                - File extension (default: ".md")
+    export_rejected          - Save rejected plans (default: true)
+    output_rejected_plan_dir - Directory for rejected plans (default: "notes/rejected")
+    debug_logging            - Enable debug logging (default: false)
+    notify_claude            - Show export confirmation message (default: true)
+
+TEMPLATE VARIABLES:
+    {YYYY}     - 4-digit year (2025)
+    {YY}       - 2-digit year (25)
+    {MM}       - Month 01-12
+    {DD}       - Day 01-31
+    {HH}       - Hour 00-23
+    {mm}       - Minute 00-59
+    {date}     - Full date YYYY_MM_DD
+    {datetime} - Full datetime YYYY_MM_DD_HHmm
+    {name}     - Extracted plan name from first heading
+    {original} - Original plan filename (without .md)
 
 GOALS:
     - DRY: Reuse clautorun's session_state() for thread-safe persistence
@@ -70,6 +124,30 @@ THREAD SAFETY & MULTIPROCESS CONCURRENCY:
     - shelve.sync() is called on context exit for durability
     - No additional FileLock needed - clautorun's SessionLock is sufficient
 
+STATE PERSISTENCE:
+    State is stored in ~/.claude/sessions/plugin___plan_export__.db (shelve format):
+    - Uses GLOBAL_SESSION_ID = "__plan_export__" (NOT session-scoped)
+    - Survives: daemon restarts, Option 1 session clears, VS Code restarts, reboots
+    - Two state dictionaries:
+        active_plans: Plans written but not yet exported
+            Key: plan file path (e.g., "/Users/x/.claude/plans/foo.md")
+            Value: {cwd, session_id, recorded_at}
+        tracking: Content hashes of exported plans (prevents duplicates)
+            Key: SHA256 hash (first 16 chars)
+            Value: {exported_to, exported_at}
+
+LIFECYCLE:
+    Short-term (within session):
+        Write plan → ThreadSafeDB cache + shelve → survives
+        Edit plan → updates cache + shelve → survives
+        ExitPlanMode (Option 2) → export immediately → survives
+
+    Long-term (across sessions):
+        Daemon restart → shelve persists, cache rebuilds → survives
+        Option 1 (fresh context) → NEW session_id, but GLOBAL store survives
+        VS Code restart → shelve persists → survives
+        Machine reboot → shelve persists → survives
+
 HOOK FLOW:
     PLAN MODE:
       Write to ~/.claude/plans/foo.md
@@ -110,6 +188,178 @@ from .session_manager import session_state, SessionTimeoutError
 # Global key for cross-session state (survives Option 1 fresh context)
 GLOBAL_SESSION_ID = "__plan_export__"
 
+# Default config for compatibility
+DEFAULT_CONFIG = {
+    "enabled": True,
+    "output_plan_dir": "notes",
+    "filename_pattern": "{datetime}_{name}",
+    "extension": ".md",
+    "export_rejected": True,
+    "output_rejected_plan_dir": "notes/rejected",
+    "debug_logging": False,
+    "notify_claude": True,
+}
+
+# Config file path
+CONFIG_PATH = Path.home() / ".claude" / "plan-export.config.json"
+PLANS_DIR = Path.home() / ".claude" / "plans"
+DEBUG_LOG_PATH = Path.home() / ".claude" / "plan-export-debug.log"
+
+
+# === Module-level helper functions (DRY - single source of truth) ===
+
+
+def detect_hook_type(hook_input: dict) -> str:
+    """Detect which hook triggered this script."""
+    if "tool_name" in hook_input:
+        return "PostToolUse"
+    return "SessionStart"
+
+
+def get_content_hash(file_path) -> str:
+    """Get SHA256 hash of file content (first 16 chars)."""
+    try:
+        content = Path(file_path).read_bytes()
+        return hashlib.sha256(content).hexdigest()[:16]
+    except IOError:
+        return ""
+
+
+def get_config_path() -> Path:
+    """Get config file path."""
+    return CONFIG_PATH
+
+
+def load_config() -> dict:
+    """Load config as dict (for backwards compatibility)."""
+    config = PlanExportConfig.load()
+    return config.to_dict()
+
+
+def is_enabled() -> bool:
+    """Check if plan export is enabled."""
+    return PlanExportConfig.load().enabled
+
+
+def log_warning(message: str) -> None:
+    """Log warning message to debug log."""
+    config = PlanExportConfig.load()
+    if config.debug_logging:
+        try:
+            with open(DEBUG_LOG_PATH, "a") as f:
+                f.write(f"[{datetime.now()}] WARNING: {message}\n")
+        except IOError:
+            pass
+
+
+def get_most_recent_plan() -> Optional[Path]:
+    """Find most recent plan file in ~/.claude/plans/."""
+    if not PLANS_DIR.exists():
+        return None
+    plan_files = list(PLANS_DIR.glob("*.md"))
+    if not plan_files:
+        return None
+    plan_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return plan_files[0]
+
+
+def get_plan_from_transcript(transcript_path: str) -> Optional[Path]:
+    """Extract plan file path from session transcript."""
+    transcript = Path(transcript_path)
+    if not transcript.exists():
+        return None
+
+    found_plans = set()
+    try:
+        with open(transcript, 'r', encoding='utf-8') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") == "assistant":
+                        message = entry.get("message", {})
+                        content = message.get("content", [])
+                        if isinstance(content, list):
+                            for item in content:
+                                if item.get("type") == "tool_use":
+                                    tool_name = item.get("name", "")
+                                    if tool_name in ["Write", "Edit"]:
+                                        tool_input = item.get("input", {})
+                                        file_path = tool_input.get("file_path", "")
+                                        if file_path and str(PLANS_DIR) in file_path and file_path.endswith(".md"):
+                                            found_plans.add(file_path)
+                except json.JSONDecodeError:
+                    continue
+    except IOError:
+        return None
+
+    if not found_plans:
+        return None
+
+    valid_plans = [Path(p) for p in found_plans if Path(p).exists()]
+    if not valid_plans:
+        return None
+
+    valid_plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return valid_plans[0]
+
+
+def get_plan_from_metadata(plan_path: Path) -> Optional[str]:
+    """Extract session_id from plan file YAML frontmatter."""
+    try:
+        content = plan_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            return None
+        frontmatter_end = content.find("\n---", 4)
+        if frontmatter_end == -1:
+            return None
+        frontmatter = content[4:frontmatter_end].strip()
+        for line in frontmatter.split("\n"):
+            if line.startswith("session_id:"):
+                session_id = line.split(":", 1)[1].strip()
+                return session_id.strip('"\'')
+    except (IOError, UnicodeDecodeError):
+        pass
+    return None
+
+
+def find_plan_by_session_id(session_id: str) -> Optional[Path]:
+    """Find a plan file by session_id in metadata."""
+    if not PLANS_DIR.exists():
+        return None
+    for plan_path in PLANS_DIR.glob("*.md"):
+        if get_plan_from_metadata(plan_path) == session_id:
+            return plan_path
+    return None
+
+
+def load_tracking() -> dict:
+    """Load export tracking data from session state."""
+    with session_state(GLOBAL_SESSION_ID) as state:
+        return dict(state.get("tracking", {}))
+
+
+def save_tracking(tracking: dict) -> None:
+    """Save export tracking data to session state."""
+    with session_state(GLOBAL_SESSION_ID) as state:
+        state["tracking"] = tracking
+
+
+def record_export(plan_path, dest_path) -> None:
+    """Record a successful export to tracking."""
+    content_hash = get_content_hash(plan_path)
+    if not content_hash:
+        return
+    with session_state(GLOBAL_SESSION_ID) as state:
+        tracking = state.get("tracking", {})
+        tracking[content_hash] = {
+            "exported_at": datetime.now().isoformat(),
+            "destination": str(dest_path),
+            "source": str(plan_path),
+        }
+        state["tracking"] = tracking
+
 
 @dataclass
 class PlanExportConfig:
@@ -126,14 +376,26 @@ class PlanExportConfig:
     @classmethod
     def load(cls) -> "PlanExportConfig":
         """Load from ~/.claude/plan-export.config.json with defaults."""
-        config_path = Path.home() / ".claude" / "plan-export.config.json"
-        if config_path.exists():
+        if CONFIG_PATH.exists():
             try:
-                data = json.loads(config_path.read_text())
+                data = json.loads(CONFIG_PATH.read_text())
                 return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
             except (json.JSONDecodeError, TypeError):
                 pass
         return cls()
+
+    def to_dict(self) -> dict:
+        """Convert config to dict (for backwards compatibility)."""
+        return {
+            "enabled": self.enabled,
+            "output_plan_dir": self.output_plan_dir,
+            "filename_pattern": self.filename_pattern,
+            "extension": self.extension,
+            "export_rejected": self.export_rejected,
+            "output_rejected_plan_dir": self.output_rejected_plan_dir,
+            "debug_logging": self.debug_logging,
+            "notify_claude": self.notify_claude,
+        }
 
 
 @dataclass
@@ -452,6 +714,148 @@ export_timestamp: {datetime.now().isoformat()}
                 pass
 
 
+# === Module-level export functions (use after classes are defined) ===
+
+
+def export_plan(plan_path, project_dir, session_id: str = None) -> dict:
+    """Export a plan file to project notes directory.
+
+    Args:
+        plan_path: Path to the plan file
+        project_dir: Project directory (notes/ will be created here)
+        session_id: Optional session ID for metadata
+
+    Returns:
+        dict with success, source, destination, message keys
+    """
+    from .core import ThreadSafeDB
+    store = ThreadSafeDB()
+    ctx = EventContext(
+        session_id=session_id or "unknown",
+        event="PostToolUse",
+        tool_name="ExitPlanMode",
+        tool_input={"cwd": str(project_dir)},
+        store=store
+    )
+    config = PlanExportConfig.load()
+    exporter = PlanExport(ctx, config)
+    result = exporter.export(Path(plan_path))
+
+    if result["success"]:
+        return {
+            "success": True,
+            "source": str(plan_path),
+            "destination": str(project_dir / config.output_plan_dir),
+            "message": result["message"]
+        }
+    return {
+        "success": False,
+        "source": str(plan_path),
+        "destination": "",
+        "message": result.get("error", "Export failed")
+    }
+
+
+def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict:
+    """Export a rejected plan to project rejected plans directory.
+
+    Args:
+        plan_path: Path to the plan file
+        project_dir: Project directory
+        session_id: Optional session ID for metadata
+
+    Returns:
+        dict with success, source, destination, message keys
+    """
+    from .core import ThreadSafeDB
+    store = ThreadSafeDB()
+    ctx = EventContext(
+        session_id=session_id or "unknown",
+        event="PostToolUse",
+        tool_name="ExitPlanMode",
+        tool_input={"cwd": str(project_dir)},
+        store=store
+    )
+    config = PlanExportConfig.load()
+    exporter = PlanExport(ctx, config)
+    result = exporter.export(Path(plan_path), rejected=True)
+
+    if result["success"]:
+        return {
+            "success": True,
+            "source": str(plan_path),
+            "destination": str(project_dir / config.output_rejected_plan_dir),
+            "message": result["message"]
+        }
+    return {
+        "success": False,
+        "source": str(plan_path),
+        "destination": "",
+        "message": result.get("error", "Export failed")
+    }
+
+
+def handle_session_start(hook_input: dict) -> None:
+    """Handle SessionStart hook - recover unexported plans.
+
+    This is called by the hook script when daemon is not running.
+    Prints JSON response to stdout for Claude Code.
+    """
+    from .core import ThreadSafeDB
+    store = ThreadSafeDB()
+    session_id = hook_input.get("session_id", "unknown")
+    cwd = hook_input.get("cwd", str(Path.cwd()))
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="SessionStart",
+        tool_input={"cwd": cwd},
+        store=store
+    )
+
+    config = PlanExportConfig.load()
+    if not config.enabled:
+        print(json.dumps({"continue": True}))
+        return
+
+    exporter = PlanExport(ctx, config)
+    for plan in exporter.get_unexported():
+        result = exporter.export(plan)
+        if result["success"] and config.notify_claude:
+            print(json.dumps({
+                "continue": True,
+                "systemMessage": f"📋 Recovered: {result['message']}",
+            }))
+            return
+    print(json.dumps({"continue": True}))
+
+
+def embed_plan_metadata(plan_path, session_id: str, export_destination) -> None:
+    """Embed metadata into exported plan file.
+
+    Args:
+        plan_path: Original plan file path
+        session_id: Session ID to embed
+        export_destination: Destination file to add metadata to
+    """
+    try:
+        dest = Path(export_destination)
+        content = dest.read_text(encoding="utf-8")
+        if content.startswith("---"):
+            return  # Already has frontmatter
+        metadata = f"""---
+session_id: {session_id}
+original_path: {plan_path}
+export_timestamp: {datetime.now().isoformat()}
+export_destination: {export_destination}
+---
+
+"""
+        dest.write_text(metadata + content, encoding="utf-8")
+    except (IOError, UnicodeDecodeError):
+        pass
+
+
 # --- Daemon-Integrated Handlers (Sugar + Error Handling) ---
 
 @app.on("PostToolUse")
@@ -515,3 +919,41 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"recover_unexported_plans error: {e}")
     return None
+
+
+# === Public API ===
+
+__all__ = [
+    # Classes
+    "PlanExport",
+    "PlanExportConfig",
+    # Constants
+    "GLOBAL_SESSION_ID",
+    "DEFAULT_CONFIG",
+    "CONFIG_PATH",
+    "PLANS_DIR",
+    "DEBUG_LOG_PATH",
+    # Helper functions
+    "detect_hook_type",
+    "get_content_hash",
+    "get_config_path",
+    "load_config",
+    "is_enabled",
+    "log_warning",
+    "get_most_recent_plan",
+    "get_plan_from_transcript",
+    "get_plan_from_metadata",
+    "find_plan_by_session_id",
+    "load_tracking",
+    "save_tracking",
+    "record_export",
+    # Export functions
+    "export_plan",
+    "export_rejected_plan",
+    "handle_session_start",
+    "embed_plan_metadata",
+    # Daemon handlers (for registration)
+    "track_plan_writes",
+    "export_on_exit_plan_mode",
+    "recover_unexported_plans",
+]
