@@ -183,6 +183,55 @@ def _install_bashlex() -> None:
         logger.debug(f"bashlex install failed: {e}, using shlex fallback")
 
 
+def _install_pdf_deps() -> None:
+    """
+    Install pdf-extractor core dependencies if plugin is present and deps are missing.
+
+    Core deps: pdfplumber, pdfminer.six, PyPDF2, markitdown, tqdm
+    Falls back gracefully if plugin not present or installation fails.
+    """
+    # Skip if pdf-extractor plugin not present
+    plugin_root = _get_plugin_root()
+    if not plugin_root:
+        return
+    pdf_dir = plugin_root.parent / "pdf-extractor"
+    if not pdf_dir.exists():
+        return
+
+    # Check if any core dep is missing (package names differ from import names)
+    deps_to_check = ["pdfplumber", "pdfminer", "PyPDF2", "markitdown", "tqdm"]
+    missing = []
+    for dep in deps_to_check:
+        # Special case: pdfminer package is pdfminer.six, import is just pdfminer
+        import_name = "pdfminer" if dep == "pdfminer.six" else dep
+        try:
+            __import__(import_name)
+        except ImportError:
+            missing.append(dep)
+
+    if not missing:
+        return
+
+    # Install via uv pip (prefer UV, fall back to pip)
+    pip_names = ["pdfplumber", "pdfminer.six", "PyPDF2", "markitdown", "tqdm"]
+    if shutil.which('uv'):
+        cmd = ['uv', 'pip', 'install', '--python', sys.executable, '-q'] + pip_names
+    else:
+        pip_cmd = _get_pip_command()
+        if not pip_cmd:
+            logger.debug("No package manager found, skipping pdf-extractor deps install")
+            return
+        cmd = pip_cmd + pip_names
+
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=120)
+        logger.info("Installed pdf-extractor core dependencies")
+    except subprocess.TimeoutExpired:
+        logger.debug("pdf-extractor deps install timed out")
+    except Exception as e:
+        logger.debug(f"pdf-extractor deps install failed: {e}")
+
+
 # =============================================================================
 # Bootstrap Orchestration
 # =============================================================================
@@ -196,6 +245,7 @@ def _bootstrap_optional_deps() -> None:
     1. Install UV via pip (if missing) - 10-100x faster package manager
     2. Install clautorun CLI (if missing) - enables fast hook path
     3. Install bashlex (if missing) - better command parsing
+    4. Install pdf-extractor deps (if plugin present and deps missing)
 
     Runs in background thread so daemon starts immediately.
     """
@@ -204,6 +254,7 @@ def _bootstrap_optional_deps() -> None:
         _ensure_uv()           # Step 1: UV first (makes subsequent installs faster)
         _install_clautorun()   # Step 2: clautorun CLI (enables fast hook path)
         _install_bashlex()     # Step 3: bashlex (better command parsing)
+        _install_pdf_deps()    # Step 4: pdf-extractor deps (if plugin present)
 
     # Run in background thread - don't block daemon startup
     thread = threading.Thread(target=_install, daemon=True, name="bootstrap-deps")
@@ -233,11 +284,21 @@ def main():
     _bootstrap_optional_deps()
 
     # Import plugins to register handlers (deferred to avoid circular imports)
-    try:
-        from . import plugins  # noqa: F401
-        logger.info("Plugins loaded successfully")
-    except ImportError as e:
-        logger.warning(f"plugins.py not found or import error: {e} - daemon has no handlers")
+    # May fail on first run if claude-agent-sdk not yet installed by bootstrap
+    MAX_BOOTSTRAP_WAIT_SECONDS = 30
+    for attempt in range(6):  # 6 attempts × 5s = 30s max wait
+        try:
+            from . import plugins  # noqa: F401
+            logger.info("Plugins loaded successfully")
+            break
+        except ImportError as e:
+            if attempt == 0:
+                logger.warning(f"Plugin import failed: {e} — waiting for bootstrap to complete")
+            if attempt == 5:
+                logger.error(f"Bootstrap timeout after {MAX_BOOTSTRAP_WAIT_SECONDS}s — claude-agent-sdk still missing")
+                logger.error("Run 'clautorun --install' to install dependencies before first daemon use")
+                sys.exit(1)
+            time.sleep(5)
 
     daemon = ClautorunDaemon(app)
 
