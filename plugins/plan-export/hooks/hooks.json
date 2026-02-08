@@ -15,9 +15,13 @@
     ],
     "SessionStart": [
       {
-        "type": "command",
-        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export.py",
-        "timeout": 10
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export.py",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
