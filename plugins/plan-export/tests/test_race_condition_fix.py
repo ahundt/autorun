@@ -93,18 +93,22 @@ class SyntheticPlanBuilder:
 
     @staticmethod
     def create_transcript(transcript_path: Path, session_id: str, plan_path: Path) -> Path:
-        """Create a synthetic session transcript tracking plan edits."""
+        """Create a synthetic session transcript tracking plan edits.
+
+        Uses the correct format expected by get_plan_from_transcript():
+        assistant type entry with tool_use (Write/Edit).
+        """
         transcript_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
-            "type": "file-history-snapshot",
-            "timestamp": datetime.now().isoformat(),
-            "snapshot": {
-                "trackedFileBackups": {
-                    str(plan_path): {
-                        "size": plan_path.stat().st_size if plan_path.exists() else 0,
-                        "modified": datetime.now().isoformat()
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Write",
+                        "input": {"file_path": str(plan_path)}
                     }
-                }
+                ]
             }
         }
         transcript_path.write_text(json.dumps(entry) + "\n")
@@ -237,7 +241,9 @@ class TestBaselineFunctionality:
     def test_export_with_missing_session_id(self, test_temp_dir, sample_config, monkeypatch, capsys):
         """Test that export fails gracefully when session_id is missing."""
         # Mock stdin to provide hook input without session_id
+        # Include tool_name to ensure this tests PostToolUse path (not SessionStart)
         hook_input = {
+            "tool_name": "ExitPlanMode",  # Required for PostToolUse dispatch
             "cwd": str(test_temp_dir["test_root"]),
             "transcript_path": None,
             "permission_mode": "acceptEdits"
@@ -307,7 +313,9 @@ class TestBaselineFunctionality:
         SyntheticPlanBuilder.create_transcript(transcript_path, session_id, plan_path)
 
         # Prepare hook input for main()
+        # Include tool_name to ensure PostToolUse dispatch (not SessionStart)
         hook_input = {
+            "tool_name": "ExitPlanMode",  # Required for PostToolUse dispatch
             "session_id": session_id,
             "cwd": str(test_session.project_dir),
             "transcript_path": str(transcript_path),

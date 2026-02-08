@@ -229,11 +229,17 @@ class TestGetPlanFromTranscript:
         plan_file.write_text("# My Plan")
 
         transcript = temp_dir / "transcript.jsonl"
-        # Use correct format: file-history-snapshot with trackedFileBackups
+        # Use correct format: assistant type with tool_use (Write/Edit)
         entry = {
-            "type": "file-history-snapshot",
-            "snapshot": {
-                "trackedFileBackups": {str(plan_file): {"content": "# My Plan"}}
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Write",
+                        "input": {"file_path": str(plan_file)}
+                    }
+                ]
             }
         }
         transcript.write_text(json.dumps(entry) + "\n")
@@ -249,11 +255,17 @@ class TestGetPlanFromTranscript:
     def test_transcript_plan_file_not_exists(self, temp_dir, plans_dir):
         """Transcript references plan that doesn't exist - returns None."""
         transcript = temp_dir / "transcript.jsonl"
-        # Use correct format: file-history-snapshot with trackedFileBackups
+        # Use correct format: assistant type with tool_use (Write/Edit)
         entry = {
-            "type": "file-history-snapshot",
-            "snapshot": {
-                "trackedFileBackups": {str(plans_dir / "deleted-plan.md"): {"content": "# Deleted"}}
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Write",
+                        "input": {"file_path": str(plans_dir / "deleted-plan.md")}
+                    }
+                ]
             }
         }
         transcript.write_text(json.dumps(entry) + "\n")
@@ -272,11 +284,17 @@ class TestGetPlanFromTranscript:
         plan_file.write_text("# Valid Plan")
 
         transcript = temp_dir / "transcript.jsonl"
-        # Use correct format: file-history-snapshot with trackedFileBackups
+        # Use correct format: assistant type with tool_use (Write/Edit)
         valid_entry = {
-            "type": "file-history-snapshot",
-            "snapshot": {
-                "trackedFileBackups": {str(plan_file): {"content": "# Valid"}}
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Write",
+                        "input": {"file_path": str(plan_file)}
+                    }
+                ]
             }
         }
         transcript.write_text("{ invalid json }\n" + json.dumps(valid_entry) + "\n")
