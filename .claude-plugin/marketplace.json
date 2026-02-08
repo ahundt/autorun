@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "clautorun",
   "version": "1.0.0",
-  "description": "Automation suite: clautorun (file policies, autonomous sessions) + plan-export (plan archiving) + pdf-extractor (PDF data extraction)",
+  "description": "Automation suite: clautorun (file policies, autonomous sessions, plan export) + pdf-extractor (PDF data extraction)",
   "owner": {
     "name": "Andrew Hundt",
     "email": "ATHundt@gmail.com"
@@ -12,17 +12,6 @@
       "name": "clautorun",
       "description": "Autonomous task automation with file creation policies and session persistence",
       "source": "./plugins/clautorun",
-      "category": "productivity",
-      "version": "0.7.0",
-      "author": {
-        "name": "Andrew Hundt",
-        "email": "ATHundt@gmail.com"
-      }
-    },
-    {
-      "name": "plan-export",
-      "description": "Automatically exports plan files to project notes when exiting plan mode",
-      "source": "./plugins/plan-export",
       "category": "productivity",
       "version": "0.7.0",
       "author": {

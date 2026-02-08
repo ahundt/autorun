@@ -16,7 +16,7 @@
 This is a minimal stub package for the UV workspace. The actual functionality
 is provided by the plugins:
 - clautorun: Main plugin with autonomous task automation
-- plan-export: Auto-export plans to notes/
+- Plan export: Built into clautorun (auto-export plans to notes/)
 - pdf-extractor: PDF to markdown extraction
 
 For CLI usage, run: clautorun --help
