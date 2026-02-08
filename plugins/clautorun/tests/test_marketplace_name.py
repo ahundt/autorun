@@ -11,7 +11,7 @@ Bug details:
 - This caused all plugin installations to fail silently
 
 v0.7.0 Update:
-- clautorun_marketplace/__init__.py has been replaced by clautorun/install_plugins.py
+- clautorun_marketplace/__init__.py has been replaced by clautorun/install.py
 - Tests now verify the new unified installation module
 """
 
@@ -54,28 +54,28 @@ class TestMarketplaceName:
         )
 
     def test_install_plugins_uses_correct_name(self):
-        """Verify install_plugins.py uses @clautorun not @clautorun-dev."""
+        """Verify install.py uses @clautorun not @clautorun-dev."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+        install_file = plugin_root / "src" / "clautorun" / "install.py"
 
-        assert install_file.exists(), f"install_plugins.py not found at {install_file}"
+        assert install_file.exists(), f"install.py not found at {install_file}"
 
         content = install_file.read_text()
 
         # Should NOT contain clautorun-dev
         assert "clautorun-dev" not in content, (
-            "install_plugins.py should NOT contain 'clautorun-dev'. "
+            "install.py should NOT contain 'clautorun-dev'. "
             "This bug causes plugin installation to fail."
         )
 
         # Should contain @clautorun for plugin installs (the pattern for plugin install commands)
         assert "@clautorun" in content or '@{MARKETPLACE}' in content, (
-            "install_plugins.py should contain '@clautorun' or '@{MARKETPLACE}' for plugin installs"
+            "install.py should contain '@clautorun' or '@{MARKETPLACE}' for plugin installs"
         )
 
         # Verify the MARKETPLACE constant is correct
         assert 'MARKETPLACE = "clautorun"' in content, (
-            "install_plugins.py should have MARKETPLACE = \"clautorun\""
+            "install.py should have MARKETPLACE = \"clautorun\""
         )
 
     def test_known_marketplaces_uses_correct_name(self):
@@ -141,7 +141,7 @@ class TestInstallPluginsExitCode:
         causes exit code 1 instead of 0.
         """
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+        install_file = plugin_root / "src" / "clautorun" / "install.py"
 
         content = install_file.read_text()
 
@@ -176,7 +176,7 @@ class TestInstallPluginsPrintMessages:
     def test_print_messages_use_correct_name(self):
         """Verify print messages reference 'clautorun' not 'clautorun-dev'."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+        install_file = plugin_root / "src" / "clautorun" / "install.py"
 
         content = install_file.read_text()
 
@@ -188,12 +188,12 @@ class TestInstallPluginsPrintMessages:
 
         for pattern in expected_patterns:
             assert pattern in content, (
-                f"Expected content containing '{pattern}' in install_plugins.py"
+                f"Expected content containing '{pattern}' in install.py"
             )
 
         # Should NOT have clautorun-dev in print messages
         assert "clautorun-dev" not in content, (
-            "install_plugins.py should NOT contain 'clautorun-dev' in any messages"
+            "install.py should NOT contain 'clautorun-dev' in any messages"
         )
 
 
@@ -203,18 +203,18 @@ class TestPluginNameEnum:
     def test_plugin_name_enum_exists(self):
         """Verify PluginName enum is defined."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+        install_file = plugin_root / "src" / "clautorun" / "install.py"
 
         content = install_file.read_text()
 
         assert "class PluginName" in content, (
-            "install_plugins.py should define PluginName enum"
+            "install.py should define PluginName enum"
         )
 
     def test_plugin_name_enum_has_all_plugins(self):
         """Verify PluginName enum includes all marketplace plugins."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install_plugins.py"
+        install_file = plugin_root / "src" / "clautorun" / "install.py"
 
         content = install_file.read_text()
 

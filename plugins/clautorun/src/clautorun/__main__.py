@@ -226,25 +226,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Install mode (new unified installer)
     if args.install is not None:
-        from clautorun.install_plugins import install_plugins
+        from clautorun.install import install_plugins
 
         return install_plugins(args.install, tool=args.tool, force=args.force_install)
 
     # Status mode
     if args.status:
-        from clautorun.install_plugins import show_status
+        from clautorun.install import show_status
 
         return show_status()
 
     # Uninstall mode
     if args.uninstall:
-        from clautorun.install_plugins import uninstall_plugins
+        from clautorun.install import uninstall_plugins
 
         return uninstall_plugins()
 
     # Sync mode
     if args.sync:
-        from clautorun.install_plugins import sync_to_cache
+        from clautorun.install import sync_to_cache
 
         return sync_to_cache()
 
