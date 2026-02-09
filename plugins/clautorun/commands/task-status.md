@@ -75,9 +75,9 @@ try:
 
     # Show storage info
     print('\\n## CLI Commands')
-    print(f'python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --status {session_id}  # View from command line')
-    print(f'python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --export {session_id} ./tasks.json  # Export to JSON')
-    print(f'python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --clear {session_id}  # Clear this session\\'s tasks')
+    print(f'python3 \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --status {session_id}  # View from command line')
+    print(f'python3 \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --export {session_id} ./tasks.json  # Export to JSON')
+    print(f'python3 \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --clear {session_id}  # Clear this session\\'s tasks')
 
 except Exception as e:
     print(f'Error: {e}')

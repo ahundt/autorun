@@ -506,6 +506,60 @@ def _file_has_unstaged_changes(ctx: any) -> bool:
         return False
 
 
+def _checkout_targets_file_with_changes(ctx: any) -> bool:
+    """
+    Check if 'git checkout <target>' is targeting an existing file with unstaged changes.
+
+    Distinguishes between:
+    - git checkout branch-name (safe, returns False to allow)
+    - git checkout path/to/file (destructive if file has changes, returns True to block)
+
+    Args:
+        ctx: EventContext with tool_input["command"]
+
+    Returns:
+        True if checkout targets a file with unstaged changes, False otherwise
+    """
+    try:
+        import os
+
+        cmd = ctx.tool_input.get("command", "") if hasattr(ctx, "tool_input") else ""
+        if not cmd:
+            return False
+
+        # Parse command to get target
+        parts = cmd.split()
+        if len(parts) < 3 or parts[0] != "git" or parts[1] != "checkout":
+            return False
+
+        # Skip if it has "--" separator (handled by different pattern)
+        if "--" in parts:
+            return False
+
+        # Get the target (could be branch or file path)
+        target = parts[2]
+
+        # Special cases that are always safe
+        if target in ("-b", "-B", "--track", "--orphan"):
+            return False  # Branch creation flags
+
+        # Check if target is an existing file path
+        if not os.path.exists(target):
+            # Not a file, probably a branch name - allow
+            return False
+
+        # It's a file - check if it has unstaged changes
+        result = subprocess.run(
+            f"git diff --quiet -- {target}",
+            shell=True,
+            capture_output=True,
+            timeout=2
+        )
+        return result.returncode != 0  # Non-zero = has changes
+    except Exception:
+        return False
+
+
 def _not_in_pipe(ctx: any) -> bool:
     """
     Check if command is NOT in a pipe context (should block for direct file operations).
@@ -602,6 +656,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_has_unstaged_changes": _has_unstaged_changes,
     "_stash_exists": _stash_exists,
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
+    "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,  # v0.8.0: Catch git checkout <file>
     "_not_in_pipe": _not_in_pipe,  # v0.8.0: Context-aware blocking for head/tail/grep/cat
     # Add more as needed
 }

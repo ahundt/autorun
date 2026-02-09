@@ -70,6 +70,12 @@ DEFAULT_INTEGRATIONS = {
         "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_file_has_unstaged_changes",
     },
+    "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
+        "action": "block",
+        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Use modern Git syntax**:\n   git restore <file>  # discard changes (Git 2.23+)\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow in this session: /cr:ok 'git checkout'",
+        "redirect": "git restore {args}",
+        "when": "_checkout_targets_file_with_changes",
+    },
     "git stash drop": {
         "action": "block",
         "suggestion": "CAUTION: 'git stash drop' permanently deletes stashed changes.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply stash instead** (keeps changes):\n   git stash pop    # apply and remove from stash\n   git stash apply  # apply and keep in stash\n\n2. **View stash contents first**:\n   git stash show -p  # see what's in the stash\n\nTo allow in this session: /cr:ok 'git stash drop'",
