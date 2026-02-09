@@ -1,0 +1,67 @@
+{
+  "description": "clautorun v0.8 - Gemini CLI native compatibility hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{
+          "name": "clautorun-init",
+          "type": "command",
+          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+        "hooks": [{
+          "name": "clautorun-command",
+          "type": "command",
+          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "write_file|bash_command|exit_plan_mode",
+        "hooks": [{
+          "name": "clautorun-pretool",
+          "type": "command",
+          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "exit_plan_mode|write_file|edit_file",
+        "hooks": [{
+          "name": "clautorun-posttool-plan",
+          "type": "command",
+          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      },
+      {
+        "matcher": "task_create|task_update|task_get|task_list",
+        "hooks": [{
+          "name": "clautorun-posttool-task",
+          "type": "command",
+          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{
+          "name": "clautorun-cleanup",
+          "type": "command",
+          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ]
+  }
+}
