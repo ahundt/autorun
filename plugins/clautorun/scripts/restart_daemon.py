@@ -5,11 +5,14 @@ import sys
 import time
 import socket
 import subprocess
+import fcntl
+import errno
 from pathlib import Path
 
 HOME_DIR = Path.home() / ".clautorun"
 SOCKET_PATH = HOME_DIR / "daemon.sock"
 LOCK_PATH = HOME_DIR / "daemon.lock"
+RESTART_LOCK_PATH = HOME_DIR / "daemon-restart.lock"
 
 def get_daemon_pid():
     """Get daemon PID from lock file (None if not running)."""
@@ -37,13 +40,23 @@ def is_daemon_responding():
         return False
 
 def wait_for_shutdown(max_wait=5.0):
-    """Poll for daemon shutdown with progress dots."""
+    """Poll for daemon shutdown with progress dots.
+
+    CRITICAL: Waits for BOTH PID to exit AND socket to close.
+    This ensures daemon has fully released all resources before
+    we attempt cleanup or start new daemon.
+    """
     print("  Waiting for shutdown", end="", flush=True)
     start = time.time()
     while time.time() - start < max_wait:
-        if not get_daemon_pid() and not is_daemon_responding():
+        # Both conditions must be true for clean shutdown
+        pid_gone = not get_daemon_pid()
+        socket_closed = not is_daemon_responding()
+
+        if pid_gone and socket_closed:
             print(" ✓")
             return True
+
         if int((time.time() - start) * 2) % 2:
             print(".", end="", flush=True)
         time.sleep(0.1)
@@ -51,14 +64,18 @@ def wait_for_shutdown(max_wait=5.0):
     return False
 
 def cleanup_stale_files():
-    """Remove stale socket and lock files."""
+    """Remove stale socket and lock files (ONLY after failed shutdown).
+
+    IMPORTANT: Only call this if daemon failed to clean up after itself.
+    Normal shutdown should NOT need this - daemon cleans up in async_stop().
+    """
     removed = []
     for path in [SOCKET_PATH, LOCK_PATH]:
         if path.exists():
             path.unlink()
             removed.append(path.name)
     if removed:
-        print(f"  Cleaned up: {', '.join(removed)}")
+        print(f"  Cleaned up stale files: {', '.join(removed)}")
 
 def verify_bashlex():
     """Check if bashlex available in daemon."""
@@ -70,71 +87,129 @@ def verify_bashlex():
     except:
         return False
 
+def acquire_restart_lock():
+    """Acquire exclusive restart lock to prevent concurrent restarts.
+
+    Returns:
+        file descriptor if lock acquired, None otherwise
+    """
+    try:
+        # Create restart lock file
+        lock_fd = open(RESTART_LOCK_PATH, 'w')
+        # Try to acquire exclusive, non-blocking lock
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fd.write(f"{os.getpid()}\n")
+        lock_fd.flush()
+        return lock_fd
+    except (IOError, OSError) as e:
+        if hasattr(e, 'errno') and e.errno == errno.EAGAIN:
+            return None  # Another restart in progress
+        raise
+
+def release_restart_lock(lock_fd):
+    """Release restart lock and cleanup lock file."""
+    if lock_fd:
+        try:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+            lock_fd.close()
+        except (IOError, OSError):
+            pass
+        try:
+            RESTART_LOCK_PATH.unlink()
+        except OSError:
+            pass
+
 def main():
     print("=== Daemon Restart ===")
 
-    # Step 1: Current state
-    pid = get_daemon_pid()
-    if pid:
-        print(f"Daemon running (PID {pid})")
-
-        # Step 2: Graceful shutdown
-        print(f"  Sending SIGTERM to PID {pid}")
-        os.kill(pid, 15)  # SIGTERM
-
-        if not wait_for_shutdown(max_wait=5.0):
-            print("  ⚠️ Timeout, forcing shutdown")
-            try:
-                os.kill(pid, 9)  # SIGKILL
-                time.sleep(0.5)
-            except OSError:
-                pass
-    else:
-        print("Daemon not running")
-
-    # Step 3: Cleanup
-    cleanup_stale_files()
-
-    # Step 4: Trigger auto-start
-    print("  Starting fresh daemon...")
-    try:
-        # Use same auto-start mechanism as client.py
-        plugin_root = Path(__file__).parent.parent
-        src_dir = plugin_root / "src"
-        daemon_code = f"import sys; sys.path.insert(0, '{src_dir}'); from clautorun.daemon import main; main()"
-
-        subprocess.Popen(
-            [sys.executable, "-c", daemon_code],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-    except Exception as e:
-        print(f"  ⚠️ Failed to start daemon: {e}")
-
-    time.sleep(0.5)  # Let daemon initialize
-
-    # Step 5: Verify
-    new_pid = get_daemon_pid()
-    if new_pid:
-        if new_pid == pid:
-            print(f"  ⚠️ Same PID {new_pid} (may not have restarted)")
-        else:
-            print(f"  ✓ New daemon started (PID {new_pid})")
-    else:
-        print("  ✗ ERROR: Daemon did not start")
+    # Step 0: Acquire restart lock (prevent concurrent restarts)
+    restart_lock = acquire_restart_lock()
+    if not restart_lock:
+        print("  ⚠️  Another restart already in progress")
         return 1
 
-    # Step 6: Verify bashlex
-    if verify_bashlex():
-        print("  ✓ bashlex available")
-    else:
-        print("  ✗ bashlex NOT available (using fallback)")
+    try:
+        # Step 1: Current state
+        pid = get_daemon_pid()
+        if pid:
+            print(f"Daemon running (PID {pid})")
 
-    print("\n=== Test Commands ===")
-    print("cargo build 2>&1 | head -50  # Should be ALLOWED")
-    print("head somefile.txt             # Should be BLOCKED")
-    return 0
+            # Step 2: Graceful shutdown
+            print(f"  Sending SIGTERM to PID {pid}")
+            os.kill(pid, 15)  # SIGTERM
+
+            # Step 3: Wait for FULL shutdown (PID gone AND socket closed)
+            shutdown_clean = wait_for_shutdown(max_wait=5.0)
+
+            if not shutdown_clean:
+                # Daemon didn't shut down cleanly - force it
+                print("  ⚠️ Timeout, forcing shutdown")
+                try:
+                    os.kill(pid, 9)  # SIGKILL
+                    time.sleep(0.5)
+                except OSError:
+                    pass
+
+                # Only cleanup stale files if daemon failed to clean up
+                cleanup_stale_files()
+            else:
+                # Daemon shut down cleanly - it cleaned up its own files
+                # Only cleanup if files still exist (shouldn't happen)
+                if SOCKET_PATH.exists() or LOCK_PATH.exists():
+                    print("  ⚠️ Stale files remain after clean shutdown")
+                    cleanup_stale_files()
+        else:
+            print("Daemon not running")
+            # Cleanup any stale files from crashed daemon
+            if SOCKET_PATH.exists() or LOCK_PATH.exists():
+                cleanup_stale_files()
+
+        # Step 4: Trigger auto-start
+        print("  Starting fresh daemon...")
+        try:
+            # Use same auto-start mechanism as client.py
+            plugin_root = Path(__file__).parent.parent
+            src_dir = plugin_root / "src"
+            daemon_code = f"import sys; sys.path.insert(0, '{src_dir}'); from clautorun.daemon import main; main()"
+
+            subprocess.Popen(
+                [sys.executable, "-c", daemon_code],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"  ⚠️ Failed to start daemon: {e}")
+            return 1
+
+        time.sleep(0.5)  # Let daemon initialize
+
+        # Step 5: Verify new daemon started
+        new_pid = get_daemon_pid()
+        if new_pid:
+            if new_pid == pid:
+                print(f"  ⚠️ Same PID {new_pid} (may not have restarted)")
+                return 1
+            else:
+                print(f"  ✓ New daemon started (PID {new_pid})")
+        else:
+            print("  ✗ ERROR: Daemon did not start")
+            return 1
+
+        # Step 6: Verify bashlex
+        if verify_bashlex():
+            print("  ✓ bashlex available")
+        else:
+            print("  ✗ bashlex NOT available (using fallback)")
+
+        print("\n=== Test Commands ===")
+        print("cargo build 2>&1 | head -50  # Should be ALLOWED")
+        print("head somefile.txt             # Should be BLOCKED")
+        return 0
+
+    finally:
+        # Always release restart lock
+        release_restart_lock(restart_lock)
 
 if __name__ == "__main__":
     sys.exit(main())
