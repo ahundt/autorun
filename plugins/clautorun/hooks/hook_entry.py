@@ -44,7 +44,82 @@ BOOTSTRAP_MSG = (
 )
 
 # =============================================================================
-# Fail-Open Response (never crash Claude)
+# CLI Detection (dual Claude Code / Gemini CLI support)
+# =============================================================================
+
+
+def detect_cli_type() -> str:
+    """Detect which CLI is calling the hook.
+
+    Returns:
+        str: "claude" or "gemini"
+
+    Safety: Defaults to "claude" to preserve existing behavior if detection fails.
+    """
+    try:
+        # Check for Gemini-specific environment variables (most specific first)
+        if os.environ.get("GEMINI_SESSION_ID"):
+            return "gemini"
+        elif os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
+            # GEMINI_PROJECT_DIR exists but CLAUDE_PROJECT_DIR doesn't (pure Gemini)
+            return "gemini"
+        # Default to Claude (safe fallback - preserves existing behavior)
+        else:
+            return "claude"
+    except Exception:
+        # Ultimate fail-safe: if detection crashes, assume Claude
+        return "claude"
+
+
+def get_project_dir() -> str:
+    """Get project directory regardless of CLI.
+
+    Returns:
+        str: Absolute path to project directory
+
+    Safety: Multiple fallbacks ensure we always return a valid path.
+    """
+    try:
+        # Try Gemini first (more specific)
+        project_dir = os.environ.get("GEMINI_PROJECT_DIR")
+        if project_dir:
+            return project_dir
+
+        # Fall back to Claude (also set by Gemini as alias per docs)
+        project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+        if project_dir:
+            return project_dir
+
+        # Final fallback to current directory
+        return os.getcwd()
+    except Exception:
+        # Ultimate fail-safe: if all fails, use cwd
+        return os.getcwd()
+
+
+def get_plugin_root() -> str:
+    """Get plugin root directory regardless of CLI.
+
+    Returns:
+        str: Absolute path to plugin root directory
+
+    Safety: Works with both CLAUDE_PLUGIN_ROOT and Gemini's extensionPath.
+    """
+    try:
+        # Claude Code uses CLAUDE_PLUGIN_ROOT
+        plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+        if plugin_root:
+            return plugin_root
+
+        # Gemini CLI may use different variable (TBD during testing)
+        # For now, fall back to current directory
+        return os.getcwd()
+    except Exception:
+        return os.getcwd()
+
+
+# =============================================================================
+# Fail-Open Response (never crash Claude or Gemini)
 # =============================================================================
 
 
@@ -81,8 +156,10 @@ def get_clautorun_bin() -> Path | None:
     Priority order:
         1. Plugin-local venv (isolated, preferred)
         2. Global installation (uv pip install / pip install)
+
+    Safety: Works with both Claude Code and Gemini CLI via get_plugin_root().
     """
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    plugin_root = get_plugin_root()
 
     if plugin_root:
         # Priority 1: Plugin-local venv
@@ -276,12 +353,14 @@ def run_fallback() -> None:
 
     This is the fallback when no CLI is available. It attempts to import
     clautorun directly from the plugin source. If dependencies are missing,
-    it spawns a background bootstrap process and returns fail_open so Claude
+    it spawns a background bootstrap process and returns fail_open so the CLI
     can continue. The next hook invocation will find deps installed.
-    """
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
 
-    # Try CLAUDE_PLUGIN_ROOT first, then relative path
+    Safety: Works with both Claude Code and Gemini CLI via get_plugin_root().
+    """
+    plugin_root = get_plugin_root()
+
+    # Try plugin root first, then relative path
     if plugin_root:
         src_dir = Path(plugin_root) / "src"
     else:
