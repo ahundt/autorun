@@ -100,6 +100,28 @@ Legacy commands (still supported):
         help="Re-enable automatic bootstrap (removes --no-bootstrap from hooks.json commands)",
     )
     install_group.add_argument(
+        "--claude",
+        action="store_true",
+        help="Install for Claude Code only (default: install for both CLIs if available)",
+    )
+    install_group.add_argument(
+        "--gemini",
+        action="store_true",
+        help="Install for Gemini CLI only (default: install for both CLIs if available)",
+    )
+    install_group.add_argument(
+        "--conductor",
+        action="store_true",
+        default=True,
+        help="Install Conductor extension for Gemini (default: True)",
+    )
+    install_group.add_argument(
+        "--no-conductor",
+        action="store_false",
+        dest="conductor",
+        help="Skip Conductor extension installation for Gemini",
+    )
+    install_group.add_argument(
         "--uninstall",
         "-u",
         action="store_true",
@@ -228,7 +250,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.install is not None:
         from clautorun.install import install_plugins
 
-        return install_plugins(args.install, tool=args.tool, force=args.force_install)
+        return install_plugins(
+            args.install,
+            tool=args.tool,
+            force=args.force_install,
+            claude_only=args.claude,
+            gemini_only=args.gemini,
+            conductor=args.conductor,
+        )
 
     # Status mode
     if args.status:
