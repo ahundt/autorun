@@ -56,7 +56,7 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective restore** (to discard specific files only):\n   git restore <file>           # discard working tree changes\n   git restore --staged <file>  # unstage but keep changes\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow in this session: /cr:ok 'git reset --hard'",
         "redirect": "git stash push -m 'WIP: {args}'",
-        "when": "has_uncommitted_changes",
+        "when": "_has_unstaged_changes",
     },
     "git checkout .": {
         "action": "block",
@@ -74,7 +74,7 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Use modern Git syntax**:\n   git restore <file>  # discard changes (Git 2.23+)\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow in this session: /cr:ok 'git checkout'",
         "redirect": "git restore {args}",
-        "when": "_checkout_targets_file_with_changes",
+        "when": "_file_has_unstaged_changes",
     },
     "git stash drop": {
         "action": "block",
