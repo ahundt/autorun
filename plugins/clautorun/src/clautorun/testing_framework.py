@@ -58,6 +58,7 @@ def testing_handler(name):
 
 class TestEnvironment(Enum):
     """Test environment types"""
+    __test__ = False  # Not a pytest test class
     PRODUCTION = "production"
     STAGING = "staging"
     DEVELOPMENT = "development"
@@ -66,6 +67,7 @@ class TestEnvironment(Enum):
 
 class TestType(Enum):
     """Types of tests"""
+    __test__ = False  # Not a pytest test class
     UNIT = "unit"
     INTEGRATION = "integration"
     END_TO_END = "end_to_end"
@@ -76,6 +78,7 @@ class TestType(Enum):
 
 class TestStatus(Enum):
     """Test execution status"""
+    __test__ = False  # Not a pytest test class
     PENDING = "pending"
     RUNNING = "running"
     PASSED = "passed"
@@ -87,6 +90,7 @@ class TestStatus(Enum):
 @dataclass
 class TestResult:
     """Individual test result"""
+    __test__ = False  # Not a pytest test class
     test_id: str
     test_name: str
     test_type: TestType
@@ -110,6 +114,7 @@ class TestResult:
 @dataclass
 class TestSuite:
     """Test suite configuration"""
+    __test__ = False  # Not a pytest test class
     name: str
     description: str
     test_type: TestType
@@ -288,6 +293,7 @@ class EnvironmentController:
 
 class TestRunner:
     """Advanced test runner with environment control"""
+    __test__ = False  # Not a pytest test class
 
     def __init__(self):
         self.environment_controller = EnvironmentController()
