@@ -97,6 +97,39 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /cr:ok fdisk",
     },
+    # Command-line tools that should use dedicated Claude tools instead (v0.7.1)
+    "sed": {
+        "action": "block",
+        "suggestion": "Use the Edit tool instead of sed for file modifications.\n\n**Why:**\n- Edit tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with Claude's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: Edit tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /cr:ok sed\n- Block globally: /cr:globalno sed",
+    },
+    "awk": {
+        "action": "block",
+        "suggestion": "Use Python or the Read tool instead of awk for text processing.\n\n**Why:**\n- Read tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: Read tool + Python string processing\n\n**Commands:**\n- Allow in this session: /cr:ok awk\n- Block globally: /cr:globalno awk",
+    },
+    "grep": {
+        "action": "block",
+        "suggestion": "Use the Grep tool instead of bash grep command.\n\n**Why:**\n- Grep tool is optimized for Claude Code\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: Grep tool with pattern='pattern'\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
+    },
+    "find": {
+        "action": "block",
+        "suggestion": "Use the Glob tool instead of find command.\n\n**Why:**\n- Glob is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: Glob tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: Glob tool with pattern='**/*test*'\n\n**Commands:**\n- Allow in this session: /cr:ok find\n- Block globally: /cr:globalno find",
+    },
+    "cat": {
+        "action": "block",
+        "suggestion": "Use the Read tool instead of cat command.\n\n**Why:**\n- Read tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: Read tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
+    },
+    "head": {
+        "action": "block",
+        "suggestion": "Use the Read tool with limit parameter instead of head.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
+    },
+    "tail": {
+        "action": "block",
+        "suggestion": "Use the Read tool with offset parameter instead of tail.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: Read tool - first get total lines, then read with offset\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
+    },
+    "echo >": {
+        "action": "block",
+        "suggestion": "Use the Write tool instead of echo redirection.\n\n**Why:**\n- Write tool validates file paths\n- Better error handling\n- Integrates with Claude's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: Write tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /cr:ok 'echo >'\n- Block globally: /cr:globalno 'echo >'",
+    },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",

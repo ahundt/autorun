@@ -15,6 +15,7 @@
   - [AutoFile Policy Commands](#autofile-commands-file-creation-control)
   - [Autorun Commands](#autorun-commands-autonomous-execution)
   - [Plan Management Commands](#plan-management-commands)
+  - [Task Lifecycle Tracking](#task-lifecycle-tracking-v071)
   - [Command Blocking](#command-blocking-commands-new-in-v060)
   - [Tmux Session Commands](#tmux-automation-commands)
   - [Legacy Commands](#legacy-commands-backward-compatible)
@@ -802,6 +803,130 @@ Structured planning for complex development tasks.
 - **/cr:pp** or **/cr:planprocess** - Execute development process
   - Follows the plan with Sequential Improvement Methodology
   - Auto-triggers autorun when plan is approved ("PLAN ACCEPTED" marker)
+
+### Task Lifecycle Tracking (v0.7.1+)
+
+**PRIMARY GOAL**: Ensure AI continues working while tasks are outstanding.
+
+Comprehensive task lifecycle tracking with automatic AI continuation enforcement.
+
+| Command | Description |
+|---------|-------------|
+| `/task-status` (aliases: `/ts`, `/tasks`) | Show current task state in-session |
+| `/task-ignore <task_id> [reason]` (alias: `/ti`) | Mark task as ignored (user override) |
+
+**CLI Commands:**
+```bash
+# Show task status
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --status [SESSION_ID]
+
+# Export task data
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --export SESSION_ID OUTPUT [--format json|csv|markdown]
+
+# Clear task data
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --clear [SESSION_ID] [--all]
+
+# Configure settings
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --configure
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --disable
+```
+
+**Key Features:**
+- **Stop Hook Blocks** - AI cannot stop with incomplete tasks (enforces continuation)
+- **Escape Hatch** - Allows override after 3 consecutive stop attempts
+- **SessionStart Resume** - Automatically detects and prompts for incomplete work
+- **Plan Context Injection** - Tasks linked to plans survive Option 1 context clears
+- **Hard Prioritization** - Uses blockedBy/blocks dependencies for task ordering
+- **Paused/Ignored Status** - Explicitly parked or ignored work doesn't block stop
+- **Full Audit Trail** - Timestamps, dependencies, tool_outputs logged
+
+**Architecture:**
+- **Dict-based storage**: {task_id: TaskState} prevents duplicates
+- **Per-session isolation**: Each AI session tracks own tasks independently
+- **Thread-safe**: fcntl locks via session_state(), atomic operations
+- **DRY patterns**: Reuses session_state(), simple logging, @property + atomic_update_*()
+
+**Configuration:**
+```bash
+# Enable/disable tracking
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --disable
+
+# Configure settings interactively
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --configure
+```
+
+**Settings:**
+- `enabled`: Enable/disable task lifecycle tracking (default: true)
+- `max_resume_tasks`: Max tasks shown in resume prompt (default: 20)
+- `stop_block_max_count`: Stop override threshold (default: 3)
+- `task_ttl_days`: Auto-prune completed tasks after N days (default: 30)
+- `debug_logging`: Enable audit logging (default: false)
+
+**Storage:**
+- **State**: `~/.claude/sessions/plugin___task_lifecycle__.db` (global shelve)
+- **Logs**: `~/.clautorun/task-tracking/{session_id}/audit.log` (per-session)
+- **Config**: `~/.clautorun/task-lifecycle.config.json`
+
+**Test Coverage:**
+
+Comprehensive test suite with 36 tests across 4 test files:
+
+```bash
+# Run all task lifecycle tests
+uv run pytest plugins/clautorun/tests/test_task_lifecycle_*.py -v
+
+# Run specific test suites
+uv run pytest plugins/clautorun/tests/test_task_lifecycle_basic.py          # 8 basic tests
+uv run pytest plugins/clautorun/tests/test_task_lifecycle_integration.py    # 10 integration tests
+uv run pytest plugins/clautorun/tests/test_task_lifecycle_failure_modes.py  # 8 failure mode tests
+uv run pytest plugins/clautorun/tests/test_task_lifecycle_edge_cases.py     # 10 edge case tests
+```
+
+**Test Categories:**
+
+1. **Basic Tests** (8 tests) - `test_task_lifecycle_basic.py`
+   - Config load/save
+   - TaskLifecycle creation and instantiation
+   - Task creation, update, prioritization
+   - Deduplication and CLI methods
+
+2. **Integration Tests** (10 tests) - `test_task_lifecycle_integration.py`
+   - Full lifecycle: create → update → complete
+   - Dependencies and blockedBy/blocks chains
+   - Stop hook blocking (PRIMARY GOAL verification)
+   - Resume detection and plan context injection
+   - Cross-session persistence and escape hatch
+
+3. **Failure Mode Tests** (8 tests) - `test_task_lifecycle_failure_modes.py`
+   - Task explosion (100+ tasks) with capping
+   - Stuck task escape hatch (override after 3 blocks)
+   - Format change resilience (multiple regex patterns)
+   - Unbounded growth prevention (TTL-based pruning)
+   - Race condition prevention (atomic operations)
+   - Deduplication enforcement
+   - Log file growth tolerance
+   - Session isolation verification
+
+4. **Edge Case Tests** (10 tests) - `test_task_lifecycle_edge_cases.py`
+   - Empty/minimal task creation
+   - Very long fields (stress test: 10k+ chars)
+   - Special characters in task IDs
+   - Circular dependencies (A blocks B, B blocks A)
+   - Self-blocking tasks
+   - Update non-existent task behavior
+   - Idempotent operations
+   - Zero TTL pruning
+   - Various session_id formats (UUID, timestamps, custom)
+   - Config override validation
+
+**All 36 tests pass with 100% success rate**, verifying:
+- ✅ PRIMARY GOAL: AI continuation enforcement (stop hook blocks incomplete tasks)
+- ✅ Thread safety (concurrent access, atomic operations)
+- ✅ Failure resilience (format changes, corruption recovery, pruning)
+- ✅ Edge case handling (boundary conditions, unusual inputs)
+- ✅ DRY patterns (reuses session_state(), no code duplication)
 
 ### Commit Command
 
