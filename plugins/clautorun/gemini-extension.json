@@ -1,0 +1,17 @@
+{
+  "name": "cr",
+  "version": "0.8.0",
+  "description": "clautorun plugin - AutoFile policies, autonomous operation, safety guards. Uses 'cr' as command prefix (/cr:st, /cr:a, etc.)",
+  "author": {
+    "name": "clautorun contributors",
+    "url": "https://github.com/ahundt/clautorun"
+  },
+  "homepage": "https://github.com/ahundt/clautorun#readme",
+  "repository": "https://github.com/ahundt/clautorun.git",
+  "license": "Apache-2.0",
+  "keywords": ["gemini-cli", "agent-sdk", "file-policy", "autonomous-sessions", "safety-guards"],
+  "contextFileName": "../../GEMINI.md",
+  "commands": "./commands/",
+  "skills": "./skills/",
+  "hooks": "./hooks/gemini-hooks.json"
+}

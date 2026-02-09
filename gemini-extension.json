@@ -1,0 +1,11 @@
+{
+  "name": "clautorun-workspace",
+  "version": "0.8.0",
+  "description": "Clautorun workspace with multiple plugins: clautorun (safety/automation), pdf-extractor (PDF processing)",
+  "author": "Andrew Hundt",
+  "contextFileName": "GEMINI.md",
+  "extensions": [
+    "./plugins/clautorun",
+    "./plugins/pdf-extractor"
+  ]
+}
