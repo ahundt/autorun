@@ -68,7 +68,9 @@ def main():
                        help="Skip confirmation prompt")
 
     parser.add_argument("--configure", action="store_true",
-                       help="Interactive configuration")
+                       help="Show configuration (interactive if TTY)")
+    parser.add_argument("--interactive", action="store_true",
+                       help="Force interactive mode (requires TTY)")
     parser.add_argument("--enable", action="store_true",
                        help="Enable task lifecycle tracking")
     parser.add_argument("--disable", action="store_true",
@@ -98,7 +100,7 @@ def main():
         )
 
     elif args.configure:
-        return TaskLifecycle.cli_configure()
+        return TaskLifecycle.cli_configure(interactive=args.interactive)
 
     elif args.enable:
         return TaskLifecycle.cli_enable()

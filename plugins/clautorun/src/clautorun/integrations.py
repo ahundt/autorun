@@ -629,11 +629,10 @@ def _not_in_pipe(ctx: any) -> bool:
             tokens = cmd.split()
 
         # Skip command name and flags
+        # Any non-flag argument is potentially a file argument
         file_args = [
             t for t in tokens[1:]
-            if not t.startswith("-") and (
-                "/" in t or "." in t or t.endswith((".txt", ".md", ".py", ".rs", ".js", ".log"))
-            )
+            if not t.startswith("-")
         ]
 
         if file_args:

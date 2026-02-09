@@ -925,6 +925,10 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 session_dirs = [d for d in sessions_dir.iterdir() if d.is_dir()]
 
                 if confirm:
+                    if not sys.stdin.isatty():
+                        print("⚠️ Refusing to clear all sessions in non-interactive mode")
+                        print("Use --no-confirm flag to proceed")
+                        return 2
                     print(f"⚠️  WARNING: About to clear {len(session_dirs)} session(s)")
                     response = input("Type 'yes' to confirm: ")
                     if response.lower() != 'yes':
@@ -950,6 +954,10 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 task_count = len(tasks)
 
                 if confirm:
+                    if not sys.stdin.isatty():
+                        print("⚠️ Refusing to clear session in non-interactive mode")
+                        print("Use --no-confirm flag to proceed")
+                        return 2
                     print(f"⚠️  WARNING: About to clear {task_count} task(s) from session {session_id[:8]}...")
                     response = input("Type 'yes' to confirm: ")
                     if response.lower() != 'yes':
@@ -973,16 +981,20 @@ You CANNOT stop until all tasks are marked completed or deleted.
             return 1
 
     @classmethod
-    def cli_configure(cls) -> int:
-        """Interactive configuration (CLI command).
+    def cli_configure(cls, interactive: bool = False) -> int:
+        """Show configuration (interactive if TTY or forced).
+
+        Args:
+            interactive: Force interactive mode even in non-TTY
 
         Returns:
-            Exit code (0 = success, 1 = error)
+            Exit code (0 = success, 1 = error, 2 = non-interactive)
         """
         import sys
         try:
             config = TaskLifecycleConfig.load()
 
+            # Always show current settings
             print("Task Lifecycle Configuration")
             print("============================")
             print()
@@ -995,6 +1007,13 @@ You CANNOT stop until all tasks are marked completed or deleted.
             print(f"  Debug logging: {config.debug_logging}")
             print()
 
+            # Check if interactive mode possible
+            if not interactive and not sys.stdin.isatty():
+                print("(Non-interactive mode - showing current settings only)")
+                print("Use --interactive flag to modify settings")
+                return 0
+
+            # Prompt to modify
             response = input("Modify settings? (y/n): ")
             if response.lower() != 'y':
                 return 0
