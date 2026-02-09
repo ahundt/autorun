@@ -506,6 +506,73 @@ def _file_has_unstaged_changes(ctx: any) -> bool:
         return False
 
 
+def _not_in_pipe(ctx: any) -> bool:
+    """
+    Check if command is NOT in a pipe context (should block for direct file operations).
+
+    Returns True when command should be blocked (NOT in pipe).
+    Returns False when command should be allowed (in pipe or reading stdin).
+
+    Examples:
+        - `head file.txt` → NOT in pipe → return True (block)
+        - `git diff | head -50` → in pipe → return False (allow)
+        - `head -50` (no file) → NOT in pipe but stdin → return False (allow)
+
+    Args:
+        ctx: EventContext with tool_input["command"]
+
+    Returns:
+        True if command should be blocked (not in pipe), False otherwise
+    """
+    try:
+        # Extract command from context
+        cmd = ctx.tool_input.get("command", "") if hasattr(ctx, "tool_input") else ""
+        if not cmd:
+            return False  # No command, allow
+
+        # Check if command contains pipe operator |
+        # If there's a pipe, the command is being used as a filter
+        if "|" in cmd:
+            # Command is in a pipe - allow (return False to not block)
+            return False
+
+        # Not in pipe - but check if reading from stdin (no file args)
+        # Commands like `head -50` with no file argument read from stdin
+        # We should allow these (they're not direct file operations)
+
+        # Simple heuristic: if no obvious file path pattern, allow
+        # File paths typically have . or / characters
+        # This catches: head -50, tail, grep pattern (without files)
+        # But blocks: head file.txt, tail /path/to/file
+
+        # Split command to check for file-like arguments
+        import shlex
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            tokens = cmd.split()
+
+        # Skip command name and flags
+        file_args = [
+            t for t in tokens[1:]
+            if not t.startswith("-") and (
+                "/" in t or "." in t or t.endswith((".txt", ".md", ".py", ".rs", ".js", ".log"))
+            )
+        ]
+
+        if file_args:
+            # Has file arguments - block (return True)
+            return True
+        else:
+            # No file arguments (reading stdin) - allow (return False)
+            return False
+
+    except Exception as e:
+        logger.warning(f"_not_in_pipe predicate error: {e}")
+        # On error, default to allowing (return False to not block)
+        return False
+
+
 # Predicate functions (O(1) lookups) - FIX Bug 1
 _WHEN_PREDICATES: Final[dict] = {
     "has_uncommitted_changes": _has_uncommitted_changes,
@@ -513,6 +580,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_has_unstaged_changes": _has_unstaged_changes,
     "_stash_exists": _stash_exists,
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
+    "_not_in_pipe": _not_in_pipe,  # v0.7.1: Context-aware blocking for head/tail/grep/cat
     # Add more as needed
 }
 
