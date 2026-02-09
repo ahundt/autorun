@@ -108,7 +108,8 @@ DEFAULT_INTEGRATIONS = {
     },
     "grep": {
         "action": "block",
-        "suggestion": "Use the Grep tool instead of bash grep command.\n\n**Why:**\n- Grep tool is optimized for Claude Code\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: Grep tool with pattern='pattern'\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
+        "suggestion": "Use the Grep tool instead of bash grep command.\n\n**Why:**\n- Grep tool is optimized for Claude Code\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: Grep tool with pattern='pattern'\n\n**Note:** grep in pipes is allowed (e.g., `ps aux | grep python`)\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
+        "when": "_not_in_pipe",
     },
     "find": {
         "action": "block",
@@ -116,15 +117,18 @@ DEFAULT_INTEGRATIONS = {
     },
     "cat": {
         "action": "block",
-        "suggestion": "Use the Read tool instead of cat command.\n\n**Why:**\n- Read tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: Read tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
+        "suggestion": "Use the Read tool instead of cat command.\n\n**Why:**\n- Read tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: Read tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes is allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
+        "when": "_not_in_pipe",
     },
     "head": {
         "action": "block",
-        "suggestion": "Use the Read tool with limit parameter instead of head.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
+        "suggestion": "Use the Read tool with limit parameter instead of head.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes is allowed (e.g., `git diff | head -50`)\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
+        "when": "_not_in_pipe",
     },
     "tail": {
         "action": "block",
-        "suggestion": "Use the Read tool with offset parameter instead of tail.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: Read tool - first get total lines, then read with offset\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
+        "suggestion": "Use the Read tool with offset parameter instead of tail.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: Read tool - first get total lines, then read with offset\n\n**Note:** tail in pipes is allowed (e.g., `git log | tail -20`)\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
+        "when": "_not_in_pipe",
     },
     "echo >": {
         "action": "block",

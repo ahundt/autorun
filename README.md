@@ -871,17 +871,18 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --configure
 
 **Test Coverage:**
 
-Comprehensive test suite with 36 tests across 4 test files:
+Comprehensive test suite with 48 tests across 5 test files:
 
 ```bash
-# Run all task lifecycle tests
-uv run pytest plugins/clautorun/tests/test_task_lifecycle_*.py -v
+# Run all task lifecycle + command blocking tests
+uv run pytest plugins/clautorun/tests/test_task_lifecycle_*.py plugins/clautorun/tests/test_pipe_context_blocking.py -v
 
 # Run specific test suites
 uv run pytest plugins/clautorun/tests/test_task_lifecycle_basic.py          # 8 basic tests
 uv run pytest plugins/clautorun/tests/test_task_lifecycle_integration.py    # 10 integration tests
 uv run pytest plugins/clautorun/tests/test_task_lifecycle_failure_modes.py  # 8 failure mode tests
 uv run pytest plugins/clautorun/tests/test_task_lifecycle_edge_cases.py     # 10 edge case tests
+uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12 pipe context tests
 ```
 
 **Test Categories:**
@@ -921,8 +922,17 @@ uv run pytest plugins/clautorun/tests/test_task_lifecycle_edge_cases.py     # 10
    - Various session_id formats (UUID, timestamps, custom)
    - Config override validation
 
-**All 36 tests pass with 100% success rate**, verifying:
+5. **Pipe Context Blocking Tests** (12 tests) - `test_pipe_context_blocking.py`
+   - CRITICAL: User-reported bug fix (git diff | head -50 now allowed)
+   - head/tail/grep/cat in pipes allowed (e.g., `ps aux | grep python`)
+   - head/tail/grep/cat on files blocked (e.g., `cat file.txt` → use Read tool)
+   - Commands reading stdin allowed (e.g., `head -50` with no file)
+   - Complex multi-pipe commands handled correctly
+   - _not_in_pipe predicate logic verification
+
+**All 48 tests pass with 100% success rate**, verifying:
 - ✅ PRIMARY GOAL: AI continuation enforcement (stop hook blocks incomplete tasks)
+- ✅ Context-aware command blocking (pipes allowed, direct file operations blocked)
 - ✅ Thread safety (concurrent access, atomic operations)
 - ✅ Failure resilience (format changes, corruption recovery, pruning)
 - ✅ Edge case handling (boundary conditions, unusual inputs)
