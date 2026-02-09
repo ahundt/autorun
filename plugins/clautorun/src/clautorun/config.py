@@ -134,7 +134,8 @@ DEFAULT_INTEGRATIONS = {
     },
     "find": {
         "action": "block",
-        "suggestion": "Use the Glob tool instead of find command.\n\n**Why:**\n- Glob is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: Glob tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: Glob tool with pattern='**/*test*'\n\n**Commands:**\n- Allow in this session: /cr:ok find\n- Block globally: /cr:globalno find",
+        "suggestion": "Use the Glob tool instead of find command.\n\n**Why:**\n- Glob is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: Glob tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: Glob tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow in this session: /cr:ok find\n- Block globally: /cr:globalno find",
+        "when": "_not_in_pipe",
     },
     "cat": {
         "action": "block",
