@@ -43,6 +43,10 @@ from .integrations import load_all_integrations, invalidate_caches, check_when_p
 # Import plan_export to register its @app.on() handlers with daemon
 from . import plan_export  # noqa: F401
 
+# Import task_lifecycle and register hooks (if enabled)
+from . import task_lifecycle  # noqa: F401
+task_lifecycle.register_hooks(app)  # Register task lifecycle hooks
+
 
 # ============================================================================
 # FILE POLICY PLUGIN (DRY Factory Pattern)
