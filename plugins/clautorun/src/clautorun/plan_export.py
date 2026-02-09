@@ -184,6 +184,7 @@ from datetime import datetime
 
 from .core import EventContext, app, logger
 from .session_manager import session_state, SessionLock, SessionTimeoutError
+from .config import WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 
 # Global key for cross-session state (survives Option 1 fresh context)
 GLOBAL_SESSION_ID = "__plan_export__"
@@ -268,7 +269,7 @@ def get_plan_from_transcript(transcript_path: str) -> Optional[Path]:
                             for item in content:
                                 if item.get("type") == "tool_use":
                                     tool_name = item.get("name", "")
-                                    if tool_name in ["Write", "Edit"]:
+                                    if tool_name in (WRITE_TOOLS | EDIT_TOOLS):
                                         tool_input = item.get("input", {})
                                         file_path = tool_input.get("file_path", "")
                                         if file_path and str(PLANS_DIR) in file_path and file_path.endswith(".md"):
@@ -688,7 +689,7 @@ def export_plan(plan_path, project_dir, session_id: str = None) -> dict:
     ctx = EventContext(
         session_id=session_id or "unknown",
         event="PostToolUse",
-        tool_name="ExitPlanMode",
+        tool_name=next(iter(PLAN_TOOLS)),
         tool_input={"cwd": str(project_dir)},
         store=store
     )
@@ -727,7 +728,7 @@ def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict
     ctx = EventContext(
         session_id=session_id or "unknown",
         event="PostToolUse",
-        tool_name="ExitPlanMode",
+        tool_name=next(iter(PLAN_TOOLS)),
         tool_input={"cwd": str(project_dir)},
         store=store
     )
@@ -873,7 +874,7 @@ export_destination: {export_destination}
 @app.on("PostToolUse")
 def track_plan_writes(ctx: EventContext) -> Optional[Dict]:
     """Track Write/Edit to plan files for fresh context recovery."""
-    if ctx.tool_name not in ("Write", "Edit"):
+    if ctx.tool_name not in (WRITE_TOOLS | EDIT_TOOLS):
         return None
     try:
         config = PlanExportConfig.load()
@@ -890,7 +891,7 @@ def track_plan_writes(ctx: EventContext) -> Optional[Dict]:
 @app.on("PostToolUse")
 def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     """Export plan when ExitPlanMode fires (Option 2 - regular accept)."""
-    if ctx.tool_name != "ExitPlanMode":
+    if ctx.tool_name not in PLAN_TOOLS:
         return None
     try:
         config = PlanExportConfig.load()

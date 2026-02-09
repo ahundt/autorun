@@ -35,7 +35,10 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from .core import app, EventContext, logger
-from .config import CONFIG, DEFAULT_INTEGRATIONS
+from .config import (
+    CONFIG, DEFAULT_INTEGRATIONS,
+    BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS
+)
 from .session_manager import session_state
 from .command_detection import command_matches_pattern
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
@@ -115,7 +118,7 @@ def handle_status(ctx: EventContext) -> str:
 @app.on("PreToolUse")
 def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
     """Enforce file creation policy on Write tool."""
-    if ctx.tool_name != "Write":
+    if ctx.tool_name not in WRITE_TOOLS:
         return None
 
     policy = ctx.file_policy  # Magic: auto-loads from Shelve!
@@ -139,7 +142,7 @@ def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
 @app.on("PreToolUse")
 def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     """Only allow ExitPlanMode after planning Stage 3 is complete (when autorun active)."""
-    if ctx.tool_name != "ExitPlanMode":
+    if ctx.tool_name not in PLAN_TOOLS:
         return None
 
     # REGRESSION PROTECTION: Only gate when autorun is active
@@ -450,10 +453,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     Supports: Bash commands (event: bash), Write/Edit operations (event: file)
     """
     # Determine event type and command/path
-    if ctx.tool_name == "Bash":
+    if ctx.tool_name in BASH_TOOLS:
         event_type = "bash"
         cmd = ctx.tool_input.get("command", "")
-    elif ctx.tool_name in ("Write", "Edit"):
+    elif ctx.tool_name in FILE_TOOLS:
         event_type = "file"
         cmd = ctx.tool_input.get("file_path", "")
     else:
@@ -481,7 +484,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
             # Check tool matcher (hookify compat)
             if intg.tool_matcher != "*":
-                allowed_tools = intg.tool_matcher.split("|")
+                # Split allowed tools and check if any of the aliases match
+                # Note: This is simplified; ideally we'd map Claude tools to Gemini tools or vice versa.
+                # For now, we check if the current tool_name is in the set of allowed tools.
+                allowed_tools = set(intg.tool_matcher.split("|"))
                 if ctx.tool_name not in allowed_tools:
                     continue
 
@@ -742,7 +748,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     - https://github.com/anthropics/claude-code/issues/9701
     """
     # Only handle ExitPlanMode tool
-    if ctx.tool_name != "ExitPlanMode":
+    if ctx.tool_name not in PLAN_TOOLS:
         return None
 
     # Skip if already in autorun

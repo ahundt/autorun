@@ -24,7 +24,7 @@
     ],
     "BeforeTool": [
       {
-        "matcher": "write_file|bash_command|exit_plan_mode",
+        "matcher": "write_file|bash_command|run_shell_command|exit_plan_mode",
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",
@@ -35,7 +35,7 @@
     ],
     "AfterTool": [
       {
-        "matcher": "exit_plan_mode|write_file|edit_file",
+        "matcher": "exit_plan_mode|write_file|edit_file|replace",
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",
