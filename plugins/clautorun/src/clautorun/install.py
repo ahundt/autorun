@@ -602,16 +602,79 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
 
         # Verify which platforms were installed
         verify_result = run_cmd(["aix", "skills", "list"])
+        installed_platforms = []
         if verify_result.ok:
             print("\n   Installed on platforms:")
             if "claude_code" in verify_result.output:
                 print("   • Claude Code")
+                installed_platforms.append("claude")
             if "gemini_cli" in verify_result.output:
                 print("   • Gemini CLI")
+                installed_platforms.append("gemini")
             if "opencode" in verify_result.output:
                 print("   • OpenCode")
+                installed_platforms.append("opencode")
             if "codex_cli" in verify_result.output:
                 print("   • Codex CLI")
+                installed_platforms.append("codex")
+
+        # CRITICAL: Verify hooks are registered (essential for clautorun functionality)
+        # AIX may not fully support hook registration, so we verify and provide guidance
+        print("\n   Verifying hook registration...")
+        hooks_ok = True
+
+        for platform in installed_platforms:
+            if platform == "claude":
+                # Check Claude Code hooks
+                hooks_path = Path.home() / ".claude" / "hooks.json"
+                if hooks_path.exists():
+                    import json
+                    try:
+                        with open(hooks_path) as f:
+                            hooks_data = json.load(f)
+                        # Check if clautorun hooks are present
+                        has_hooks = any("clautorun" in str(hook) for hook in hooks_data.get("hooks", []))
+                        if has_hooks:
+                            print(f"   ✓ Claude Code hooks registered")
+                        else:
+                            print(f"   ⚠️  Claude Code hooks may not be registered")
+                            hooks_ok = False
+                    except Exception:
+                        print(f"   ⚠️  Could not verify Claude Code hooks")
+                        hooks_ok = False
+                else:
+                    print(f"   ⚠️  Claude Code hooks file not found")
+                    hooks_ok = False
+
+            elif platform == "gemini":
+                # Check Gemini CLI hooks
+                gemini_config = Path.home() / ".config" / "gemini-cli" / "config.json"
+                if gemini_config.exists():
+                    import json
+                    try:
+                        with open(gemini_config) as f:
+                            config_data = json.load(f)
+                        # Check if clautorun hooks are present
+                        has_hooks = any("clautorun" in str(ext) for ext in config_data.get("extensions", []))
+                        if has_hooks:
+                            print(f"   ✓ Gemini CLI hooks registered")
+                        else:
+                            print(f"   ⚠️  Gemini CLI hooks may not be registered")
+                            hooks_ok = False
+                    except Exception:
+                        print(f"   ⚠️  Could not verify Gemini CLI hooks")
+                        hooks_ok = False
+                else:
+                    print(f"   ⚠️  Gemini CLI config file not found")
+                    hooks_ok = False
+
+        if not hooks_ok:
+            print("\n   ⚠️  Hook registration incomplete!")
+            print("   SOLUTION: Clautorun has built-in bootstrap that will auto-register")
+            print("            hooks on first use. Alternatively, run manually:")
+            print("            $ clautorun --install")
+            print("\n   Why this matters: Hooks enable PreToolUse/PostToolUse functionality,")
+            print("                      which powers file policies, command blocking, etc.")
 
         return (True, "success")
     else:
