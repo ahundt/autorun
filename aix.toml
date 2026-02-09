@@ -96,6 +96,8 @@ description = "Display Git Commit Requirements - comprehensive guidelines for hi
 path = "plugins/clautorun/commands/commit.md"
 
 # Platform-specific hooks (not translated - kept native)
+# CRITICAL: Hooks are essential for clautorun functionality
+# AIX may not fully understand hook registration, so post_install ensures proper setup
 [hooks.claude_code]
 path = "plugins/clautorun/hooks/hooks.json"
 
@@ -105,13 +107,20 @@ path = "plugins/clautorun/hooks/gemini-hooks.json"
 # Installation hooks (custom AIX extension)
 # CRITICAL: Only performs LOCAL installation (aix skills install .)
 # Does NOT publish to public AIX registry
+#
+# HOOK REGISTRATION: post_install runs "clautorun --install" to ensure hooks
+# are properly registered even if AIX doesn't support hook registration natively.
+# This is essential for clautorun's PreToolUse/PostToolUse functionality.
+#
+# BOOTSTRAP FALLBACK: If hook registration fails, clautorun's bootstrap mechanism
+# (hook_entry.py) will auto-detect on first use and register hooks in background.
 [install.claude_code]
 command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
-post_install = ["clautorun", "--install"]
+post_install = ["clautorun", "--install"]  # Ensures hooks registered
 
 [install.gemini_cli]
 command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
-post_install = ["clautorun", "--install", "--gemini", "--conductor"]
+post_install = ["clautorun", "--install", "--gemini", "--conductor"]  # Ensures hooks + Conductor
 
 [install.opencode]
 command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
