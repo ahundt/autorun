@@ -1567,7 +1567,9 @@ def pretooluse_handler(ctx):
     # NEW: Command blocking check (highest priority)
     # =========================================================================
     if ctx.tool_name in BASH_TOOLS:
-        command = ctx.tool_input.get("command", "")
+        # Handle None tool_input gracefully (defensive programming)
+        tool_input = ctx.tool_input or {}
+        command = tool_input.get("command", "")
 
         # Check if command should be blocked
         block_info = should_block_command(ctx.session_id, command)
@@ -1592,8 +1594,9 @@ def pretooluse_handler(ctx):
     # =========================================================================
     # EXISTING: AutoFile policy enforcement
     # =========================================================================
-    # Extract file path from Write tool input
-    file_path = ctx.tool_input.get("file_path", "")
+    # Extract file path from Write tool input (handle None gracefully)
+    tool_input = ctx.tool_input or {}
+    file_path = tool_input.get("file_path", "")
 
     # Debug logging using log_info for consistent logging
     log_info(f"PreToolUse Debug: Tool Name: {ctx.tool_name}")

@@ -439,3 +439,44 @@ def shared_session_state(session_id: str, timeout: float = SHARED_ACCESS_TIMEOUT
     manager = get_session_manager()
     with manager.session_state(session_id, timeout, shared_access=True) as state:
         yield state
+
+def clear_test_session_state(session_id: str) -> None:
+    """Clear session state for testing (exported for test cleanup).
+
+    WARNING: This is a testing-only function. DO NOT use in production code.
+    Clears session state from both memory and shelve backends.
+
+    Args:
+        session_id: Session identifier to clear
+
+    Example:
+        >>> clear_test_session_state("test-session-123")
+    """
+    global _global_session_manager
+
+    if _global_session_manager is None:
+        return  # Nothing to clear
+
+    # Clear from memory backend
+    with _global_session_manager._memory_lock:
+        if session_id in _global_session_manager._memory_states:
+            del _global_session_manager._memory_states[session_id]
+        if session_id in _global_session_manager._memory_locks:
+            del _global_session_manager._memory_locks[session_id]
+
+    # Clear shelve backend files
+    import glob
+    state_dir = _global_session_manager.state_dir
+
+    # Remove all shelve files for this session
+    patterns = [
+        str(state_dir / f"plugin_{session_id}.db*"),
+        str(state_dir / f"plugin_{session_id}_dumb.db*"),
+    ]
+
+    for pattern in patterns:
+        for filepath in glob.glob(pattern):
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass  # Silently handle cleanup errors

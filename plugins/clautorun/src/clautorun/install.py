@@ -292,7 +292,11 @@ def determine_target_clis(
 
 
 def _sync_dependencies() -> CmdResult:
-    """Run uv sync --extra claude-code from the clautorun plugin directory.
+    """Run uv sync with required extras from the clautorun plugin directory.
+
+    Installs:
+    - claude-code extra: Claude Code integration dependencies
+    - bashlex extra: Required for pipe detection in command blocking
 
     Returns:
         CmdResult indicating success/failure
@@ -306,7 +310,7 @@ def _sync_dependencies() -> CmdResult:
         plugin_dir = marketplace_root
 
     return run_cmd(
-        ["uv", "sync", "--extra", "claude-code"],
+        ["uv", "sync", "--extra", "claude-code", "--extra", "bashlex"],
         timeout=120,
         cwd=plugin_dir,
     )
