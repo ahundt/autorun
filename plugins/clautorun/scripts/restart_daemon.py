@@ -214,11 +214,38 @@ def main():
             if not cleared_caches and not failed_clears:
                 print(f"  No __pycache__ directories to clear")
 
+            # Check for conflicting installed packages
+            import site
+            try:
+                site_packages_list = site.getsitepackages()
+                for site_pkg_dir in site_packages_list:
+                    site_packages = Path(site_pkg_dir) / "clautorun"
+                    if site_packages.exists():
+                        print(f"  ⚠️  WARNING: Installed package found at {site_packages}")
+                        print(f"      This may interfere with source directory loading")
+                        print(f"      Consider: uv pip uninstall clautorun")
+                        break
+            except Exception as e:
+                # Non-fatal: just log
+                print(f"  ⚠️ Could not check for installed packages: {e}")
+
+            # Enhanced daemon startup with detailed logging
             daemon_code = (
-                f"import sys; sys.path.insert(0, r'{src_dir}'); "
-                f"import clautorun; print(f'Loaded clautorun from: {{clautorun.__file__}}', flush=True); "
-                f"from clautorun.daemon import main; "
-                f"print('Starting daemon server...', flush=True); main()"
+                f"import sys; "
+                f"sys.path.insert(0, r'{src_dir}'); "
+                f"import clautorun; "
+                f"print(f'=== Daemon Startup Diagnostics ===', flush=True); "
+                f"print(f'clautorun loaded from: {{clautorun.__file__}}', flush=True); "
+                f"print(f'sys.path[0]: {{sys.path[0]}}', flush=True); "
+                f"print(f'Expected source: {src_dir}', flush=True); "
+                # Verify bashlex availability
+                f"from clautorun.command_detection import BASHLEX_AVAILABLE; "
+                f"print(f'bashlex available: {{BASHLEX_AVAILABLE}}', flush=True); "
+                # Verify tool name sets loaded
+                f"from clautorun.config import BASH_TOOLS; "
+                f"print(f'BASH_TOOLS = {{BASH_TOOLS}}', flush=True); "
+                f"print(f'=== Starting Daemon ===', flush=True); "
+                f"from clautorun.daemon import main; main()"
             )
 
             # Redirect stdout/stderr to a log file for debug visibility
@@ -230,7 +257,37 @@ def main():
                     stderr=startup_log,
                     start_new_session=True
                 )
-            print(f"  Daemon output: {log_path}")
+
+            # Wait briefly for daemon to log diagnostics
+            time.sleep(0.5)
+
+            # Read and display diagnostics
+            print("\n=== Daemon Diagnostics ===")
+            try:
+                with open(log_path) as log:
+                    lines = log.readlines()
+                    # Show first 10 lines (diagnostics section)
+                    for line in lines[:10]:
+                        print(f"  {line.rstrip()}")
+
+                # Verify module source matches expected
+                log_content = ''.join(lines)
+                # Check if clautorun loaded from our source directory
+                # (path will contain /src/clautorun/__init__.py)
+                src_parent = str(src_dir.parent.parent)  # Go up to repo root
+                if src_parent in log_content and '/src/clautorun/__init__.py' in log_content:
+                    print("  ✓ Daemon loaded from source directory")
+                elif '.local/lib' in log_content or 'site-packages' in log_content:
+                    print("  ✗ WARNING: Daemon loaded from installed package!")
+                    print(f"  Check {log_path} for details")
+                else:
+                    print(f"  ⚠️ Unknown load location - check {log_path}")
+            except FileNotFoundError:
+                print(f"  ⚠️ Log file not yet created: {log_path}")
+            except Exception as e:
+                print(f"  ⚠️ Could not read daemon log: {e}")
+
+            print(f"\n  Full daemon output: {log_path}")
         except Exception as e:
             print(f"  ✗ ERROR: Failed to start daemon: {e}")
             import traceback
