@@ -1,0 +1,2 @@
+Baseline test passed: 2026-02-08
+Claude Code is verified working before Gemini CLI integration
