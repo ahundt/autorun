@@ -121,6 +121,21 @@ Legacy commands (still supported):
         dest="conductor",
         help="Skip Conductor extension installation for Gemini",
     )
+    # AIX auto-detection: Will use AIX for local installation if available
+    # CRITICAL: Only does LOCAL installation, never publishes to public registry
+    install_group.add_argument(
+        "--aix",
+        action="store_true",
+        default=None,
+        help="Force use of AIX for installation (auto-detects if not specified). "
+             "Only performs LOCAL installation, never publishes publicly.",
+    )
+    install_group.add_argument(
+        "--no-aix",
+        action="store_false",
+        dest="aix",
+        help="Skip AIX even if installed (use direct installation instead)",
+    )
     install_group.add_argument(
         "--uninstall",
         "-u",
@@ -257,6 +272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             claude_only=args.claude,
             gemini_only=args.gemini,
             conductor=args.conductor,
+            use_aix=args.aix if hasattr(args, 'aix') else None,  # NEW: Auto-detect if None
         )
 
     # Status mode

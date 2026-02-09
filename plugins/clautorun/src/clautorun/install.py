@@ -297,7 +297,14 @@ def _sync_dependencies() -> CmdResult:
     Returns:
         CmdResult indicating success/failure
     """
-    plugin_dir = find_marketplace_root() / "plugins" / "clautorun"
+    marketplace_root = find_marketplace_root()
+    # If the root has a plugins/ directory, the plugin is in plugins/clautorun
+    # If the root IS the clautorun directory (e.g. nested), use it directly
+    if (marketplace_root / "plugins" / "clautorun").exists():
+        plugin_dir = marketplace_root / "plugins" / "clautorun"
+    else:
+        plugin_dir = marketplace_root
+
     return run_cmd(
         ["uv", "sync", "--extra", "claude-code"],
         timeout=120,
@@ -539,6 +546,79 @@ def _verify_conductor_installation() -> bool:
 
 
 # =============================================================================
+# AIX Integration - Unified Multi-Platform Installation
+# =============================================================================
+# CRITICAL: AIX integration follows existing argparse patterns (see plugins.py)
+# No click/typer dependencies added - maintains UV workspace structure
+
+
+def detect_aix_installed() -> bool:
+    """Check if AIX is installed and available.
+
+    Returns:
+        True if AIX CLI is in PATH
+    """
+    return shutil.which("aix") is not None
+
+
+def install_via_aix(force: bool = False) -> tuple[bool, str]:
+    """Install clautorun locally using AIX if available.
+
+    AIX provides unified installation across Claude Code, Gemini CLI,
+    OpenCode, and Codex CLI platforms.
+
+    CRITICAL: This performs LOCAL installation only (aix skills install .).
+    Does NOT publish to public AIX registry - that requires manual user action.
+
+    Args:
+        force: Force reinstall even if already installed
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    if not detect_aix_installed():
+        return (False, "AIX not installed")
+
+    print()
+    print("Installing clautorun via AIX...")
+    print("AIX will auto-detect and install for all available platforms")
+
+    # Get repository root (2 levels up from plugin directory)
+    plugin_root = Path(__file__).parent.parent.parent.parent
+    aix_manifest = plugin_root / "aix.toml"
+
+    if not aix_manifest.exists():
+        return (False, f"AIX manifest not found: {aix_manifest}")
+
+    # Install via AIX (LOCAL installation only)
+    cmd = ["aix", "skills", "install", str(plugin_root)]
+    if force:
+        cmd.append("--force")
+
+    result = run_cmd(cmd)
+
+    if result.ok or result.has_text("already installed"):
+        print("   ✓ clautorun installed via AIX")
+
+        # Verify which platforms were installed
+        verify_result = run_cmd(["aix", "skills", "list"])
+        if verify_result.ok:
+            print("\n   Installed on platforms:")
+            if "claude_code" in verify_result.output:
+                print("   • Claude Code")
+            if "gemini_cli" in verify_result.output:
+                print("   • Gemini CLI")
+            if "opencode" in verify_result.output:
+                print("   • OpenCode")
+            if "codex_cli" in verify_result.output:
+                print("   • Codex CLI")
+
+        return (True, "success")
+    else:
+        return (False, result.output)
+
+
+# =============================================================================
 # Main Function - Installation
 # =============================================================================
 
@@ -551,8 +631,12 @@ def install_plugins(
     claude_only: bool = False,
     gemini_only: bool = False,
     conductor: bool = True,
+    use_aix: bool = None,  # NEW: Auto-detect AIX if None (default behavior)
 ) -> int:
     """Install and enable plugins for Claude Code and/or Gemini CLI.
+
+    CRITICAL: Will auto-detect and use AIX for LOCAL installation if available.
+    Does NOT publish to public AIX registry (requires manual user action).
 
     Args:
         selection: "all" or comma-separated plugin names (e.g., "clautorun,pdf-extractor")
@@ -561,6 +645,7 @@ def install_plugins(
         claude_only: Install only for Claude Code (default: False)
         gemini_only: Install only for Gemini CLI (default: False)
         conductor: Install Conductor extension for Gemini (default: True)
+        use_aix: Use AIX for installation (None = auto-detect, True = force use, False = skip)
 
     Returns:
         Exit code: 0 = success, 1 = failure
@@ -571,6 +656,8 @@ def install_plugins(
         - --gemini: Installs only for Gemini CLI (error if not available)
         - --claude --gemini: Installs for both CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
+        - --aix: Force use AIX (fail if not installed)
+        - --no-aix: Skip AIX even if installed
         - Continues even if one CLI fails (reports status for each)
 
     Note:
@@ -581,6 +668,21 @@ def install_plugins(
         print(f"Python {sys.version_info.major}.{sys.version_info.minor} detected. "
               f"clautorun requires Python 3.10+.")
         return 1
+
+    # NEW: Auto-detect AIX and use for local installation if available
+    # CRITICAL: Only does LOCAL install (aix skills install .), never publishes
+    if use_aix is None:
+        use_aix = detect_aix_installed()  # Auto-detect by default
+
+    if use_aix and not (claude_only or gemini_only):
+        aix_success, aix_msg = install_via_aix(force)
+        if aix_success:
+            print("\n✓ Installation via AIX completed successfully")
+            print("Run `aix skills list` to see all installed platforms")
+            return 0
+        else:
+            print(f"\n⚠️  AIX installation failed: {aix_msg}")
+            print("Falling back to direct installation...")
 
     # Parse and validate plugin selection
     plugins = _parse_selection(selection)
@@ -627,7 +729,11 @@ def install_plugins(
     print()
 
     # UV environment check (warning only, not blocker)
-    plugin_dir = marketplace_root / "plugins" / "clautorun"
+    if (marketplace_root / "plugins" / "clautorun").exists():
+        plugin_dir = marketplace_root / "plugins" / "clautorun"
+    else:
+        plugin_dir = marketplace_root
+
     uv_check = _check_uv_env(plugin_dir)
     if not uv_check.ok:
         logger.warning(f"UV environment: {uv_check.output}")
