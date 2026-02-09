@@ -37,7 +37,7 @@ claude plugin list  # Should show: cr, pdf-extractor
 
 ---
 
-## clautorun Plugin (v0.7.0)
+## clautorun Plugin (v0.8.0)
 
 ### Three-Stage Verification System
 

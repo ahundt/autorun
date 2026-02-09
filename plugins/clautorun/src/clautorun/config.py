@@ -27,7 +27,7 @@ Usage:
 """
 
 # =============================================================================
-# Unified Command Integrations System v0.7.0 (superset of hookify)
+# Unified Command Integrations System v0.8.0 (superset of hookify)
 # =============================================================================
 # Fields:
 #   action: "block" (deny) or "warn" (allow + message) - defaults to "block"
@@ -97,7 +97,7 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /cr:ok fdisk",
     },
-    # Command-line tools that should use dedicated Claude tools instead (v0.7.1)
+    # Command-line tools that should use dedicated Claude tools instead (v0.8.0)
     "sed": {
         "action": "block",
         "suggestion": "Use the Edit tool instead of sed for file modifications.\n\n**Why:**\n- Edit tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with Claude's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: Edit tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /cr:ok sed\n- Block globally: /cr:globalno sed",
@@ -108,7 +108,7 @@ DEFAULT_INTEGRATIONS = {
     },
     "grep": {
         "action": "block",
-        "suggestion": "Use the Grep tool instead of bash grep command.\n\n**Why:**\n- Grep tool is optimized for Claude Code\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: Grep tool with pattern='pattern'\n\n**Note:** grep in pipes is allowed (e.g., `ps aux | grep python`)\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
+        "suggestion": "Command blocked: grep\nUse the Grep tool instead of bash grep command.\n\n**Why:**\n- Grep tool is optimized for Claude Code\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: Grep tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
         "when": "_not_in_pipe",
     },
     "find": {
@@ -117,17 +117,17 @@ DEFAULT_INTEGRATIONS = {
     },
     "cat": {
         "action": "block",
-        "suggestion": "Use the Read tool instead of cat command.\n\n**Why:**\n- Read tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: Read tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes is allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
+        "suggestion": "Command blocked: cat\nUse the Read tool instead of cat command.\n\n**Why:**\n- Read tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: Read tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
         "when": "_not_in_pipe",
     },
     "head": {
         "action": "block",
-        "suggestion": "Use the Read tool with limit parameter instead of head.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes is allowed (e.g., `git diff | head -50`)\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
+        "suggestion": "Command blocked: head\nUse the Read tool with limit parameter instead of head.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
         "when": "_not_in_pipe",
     },
     "tail": {
         "action": "block",
-        "suggestion": "Use the Read tool with offset parameter instead of tail.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: Read tool - first get total lines, then read with offset\n\n**Note:** tail in pipes is allowed (e.g., `git log | tail -20`)\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
+        "suggestion": "Command blocked: tail\nUse the Read tool with offset parameter instead of tail.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: Read tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
         "when": "_not_in_pipe",
     },
     "echo >": {

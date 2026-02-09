@@ -22,4 +22,4 @@ is provided by the plugins:
 For CLI usage, run: clautorun --help
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

@@ -1,6 +1,6 @@
 {
   "name": "cr",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "clautorun plugin - uses 'cr' as command prefix for easy typing (/cr:st, /cr:a, etc.). Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
   "author": {
     "name": "clautorun contributors",

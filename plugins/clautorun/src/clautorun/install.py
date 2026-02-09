@@ -163,16 +163,16 @@ def _read_plugin_version(plugin_dir: Path) -> str:
         plugin_dir: Path to plugin directory
 
     Returns:
-        Version string from plugin.json, or "0.7.0" as fallback
+        Version string from plugin.json, or "0.8.0" as fallback
     """
     manifest = plugin_dir / ".claude-plugin" / "plugin.json"
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-            return data.get("version", "0.7.0")
+            return data.get("version", "0.8.0")
         except (json.JSONDecodeError, OSError):
             pass
-    return "0.7.0"
+    return "0.8.0"
 
 
 # =============================================================================
@@ -444,7 +444,7 @@ def install_plugins(
     try:
         from clautorun import __version__
     except ImportError:
-        __version__ = "0.7.0"
+        __version__ = "0.8.0"
 
     print(f"clautorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")

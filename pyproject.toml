@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clautorun-workspace"
-version = "0.7.0"
+version = "0.8.0"
 description = "UV workspace for clautorun plugins: clautorun, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,8 +39,8 @@ dev = [
     "ruff>=0.14.1",
 ]
 all = [
-    "clautorun>=0.7.0",
-    "pdf-extractor>=0.7.0",
+    "clautorun>=0.8.0",
+    "pdf-extractor>=0.8.0",
 ]
 
 # NO [project.scripts] - scripts come from plugins/clautorun/pyproject.toml
