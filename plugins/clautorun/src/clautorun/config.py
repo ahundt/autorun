@@ -26,6 +26,21 @@ Usage:
     from clautorun import CONFIG
 """
 
+# Tool name sets for different CLIs (Claude Code vs Gemini CLI) - v0.8.0
+BASH_TOOLS = {"Bash", "bash_command", "run_shell_command"}
+WRITE_TOOLS = {"Write", "write_file"}
+EDIT_TOOLS = {"Edit", "edit_file", "replace"}
+FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS
+PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"}
+
+# Task Lifecycle Tools
+TASK_CREATE_TOOLS = {"TaskCreate", "task_create"}
+TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update"}
+TASK_LIST_TOOLS = {"TaskList", "task_list"}
+TASK_GET_TOOLS = {"TaskGet", "task_get"}
+ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS
+
+
 # =============================================================================
 # Unified Command Integrations System v0.8.0 (superset of hookify)
 # =============================================================================

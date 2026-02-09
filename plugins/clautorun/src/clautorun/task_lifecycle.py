@@ -47,6 +47,10 @@ from datetime import datetime
 
 from .core import EventContext, app, logger
 from .session_manager import session_state  # REUSE - no custom shelve code
+from .config import (
+    PLAN_TOOLS, TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS,
+    TASK_LIST_TOOLS, TASK_GET_TOOLS
+)
 
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
@@ -1106,18 +1110,18 @@ def register_hooks(app_instance) -> None:
     @app_instance.on("PostToolUse")
     def track_task_operations(ctx: EventContext) -> Optional[Dict]:
         """Track Task tool usage for AI continuation (PostToolUse hook)."""
-        if ctx.tool_name not in ("TaskCreate", "TaskUpdate", "TaskList", "TaskGet"):
+        if ctx.tool_name not in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS):
             return None
 
         try:
             # Instantiate class with auto-detected session ID
             manager = TaskLifecycle(ctx=ctx)
 
-            if ctx.tool_name == "TaskCreate":
+            if ctx.tool_name in TASK_CREATE_TOOLS:
                 manager.handle_task_create(ctx)
-            elif ctx.tool_name == "TaskUpdate":
+            elif ctx.tool_name in TASK_UPDATE_TOOLS:
                 manager.handle_task_update(ctx)
-            elif ctx.tool_name == "TaskList":
+            elif ctx.tool_name in TASK_LIST_TOOLS:
                 # Update last activity timestamp
                 def update_activity(metadata):
                     metadata['last_activity'] = time.time()
@@ -1158,7 +1162,7 @@ def register_hooks(app_instance) -> None:
     @app_instance.on("PostToolUse")
     def inject_plan_tasks(ctx: EventContext) -> Optional[Dict]:
         """Inject plan tasks when plan approved (survives Option 1)."""
-        if ctx.tool_name != "ExitPlanMode":
+        if ctx.tool_name not in PLAN_TOOLS:
             return None
 
         tool_result = ctx.tool_result or ""

@@ -167,7 +167,9 @@ except ImportError:
 _injection_monitor: Optional[InjectionEffectivenessMonitor] = None
 
 # Import centralized configuration (DRY principle)
-from .config import CONFIG
+from .config import (
+    CONFIG, BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS
+)
 
 # Import robust command detection (fixes substring matching bug)
 # Uses bashlex AST parsing when available, falls back to shlex
@@ -1564,7 +1566,7 @@ def pretooluse_handler(ctx):
     # =========================================================================
     # NEW: Command blocking check (highest priority)
     # =========================================================================
-    if ctx.tool_name == "Bash":
+    if ctx.tool_name in BASH_TOOLS:
         command = ctx.tool_input.get("command", "")
 
         # Check if command should be blocked
@@ -1605,7 +1607,7 @@ def pretooluse_handler(ctx):
 
         # For non-Write tools, always allow - file policies only apply to file creation
         # The Write tool is the only tool that creates files, so other tools don't need policy checks
-        if ctx.tool_name != "Write":
+        if ctx.tool_name not in WRITE_TOOLS:
             return build_pretooluse_response("allow", "Non-Write tool allowed - file policies only apply to Write tool")
 
         # Write tools - always apply policy
