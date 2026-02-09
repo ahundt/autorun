@@ -441,7 +441,7 @@ def _install_for_gemini(
     Note: Gemini uses workspace-level installation (single command installs all plugins).
 
     Args:
-        marketplace_root: Path to marketplace root directory
+        marketplace_root: Path to marketplace root directory (plugin directory)
         force: Force reinstall even if same version
 
     Returns:
@@ -457,6 +457,11 @@ def _install_for_gemini(
         print("~/.gemini/ directory not found. Run 'gemini' once to initialize.")
         return (False, "~/.gemini/ not found")
 
+    # Gemini needs workspace root (2 levels up from plugin dir)
+    # marketplace_root: /Users/user/.claude/clautorun/plugins/clautorun
+    # workspace_root:   /Users/user/.claude/clautorun
+    workspace_root = marketplace_root.parent.parent
+
     print()
     print("Installing clautorun workspace for Gemini CLI...")
 
@@ -464,7 +469,7 @@ def _install_for_gemini(
         print("Force mode: uninstalling existing workspace...")
         run_cmd(["gemini", "extensions", "uninstall", "clautorun-workspace"])
 
-    result = run_cmd(["gemini", "extensions", "install", str(marketplace_root)])
+    result = run_cmd(["gemini", "extensions", "install", str(workspace_root), "--consent"])
 
     if result.ok or result.has_text("already installed"):
         print("   Workspace installed: clautorun-workspace@0.8.0")
@@ -500,7 +505,8 @@ def _install_conductor(force: bool = False) -> tuple[bool, str]:
     result = run_cmd([
         "gemini", "extensions", "install",
         "https://github.com/gemini-cli-extensions/conductor",
-        "--auto-update"
+        "--auto-update",
+        "--consent"
     ])
 
     if result.ok or result.has_text("already installed"):
