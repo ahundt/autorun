@@ -130,6 +130,138 @@ class TestPipeBlockingFix:
                 f"Expected blocked={expected_blocked}, got {result}"
             )
 
+    def test_pipes_with_logical_operators(self):
+        """Test pipe detection with || and && operators (REGRESSION TEST)."""
+        commands_with_logical_ops = [
+            # Pipe with || (logical OR) - SHOULD BE ALLOWED
+            "gemini extensions list | grep clautorun || echo 'Not found'",
+            "git log | grep fix || exit 1",
+            "ps aux | grep python || echo 'No python processes'",
+
+            # Pipe with && (logical AND) - SHOULD BE ALLOWED
+            "git diff | grep TODO && echo 'Found TODOs'",
+            "ls -la | grep .txt && cat list.txt",
+
+            # Complex: pipe with both || and && - SHOULD BE ALLOWED
+            "cat file.txt | grep error && echo 'Errors found' || echo 'No errors'",
+
+            # Pipe with grep -A/-B flags (context lines) - SHOULD BE ALLOWED
+            "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'",
+        ]
+
+        for cmd in commands_with_logical_ops:
+            ctx = create_mock_context(cmd)
+            result = _not_in_pipe(ctx)
+            assert result == False, (
+                f"Command with pipe + logical operator should be ALLOWED: {cmd}\n"
+                f"_not_in_pipe() returned {result} (should be False for piped commands)"
+            )
+
+    def test_comprehensive_grep_pipe_scenarios(self):
+        """Comprehensive test of all grep pipe scenarios reported by users."""
+        grep_pipe_commands = [
+            # Basic pipes with grep
+            "git log | grep fix",
+            "ps aux | grep python",
+            "ls -la | grep .md",
+
+            # grep with multiple flags
+            "docker ps | grep -i container",
+            "find . | grep -v node_modules",
+            "cat file.txt | grep -E 'pattern.*match'",
+
+            # grep with context flags (-A, -B, -C)
+            "git log | grep -A 5 commit",
+            "cat error.log | grep -B 10 ERROR",
+            "ps aux | grep -C 3 python",
+            "gemini extensions list | grep -A 2 -B 2 clautorun",
+
+            # Multiple pipes with grep
+            "cat file.txt | grep error | grep -v warning",
+            "git log --oneline | grep fix | grep -i security",
+
+            # Pipes with grep + redirection
+            "cat file.txt | grep pattern > output.txt",
+            "git log | grep fix >> results.log",
+
+            # Pipes with grep + logical operators
+            "cat file.txt | grep pattern && echo found",
+            "git log | grep fix || echo 'no fixes'",
+            "ps aux | grep python && kill -9 $(pidof python) || echo 'not running'",
+        ]
+
+        for cmd in grep_pipe_commands:
+            ctx = create_mock_context(cmd)
+            result = _not_in_pipe(ctx)
+            assert result == False, (
+                f"Grep in pipe should be ALLOWED: {cmd}\n"
+                f"_not_in_pipe() returned {result}"
+            )
+
+    def test_comprehensive_head_tail_pipe_scenarios(self):
+        """Comprehensive test of all head/tail pipe scenarios."""
+        head_tail_pipe_commands = [
+            # head in pipes
+            "git log | head -10",
+            "ls -la | head -n 20",
+            "cat large_file.txt | head -100",
+            "uv run pytest --co -q | head -50",
+
+            # tail in pipes
+            "git log | tail -10",
+            "cat log.txt | tail -n 100",
+            "dmesg | tail -50",
+
+            # head/tail with other commands in pipe
+            "git diff | head -100 | grep TODO",
+            "cat file.txt | tail -50 | grep error",
+
+            # head/tail with logical operators
+            "git log | head -20 || echo 'empty'",
+            "cat file.txt | tail -10 && echo 'success'",
+
+            # Complex pipes with head/tail
+            "find . -name '*.py' | head -100 | grep test",
+            "git log --oneline | tail -50 | grep fix",
+        ]
+
+        for cmd in head_tail_pipe_commands:
+            ctx = create_mock_context(cmd)
+            result = _not_in_pipe(ctx)
+            assert result == False, (
+                f"head/tail in pipe should be ALLOWED: {cmd}\n"
+                f"_not_in_pipe() returned {result}"
+            )
+
+    def test_comprehensive_cat_pipe_scenarios(self):
+        """Comprehensive test of all cat pipe scenarios."""
+        cat_pipe_commands = [
+            # cat in pipes
+            "cat file.txt | grep pattern",
+            "cat *.log | grep error",
+            "cat file1.txt file2.txt | head -50",
+
+            # cat with flags in pipes
+            "cat -n file.txt | grep '10:'",
+            "cat -A file.txt | head -20",
+
+            # cat in complex pipes
+            "cat file.txt | grep error | wc -l",
+            "cat *.md | grep TODO | head -100",
+
+            # cat with logical operators
+            "cat file.txt | grep pattern || echo 'not found'",
+            "cat file.txt | head -10 && echo 'success'",
+        ]
+
+        for cmd in cat_pipe_commands:
+            ctx = create_mock_context(cmd)
+            result = _not_in_pipe(ctx)
+            assert result == False, (
+                f"cat in pipe should be ALLOWED: {cmd}\n"
+                f"_not_in_pipe() returned {result}"
+            )
+
 
 if __name__ == '__main__':
     import pytest
