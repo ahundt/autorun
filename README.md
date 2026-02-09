@@ -133,6 +133,78 @@ claude plugin marketplace list
 # Expected: "AutoFile policy: allow-all"
 ```
 
+### Dual CLI Support (Claude Code + Gemini CLI)
+
+**clautorun works identically in both Claude Code and Gemini CLI**, providing the same safety features, commands, and autonomous execution capabilities across both platforms.
+
+#### Gemini CLI Installation
+
+```bash
+# Navigate to clautorun repository
+cd /path/to/clautorun
+
+# Install extension in Gemini CLI
+gemini extensions install .
+
+# Verify installation
+gemini extensions list
+# Should show: clautorun-workspace@0.8.0
+#   - cr@0.8.0
+#   - pdf-extractor@0.8.0
+
+# Test in Gemini CLI
+gemini
+/cr:st
+# Expected: "AutoFile policy: allow-all"
+```
+
+#### Multi-Model Workflows
+
+Use clautorun's safety features across both CLIs:
+
+```bash
+# Claude Code creates implementation
+claude
+/cr:go "Implement user authentication system"
+
+# Gemini CLI reviews with vision capabilities
+gemini
+"Review the authentication code and analyze this architecture diagram"
+# Attach: architecture.png
+
+# Both sessions use clautorun safety:
+# - File policies enforce consistently
+# - Command blocking prevents dangerous operations
+# - Sessions are isolated (no state leakage)
+```
+
+#### Gemini-Specific Features
+
+**Vision + Safety**: Analyze images/diagrams with clautorun safety guards active:
+
+```bash
+gemini -i screenshot.png -c "Convert this UI mockup to React components"
+```
+
+Clautorun ensures generated code respects file policies (`/cr:f` for strict mode) and blocks dangerous operations.
+
+**Cross-Model Code Review**: Use Gemini to review Claude's work with safety features active:
+
+```bash
+# After Claude creates code
+gemini -c "Review src/auth.py for security issues and suggest improvements"
+# File policies and command blocking stay active during review
+```
+
+#### Installation Notes
+
+- **Single install command**: `clautorun --install` detects both CLIs and installs for whichever are present
+- **Same commands**: All `/cr:*` and `/pdf-extractor:*` commands work identically
+- **Isolated sessions**: Claude and Gemini sessions don't interfere with each other
+- **Shared safety**: File policies, command blocking, and hooks work the same in both CLIs
+
+For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
+
 ## What clautorun Does For You
 
 **Problem Statement**: Claude Code sessions can end unexpectedly during extended tasks, requiring manual intervention to continue work. AI creates numerous experimental files during development, leading to cluttered project directories. Network disconnections or application crashes terminate active sessions, losing all in-progress work.
