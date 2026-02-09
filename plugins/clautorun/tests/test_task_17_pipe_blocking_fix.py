@@ -262,6 +262,44 @@ class TestPipeBlockingFix:
                 f"_not_in_pipe() returned {result}"
             )
 
+    def test_command_detection_accuracy(self):
+        """Test that command_matches_pattern correctly identifies actual commands vs data.
+
+        This tests the command_detection.py module directly to ensure it uses
+        bashlex AST parsing and doesn't do naive substring matching.
+        """
+        from clautorun.command_detection import command_matches_pattern
+
+        # Should MATCH (actual grep commands)
+        actual_grep_commands = [
+            ("grep pattern file.txt", "grep", True),
+            ("sudo grep -r 'test' .", "grep", True),
+            ("grep 'error' log.txt", "grep", True),
+        ]
+
+        for cmd, pattern, expected in actual_grep_commands:
+            result = command_matches_pattern(cmd, pattern)
+            assert result == expected, (
+                f"Actual command should match: {cmd}\n"
+                f"Pattern: {pattern}\n"
+                f"Expected: {expected}, Got: {result}"
+            )
+
+        # Should NOT MATCH (grep in arguments/data/heredocs)
+        non_grep_commands = [
+            ("echo grep", "grep", False),  # grep is an argument to echo
+            ("python3 -c \"pattern = 'grep'\"", "grep", False),  # grep in Python string
+            ("cat << EOF\ngrep pattern\nEOF", "grep", False),  # grep in heredoc content
+        ]
+
+        for cmd, pattern, expected in non_grep_commands:
+            result = command_matches_pattern(cmd, pattern)
+            assert result == expected, (
+                f"Non-command occurrence should NOT match: {cmd}\n"
+                f"Pattern: {pattern}\n"
+                f"Expected: {expected}, Got: {result}"
+            )
+
 
 if __name__ == '__main__':
     import pytest
