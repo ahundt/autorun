@@ -300,6 +300,25 @@ def log_info(message):
 # Fixes Issue #29 (process-local _session_backends) and Issue #28 (filename extensions)
 from clautorun.session_manager import session_state
 
+# Import _not_in_pipe for pipe detection predicate
+try:
+    from clautorun.integrations import _not_in_pipe
+except ImportError as e:
+    # Import failed - define fallback and log diagnostic info
+    print("=" * 70, file=sys.stderr)
+    print("IMPORT ERROR: Failed to load command predicate", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+    print(f"Module: clautorun.integrations", file=sys.stderr)
+    print(f"Function: _not_in_pipe", file=sys.stderr)
+    print(f"Exception: {type(e).__name__}: {e}", file=sys.stderr)
+    print(f"\nIMPACT: Pipe detection will not work correctly", file=sys.stderr)
+    print(f"SYMPTOM: Commands like 'git log | grep fix' may be blocked", file=sys.stderr)
+    print(f"ACTION: Check clautorun installation and module paths", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+    # Define a fallback that always returns True (block everything)
+    def _not_in_pipe(ctx):
+        return True
+
 # =============================================================================
 # Command Blocking State Management
 # =============================================================================
@@ -812,12 +831,54 @@ def _stash_exists(command: str) -> bool:
         return True  # Fail-safe: block on error
 
 
+# Wrapper for _not_in_pipe to match predicate signature
+def _not_in_pipe_predicate(command: str) -> bool:
+    """Wrapper for _not_in_pipe that takes command string instead of context.
+
+    Returns True to BLOCK (not in pipe), False to ALLOW (in pipe).
+    """
+    try:
+        from unittest.mock import MagicMock
+        ctx = MagicMock()
+        ctx.tool_input = {'command': command}
+        return _not_in_pipe(ctx)
+    except Exception as e:
+        # Predicate evaluation failed - log details and fail-safe to BLOCK
+        print(f"ERROR: Predicate '_not_in_pipe' evaluation failed", file=sys.stderr)
+        print(f"  Command: {command[:100]}...", file=sys.stderr)
+        print(f"  Exception: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"  IMPACT: Command will be blocked (fail-safe behavior)", file=sys.stderr)
+        return True  # Fail-safe: block on error
+
+
 # Predicate lookup table
+# CRITICAL: _not_in_pipe MUST be in this table for pipe detection to work
 _PREDICATES = {
     "_has_unstaged_changes": _has_unstaged_changes,
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
     "_stash_exists": _stash_exists,
+    "_not_in_pipe": _not_in_pipe_predicate,  # Task #17: Allow grep/head/tail/cat in pipes
 }
+
+# Verify CONFIG references only defined predicates
+# This catches mismatches between CONFIG['default_integrations'] and _PREDICATES
+_undefined_predicates = set()
+for pattern, config in CONFIG.get("default_integrations", {}).items():
+    when_predicate = config.get("when")
+    if when_predicate and when_predicate not in _PREDICATES:
+        _undefined_predicates.add((pattern, when_predicate))
+
+if _undefined_predicates:
+    print("=" * 70, file=sys.stderr)
+    print("CONFIGURATION ERROR: Predicate Mismatch Detected", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+    print(f"Found {len(_undefined_predicates)} command pattern(s) referencing undefined predicates:", file=sys.stderr)
+    for pattern, predicate in sorted(_undefined_predicates):
+        print(f"  - Pattern '{pattern}' uses undefined predicate '{predicate}'", file=sys.stderr)
+    print(f"\nDefined predicates: {sorted(_PREDICATES.keys())}", file=sys.stderr)
+    print("\nIMPACT: Commands matching these patterns will be incorrectly blocked", file=sys.stderr)
+    print("ACTION: Add missing predicates to _PREDICATES lookup table in main.py", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
 
 
 def should_block_command(session_id: str, command: str) -> Optional[Dict]:

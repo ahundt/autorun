@@ -167,19 +167,74 @@ def main():
         # Step 4: Trigger auto-start
         print("  Starting fresh daemon...")
         try:
-            # Use same auto-start mechanism as client.py
-            plugin_root = Path(__file__).parent.parent
+            # Use absolute path to ensure sys.path works regardless of CWD
+            plugin_root = Path(__file__).resolve().parent.parent
             src_dir = plugin_root / "src"
-            daemon_code = f"import sys; sys.path.insert(0, '{src_dir}'); from clautorun.daemon import main; main()"
 
-            subprocess.Popen(
-                [sys.executable, "-c", daemon_code],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
+            # Verify source directory exists
+            if not src_dir.exists():
+                print(f"  ✗ ERROR: Source directory not found: {src_dir}")
+                return 1
+            if not src_dir.is_dir():
+                print(f"  ✗ ERROR: Source path is not a directory: {src_dir}")
+                return 1
+
+            print(f"  Source directory: {src_dir}")
+
+            # Explicitly clear __pycache__ to prevent stale bytecode loading
+            # Safety: Only delete __pycache__ dirs within src_dir (not system-wide)
+            # Rationale: Python may load old .pyc files if timestamps are ambiguous
+            import shutil
+            cleared_caches = 0
+            failed_clears = 0
+            if src_dir.exists() and src_dir.is_dir():
+                for pycache in src_dir.rglob("__pycache__"):
+                    # Safety check: only delete if it's actually a __pycache__ directory
+                    # and it's within our plugin source (not system Python)
+                    if pycache.name == "__pycache__" and pycache.is_dir():
+                        # Extra safety: verify it's within src_dir
+                        try:
+                            pycache.relative_to(src_dir)
+                        except ValueError:
+                            print(f"  ⚠️ Skipping __pycache__ outside src_dir: {pycache}")
+                            continue
+
+                        try:
+                            shutil.rmtree(pycache)
+                            cleared_caches += 1
+                        except (OSError, PermissionError) as e:
+                            # Non-fatal: log but continue
+                            print(f"  ⚠️ Could not clear {pycache}: {e}")
+                            failed_clears += 1
+
+            if cleared_caches:
+                print(f"  Cleared {cleared_caches} __pycache__ directories")
+            if failed_clears:
+                print(f"  ⚠️ Failed to clear {failed_clears} __pycache__ directories")
+            if not cleared_caches and not failed_clears:
+                print(f"  No __pycache__ directories to clear")
+
+            daemon_code = (
+                f"import sys; sys.path.insert(0, r'{src_dir}'); "
+                f"import clautorun; print(f'Loaded clautorun from: {{clautorun.__file__}}', flush=True); "
+                f"from clautorun.daemon import main; "
+                f"print('Starting daemon server...', flush=True); main()"
             )
+
+            # Redirect stdout/stderr to a log file for debug visibility
+            log_path = HOME_DIR / "daemon_startup.log"
+            with open(log_path, "w") as startup_log:
+                subprocess.Popen(
+                    [sys.executable, "-c", daemon_code],
+                    stdout=startup_log,
+                    stderr=startup_log,
+                    start_new_session=True
+                )
+            print(f"  Daemon output: {log_path}")
         except Exception as e:
-            print(f"  ⚠️ Failed to start daemon: {e}")
+            print(f"  ✗ ERROR: Failed to start daemon: {e}")
+            import traceback
+            traceback.print_exc()
             return 1
 
         time.sleep(0.5)  # Let daemon initialize
