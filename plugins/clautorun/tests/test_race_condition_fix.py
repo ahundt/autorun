@@ -48,6 +48,7 @@ from clautorun.session_manager import SessionLock, SessionTimeoutError
 
 class TestSession:
     """Represents a synthetic test session with isolated state."""
+    __test__ = False  # Not a pytest test class
 
     def __init__(self, session_id: str, test_state_dir: Path, test_plans_dir: Path):
         self.session_id = session_id
