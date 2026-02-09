@@ -69,6 +69,15 @@ where = ["src"]
 [tool.setuptools.package-dir]
 "" = "src"
 
+[tool.setuptools.package-data]
+clautorun = [
+    "../../.claude-plugin/**/*",
+    "../../commands/**/*",
+    "../../agents/**/*",
+    "../../skills/**/*",
+    "../../hooks/**/*",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py38"

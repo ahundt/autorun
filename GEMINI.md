@@ -4,11 +4,11 @@
 
 ## Installation
 
-### From GitHub (Production)
+### From GitHub (Production - Recommended)
 
 ```bash
-uv pip install git+https://github.com/ahundt/clautorun.git
-uv tool run clautorun --install --gemini
+# Install directly via Gemini extension system
+gemini extensions install https://github.com/ahundt/clautorun.git
 
 # Verify
 gemini extensions list  # Should show: clautorun-workspace@0.8.0
@@ -18,7 +18,11 @@ gemini extensions list  # Should show: clautorun-workspace@0.8.0
 
 ```bash
 git clone https://github.com/ahundt/clautorun.git && cd clautorun
-uv pip install .
+
+# Install for Gemini CLI
+python3 -m plugins.clautorun.src.clautorun.install --install --gemini-only
+
+# Or install for all CLIs
 python3 -m plugins.clautorun.src.clautorun.install --install --force
 
 # Restart Gemini daemon (required to pick up changes)
