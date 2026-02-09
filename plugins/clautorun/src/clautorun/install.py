@@ -232,6 +232,60 @@ def _check_uv_env(plugin_dir: Path) -> CmdResult:
     return CmdResult(True, "UV environment OK")
 
 
+def detect_available_clis() -> dict[str, bool]:
+    """Detect which AI CLIs are available on the system.
+
+    Returns:
+        Dict mapping CLI name to availability: {"claude": bool, "gemini": bool}
+    """
+    return {
+        "claude": shutil.which("claude") is not None,
+        "gemini": shutil.which("gemini") is not None,
+    }
+
+
+def determine_target_clis(
+    claude_only: bool,
+    gemini_only: bool,
+    available: dict[str, bool]
+) -> list[str]:
+    """Determine which CLIs to install for based on flags and availability.
+
+    Args:
+        claude_only: If True, include Claude Code in install targets
+        gemini_only: If True, include Gemini CLI in install targets
+        available: Dict of CLI availability from detect_available_clis()
+
+    Returns:
+        List of CLI names to install for (e.g., ["claude", "gemini"])
+
+    Logic:
+        - If both flags False (default): install for all available CLIs
+        - If both flags True: install for both CLIs (if available)
+        - If only claude_only: install only for Claude
+        - If only gemini_only: install only for Gemini
+    """
+    # If both flags are set, install for both
+    if claude_only and gemini_only:
+        targets = []
+        if available["claude"]:
+            targets.append("claude")
+        if available["gemini"]:
+            targets.append("gemini")
+        return targets
+
+    # If only claude flag is set
+    if claude_only:
+        return ["claude"] if available["claude"] else []
+
+    # If only gemini flag is set
+    if gemini_only:
+        return ["gemini"] if available["gemini"] else []
+
+    # Default: install for all available CLIs
+    return [cli for cli, avail in available.items() if avail]
+
+
 # =============================================================================
 # Install Operations
 # =============================================================================
@@ -378,6 +432,106 @@ def _substitute_paths(plugin_dir: Path) -> None:
             logger.warning(f"Failed to substitute paths in {rel_path}: {e}")
 
 
+def _install_for_gemini(
+    marketplace_root: Path,
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Install workspace for Gemini CLI.
+
+    Note: Gemini uses workspace-level installation (single command installs all plugins).
+
+    Args:
+        marketplace_root: Path to marketplace root directory
+        force: Force reinstall even if same version
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    if not shutil.which("gemini"):
+        msg = "gemini CLI not found. Install from: npm install -g @google-labs/gemini-cli"
+        print(msg)
+        return (False, msg)
+
+    gemini_dir = Path.home() / ".gemini"
+    if not gemini_dir.exists():
+        print("~/.gemini/ directory not found. Run 'gemini' once to initialize.")
+        return (False, "~/.gemini/ not found")
+
+    print()
+    print("Installing clautorun workspace for Gemini CLI...")
+
+    if force:
+        print("Force mode: uninstalling existing workspace...")
+        run_cmd(["gemini", "extensions", "uninstall", "clautorun-workspace"])
+
+    result = run_cmd(["gemini", "extensions", "install", str(marketplace_root)])
+
+    if result.ok or result.has_text("already installed"):
+        print("   Workspace installed: clautorun-workspace@0.8.0")
+        print("   Includes plugins: cr, pdf-extractor")
+        return (True, "success")
+    else:
+        print(f"   Installation failed: {result.output}")
+        return (False, result.output)
+
+
+def _install_conductor(force: bool = False) -> tuple[bool, str]:
+    """Install Conductor extension for Gemini CLI (plan mode).
+
+    Conductor provides Context → Spec → Plan → Implement workflow.
+    GitHub: https://github.com/gemini-cli-extensions/conductor
+
+    Args:
+        force: Force reinstall even if already installed
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    if not shutil.which("gemini"):
+        return (False, "gemini CLI not available")
+
+    print()
+    print("Installing Conductor extension for Gemini CLI...")
+
+    if force:
+        print("Force mode: uninstalling existing Conductor...")
+        run_cmd(["gemini", "extensions", "uninstall", "conductor"])
+
+    result = run_cmd([
+        "gemini", "extensions", "install",
+        "https://github.com/gemini-cli-extensions/conductor",
+        "--auto-update"
+    ])
+
+    if result.ok or result.has_text("already installed"):
+        print("   Conductor extension installed")
+        print("   Commands: /conductor:setup, /conductor:newTrack, /conductor:implement")
+        return (True, "success")
+    else:
+        print(f"   Conductor installation failed: {result.output}")
+        return (False, result.output)
+
+
+def _verify_gemini_installation() -> bool:
+    """Verify Gemini workspace installation.
+
+    Returns:
+        True if clautorun-workspace is installed
+    """
+    result = run_cmd(["gemini", "extensions", "list"])
+    return result.ok and "clautorun-workspace" in result.output
+
+
+def _verify_conductor_installation() -> bool:
+    """Verify Conductor extension installation.
+
+    Returns:
+        True if conductor is installed
+    """
+    result = run_cmd(["gemini", "extensions", "list"])
+    return result.ok and "conductor" in result.output
+
+
 # =============================================================================
 # Main Function - Installation
 # =============================================================================
@@ -388,25 +542,33 @@ def install_plugins(
     *,
     tool: bool = False,
     force: bool = False,
+    claude_only: bool = False,
+    gemini_only: bool = False,
+    conductor: bool = True,
 ) -> int:
-    """Install and enable Claude Code plugins with complete dependency bootstrap.
+    """Install and enable plugins for Claude Code and/or Gemini CLI.
 
     Args:
         selection: "all" or comma-separated plugin names (e.g., "clautorun,pdf-extractor")
         tool: Also run `uv tool install` for global CLI availability
         force: Force reinstall even if already installed (for dev with same version)
+        claude_only: Install only for Claude Code (default: False)
+        gemini_only: Install only for Gemini CLI (default: False)
+        conductor: Install Conductor extension for Gemini (default: True)
 
     Returns:
         Exit code: 0 = success, 1 = failure
 
-    Edge cases handled:
-        - Invalid plugin names -> error message, skip
-        - Empty selection -> treated as "all"
-        - Duplicate plugins -> deduplicated
-        - Missing claude CLI -> early exit with guidance
-        - Partial failures -> continues with remaining, reports count
-        - Missing UV -> warning only (can still install via marketplace)
-        - Cache fallback -> when marketplace install fails
+    Behavior:
+        - Default (no CLI flags): Installs for all available CLIs with maximum capability
+        - --claude: Installs only for Claude Code (error if not available)
+        - --gemini: Installs only for Gemini CLI (error if not available)
+        - --claude --gemini: Installs for both CLIs
+        - --no-conductor: Skip Conductor (reduce scope to workspace only)
+        - Continues even if one CLI fails (reports status for each)
+
+    Note:
+        Commands and skills work natively via extension manifest.
     """
     # Python version check
     if sys.version_info < (3, 10):
@@ -420,17 +582,24 @@ def install_plugins(
         print("No valid plugins specified")
         return 1
 
-    # Verify claude CLI is available
-    if not shutil.which("claude"):
-        print("claude CLI not found. Install Claude Code first:")
-        print("   https://docs.anthropic.com/claude/docs/claude-code")
+    # Detect available CLIs
+    available = detect_available_clis()
+
+    try:
+        target_clis = determine_target_clis(claude_only, gemini_only, available)
+    except ValueError as e:
+        print(f"Error: {e}")
         return 1
 
-    # Verify ~/.claude/ directory exists
-    claude_dir = Path.home() / ".claude"
-    if not claude_dir.exists():
-        print("~/.claude/ directory not found. Claude Code may not be initialized.")
-        print("Run 'claude' once to initialize, then retry.")
+    if not target_clis:
+        print("No target CLIs available or specified.")
+        print(f"Available CLIs: {', '.join([k for k, v in available.items() if v]) or 'none'}")
+        if claude_only and not available["claude"]:
+            print("   Claude Code not found. Install from:")
+            print("   https://docs.anthropic.com/claude/docs/claude-code")
+        if gemini_only and not available["gemini"]:
+            print("   Gemini CLI not found. Install from:")
+            print("   npm install -g @google-labs/gemini-cli")
         return 1
 
     # Ensure marketplace is added
@@ -448,6 +617,7 @@ def install_plugins(
 
     print(f"clautorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")
+    print(f"Target CLIs: {', '.join(target_clis)}")
     print()
 
     # UV environment check (warning only, not blocker)
@@ -480,67 +650,88 @@ def install_plugins(
             logger.warning(f"PDF deps: {pdf_result.output}")
             print(f"⚠️  PDF deps: {pdf_result.output}")
 
-    print()
-    print("Adding clautorun marketplace...")
-    result = run_cmd(["claude", "plugin", "marketplace", "add", str(marketplace_root)])
-    if result.ok:
-        print("   Added clautorun marketplace")
-    elif result.has_text("already"):
-        print("   clautorun marketplace already exists")
-    else:
-        print(f"   Marketplace add: {result.output}")
+    # Track overall success
+    all_succeeded = True
+    claude_succeeded: list[str] = []
+    claude_failed: list[str] = []
+    claude_success = False
+    gemini_success = False
 
-    # Uninstall first if force flag (for same-version reinstall)
-    if force:
+    # Install for Claude Code
+    if "claude" in target_clis:
         print()
-        print("Force mode: uninstalling existing plugins...")
-        for name in plugins:
-            run_cmd(["claude", "plugin", "uninstall", f"{name}@{MARKETPLACE}"])
-
-    # Install + enable each plugin
-    print()
-    print(f"Installing {len(plugins)} plugin(s):")
-    succeeded: list[str] = []
-    failed: list[str] = []
-
-    for name in plugins:
-        print(f"   {name}...", end=" ", flush=True)
-
-        # Try update first (faster, preserves settings)
-        upd = run_cmd(["claude", "plugin", "update", f"{name}@{MARKETPLACE}"])
-        if upd.ok:
-            # Enable after update (update doesn't guarantee enabled state)
-            enable_result = run_cmd(["claude", "plugin", "enable", f"{name}@{MARKETPLACE}"])
-            if enable_result.ok or enable_result.has_text("already"):
-                print("updated")
-                succeeded.append(name)
-                continue
-            else:
-                print(f"enable after update failed: {enable_result.output}")
-                failed.append(name)
-                continue
-
-        # Fall back to fresh install
-        result = run_cmd(["claude", "plugin", "install", f"{name}@{MARKETPLACE}"])
-        if not result.ok and not result.has_text("already"):
-            # Marketplace install failed — try cache fallback
-            print("marketplace failed, trying cache...", end=" ", flush=True)
-            if _install_to_cache(name):
-                print("ok (cache)")
-                succeeded.append(name)
-            else:
-                print("cache failed")
-                failed.append(name)
-            continue
-
-        # Enable (critical: without this, hooks don't run)
-        result = run_cmd(["claude", "plugin", "enable", f"{name}@{MARKETPLACE}"])
-        if result.ok or result.has_text("already"):
-            print("ok")
-            succeeded.append(name)
+        print("Adding clautorun marketplace for Claude Code...")
+        result = run_cmd(["claude", "plugin", "marketplace", "add", str(marketplace_root)])
+        if result.ok:
+            print("   Added clautorun marketplace")
+        elif result.has_text("already"):
+            print("   clautorun marketplace already exists")
         else:
-            print(f"enable failed: {result.output}")
-            failed.append(name)
+            print(f"   Marketplace add: {result.output}")
+
+        # Uninstall first if force flag (for same-version reinstall)
+        if force:
+            print()
+            print("Force mode: uninstalling existing plugins...")
+            for name in plugins:
+                run_cmd(["claude", "plugin", "uninstall", f"{name}@{MARKETPLACE}"])
+
+        # Install + enable each plugin
+        print()
+        print(f"Installing {len(plugins)} plugin(s) for Claude Code:")
+
+        for name in plugins:
+            print(f"   {name}...", end=" ", flush=True)
+
+            # Try update first (faster, preserves settings)
+            upd = run_cmd(["claude", "plugin", "update", f"{name}@{MARKETPLACE}"])
+            if upd.ok:
+                # Enable after update (update doesn't guarantee enabled state)
+                enable_result = run_cmd(["claude", "plugin", "enable", f"{name}@{MARKETPLACE}"])
+                if enable_result.ok or enable_result.has_text("already"):
+                    print("updated")
+                    claude_succeeded.append(name)
+                    continue
+                else:
+                    print(f"enable after update failed: {enable_result.output}")
+                    claude_failed.append(name)
+                    continue
+
+            # Fall back to fresh install
+            result = run_cmd(["claude", "plugin", "install", f"{name}@{MARKETPLACE}"])
+            if not result.ok and not result.has_text("already"):
+                # Marketplace install failed — try cache fallback
+                print("marketplace failed, trying cache...", end=" ", flush=True)
+                if _install_to_cache(name):
+                    print("ok (cache)")
+                    claude_succeeded.append(name)
+                else:
+                    print("cache failed")
+                    claude_failed.append(name)
+                continue
+
+            # Enable (critical: without this, hooks don't run)
+            result = run_cmd(["claude", "plugin", "enable", f"{name}@{MARKETPLACE}"])
+            if result.ok or result.has_text("already"):
+                print("ok")
+                claude_succeeded.append(name)
+            else:
+                print(f"enable failed: {result.output}")
+                claude_failed.append(name)
+
+        claude_success = len(claude_succeeded) == len(plugins)
+        all_succeeded = all_succeeded and claude_success
+
+    # Install for Gemini CLI
+    if "gemini" in target_clis:
+        gemini_success, gemini_msg = _install_for_gemini(marketplace_root, force)
+        all_succeeded = all_succeeded and gemini_success
+
+        # Install Conductor if requested and Gemini install succeeded
+        if conductor and gemini_success:
+            conductor_success, conductor_msg = _install_conductor(force)
+            # Note: Conductor failure doesn't affect overall success
+            # (it's an optional enhancement)
 
     # Optional: uv tool install for global CLI
     if tool:
@@ -555,22 +746,37 @@ def install_plugins(
     # Summary
     print()
     print("=" * 60)
-    if len(succeeded) == len(plugins):
-        print(f"Successfully installed all {len(succeeded)} plugins!")
-    else:
-        print(f"Installed {len(succeeded)}/{len(plugins)} plugins")
 
-    if failed:
-        print(f"Failed plugins: {', '.join(failed)}")
+    if "claude" in target_clis:
+        if claude_success:
+            print(f"✓ Claude Code: Installed {len(claude_succeeded)}/{len(plugins)} plugins")
+        else:
+            print(f"✗ Claude Code: Installed {len(claude_succeeded)}/{len(plugins)} plugins")
+            if claude_failed:
+                print(f"  Failed: {', '.join(claude_failed)}")
+
+    if "gemini" in target_clis:
+        if gemini_success:
+            print(f"✓ Gemini CLI: Workspace installed (clautorun-workspace@0.8.0)")
+            if conductor:
+                conductor_ok = _verify_conductor_installation()
+                if conductor_ok:
+                    print(f"✓ Gemini CLI: Conductor extension installed")
+                else:
+                    print(f"⚠️  Gemini CLI: Conductor installation failed (optional)")
+        else:
+            print(f"✗ Gemini CLI: Installation failed")
 
     print()
     print("Available commands:")
     print("  /cr:*             - clautorun commands (autorun, file policies, plan export, tmux)")
     print("  /pdf-extractor:*  - PDF extraction commands")
+    if "gemini" in target_clis and conductor:
+        print("  /conductor:*      - Conductor plan mode (Gemini only)")
     print()
     print("Run '/help' to see all available commands.")
 
-    return 0 if len(succeeded) == len(plugins) else 1
+    return 0 if all_succeeded else 1
 
 
 # =============================================================================
@@ -692,6 +898,32 @@ def show_status() -> int:
             print(f"\n  venv: {venv_path}")
         else:
             print("\n  venv: not found")
+
+    # Check Gemini CLI
+    print()
+    print("-" * 60)
+    print("Gemini CLI:")
+
+    gemini_ok = shutil.which("gemini") is not None
+    if gemini_ok:
+        print("  gemini CLI: found")
+
+        result = run_cmd(["gemini", "extensions", "list"])
+        if result.ok:
+            workspace = "clautorun-workspace" in result.output
+            print(f"  clautorun-workspace: {'✓ installed' if workspace else '✗ not installed'}")
+
+            conductor = "conductor" in result.output
+            print(f"  conductor: {'✓ installed' if conductor else '✗ not installed (optional)'}")
+
+            # Note: Commands and skills work natively via extension manifest
+            # No need to check for aix-translated TOML files
+        else:
+            print(f"  extensions list failed: {result.output}")
+            all_ok = False
+    else:
+        print("  gemini CLI: not found")
+        print("  Install: npm install -g @google-labs/gemini-cli")
 
     return 0 if all_ok else 1
 
