@@ -1,0 +1,1294 @@
+---
+name: FixStubbornBugsFastByParallelizing
+description: Fix stubborn configuration and integration bugs fast by testing 8-10 different solution approaches in parallel. Build minimal test harness, systematically evaluate all approaches simultaneously, identify what works and why. Best for framework/library bugs with unclear root cause where serial debugging would take hours. Includes concrete examples, gotchas, checklists, and anti-patterns.
+---
+
+# Debugging Methodology: Parallel Solution Testing
+
+**When a complex bug has an unclear root cause, systematically testing 8-10 different solution approaches in parallel is often faster and more thorough than serial trial-and-error.**
+
+---
+
+## Summary
+
+**Parallel solution testing is a systematic methodology for complex bugs:**
+
+1. **Identify** 8-10 orthogonally different approaches
+2. **Build** minimal test harness showing all approaches simultaneously
+3. **Test** all approaches in one run
+4. **Analyze** why winner works and losers fail
+5. **Apply** fix to production with deep understanding
+6. **Debug** any context differences between test and production
+
+**Best for:** Configuration/integration bugs in complex subsystems where root cause is ambiguous.
+
+**Time investment:** 1-2 hours to build test harness, but saves hours/days of serial trial-and-error.
+
+**Key success factors:** Platform compatibility, realistic test data, comprehensive logging, matching production context.
+
+**Related methodologies:** Binary Search Debugging (bisecting commits), Fuzzing (input space exploration), Property-Based Testing (behavior space), A/B Testing (production comparison), Ablation Testing (component removal). This methodology is specifically optimized for **configuration/integration debugging**.
+
+---
+
+## Table of Contents
+
+1. [When to Use This Methodology](#when-to-use-this-methodology)
+2. [The 8-Step Process](#the-8-step-process)
+3. [Concrete Example: UI Scrolling Bug](#concrete-example-ui-scrolling-bug)
+4. [Common Gotchas](#common-gotchas)
+5. [Benefits and Trade-offs](#benefits-and-trade-offs)
+6. [Anti-Patterns to Avoid](#anti-patterns-to-avoid)
+7. [Checklist for Success](#checklist-for-success)
+
+---
+
+## When to Use This Methodology
+
+### ✅ **Good Fit:**
+
+- **Subsystem integration bugs** - The issue is in how components are configured/wired together, not in business logic
+- **Framework/library configuration** - Documentation suggests multiple possible approaches
+- **Ambiguous root cause** - Could be any of several different issues
+- **Slow iteration in main codebase** - Long build times or complex setup make trial-and-error painful
+- **Reproducible behavior** - The bug can be isolated from business logic
+
+### ❌ **Poor Fit:**
+
+- **Obvious bugs** - Typos, logic errors, off-by-one errors with clear fixes
+- **Simple issues** - Only 1-2 possible solutions exist
+- **Good error messages** - The framework already points to the fix
+- **Time-critical hotfixes** - Need a quick workaround, not deep understanding
+- **Cannot isolate** - Minimal reproduction would be too complex to build
+
+---
+
+## The 8-Step Process
+
+### 📖 Step 1: Read and Understand the Buggy Code
+
+**Objective:** Build a clear mental model of what's happening vs what should happen.
+
+**Investigation Process:**
+
+**1. Locate the Subsystem**
+
+Find the code where the bug manifests:
+- Search for error messages or symptoms in codebase
+- Use debugger to identify where behavior diverges
+- Ask: "What file/function/module is responsible for this behavior?"
+
+**2. Extract Current Configuration**
+
+Document how the component is currently set up:
+```markdown
+## Current Configuration
+
+Component: [NAME]
+Location: [FILE:LINE]
+
+Initialization:
+[code snippet showing how it's created]
+
+Configuration:
+- Parameter A: [value]
+- Parameter B: [value]
+- Method used: [constructor/factory/builder/etc]
+
+Dependencies:
+- Requires: [what must exist before this]
+- Calls: [what this calls/uses]
+```
+
+**3. Document Expected vs Actual Behavior**
+
+Be **precise** - vague descriptions lead to wrong solutions:
+
+**❌ Vague:**
+```
+Expected: Should work correctly
+Actual: Doesn't work
+```
+
+**✅ Precise:**
+```
+Expected: Horizontal scrollbar should appear when content width exceeds viewport
+          User should be able to scroll to see truncated text
+          Example: 1500px content in 600px viewport → scrollbar appears
+
+Actual: No scrollbar appears
+        Text truncates with "..." at viewport edge
+        Content width calculated as 800px but only 600px visible
+        Scrolling horizontally has no effect
+```
+
+**4. List Configurable Parameters**
+
+Enumerate all ways this component can be configured:
+
+| Parameter | Current Value | Type | Default | Other Options |
+|-----------|--------------|------|---------|---------------|
+| `width` | `auto` | enum | `auto` | `fixed(N)`, `percent(N)` |
+| `scroll_x` | `true` | bool | `false` | `true`, `false` |
+| `clip` | `false` | bool | `true` | `true`, `false` |
+| `method` | `new()` | - | - | `create()`, `builder()` |
+
+**5. Review Framework Documentation**
+
+Find relevant documentation:
+- Official API docs for this component
+- Examples and tutorials
+- GitHub issues or forums discussing this component
+- Version-specific release notes or migration guides
+
+**Note what you find:**
+```markdown
+## Documentation Notes
+
+API Methods:
+- `Component::new()` - basic constructor
+- `Component::create()` - factory method (when to use?)
+- `Component::builder()` - builder pattern (more flexible?)
+
+Configuration options:
+- `scroll_mode` - mentioned but not in current code
+- `auto_resize` - might be relevant?
+
+Known issues:
+- Issue #1234: Scrolling doesn't work with auto-sizing
+- Workaround mentioned: Use fixed size
+```
+
+**6. Create a Reference Document**
+
+Consolidate your findings:
+```markdown
+# Bug Investigation: [SHORT_DESCRIPTION]
+
+## Problem Statement
+[What's broken, precisely]
+
+## Current Code
+Location: src/ui/table.rs:245-280
+```[code snippet]```
+
+## Expected Behavior
+- [bullet point]
+- [bullet point]
+
+## Actual Behavior
+- [bullet point]
+- [bullet point]
+
+## Configuration
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| ... | ... | ... |
+
+## Framework Info
+Component: egui::ScrollArea v0.33
+Relevant docs: [links]
+Known issues: [links]
+
+## Hypotheses
+Based on investigation:
+1. [hypothesis 1]
+2. [hypothesis 2]
+3. [hypothesis 3]
+```
+
+**Output:**
+- Clear understanding of what's broken and how it should work
+- Documentation of current configuration
+- List of all configurable parameters
+- Reference to relevant framework documentation
+- Initial hypotheses about root cause
+
+---
+
+### 🔍 Step 2: Research Alternative Approaches
+
+**Objective:** Identify 8-10 orthogonally different configuration approaches.
+
+**Why Orthogonal?** Testing 10 variations of the same parameter (width=100, 200, 300...) wastes time. You want 10 **fundamentally different** approaches that test different hypotheses about what's wrong.
+
+**Research Sources:**
+
+1. **Framework Documentation**
+   - Official API reference for the component
+   - Tutorial/guide examples showing different usage patterns
+   - Migration guides (old vs new API approaches)
+   - Advanced/cookbook sections
+
+2. **Community Knowledge**
+   - GitHub issues with similar symptoms
+   - Stack Overflow questions about the component
+   - Framework Discord/Slack/forums
+   - Blog posts and tutorials
+
+3. **Framework Source Code**
+   - Read the implementation of the buggy component
+   - Look for alternative code paths, flags, or modes
+   - Check for deprecated-but-still-working old APIs
+
+**Brainstorming Orthogonal Approaches:**
+
+Use these categories to generate different approaches:
+
+| Category | What to Vary | Example Hypotheses |
+|----------|-------------|-------------------|
+| **API Method** | Constructor vs factory vs builder | Different initialization paths may have different defaults |
+| **Initialization Order** | Before vs after dependencies | Timing dependency may exist |
+| **Explicit vs Implicit** | Auto-calculate vs manually specify | Framework auto-detection may be wrong |
+| **Delegation** | Parent handles vs child handles | Responsibility may be in wrong place |
+| **Data Structure** | Mutable vs immutable, shared vs copied | Ownership/mutation may cause issue |
+| **Synchronous vs Async** | Blocking vs non-blocking | Race condition may exist |
+| **Configuration Location** | Inline vs external config | Config loading order may matter |
+| **Nested vs Flat** | Deep hierarchy vs flat structure | Framework may handle nesting poorly |
+| **Direct vs Indirect** | Call method directly vs through proxy | Wrapping/delegation may break behavior |
+| **Pattern Change** | Pull vs push, observer vs polling | Architectural mismatch with framework |
+
+**Approach Template:**
+
+For each approach, write:
+```
+Approach N: [DESCRIPTIVE_NAME]
+- What varies: [specific parameter/method/pattern being changed]
+- Hypothesis: [why this might fix the issue]
+- Alternative to: [which other approach this replaces]
+```
+
+**Example Categorization:**
+```
+Approach 1: BASELINE
+- What varies: Nothing (current broken code)
+- Hypothesis: Expected to fail, establishes baseline
+- Alternative to: N/A
+
+Approach 2: USE_FACTORY_METHOD
+- What varies: Use Factory.create() instead of new Constructor()
+- Hypothesis: Constructor may skip important registration step
+- Alternative to: Approach 1 (direct construction)
+
+Approach 3: EXPLICIT_SIZE_PARAMETER
+- What varies: Specify size=1000 explicitly instead of auto
+- Hypothesis: Auto-calculation may be incorrect
+- Alternative to: Approach 1 (implicit auto)
+
+Approach 4: INITIALIZE_BEFORE_CONFIGURE
+- What varies: Call initialize() before setting properties
+- Hypothesis: Configuration may require initialized state
+- Alternative to: Approach 1 (configure then initialize)
+
+Approach 5: PARENT_HANDLES_LAYOUT
+- What varies: Parent container controls layout instead of child
+- Hypothesis: Child may not have enough context
+- Alternative to: Approach 1 (child self-layout)
+
+Approach 6: IMMUTABLE_CONFIG
+- What varies: Create new instance on config change vs mutate
+- Hypothesis: Mutation may not trigger update
+- Alternative to: Approach 1 (mutable updates)
+
+Approach 7: ASYNC_INITIALIZATION
+- What varies: Initialize asynchronously with callback
+- Hypothesis: Synchronous init may race with other setup
+- Alternative to: Approach 1 (synchronous)
+
+Approach 8: EXTERNAL_CONFIG_FILE
+- What varies: Load config from file vs inline
+- Hypothesis: Config parsing may differ
+- Alternative to: Approach 1 (inline config)
+
+Approach 9: FLAT_STRUCTURE
+- What varies: Single-level structure vs nested
+- Hypothesis: Framework may have nesting bugs
+- Alternative to: Approach 1 (nested structure)
+
+Approach 10: ALTERNATIVE_COMPONENT
+- What varies: Use AlternativeWidget instead of Widget
+- Hypothesis: Current component may have known issues
+- Alternative to: Approach 1 (original component)
+```
+
+**Quality Check:**
+
+Your list is good if:
+- ✅ Each approach tests a different hypothesis
+- ✅ Approaches cover different categories (API, order, structure, etc.)
+- ✅ You can explain WHY each might work
+- ✅ Approaches are truly independent (not just parameter variations)
+- ✅ You have 8-10 approaches total (including baseline)
+
+**Output:** List of 8-10 distinct approaches with clear hypotheses for each.
+
+---
+
+### 🛠️ Step 3: Build a Minimal Test Harness
+
+**Objective:** Create standalone code that can demonstrate all approaches simultaneously.
+
+**Why Standalone?** You need fast iteration without waiting for your full app to build/start. A minimal test harness should build in <30 seconds and show results immediately.
+
+**Critical Requirements:**
+
+| Requirement | Why Important | How to Achieve |
+|------------|---------------|----------------|
+| **Same framework version** | Different versions may behave differently | Copy exact version from production package.json/requirements.txt/Cargo.toml |
+| **Same data structures** | Data shape affects behavior | Use representative sample data with same types, sizes, nesting |
+| **Same execution context** | Context affects initialization | Match threading model, UI hierarchy, globals, environment |
+| **Minimal dependencies** | Fast builds, easier to understand | Strip away business logic, database, networking - keep only bug-related code |
+| **Fast build time** | Quick iteration | <30 seconds build time, or use interpreter mode |
+| **All solutions visible** | Easy comparison | Tabs, split view, or console output |
+
+**Building the Harness: Step-by-Step**
+
+**1. Create New Project/Directory**
+```bash
+# Create isolated test project
+mkdir bug-test-harness
+cd bug-test-harness
+# Initialize with same framework version as production
+```
+
+**2. Copy Framework Dependencies**
+
+Copy the exact versions from your production environment:
+- JavaScript/TypeScript: Copy `package.json` dependencies, run `npm install`
+- Python: Copy `requirements.txt` or `pyproject.toml`, run `pip install`
+- Rust: Copy `Cargo.toml` dependencies, run `cargo build`
+- Java: Copy `pom.xml` or `build.gradle` dependencies
+
+**3. Extract Minimal Reproduction**
+
+Identify and copy ONLY the code needed to demonstrate the bug:
+```
+✅ Copy: Component initialization code
+✅ Copy: Configuration setup
+✅ Copy: Data structures used by buggy component
+✅ Copy: Minimal UI/framework setup
+❌ Skip: Business logic
+❌ Skip: Database/API calls
+❌ Skip: Authentication, validation, etc.
+```
+
+**4. Create Representative Test Data**
+
+Generate data that matches production characteristics:
+- Same data types and structure
+- Representative size (if production has 500 items, use 50-100 in test)
+- Include edge cases (empty, null, very long, special characters)
+
+Example:
+```python
+# Production has list of user objects with name, email, address
+# Test harness should use similar data:
+TEST_DATA = [
+    {"name": "Test User 1", "email": "test1@example.com", "address": "123 Main St"},
+    {"name": "Very Long Name That Might Cause Layout Issues", "email": "long@example.com", "address": "456 Elm St"},
+    # ... 48 more items
+]
+```
+
+**5. Design the Test Presentation**
+
+**Decision: How to Show All Solutions?**
+
+Consider platform constraints:
+
+| Approach | Pros | Cons | When to Use |
+|----------|------|------|------------|
+| **Tabbed UI** | Single window, easy switching, all platforms | One at a time view | **Recommended default** - most compatible |
+| **Split view** | See 2-4 at once, direct comparison | Limited to small number, cluttered | When comparing just 2-3 solutions |
+| **Separate windows** | All visible simultaneously | Platform may restrict (macOS event loop limit) | Only if platform supports it |
+| **Console output** | No UI needed, works everywhere | No visual comparison for UI bugs | For non-UI bugs |
+| **Separate executables** | Guaranteed isolation | Harder to manage, build overhead | When testing affects global state |
+
+**Recommended:** Start with **tabbed UI** - it's the most compatible and easiest to implement.
+
+**6. Implement the Harness Structure**
+
+Basic structure for tabbed UI approach:
+```
+main.py/index.js/main.rs:
+├── setup_framework()           # Initialize framework
+├── load_test_data()            # Load representative data
+├── create_tab_container()      # Create tab UI
+├── for each test 1-10:
+│   ├── create_tab(test_number, description)
+│   └── render_test_N(tab, test_data)
+└── run_application()           # Start event loop
+```
+
+**7. Verify the Harness**
+
+Before implementing all 10 tests, verify the baseline works:
+```
+[ ] Harness builds in <30 seconds
+[ ] Baseline test (Test 1) reproduces the bug
+[ ] Test data is representative of production
+[ ] Can easily switch between tabs/views
+[ ] Framework version matches production
+```
+
+**Platform-Specific Gotchas:**
+
+| Platform | Constraint | Workaround |
+|----------|-----------|------------|
+| macOS (some frameworks) | Only one event loop per process | Use tabbed UI, not separate windows |
+| Web browsers | CORS restrictions | Use local dev server with proxy |
+| Mobile | Harder to show multiple views | Use sequential screen approach with navigation |
+
+**Example Harness Skeleton:**
+
+```python
+# Python + GUI framework example
+import framework
+
+TEST_DATA = load_representative_data()
+
+def main():
+    app = framework.Application()
+    tabs = framework.TabContainer()
+
+    # Test 1: Baseline (broken)
+    tabs.add_tab("Test 1: Baseline", render_test_1(TEST_DATA))
+
+    # Test 2: Alternative approach
+    tabs.add_tab("Test 2: Factory Method", render_test_2(TEST_DATA))
+
+    # ... tests 3-10
+
+    app.run(tabs)
+
+if __name__ == "__main__":
+    main()
+```
+
+**Output:** Working test harness that:
+- Reproduces the bug in Test 1 (baseline)
+- Builds quickly (<30 seconds)
+- Can easily add more tests
+- Uses representative data
+- Shows all tests in organized way (tabs/split/console)
+
+---
+
+### 💻 Step 4: Implement All Solutions
+
+**Objective:** Code all 8-10 approaches with clear labeling and isolation.
+
+**Key Principles:**
+
+1. **Isolation** - Each test is a separate function/module/class with no shared mutable state
+2. **Labeling** - Clear naming: Test 1, Test 2, etc. with descriptive tags
+3. **Identical data** - All tests use the exact same input to ensure fair comparison
+4. **Single variation** - Change only ONE thing per test (API method, parameter value, initialization order, etc.)
+5. **Documentation** - Comment what each test varies and why it might work
+
+**General Structure Pattern:**
+
+Each test should follow this pattern regardless of language:
+- Test number (1-10)
+- Descriptive name indicating what's different
+- Comment explaining the hypothesis
+- Minimal code implementing the variation
+- Same test data as all other tests
+
+**Example (pseudo-code showing the pattern):**
+```
+test_1_baseline():
+    // BASELINE: Current broken configuration (expect to fail)
+    component = create_with_current_config()
+    return render(component, STANDARD_TEST_DATA)
+
+test_2_alternative_api():
+    // VARIATION: Use framework's alternative initialization API
+    // Hypothesis: Original API may have hidden defaults causing issue
+    component = create_with_alternative_api()
+    return render(component, STANDARD_TEST_DATA)
+
+test_3_explicit_parameter():
+    // VARIATION: Explicitly set parameter instead of using default
+    // Hypothesis: Default value may be incorrect for our use case
+    component = create_with_config(param=EXPLICIT_VALUE)
+    return render(component, STANDARD_TEST_DATA)
+
+test_4_different_order():
+    // VARIATION: Initialize components in different order
+    // Hypothesis: Timing/order dependency may exist
+    setup_dependency_first()
+    component = create_with_config()
+    return render(component, STANDARD_TEST_DATA)
+
+// ... continue for all 10 approaches
+```
+
+**Language-Specific Examples:**
+
+**Python/JavaScript:**
+```python
+def test_1_baseline():
+    """BASELINE: Current broken approach"""
+    widget = Widget(config=current_broken_config)
+    return widget.render(TEST_DATA)
+
+def test_2_alternative_method():
+    """VARIATION: Use create_widget() instead of Widget()"""
+    widget = create_widget(current_broken_config)
+    return widget.render(TEST_DATA)
+```
+
+**Java/C#:**
+```java
+public Widget test1Baseline() {
+    // BASELINE: Current broken approach
+    return new Widget(currentConfig).render(TEST_DATA);
+}
+
+public Widget test2FactoryMethod() {
+    // VARIATION: Use factory method instead of constructor
+    return WidgetFactory.create(currentConfig).render(TEST_DATA);
+}
+```
+
+**Implementation Checklist:**
+- [ ] Each test has a clear numbered name (Test 1, Test 2, etc.)
+- [ ] Each test has a comment describing what it varies and why
+- [ ] All tests use **identical test data** (defined once, reused everywhere)
+- [ ] Only the specific parameter(s)/approach being tested differs between tests
+- [ ] Each test is independent (no shared mutable state between tests)
+- [ ] Tests can run in any order without affecting each other
+- [ ] Each test returns/displays results in the same format for easy comparison
+
+**Output:** Complete test harness with all 10 solutions implemented and ready to run.
+
+---
+
+### 🧪 Step 5: Test and Identify Working Solutions
+
+**Objective:** Systematically test all approaches and document which ones work.
+
+**Testing Process:**
+
+**1. Build and Launch**
+```bash
+# Build the test harness
+[build command for your language/framework]
+
+# Run it
+[run command]
+```
+
+**2. Create a Test Results Document**
+
+Open a text file or markdown document to record results as you test:
+```markdown
+# Test Results - [Bug Description]
+Date: [DATE]
+Framework: [NAME] version [VERSION]
+
+## Test 1: BASELINE
+- Approach: [description]
+- Result: ❌ FAILS
+- Details: [what you observe]
+
+## Test 2: [NAME]
+- Approach: [description]
+- Result: [PASS/FAIL/PARTIAL]
+- Details: [what you observe]
+
+[... continue for all tests]
+```
+
+**3. Evaluate Each Test**
+
+For each test (1-10), systematically check:
+
+| Criterion | What to Check | How to Verify |
+|-----------|--------------|---------------|
+| **Primary behavior** | Does it fix the bug? | Compare to expected behavior |
+| **Visual correctness** | Any layout issues, artifacts? | Inspect UI carefully |
+| **Functional correctness** | Does it actually work or just look right? | Interact with the component |
+| **Performance** | Acceptable speed? | Note any lag or slowness |
+| **Side effects** | Other things broken? | Check related functionality |
+| **Edge cases** | Works with empty/large/weird data? | Try boundary conditions |
+
+**4. Classify Results**
+
+Use this classification system:
+
+- ✅ **WORKS** - Fixes the bug completely, no side effects
+- ⚠️ **PARTIAL** - Fixes bug but has issues (performance, edge cases, side effects)
+- ❌ **FAILS** - Doesn't fix the bug
+- 💥 **BREAKS** - Makes it worse (crashes, corrupts data, worse behavior)
+
+**5. Document Observations**
+
+For each test, record specific details:
+
+**For WORKS (✅):**
+- What specific behavior changed
+- How it compares to broken baseline
+- Any trade-offs or limitations noticed
+
+**For PARTIAL (⚠️):**
+- What works and what doesn't
+- Specific issues or side effects
+- Might this be fixable with tweaks?
+
+**For FAILS (❌):**
+- Is behavior identical to baseline or different?
+- Any clues about why it didn't work?
+
+**For BREAKS (💥):**
+- What broke?
+- Error messages or symptoms
+- Is this revealing something about the framework?
+
+**Example Test Results:**
+```
+Test 1: BASELINE - ❌ FAILS
+- Approach: Current broken ScrollArea configuration
+- Observation: Text truncates at viewport edge, no scrollbar appears
+- Details: Column width calculated as 800px but viewport is 600px
+
+Test 2: SET_MAX_WIDTH - ❌ FAILS
+- Approach: Explicitly set ui.set_max_width(2000)
+- Observation: No change, still truncates at 600px
+- Details: Appears ScrollArea overrides max_width internally
+
+Test 3: EXPAND_TO_INCLUDE_X - ✅ WORKS
+- Approach: Call ui.expand_to_include_x(calculated_width)
+- Observation: Horizontal scrollbar appears! Text fully visible!
+- Details: Scrolls smoothly, no visual artifacts, performance fine
+- Trade-off: Need to calculate width in advance
+
+Test 4: DISABLE_VSCROLL - ❌ FAILS
+- Approach: Set vscroll(false) on table
+- Observation: Removed vertical scroll but horizontal still missing
+- Details: Wrong axis, as expected
+
+Test 5: NO_CLIP - ❌ FAILS
+- Approach: Remove .clip(false) from column definition
+- Observation: Text renders outside bounds, no scrollbar
+- Details: Makes it worse - now overlaps other UI
+
+Test 6: EXACT_COLUMNS - ⚠️ PARTIAL
+- Approach: Use Column::exact(200) for all columns
+- Observation: Scrollbar appears!
+- Details: BUT width is fixed at 200px per column, doesn't adapt to content
+- Issue: Long text still truncates, just at different point
+
+Test 7: MIN_SCROLLED_WIDTH - ❌ FAILS
+- Approach: Use ScrollArea.min_scrolled_width(2000)
+- Observation: No change
+- Details: Similar to set_max_width - gets overridden
+
+Test 8: SENSE_HOVER - ❌ FAILS
+- Approach: Change table sense mode to Hover
+- Observation: Changes click behavior but no effect on scrolling
+- Details: Unrelated to scrolling issue
+
+Test 9: NESTED_SCROLL - 💥 BREAKS
+- Approach: Wrap in outer horizontal, inner vertical ScrollAreas
+- Observation: Crashes with "nested scroll areas not supported"
+- Details: Framework limitation
+
+Test 10: MANUAL_ALLOCATE - ❌ FAILS
+- Approach: Call ui.allocate_space(Vec2::new(2000, 600))
+- Observation: Reserves space but scrollbar doesn't appear
+- Details: Space allocation alone insufficient
+```
+
+**6. Identify Winners**
+
+From your results, identify:
+- **Full solutions** (✅ WORKS)
+- **Potential solutions** (⚠️ PARTIAL - might be fixable)
+- **Interesting failures** (💥 BREAKS - reveals framework constraints)
+
+**Output:**
+- Documented test results for all 10 approaches
+- Clear identification of which solution(s) work
+- Observations about partial solutions and interesting failures
+- Notes on framework behavior learned from testing
+
+---
+
+### 🔬 Step 6: Analyze the Working Solution
+
+**Objective:** Understand **why** the working solution works and **why** others failed.
+
+**Critical Analysis Questions:**
+
+1. **What's the minimal difference** between working and broken approaches?
+   - What exact parameter/method/order changed?
+   - Can you reduce it further and still have it work?
+
+2. **Why does this approach succeed** where others fail?
+   - What framework/library behavior does this leverage?
+   - What assumption was incorrect in the failed approaches?
+   - What documentation or internal behavior explains this?
+
+3. **What does this reveal** about the framework's internals?
+   - Hidden defaults or implicit behaviors?
+   - Execution order dependencies?
+   - Undocumented constraints or assumptions?
+
+4. **Are there trade-offs or edge cases?**
+   - Performance implications?
+   - Memory usage?
+   - Compatibility issues?
+   - Situations where this won't work?
+
+5. **Is this the simplest working approach?**
+   - Can it be simplified further?
+   - Are there fewer steps or parameters needed?
+   - Is there a more idiomatic way in this framework?
+
+**Documentation Template:**
+
+Create a brief analysis document following this structure:
+
+```markdown
+## Analysis: Why [TEST_NAME] Works
+
+### What It Does
+[1-2 sentence description of the approach]
+
+### Why It Works
+[Explanation of the mechanism, framework behavior, or principle]
+
+### Why Other Approaches Failed
+
+**Test X ([APPROACH_NAME]):**
+- Tried: [what it did]
+- Failed because: [specific reason]
+- Framework behavior: [what the framework does that causes failure]
+
+**Test Y ([APPROACH_NAME]):**
+- Tried: [what it did]
+- Failed because: [specific reason]
+
+[Repeat for each failed approach that provides insight]
+
+### Trade-offs and Limitations
+- Performance: [any performance implications]
+- Edge cases: [situations where this might not work]
+- Compatibility: [version requirements, platform constraints]
+
+### Simplification Opportunities
+[Can this be simplified? Is there a better way?]
+```
+
+**Example Analysis:**
+
+```markdown
+## Analysis: Why Factory Method Pattern Works
+
+### What It Does
+Uses `WidgetFactory.create()` instead of `new Widget()` constructor.
+
+### Why It Works
+The factory method registers the widget with a global registry before
+returning it. Direct constructor bypasses registration, causing later
+calls to `WidgetManager.get()` to fail with "widget not found" error.
+
+### Why Other Approaches Failed
+
+**Test 2 (Manual registration after construction):**
+- Tried: `widget = new Widget(); WidgetManager.register(widget);`
+- Failed because: Race condition - another thread may call get() between
+  construction and registration
+- Framework behavior: WidgetManager uses thread-local storage, registration
+  must happen atomically with construction
+
+**Test 5 (Lazy initialization):**
+- Tried: Register on first use instead of construction
+- Failed because: Some framework internals call get() during initialization,
+  creating infinite recursion
+
+### Trade-offs and Limitations
+- Performance: Factory adds ~50μs per widget (negligible)
+- Edge cases: Custom widget subclasses must also use factory pattern
+- Compatibility: Requires framework 2.0+, factory didn't exist in 1.x
+
+### Simplification Opportunities
+Could potentially use a decorator pattern to auto-register, but factory
+is idiomatic for this framework and well-documented.
+```
+
+**Output:** Document explaining why the solution works, why others failed, and what you learned about the framework's behavior.
+
+---
+
+### 🔧 Step 7: Apply the Fix to Real Codebase
+
+**Objective:** Transfer the working solution to production code with minimal changes.
+
+**Process:**
+
+1. **Locate the corresponding code** in your main application
+   - Find the exact location where the bug manifests
+   - Identify the configuration/setup code that needs modification
+
+2. **Apply the minimal change**
+   - Use the **exact approach** from the working test
+   - Don't refactor, optimize, or "improve" other code
+   - Change only what's necessary to fix the bug
+
+3. **Match the execution context**
+   - Ensure initialization happens in the same order as working test
+   - Verify data is available when needed (not moved, borrowed, or empty)
+   - Check that the surrounding code structure matches test harness context
+
+4. **Test with real production data**
+   - Run the application with actual workloads
+   - Verify the fix works with edge cases (empty, large, unusual data)
+   - Check for any performance regressions
+
+5. **Add explanatory comments**
+   - Explain **what** the fix does
+   - Explain **why** this approach is needed
+   - Reference failed approaches to prevent future "simplifications"
+   - Point to the test harness for future maintainers
+
+**Comment Template:**
+```
+// Use [APPROACH] to fix [PROBLEM].
+// Alternative approaches don't work because [REASON].
+// Tested approaches: [LIST FAILED METHODS]
+// See [PATH_TO_TEST_HARNESS] for parallel solution comparison.
+[CODE]
+```
+
+**Example Comments:**
+```python
+# Use factory.create() instead of direct Widget() constructor to fix
+# initialization order dependency. Direct construction fails because
+# dependency hasn't been registered yet. Tried: Widget(), Widget.new(),
+# lazy initialization - all failed. See tests/widget_init_test for details.
+widget = factory.create(config)
+```
+
+```javascript
+// Call initialize() before setting callbacks to fix timing bug.
+// Setting callbacks first causes handler to fire before state is ready.
+// Tried: async/await, promises, event queuing - all failed.
+// See tests/callback-timing for parallel approach comparison.
+component.initialize();
+component.setCallbacks(handlers);
+```
+
+**Checklist:**
+- [ ] Minimal change applied (don't refactor unrelated code)
+- [ ] Execution context matches test harness (order, data availability, structure)
+- [ ] Comments explain **why** this approach is needed
+- [ ] Failed approaches mentioned in comments to prevent regression
+- [ ] Reference to test harness location for future maintainers
+- [ ] Tested with real production data and edge cases
+- [ ] No unintended side effects or performance regressions
+
+**Output:** Working fix in production codebase with clear documentation.
+
+---
+
+### 🐛 Step 8: Debug the Fix if Needed
+
+**Objective:** Fix works in test harness but fails in production? Find out why.
+
+**Common Causes:**
+
+| Issue | Symptom | How to Detect | Solution |
+|-------|---------|--------------|----------|
+| **Data availability** | Calculation uses empty/wrong data | Log data count/size differs | Move calculation earlier in execution flow |
+| **Execution order** | Function called before/after critical point | Different behavior on timing | Reorder operations, add dependencies |
+| **Context differences** | Different environment state | Works in test, fails in app | Match initialization, hierarchy, globals |
+| **State mutations** | Data moved/consumed before use | Value changes between checks | Clone data, use immutable references |
+
+**Systematic Debugging Strategy:**
+
+**1. Add Comprehensive Logging**
+
+Add identical logging statements to both test harness and production code. Log at key points:
+- Input data (count, size, sample values)
+- Intermediate calculations (each step of the computation)
+- Execution order (timestamp, sequence number, call stack depth)
+- Output values (final results)
+
+**Example logging pattern (language-agnostic):**
+```
+LOG: === [OPERATION_NAME] START ===
+LOG: Input count: [COUNT]
+LOG: Input sample: [FIRST_FEW_VALUES]
+LOG: Calculation step 1: [INTERMEDIATE_VALUE_1]
+LOG: Calculation step 2: [INTERMEDIATE_VALUE_2]
+LOG: Final result: [OUTPUT]
+LOG: === [OPERATION_NAME] END ===
+```
+
+**Language-specific examples:**
+
+**Python:**
+```python
+print(f"=== CALCULATION START ===")
+print(f"Data count: {len(data)}")
+print(f"First item: {data[0] if data else 'EMPTY'}")
+print(f"Calculated value: {result}")
+print(f"=== CALCULATION END ===")
+```
+
+**JavaScript:**
+```javascript
+console.log("=== CALCULATION START ===");
+console.log(`Data count: ${data.length}`);
+console.log(`First item: ${data[0] || 'EMPTY'}`);
+console.log(`Calculated value: ${result}`);
+console.log("=== CALCULATION END ===");
+```
+
+**Java:**
+```java
+System.out.println("=== CALCULATION START ===");
+System.out.println("Data count: " + data.size());
+System.out.println("First item: " + (data.isEmpty() ? "EMPTY" : data.get(0)));
+System.out.println("Calculated value: " + result);
+System.out.println("=== CALCULATION END ===");
+```
+
+**2. Compare Test vs Production Logs Side-by-Side**
+
+Run both test harness and production, capture logs, compare line-by-line:
+```
+TEST:       Data count: 50
+PRODUCTION: Data count: 0           ← MISMATCH FOUND!
+
+TEST:       First item: "example"
+PRODUCTION: First item: EMPTY       ← This is the problem
+
+TEST:       Calculated value: 2000
+PRODUCTION: Calculated value: 100   ← Result differs because input differs
+```
+
+**3. Identify the Divergence Point**
+
+Look for the **first** difference in the logs:
+- If data count differs → data availability issue
+- If values differ → calculation or state issue
+- If order differs → execution order issue
+- If context differs → environment setup issue
+
+**4. Fix the Root Cause**
+
+Based on divergence type:
+
+| Divergence Type | Root Cause | Fix Strategy |
+|----------------|------------|--------------|
+| Data count differs | Data moved, cleared, or not initialized | Move calculation before data consumption |
+| Calculation differs | Different code paths, globals, config | Match test harness configuration exactly |
+| Order differs | Async timing, event ordering | Add synchronization, reorder operations |
+| Context differs | Different initialization, hierarchy | Match test harness setup sequence |
+
+**5. Iterate Until Logs Match**
+
+After each fix:
+1. Run both test and production again
+2. Compare logs line-by-line
+3. Verify logs are now identical
+4. Remove debug logging (or leave commented for future debugging)
+
+**Debugging Checklist:**
+```
+[ ] Added identical logging to test harness and production code
+[ ] Logged input data (count, size, sample values)
+[ ] Logged intermediate calculations (each step)
+[ ] Logged execution order (timestamps, sequence)
+[ ] Logged final output values
+[ ] Ran test harness, captured logs
+[ ] Ran production code, captured logs
+[ ] Compared logs side-by-side
+[ ] Identified first divergence point
+[ ] Diagnosed root cause (data/order/context/state)
+[ ] Applied fix targeting root cause
+[ ] Re-ran both, verified logs now match
+[ ] Tested with production data and edge cases
+```
+
+**Output:** Working fix that behaves identically in test and production, with clear understanding of what was different and why.
+
+---
+
+## Concrete Example: UI Scrolling Bug
+
+### The Problem
+A table with 14 columns wasn't showing horizontal scrollbar for long text in the rightmost column. Text was truncated with "..." instead of scrollable.
+
+### Step 2: Research (10 Approaches Identified)
+1. **BASELINE:** `ScrollArea.horizontal()` + `Column::remainder().clip(false)`
+2. **SET_MAX_WIDTH:** Calculate total width, call `ui.set_max_width(total)`
+3. **EXPAND_TO_INCLUDE:** Call `ui.expand_to_include_x(width)`
+4. **VSCROLL_FALSE:** Disable table's vertical scrolling
+5. **NO_CLIP:** Remove `.clip()` from remainder column
+6. **EXACT_COLUMNS:** Use `Column::exact()` for all columns
+7. **MIN_SCROLLED_WIDTH:** Use `ScrollArea.min_scrolled_width()`
+8. **SENSE_HOVER:** Change table interaction mode
+9. **NESTED_SCROLL:** Horizontal outer, vertical inner ScrollAreas
+10. **MANUAL_ALLOCATE:** Call `ui.allocate_space()` before table
+
+### Step 3-5: Test Harness Results
+- ❌ Tests 1, 2, 4, 5, 7, 8, 9, 10: Failed (no scrollbar)
+- ⚠️  Test 6: Partial (scrollbar appeared but fixed width, not dynamic)
+- ✅ **Test 3: WORKS** (horizontal scrollbar appeared and functioned correctly!)
+
+### Step 6: Analysis
+**Why Test 3 worked:** `expand_to_include_x()` forces the UI to reserve space beyond viewport width, allowing `ScrollArea` to detect overflow and enable scrolling.
+
+**Why Test 2 failed:** `set_max_width()` gets overridden by `ScrollArea`'s internal width clamping.
+
+### Step 7-8: Production Fix Hit a Gotcha
+Applied `ui.expand_to_include_x()` to production code → **still broken!**
+
+**Root cause discovered via logging:**
+- Test harness: Used `data` directly (50 rows available)
+- Production: Used `self.cached_rows` which was **empty** due to `std::mem::take()` earlier in code
+
+**Fix:** Calculate width **before** the `take()`, using the actual data:
+```rust
+// Calculate BEFORE entering ScrollArea (data is available here)
+let total_width = calculate_width(&flat_rows);  // Use flat_rows, not cached
+
+ScrollArea::horizontal().show(ui, |ui| {
+    ui.expand_to_include_x(total_width);  // Use pre-calculated value
+    // ... table rendering
+});
+```
+
+**Result:** ✅ Horizontal scrolling works perfectly!
+
+---
+
+## Common Gotchas
+
+### 🚨 Gotcha 1: Platform Constraints on Multi-Window
+
+**Problem:** Initial design used 10 separate windows (one per test) for side-by-side viewing.
+
+**What happened:** macOS only allows one event loop per process → first window launched, others crashed with `EventLoop can't be recreated` error.
+
+**Lesson:** Research platform constraints before implementing test harness UI. Start with **tabbed UI** (most compatible) and only use separate windows if you verify platform support.
+
+**How to avoid:**
+- Check framework documentation for platform limitations
+- Prototype the UI approach first before implementing all tests
+- Have fallback design (tabs) ready if primary approach fails
+
+---
+
+### 🚨 Gotcha 2: Data Availability Mismatch
+
+**Problem:** Fix worked in test harness but failed in production with calculated width of only 1,117px vs expected 11,189px.
+
+**Root cause:** Production code did `std::mem::take(&mut self.cached_rows)` which **moved** the data, leaving an empty vector. Width calculation then operated on empty data.
+
+**Symptoms to watch for:**
+- Calculation produces suspiciously small/default values
+- Log shows "count: 0" or empty strings
+- Test harness shows large realistic values, production shows minimums
+
+**How to avoid:**
+- Add logging to test harness showing data count/size
+- Add **identical logging** to production code
+- Compare logs side-by-side to spot data availability issues
+- Calculate values **before** any data moves/borrows
+
+**Debugging checklist when test works but production fails:**
+```
+[ ] Log data availability (count, size, content sample)
+[ ] Log calculation inputs (what data is being measured)
+[ ] Log intermediate values (width per column, totals)
+[ ] Log execution order (timestamps, sequence numbers)
+[ ] Compare test vs production logs line-by-line
+```
+
+---
+
+### 🚨 Gotcha 3: Simplified Test Data Hides Edge Cases
+
+**Problem:** Test harness uses artificial data that may not match production complexity.
+
+**Example:** Test uses 50 processes with 150-char commands, but production has 700+ processes with 1,600-char commands.
+
+**How to avoid:**
+- Use realistic data sizes in test harness
+- Measure actual production data characteristics first
+- Test with edge cases: empty data, maximum data, mixed data
+- Verify calculated values against production logs
+
+---
+
+### 🚨 Gotcha 4: Framework Version Mismatches
+
+**Problem:** Test harness uses different framework version than production, leading to different behavior.
+
+**How to avoid:**
+- Use **exact same version** in test harness Cargo.toml/package.json
+- Check version before implementing all 10 tests
+- Document version in test harness README
+
+---
+
+## Benefits and Trade-offs
+
+### ✅ Benefits
+
+**Efficiency:**
+- **Parallel testing** evaluates all approaches in single run (minutes vs hours/days)
+- **Fast iteration** with minimal build times
+- **Clear visual comparison** eliminates guesswork
+
+**Thoroughness:**
+- **Systematic exploration** of solution space
+- **Discovers non-obvious solutions** that might be skipped in serial debugging
+- **Documents what doesn't work** (valuable negative results)
+
+**Knowledge Building:**
+- **Framework internals** become clearer through systematic variation
+- **Mental model** improves with each test
+- **Future reference** for similar issues
+
+### ⚠️ Trade-offs
+
+**Upfront Cost:**
+- **1-2 hours** to build test harness (vs 10 minutes to try one fix)
+- **Planning required** to identify 10 good approaches
+- **Only worthwhile** if serial debugging would take >4 hours
+
+**When It Pays Off:**
+- Complex subsystem bugs where root cause is unclear
+- Multiple failed attempts already made
+- Deep understanding needed (not just quick fix)
+
+---
+
+## Anti-Patterns to Avoid
+
+### ❌ Anti-Pattern 1: Parameter Tweaking Instead of Approach Variation
+
+**Bad:** Testing 10 different buffer sizes (100, 200, 300, 400...)
+
+**Good:** Testing 10 different buffering strategies:
+- No buffering
+- Fixed-size buffer
+- Dynamic buffer
+- Ring buffer
+- Double buffering
+- Memory-mapped I/O
+- Async buffering
+- Zero-copy
+- Pooled buffers
+- Adaptive buffering
+
+**Rule:** Test **orthogonal approaches**, not incremental parameter values.
+
+---
+
+### ❌ Anti-Pattern 2: Over-Simplification
+
+**Bad:** Test harness that doesn't reproduce the bug because it's too minimal.
+
+**Signs:**
+- Uses different data types than production
+- Uses hard-coded data instead of realistic data
+- Skips framework initialization that production requires
+- Different execution context (threading, UI hierarchy, etc.)
+
+**Fix:** Match production structure even if it adds complexity.
+
+---
+
+### ❌ Anti-Pattern 3: Stopping at "It Works"
+
+**Bad:** Find a working solution, apply to production, move on.
+
+**Good:**
+1. Find working solution
+2. Understand **why** it works
+3. Compare to failed approaches to understand **why they failed**
+4. Document the rationale
+5. Apply to production with explanatory comments
+
+**Why:** Future maintainers need to understand the decision, or they may "simplify" it back to a broken state.
+
+---
+
+### ❌ Anti-Pattern 4: Ignoring Failed Solutions
+
+**Bad:** Only document the one solution that worked.
+
+**Good:** Document pattern of failures:
+```markdown
+## Solutions Tested
+
+✅ Test 3: expand_to_include_x() - WORKS
+❌ Test 2: set_max_width() - Doesn't work because ScrollArea overrides it
+❌ Test 4: vscroll(false) - Only affects vertical scrolling
+❌ Test 7: min_scrolled_width() - Requires exact width, doesn't adapt
+...
+```
+
+**Why:** Failed solutions teach you about framework constraints and prevent future attempts of the same approach.
+
+---
+
+### ❌ Anti-Pattern 5: Testing in Wrong Context
+
+**Bad:** Test harness uses different UI framework, different threading model, or mock implementations.
+
+**Example:** Testing async behavior in synchronous test, or vice versa.
+
+**Fix:** Match production execution context as closely as possible.
+
+---
+
+## Checklist for Success
+
+### Before Starting
+- [ ] Bug is reproducible and isolated
+- [ ] Root cause is unclear (multiple possible issues)
+- [ ] Framework documentation shows multiple approaches
+- [ ] Have 2+ hours to invest in systematic debugging
+
+### Test Harness Design
+- [ ] Uses exact same framework version as production
+- [ ] Matches production data structures and types
+- [ ] Execution context matches (threading, UI, etc.)
+- [ ] Builds in <30 seconds for fast iteration
+- [ ] Shows all solutions in single window (tabs recommended)
+
+### Implementation
+- [ ] 8-10 orthogonally different approaches identified
+- [ ] Each test clearly numbered and labeled
+- [ ] Each test has description of what it varies
+- [ ] All tests use identical test data
+- [ ] Only specific parameter(s) differ per test
+
+### Testing
+- [ ] All tests visible/accessible in one run
+- [ ] Clear pass/fail criteria for each test
+- [ ] Results documented (which work, which fail)
+- [ ] Working solution(s) identified
+
+### Analysis
+- [ ] Understand **why** working solution works
+- [ ] Understand **why** other solutions failed
+- [ ] Documented rationale and framework insights
+- [ ] Identified any trade-offs or edge cases
+
+### Production Fix
+- [ ] Applied minimal change from working test
+- [ ] Added explanatory comments
+- [ ] Referenced test harness for future maintainers
+- [ ] Verified with production data
+- [ ] Compared logs between test and production
+- [ ] Fixed any data availability or ordering issues
+
