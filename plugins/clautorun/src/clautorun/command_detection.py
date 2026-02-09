@@ -339,10 +339,37 @@ if BASHLEX_AVAILABLE:
             return True
 
 
+def _normalize_heredoc_delimiters(cmd: str) -> str:
+    """
+    Remove quotes from heredoc delimiters for bashlex compatibility.
+
+    Bashlex expects unquoted heredoc delimiters, but shell scripts often use
+    quoted delimiters like << 'EOF' or << "END". This function normalizes them
+    to the unquoted form that bashlex can parse.
+
+    Examples:
+        python3 << 'EOF' → python3 << EOF
+        cat << "END" → cat << END
+        sh << EOF → sh << EOF (no change)
+
+    Args:
+        cmd: Shell command string potentially containing heredoc
+
+    Returns:
+        Normalized command string with unquoted heredoc delimiters
+    """
+    # Match << followed by optional whitespace and quoted delimiter
+    # Capture the delimiter content (without quotes)
+    pattern = r'<<\s*(["\'])(\w+)\1'
+    return re.sub(pattern, r'<< \2', cmd)
+
+
 def _extract_bashlex(cmd: str, depth: int) -> ExtractedCommands:
     """Extract using bashlex AST."""
     try:
-        parts = bashlex.parse(cmd)
+        # Normalize heredoc delimiters for bashlex compatibility
+        normalized_cmd = _normalize_heredoc_delimiters(cmd)
+        parts = bashlex.parse(normalized_cmd)
     except (ParsingError, Exception):
         return ExtractedCommands(frozenset(), frozenset(), frozenset())
 
