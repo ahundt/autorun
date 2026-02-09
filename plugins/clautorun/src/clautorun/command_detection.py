@@ -63,8 +63,9 @@ COMMAND_PREFIXES: Final[frozenset[str]] = frozenset({
 })
 
 GIT_SUBCOMMANDS: Final[frozenset[str]] = frozenset({
-    "reset", "checkout", "stash", "clean", "push", "pull",
-    "merge", "rebase", "branch", "tag", "remote",
+    "add", "commit", "reset", "checkout", "stash", "clean",
+    "push", "pull", "fetch", "merge", "rebase",
+    "branch", "tag", "remote", "log", "diff", "status",
 })
 
 SHELL_EXEC_COMMANDS: Final[frozenset[str]] = frozenset({
@@ -112,6 +113,7 @@ class ParsedPattern:
         first = tokens[0]
         is_git = first == "git"  # v8: Only apply GIT_SUBCOMMANDS for git
         cmd_parts, flags, positional = [first], set(), set()
+        seen_non_flag = False  # Track if we've seen any non-flag token
 
         for token in tokens[1:]:
             if token.startswith("-"):
@@ -121,9 +123,13 @@ class ParsedPattern:
                     flags.update(f"-{c}" for c in token[1:])
                 else:
                     flags.add(token)
-            elif is_git and token in GIT_SUBCOMMANDS:  # v8: Scoped check
+            elif is_git and not seen_non_flag and token in GIT_SUBCOMMANDS:
+                # Only add FIRST non-flag token if it's a git subcommand
                 cmd_parts.append(token)
+                seen_non_flag = True
             else:
+                # Any other non-flag token (including git subcommands after first position)
+                seen_non_flag = True
                 positional.add(token)
 
         return cls(
