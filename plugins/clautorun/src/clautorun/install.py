@@ -136,8 +136,9 @@ def run_cmd(
 def find_marketplace_root() -> Path:
     """Find the clautorun marketplace root directory.
 
-    Searches upward from this file for .claude-plugin/marketplace.json.
-    Result is cached since it doesn't change during execution.
+    Handles both source repository and installed package locations:
+    1. Source repository: Search upward for .claude-plugin/marketplace.json
+    2. Installed package: Use package installation directory
 
     Returns:
         Path to marketplace root directory
@@ -145,14 +146,52 @@ def find_marketplace_root() -> Path:
     Raises:
         FileNotFoundError: If marketplace root cannot be found
     """
+    # Try source repository first (development workflow)
     current = Path(__file__).resolve()
     for parent in [current, *current.parents]:
         marker = parent / ".claude-plugin" / "marketplace.json"
         if marker.exists():
             return parent
+
+    # Try installed package location (production workflow)
+    # When installed via pip/uv, __file__ is like:
+    # /path/to/site-packages/clautorun/install.py
+    # We need to go up to find the plugin root
+    try:
+        import importlib.resources as resources
+        # Try to find package data
+        # For installed package, look for plugins/ directory relative to package
+        package_dir = Path(__file__).parent.parent.parent  # Go up from src/clautorun/ to plugins/
+        if (package_dir / "clautorun").exists():
+            # Found plugins/clautorun directory in installed location
+            return package_dir.parent  # Return parent of plugins/
+    except (ImportError, AttributeError):
+        pass
+
+    # Last resort: assume we're in plugins/clautorun/src/clautorun/ and go up
+    potential_root = Path(__file__).resolve().parent.parent.parent.parent
+    if (potential_root / ".claude-plugin" / "marketplace.json").exists():
+        return potential_root
+
+    # INSTALLED PACKAGE FALLBACK:
+    # When installed via pip/uv from GitHub, marketplace.json won't exist.
+    # In this case, we can't install from local files - user should use:
+    #   1. GitHub install: Already done (they ran `uv pip install git+...`)
+    #   2. CLI registration: Use `claude plugin install https://github.com/ahundt/clautorun.git`
+    #
+    # For now, guide users to the correct workflow.
     raise FileNotFoundError(
-        "Could not find marketplace root (.claude-plugin/marketplace.json). "
-        "Ensure you're running from within the clautorun repository."
+        "Could not find marketplace root (.claude-plugin/marketplace.json).\n\n"
+        "This usually means clautorun is installed as a package, not from source.\n\n"
+        "**For local development (recommended):**\n"
+        "  cd /path/to/clautorun  # Git repository\n"
+        "  python3 -m plugins.clautorun.src.clautorun.install --install --force\n\n"
+        "**For production install from GitHub:**\n"
+        "  # Python package already installed\n"
+        "  # Now register with CLI:\n"
+        "  claude plugin install https://github.com/ahundt/clautorun.git\n"
+        "  # Or for Gemini:\n"
+        "  gemini extensions install https://github.com/ahundt/clautorun.git\n"
     )
 
 

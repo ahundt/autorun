@@ -1,0 +1,9 @@
+# Include plugin metadata and resources
+include README.md
+include LICENSE
+recursive-include .claude-plugin *
+recursive-include commands *.md
+recursive-include agents *.md
+recursive-include skills *.md
+recursive-include hooks *.json *.py
+recursive-include scripts *.py
