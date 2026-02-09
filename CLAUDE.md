@@ -4,20 +4,32 @@ UV workspace containing 2 Claude Code plugins: **clautorun**, **pdf-extractor**.
 
 ## Installation
 
+### From GitHub (Production)
+
 ```bash
-# From GitHub (recommended)
 uv pip install git+https://github.com/ahundt/clautorun.git
-clautorun --install
+uv tool run clautorun --install
 
-# From local clone
-git clone https://github.com/ahundt/clautorun.git && cd clautorun
-uv pip install . && clautorun --install
-
-# Verify plugins installed
+# Verify
 claude plugin list  # Should show: cr, pdf-extractor
+```
 
-# In a Claude Code session, test:
-# /cr:st  → "AutoFile policy: allow-all"
+### From Local Clone (Development)
+
+```bash
+git clone https://github.com/ahundt/clautorun.git && cd clautorun
+uv pip install .
+python3 -m plugins.clautorun.src.clautorun.install --install --force
+
+# Verify
+claude plugin list  # Should show: cr, pdf-extractor
+```
+
+### Test Installation
+
+```bash
+# In Claude Code session:
+/cr:st  # Expected: "AutoFile policy: allow-all"
 ```
 
 ## Quick Start

@@ -2,18 +2,39 @@
 
 **clautorun works identically in both Claude Code and Gemini CLI**, providing unified safety features, commands, and autonomous execution capabilities across both platforms.
 
-## Quick Start
+## Installation
+
+### From GitHub (Production)
 
 ```bash
-# Installation
-cd /path/to/clautorun
-gemini extensions install .
+uv pip install git+https://github.com/ahundt/clautorun.git
+uv tool run clautorun --install --gemini
 
 # Verify
 gemini extensions list  # Should show: clautorun-workspace@0.8.0
+```
 
-# Test basic functionality
+### From Local Clone (Development)
+
+```bash
+git clone https://github.com/ahundt/clautorun.git && cd clautorun
+uv pip install .
+python3 -m plugins.clautorun.src.clautorun.install --install --force
+
+# Restart Gemini daemon (required to pick up changes)
+python3 plugins/clautorun/scripts/restart_daemon.py
+
+# Verify
+gemini extensions list  # Should show: clautorun-workspace@0.8.0
+```
+
+### Test Installation
+
+```bash
+# Start new Gemini session
 gemini
+
+# Test
 /cr:st  # Expected: "AutoFile policy: allow-all"
 ```
 
