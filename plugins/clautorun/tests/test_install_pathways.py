@@ -259,7 +259,7 @@ class TestReadPluginVersion:
         plugin_root = get_plugin_root()
 
         version = install._read_plugin_version(plugin_root)
-        assert version == "0.7.0"
+        assert version == "0.8.0"
 
     def test_read_plugin_version_fallback(self):
         """Verify fallback version when plugin.json missing."""
@@ -267,7 +267,7 @@ class TestReadPluginVersion:
         nonexistent = Path("/tmp/nonexistent-plugin")
 
         version = install._read_plugin_version(nonexistent)
-        assert version == "0.7.0"  # Default fallback
+        assert version == "0.8.0"  # Default fallback
 
 
 class TestCheckUvEnv:

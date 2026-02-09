@@ -5,7 +5,7 @@ Tests for bootstrap configuration functionality.
 Tests the --no-bootstrap and --enable-bootstrap CLI commands that modify hooks.json,
 and the is_bootstrap_disabled() function in hook_entry.py.
 
-v0.7.0: Bootstrap is controlled via:
+v0.8.0: Bootstrap is controlled via:
 1. --no-bootstrap flag in hooks.json commands (persistent)
 2. CLAUTORUN_NO_BOOTSTRAP=1 environment variable (runtime)
 """
@@ -443,7 +443,7 @@ class TestMainFunctionRouting:
         assert result == 0
         captured = capsys.readouterr()
         assert "clautorun" in captured.out
-        assert "0.7.0" in captured.out
+        assert "0.8.0" in captured.out
 
     def test_install_calls_install_plugins(self):
         """Test that --install calls install_plugins function."""

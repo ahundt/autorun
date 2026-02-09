@@ -6,7 +6,7 @@ When updating versions in the clautorun marketplace, use this checklist to ensur
 
 All plugins in this marketplace use the **same version number** for consistency. When releasing a new version, update ALL plugins to the same version.
 
-**Current Version: 0.7.0**
+**Current Version: 0.8.0**
 
 ### Total Files to Update: 13
 
@@ -23,8 +23,8 @@ All plugins in this marketplace use the **same version number** for consistency.
 Use these grep commands to find all version references:
 
 ```bash
-# Find all version strings for a specific version (e.g., 0.7.0)
-grep -rn "0\.7\.0" --include="*.py" --include="*.json" --include="*.toml" --include="*.md" . | grep -v notes/ | grep -v __pycache__ | grep -v .venv
+# Find all version strings for a specific version (e.g., 0.8.0)
+grep -rn "0\.8\.0" --include="*.py" --include="*.json" --include="*.toml" --include="*.md" . | grep -v notes/ | grep -v __pycache__ | grep -v .venv
 
 # Find all JSON version fields
 grep -rn '"version"' --include="*.json" . | grep -v notes/ | grep -v __pycache__
@@ -40,7 +40,7 @@ grep -rn '^version\s*=' --include="*.toml" .
 
 | File | Field/Pattern | Example |
 |------|---------------|---------|
-| `pyproject.toml` (root) | `version = "X.Y.Z"` | `version = "0.7.0"` |
+| `pyproject.toml` (root) | `version = "X.Y.Z"` | `version = "0.8.0"` |
 | `src/clautorun_marketplace/__init__.py` | Print statement | `print(f"📦 clautorun-marketplace vX.Y.Z")` |
 | `README.md` | Header text | `clautorun plugin vX.Y.Z (Current)` |
 | `CLAUDE.md` | Section header | `## clautorun Plugin (vX.Y.Z)` |

@@ -510,6 +510,8 @@ def _not_in_pipe(ctx: any) -> bool:
     """
     Check if command is NOT in a pipe context (should block for direct file operations).
 
+    Uses bashlex for robust pipe detection when available, with simple fallback.
+
     Returns True when command should be blocked (NOT in pipe).
     Returns False when command should be allowed (in pipe or reading stdin).
 
@@ -517,6 +519,7 @@ def _not_in_pipe(ctx: any) -> bool:
         - `head file.txt` → NOT in pipe → return True (block)
         - `git diff | head -50` → in pipe → return False (allow)
         - `head -50` (no file) → NOT in pipe but stdin → return False (allow)
+        - `ps aux | grep foo && echo done` → has pipe → return False (allow)
 
     Args:
         ctx: EventContext with tool_input["command"]
@@ -530,20 +533,39 @@ def _not_in_pipe(ctx: any) -> bool:
         if not cmd:
             return False  # No command, allow
 
-        # Check if command contains pipe operator |
-        # If there's a pipe, the command is being used as a filter
-        if "|" in cmd:
-            # Command is in a pipe - allow (return False to not block)
-            return False
+        # Try bashlex for robust pipe detection (handles quotes, complex syntax)
+        try:
+            import bashlex
+            parts = bashlex.parse(cmd)
+
+            # Check if any part is a pipeline
+            def has_pipeline(node):
+                if node.kind == 'pipeline':
+                    return True
+                # Recursively check children
+                for child in getattr(node, 'parts', []):
+                    if has_pipeline(child):
+                        return True
+                return False
+
+            # If any part has a pipeline, allow the command
+            for part in parts:
+                if has_pipeline(part):
+                    return False  # In pipe - allow
+
+        except (ImportError, Exception) as e:
+            # Bashlex not available or parse error - fall back to simple check
+            logger.debug(f"Bashlex parse failed, using simple pipe check: {e}")
+
+            # Simple fallback: check if command contains pipe operator |
+            # This works for most cases but may have edge cases with quoted strings
+            if "|" in cmd:
+                # Command likely has a pipe - allow (return False to not block)
+                return False
 
         # Not in pipe - but check if reading from stdin (no file args)
         # Commands like `head -50` with no file argument read from stdin
         # We should allow these (they're not direct file operations)
-
-        # Simple heuristic: if no obvious file path pattern, allow
-        # File paths typically have . or / characters
-        # This catches: head -50, tail, grep pattern (without files)
-        # But blocks: head file.txt, tail /path/to/file
 
         # Split command to check for file-like arguments
         import shlex
@@ -580,7 +602,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_has_unstaged_changes": _has_unstaged_changes,
     "_stash_exists": _stash_exists,
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
-    "_not_in_pipe": _not_in_pipe,  # v0.7.1: Context-aware blocking for head/tail/grep/cat
+    "_not_in_pipe": _not_in_pipe,  # v0.8.0: Context-aware blocking for head/tail/grep/cat
     # Add more as needed
 }
 

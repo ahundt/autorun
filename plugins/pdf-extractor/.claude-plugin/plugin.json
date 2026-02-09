@@ -1,6 +1,6 @@
 {
   "name": "pdf-extractor",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "PDF data extraction with multi-backend support (markitdown, docling, pdfplumber, etc.)",
   "author": {"name": "Andrew Hundt", "email": "ATHundt@gmail.com"},
   "license": "MIT",

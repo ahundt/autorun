@@ -563,7 +563,7 @@ git commit -m "Description of changes"
 
 ### Active vs Deprecated
 
-**✅ clautorun plugin v0.7.0 (Current)**
+**✅ clautorun plugin v0.8.0 (Current)**
 - Installed via `/plugin install https://github.com/ahundt/clautorun.git`
 - Commands: `/cr:st`, `/cr:a`, `/cr:j`, `/cr:f`, `/cr:go`, `/cr:gp`, `/cr:x`, `/cr:sos`, `/cr:tm`, `/cr:tt`, `/cr:tabs`
 - **NEW v0.6.0:** `/cr:no`, `/cr:ok`, `/cr:clear`, `/cr:globalno`, `/cr:globalok`, `/cr:globalstatus` (Command Blocking)
@@ -804,7 +804,7 @@ Structured planning for complex development tasks.
   - Follows the plan with Sequential Improvement Methodology
   - Auto-triggers autorun when plan is approved ("PLAN ACCEPTED" marker)
 
-### Task Lifecycle Tracking (v0.7.1+)
+### Task Lifecycle Tracking (v0.8.0+)
 
 **PRIMARY GOAL**: Ensure AI continues working while tasks are outstanding.
 
