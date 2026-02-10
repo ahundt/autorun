@@ -425,7 +425,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 archive=not args.task_gc_no_archive,
                 dry_run=args.task_dry_run,
                 pattern=args.task_gc_pattern,
-                ttl_days=args.task_gc_ttl
+                ttl_days=args.task_gc_ttl,
+                confirm=not args.task_no_confirm
             )
 
     # Default: run as hook handler
