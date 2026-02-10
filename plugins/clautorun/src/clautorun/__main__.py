@@ -64,7 +64,8 @@ def create_parser() -> argparse.ArgumentParser:
 QUICK START:
   1. Install: clautorun --install
   2. Use /cr:go <task> in Claude Code to start autonomous execution
-  3. Manage task history: clautorun task status
+  3. Control file creation: clautorun file status (or /cr:st in Claude)
+  4. Manage task history: clautorun task status
 
 Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
 """,
@@ -76,6 +77,13 @@ Installation (Run this first!):
   clautorun --install                    # Install all plugins (RECOMMENDED)
   clautorun --install clautorun          # Install only clautorun plugin
   clautorun --status                     # Check installation status
+
+AutoFile - control file creation (slash: /cr:a, /cr:j, /cr:f, /cr:st):
+  clautorun file status                    # Show current file policy
+  clautorun file allow                     # Allow all file creation (slash: /cr:a)
+  clautorun file justify                   # Require justification (slash: /cr:j)
+  clautorun file search                    # Only modify existing (slash: /cr:f)
+  clautorun file allow --global            # Set global default for all sessions
 
 Task lifecycle management:
   clautorun task status                  # Show current task status
@@ -90,6 +98,10 @@ Common workflows:
 
   # Check what's installed
   clautorun --status                     # See plugin status
+
+  # Control file creation
+  clautorun file status                    # See current policy
+  clautorun file justify                   # Enable strict mode (equivalent to /cr:j)
 
   # View task progress
   clautorun task status --verbose        # See all incomplete tasks
@@ -216,8 +228,74 @@ For more information: https://github.com/ahundt/clautorun
         help="Force specific update method (default: auto-detect)",
     )
 
-    # Task lifecycle subcommands (modern CLI structure)
+    # Subcommands (modern CLI structure)
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # AutoFile (af) subcommand - file creation control
+    file_parser = subparsers.add_parser(
+        "file",
+        help="AutoFile - control file creation policy",
+        description="Control file creation and modification policies (AutoFile system). "
+                    "Equivalent to /cr:a (allow), /cr:j (justify), /cr:f (find), /cr:st (status) slash commands.",
+    )
+    file_subparsers = file_parser.add_subparsers(dest="file_command", help="AutoFile operations")
+
+    # file allow
+    allow_parser = file_subparsers.add_parser(
+        "allow",
+        help="Allow all file creation (slash: /cr:a, /cr:allow, /afa)",
+        description="Set policy to allow-all: full permission to create and modify files without restrictions",
+    )
+    allow_parser.add_argument(
+        "--global",
+        "-g",
+        action="store_true",
+        dest="file_global",
+        help="Set globally (all sessions). Default: current session only",
+    )
+
+    # file justify
+    justify_parser = file_subparsers.add_parser(
+        "justify",
+        help="Require justification for new files (slash: /cr:j, /cr:justify, /afj)",
+        description="Set policy to justify-create: search existing files first, require <AUTOFILE_JUSTIFICATION> for new files",
+    )
+    justify_parser.add_argument(
+        "--global",
+        "-g",
+        action="store_true",
+        dest="file_global",
+        help="Set globally (all sessions). Default: current session only",
+    )
+
+    # file search (find) - strict mode
+    search_parser = file_subparsers.add_parser(
+        "search",
+        aliases=["find"],
+        help="Only modify existing files (slash: /cr:f, /cr:find, /afs)",
+        description="Set policy to strict-search: ONLY modify existing files, NO new file creation (strictest mode)",
+    )
+    search_parser.add_argument(
+        "--global",
+        "-g",
+        action="store_true",
+        dest="file_global",
+        help="Set globally (all sessions). Default: current session only",
+    )
+
+    # files status
+    af_status_parser = file_subparsers.add_parser(
+        "status",
+        help="Show current policy (slash: /cr:st, /cr:status, /afst)",
+        description="Display current file creation policy for this session or globally",
+    )
+    af_status_parser.add_argument(
+        "--global",
+        "-g",
+        action="store_true",
+        dest="file_global",
+        help="Show global policy. Default: current session policy",
+    )
 
     # Task subcommand
     task_parser = subparsers.add_parser(
@@ -479,6 +557,106 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = perform_self_update(method=args.update_method)
         print(result.output)
         return 0 if result.ok else 1
+
+    # AutoFile (af) subcommand - file creation control
+    if args.command == "file":
+        from clautorun.session_manager import get_session_manager
+        from clautorun.config import CONFIG
+
+        if not hasattr(args, 'file_command') or args.file_command is None:
+            # No subcommand specified - show help
+            file_parser = create_parser().add_subparsers().choices['file']
+            file_parser.print_help()
+            return 1
+
+        session_id = os.environ.get("CLAUDE_SESSION_ID")
+        is_global = getattr(args, 'file_global', False)
+
+        # Get session manager
+        mgr = get_session_manager()
+
+        # file status
+        if args.file_command == "status":
+            if is_global:
+                # Show global default policy
+                global_policy = mgr.get_global_state("autofile_policy", "allow-all")
+                policy_desc = {
+                    "allow-all": "ALLOW ALL: Full permission to create/modify files",
+                    "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
+                    "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files"
+                }.get(global_policy, f"Unknown policy: {global_policy}")
+                print(f"Global AutoFile policy: {global_policy}")
+                print(f"{policy_desc}")
+                print()
+                print("This is the default for new sessions.")
+                print("Override per-session with: clautorun policy <allow|justify|search>")
+            else:
+                # Show session-specific policy
+                if not session_id:
+                    print("Error: No CLAUDE_SESSION_ID set. Cannot show session policy.")
+                    print("Use --global to show global default policy.")
+                    return 1
+
+                with mgr.session_state(f"__autofile_policy__{session_id}") as state:
+                    session_policy = state.get("policy", None)
+
+                if session_policy:
+                    policy_desc = {
+                        "allow-all": "ALLOW ALL: Full permission to create/modify files",
+                        "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
+                        "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files"
+                    }.get(session_policy, f"Unknown policy: {session_policy}")
+                    print(f"Session AutoFile policy: {session_policy}")
+                    print(f"{policy_desc}")
+                    print()
+                    print(f"Session: {session_id[:12]}...")
+                    print("Slash command equivalent: /cr:st")
+                else:
+                    # No session override, show global default
+                    global_policy = mgr.get_global_state("autofile_policy", "allow-all")
+                    print(f"AutoFile policy: {global_policy} (using global default)")
+                    print()
+                    print(f"Session: {session_id[:12]}...")
+                    print("No session-specific override. Using global default.")
+
+            return 0
+
+        # Set policy (allow, justify, search/find)
+        af_cmd = args.file_command
+        if af_cmd == "find":
+            af_cmd = "search"  # Alias: find -> search
+
+        policy_value = {
+            "allow": "allow-all",
+            "justify": "justify-create",
+            "search": "strict-search"
+        }.get(af_cmd)
+
+        if not policy_value:
+            print(f"Error: Unknown file command: {af_cmd}", file=sys.stderr)
+            return 1
+
+        if is_global:
+            # Set global default
+            mgr.set_global_state("autofile_policy", policy_value)
+            print(f"Global AutoFile policy set to: {policy_value}")
+            print("This will be the default for all new sessions.")
+            print(f"Slash command equivalent: /cr:{af_cmd[0]} (or /cr:{af_cmd})")
+        else:
+            # Set for current session
+            if not session_id:
+                print("Error: No CLAUDE_SESSION_ID set. Cannot set session policy.")
+                print("Use --global to set global default policy instead.")
+                return 1
+
+            with mgr.session_state(f"__autofile_policy__{session_id}") as state:
+                state["policy"] = policy_value
+
+            print(f"Session AutoFile policy set to: {policy_value}")
+            print(f"Session: {session_id[:12]}...")
+            print(f"Slash command equivalent: /cr:{af_cmd[0]} (or /cr:{af_cmd})")
+
+        return 0
 
     # Task subcommand (modern CLI structure)
     if args.command == "task":
