@@ -639,16 +639,27 @@ class TaskLifecycle:
     def handle_session_start(self, ctx: EventContext) -> Optional[Dict]:
         """Handle SessionStart (return injection if incomplete tasks).
 
-        Strategy:
-        1. Prune old completed tasks (Problem 4 solution)
-        2. Find incomplete tasks (status != completed/deleted/paused/ignored)
-        3. Inject resume prompt with prioritized task details
-        4. Cap injection size (Problem 1 solution)
-        """
-        # Prune old completed tasks
-        self.prune_old_tasks()
+        CRITICAL LIFECYCLE: Does NOT auto-prune tasks.
+        Completed tasks are HISTORICAL EVIDENCE, not garbage. Users expect
+        persistent task history in sessions. Automatic deletion without consent
+        violates this expectation and loses valuable context.
 
+        Pruning is manual-only:
+        - Via CLI: clautorun --task-clear
+        - Via GC: TaskLifecycle.cli_gc()
+        - User controls when to delete history
+
+        Strategy:
+        1. Find incomplete tasks (status = in_progress or pending)
+        2. Inject resume prompt with prioritized task details
+        3. Cap injection size (avoid overwhelming AI)
+
+        REMOVED (lifecycle violation): Automatic pruning on SessionStart.
+        Old behavior deleted completed tasks > 30 days on EVERY resume,
+        losing user's work history without consent.
+        """
         # Find incomplete tasks (exclude paused/ignored - they're explicitly parked)
+        # REMOVED: self.prune_old_tasks() - manual pruning only
         incomplete = self.get_incomplete_tasks(exclude_blocking=True)
 
         if not incomplete:
