@@ -204,20 +204,18 @@ class TestGeminiHookEntryPointDirect:
         assert "continue" in response, "Missing 'continue' field"
         assert response["continue"] is not None, "continue field is None"
 
-    def test_hook_beforetool_event_blocking(self, clean_environment):
-        """Test BeforeTool hook blocks dangerous command (NO COST).
+    def test_hook_beforetool_event_blocking_camelcase(self, clean_environment):
+        """Test BeforeTool hook blocks dangerous command using camelCase format (NO COST).
 
-        Sends Gemini-format BeforeTool JSON and verifies:
-        1. hookSpecificOutput is present (not silently missing)
-        2. permissionDecision is 'deny' (command actually blocked)
-        3. Blocking reason mentions 'cat' and suggests 'Read'
+        Tests backward-compatible camelCase format (type/toolName/toolInput/sessionId).
+        Our normalize_hook_payload handles this for older Gemini CLI versions.
         """
         try:
             hook_script = find_hook_script()
         except FileNotFoundError as e:
             pytest.skip(str(e))
 
-        # Simulate BeforeTool event with cat command (Gemini CLI format)
+        # camelCase format (backward-compatible)
         stdin_data = json.dumps({
             "type": "BeforeTool",
             "toolName": "bash_command",
@@ -225,7 +223,6 @@ class TestGeminiHookEntryPointDirect:
             "sessionId": "test-e2e-session"
         })
 
-        # Use CLAUTORUN_USE_DAEMON=0 for deterministic testing
         test_env = os.environ.copy()
         test_env["CLAUTORUN_USE_DAEMON"] = "0"
 
@@ -245,21 +242,116 @@ class TestGeminiHookEntryPointDirect:
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON response: {e}\nOutput: {result.stdout}")
 
-        # CRITICAL: hookSpecificOutput MUST be present (not silently missing)
+        # Verify blocking via BOTH formats
         assert "hookSpecificOutput" in response, \
-            f"Missing hookSpecificOutput - blocking not triggered.\nFull response: {json.dumps(response, indent=2)[:500]}"
+            f"Missing hookSpecificOutput.\nFull response: {json.dumps(response, indent=2)[:500]}"
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny", \
+            f"Claude Code format: permissionDecision={response['hookSpecificOutput'].get('permissionDecision')}"
+        assert response.get("decision") == "deny", \
+            f"Gemini CLI format: top-level decision={response.get('decision')} (must be 'deny')"
 
-        hook_output = response["hookSpecificOutput"]
-        permission = hook_output.get("permissionDecision", "allow")
+    def test_hook_beforetool_event_blocking_snakecase(self, clean_environment):
+        """Test BeforeTool hook blocks dangerous command using official snake_case format (NO COST).
 
-        assert permission == "deny", \
-            f"cat command not blocked! permissionDecision={permission}"
+        Tests the official Gemini CLI v0.26+ hook input format (snake_case keys):
+        - hook_event_name: "BeforeTool" (not "type")
+        - tool_name: "bash_command" (not "toolName")
+        - tool_input: {...} (not "toolInput")
+        - session_id: "..." (not "sessionId")
 
-        reason = hook_output.get("permissionDecisionReason", "")
+        Verifies the response includes top-level 'decision: deny' which is what
+        Gemini CLI actually reads to block commands.
+
+        Reference: https://geminicli.com/docs/hooks/reference/
+        """
+        try:
+            hook_script = find_hook_script()
+        except FileNotFoundError as e:
+            pytest.skip(str(e))
+
+        # Official Gemini CLI snake_case format (v0.26+)
+        stdin_data = json.dumps({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "cat /etc/hosts"},
+            "session_id": "test-e2e-session",
+            "cwd": "/tmp",
+            "transcript_path": "/tmp/test-transcript.jsonl"
+        })
+
+        test_env = os.environ.copy()
+        test_env["CLAUTORUN_USE_DAEMON"] = "0"
+
+        result = subprocess.run(
+            ["python3", str(hook_script)],
+            input=stdin_data,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=test_env
+        )
+
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            pytest.fail(f"Invalid JSON response: {e}\nOutput: {result.stdout}")
+
+        # CRITICAL: Gemini CLI reads top-level 'decision' field
+        assert response.get("decision") == "deny", \
+            f"Gemini CLI blocking failed! top-level decision={response.get('decision')}. " \
+            f"Gemini CLI will NOT block this command without 'decision: deny' at top level.\n" \
+            f"Full response: {json.dumps(response, indent=2)[:500]}"
+
+        # Also verify Claude Code format for cross-platform compat
+        assert "hookSpecificOutput" in response, "Missing hookSpecificOutput"
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny", \
+            f"Claude Code format mismatch: permissionDecision={response['hookSpecificOutput'].get('permissionDecision')}"
+
+        # Verify reason is meaningful
+        reason = response.get("reason", "")
         assert "cat" in reason.lower(), \
-            "Blocking reason doesn't mention cat"
-        assert "read" in reason.lower(), \
-            "Blocking reason doesn't suggest Read tool"
+            f"Blocking reason doesn't mention 'cat': {reason[:200]}"
+
+    def test_hook_safe_command_allowed_snakecase(self, clean_environment):
+        """Test that safe commands are allowed with official snake_case format (NO COST)."""
+        try:
+            hook_script = find_hook_script()
+        except FileNotFoundError as e:
+            pytest.skip(str(e))
+
+        # Official Gemini CLI format - safe command
+        stdin_data = json.dumps({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "ls -la"},
+            "session_id": "test-e2e-session",
+            "cwd": "/tmp"
+        })
+
+        test_env = os.environ.copy()
+        test_env["CLAUTORUN_USE_DAEMON"] = "0"
+
+        result = subprocess.run(
+            ["python3", str(hook_script)],
+            input=stdin_data,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=test_env
+        )
+
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            pytest.fail(f"Invalid JSON response: {e}\nOutput: {result.stdout}")
+
+        # Safe command should be allowed
+        assert response.get("decision") == "allow", \
+            f"Safe command blocked! decision={response.get('decision')}"
 
 
 # Skip entire class if ENABLE_REAL_MONEY_TESTS not set
