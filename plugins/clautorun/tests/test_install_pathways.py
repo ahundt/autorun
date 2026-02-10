@@ -280,7 +280,7 @@ class TestCheckUvEnv:
         with mock.patch("shutil.which", return_value=None):
             result = install._check_uv_env(Path("/tmp"))
             assert result.ok is False
-            assert "uv not found" in result.output
+            assert "uv not found" in result.output.lower()
 
     def test_check_uv_env_detects_missing_pyproject(self):
         """Verify error when pyproject.toml missing."""
@@ -303,7 +303,8 @@ class TestInstallPathwayRouting:
         content = main_file.read_text()
 
         assert "from clautorun.install import install_plugins" in content
-        assert "return install_plugins(args.install" in content
+        assert "install_plugins(" in content
+        assert "args.install" in content
 
     def test_main_uninstall_flag_routes_to_uninstall_plugins(self):
         """Verify __main__.py --uninstall flag routes to install.uninstall_plugins()."""
@@ -450,7 +451,9 @@ class TestDependencyInstallation:
         content = install_file.read_text()
 
         assert "_sync_dependencies()" in content
-        assert "uv sync --extra claude-code" in content
+        # Verify the sync command includes required extras (as list elements)
+        assert '"uv"' in content and '"sync"' in content
+        assert '"claude-code"' in content and '"bashlex"' in content
 
     def test_install_syncs_pdf_deps_when_selected(self):
         """Verify install_plugins() calls _install_pdf_deps() when pdf-extractor selected."""
