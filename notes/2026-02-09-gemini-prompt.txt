@@ -1,0 +1,25 @@
+Analyze the daemon loading issue described in notes/2026-02-09-gemini-debug-pipe-blocking.txt.
+
+**Files to review**:
+1. plugins/clautorun/src/clautorun/core.py - Daemon initialization and module loading
+2. plugins/clautorun/src/clautorun/command_detection.py - Fixed code with _normalize_heredoc_delimiters()
+3. plugins/clautorun/scripts/restart_daemon.py - Restart mechanism
+4. plugins/clautorun/src/clautorun/integrations.py - _not_in_pipe predicate
+5. plugins/clautorun/src/clautorun/plugins.py - check_blocked_commands hook
+
+**Check for**:
+1. Python module caching issues (sys.modules, __pycache__, importlib)
+2. Daemon code loading path - where does it actually import from?
+3. How daemon discovers and imports plugin modules (sys.path, PYTHONPATH)
+4. Why restart doesn't reload new code even after force-reinstall
+5. Is there a separate daemon process cache or installed package cache?
+
+**Critical question**: The code fix is correct (tests pass), but daemon still blocks commands. Why?
+
+**Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide:
+(1) BEFORE code showing the problem with file_path:function_name:line_start-line_end citation
+(2) AFTER code with fix
+(3) concrete technical justification with specific Python module loading details
+(4) preserve all references and citations with academic rigor
+
+**Be harshly critical** and propose concrete, actionable solutions to force daemon to reload Python modules.

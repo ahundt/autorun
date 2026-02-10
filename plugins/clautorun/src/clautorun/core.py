@@ -75,19 +75,63 @@ GEMINI_EVENT_MAP = {
 
 
 def normalize_hook_payload(payload: dict) -> dict:
-    """Normalize hook payload from any CLI format (Claude Code or Gemini CLI) to internal format.
+    """Normalize hook payload from any CLI format and truncate large transcripts.
 
-    Claude Code sends:
-        hook_event_name, session_id, tool_name, tool_input, session_transcript, prompt
+    Normalization:
+    - Claude Code: hook_event_name, session_id, tool_name (snake_case)
+    - Gemini CLI: type, sessionId, toolName (camelCase)
 
-    Gemini CLI sends:
-        type, sessionId, toolName, toolInput (camelCase keys, different event names)
+    Transcript Truncation:
+    - session_transcript can be 200MB+ in long sessions
+    - We only search for recent patterns (stage markers, justification tags)
+    - Truncate to last ~64KB of messages (typically last 20-50 messages)
+    - Saves memory and dramatically speeds up pattern searches
 
-    Returns a new dict with consistent internal key names and mapped event names.
+    Returns:
+        dict: Normalized payload with truncated transcript
     """
     # Map event name: Gemini "BeforeTool" → internal "PreToolUse", etc.
     raw_event = payload.get("hook_event_name") or payload.get("type", "")
     event = GEMINI_EVENT_MAP.get(raw_event, raw_event)
+
+    # Get transcript and truncate to recent messages (memory optimization)
+    # session_transcript can be 200MB+ in long sessions. We only search for
+    # recent patterns (stage markers in last few AI messages), so truncate aggressively.
+    #
+    # STRATEGY: Prioritize size limit (64KB hard cap) over message count.
+    # This prevents memory bloat from sessions with huge individual messages.
+    transcript = payload.get("session_transcript", [])
+    if transcript and len(transcript) > 20:
+        # Try last 20 messages first (fast path for normal-sized messages)
+        recent_20 = transcript[-20:]
+        size_20 = len(json.dumps(recent_20))
+
+        if size_20 <= 64 * 1024:
+            # Last 20 fit in 64KB - use them (common case)
+            transcript = recent_20
+            logger.debug(f"Truncated transcript: {len(payload['session_transcript'])} → 20 messages ({size_20//1024}KB)")
+        else:
+            # Last 20 too large - accumulate from end with STRICT 64KB limit
+            # Prioritize size over count (some messages are huge)
+            truncated = []
+            size_estimate = 0
+            for msg in reversed(transcript):
+                msg_size = len(json.dumps(msg))
+                # STRICT: Stop if adding would exceed 64KB (even if < 5 messages)
+                # We need size limit more than message count - one message is enough
+                # if it contains the patterns we search for
+                if size_estimate + msg_size > 64 * 1024:
+                    if len(truncated) == 0:
+                        # Edge case: First message itself > 64KB
+                        # Keep it anyway (we need at least one message)
+                        truncated.insert(0, msg)
+                    break
+                truncated.insert(0, msg)
+                size_estimate += msg_size
+
+            transcript = truncated
+            logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → "
+                        f"{len(truncated)} messages ({size_estimate//1024}KB)")
 
     return {
         "hook_event_name": event,
@@ -96,7 +140,7 @@ def normalize_hook_payload(payload: dict) -> dict:
         "tool_name": payload.get("tool_name") or payload.get("toolName", ""),
         "tool_input": payload.get("tool_input") or payload.get("toolInput", {}),
         "tool_result": payload.get("tool_result") or payload.get("toolResult"),
-        "session_transcript": payload.get("session_transcript", []),
+        "session_transcript": transcript,
     }
 
 
@@ -690,8 +734,8 @@ class ClautorunDaemon:
         response = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
         try:
-            # Set limit to 10MB for large session transcripts (default 64KB too small)
-            # PostToolUse payloads include full session_transcript which can be large
+            # Read payload with 10MB limit (allows large transcripts initially)
+            # but we'll truncate transcript below to only recent data
             data = await reader.readuntil(b'\n', limit=10 * 1024 * 1024)
             payload = json.loads(data.decode())
 
@@ -701,8 +745,9 @@ class ClautorunDaemon:
                 self.active_pids.add(pid)
                 logger.info(f"New session PID: {pid} (active: {len(self.active_pids)})")
 
-            # Normalize payload from any CLI format (Claude Code or Gemini CLI)
+            # Normalize payload (includes transcript truncation to ~64KB)
             normalized = normalize_hook_payload(payload)
+
 
             # Resolve session identity (supports tri-layer for resume robustness)
             raw_session_id = normalized["session_id"]
