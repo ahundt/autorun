@@ -107,14 +107,23 @@ For contributors and developers:
 git clone https://github.com/ahundt/clautorun.git
 cd clautorun
 
-# Create UV workspace and install dependencies
-uv sync --all-extras
+# Option 1: UV (recommended - faster, better dependency management)
+uv run python -m plugins.clautorun.src.clautorun.install --install --force
 
-# Register plugins with Claude Code
-clautorun --install
+# Option 2: pip fallback (if UV not available)
+pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+```
 
-# Or use the installer with marketplace flag
-uv run clautorun-install install --marketplace
+**Install UV (if needed):**
+```bash
+# macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Homebrew:
+brew install uv
+
+# Windows:
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 ### Verification
@@ -140,17 +149,21 @@ claude plugin marketplace list
 #### Gemini CLI Installation
 
 ```bash
-# Navigate to clautorun repository
-cd /path/to/clautorun
+# Clone and install
+git clone https://github.com/ahundt/clautorun.git && cd clautorun
 
-# Install extension in Gemini CLI
-gemini extensions install .
+# Option 1: UV (recommended)
+uv run python -m plugins.clautorun.src.clautorun.install --install --force
+uv run python plugins/clautorun/scripts/restart_daemon.py
+
+# Option 2: pip fallback
+pip install -e . && \
+python -m plugins.clautorun.src.clautorun.install --install --force && \
+python plugins/clautorun/scripts/restart_daemon.py
 
 # Verify installation
 gemini extensions list
 # Should show: clautorun-workspace@0.8.0
-#   - cr@0.8.0
-#   - pdf-extractor@0.8.0
 
 # Test in Gemini CLI
 gemini
