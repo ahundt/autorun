@@ -1000,16 +1000,36 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
     return response
 
 def build_pretooluse_response(decision="allow", reason=""):
-    """Build PreToolUse hook response for permission decisions
+    """Build PreToolUse hook response for permission decisions.
 
-    The 'continue' field should always be True for PreToolUse hooks to allow
-    the conversation to continue. The 'permissionDecision' field controls
-    whether the specific tool is allowed or denied.
+    Returns a response compatible with BOTH Claude Code and Gemini CLI:
+    - Claude Code reads: hookSpecificOutput.permissionDecision (allow/deny/ask)
+    - Gemini CLI reads: top-level decision (allow/deny/block)
+
+    The 'continue' field is always True so the conversation continues.
+    The tool-level blocking is controlled by the decision fields.
+
+    References:
+    - Claude Code: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
+    - Gemini CLI: https://geminicli.com/docs/hooks/reference/
     """
-    return {"continue": True, "stopReason": "", "suppressOutput": False,
-            "systemMessage": json.dumps(reason)[1:-1] if reason else "",
-            "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                  "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
+    safe_reason = json.dumps(reason)[1:-1] if reason else ""
+    return {
+        # Top-level decision for Gemini CLI compatibility
+        "decision": decision,
+        "reason": safe_reason,
+        # Universal fields
+        "continue": True,
+        "stopReason": "",
+        "suppressOutput": False,
+        "systemMessage": safe_reason,
+        # Claude Code hookSpecificOutput for PreToolUse
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": safe_reason,
+        },
+    }
 
 
 def has_valid_justification(*texts: str) -> bool:

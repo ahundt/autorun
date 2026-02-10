@@ -197,7 +197,16 @@ class TestActualCommandBlocking:
         assert "write_file" in WRITE_TOOLS, "Gemini's write_file not in WRITE_TOOLS"
 
     def test_hook_response_format_universal(self):
-        """Verify hook response format works for both Claude and Gemini."""
+        """Verify hook response format works for both Claude Code and Gemini CLI.
+
+        Claude Code reads: hookSpecificOutput.permissionDecision
+        Gemini CLI reads: top-level decision field
+        Both must be present and consistent.
+
+        References:
+        - Claude Code: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
+        - Gemini CLI: https://geminicli.com/docs/hooks/reference/
+        """
         ctx = EventContext(
             session_id="test-session",
             event="PreToolUse",
@@ -207,23 +216,71 @@ class TestActualCommandBlocking:
 
         result = pretooluse_handler(ctx)
 
-        # Required fields for both platforms
+        # === Universal fields (both platforms) ===
         assert "continue" in result, "Missing 'continue' field"
         assert "stopReason" in result, "Missing 'stopReason' field"
         assert "suppressOutput" in result, "Missing 'suppressOutput' field"
         assert "systemMessage" in result, "Missing 'systemMessage' field"
-        assert "hookSpecificOutput" in result, "Missing 'hookSpecificOutput' field"
 
-        # hookSpecificOutput required fields
+        # === Gemini CLI format: top-level decision (required for Gemini blocking) ===
+        assert "decision" in result, \
+            "Missing top-level 'decision' field (required by Gemini CLI)"
+        assert "reason" in result, \
+            "Missing top-level 'reason' field (required by Gemini CLI)"
+        assert result["decision"] in ["allow", "deny"], \
+            f"Invalid top-level decision: {result['decision']}"
+
+        # === Claude Code format: hookSpecificOutput.permissionDecision ===
+        assert "hookSpecificOutput" in result, "Missing 'hookSpecificOutput' field"
         hook_output = result["hookSpecificOutput"]
         assert "hookEventName" in hook_output, "Missing 'hookEventName'"
         assert "permissionDecision" in hook_output, "Missing 'permissionDecision'"
         assert "permissionDecisionReason" in hook_output, \
             "Missing 'permissionDecisionReason'"
-
-        # Verify permissionDecision is valid
         assert hook_output["permissionDecision"] in ["allow", "deny"], \
             f"Invalid permissionDecision: {hook_output['permissionDecision']}"
+
+        # === Cross-platform consistency: both formats must agree ===
+        assert result["decision"] == hook_output["permissionDecision"], \
+            f"Format mismatch! top-level decision={result['decision']} " \
+            f"vs hookSpecificOutput.permissionDecision={hook_output['permissionDecision']}"
+
+    def test_gemini_top_level_decision_deny(self):
+        """Verify blocked commands include top-level decision='deny' for Gemini CLI.
+
+        Gemini CLI reads 'decision' at the top level (not inside hookSpecificOutput).
+        Without this field, Gemini CLI will allow all commands regardless of our response.
+        See: https://geminicli.com/docs/hooks/reference/
+        """
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "cat /etc/hosts"},
+        )
+
+        result = pretooluse_handler(ctx)
+
+        # Top-level decision MUST be "deny" for Gemini CLI to actually block
+        assert result.get("decision") == "deny", \
+            f"Top-level decision is '{result.get('decision')}', not 'deny'. " \
+            "Gemini CLI will NOT block this command!"
+        assert result.get("reason"), \
+            "Top-level reason is empty. Gemini CLI uses this as tool error feedback."
+
+    def test_gemini_top_level_decision_allow(self):
+        """Verify safe commands include top-level decision='allow' for Gemini CLI."""
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "ls -la"},
+        )
+
+        result = pretooluse_handler(ctx)
+
+        assert result.get("decision") == "allow", \
+            f"Safe command has top-level decision='{result.get('decision')}', expected 'allow'"
 
 
 class TestPipeDetectionRobustness:
@@ -335,7 +392,7 @@ class TestGeminiPayloadNormalization:
         assert result["session_id"] == "claude-session"
 
     def test_gemini_cat_blocked_through_normalization(self):
-        """End-to-end: Gemini format cat command blocked via pretooluse_handler."""
+        """End-to-end: Gemini camelCase format cat command blocked."""
         from clautorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
@@ -354,13 +411,17 @@ class TestGeminiPayloadNormalization:
 
         result = pretooluse_handler(ctx)
 
+        # Claude Code format
         assert "hookSpecificOutput" in result, \
             "Missing hookSpecificOutput - normalization failed"
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny", \
             "cat command not blocked after Gemini format normalization"
+        # Gemini CLI format (top-level decision)
+        assert result.get("decision") == "deny", \
+            "cat command: top-level decision not 'deny' (Gemini CLI won't block)"
 
     def test_gemini_head_blocked_through_normalization(self):
-        """End-to-end: Gemini format head command blocked."""
+        """End-to-end: Gemini camelCase format head command blocked."""
         from clautorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
@@ -379,12 +440,13 @@ class TestGeminiPayloadNormalization:
 
         result = pretooluse_handler(ctx)
 
-        assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny", \
             "head command not blocked after Gemini format normalization"
+        assert result.get("decision") == "deny", \
+            "head command: top-level decision not 'deny' (Gemini CLI won't block)"
 
     def test_gemini_safe_command_allowed(self):
-        """End-to-end: Gemini format safe command allowed."""
+        """End-to-end: Gemini camelCase format safe command allowed."""
         from clautorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
@@ -403,10 +465,139 @@ class TestGeminiPayloadNormalization:
 
         result = pretooluse_handler(ctx)
 
+        assert result.get("decision") == "allow", \
+            f"Safe ls command was blocked! decision={result.get('decision')}"
         hook_output = result.get("hookSpecificOutput", {})
-        permission = hook_output.get("permissionDecision", "allow")
-        assert permission == "allow", \
-            f"Safe ls command was blocked! permissionDecision={permission}"
+        assert hook_output.get("permissionDecision") == "allow", \
+            f"Safe ls command was blocked! permissionDecision={hook_output.get('permissionDecision')}"
+
+
+class TestGeminiOfficialSnakeCaseFormat:
+    """Test the official Gemini CLI v0.26+ snake_case hook input format.
+
+    Per https://geminicli.com/docs/hooks/reference/, Gemini CLI sends:
+    - hook_event_name: "BeforeTool" (snake_case key, PascalCase value)
+    - tool_name: "bash_command" or "run_shell_command"
+    - tool_input: {"command": "..."}
+    - session_id: "..."
+    - cwd: "..."
+    - transcript_path: "..."
+
+    And expects the response to include:
+    - decision: "deny" at the TOP LEVEL (not inside hookSpecificOutput)
+    - reason: "..." at the TOP LEVEL
+    """
+
+    def test_official_format_cat_blocked(self):
+        """Verify cat is blocked with official Gemini CLI snake_case input."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "cat /etc/hosts"},
+            "session_id": "gemini-official-test",
+            "cwd": "/tmp",
+            "transcript_path": "/tmp/transcript.jsonl",
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        # Gemini CLI reads top-level decision
+        assert result.get("decision") == "deny", \
+            f"Gemini official format: top-level decision={result.get('decision')}, expected 'deny'"
+        assert result.get("reason"), \
+            "Gemini official format: top-level reason is empty"
+
+    def test_official_format_run_shell_command_blocked(self):
+        """Verify run_shell_command (Gemini's other bash tool) blocks cat."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "run_shell_command",
+            "tool_input": {"command": "cat /etc/passwd"},
+            "session_id": "gemini-official-test",
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        assert result.get("decision") == "deny", \
+            f"run_shell_command with cat not blocked! decision={result.get('decision')}"
+
+    def test_official_format_safe_command_allowed(self):
+        """Verify safe commands produce decision='allow' with official format."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "git status"},
+            "session_id": "gemini-official-test",
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        assert result.get("decision") == "allow", \
+            f"Safe command blocked! decision={result.get('decision')}"
+
+    def test_official_format_write_file_blocked_justify(self):
+        """Verify write_file is blocked in JUSTIFY mode with official format."""
+        from clautorun.core import normalize_hook_payload
+        session_id = "gemini-justify-test"
+
+        with session_state(session_id) as state:
+            state["file_policy"] = "JUSTIFY"
+
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "write_file",
+            "tool_input": {"file_path": "/tmp/new_file.txt", "content": "test"},
+            "session_id": session_id,
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        assert result.get("decision") == "deny", \
+            f"write_file not blocked in JUSTIFY mode! decision={result.get('decision')}"
+
+    def test_event_name_preserved_in_normalization(self):
+        """Verify BeforeTool maps to PreToolUse even with hook_event_name key."""
+        from clautorun.core import normalize_hook_payload
+        # This is the exact format Gemini CLI sends per official docs
+        payload = {"hook_event_name": "BeforeTool"}
+        result = normalize_hook_payload(payload)
+        assert result["hook_event_name"] == "PreToolUse", \
+            f"BeforeTool not mapped to PreToolUse: got {result['hook_event_name']}"
 
 
 # Documentation
@@ -445,14 +636,19 @@ uv run pytest plugins/clautorun/tests/test_actual_command_blocking.py -v
 
 ## Hook Response Format
 
-The hook response format is UNIVERSAL for both Claude Code and Gemini CLI:
+The hook response format supports BOTH Claude Code and Gemini CLI:
 
 ```python
 {
+    # Top-level fields for Gemini CLI (reads 'decision' at top level)
+    "decision": "deny",  # or "allow" - Gemini CLI reads THIS
+    "reason": "detailed explanation",  # Gemini CLI reads THIS
+    # Universal fields
     "continue": True,  # Always True - let conversation continue
     "stopReason": "",
     "suppressOutput": False,
     "systemMessage": "blocking message shown to user",
+    # Claude Code reads hookSpecificOutput.permissionDecision
     "hookSpecificOutput": {
         "hookEventName": "PreToolUse",  # Same for both platforms
         "permissionDecision": "deny",  # or "allow"

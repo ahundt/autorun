@@ -350,9 +350,13 @@ except ImportError:
         """Fallback build_pretooluse_response function - matches main.py signature.
 
         DRY: This is a fallback for tests if main.py import fails.
-        Source of truth: main.py:897-907
+        Source of truth: main.py build_pretooluse_response()
         """
-        return {"continue": True, "stopReason": "", "suppressOutput": False,
-                "systemMessage": json.dumps(reason)[1:-1] if reason else "",
-                "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                      "permissionDecisionReason": json.dumps(reason)[1:-1] if reason else ""}}
+        safe_reason = json.dumps(reason)[1:-1] if reason else ""
+        return {
+            "decision": decision,
+            "reason": safe_reason,
+            "continue": True, "stopReason": "", "suppressOutput": False,
+            "systemMessage": safe_reason,
+            "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                  "permissionDecisionReason": safe_reason}}
