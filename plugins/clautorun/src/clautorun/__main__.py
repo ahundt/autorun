@@ -163,6 +163,20 @@ Legacy commands (still supported):
         help="Show version and exit",
     )
 
+    # Update group
+    update_group = parser.add_argument_group("Update")
+    update_group.add_argument(
+        "--update",
+        action="store_true",
+        help="Check for and install clautorun updates",
+    )
+    update_group.add_argument(
+        "--update-method",
+        choices=["auto", "plugin", "uv", "pip", "aix"],
+        default="auto",
+        help="Force specific update method (default: auto-detect)",
+    )
+
     return parser
 
 
@@ -292,6 +306,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from clautorun.install import sync_to_cache
 
         return sync_to_cache()
+
+    # Update mode
+    if args.update:
+        from clautorun.install import perform_self_update
+
+        result = perform_self_update(method=args.update_method)
+        print(result.output)
+        return 0 if result.ok else 1
 
     # Default: run as hook handler
     return run_hook_handler()

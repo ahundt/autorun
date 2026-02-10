@@ -128,6 +128,142 @@ def run_cmd(
 
 
 # =============================================================================
+# UV/Pip Compositional Helpers
+# =============================================================================
+
+
+@lru_cache(maxsize=1)
+def has_uv() -> bool:
+    """Check if UV is available in PATH (cached for performance).
+
+    Returns:
+        True if UV is available, False otherwise
+    """
+    return shutil.which("uv") is not None
+
+
+def get_python_runner() -> list[str]:
+    """Get Python runner command with UV-first fallback to pip.
+
+    Returns UV-wrapped python command when UV available, falls back to
+    bare python command when UV not installed.
+
+    Returns:
+        ["uv", "run", "python"] if UV available, else ["python"]
+
+    Examples:
+        >>> # When UV available:
+        >>> runner = get_python_runner()  # ["uv", "run", "python"]
+        >>> cmd = [*runner, "-m", "clautorun", "--install"]
+        >>> # Result: ["uv", "run", "python", "-m", "clautorun", "--install"]
+
+        >>> # When UV unavailable:
+        >>> runner = get_python_runner()  # ["python"]
+        >>> cmd = [*runner, "-m", "clautorun", "--install"]
+        >>> # Result: ["python", "-m", "clautorun", "--install"]
+    """
+    return ["uv", "run", "python"] if has_uv() else ["python"]
+
+
+# =============================================================================
+# Error Message Formatter (DRY)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class ErrorFormatter:
+    """Centralized error message formatting with actionable remediation.
+
+    All error messages follow WOLOG principle: easy to use correctly,
+    hard to use incorrectly. Each error includes:
+    1. Clear description of the problem
+    2. Multiple solution options (ordered by recommendation)
+    3. Troubleshooting section with common pitfalls
+
+    This is a frozen dataclass to ensure immutability and prevent
+    accidental modification of error templates.
+    """
+
+    MARKETPLACE_NOT_FOUND = """
+Could not find marketplace root (.claude-plugin/marketplace.json).
+
+This usually means clautorun is installed as a package, not from source.
+
+━━━ SOLUTION OPTIONS ━━━
+
+Option 1: Install via Plugin System (Recommended)
+  # For Claude Code:
+  claude plugin install https://github.com/ahundt/clautorun.git
+
+  # For Gemini CLI:
+  gemini extensions install https://github.com/ahundt/clautorun.git
+
+Option 2: Local Development from Source
+  cd /path/to/clautorun  # Git clone directory
+  {install_command}
+
+Option 3: AIX Multi-Platform Install
+  # Installs for all detected CLIs (Claude, Gemini, OpenCode, Codex)
+  aix skills install ahundt/clautorun
+
+━━━ TROUBLESHOOTING ━━━
+
+If you're seeing this after 'pip install clautorun':
+  The pip package doesn't include plugin files (.claude-plugin/, commands/).
+  Use Option 1 (plugin install) or Option 2 (local clone) instead.
+
+Need help? https://github.com/ahundt/clautorun/issues
+"""
+
+    UV_NOT_FOUND = """
+UV not found in PATH.
+
+━━━ INSTALL UV ━━━
+
+macOS/Linux:
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+
+Windows:
+  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+Homebrew:
+  brew install uv
+
+Alternatively, use pip fallback:
+  {pip_fallback_command}
+
+Docs: https://docs.astral.sh/uv/getting-started/installation/
+"""
+
+    @staticmethod
+    def marketplace_not_found() -> str:
+        """Format marketplace root not found error with UV/pip pathways.
+
+        Returns:
+            Formatted error message with installation commands
+        """
+        runner = get_python_runner()
+        install_cmd = " ".join([
+            *runner,
+            "-m", "plugins.clautorun.src.clautorun.install",
+            "--install", "--force"
+        ])
+        return ErrorFormatter.MARKETPLACE_NOT_FOUND.format(install_command=install_cmd)
+
+    @staticmethod
+    def uv_not_found(pip_fallback: str) -> str:
+        """Format UV not found error with installation instructions.
+
+        Args:
+            pip_fallback: Pip fallback command to show
+
+        Returns:
+            Formatted error message with UV install instructions
+        """
+        return ErrorFormatter.UV_NOT_FOUND.format(pip_fallback_command=pip_fallback)
+
+
+# =============================================================================
 # Discovery Functions
 # =============================================================================
 
@@ -180,19 +316,7 @@ def find_marketplace_root() -> Path:
     #   2. CLI registration: Use `claude plugin install https://github.com/ahundt/clautorun.git`
     #
     # For now, guide users to the correct workflow.
-    raise FileNotFoundError(
-        "Could not find marketplace root (.claude-plugin/marketplace.json).\n\n"
-        "This usually means clautorun is installed as a package, not from source.\n\n"
-        "**For local development (recommended):**\n"
-        "  cd /path/to/clautorun  # Git repository\n"
-        "  python3 -m plugins.clautorun.src.clautorun.install --install --force\n\n"
-        "**For production install from GitHub:**\n"
-        "  # Python package already installed\n"
-        "  # Now register with CLI:\n"
-        "  claude plugin install https://github.com/ahundt/clautorun.git\n"
-        "  # Or for Gemini:\n"
-        "  gemini extensions install https://github.com/ahundt/clautorun.git\n"
-    )
+    raise FileNotFoundError(ErrorFormatter.marketplace_not_found())
 
 
 def _read_plugin_version(plugin_dir: Path) -> str:
@@ -1144,6 +1268,168 @@ def show_status() -> int:
         print("  Install: npm install -g @google-labs/gemini-cli")
 
     return 0 if all_ok else 1
+
+
+# =============================================================================
+# Self-Update Mechanism
+# =============================================================================
+
+
+def check_for_updates() -> tuple[bool, str, str]:
+    """Check if clautorun update is available using stdlib (no dependencies).
+
+    Uses importlib.metadata for current version and GitHub API for latest release.
+    Handles network failures and missing package gracefully.
+
+    Returns:
+        Tuple of (update_available: bool, current_version: str, latest_version: str)
+
+    Examples:
+        >>> update_available, current, latest = check_for_updates()
+        >>> if update_available:
+        ...     print(f"Update available: {current} → {latest}")
+    """
+    import json
+    import urllib.request
+    from importlib.metadata import version as get_version, PackageNotFoundError
+
+    try:
+        current = get_version("clautorun")
+    except PackageNotFoundError:
+        return (False, "unknown", "unknown")
+
+    try:
+        url = "https://api.github.com/repos/ahundt/clautorun/releases/latest"
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", "clautorun-installer")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read())
+            latest = data["tag_name"].lstrip("v")
+            # Simple string comparison (semantic versioning)
+            return (latest > current, current, latest)
+    except (urllib.error.URLError, json.JSONDecodeError, KeyError):
+        return (False, current, "unknown")
+
+
+@dataclass(frozen=True)
+class UpdateStrategy:
+    """Installation method detection for self-updates.
+
+    Detects how clautorun was installed to choose correct update pathway:
+    - AIX: Highest priority (manages all CLIs)
+    - Plugin: Claude Code or Gemini CLI plugin system
+    - UV: UV package manager
+    - Pip: Python pip package manager
+    """
+
+    method: str  # "plugin", "uv", "pip", "aix"
+    cli: str | None  # "claude", "gemini", None
+
+    @staticmethod
+    def detect() -> "UpdateStrategy":
+        """Auto-detect installation method for updates.
+
+        Priority order:
+        1. AIX (if installed and managing clautorun)
+        2. Claude Code plugin (if claude CLI found + clautorun in list)
+        3. Gemini CLI plugin (if gemini CLI found + clautorun in list)
+        4. UV (if UV available)
+        5. Pip (fallback)
+
+        Returns:
+            UpdateStrategy with detected method and CLI
+        """
+        # Try AIX first (highest priority)
+        if detect_aix_installed():
+            return UpdateStrategy("aix", None)
+
+        # Try plugin systems
+        if shutil.which("claude"):
+            result = run_cmd(["claude", "plugin", "list"], timeout=10)
+            if result.ok and "clautorun" in result.output:
+                return UpdateStrategy("plugin", "claude")
+
+        if shutil.which("gemini"):
+            result = run_cmd(["gemini", "extensions", "list"], timeout=10)
+            if result.ok and "clautorun-workspace" in result.output:
+                return UpdateStrategy("plugin", "gemini")
+
+        # Fall back to package manager
+        return UpdateStrategy("uv" if has_uv() else "pip", None)
+
+
+def perform_self_update(method: str = "auto") -> CmdResult:
+    """Perform self-update using detected or specified installation method.
+
+    Args:
+        method: "auto" (detect), "plugin", "uv", "pip", "aix"
+
+    Returns:
+        CmdResult indicating success/failure
+
+    Examples:
+        >>> # Auto-detect and update
+        >>> result = perform_self_update()
+        >>> print(result.output)
+
+        >>> # Force specific method
+        >>> result = perform_self_update(method="uv")
+    """
+    update_available, current, latest = check_for_updates()
+
+    if not update_available:
+        return CmdResult(True, f"Already on latest version ({current})")
+
+    print(f"Update available: {current} → {latest}")
+
+    # Auto-detect if needed
+    if method == "auto":
+        strategy = UpdateStrategy.detect()
+        method = strategy.method
+        print(f"Detected installation method: {method}")
+
+    # Strategy pattern - each method is a separate handler
+    if method == "aix":
+        return run_cmd(["aix", "skills", "update", "clautorun"], timeout=120)
+
+    elif method == "plugin":
+        # Try both CLIs (one will succeed)
+        if shutil.which("claude"):
+            result = run_cmd(["claude", "plugin", "update", "clautorun"], timeout=60)
+            if result.ok:
+                return result
+
+        if shutil.which("gemini"):
+            result = run_cmd(["gemini", "extensions", "update", "clautorun-workspace"], timeout=60)
+            if result.ok:
+                return result
+
+        return CmdResult(False, "No plugin CLI found for update")
+
+    elif method == "uv":
+        # UV pathway: install + register
+        result = run_cmd([
+            "uv", "pip", "install", "--upgrade",
+            "git+https://github.com/ahundt/clautorun.git"
+        ], timeout=120)
+        if result.ok:
+            # Re-register plugins
+            runner = get_python_runner()
+            return run_cmd([*runner, "-m", "clautorun", "--install", "--force"], timeout=120)
+        return result
+
+    elif method == "pip":
+        # Pip pathway: install + register
+        result = run_cmd([
+            "pip", "install", "--upgrade",
+            "git+https://github.com/ahundt/clautorun.git"
+        ], timeout=120)
+        if result.ok:
+            return run_cmd(["python", "-m", "clautorun", "--install", "--force"], timeout=120)
+        return result
+
+    else:
+        return CmdResult(False, f"Unknown update method: {method}")
 
 
 # =============================================================================

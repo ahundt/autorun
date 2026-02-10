@@ -19,14 +19,26 @@ claude plugin list  # Should show: cr, pdf-extractor
 ```bash
 git clone https://github.com/ahundt/clautorun.git && cd clautorun
 
-# Install for Claude Code
-python3 -m plugins.clautorun.src.clautorun.install --install --claude-only
+# Option 1: UV (recommended - faster, better dependency management)
+uv run python -m plugins.clautorun.src.clautorun.install --install --force
 
-# Or install for all CLIs
-python3 -m plugins.clautorun.src.clautorun.install --install --force
+# Option 2: pip fallback (if UV not available)
+pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
 
 # Verify
 claude plugin list  # Should show: cr, pdf-extractor
+```
+
+**Install UV (if needed):**
+```bash
+# macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Homebrew:
+brew install uv
+
+# Windows:
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 ### Test Installation
