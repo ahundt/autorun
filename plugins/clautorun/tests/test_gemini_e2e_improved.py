@@ -630,6 +630,270 @@ class TestGeminiExtensionInstalledHook:
             f"Decision mismatch! top-level={top_level_decision}, hso={hso_decision}"
 
 
+class TestGeminiWriteFileBlocking:
+    """Test write_file and edit_file tool blocking through installed hook.
+
+    Validates that Gemini CLI tool names (write_file, edit_file, replace)
+    are properly handled in justify/strict AutoFile modes.
+    NO API COST - direct hook invocation.
+    """
+
+    @pytest.fixture
+    def extension_hook(self):
+        """Get path to the installed hook in the Gemini extension."""
+        hook_path = (
+            Path.home() /
+            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py"
+        )
+        if not hook_path.exists():
+            pytest.skip(f"Gemini extension hook not found: {hook_path}")
+        return hook_path
+
+    def _run_hook(self, hook_path: Path, payload: dict) -> dict:
+        """Run hook_entry.py as subprocess with JSON payload."""
+        env = os.environ.copy()
+        env["GEMINI_SESSION_ID"] = "test-write-file"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+
+        result = subprocess.run(
+            ["python3", str(hook_path)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+
+        assert result.returncode == 0, \
+            f"Hook failed: {result.stderr}"
+
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            pytest.fail(f"Invalid JSON: {e}\nstdout: {result.stdout}")
+
+    def test_write_file_returns_valid_response(self, extension_hook):
+        """Verify write_file tool returns a well-formed response with both formats."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "write_file",
+            "tool_input": {"file_path": "/tmp/test.txt", "content": "hello"},
+            "session_id": "test-write-file",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        # Must have both decision formats
+        assert "decision" in response, \
+            f"Missing top-level decision for write_file: {response}"
+        assert "hookSpecificOutput" in response, \
+            f"Missing hookSpecificOutput for write_file: {response}"
+        assert response["decision"] == response["hookSpecificOutput"]["permissionDecision"], \
+            "Decision format mismatch between top-level and hookSpecificOutput"
+
+    def test_edit_file_returns_valid_response(self, extension_hook):
+        """Verify edit_file tool returns a well-formed response."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "edit_file",
+            "tool_input": {"file_path": "/tmp/test.txt", "old_string": "a", "new_string": "b"},
+            "session_id": "test-edit-file",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert "decision" in response, \
+            f"Missing top-level decision for edit_file: {response}"
+        assert "hookSpecificOutput" in response, \
+            f"Missing hookSpecificOutput for edit_file: {response}"
+
+    def test_exit_plan_mode_returns_valid_response(self, extension_hook):
+        """Verify exit_plan_mode tool returns a well-formed response."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "exit_plan_mode",
+            "tool_input": {},
+            "session_id": "test-exit-plan",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert "decision" in response, \
+            f"Missing top-level decision for exit_plan_mode: {response}"
+
+    def test_response_json_schema_completeness(self, extension_hook):
+        """Verify response contains all required fields for both CLIs.
+
+        Claude Code required fields: continue, stopReason, suppressOutput,
+            systemMessage, hookSpecificOutput.permissionDecision
+        Gemini CLI required fields: decision, reason
+        """
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "echo test"},
+            "session_id": "test-schema",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        # Claude Code required fields
+        claude_required = ["continue", "stopReason", "suppressOutput", "systemMessage",
+                          "hookSpecificOutput"]
+        for field in claude_required:
+            assert field in response, \
+                f"Missing Claude Code required field '{field}': {list(response.keys())}"
+
+        hso = response["hookSpecificOutput"]
+        hso_required = ["hookEventName", "permissionDecision", "permissionDecisionReason"]
+        for field in hso_required:
+            assert field in hso, \
+                f"Missing hookSpecificOutput field '{field}': {list(hso.keys())}"
+
+        # Gemini CLI required fields
+        gemini_required = ["decision", "reason"]
+        for field in gemini_required:
+            assert field in response, \
+                f"Missing Gemini CLI required field '{field}': {list(response.keys())}"
+
+
+class TestGeminiHighQualityMocks:
+    """High-quality mock tests for when real money flag is disabled.
+
+    These tests simulate the exact JSON payloads that Gemini CLI v0.26+
+    sends to hooks, based on official documentation at
+    geminicli.com/docs/hooks/reference/. NO API COST.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        """Import plugins to register handlers (same as daemon startup)."""
+        import sys
+        src_dir = str(Path(__file__).parent.parent / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+        # Import plugins to register handlers on the app
+        from clautorun import plugins  # noqa: F401
+
+    def _simulate_hook(self, payload: dict) -> dict:
+        """Simulate hook processing through the full Python code path.
+
+        Uses the dev repo's code directly (no subprocess), testing the
+        normalization + dispatch + response pipeline. Requires handlers
+        to be registered via plugins import (done in setup_class).
+        """
+        from clautorun.core import EventContext, normalize_hook_payload, app
+
+        normalized = normalize_hook_payload(payload)
+        ctx = EventContext(
+            session_id=normalized["session_id"] or "mock-session",
+            event=normalized["hook_event_name"],
+            prompt=normalized["prompt"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+            tool_result=normalized["tool_result"],
+            session_transcript=normalized["session_transcript"],
+        )
+        return app.dispatch(ctx)
+
+    def test_mock_gemini_rm_blocked(self):
+        """Mock: 'rm -rf /' blocked via bash_command."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "rm -rf /"},
+            "session_id": "mock-1",
+        })
+        assert response.get("decision") == "deny", \
+            f"rm -rf should be blocked: {response.get('decision')}"
+
+    def test_mock_gemini_git_reset_hard_blocked(self):
+        """Mock: 'git reset --hard' blocked."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "git reset --hard HEAD~5"},
+            "session_id": "mock-2",
+        })
+        assert response.get("decision") == "deny", \
+            f"git reset --hard should be blocked: {response.get('decision')}"
+
+    def test_mock_gemini_python_allowed(self):
+        """Mock: 'python3 script.py' allowed."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "python3 test.py"},
+            "session_id": "mock-3",
+        })
+        assert response.get("decision") == "allow", \
+            f"python3 should be allowed: {response.get('decision')}"
+
+    def test_mock_gemini_npm_allowed(self):
+        """Mock: 'npm test' allowed."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "run_shell_command",
+            "tool_input": {"command": "npm test"},
+            "session_id": "mock-4",
+        })
+        assert response.get("decision") == "allow", \
+            f"npm test should be allowed: {response.get('decision')}"
+
+    def test_mock_gemini_sed_blocked(self):
+        """Mock: 'sed -i' blocked (direct file modification)."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "sed -i 's/foo/bar/g' file.txt"},
+            "session_id": "mock-5",
+        })
+        assert response.get("decision") == "deny", \
+            f"sed should be blocked: {response.get('decision')}"
+
+    def test_mock_gemini_find_blocked(self):
+        """Mock: 'find' blocked (use Glob instead)."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "find . -name '*.py'"},
+            "session_id": "mock-6",
+        })
+        assert response.get("decision") == "deny", \
+            f"find should be blocked: {response.get('decision')}"
+
+    def test_mock_dual_format_on_deny(self):
+        """Mock: denied response has both Gemini and Claude Code formats."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "cat secret.txt"},
+            "session_id": "mock-7",
+        })
+        # Gemini format
+        assert response.get("decision") == "deny"
+        assert "reason" in response
+        # Claude Code format
+        hso = response.get("hookSpecificOutput", {})
+        assert hso.get("permissionDecision") == "deny"
+        assert hso.get("permissionDecisionReason") != ""
+
+    def test_mock_dual_format_on_allow(self):
+        """Mock: allowed response has both Gemini and Claude Code formats."""
+        response = self._simulate_hook({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "uv run pytest tests/ -v"},
+            "session_id": "mock-8",
+        })
+        # Gemini format
+        assert response.get("decision") == "allow"
+        assert "reason" in response
+        # Claude Code format
+        hso = response.get("hookSpecificOutput", {})
+        assert hso.get("permissionDecision") == "allow"
+
+
 class TestGeminiExtensionVerification:
     """Verify Gemini extension configuration (NO COST - file checks only)."""
 
