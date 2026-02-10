@@ -482,13 +482,20 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if intg.event not in ("all", event_type):
                 continue
 
-            # Check tool matcher (hookify compat)
+            # Check tool matcher (hookify compat) - expand to all CLI aliases
             if intg.tool_matcher != "*":
-                # Split allowed tools and check if any of the aliases match
-                # Note: This is simplified; ideally we'd map Claude tools to Gemini tools or vice versa.
-                # For now, we check if the current tool_name is in the set of allowed tools.
+                # Expand tool_matcher to include all aliases from the same tool family.
+                # e.g., "Bash" expands to {"Bash", "bash_command", "run_shell_command"}
                 allowed_tools = set(intg.tool_matcher.split("|"))
-                if ctx.tool_name not in allowed_tools:
+                expanded = set()
+                for tool in allowed_tools:
+                    for family in (BASH_TOOLS, FILE_TOOLS, PLAN_TOOLS):
+                        if tool in family:
+                            expanded |= family
+                            break
+                    else:
+                        expanded.add(tool)
+                if ctx.tool_name not in expanded:
                     continue
 
             # Check when predicate - FIX Bug 1

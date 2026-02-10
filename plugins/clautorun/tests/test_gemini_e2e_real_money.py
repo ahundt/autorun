@@ -62,19 +62,27 @@ def gemini_cli_check():
 
 @pytest.fixture(scope="module")
 def gemini_extension_check():
-    """Verify clautorun extension is loaded in Gemini."""
+    """Verify clautorun extension is loaded in Gemini.
+
+    Note: `gemini extensions list` sends the extension list to stderr,
+    not stdout. We check both streams to handle this correctly.
+    """
     try:
         result = subprocess.run(
             ["gemini", "extensions", "list"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=30  # Extensions list loads credentials + experiments
         )
         if result.returncode != 0:
             pytest.skip(f"Could not list Gemini extensions: {result.stderr}")
 
-        if "clautorun" not in result.stdout:
+        # Gemini CLI sends extension list to stderr (debug output stream)
+        combined_output = result.stdout + result.stderr
+        if "clautorun" not in combined_output:
             pytest.skip("clautorun extension not installed in Gemini CLI")
+    except subprocess.TimeoutExpired:
+        pytest.skip("gemini extensions list timed out (>30s)")
     except Exception as e:
         pytest.skip(f"Extension check failed: {e}")
 
@@ -111,17 +119,20 @@ class TestGeminiE2ERealMoney:
         """Test that clautorun extension is loaded in Gemini.
 
         No API cost - just checks extension list.
+        Note: `gemini extensions list` outputs to stderr, not stdout.
         """
         result = subprocess.run(
             ["gemini", "extensions", "list"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=30
         )
 
         assert result.returncode == 0, f"Extension list failed: {result.stderr}"
-        assert "clautorun" in result.stdout, \
-            "clautorun extension not found in Gemini extensions"
+        # Gemini CLI sends extension list to stderr (debug output stream)
+        combined_output = result.stdout + result.stderr
+        assert "clautorun" in combined_output, \
+            f"clautorun extension not found. Output:\n{combined_output[:500]}"
 
     @pytest.mark.skipif(
         True,  # Always skip until user confirms they want to test

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Verify actual command blocking logic for both Claude Code and Gemini CLI.
 
-Tests the pretooluse_handler function directly to ensure:
+Tests the pretooluse_handler function directly using real EventContext to ensure:
 1. Commands are actually blocked (permissionDecision='deny')
 2. Piped commands are allowed (bashlex detects pipe context)
 3. File creation is blocked in justify mode
 4. Hook response format works for both Claude Code and Gemini CLI
+5. Real EventContext property access matches production behavior
 
 NO COST - Direct Python function calls, no API usage.
 """
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,8 +21,10 @@ plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
 from clautorun.main import pretooluse_handler
+from clautorun.core import EventContext
 from clautorun.command_detection import BASHLEX_AVAILABLE
 from clautorun.config import BASH_TOOLS, WRITE_TOOLS
+from clautorun.session_manager import session_state
 
 
 @pytest.fixture(autouse=True)
@@ -57,11 +59,12 @@ class TestActualCommandBlocking:
 
     def test_cat_command_blocked(self):
         """Verify cat command is blocked with permissionDecision='deny'."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"  # Gemini's bash tool
-        ctx.tool_input = {"command": "cat /etc/hosts"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",  # Gemini's bash tool
+            tool_input={"command": "cat /etc/hosts"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -84,11 +87,12 @@ class TestActualCommandBlocking:
 
     def test_head_command_blocked(self):
         """Verify head command is blocked with permissionDecision='deny'."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "head -10 file.txt"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "head -10 file.txt"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -104,11 +108,12 @@ class TestActualCommandBlocking:
     @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required for pipe detection")
     def test_piped_cat_allowed(self):
         """Verify piped cat is ALLOWED (bashlex detects pipe context)."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "cargo build 2>&1 | cat"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "cargo build 2>&1 | cat"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -121,11 +126,12 @@ class TestActualCommandBlocking:
     @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required for pipe detection")
     def test_piped_head_allowed(self):
         """Verify piped head is ALLOWED (bashlex detects pipe context)."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "cargo build 2>&1 | head -50"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "cargo build 2>&1 | head -50"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -137,21 +143,21 @@ class TestActualCommandBlocking:
 
     def test_file_creation_blocked_in_justify_mode(self):
         """Verify file creation is blocked when policy is justify-create."""
-        # Initialize session state with file_policy (handler reads from state)
-        from clautorun.session_manager import session_state
         session_id = "test-session"
 
+        # Initialize session state with file_policy (handler reads from state)
         with session_state(session_id) as state:
             state["file_policy"] = "JUSTIFY"
 
-        ctx = MagicMock()
-        ctx.session_id = session_id
-        ctx.tool_name = "write_file"  # Gemini's write tool
-        ctx.tool_input = {
-            "file_path": "/tmp/test_new_file.txt",
-            "content": "test"
-        }
-        ctx.file_policy = "justify-create"
+        ctx = EventContext(
+            session_id=session_id,
+            event="PreToolUse",
+            tool_name="write_file",  # Gemini's write tool
+            tool_input={
+                "file_path": "/tmp/test_new_file.txt",
+                "content": "test"
+            },
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -192,11 +198,12 @@ class TestActualCommandBlocking:
 
     def test_hook_response_format_universal(self):
         """Verify hook response format works for both Claude and Gemini."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "cat test.txt"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "cat test.txt"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -225,11 +232,12 @@ class TestPipeDetectionRobustness:
     @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
     def test_pipe_with_stderr_redirect(self):
         """Test pipe detection with stderr redirect (2>&1 | command)."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "npm test 2>&1 | head -100"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "npm test 2>&1 | head -100"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -242,11 +250,12 @@ class TestPipeDetectionRobustness:
     @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
     def test_pipe_with_tee(self):
         """Test pipe with tee command (common logging pattern)."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "pytest 2>&1 | tee log.txt"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "pytest 2>&1 | tee log.txt"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -258,11 +267,12 @@ class TestPipeDetectionRobustness:
 
     def test_direct_cat_blocked_without_pipe(self):
         """Verify direct cat is still blocked even if bashlex unavailable."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = {"command": "cat myfile.txt"}
-        ctx.file_policy = "allow-all"
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input={"command": "cat myfile.txt"},
+        )
 
         result = pretooluse_handler(ctx)
 
@@ -271,6 +281,132 @@ class TestPipeDetectionRobustness:
 
         assert permission_decision == "deny", \
             "Direct cat command was not blocked"
+
+
+class TestGeminiPayloadNormalization:
+    """Test normalize_hook_payload handles Gemini CLI format correctly."""
+
+    def test_gemini_event_name_mapping(self):
+        """Verify BeforeTool maps to PreToolUse."""
+        from clautorun.core import normalize_hook_payload
+        result = normalize_hook_payload({"type": "BeforeTool"})
+        assert result["hook_event_name"] == "PreToolUse"
+
+    def test_gemini_aftertool_mapping(self):
+        """Verify AfterTool maps to PostToolUse."""
+        from clautorun.core import normalize_hook_payload
+        result = normalize_hook_payload({"type": "AfterTool"})
+        assert result["hook_event_name"] == "PostToolUse"
+
+    def test_gemini_beforeagent_mapping(self):
+        """Verify BeforeAgent maps to UserPromptSubmit."""
+        from clautorun.core import normalize_hook_payload
+        result = normalize_hook_payload({"type": "BeforeAgent"})
+        assert result["hook_event_name"] == "UserPromptSubmit"
+
+    def test_gemini_camelcase_keys(self):
+        """Verify Gemini camelCase keys are normalized to snake_case."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "type": "BeforeTool",
+            "toolName": "bash_command",
+            "toolInput": {"command": "cat file.txt"},
+            "sessionId": "gemini-session-123",
+        }
+        result = normalize_hook_payload(payload)
+        assert result["hook_event_name"] == "PreToolUse"
+        assert result["tool_name"] == "bash_command"
+        assert result["tool_input"] == {"command": "cat file.txt"}
+        assert result["session_id"] == "gemini-session-123"
+
+    def test_claude_format_passthrough(self):
+        """Verify Claude Code format passes through unchanged."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "session_id": "claude-session",
+        }
+        result = normalize_hook_payload(payload)
+        assert result["hook_event_name"] == "PreToolUse"
+        assert result["tool_name"] == "Bash"
+        assert result["tool_input"] == {"command": "ls"}
+        assert result["session_id"] == "claude-session"
+
+    def test_gemini_cat_blocked_through_normalization(self):
+        """End-to-end: Gemini format cat command blocked via pretooluse_handler."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "type": "BeforeTool",
+            "toolName": "bash_command",
+            "toolInput": {"command": "cat /etc/hosts"},
+            "sessionId": "test-normalization",
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        assert "hookSpecificOutput" in result, \
+            "Missing hookSpecificOutput - normalization failed"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny", \
+            "cat command not blocked after Gemini format normalization"
+
+    def test_gemini_head_blocked_through_normalization(self):
+        """End-to-end: Gemini format head command blocked."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "type": "BeforeTool",
+            "toolName": "bash_command",
+            "toolInput": {"command": "head -10 file.txt"},
+            "sessionId": "test-normalization",
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        assert "hookSpecificOutput" in result
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny", \
+            "head command not blocked after Gemini format normalization"
+
+    def test_gemini_safe_command_allowed(self):
+        """End-to-end: Gemini format safe command allowed."""
+        from clautorun.core import normalize_hook_payload
+        payload = {
+            "type": "BeforeTool",
+            "toolName": "bash_command",
+            "toolInput": {"command": "ls -la"},
+            "sessionId": "test-normalization",
+        }
+        normalized = normalize_hook_payload(payload)
+
+        ctx = EventContext(
+            session_id=normalized["session_id"],
+            event=normalized["hook_event_name"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+        )
+
+        result = pretooluse_handler(ctx)
+
+        hook_output = result.get("hookSpecificOutput", {})
+        permission = hook_output.get("permissionDecision", "allow")
+        assert permission == "allow", \
+            f"Safe ls command was blocked! permissionDecision={permission}"
 
 
 # Documentation

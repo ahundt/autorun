@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive command blocking tests with proper context simulation.
+"""Comprehensive command blocking tests using real EventContext.
 
 Tests verify:
 1. Blocking logic works for all tool name variants (Claude + Gemini)
@@ -7,13 +7,18 @@ Tests verify:
 3. Edge cases handled correctly (empty commands, invalid input, etc.)
 4. systemMessage content is helpful and actionable
 5. permissionDecision correctly set for allow/deny scenarios
+6. Real EventContext property access and None handling
+
+Uses real EventContext (core.py:222) instead of MagicMock to exercise
+the actual context construction, property accessors, and default handling
+that runs in production.
 
 NO COST - Direct Python function calls, no API usage.
 """
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from typing import Any, Dict
 
 import pytest
@@ -23,18 +28,23 @@ plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
 from clautorun.main import pretooluse_handler
+from clautorun.core import EventContext
 from clautorun.command_detection import BASHLEX_AVAILABLE
 from clautorun.config import BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 from clautorun.session_manager import clear_test_session_state, session_state
 
 
-def create_mock_context(
+def create_test_context(
     tool_name: str,
     tool_input: Dict[str, Any],
     session_id: str = "test-session",
     file_policy: str = "allow-all"
-) -> MagicMock:
-    """Create properly structured mock context matching real hook context.
+) -> EventContext:
+    """Create real EventContext matching production hook context.
+
+    Uses the actual EventContext class from core.py:222 instead of MagicMock.
+    This ensures tests exercise the same property accessors, __slots__,
+    and default handling that runs in production.
 
     Args:
         tool_name: Name of tool being called (e.g., "Bash", "bash_command")
@@ -43,11 +53,11 @@ def create_mock_context(
         file_policy: AutoFile policy (allow-all, justify-create, strict-search)
 
     Returns:
-        Mock context object with all required attributes
+        Real EventContext with proper initialization
 
     Note:
-        This also initializes session state with the file_policy since the
-        handler reads file_policy from session state, not ctx.file_policy.
+        File policy is stored in session_state (shelve), not on ctx directly,
+        since pretooluse_handler reads from session_state(session_id).
     """
     # Map test-friendly policy names to internal policy constants
     policy_map = {
@@ -57,19 +67,19 @@ def create_mock_context(
     }
     internal_policy = policy_map.get(file_policy, "ALLOW")
 
-    # Initialize session state with file_policy
+    # Initialize session state with file_policy (handler reads from here)
     with session_state(session_id) as state:
         state["file_policy"] = internal_policy
 
-    ctx = MagicMock()
-    ctx.session_id = session_id
-    ctx.tool_name = tool_name
-    ctx.tool_input = tool_input
-    ctx.file_policy = file_policy
-
-    # Add commonly accessed attributes that might be in real context
-    ctx.user_message = ""
-    ctx.conversation_history = []
+    # Create real EventContext - same class used by daemon mode (core.py:222)
+    # EventContext.__init__ handles None tool_input (defaults to {})
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name=tool_name,
+        tool_input=tool_input,
+        session_transcript=[],
+    )
 
     return ctx
 
@@ -107,7 +117,7 @@ class TestCommandBlockingAllToolNames:
     @pytest.mark.parametrize("tool_name", ["Bash", "bash_command", "run_shell_command"])
     def test_cat_blocked_all_bash_tool_names(self, tool_name):
         """Verify cat blocked for all bash tool name variants."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name=tool_name,
             tool_input={"command": "cat /etc/hosts"}
         )
@@ -128,7 +138,7 @@ class TestCommandBlockingAllToolNames:
     @pytest.mark.parametrize("tool_name", ["Write", "write_file"])
     def test_file_creation_all_write_tool_names(self, tool_name):
         """Verify file creation gating works for all write tool variants."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name=tool_name,
             tool_input={
                 "file_path": "/tmp/new_file.txt",
@@ -167,7 +177,7 @@ class TestCommandBlockingEdgeCases:
 
     def test_empty_command(self):
         """Test handling of empty command string."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={"command": ""}
         )
@@ -181,7 +191,7 @@ class TestCommandBlockingEdgeCases:
 
     def test_whitespace_only_command(self):
         """Test handling of whitespace-only command."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={"command": "   \n\t   "}
         )
@@ -194,7 +204,7 @@ class TestCommandBlockingEdgeCases:
 
     def test_missing_command_key(self):
         """Test handling when 'command' key missing from tool_input."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={}  # No 'command' key
         )
@@ -222,7 +232,7 @@ class TestCommandBlockingEdgeCases:
 
     def test_invalid_file_policy(self):
         """Test handling of invalid file policy value."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="write_file",
             tool_input={"file_path": "/tmp/test.txt", "content": "test"},
             file_policy="invalid-policy"
@@ -239,7 +249,7 @@ class TestFilePathVariants:
 
     def test_absolute_path_new_file_justify_mode(self):
         """Test absolute path to new file in justify mode."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="write_file",
             tool_input={
                 "file_path": "/tmp/test_absolute_new.txt",
@@ -258,7 +268,7 @@ class TestFilePathVariants:
 
     def test_relative_path_new_file_justify_mode(self):
         """Test relative path to new file in justify mode."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="write_file",
             tool_input={
                 "file_path": "test_relative_new.txt",
@@ -284,7 +294,7 @@ class TestFilePathVariants:
             f.write("original content")
 
         try:
-            ctx = create_mock_context(
+            ctx = create_test_context(
                 tool_name="write_file",
                 tool_input={
                     "file_path": existing_file,
@@ -311,7 +321,7 @@ class TestSystemMessageQuality:
 
     def test_cat_message_suggests_read_tool(self):
         """Verify cat blocking message suggests Read tool."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={"command": "cat myfile.txt"}
         )
@@ -331,7 +341,7 @@ class TestSystemMessageQuality:
 
     def test_head_message_suggests_read_with_limit(self):
         """Verify head blocking message suggests Read tool with limit parameter."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={"command": "head -20 file.txt"}
         )
@@ -346,7 +356,7 @@ class TestSystemMessageQuality:
 
     def test_file_creation_message_explains_policy(self):
         """Verify file creation blocking explains the policy."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="write_file",
             tool_input={"file_path": "/tmp/new.txt", "content": "test"},
             file_policy="justify-create"
@@ -386,7 +396,7 @@ class TestPipeDetectionComprehensive:
     ])
     def test_pipe_detection_accuracy(self, command, expected_permission):
         """Test pipe detection accuracy for various command patterns."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={"command": command}
         )
@@ -401,7 +411,7 @@ class TestPipeDetectionComprehensive:
 
     def test_complex_pipe_chain(self):
         """Test complex pipe chain with multiple stages."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={
                 "command": "cargo test 2>&1 | grep FAILED | head -20 | tee failures.txt"
@@ -419,7 +429,7 @@ class TestPipeDetectionComprehensive:
 
     def test_pipe_with_subshell(self):
         """Test pipe detection with subshell."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={
                 "command": "(cargo build && cargo test) 2>&1 | head -100"
@@ -441,7 +451,7 @@ class TestHookResponseFormatCompliance:
 
     def test_response_has_all_required_fields(self):
         """Verify response contains all required fields."""
-        ctx = create_mock_context(
+        ctx = create_test_context(
             tool_name="bash_command",
             tool_input={"command": "cat test.txt"}
         )
@@ -471,7 +481,7 @@ class TestHookResponseFormatCompliance:
         ]
 
         for tool_name, tool_input in test_cases:
-            ctx = create_mock_context(tool_name=tool_name, tool_input=tool_input)
+            ctx = create_test_context(tool_name=tool_name, tool_input=tool_input)
             result = pretooluse_handler(ctx)
 
             assert result.get("continue") is True, \
@@ -485,7 +495,7 @@ class TestHookResponseFormatCompliance:
         ]
 
         for tool_name, tool_input, expected in test_cases:
-            ctx = create_mock_context(tool_name=tool_name, tool_input=tool_input)
+            ctx = create_test_context(tool_name=tool_name, tool_input=tool_input)
             result = pretooluse_handler(ctx)
 
             hook_output = result.get("hookSpecificOutput", {})
@@ -503,7 +513,7 @@ class TestSessionStateIsolation:
     def test_session_state_isolated(self):
         """Verify each test gets clean session state."""
         # Test 1: Create some session state
-        ctx1 = create_mock_context(
+        ctx1 = create_test_context(
             tool_name="bash_command",
             tool_input={"command": "cat file1.txt"},
             session_id="test-session-1"
@@ -511,7 +521,7 @@ class TestSessionStateIsolation:
         result1 = pretooluse_handler(ctx1)
 
         # Test 2: Different session should not see state from test 1
-        ctx2 = create_mock_context(
+        ctx2 = create_test_context(
             tool_name="bash_command",
             tool_input={"command": "cat file2.txt"},
             session_id="test-session-2"
