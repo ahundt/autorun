@@ -177,6 +177,76 @@ Legacy commands (still supported):
         help="Force specific update method (default: auto-detect)",
     )
 
+    # Task lifecycle management group
+    tasks_group = parser.add_argument_group("Task Lifecycle (Manual History Management)")
+    tasks_group.add_argument(
+        "--task-status",
+        action="store_true",
+        help="Show task status for current or specified session",
+    )
+    tasks_group.add_argument(
+        "--task-export",
+        metavar="FILE",
+        help="Export tasks to JSON/CSV/markdown file",
+    )
+    tasks_group.add_argument(
+        "--task-export-format",
+        choices=["json", "csv", "markdown"],
+        default="json",
+        help="Export format (default: json)",
+    )
+    tasks_group.add_argument(
+        "--task-clear",
+        action="store_true",
+        help="Clear tasks for current or specified session (requires --confirm)",
+    )
+    tasks_group.add_argument(
+        "--task-clear-all",
+        action="store_true",
+        help="Clear ALL session tasks (requires --confirm)",
+    )
+    tasks_group.add_argument(
+        "--task-gc",
+        action="store_true",
+        help="Garbage-collect old session task data (archive-then-purge)",
+    )
+    tasks_group.add_argument(
+        "--task-gc-pattern",
+        default="*",
+        help="Session ID pattern for GC (default: * = all)",
+    )
+    tasks_group.add_argument(
+        "--task-gc-ttl",
+        type=int,
+        metavar="DAYS",
+        help="Only GC sessions older than DAYS (default: config.task_ttl_days)",
+    )
+    tasks_group.add_argument(
+        "--task-gc-no-archive",
+        action="store_true",
+        help="Skip archiving before deletion (DANGEROUS - permanent data loss)",
+    )
+    tasks_group.add_argument(
+        "--task-session",
+        metavar="SESSION_ID",
+        help="Session ID for task operations (default: $CLAUDE_SESSION_ID)",
+    )
+    tasks_group.add_argument(
+        "--task-verbose",
+        action="store_true",
+        help="Show detailed task information",
+    )
+    tasks_group.add_argument(
+        "--task-dry-run",
+        action="store_true",
+        help="Preview task operations without making changes",
+    )
+    tasks_group.add_argument(
+        "--task-no-confirm",
+        action="store_true",
+        help="Skip confirmation prompts (use with caution)",
+    )
+
     return parser
 
 
@@ -314,6 +384,49 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = perform_self_update(method=args.update_method)
         print(result.output)
         return 0 if result.ok else 1
+
+    # Task lifecycle operations
+    if args.task_status or args.task_export or args.task_clear or args.task_clear_all or args.task_gc:
+        from clautorun.task_lifecycle import TaskLifecycle
+
+        session_id = args.task_session or os.environ.get("CLAUDE_SESSION_ID")
+
+        # Task status
+        if args.task_status:
+            return TaskLifecycle.cli_status(
+                session_id=session_id,
+                verbose=args.task_verbose,
+                format='text'
+            )
+
+        # Task export
+        if args.task_export:
+            if not session_id:
+                print("Error: --task-session required when CLAUDE_SESSION_ID not set", file=sys.stderr)
+                return 1
+            return TaskLifecycle.cli_export(
+                session_id=session_id,
+                output_path=args.task_export,
+                format=args.task_export_format,
+                include_completed=True
+            )
+
+        # Task clear
+        if args.task_clear or args.task_clear_all:
+            return TaskLifecycle.cli_clear(
+                session_id=session_id,
+                all_sessions=args.task_clear_all,
+                confirm=not args.task_no_confirm
+            )
+
+        # Task GC (garbage collect)
+        if args.task_gc:
+            return TaskLifecycle.cli_gc(
+                archive=not args.task_gc_no_archive,
+                dry_run=args.task_dry_run,
+                pattern=args.task_gc_pattern,
+                ttl_days=args.task_gc_ttl
+            )
 
     # Default: run as hook handler
     return run_hook_handler()
