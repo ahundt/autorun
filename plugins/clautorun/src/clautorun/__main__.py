@@ -82,6 +82,10 @@ Why two steps?
   Step 1: Install Python package    → Makes 'clautorun' CLI command available
   Step 2: Register with Claude CLI  → Adds /cr:* slash commands to Claude Code/Gemini
 
+Note: For local development from a git clone, use the full module path in Step 2:
+  uv run python -m plugins.clautorun.src.clautorun.install --install --force
+This ensures the installer finds the source .claude-plugin/ directory.
+
 Method 1: Via Claude Code plugin system (EASIEST - one command does both):
   claude plugin install https://github.com/ahundt/clautorun.git
 
@@ -95,6 +99,9 @@ Method 2: Via pip/uv (two steps):
   clautorun --install                    # Register all plugins
   clautorun --status                     # Verify installation
 
+  # Optional: Install as UV tool for global availability
+  uv tool install git+https://github.com/ahundt/clautorun.git
+
 Method 3: From local clone (development):
   git clone https://github.com/ahundt/clautorun.git && cd clautorun
 
@@ -103,8 +110,11 @@ Method 3: From local clone (development):
   # OR:
   pip install -e .                       # Standard pip
 
-  # Step 2: Register with Claude Code/Gemini
-  clautorun --install --force            # Force reinstall for development
+  # Step 2: Register with Claude Code/Gemini (use full module path for local dev)
+  uv run python -m plugins.clautorun.src.clautorun.install --install --force
+
+  # Optional: Install as UV tool (adds --tool flag to registration)
+  clautorun --install --force --tool     # Only after uv tool install
 
 Install UV (if needed):
   # macOS/Linux:
@@ -138,9 +148,13 @@ Task lifecycle management:
   clautorun task gc --no-confirm         # Clean up old task data
 
 Common workflows:
-  # First time setup (see INSTALLATION GUIDE above for full details)
+  # First time setup - production (see INSTALLATION GUIDE above for full details)
   pip install clautorun                  # Step 1: Install Python package
   clautorun --install                    # Step 2: Register with Claude/Gemini
+
+  # First time setup - local development from clone
+  cd /path/to/clautorun && uv pip install -e .
+  uv run python -m plugins.clautorun.src.clautorun.install --install --force
 
   # Check what's installed
   clautorun --status                     # See plugin status

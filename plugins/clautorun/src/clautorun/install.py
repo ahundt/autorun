@@ -325,52 +325,188 @@ Docs: https://docs.astral.sh/uv/getting-started/installation/
 
 @lru_cache(maxsize=1)
 def find_marketplace_root() -> Path:
-    """Find the clautorun marketplace root directory.
+    """Find the clautorun marketplace root directory dynamically.
 
-    Handles both source repository and installed package locations:
-    1. Source repository: Search upward for .claude-plugin/marketplace.json
-    2. Installed package: Use package installation directory
+    Supports all installation pathways:
+    1. Source repository (git clone): Walk up from __file__ to find .claude-plugin/
+    2. Editable install (uv pip install -e .): Check direct_url.json for source path
+    3. UV tool install: Check known tool paths, then try to find dev repo
+    4. Gemini extension: Check ~/.gemini/extensions/
+    5. Claude plugin cache: Check ~/.claude/plugins/cache/
 
     Returns:
-        Path to marketplace root directory
+        Path to marketplace root directory containing .claude-plugin/marketplace.json
 
     Raises:
-        FileNotFoundError: If marketplace root cannot be found
+        FileNotFoundError: If marketplace root cannot be found in any location
     """
-    # Try source repository first (development workflow)
+    # Strategy 1: Walk up from __file__ FIRST - respect where we're actually running from
+    # Works for: source repo, Gemini extensions, Claude cache, editable installs
+    # This ensures Gemini/Claude use their own copies, not jumping to dev repo
     current = Path(__file__).resolve()
     for parent in [current, *current.parents]:
         marker = parent / ".claude-plugin" / "marketplace.json"
         if marker.exists():
+            # Filter out backup/reference directories unless explicitly in their subdirectories
+            parent_str = str(parent).lower()
+            if "backup" in parent_str or "reference" in parent_str:
+                # Only use backup/reference if we're actually running FROM them
+                if str(Path(__file__).resolve()).startswith(str(parent)):
+                    return parent
+                # Otherwise skip and keep searching
+                continue
             return parent
 
-    # Try installed package location (production workflow)
-    # When installed via pip/uv, __file__ is like:
-    # /path/to/site-packages/clautorun/install.py
-    # We need to go up to find the plugin root
+    # Strategy 2: Check if this is an editable install - look for direct_url.json
+    # Works for: uv pip install -e . (points back to source)
     try:
-        import importlib.resources as resources
-        # Try to find package data
-        # For installed package, look for plugins/ directory relative to package
-        package_dir = Path(__file__).parent.parent.parent  # Go up from src/clautorun/ to plugins/
-        if (package_dir / "clautorun").exists():
-            # Found plugins/clautorun directory in installed location
-            return package_dir.parent  # Return parent of plugins/
-    except (ImportError, AttributeError):
+        package_dir = Path(__file__).parent  # clautorun package directory
+        dist_info_dirs = list(package_dir.parent.glob("clautorun*.dist-info"))
+        for dist_info in dist_info_dirs:
+            direct_url_file = dist_info / "direct_url.json"
+            if direct_url_file.exists():
+                import json
+                data = json.loads(direct_url_file.read_text())
+                if "dir_info" in data and "editable" in data["dir_info"]:
+                    # This is an editable install - get the source directory
+                    source_dir = Path(data["url"].replace("file://", ""))
+                    # Source could be workspace root or plugin dir
+                    for candidate in [source_dir, source_dir / "plugins" / "clautorun"]:
+                        marker = candidate / ".claude-plugin" / "marketplace.json"
+                        if marker.exists():
+                            return candidate
+    except (ImportError, json.JSONDecodeError, KeyError, OSError):
         pass
 
-    # Last resort: assume we're in plugins/clautorun/src/clautorun/ and go up
-    potential_root = Path(__file__).resolve().parent.parent.parent.parent
-    if (potential_root / ".claude-plugin" / "marketplace.json").exists():
-        return potential_root
+    # Strategy 3: UV tool install fallback - search for any marketplace root
+    # Works for: uv tool install . when above strategies failed
+    # Only reaches here if UV tool can't find files via Strategy 1 (walk up)
+    current_path = str(Path(__file__).resolve())
+    if ".local/share/uv/tools" in current_path or ".local/share/uv/python" in current_path:
+        # This is a UV tool install - search common base directories for any project
+        # containing .claude-plugin/marketplace.json
+        search_bases = [
+            Path.home() / ".claude",  # Claude-specific projects
+            Path.home(),               # Home directory projects
+            Path("/opt"),              # System-wide installs
+        ]
 
-    # INSTALLED PACKAGE FALLBACK:
-    # When installed via pip/uv from GitHub, marketplace.json won't exist.
-    # In this case, we can't install from local files - user should use:
-    #   1. GitHub install: Already done (they ran `uv pip install git+...`)
-    #   2. CLI registration: Use `claude plugin install https://github.com/ahundt/clautorun.git`
-    #
-    # For now, guide users to the correct workflow.
+        # Check if CLAUTORUN_DEV_PATH env var is set (for custom locations)
+        if "CLAUTORUN_DEV_PATH" in os.environ:
+            dev_path = Path(os.environ["CLAUTORUN_DEV_PATH"])
+            if (dev_path / ".claude-plugin" / "marketplace.json").exists():
+                return dev_path
+
+        # Search for marketplace.json in common base directories
+        for base in search_bases:
+            if not base.exists():
+                continue
+            # Search up to 4 levels deep for .claude-plugin/marketplace.json
+            for depth in range(1, 5):
+                pattern = "/".join(["*"] * depth) + "/.claude-plugin/marketplace.json"
+                try:
+                    matches = list(base.glob(pattern))
+                    if matches:
+                        # Filter and sort matches to prefer main repo over backups/references
+                        filtered_matches = []
+                        for match in matches:
+                            root = match.parent.parent
+                            root_str = str(root).lower()
+                            # Skip backup and reference directories
+                            if "backup" in root_str or "reference" in root_str:
+                                continue
+                            filtered_matches.append(root)
+
+                        if filtered_matches:
+                            # Sort to prefer exact "clautorun" name
+                            filtered_matches.sort(key=lambda p: (
+                                p.name != "clautorun",  # Prefer exact name
+                                "-" in p.name,  # Deprioritize names with dashes
+                                str(p),  # Alphabetical tiebreaker
+                            ))
+                            return filtered_matches[0]
+                except (PermissionError, OSError):
+                    continue
+
+    # Strategy 4: Check common development paths (last resort fallback)
+    # Works for: any scenario where source repo exists in standard locations
+    # Check CLAUTORUN_DEV_PATH first
+    if "CLAUTORUN_DEV_PATH" in os.environ:
+        dev_path = Path(os.environ["CLAUTORUN_DEV_PATH"])
+        marker = dev_path / ".claude-plugin" / "marketplace.json"
+        if marker.exists():
+            return dev_path
+
+    # Check exact common paths first (most specific)
+    exact_paths = [
+        Path.home() / ".claude" / "clautorun" / "plugins" / "clautorun",
+        Path.home() / ".claude" / "clautorun",
+        Path.home() / "clautorun" / "plugins" / "clautorun",
+        Path.home() / "clautorun",
+    ]
+
+    for candidate in exact_paths:
+        marker = candidate / ".claude-plugin" / "marketplace.json"
+        if marker.exists():
+            return candidate
+
+    # Search common project locations more broadly (only if exact paths failed)
+    search_patterns = [
+        Path.home() / ".claude" / "*" / "plugins" / "clautorun",
+        Path.home() / "*" / "plugins" / "clautorun",
+    ]
+
+    for pattern in search_patterns:
+        try:
+            # Sort to prefer non-backup, non-reference directories
+            # Lower sort key = higher priority, so use negation for preferred attributes
+            candidates = sorted(
+                pattern.parent.glob(pattern.name),
+                key=lambda p: (
+                    # Prioritize exact "clautorun" name (not "clautorun-*")
+                    p.parent.name != "clautorun" if "clautorun" in str(p.parent) else True,
+                    # Deprioritize backup/reference (True sorts after False)
+                    "backup" in str(p).lower(),
+                    "reference" in str(p).lower(),
+                    # Deprioritize names with dashes
+                    "-" in p.parent.name,
+                    # Alphabetical as final tiebreaker
+                    str(p),
+                )
+            )
+            for candidate in candidates:
+                if not candidate.is_dir():
+                    continue
+                marker = candidate / ".claude-plugin" / "marketplace.json"
+                if marker.exists():
+                    return candidate
+        except (PermissionError, OSError):
+            continue
+
+    # Strategy 5: Check known Gemini extension paths
+    # Works for: gemini extensions install or gemini extensions link
+    gemini_home = Path.home() / ".gemini" / "extensions"
+    for ext_name in ["clautorun-workspace", "clautorun"]:
+        ext_dir = gemini_home / ext_name
+        if ext_dir.exists():
+            # Could be at workspace root or in plugins/clautorun/
+            for candidate in [ext_dir, ext_dir / "plugins" / "clautorun"]:
+                marker = candidate / ".claude-plugin" / "marketplace.json"
+                if marker.exists():
+                    return candidate
+
+    # Strategy 6: Check Claude plugin cache
+    # Works for: claude plugin install (copies to cache)
+    claude_cache = Path.home() / ".claude" / "plugins" / "cache" / "clautorun"
+    if claude_cache.exists():
+        # Find the latest version directory
+        version_dirs = sorted(claude_cache.glob("clautorun/*"), reverse=True)
+        for version_dir in version_dirs:
+            marker = version_dir / ".claude-plugin" / "marketplace.json"
+            if marker.exists():
+                return version_dir
+
+    # No marketplace root found - provide clear guidance
     raise FileNotFoundError(ErrorFormatter.marketplace_not_found())
 
 
@@ -513,28 +649,63 @@ def determine_target_clis(
 
 
 def _sync_dependencies() -> CmdResult:
-    """Run uv sync with required extras from the clautorun plugin directory.
+    """Install required dependencies using appropriate method for environment.
 
     Installs:
     - claude-code extra: Claude Code integration dependencies
-    - bashlex extra: Required for pipe detection in command blocking
+    - bashlex: Required for pipe detection in command blocking
+
+    For source/editable installs: Uses `uv sync` with pyproject.toml extras
+    For UV tool installs: Uses `uv pip install` into tool environment
+    For other package installs: Uses `pip install` with sys.executable
 
     Returns:
         CmdResult indicating success/failure
     """
-    marketplace_root = find_marketplace_root()
-    # If the root has a plugins/ directory, the plugin is in plugins/clautorun
-    # If the root IS the clautorun directory (e.g. nested), use it directly
-    if (marketplace_root / "plugins" / "clautorun").exists():
-        plugin_dir = marketplace_root / "plugins" / "clautorun"
-    else:
-        plugin_dir = marketplace_root
+    # Check if we're in a UV tool environment
+    current_path = str(Path(__file__).resolve())
+    is_uv_tool = ".local/share/uv/tools" in current_path or ".local/share/uv/python" in current_path
 
-    return run_cmd(
-        ["uv", "sync", "--extra", "claude-code", "--extra", "bashlex"],
-        timeout=120,
-        cwd=plugin_dir,
-    )
+    if is_uv_tool:
+        # UV tool install: install bashlex into the tool's environment
+        # Use the same python executable that's running this code
+        return run_cmd(
+            ["uv", "pip", "install", "--python", sys.executable, "-q", "bashlex"],
+            timeout=60,
+        )
+
+    # Source/editable install: use uv sync if pyproject.toml exists
+    try:
+        marketplace_root = find_marketplace_root()
+        # If the root has a plugins/ directory, the plugin is in plugins/clautorun
+        # If the root IS the clautorun directory (e.g. nested), use it directly
+        if (marketplace_root / "plugins" / "clautorun").exists():
+            plugin_dir = marketplace_root / "plugins" / "clautorun"
+        else:
+            plugin_dir = marketplace_root
+
+        # Check if we have a pyproject.toml and can run uv sync
+        if (plugin_dir / "pyproject.toml").exists():
+            return run_cmd(
+                ["uv", "sync", "--extra", "claude-code", "--extra", "bashlex"],
+                timeout=120,
+                cwd=plugin_dir,
+            )
+    except FileNotFoundError:
+        pass
+
+    # Fallback: use pip install with current python (works for any environment)
+    try:
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", "bashlex"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return CmdResult(result.returncode == 0, result.stdout or result.stderr)
+    except Exception as e:
+        return CmdResult(False, f"Failed to install bashlex: {e}")
 
 
 def _install_pdf_deps() -> CmdResult:
