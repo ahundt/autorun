@@ -313,20 +313,22 @@ class TaskLifecycle:
         def updater(tasks):
             # Get or create task entry
             if task_id not in tasks:
-                # Task created before tracking started - initialize with minimal state
+                # Task created before tracking started - initialize as ignored
+                # so ghost tasks don't block stopping. The AI's update (below)
+                # will set the real status if one is provided.
                 tasks[task_id] = {
                     "id": task_id,
                     "subject": "(unknown - created before tracking)",
                     "description": "",
                     "activeForm": "",
-                    "status": "pending",
+                    "status": "ignored",
                     "created_at": time.time(),
                     "updated_at": time.time(),
                     "session_id": self.session_id,
                     "owner": None,
                     "blockedBy": [],
                     "blocks": [],
-                    "metadata": {},
+                    "metadata": {"ghost_task": True},
                     "tool_outputs": []
                 }
 
@@ -607,10 +609,12 @@ Use /task-status to see full task list and plan linkage.
 
         This is the core mechanism that ensures AI continues while tasks are outstanding.
 
-        Implements escape hatch (Problem 2 solution):
-        - Blocks stop with incomplete tasks
-        - But allows override after N consecutive blocks (configurable)
-        - Prevents stuck tasks from blocking forever
+        Escape hatches (user-driven only, never automatic):
+        - User runs /cr:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
+        - User runs /cr:task-ignore <id> to mark specific tasks as ignored
+        - User marks tasks as completed/deleted/paused via TaskUpdate
+
+        No automatic override after N attempts - that caused premature stoppage.
         """
         # Find incomplete tasks (exclude paused/ignored - they're explicitly parked)
         incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
@@ -622,48 +626,12 @@ Use /task-status to see full task list and plan linkage.
             self.atomic_update_metadata(reset_counter)
             return None  # Allow stop - all tasks completed
 
-        # Increment stop block counter
+        # Increment stop block counter for diagnostics
         block_count = self.session_metadata.get('stop_block_count', 0) + 1
 
         def increment_counter(metadata):
             metadata['stop_block_count'] = block_count
         self.atomic_update_metadata(increment_counter)
-
-        # Escape hatch: allow override after max blocks (Problem 2 solution)
-        max_blocks = self.config.stop_block_max_count
-        if block_count > max_blocks:
-            self.log_event("STOP_OVERRIDE", "session",
-                          f"Stop blocked {block_count} times - allowing override", "override")
-
-            override_msg = f"""
-⚠️ STOP OVERRIDE TRIGGERED
-
-You have been blocked from stopping {block_count} times with incomplete tasks.
-After {max_blocks} blocks, we're allowing you to stop anyway.
-
-**You have {len(incomplete_tasks)} incomplete task(s):**
-"""
-            for t in incomplete_tasks[:5]:  # Show first 5
-                override_msg += f"\n  - Task #{t['id']}: {t['subject']} ({t['status']})"
-
-            if len(incomplete_tasks) > 5:
-                override_msg += f"\n  ... and {len(incomplete_tasks) - 5} more"
-
-            override_msg += """
-
-**⚠️ IMPORTANT**: These tasks remain in the system.
-Use /task-status to review them in your next session.
-Consider using TaskUpdate to mark them as paused or deleted.
-
-Stopping now...
-"""
-            # Reset counter for next session
-            def reset_after_override(metadata):
-                metadata['stop_block_count'] = 0
-            self.atomic_update_metadata(reset_after_override)
-
-            # ALLOW stop with warning
-            return ctx.allow(override_msg)
 
         # Build task list with status indicators (cap at max_resume_tasks)
         max_tasks = self.config.max_resume_tasks
@@ -691,7 +659,7 @@ You have {total} incomplete task(s):
         if total > max_tasks:
             injection += f"\n... and {total - max_tasks} more tasks (use /task-status to see all)\n"
 
-        injection += f"""
+        injection += """
 **Required actions:**
 1. Use TaskUpdate(taskId="X", status="in_progress") to start working on a task
 2. Complete the work
@@ -705,7 +673,9 @@ You have {total} incomplete task(s):
 
 Use TaskList or /task-status to see current state of all tasks.
 
-💡 **Escape hatch**: After {max_blocks} consecutive stop attempts, the block will be overridden.
+**User escape hatches** (only the user can trigger these):
+- /cr:sos - Emergency stop (outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
+- /cr:task-ignore <id> - Mark a specific task as ignored to unblock stopping
 """
 
         # Log warning

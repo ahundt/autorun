@@ -184,18 +184,29 @@ class TestEdgeCases:
         # Update task that doesn't exist
         manager.update_task('999', {'status': 'in_progress'}, 'Updated non-existent')
 
-        # Should create minimal task entry
+        # Should create minimal task entry - status overridden by update
         tasks = manager.tasks
         assert '999' in tasks
         assert tasks['999']['status'] == 'in_progress'
         assert tasks['999']['subject'] == '(unknown - created before tracking)'
+        assert tasks['999']['metadata'].get('ghost_task') == True
+
+        # Verify ghost task without status update defaults to "ignored" (not "pending")
+        # so it doesn't block stopping
+        manager.update_task('998', {'subject': 'Updated ghost'}, 'Just metadata update')
+        tasks = manager.tasks
+        assert '998' in tasks
+        assert tasks['998']['status'] == 'ignored', \
+            "Ghost task without status update should default to 'ignored', not block stopping"
+        assert tasks['998']['subject'] == 'Updated ghost'
+        assert tasks['998']['metadata'].get('ghost_task') == True
 
         # Cleanup
         shutil.rmtree(manager.config.storage_dir / session_id, ignore_errors=True)
         with session_state(manager.global_key) as state:
             state.clear()
 
-        print("✅ Edge 6 passed: Update non-existent task creates minimal entry")
+        print("✅ Edge 6 passed: Ghost tasks default to 'ignored' and don't block stopping")
 
     def test_07_ignore_already_ignored_task(self):
         """Edge 7: Ignore already-ignored task (idempotent)."""

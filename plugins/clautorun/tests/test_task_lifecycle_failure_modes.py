@@ -75,9 +75,14 @@ class TestFailureModes:
 
         print("✅ Problem 1 handled: Task explosion capped at max_resume_tasks")
 
-    def test_02_stuck_task_escape_hatch(self):
-        """Problem 2: Stuck task (blocked forever) - escape hatch works."""
-        print("\n=== Problem 2: Stuck task with escape hatch ===")
+    def test_02_stuck_task_always_blocks_without_user_action(self):
+        """Problem 2: Stuck task - stop always blocked until user acts.
+
+        The escape hatch requires USER action (/cr:sos or /cr:task-ignore),
+        not automatic override after N attempts. Automatic override caused
+        premature stoppage.
+        """
+        print("\n=== Problem 2: Stuck task always blocks (no auto-override) ===")
 
         session_id = f'test-stuck-{int(time.time())}'
         manager = TaskLifecycle(session_id=session_id)
@@ -91,42 +96,37 @@ class TestFailureModes:
 
         manager.update_task('1', {'addBlockedBy': ['999']}, 'Added blocker')
 
-        # Try to stop multiple times
+        # Try to stop many times - should ALWAYS block
         from unittest.mock import MagicMock
         ctx = MagicMock()
         ctx.session_id = session_id
-        ctx.plan_active = False  # Don't try to link to plan
+        ctx.plan_active = False
         ctx.plan_arguments = ''
 
-        # Define helper functions for mock methods
         def mock_block(msg=''):
             return {'continue': False, 'systemMessage': msg}
 
         def mock_allow(msg=''):
             return {'continue': True, 'systemMessage': msg}
 
-        max_blocks = manager.config.stop_block_max_count
-
-        # Should block first N times
-        for i in range(max_blocks):
+        # Try more than the old max_blocks - should STILL block every time
+        for i in range(10):
             ctx.block = MagicMock(side_effect=mock_block)
             ctx.allow = MagicMock(side_effect=mock_allow)
             result = manager.handle_stop(ctx)
-            assert result['continue'] == False, f"Should block attempt {i+1}"
+            assert result['continue'] == False, f"Should block attempt {i+1} - no auto-override"
+            assert 'INCOMPLETE TASKS' in result['systemMessage']
 
-        # Next attempt should override
-        ctx.block = MagicMock(side_effect=mock_block)
-        ctx.allow = MagicMock(side_effect=mock_allow)
-        result = manager.handle_stop(ctx)
-        assert result['continue'] == True, "Should allow stop after max blocks"
-        assert 'OVERRIDE' in result['systemMessage']
+        # Verify the message includes user escape hatch instructions
+        assert '/cr:sos' in result['systemMessage'], "Should mention /cr:sos as user escape hatch"
+        assert '/cr:task-ignore' in result['systemMessage'], "Should mention /cr:task-ignore"
 
         # Cleanup
         shutil.rmtree(manager.config.storage_dir / session_id, ignore_errors=True)
         with session_state(manager.global_key) as state:
             state.clear()
 
-        print(f"✅ Problem 2 handled: Escape hatch triggered after {max_blocks} blocks")
+        print("✅ Problem 2 handled: Stop always blocked - user must use /cr:sos or /cr:task-ignore")
 
     def test_03_format_change_multiple_regex_patterns(self):
         """Problem 3: Format change - multiple regex patterns handle it."""
@@ -362,7 +362,7 @@ def run_all_failure_mode_tests():
     test = TestFailureModes()
     tests = [
         test.test_01_task_explosion_100_plus_tasks,
-        test.test_02_stuck_task_escape_hatch,
+        test.test_02_stuck_task_always_blocks_without_user_action,
         test.test_03_format_change_multiple_regex_patterns,
         test.test_04_unbounded_growth_pruning,
         test.test_05_race_conditions_concurrent_access,

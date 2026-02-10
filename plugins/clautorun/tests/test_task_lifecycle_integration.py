@@ -386,27 +386,29 @@ class TestTaskLifecycleIntegration:
 
         print("✅ Test 10 passed: Deleted tasks don't block stop")
 
-    def test_10_escape_hatch_after_max_blocks(self):
-        """Test escape hatch: Stop allowed after max blocks."""
-        print("\n=== Test: Escape hatch after max blocks ===")
+    def test_10_stop_always_blocked_with_incomplete_tasks(self):
+        """Test that stop is always blocked when tasks are incomplete.
+
+        No auto-override after N attempts. User must use /cr:sos or
+        /cr:task-ignore to unblock. Auto-override caused premature stoppage.
+        """
+        print("\n=== Test: Stop always blocked with incomplete tasks ===")
 
         # Create incomplete task
         self.manager.create_task('1', {'subject': 'Stuck task', 'description': '', 'activeForm': ''}, 'Created')
 
-        # Block stop multiple times
+        # Block stop many times - should ALWAYS block
         ctx = create_mock_context(session_id=self.session_id)
-        max_blocks = self.manager.config.stop_block_max_count
 
-        for i in range(max_blocks):
+        for i in range(10):
             result = self.manager.handle_stop(ctx)
-            assert result['continue'] == False, f"Block {i+1} should block"
+            assert result['continue'] == False, f"Attempt {i+1} should block - no auto-override"
 
-        # Next attempt should allow override
-        result = self.manager.handle_stop(ctx)
-        assert result['continue'] == True, "Should allow stop after max blocks"
-        assert 'STOP OVERRIDE' in result['systemMessage']
+        # Verify message includes user escape hatch instructions
+        assert '/cr:sos' in result['systemMessage']
+        assert '/cr:task-ignore' in result['systemMessage']
 
-        print(f"✅ Test passed: Escape hatch works after {max_blocks} blocks")
+        print("✅ Test passed: Stop always blocked - no auto-override")
 
 
 def run_all_integration_tests():
@@ -426,7 +428,7 @@ def run_all_integration_tests():
         test.test_07_plan_context_injection,
         test.test_08_cross_session_persistence,
         test.test_09_deleted_task_handling,
-        test.test_10_escape_hatch_after_max_blocks,
+        test.test_10_stop_always_blocked_with_incomplete_tasks,
     ]
 
     passed = 0
