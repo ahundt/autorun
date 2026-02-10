@@ -1,0 +1,96 @@
+# Pipe Blocking Bug - Gemini Debug Request
+
+## Problem Summary
+
+User command is being blocked even though fix is implemented and tests pass:
+
+**Blocked Command**: `gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'`
+
+**Error**: "Command blocked: grep" even though grep is in a pipe and should be allowed.
+
+## What I Fixed
+
+1. **Heredoc bug in command_detection.py**:
+   - Added `_normalize_heredoc_delimiters()` function
+   - Converts `<< 'EOF'` to `<< EOF` for bashlex compatibility
+   - Tests pass: 20/20 (9 new + 11 existing)
+
+2. **Root cause**:
+   - Bashlex failed to parse heredocs with quoted delimiters
+   - Fell back to shlex parser which treated heredoc LINES as commands
+   - Line "pattern = grep" got added to all_potential set
+
+3. **The fix works in tests**:
+```python
+# test_pipe_detection_debug.py output:
+Command: gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'
+Step 1 - command_matches_pattern(cmd, 'grep'): True  ✅
+Step 2 - _not_in_pipe(ctx): False  ✅ (correctly detected pipe)
+RESULT: Command would be ALLOWED ✅
+```
+
+## The Problem
+
+**Daemon is STILL blocking the command** even after:
+1. Force reinstall: `uv pip install --force-reinstall --no-deps .`
+2. Daemon restart: `python3 plugins/clautorun/scripts/restart_daemon.py`
+3. Manual kill and restart
+
+## Evidence
+
+1. **Tests pass** (code is correct)
+2. **Debug script shows fix works** (logic is correct)
+3. **Daemon still blocks** (daemon running old code?)
+
+## Files Involved
+
+- plugins/clautorun/src/clautorun/command_detection.py:342-373 (FIXED)
+- plugins/clautorun/src/clautorun/integrations.py:563-649 (_not_in_pipe predicate)
+- plugins/clautorun/src/clautorun/plugins.py:444-532 (check_blocked_commands hook)
+- plugins/clautorun/src/clautorun/config.py:115-119 (grep integration config)
+
+## Questions for Gemini
+
+1. **Why is daemon still running old code?**
+   - Is there a Python module cache issue?
+   - Is the daemon loading from wrong path?
+   - Is there a __pycache__ issue?
+
+2. **Where is the daemon actually loading code from?**
+   - Expected: /Users/athundt/.claude/clautorun/plugins/clautorun/src/clautorun/
+   - Actual: Unknown (how to verify?)
+
+3. **How to force daemon to reload Python modules?**
+   - Is there a cache to clear?
+   - Do I need to delete __pycache__ directories?
+   - Is there a sys.modules issue?
+
+4. **Is the hook being called correctly?**
+   - Is check_blocked_commands() actually running?
+   - Is it calling command_matches_pattern() with new code?
+   - Is it calling _not_in_pipe() with new code?
+
+## Debug Commands That Got Blocked
+
+These commands show the daemon is blocking even my debug attempts:
+- `ps aux | grep -E "python.*daemon" | grep -v grep` - BLOCKED (grep in pipe!)
+- `tail -100 ~/.clautorun/daemon.log` - BLOCKED (correct - not in pipe)
+- `python3 -c "..." 2>&1 | head -100` - BLOCKED (head in pipe!)
+
+This suggests the daemon IS running old code that doesn't have the fix.
+
+## Expected Behavior
+
+With the fix, this should be ALLOWED:
+```
+gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'
+```
+
+Because:
+1. Pattern matches: "grep" is in the command (TRUE)
+2. Not in pipe: FALSE (grep IS in pipe after `|`)
+3. Action: Allow (predicate returns False, so don't block)
+
+## Request
+
+Please analyze the daemon loading mechanism and help identify why the daemon is not loading the fixed code.
