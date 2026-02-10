@@ -128,6 +128,61 @@ def run_cmd(
 
 
 # =============================================================================
+# Daemon Management
+# =============================================================================
+
+
+def _restart_daemon_if_running() -> None:
+    """Restart the clautorun daemon if it's currently running.
+
+    Called at the end of install to ensure the daemon picks up new code/config.
+    Imports restart_daemon() from scripts/restart_daemon.py.
+    Non-fatal: installation succeeds even if daemon restart fails.
+    """
+    lock_path = Path.home() / ".clautorun" / "daemon.lock"
+
+    # Quick check: skip entirely if no daemon is running
+    if not lock_path.exists():
+        return
+    try:
+        pid = int(lock_path.read_text().strip())
+        os.kill(pid, 0)
+    except (ValueError, OSError):
+        return
+
+    print()
+    print("Restarting daemon to pick up changes...")
+
+    # Import restart_daemon from scripts module
+    scripts_dir = Path(__file__).resolve().parent.parent.parent / "scripts"
+    if not scripts_dir.exists():
+        try:
+            scripts_dir = find_marketplace_root() / "scripts"
+        except FileNotFoundError:
+            pass
+
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "restart_daemon",
+            scripts_dir / "restart_daemon.py",
+        )
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            result = module.restart_daemon()
+            if result == 0:
+                print("   Daemon restarted")
+            else:
+                print("   Daemon restart returned non-zero (non-fatal)")
+        else:
+            print("   Could not load restart_daemon module (non-fatal)")
+    except Exception as e:
+        logger.warning(f"Daemon restart failed: {e}")
+        print(f"   Daemon restart failed (non-fatal): {e}")
+
+
+# =============================================================================
 # UV/Pip Compositional Helpers
 # =============================================================================
 
@@ -381,7 +436,10 @@ def _check_uv_env(plugin_dir: Path) -> CmdResult:
         CmdResult with ok=True if environment is valid
     """
     if not shutil.which("uv"):
-        return CmdResult(False, "uv not found in PATH — install from https://github.com/astral-sh/uv")
+        return CmdResult(
+            False,
+            ErrorFormatter.uv_not_found("pip install -e . && python -m clautorun --install"),
+        )
 
     if not (plugin_dir / "pyproject.toml").exists():
         return CmdResult(False, f"pyproject.toml not found in {plugin_dir}")
@@ -1117,6 +1175,9 @@ def install_plugins(
         print("  /conductor:*      - Conductor plan mode (Gemini only)")
     print()
     print("Run '/help' to see all available commands.")
+
+    # Restart daemon if running (picks up new code/config)
+    _restart_daemon_if_running()
 
     return 0 if all_succeeded else 1
 

@@ -696,15 +696,14 @@ Git provides complete version control for collaborative development. Essential c
 ### Manual Installation (if plugin system fails)
 
 ```bash
-# Create virtual environment
+# Option 1: UV (recommended)
+uv run python -m plugins.clautorun.src.clautorun.install --install --force
+
+# Option 2: pip fallback (if UV not available)
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -e ".[dev]"
-
-# Manual plugin setup
-PYTHONPATH=$(pwd)/src python src/clautorun/install.py install
+python -m plugins.clautorun.src.clautorun.install --install --force
 ```
 
 ## 📋 Available Commands
@@ -1871,8 +1870,8 @@ uv run clautorun install --force
 See the comprehensive [Testing](#testing) section above for all testing commands and approaches.
 
 **Python Environment Reminders:**
-- Always activate UV environment: `source .venv/bin/activate`
-- Or use explicit Python3: `python3 -m clautorun install`
+- With UV (recommended): `uv run python -m clautorun --install`
+- With pip fallback: `python -m clautorun --install`
 - The plugin inherits dependencies from the active Python environment
 - For production use, prefer the official `/plugin` commands
 
@@ -1977,7 +1976,7 @@ uv sync --extra claude-code
 - **Error: "ImportError: No module named pathlib"** → You're using Python 2.7, use `python3` instead
 - **Error: "dbm error: db type could not be determined"** → Normal for first run, plugin still works
 - **Solution**: Always activate UV environment: `source .venv/bin/activate`
-- **Alternative**: Use explicit Python3: `python3 -m clautorun check`
+- **Alternative**: Use UV runner: `uv run python -m clautorun --status` (or `python -m clautorun --status` with pip)
 
 **Built-in Python Version Checking:**
 clautorun includes comprehensive Python version validation:
