@@ -893,7 +893,16 @@ You CANNOT stop until all tasks are marked completed or deleted.
             tasks = manager.tasks
 
             if format == 'json':
-                print(json.dumps(tasks, indent=2))
+                # Wrap tasks in metadata for CLI usability
+                incomplete_count = len([t for t in tasks.values()
+                                        if t['status'] not in cls.COMPLETED_STATUSES])
+                output = {
+                    'session_id': session_id,
+                    'total_tasks': len(tasks),
+                    'incomplete_tasks': incomplete_count,
+                    'tasks': tasks
+                }
+                print(json.dumps(output, indent=2))
                 return 0
 
             elif format == 'table':
