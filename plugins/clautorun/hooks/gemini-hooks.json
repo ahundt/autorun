@@ -24,7 +24,7 @@
     ],
     "BeforeTool": [
       {
-        "matcher": "write_file|run_shell_command|exit_plan_mode",
+        "matcher": "write_file|run_shell_command|replace",
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",
@@ -35,7 +35,7 @@
     ],
     "AfterTool": [
       {
-        "matcher": "exit_plan_mode|write_file|edit_file",
+        "matcher": "write_file|replace",
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",
@@ -44,7 +44,7 @@
         }]
       },
       {
-        "matcher": "task_create|task_update|task_get|task_list",
+        "matcher": "write_todos",
         "hooks": [{
           "name": "clautorun-posttool-task",
           "type": "command",
