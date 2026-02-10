@@ -19,13 +19,23 @@ This module provides:
 1. Hook handler mode (default): Process Claude Code hooks efficiently
 2. Install mode (--install): Install and enable Claude Code plugins
 3. Status mode (--status): Show installation status
+4. Task lifecycle management (task subcommand): Manual task history management
 
 Usage:
-    clautorun                              # Run as hook handler (default)
+    # Installation
     clautorun --install                    # Install all plugins
-    clautorun --install clautorun          # Install specific plugin
-    clautorun --install --force-install    # Force reinstall (dev workflow)
     clautorun --status                     # Show installation status
+
+    # Task lifecycle management (modern subcommand structure)
+    clautorun task status                  # Show task status
+    clautorun task status --verbose        # Detailed task info
+    clautorun task export tasks.json       # Export to JSON
+    clautorun task clear --session abc123  # Clear specific session
+    clautorun task gc --dry-run            # Preview garbage collection
+    clautorun task gc --no-confirm         # Run GC without confirmation
+
+    # Hook handler (default)
+    clautorun                              # Run as hook handler
 
 v0.7: Daemon mode is now default (85-90% complete architecture)
 Set CLAUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
@@ -53,12 +63,21 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  clautorun                              # Run as hook handler (default)
+  # Installation
   clautorun --install                    # Install all plugins
   clautorun --install clautorun          # Install specific plugin
-  clautorun --install clautorun,pdf-extractor  # Install multiple
-  clautorun --install --force-install    # Force reinstall (dev workflow)
   clautorun --status                     # Show installation status
+
+  # Task lifecycle management
+  clautorun task status                  # Show task status
+  clautorun task status --verbose        # Show detailed task info
+  clautorun task export file.json        # Export tasks to JSON
+  clautorun task clear --session abc123  # Clear specific session
+  clautorun task gc --dry-run            # Preview garbage collection
+  clautorun task gc --no-confirm         # Run GC without confirmation
+
+  # Hook handler (default)
+  clautorun                              # Run as hook handler
 
 Legacy commands (still supported):
   clautorun install                      # Install clautorun hooks
@@ -177,74 +196,130 @@ Legacy commands (still supported):
         help="Force specific update method (default: auto-detect)",
     )
 
-    # Task lifecycle management group
-    tasks_group = parser.add_argument_group("Task Lifecycle (Manual History Management)")
-    tasks_group.add_argument(
-        "--task-status",
+    # Task lifecycle subcommands (modern CLI structure)
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Task subcommand
+    task_parser = subparsers.add_parser(
+        "task",
+        help="Task lifecycle management",
+        description="Manual task lifecycle history management",
+    )
+    task_subparsers = task_parser.add_subparsers(dest="task_command", help="Task operations")
+
+    # task status
+    status_parser = task_subparsers.add_parser(
+        "status",
+        help="Show task status for session",
+        description="Display task status and progress for current or specified session",
+    )
+    status_parser.add_argument(
+        "--session",
+        metavar="SESSION_ID",
+        help="Session ID (default: $CLAUDE_SESSION_ID)",
+    )
+    status_parser.add_argument(
+        "--verbose",
+        "-v",
         action="store_true",
-        help="Show task status for current or specified session",
+        help="Show detailed task information",
     )
-    tasks_group.add_argument(
-        "--task-export",
+    status_parser.add_argument(
+        "--format",
+        "-f",
+        choices=["text", "json", "table"],
+        default="text",
+        help="Output format (default: text)",
+    )
+
+    # task export
+    export_parser = task_subparsers.add_parser(
+        "export",
+        help="Export task data to file",
+        description="Export task data to JSON, CSV, or Markdown file",
+    )
+    export_parser.add_argument(
+        "output",
         metavar="FILE",
-        help="Export tasks to JSON/CSV/markdown file",
+        help="Output file path",
     )
-    tasks_group.add_argument(
-        "--task-export-format",
+    export_parser.add_argument(
+        "--session",
+        metavar="SESSION_ID",
+        help="Session ID (default: $CLAUDE_SESSION_ID)",
+    )
+    export_parser.add_argument(
+        "--format",
+        "-f",
         choices=["json", "csv", "markdown"],
         default="json",
         help="Export format (default: json)",
     )
-    tasks_group.add_argument(
-        "--task-clear",
+    export_parser.add_argument(
+        "--include-completed",
+        "-c",
         action="store_true",
-        help="Clear tasks for current or specified session (requires --confirm)",
+        help="Include completed and deleted tasks",
     )
-    tasks_group.add_argument(
-        "--task-clear-all",
+
+    # task clear
+    clear_parser = task_subparsers.add_parser(
+        "clear",
+        help="Clear task data",
+        description="Clear task data for session(s) - DESTRUCTIVE OPERATION",
+    )
+    clear_parser.add_argument(
+        "--session",
+        metavar="SESSION_ID",
+        help="Session ID to clear (default: $CLAUDE_SESSION_ID)",
+    )
+    clear_parser.add_argument(
+        "--all",
+        "-a",
         action="store_true",
-        help="Clear ALL session tasks (requires --confirm)",
+        help="Clear ALL sessions (ignores --session)",
     )
-    tasks_group.add_argument(
-        "--task-gc",
+    clear_parser.add_argument(
+        "--no-confirm",
         action="store_true",
-        help="Garbage-collect old session task data (archive-then-purge)",
+        help="Skip confirmation prompt (use with caution)",
     )
-    tasks_group.add_argument(
-        "--task-gc-pattern",
+
+    # task gc
+    gc_parser = task_subparsers.add_parser(
+        "gc",
+        help="Garbage-collect old task data",
+        description="Garbage-collect stale task data (archive-then-purge) - DESTRUCTIVE",
+    )
+    gc_parser.add_argument(
+        "--dry-run",
+        "-n",
+        action="store_true",
+        help="Preview without making changes (RECOMMENDED first)",
+    )
+    gc_parser.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="Skip confirmation prompt (use with caution)",
+    )
+    gc_parser.add_argument(
+        "--pattern",
+        "-p",
         default="*",
-        help="Session ID pattern for GC (default: * = all)",
+        metavar="PATTERN",
+        help="Session ID glob pattern (default: *)",
     )
-    tasks_group.add_argument(
-        "--task-gc-ttl",
+    gc_parser.add_argument(
+        "--ttl",
+        "-t",
         type=int,
         metavar="DAYS",
         help="Only GC sessions older than DAYS (default: config.task_ttl_days)",
     )
-    tasks_group.add_argument(
-        "--task-gc-no-archive",
+    gc_parser.add_argument(
+        "--no-archive",
         action="store_true",
-        help="Skip archiving before deletion (DANGEROUS - permanent data loss)",
-    )
-    tasks_group.add_argument(
-        "--task-session",
-        metavar="SESSION_ID",
-        help="Session ID for task operations (default: $CLAUDE_SESSION_ID)",
-    )
-    tasks_group.add_argument(
-        "--task-verbose",
-        action="store_true",
-        help="Show detailed task information",
-    )
-    tasks_group.add_argument(
-        "--task-dry-run",
-        action="store_true",
-        help="Preview task operations without making changes",
-    )
-    tasks_group.add_argument(
-        "--task-no-confirm",
-        action="store_true",
-        help="Skip confirmation prompts (use with caution)",
+        help="Skip archiving (DANGEROUS - permanent data loss)",
     )
 
     return parser
@@ -385,48 +460,54 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(result.output)
         return 0 if result.ok else 1
 
-    # Task lifecycle operations
-    if args.task_status or args.task_export or args.task_clear or args.task_clear_all or args.task_gc:
+    # Task subcommand (modern CLI structure)
+    if args.command == "task":
         from clautorun.task_lifecycle import TaskLifecycle
 
-        session_id = args.task_session or os.environ.get("CLAUDE_SESSION_ID")
+        if not hasattr(args, 'task_command') or args.task_command is None:
+            # No subcommand specified - show help
+            task_parser = create_parser().add_subparsers().choices['task']
+            task_parser.print_help()
+            return 1
 
-        # Task status
-        if args.task_status:
+        session_id = getattr(args, 'session', None) or os.environ.get("CLAUDE_SESSION_ID")
+
+        # task status
+        if args.task_command == "status":
             return TaskLifecycle.cli_status(
                 session_id=session_id,
-                verbose=args.task_verbose,
-                format='text'
+                verbose=args.verbose,
+                format=args.format
             )
 
-        # Task export
-        if args.task_export:
+        # task export
+        elif args.task_command == "export":
             if not session_id:
-                print("Error: --task-session required when CLAUDE_SESSION_ID not set", file=sys.stderr)
+                print("Error: --session required when CLAUDE_SESSION_ID not set", file=sys.stderr)
                 return 1
             return TaskLifecycle.cli_export(
                 session_id=session_id,
-                output_path=args.task_export,
-                format=args.task_export_format,
-                include_completed=True
+                output_path=args.output,
+                format=args.format,
+                include_completed=args.include_completed
             )
 
-        # Task clear
-        if args.task_clear or args.task_clear_all:
+        # task clear
+        elif args.task_command == "clear":
             return TaskLifecycle.cli_clear(
                 session_id=session_id,
-                all_sessions=args.task_clear_all,
-                confirm=not args.task_no_confirm
+                all_sessions=args.all,
+                confirm=not args.no_confirm
             )
 
-        # Task GC (garbage collect)
-        if args.task_gc:
+        # task gc
+        elif args.task_command == "gc":
             return TaskLifecycle.cli_gc(
-                archive=not args.task_gc_no_archive,
-                dry_run=args.task_dry_run,
-                pattern=args.task_gc_pattern,
-                ttl_days=args.task_gc_ttl,
-                confirm=not args.task_no_confirm
+                archive=not args.no_archive,
+                dry_run=args.dry_run,
+                pattern=args.pattern,
+                ttl_days=args.ttl,
+                confirm=not args.no_confirm
             )
 
     # Default: run as hook handler

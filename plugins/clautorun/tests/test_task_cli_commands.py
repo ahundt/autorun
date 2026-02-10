@@ -7,6 +7,32 @@ Tests all CLI commands with proper isolation:
 - cli_export: JSON/CSV/markdown formats, completed task filtering
 - cli_clear: single session, all sessions, confirmation handling
 - cli_gc: dry-run, archive, pattern filtering, TTL, protection logic
+
+CLI Usage (Modern Subcommand Structure):
+    # Show task status
+    clautorun task status                      # Current session, text format
+    clautorun task status --verbose            # Detailed task info
+    clautorun task status --format json        # JSON output
+    clautorun task status --session abc123     # Specific session
+
+    # Export task data
+    clautorun task export tasks.json           # Export to JSON
+    clautorun task export tasks.csv --format csv  # Export to CSV
+    clautorun task export --include-completed  # Include completed tasks
+
+    # Clear task data (DESTRUCTIVE)
+    clautorun task clear                       # Clear current session
+    clautorun task clear --session abc123      # Clear specific session
+    clautorun task clear --all                 # Clear ALL sessions
+    clautorun task clear --no-confirm          # Skip confirmation
+
+    # Garbage collection (DESTRUCTIVE)
+    clautorun task gc --dry-run                # Preview (RECOMMENDED first)
+    clautorun task gc                          # Run with confirmation
+    clautorun task gc --no-confirm             # Skip confirmation
+    clautorun task gc --pattern "test-*"       # Filter by pattern
+    clautorun task gc --ttl 7                  # Only sessions older than 7 days
+    clautorun task gc --no-archive             # Skip archiving (DANGEROUS)
 """
 
 import sys
