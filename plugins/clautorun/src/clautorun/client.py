@@ -59,6 +59,14 @@ def run_client():
             writer.close()
             await writer.wait_closed()
 
+        except asyncio.LimitOverrunError as e:
+            # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
+            print(json.dumps({
+                "continue": True,
+                "stopReason": "",
+                "suppressOutput": False,
+                "systemMessage": f"Client buffer error: Daemon response too large. This is a bug. {e}"
+            }))
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors

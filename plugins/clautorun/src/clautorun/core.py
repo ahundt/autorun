@@ -52,6 +52,26 @@ LOCK_PATH = HOME_DIR / "daemon.lock"
 LOG_FILE = HOME_DIR / "daemon.log"
 IDLE_TIMEOUT = 1800  # 30 minutes
 
+# Buffer size for reading hook payloads (asyncio default is 64KB = 2^16)
+# Need larger than default to accept full payloads before truncating
+# Client sends full transcript (can be 200MB+), server truncates to 64KB after reading
+_DEFAULT_LIMIT = asyncio.streams._DEFAULT_LIMIT  # 64KB (2^16 = 65536)
+
+# Allow override via CLAUTORUN_BUFFER_LIMIT env var (in bytes)
+# Default: 1GB (2^30) handles sessions up to 1GB
+# Found actual sessions: 511MB, so need more than 512MB headroom
+_env_limit = os.environ.get("CLAUTORUN_BUFFER_LIMIT")
+if _env_limit:
+    try:
+        READ_BUFFER_LIMIT = int(_env_limit)
+    except ValueError:
+        # Logger not available yet at module load time
+        import sys
+        print(f"WARNING: Invalid CLAUTORUN_BUFFER_LIMIT={_env_limit}, using default 1GB", file=sys.stderr)
+        READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)
+else:
+    READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)
+
 # === LOGGING ===
 logging.basicConfig(
     filename=LOG_FILE,
@@ -741,17 +761,16 @@ class ClautorunDaemon:
                            writer: asyncio.StreamWriter):
         """Handle single hook request.
 
-        CRITICAL: Sets readuntil limit to 10MB (was 64KB default).
-        Large session transcripts in hook payloads can exceed 64KB,
-        causing "Separator is found, but chunk is longer than limit" error.
+        Note: Server uses READ_BUFFER_LIMIT (1GB) to accept large payloads,
+        then truncates transcript to ~64KB after reading (see normalize_hook_payload).
         """
         self.last_activity = time.time()
         response = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
         try:
-            # Read payload with 10MB limit (allows large transcripts initially)
-            # but we'll truncate transcript below to only recent data
-            data = await reader.readuntil(b'\n', limit=10 * 1024 * 1024)
+            # Read payload (READ_BUFFER_LIMIT set on server to accept large payloads)
+            # Truncates transcript to ~64KB AFTER reading (see normalize_hook_payload below)
+            data = await reader.readuntil(b'\n')
             payload = json.loads(data.decode())
 
             # Track the Claude session PID (injected by client)
@@ -783,6 +802,18 @@ class ClautorunDaemon:
             # Dispatch
             response = self.app.dispatch(ctx)
 
+        except asyncio.LimitOverrunError as e:
+            # Buffer size exceeded - provide actionable guidance
+            current_mb = READ_BUFFER_LIMIT // (1024 * 1024)
+            logger.error(f"Buffer overflow: Session transcript exceeded {current_mb}MB limit", exc_info=True)
+            response["systemMessage"] = (
+                f"Daemon buffer overflow (fail-open): Session transcript exceeded {current_mb}MB.\n\n"
+                f"SOLUTION: Increase buffer size with environment variable:\n"
+                f"  export CLAUTORUN_BUFFER_LIMIT={READ_BUFFER_LIMIT * 2}  # {current_mb * 2}MB\n"
+                f"  # Then restart daemon: uv run python plugins/clautorun/scripts/restart_daemon.py\n\n"
+                f"Current limit: {current_mb}MB (READ_BUFFER_LIMIT={READ_BUFFER_LIMIT:,} bytes)\n"
+                f"Details: {e}"
+            )
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
             response["systemMessage"] = f"Daemon error (fail-open): {e}"
@@ -1053,9 +1084,11 @@ class ClautorunDaemon:
         self._register_atexit_cleanup()
         self._setup_signal_handlers()
 
-        # Start server
+        # Start server with large buffer to accept full payloads before truncation
+        # Default 64KB too small - client sends full transcript, we truncate after reading
         self._server = await asyncio.start_unix_server(
-            self.handle_client, str(SOCKET_PATH)
+            self.handle_client, str(SOCKET_PATH),
+            limit=READ_BUFFER_LIMIT
         )
         self.running = True
 
