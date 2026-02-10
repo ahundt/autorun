@@ -130,8 +130,14 @@ class TaskLifecycle:
     SCHEMA_VERSION = 2
 
     # Status constants (single source of truth - DRY)
+    # NOTE: BLOCKING_STATUSES is a misnomer from original code - it actually means
+    # "statuses that DON'T block stopping". Should be called NON_BLOCKING_STATUSES.
+    # Kept for backward compatibility with existing code.
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
     BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
+
+    # Statuses safe to prune after TTL (truly terminal, no resume expected)
+    PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
 
     def __init__(self, session_id: str | None = None, ctx: EventContext | None = None,
                  config: TaskLifecycleConfig | None = None):
@@ -502,11 +508,21 @@ class TaskLifecycle:
         return task_id in self.tasks
 
     def prune_old_tasks(self) -> int:
-        """Prune non-blocking tasks older than TTL.
+        """Prune truly terminal tasks older than TTL.
 
-        Prunes tasks with any status in BLOCKING_STATUSES (completed, deleted,
-        paused, ignored) that are older than task_ttl_days. This includes ghost
-        tasks with "ignored" status, which would otherwise persist indefinitely.
+        CRITICAL: Only prunes PRUNABLE_STATUSES (completed, deleted, ignored).
+        NEVER prunes "paused" tasks - users pause for later resume, pruning would
+        violate that contract and lose their work intent.
+
+        Prunable statuses:
+        - completed: Work finished, safe to remove after TTL
+        - deleted: User explicitly removed, safe to purge after TTL
+        - ignored: Ghost tasks we can't track, safe to clean after TTL
+
+        NOT prunable:
+        - paused: User explicitly paused for later resume - must preserve
+        - in_progress: Active work - protected by different mechanism
+        - pending: Queued work - protected by different mechanism
 
         Returns:
             Number of tasks pruned
@@ -519,9 +535,8 @@ class TaskLifecycle:
             nonlocal pruned_count
             for task_id in list(tasks.keys()):
                 task = tasks[task_id]
-                # Prune any non-blocking task past TTL (completed, deleted,
-                # paused, ignored - all terminal/parked statuses)
-                if task["status"] in self.BLOCKING_STATUSES:
+                # Only prune truly terminal statuses (NOT paused - users may resume)
+                if task["status"] in self.PRUNABLE_STATUSES:
                     age = now - task["updated_at"]
                     if age > ttl_seconds:
                         del tasks[task_id]

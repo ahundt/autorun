@@ -680,12 +680,19 @@ class ClautorunDaemon:
 
     async def handle_client(self, reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter):
-        """Handle single hook request."""
+        """Handle single hook request.
+
+        CRITICAL: Sets readuntil limit to 10MB (was 64KB default).
+        Large session transcripts in hook payloads can exceed 64KB,
+        causing "Separator is found, but chunk is longer than limit" error.
+        """
         self.last_activity = time.time()
         response = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
         try:
-            data = await reader.readuntil(b'\n')
+            # Set limit to 10MB for large session transcripts (default 64KB too small)
+            # PostToolUse payloads include full session_transcript which can be large
+            data = await reader.readuntil(b'\n', limit=10 * 1024 * 1024)
             payload = json.loads(data.decode())
 
             # Track the Claude session PID (injected by client)
