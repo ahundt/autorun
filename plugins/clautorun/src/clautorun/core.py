@@ -431,12 +431,16 @@ class EventContext:
         """
         Unified response builder - automatically formats for event type.
 
+        Returns a response compatible with BOTH Claude Code and Gemini CLI:
+        - Claude Code reads: hookSpecificOutput.permissionDecision
+        - Gemini CLI reads: top-level decision field
+
         Args:
             decision: One of "allow", "deny", "block"
             reason: Message to include in response
 
         Returns:
-            dict: Claude Code compliant hook response
+            dict: Hook response compatible with Claude Code and Gemini CLI
 
         Usage:
             return ctx.respond("allow")
@@ -445,13 +449,18 @@ class EventContext:
         """
         reason_escaped = self._escape_for_json(reason) if reason else ""
 
-        # PreToolUse needs hookSpecificOutput
+        # PreToolUse needs hookSpecificOutput + top-level decision
         if self._event == "PreToolUse":
             return {
+                # Top-level decision for Gemini CLI
+                "decision": decision,
+                "reason": reason_escaped,
+                # Universal fields
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
                 "systemMessage": reason_escaped,
+                # Claude Code hookSpecificOutput
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": decision,

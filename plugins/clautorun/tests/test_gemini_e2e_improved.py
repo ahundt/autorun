@@ -435,6 +435,201 @@ class TestGeminiCLIRealMoney:
             pytest.fail(f"Invalid JSON in hooks file: {e}")
 
 
+class TestGeminiExtensionInstalledHook:
+    """Test the INSTALLED hook (Gemini extension copy, not dev repo).
+
+    NO API COST - invokes the hook_entry.py directly with subprocess,
+    exactly as Gemini CLI would. Uses the extension's installed copy at
+    ~/.gemini/extensions/clautorun-workspace/ to verify that the deployed
+    code correctly blocks dangerous commands and permits safe ones.
+
+    This is the closest E2E validation to real Gemini CLI behavior without
+    requiring the AI to actually invoke tools (which is unreliable in piped mode).
+    """
+
+    @pytest.fixture
+    def extension_hook(self):
+        """Get path to the installed hook in the Gemini extension."""
+        hook_path = (
+            Path.home() /
+            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py"
+        )
+        if not hook_path.exists():
+            pytest.skip(f"Gemini extension hook not found: {hook_path}")
+        return hook_path
+
+    def _run_hook(self, hook_path: Path, payload: dict) -> dict:
+        """Run hook_entry.py as subprocess with JSON payload, return parsed response.
+
+        This mirrors exactly how Gemini CLI invokes hooks: subprocess with
+        JSON on stdin, expecting JSON on stdout.
+        """
+        env = os.environ.copy()
+        env["GEMINI_SESSION_ID"] = "test-installed-hook"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+
+        result = subprocess.run(
+            ["python3", str(hook_path)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+
+        assert result.returncode == 0, \
+            f"Hook failed with exit code {result.returncode}\nStderr: {result.stderr}"
+
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            pytest.fail(
+                f"Invalid JSON from installed hook: {e}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
+
+    def test_installed_hook_blocks_cat(self, extension_hook):
+        """Verify INSTALLED hook blocks 'cat' via bash_command (Gemini tool name).
+
+        This uses the exact JSON format Gemini CLI sends: snake_case keys,
+        hook_event_name='BeforeTool', tool_name='bash_command'.
+        """
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "cat /etc/passwd"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        # Gemini CLI reads top-level 'decision'
+        assert response.get("decision") == "deny", \
+            f"INSTALLED hook did NOT block 'cat'! Response: {json.dumps(response, indent=2)}"
+
+        # Claude Code reads hookSpecificOutput
+        hso = response.get("hookSpecificOutput", {})
+        assert hso.get("permissionDecision") == "deny", \
+            f"hookSpecificOutput.permissionDecision not 'deny': {hso}"
+
+    def test_installed_hook_blocks_head(self, extension_hook):
+        """Verify INSTALLED hook blocks 'head' via bash_command."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "head -20 /etc/hosts"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert response.get("decision") == "deny", \
+            f"INSTALLED hook did NOT block 'head'! Response: {json.dumps(response, indent=2)}"
+
+    def test_installed_hook_blocks_tail(self, extension_hook):
+        """Verify INSTALLED hook blocks 'tail' via bash_command."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "tail -f /var/log/system.log"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert response.get("decision") == "deny", \
+            f"INSTALLED hook did NOT block 'tail'! Response: {json.dumps(response, indent=2)}"
+
+    def test_installed_hook_blocks_run_shell_command(self, extension_hook):
+        """Verify INSTALLED hook blocks via 'run_shell_command' tool name."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "run_shell_command",
+            "tool_input": {"command": "cat /etc/shadow"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert response.get("decision") == "deny", \
+            f"INSTALLED hook did NOT block via run_shell_command! Response: {json.dumps(response, indent=2)}"
+
+    def test_installed_hook_allows_safe_command(self, extension_hook):
+        """Verify INSTALLED hook allows safe commands like 'ls'."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "ls -la /tmp"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert response.get("decision") == "allow", \
+            f"INSTALLED hook incorrectly blocked safe 'ls'! Response: {json.dumps(response, indent=2)}"
+
+    def test_installed_hook_allows_piped_cat(self, extension_hook):
+        """Verify INSTALLED hook allows piped 'cat' (e.g., 'echo foo | cat')."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "echo hello | cat"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert response.get("decision") == "allow", \
+            f"INSTALLED hook incorrectly blocked piped cat! Response: {json.dumps(response, indent=2)}"
+
+    def test_installed_hook_allows_git_status(self, extension_hook):
+        """Verify INSTALLED hook allows git status."""
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "git status"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        assert response.get("decision") == "allow", \
+            f"INSTALLED hook incorrectly blocked git status! Response: {json.dumps(response, indent=2)}"
+
+    def test_installed_hook_dual_format_consistency(self, extension_hook):
+        """Verify INSTALLED hook returns BOTH Gemini and Claude Code decision formats.
+
+        Critical cross-platform test: the response must contain:
+        - Top-level 'decision' (for Gemini CLI)
+        - hookSpecificOutput.permissionDecision (for Claude Code)
+        - Both must agree on allow/deny
+        """
+        # Test with a blocked command
+        payload = {
+            "hook_event_name": "BeforeTool",
+            "tool_name": "bash_command",
+            "tool_input": {"command": "cat README.md"},
+            "session_id": "test-installed-hook",
+            "cwd": "/tmp",
+        }
+        response = self._run_hook(extension_hook, payload)
+
+        # Both formats must be present
+        top_level_decision = response.get("decision")
+        hso = response.get("hookSpecificOutput", {})
+        hso_decision = hso.get("permissionDecision")
+
+        assert top_level_decision is not None, \
+            "Missing top-level 'decision' (needed for Gemini CLI)"
+        assert hso_decision is not None, \
+            "Missing hookSpecificOutput.permissionDecision (needed for Claude Code)"
+
+        # Both must agree
+        assert top_level_decision == hso_decision, \
+            f"Decision mismatch! top-level={top_level_decision}, hso={hso_decision}"
+
+
 class TestGeminiExtensionVerification:
     """Verify Gemini extension configuration (NO COST - file checks only)."""
 
