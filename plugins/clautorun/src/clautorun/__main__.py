@@ -243,8 +243,18 @@ For more information: https://github.com/ahundt/clautorun
     # file allow
     allow_parser = file_subparsers.add_parser(
         "allow",
-        help="Allow all file creation (slash: /cr:a, /cr:allow, /afa)",
-        description="Set policy to allow-all: full permission to create and modify files without restrictions",
+        aliases=["a"],
+        help="Allow creating new files freely (CLI: file a, Slash: /cr:a)",
+        description="""Set AutoFile policy to 'allow-all' mode.
+
+Claude can create new files and modify existing files without any restrictions.
+This is the most permissive mode - good for new projects or exploratory work.
+
+Examples:
+  clautorun file allow              # Set for current session
+  clautorun file a --global         # Set as default for all sessions
+
+Equivalent slash commands: /cr:a, /cr:allow, /afa""",
     )
     allow_parser.add_argument(
         "--global",
@@ -257,8 +267,21 @@ For more information: https://github.com/ahundt/clautorun
     # file justify
     justify_parser = file_subparsers.add_parser(
         "justify",
-        help="Require justification for new files (slash: /cr:j, /cr:justify, /afj)",
-        description="Set policy to justify-create: search existing files first, require <AUTOFILE_JUSTIFICATION> for new files",
+        aliases=["j"],
+        help="Require written justification to create new files (CLI: file j, Slash: /cr:j)",
+        description="""Set AutoFile policy to 'justify-create' mode.
+
+Claude must search for existing files first. If creating a new file, Claude must
+include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> explaining why.
+This encourages modifying existing code rather than duplicating functionality.
+
+Good for established projects where you want to minimize unnecessary new files.
+
+Examples:
+  clautorun file justify            # Set for current session
+  clautorun file j --global         # Set as default for all sessions
+
+Equivalent slash commands: /cr:j, /cr:justify, /afj""",
     )
     justify_parser.add_argument(
         "--global",
@@ -271,9 +294,22 @@ For more information: https://github.com/ahundt/clautorun
     # file search (find) - strict mode
     search_parser = file_subparsers.add_parser(
         "search",
-        aliases=["find"],
-        help="Only modify existing files (slash: /cr:f, /cr:find, /afs)",
-        description="Set policy to strict-search: ONLY modify existing files, NO new file creation (strictest mode)",
+        aliases=["find", "f"],
+        help="Block all new file creation - only modify existing (CLI: file f, Slash: /cr:f)",
+        description="""Set AutoFile policy to 'strict-search' mode (strictest).
+
+Claude CANNOT create any new files. Can only modify existing files.
+Claude must use Glob/Grep to find existing files before making changes.
+
+This is the most restrictive mode - good when you want to prevent any
+accidental new file creation in a mature codebase.
+
+Examples:
+  clautorun file search             # Set for current session
+  clautorun file f --global         # Set as default for all sessions (short version)
+
+Equivalent slash commands: /cr:f, /cr:find, /afs
+Aliases: file search, file find, file f (all equivalent)""",
     )
     search_parser.add_argument(
         "--global",
@@ -283,11 +319,25 @@ For more information: https://github.com/ahundt/clautorun
         help="Set globally (all sessions). Default: current session only",
     )
 
-    # files status
+    # file status
     af_status_parser = file_subparsers.add_parser(
         "status",
-        help="Show current policy (slash: /cr:st, /cr:status, /afst)",
-        description="Display current file creation policy for this session or globally",
+        aliases=["st", "s"],
+        help="Show current file creation policy (CLI: file st, Slash: /cr:st)",
+        description="""Display current AutoFile policy setting.
+
+Shows whether Claude can create new files freely (allow), must justify (justify),
+or is blocked from creating new files (search/strict).
+
+By default shows policy for current session. Use --global to see the default
+policy that applies to all new sessions.
+
+Examples:
+  clautorun file status             # Show current session policy
+  clautorun file st --global        # Show global default policy (short version)
+
+Equivalent slash commands: /cr:st, /cr:status, /afst
+Aliases: file status, file st, file s (all equivalent)""",
     )
     af_status_parser.add_argument(
         "--global",
@@ -575,11 +625,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Get session manager
         mgr = get_session_manager()
 
+        # Normalize aliases to canonical names
+        file_cmd = args.file_command
+        alias_map = {
+            "a": "allow",
+            "j": "justify",
+            "f": "search",
+            "find": "search",
+            "st": "status",
+            "s": "status"
+        }
+        file_cmd = alias_map.get(file_cmd, file_cmd)
+
         # file status
-        if args.file_command == "status":
+        if file_cmd == "status":
             if is_global:
                 # Show global default policy
-                global_policy = mgr.get_global_state("autofile_policy", "allow-all")
+                with mgr.session_state("__autofile_policy__global") as state:
+                    global_policy = state.get("policy", "allow-all")
                 policy_desc = {
                     "allow-all": "ALLOW ALL: Full permission to create/modify files",
                     "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
@@ -589,7 +652,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{policy_desc}")
                 print()
                 print("This is the default for new sessions.")
-                print("Override per-session with: clautorun policy <allow|justify|search>")
+                print("Override per-session with: clautorun file <allow|justify|search>")
             else:
                 # Show session-specific policy
                 if not session_id:
@@ -613,7 +676,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print("Slash command equivalent: /cr:st")
                 else:
                     # No session override, show global default
-                    global_policy = mgr.get_global_state("autofile_policy", "allow-all")
+                    with mgr.session_state("__autofile_policy__global") as gstate:
+                        global_policy = gstate.get("policy", "allow-all")
                     print(f"AutoFile policy: {global_policy} (using global default)")
                     print()
                     print(f"Session: {session_id[:12]}...")
@@ -621,27 +685,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             return 0
 
-        # Set policy (allow, justify, search/find)
-        af_cmd = args.file_command
-        if af_cmd == "find":
-            af_cmd = "search"  # Alias: find -> search
-
+        # Set policy (allow, justify, search) - file_cmd already normalized above
         policy_value = {
             "allow": "allow-all",
             "justify": "justify-create",
             "search": "strict-search"
-        }.get(af_cmd)
+        }.get(file_cmd)
 
         if not policy_value:
-            print(f"Error: Unknown file command: {af_cmd}", file=sys.stderr)
+            print(f"Error: Unknown file command: {file_cmd}", file=sys.stderr)
             return 1
 
         if is_global:
             # Set global default
-            mgr.set_global_state("autofile_policy", policy_value)
+            with mgr.session_state("__autofile_policy__global") as state:
+                state["policy"] = policy_value
             print(f"Global AutoFile policy set to: {policy_value}")
             print("This will be the default for all new sessions.")
-            print(f"Slash command equivalent: /cr:{af_cmd[0]} (or /cr:{af_cmd})")
+            print(f"Slash command equivalent: /cr:{file_cmd[0]} (or /cr:{file_cmd})")
         else:
             # Set for current session
             if not session_id:
@@ -654,7 +715,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             print(f"Session AutoFile policy set to: {policy_value}")
             print(f"Session: {session_id[:12]}...")
-            print(f"Slash command equivalent: /cr:{af_cmd[0]} (or /cr:{af_cmd})")
+            print(f"Slash command equivalent: /cr:{file_cmd[0]} (or /cr:{file_cmd})")
 
         return 0
 
