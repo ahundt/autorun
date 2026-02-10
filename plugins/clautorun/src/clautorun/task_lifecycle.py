@@ -1097,8 +1097,11 @@ You CANNOT stop until all tasks are marked completed or deleted.
     @classmethod
     def cli_gc(cls, archive: bool = True, dry_run: bool = False,
                pattern: str = "*", ttl_days: int | None = None,
-               config: TaskLifecycleConfig | None = None) -> int:
+               config: TaskLifecycleConfig | None = None,
+               confirm: bool = True) -> int:
         """Garbage-collect stale task lifecycle data (archive-then-purge).
+
+        ⚠️  DESTRUCTIVE OPERATION - PERMANENTLY DELETES SESSION DATA ⚠️
 
         SAFETY GUARANTEES (fail-safe design):
         1. Protects current active session (CLAUDE_SESSION_ID) - NEVER deleted
@@ -1108,12 +1111,14 @@ You CANNOT stop until all tasks are marked completed or deleted.
         5. Archives non-empty data to JSON before deletion (restorable backup)
         6. dry_run=True preview mode - reports without modifications
         7. Atomic archive-then-clear within single SessionLock (no data loss window)
+        8. Requires confirmation by default (confirm=True) - must type 'yes' to proceed
 
         LIFECYCLE & USAGE:
         - GC is manual-only (never automatic) - user controls when to clean
         - Daemon doesn't auto-GC - shelves persist until user runs this
         - Recommended: Run with dry_run=True first to preview
         - Safe to run anytime - protections prevent active session damage
+        - ALWAYS archives before deletion unless archive=False (NOT recommended)
 
         CRITICAL ORDERING (prevents corruption):
         1. Find session IDs matching pattern
@@ -1138,9 +1143,10 @@ You CANNOT stop until all tasks are marked completed or deleted.
             pattern: Glob pattern for session IDs (default: "*" = all sessions)
             ttl_days: Only GC sessions older than this (default: config.task_ttl_days)
             config: Config override for testing (default: load from ~/.clautorun/)
+            confirm: Require confirmation before deletion (default: True for safety)
 
         Returns:
-            0 on success (even if sessions skipped/errored), 1 on fatal error
+            0 on success, 1 on fatal error, 2 on user cancellation
 
         Examples:
             # Preview before cleaning (RECOMMENDED)
@@ -1168,6 +1174,27 @@ You CANNOT stop until all tasks are marked completed or deleted.
             current = os.environ.get("CLAUDE_SESSION_ID", "")
             archive_dir = config.storage_dir / "archive"
 
+            # Show prominent warning banner (unless dry-run)
+            if not dry_run:
+                print("\n" + "="*70)
+                print("⚠️  TASK LIFECYCLE GARBAGE COLLECTION - DESTRUCTIVE OPERATION  ⚠️")
+                print("="*70)
+                print()
+                print("This will PERMANENTLY DELETE task data from old sessions.")
+                print()
+                print("Safety protections:")
+                print("  ✓ Current session will NOT be deleted (if CLAUDE_SESSION_ID set)")
+                print("  ✓ Sessions with incomplete tasks will be SKIPPED")
+                print("  ✓ Sessions newer than TTL will be SKIPPED")
+                if archive:
+                    print(f"  ✓ Data will be ARCHIVED to: {archive_dir}/")
+                else:
+                    print("  ✗ NO ARCHIVING - Data will be PERMANENTLY LOST")
+                print()
+                print(f"Pattern: {pattern}")
+                print(f"TTL: {ttl} days")
+                print()
+
             if not sessions_dir.exists():
                 print("No session directory found.")
                 return 0
@@ -1185,6 +1212,39 @@ You CANNOT stop until all tasks are marked completed or deleted.
             if not sids:
                 print(f"No shelves matching '{pattern}'.")
                 return 0
+
+            # Preview sessions that will be processed
+            print(f"Found {len(sids)} session(s) matching pattern '{pattern}':")
+            for sid in sorted(sids):
+                is_current = sid == current
+                marker = " (CURRENT - will skip)" if is_current else ""
+                print(f"  • {sid[:24]}...{marker}")
+            print()
+
+            # Confirmation prompt (unless dry-run or confirm=False)
+            if not dry_run and confirm:
+                if not sys.stdin.isatty():
+                    print("⚠️  ERROR: Cannot prompt for confirmation in non-interactive mode")
+                    print("Use --task-dry-run to preview, or --task-no-confirm to force")
+                    return 2
+
+                print("=" * 70)
+                print("FINAL CONFIRMATION")
+                print("=" * 70)
+                print(f"About to garbage-collect up to {len(sids)} session(s).")
+                print()
+                if archive:
+                    print(f"Archived data will be saved to: {archive_dir}/")
+                    print("You can restore from archives if needed.")
+                else:
+                    print("⚠️  NO ARCHIVING - Data will be PERMANENTLY LOST")
+                print()
+                response = input("Type 'yes' to proceed, anything else to cancel: ")
+                print()
+
+                if response.lower() != 'yes':
+                    print("Cancelled. No changes made.")
+                    return 2
 
             archived = cleared = skip_active = skip_incomplete = skip_young = errors = 0
 

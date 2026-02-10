@@ -428,7 +428,8 @@ def test_cli_gc_dry_run_previews_without_changes():
         archive=True,
         dry_run=True,
         pattern="*",
-        ttl_days=0  # No TTL = immediate GC eligibility
+        ttl_days=0,  # No TTL = immediate GC eligibility
+        confirm=False  # Skip confirmation in tests
     )
 
     assert exit_code == 0, "cli_gc should succeed"
@@ -460,7 +461,8 @@ def test_cli_gc_archives_before_deletion():
         archive=True,
         dry_run=False,
         pattern=session_id,  # Only target this session
-        ttl_days=0
+        ttl_days=0,
+        confirm=False  # Skip confirmation in tests
     )
 
     assert exit_code == 0, "cli_gc should succeed"
@@ -499,7 +501,8 @@ def test_cli_gc_pattern_filtering():
         archive=True,
         dry_run=False,
         pattern="prod-*",
-        ttl_days=0
+        ttl_days=0,
+        confirm=False  # Skip confirmation in tests
     )
 
     assert exit_code == 0, "cli_gc should succeed"
@@ -528,7 +531,8 @@ def test_cli_gc_ttl_protects_recent_sessions():
         archive=True,
         dry_run=False,
         pattern=session_id,
-        ttl_days=1  # Require 1 day age
+        ttl_days=1,  # Require 1 day age
+        confirm=False  # Skip confirmation in tests
     )
 
     assert exit_code == 0, "cli_gc should succeed"
@@ -558,7 +562,8 @@ def test_cli_gc_protects_current_session():
             archive=True,
             dry_run=False,
             pattern=session_id,
-            ttl_days=0
+            ttl_days=0,
+            confirm=False  # Skip confirmation in tests
         )
 
     assert exit_code == 0, "cli_gc should succeed"
@@ -583,7 +588,8 @@ def test_cli_gc_protects_incomplete_tasks():
         archive=True,
         dry_run=False,
         pattern=session_id,
-        ttl_days=0
+        ttl_days=0,
+        confirm=False  # Skip confirmation in tests
     )
 
     assert exit_code == 0, "cli_gc should succeed"
@@ -593,6 +599,38 @@ def test_cli_gc_protects_incomplete_tasks():
     assert len(verify_manager.tasks) == 5, "Session with incomplete tasks should be protected"
 
     print("✅ cli_gc protects sessions with incomplete tasks")
+
+
+def test_cli_gc_requires_confirmation_in_non_interactive():
+    """Test cli_gc refuses to proceed without confirmation in non-interactive mode."""
+    session_id = 'test-cli-gc-confirm'
+    manager = create_test_manager_with_tasks(session_id)
+
+    # Mark all as completed
+    for task_id in ['1', '2', '3', '4', '5']:
+        manager.update_task(task_id, {'status': 'completed'}, 'Done')
+
+    time.sleep(0.1)
+
+    # Mock non-interactive terminal
+    with patch('sys.stdin.isatty', return_value=False):
+        exit_code, output = capture_stdout(
+            TaskLifecycle.cli_gc,
+            archive=True,
+            dry_run=False,
+            pattern=session_id,
+            ttl_days=0,
+            confirm=True  # Require confirmation (should fail in non-interactive)
+        )
+
+    assert exit_code == 2, "cli_gc should return 2 (cancelled) in non-interactive mode"
+    assert "Cannot prompt for confirmation" in output or "non-interactive" in output, "Should warn about non-interactive mode"
+
+    # Verify session NOT cleaned
+    verify_manager = TaskLifecycle(session_id=session_id)
+    assert len(verify_manager.tasks) == 5, "Session should NOT be cleaned without confirmation"
+
+    print("✅ cli_gc requires confirmation in non-interactive mode")
 
 
 # ============================================================================
@@ -633,6 +671,7 @@ if __name__ == '__main__':
     test_cli_gc_ttl_protects_recent_sessions()
     test_cli_gc_protects_current_session()
     test_cli_gc_protects_incomplete_tasks()
+    test_cli_gc_requires_confirmation_in_non_interactive()
 
     print("\n" + "="*70)
     print("All Tests Passed! ✅")
