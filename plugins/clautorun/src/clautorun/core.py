@@ -61,6 +61,45 @@ logging.basicConfig(
 logger = logging.getLogger("clautorun")
 
 
+# === GEMINI CLI PAYLOAD NORMALIZATION ===
+# Gemini CLI uses different event names and camelCase keys vs Claude Code's snake_case.
+# This mapping normalizes both formats to a single internal representation.
+
+GEMINI_EVENT_MAP = {
+    "BeforeTool": "PreToolUse",
+    "AfterTool": "PostToolUse",
+    "BeforeAgent": "UserPromptSubmit",
+    "SessionStart": "SessionStart",
+    "SessionEnd": "SessionEnd",
+}
+
+
+def normalize_hook_payload(payload: dict) -> dict:
+    """Normalize hook payload from any CLI format (Claude Code or Gemini CLI) to internal format.
+
+    Claude Code sends:
+        hook_event_name, session_id, tool_name, tool_input, session_transcript, prompt
+
+    Gemini CLI sends:
+        type, sessionId, toolName, toolInput (camelCase keys, different event names)
+
+    Returns a new dict with consistent internal key names and mapped event names.
+    """
+    # Map event name: Gemini "BeforeTool" → internal "PreToolUse", etc.
+    raw_event = payload.get("hook_event_name") or payload.get("type", "")
+    event = GEMINI_EVENT_MAP.get(raw_event, raw_event)
+
+    return {
+        "hook_event_name": event,
+        "session_id": payload.get("session_id") or payload.get("sessionId", ""),
+        "prompt": payload.get("prompt", ""),
+        "tool_name": payload.get("tool_name") or payload.get("toolName", ""),
+        "tool_input": payload.get("tool_input") or payload.get("toolInput", {}),
+        "tool_result": payload.get("tool_result") or payload.get("toolResult"),
+        "session_transcript": payload.get("session_transcript", []),
+    }
+
+
 # === THREAD-SAFE DB WRAPPER (In-memory cache layer for daemon performance) ===
 class ThreadSafeDB:
     """
@@ -646,19 +685,22 @@ class ClautorunDaemon:
                 self.active_pids.add(pid)
                 logger.info(f"New session PID: {pid} (active: {len(self.active_pids)})")
 
+            # Normalize payload from any CLI format (Claude Code or Gemini CLI)
+            normalized = normalize_hook_payload(payload)
+
             # Resolve session identity (supports tri-layer for resume robustness)
-            raw_session_id = payload.get("session_id", "")
+            raw_session_id = normalized["session_id"]
             session_id = resolve_session_key(pid, payload.get("_cwd", ""), raw_session_id)
 
             # Build context with shared store for magic state persistence
             ctx = EventContext(
                 session_id=session_id,
-                event=payload.get("hook_event_name", payload.get("type", "")),
-                prompt=payload.get("prompt", ""),
-                tool_name=payload.get("tool_name", payload.get("tool")),
-                tool_input=payload.get("tool_input", {}),
-                tool_result=payload.get("tool_result"),
-                session_transcript=payload.get("session_transcript", []),
+                event=normalized["hook_event_name"],
+                prompt=normalized["prompt"],
+                tool_name=normalized["tool_name"],
+                tool_input=normalized["tool_input"],
+                tool_result=normalized["tool_result"],
+                session_transcript=normalized["session_transcript"],
                 store=self.store
             )
 

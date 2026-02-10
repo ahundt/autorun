@@ -1667,7 +1667,7 @@ def pretooluse_handler(ctx):
             # For NEW files, check for justification in state flag, transcript, OR Write tool content
             justification_found = (
                 state.get("autofile_justification_detected", False) or
-                has_valid_justification(str(ctx.session_transcript), str(ctx.tool_input.get("content", "")))
+                has_valid_justification(str(ctx.session_transcript), str(tool_input.get("content", "")))
             )
             if not justification_found:
                 return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
@@ -2164,17 +2164,23 @@ def main():
         # Run as Claude Code hook - handle all hook events
         try:
             payload = json.loads(sys.stdin.read())
-            event = payload.get("hook_event_name", "?")
-            _session_id = payload.get("session_id", "?")
+
+            # Normalize payload from any CLI format (Claude Code or Gemini CLI)
+            # Maps Gemini's BeforeTool→PreToolUse, camelCase→snake_case, etc.
+            from clautorun.core import normalize_hook_payload
+            normalized = normalize_hook_payload(payload)
+
+            event = normalized.get("hook_event_name", "?")
+            _session_id = normalized.get("session_id", "?")
 
             # DEBUG: Log all hook calls to track when script is called
             # Security: Sanitize prompt to prevent log injection
             debug_log = STATE_DIR / "hook_debug.log"
-            safe_prompt = sanitize_log_message(payload.get('prompt', '')[:100], max_length=100)
+            safe_prompt = sanitize_log_message(normalized.get('prompt', '')[:100], max_length=100)
             with open(debug_log, "a") as f:
                 f.write(f"[{time.strftime('%H:%M:%S')}] HOOK_CALLED: {event} | session: {_session_id} | prompt: {safe_prompt}...\n")
 
-            # Context object for event handling
+            # Context object for event handling (uses normalized keys)
             class Ctx:
                 def __init__(self, p):
                     self.hook_event_name = p.get("hook_event_name", "")
@@ -2184,7 +2190,7 @@ def main():
                     self.tool_input = p.get("tool_input", {})
                     self.session_transcript = p.get("session_transcript", [])
 
-            ctx = Ctx(payload)
+            ctx = Ctx(normalized)
             handler = HANDLERS.get(event, default_handler)
             response = handler(ctx)
 

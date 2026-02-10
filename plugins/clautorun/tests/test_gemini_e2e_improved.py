@@ -82,21 +82,29 @@ def gemini_cli_available():
 
 @pytest.fixture(scope="module")
 def gemini_extension_check():
-    """Verify clautorun extension is loaded in Gemini."""
+    """Verify clautorun extension is loaded in Gemini.
+
+    Note: `gemini extensions list` sends the extension list to stderr,
+    not stdout. We check both streams to handle this correctly.
+    """
     try:
         result = subprocess.run(
             ["gemini", "extensions", "list"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=30  # Extensions list loads credentials + experiments
         )
         if result.returncode != 0:
             pytest.skip(f"Could not list Gemini extensions: {result.stderr}")
 
-        if "clautorun" not in result.stdout:
+        # Gemini CLI sends extension list to stderr (debug output stream)
+        combined_output = result.stdout + result.stderr
+        if "clautorun" not in combined_output:
             pytest.skip("clautorun extension not installed in Gemini CLI")
 
         return True
+    except subprocess.TimeoutExpired:
+        pytest.skip("gemini extensions list timed out (>30s)")
     except Exception as e:
         pytest.skip(f"Extension check failed: {e}")
 
@@ -197,13 +205,19 @@ class TestGeminiHookEntryPointDirect:
         assert response["continue"] is not None, "continue field is None"
 
     def test_hook_beforetool_event_blocking(self, clean_environment):
-        """Test BeforeTool hook blocks dangerous command (NO COST)."""
+        """Test BeforeTool hook blocks dangerous command (NO COST).
+
+        Sends Gemini-format BeforeTool JSON and verifies:
+        1. hookSpecificOutput is present (not silently missing)
+        2. permissionDecision is 'deny' (command actually blocked)
+        3. Blocking reason mentions 'cat' and suggests 'Read'
+        """
         try:
             hook_script = find_hook_script()
         except FileNotFoundError as e:
             pytest.skip(str(e))
 
-        # Simulate BeforeTool event with cat command (should be blocked)
+        # Simulate BeforeTool event with cat command (Gemini CLI format)
         stdin_data = json.dumps({
             "type": "BeforeTool",
             "toolName": "bash_command",
@@ -211,13 +225,17 @@ class TestGeminiHookEntryPointDirect:
             "sessionId": "test-e2e-session"
         })
 
+        # Use CLAUTORUN_USE_DAEMON=0 for deterministic testing
+        test_env = os.environ.copy()
+        test_env["CLAUTORUN_USE_DAEMON"] = "0"
+
         result = subprocess.run(
             ["python3", str(hook_script)],
             input=stdin_data,
             capture_output=True,
             text=True,
             timeout=10,
-            env=os.environ
+            env=test_env
         )
 
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
@@ -227,19 +245,21 @@ class TestGeminiHookEntryPointDirect:
         except json.JSONDecodeError as e:
             pytest.fail(f"Invalid JSON response: {e}\nOutput: {result.stdout}")
 
-        # Verify blocking response
-        if "hookSpecificOutput" in response:
-            hook_output = response["hookSpecificOutput"]
-            permission = hook_output.get("permissionDecision", "allow")
+        # CRITICAL: hookSpecificOutput MUST be present (not silently missing)
+        assert "hookSpecificOutput" in response, \
+            f"Missing hookSpecificOutput - blocking not triggered.\nFull response: {json.dumps(response, indent=2)[:500]}"
 
-            assert permission == "deny", \
-                f"cat command not blocked! permissionDecision={permission}"
+        hook_output = response["hookSpecificOutput"]
+        permission = hook_output.get("permissionDecision", "allow")
 
-            reason = hook_output.get("permissionDecisionReason", "")
-            assert "cat" in reason.lower(), \
-                "Blocking reason doesn't mention cat"
-            assert "read" in reason.lower(), \
-                "Blocking reason doesn't suggest Read tool"
+        assert permission == "deny", \
+            f"cat command not blocked! permissionDecision={permission}"
+
+        reason = hook_output.get("permissionDecisionReason", "")
+        assert "cat" in reason.lower(), \
+            "Blocking reason doesn't mention cat"
+        assert "read" in reason.lower(), \
+            "Blocking reason doesn't suggest Read tool"
 
 
 # Skip entire class if ENABLE_REAL_MONEY_TESTS not set
@@ -282,20 +302,22 @@ class TestGeminiCLIRealMoney:
         """Test that clautorun extension is loaded in Gemini (NO API COST).
 
         This verifies the extension is properly installed and registered.
+        Note: `gemini extensions list` outputs to stderr, not stdout.
         """
         result = subprocess.run(
             ["gemini", "extensions", "list"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=30
         )
 
         assert result.returncode == 0, \
             f"Extension list failed: {result.stderr}"
 
-        # Verify clautorun extension present
-        assert "clautorun" in result.stdout, \
-            f"clautorun extension not found. Extensions:\n{result.stdout}"
+        # Gemini CLI sends extension list to stderr (debug output stream)
+        combined_output = result.stdout + result.stderr
+        assert "clautorun" in combined_output, \
+            f"clautorun extension not found. Output:\n{combined_output[:500]}"
 
         # Verify hooks file exists
         hooks_file = (
