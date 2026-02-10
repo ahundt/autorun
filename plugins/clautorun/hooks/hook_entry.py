@@ -103,16 +103,20 @@ def get_plugin_root() -> str:
     Returns:
         str: Absolute path to plugin root directory
 
-    Safety: Works with both CLAUDE_PLUGIN_ROOT and Gemini's extensionPath.
+    Safety: Works with both CLAUDE_PLUGIN_ROOT and Gemini's CLAUTORUN_PLUGIN_ROOT.
     """
     try:
-        # Claude Code uses CLAUDE_PLUGIN_ROOT
+        # Try CLAUTORUN_PLUGIN_ROOT first (set by both Claude and Gemini hooks)
+        plugin_root = os.environ.get("CLAUTORUN_PLUGIN_ROOT")
+        if plugin_root:
+            return plugin_root
+
+        # Claude Code also sets CLAUDE_PLUGIN_ROOT
         plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
         if plugin_root:
             return plugin_root
 
-        # Gemini CLI may use different variable (TBD during testing)
-        # For now, fall back to current directory
+        # Final fallback to current directory
         return os.getcwd()
     except Exception:
         return os.getcwd()
@@ -267,9 +271,9 @@ def can_bootstrap() -> tuple[bool, str]:
     if not has_uv and not has_pip:
         return False, "Neither uv nor pip found in PATH"
 
-    # Check CLAUDE_PLUGIN_ROOT is set
-    if not os.environ.get("CLAUDE_PLUGIN_ROOT"):
-        return False, "CLAUDE_PLUGIN_ROOT not set"
+    # Check plugin root is set (either CLAUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)
+    if not os.environ.get("CLAUTORUN_PLUGIN_ROOT") and not os.environ.get("CLAUDE_PLUGIN_ROOT"):
+        return False, "Plugin root not set (need CLAUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)"
 
     return True, "uv" if has_uv else "pip"
 
