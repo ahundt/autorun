@@ -61,21 +61,66 @@ def create_parser() -> argparse.ArgumentParser:
         prog="clautorun",
         description="""Clautorun - Claude Code plugin for autonomous task execution and lifecycle management.
 
-QUICK START:
-  1. Install: clautorun --install
-  2. Use /cr:go <task> in Claude Code to start autonomous execution
-  3. Control file creation: clautorun file status (or /cr:st in Claude)
-  4. Manage task history: clautorun task status
+INSTALLATION (Two steps - see below for details):
+  1. Install Python package:  pip install clautorun  (or: uv pip install clautorun)
+  2. Register with CLI:       clautorun --install
+
+QUICK START (after installation):
+  1. Use /cr:go <task> in Claude Code to start autonomous execution
+  2. Control file creation: clautorun file status (or /cr:st in Claude)
+  3. Manage task history: clautorun task status
 
 Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-EXAMPLES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INSTALLATION GUIDE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Installation (Run this first!):
-  clautorun --install                    # Install all plugins (RECOMMENDED)
-  clautorun --install clautorun          # Install only clautorun plugin
+Why two steps?
+  Step 1: Install Python package    → Makes 'clautorun' CLI command available
+  Step 2: Register with Claude CLI  → Adds /cr:* slash commands to Claude Code/Gemini
+
+Method 1: Via Claude Code plugin system (EASIEST - one command does both):
+  claude plugin install https://github.com/ahundt/clautorun.git
+
+Method 2: Via pip/uv (two steps):
+  # Step 1: Install Python package
+  pip install git+https://github.com/ahundt/clautorun.git
+  # OR with UV (faster, recommended):
+  uv pip install git+https://github.com/ahundt/clautorun.git
+
+  # Step 2: Register with Claude Code/Gemini
+  clautorun --install                    # Register all plugins
+  clautorun --status                     # Verify installation
+
+Method 3: From local clone (development):
+  git clone https://github.com/ahundt/clautorun.git && cd clautorun
+
+  # Step 1: Install in editable mode
+  uv pip install -e .                    # UV (recommended)
+  # OR:
+  pip install -e .                       # Standard pip
+
+  # Step 2: Register with Claude Code/Gemini
+  clautorun --install --force            # Force reinstall for development
+
+Install UV (if needed):
+  # macOS/Linux:
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  # Homebrew:
+  brew install uv
+  # Windows:
+  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXAMPLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Installation:
+  clautorun --install                    # Register all plugins with Claude/Gemini
+  clautorun --install clautorun          # Register only clautorun plugin
   clautorun --status                     # Check installation status
 
 AutoFile - control file creation (slash: /cr:a, /cr:j, /cr:f, /cr:st):
@@ -93,8 +138,9 @@ Task lifecycle management:
   clautorun task gc --no-confirm         # Clean up old task data
 
 Common workflows:
-  # First time setup
-  clautorun --install                    # Install plugins
+  # First time setup (see INSTALLATION GUIDE above for full details)
+  pip install clautorun                  # Step 1: Install Python package
+  clautorun --install                    # Step 2: Register with Claude/Gemini
 
   # Check what's installed
   clautorun --status                     # See plugin status
