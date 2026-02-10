@@ -74,34 +74,49 @@ GEMINI_EVENT_MAP = {
 }
 
 
-def normalize_hook_payload(payload: dict) -> dict:
-    """Normalize hook payload from any CLI format and truncate large transcripts.
+def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> dict:
+    """Normalize hook payload from any CLI format and optionally truncate transcript.
 
     Normalization:
     - Claude Code: hook_event_name, session_id, tool_name (snake_case)
     - Gemini CLI: type, sessionId, toolName (camelCase)
 
-    Transcript Truncation:
+    Transcript Truncation (configurable):
     - session_transcript can be 200MB+ in long sessions
-    - We only search for recent patterns (stage markers, justification tags)
-    - Truncate to last ~64KB of messages (typically last 20-50 messages)
-    - Saves memory and dramatically speeds up pattern searches
+    - Hooks only search recent patterns (stage markers, justification tags)
+    - Truncate to last ~64KB by default (saves memory, speeds pattern search)
+    - Can disable via truncate_transcript=False or CLAUTORUN_NO_TRUNCATE=1 env var
+
+    When to disable truncation:
+    - CLI commands needing full session history (export, analysis, debugging)
+    - Custom hooks that need access to old messages
+    - Diagnostic/troubleshooting scenarios
+
+    Args:
+        payload: Raw hook payload from Claude Code or Gemini CLI
+        truncate_transcript: If True, truncate to ~64KB (default: True for hooks)
 
     Returns:
-        dict: Normalized payload with truncated transcript
+        dict: Normalized payload with optionally truncated transcript
     """
     # Map event name: Gemini "BeforeTool" → internal "PreToolUse", etc.
     raw_event = payload.get("hook_event_name") or payload.get("type", "")
     event = GEMINI_EVENT_MAP.get(raw_event, raw_event)
 
-    # Get transcript and truncate to recent messages (memory optimization)
-    # session_transcript can be 200MB+ in long sessions. We only search for
-    # recent patterns (stage markers in last few AI messages), so truncate aggressively.
+    # Get transcript
+    transcript = payload.get("session_transcript", [])
+
+    # Check if truncation disabled globally via env var
+    if os.environ.get("CLAUTORUN_NO_TRUNCATE") == "1":
+        truncate_transcript = False
+
+    # Truncate to recent messages if enabled (memory optimization)
+    # Default: enabled for hooks (saves memory, they only need recent patterns)
+    # Disable for: CLI commands, debugging, full history analysis
     #
     # STRATEGY: Prioritize size limit (64KB hard cap) over message count.
     # This prevents memory bloat from sessions with huge individual messages.
-    transcript = payload.get("session_transcript", [])
-    if transcript and len(transcript) > 20:
+    if truncate_transcript and transcript and len(transcript) > 20:
         # Try last 20 messages first (fast path for normal-sized messages)
         recent_20 = transcript[-20:]
         size_20 = len(json.dumps(recent_20))
