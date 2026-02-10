@@ -302,6 +302,33 @@ class TestPruning:
         assert manager.prune_old_tasks() == 0
         assert '1' in manager.tasks
 
+    def test_never_prunes_paused_tasks(self, isolated_config):
+        """TEST CRITICAL: Paused tasks NEVER pruned - users pause for later resume.
+
+        VIOLATION: Pruning paused tasks violates user expectation and loses work intent.
+        Users explicitly pause tasks to resume later. Pruning them is data loss.
+        """
+        config = isolated_config
+        config.task_ttl_days = 0  # Zero TTL - would prune everything IF paused were prunable
+
+        session_id = f'paused-{int(time.time())}'
+        manager = TaskLifecycle(session_id=session_id, config=config)
+
+        # Create task and pause it (user intent: resume later)
+        manager.create_task('1', {'subject': 'Paused work', 'description': 'Resume later'}, 'Created')
+        manager.update_task('1', {'status': 'paused'}, 'User paused for later')
+
+        # Age it significantly (100 days old)
+        def age(tasks):
+            tasks['1']['updated_at'] = time.time() - 86400 * 100
+        manager.atomic_update_tasks(age)
+
+        # Prune - should NOT remove paused task
+        pruned = manager.prune_old_tasks()
+        assert pruned == 0, "Paused tasks must NEVER be pruned (user may resume)"
+        assert '1' in manager.tasks, "Paused task must be preserved regardless of age"
+        assert manager.tasks['1']['status'] == 'paused', "Status must remain paused"
+
 
 class TestCrossSessionPersistence:
     """Test persistence across daemon restarts and session resume."""
