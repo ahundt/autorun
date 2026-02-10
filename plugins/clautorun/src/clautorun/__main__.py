@@ -59,42 +59,61 @@ def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
     parser = argparse.ArgumentParser(
         prog="clautorun",
-        description="Claude Code plugin for autonomous task automation",
+        description="""Clautorun - Claude Code plugin for autonomous task execution and lifecycle management.
+
+QUICK START:
+  1. Install: clautorun --install
+  2. Use /cr:go <task> in Claude Code to start autonomous execution
+  3. Manage task history: clautorun task status
+
+Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
+""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Installation
-  clautorun --install                    # Install all plugins
-  clautorun --install clautorun          # Install specific plugin
-  clautorun --status                     # Show installation status
+EXAMPLES:
 
-  # Task lifecycle management
-  clautorun task status                  # Show task status
-  clautorun task status --verbose        # Show detailed task info
-  clautorun task export file.json        # Export tasks to JSON
-  clautorun task clear --session abc123  # Clear specific session
-  clautorun task gc --dry-run            # Preview garbage collection
-  clautorun task gc --no-confirm         # Run GC without confirmation
+Installation (Run this first!):
+  clautorun --install                    # Install all plugins (RECOMMENDED)
+  clautorun --install clautorun          # Install only clautorun plugin
+  clautorun --status                     # Check installation status
 
-  # Hook handler (default)
-  clautorun                              # Run as hook handler
+Task lifecycle management:
+  clautorun task status                  # Show current task status
+  clautorun task status --verbose        # Show detailed task information
+  clautorun task export tasks.json       # Export task history to JSON
+  clautorun task gc --dry-run            # Preview old data cleanup (safe)
+  clautorun task gc --no-confirm         # Clean up old task data
 
-Legacy commands (still supported):
-  clautorun install                      # Install clautorun hooks
-  clautorun uninstall                    # Uninstall clautorun hooks
-  clautorun check                        # Check installation status
+Common workflows:
+  # First time setup
+  clautorun --install                    # Install plugins
+
+  # Check what's installed
+  clautorun --status                     # See plugin status
+
+  # View task progress
+  clautorun task status --verbose        # See all incomplete tasks
+
+  # Clean up old data
+  clautorun task gc --dry-run            # Preview what will be deleted
+  clautorun task gc                      # Confirm and clean up
+
+For more information: https://github.com/ahundt/clautorun
         """,
     )
 
     # Install options
-    install_group = parser.add_argument_group("Installation")
+    install_group = parser.add_argument_group("Installation (Start Here!)")
     install_group.add_argument(
         "--install",
         "-i",
         nargs="?",
         const="all",
         metavar="PLUGINS",
-        help="Install plugins (default: all, or comma-separated: clautorun,pdf-extractor)",
+        help="Install clautorun plugins to Claude Code and/or Gemini CLI. "
+             "This registers the plugins, installs hooks, and makes slash commands available. "
+             "Default: all plugins (clautorun + pdf-extractor). "
+             "Specify plugins: --install clautorun or --install clautorun,pdf-extractor",
     )
     install_group.add_argument(
         "--force-install",
@@ -173,7 +192,8 @@ Legacy commands (still supported):
         "--status",
         "-s",
         action="store_true",
-        help="Show installation status of all plugins",
+        help="Show installation status: which plugins are installed, where they're located, "
+             "and which CLIs (Claude Code, Gemini) have them enabled",
     )
     info_group.add_argument(
         "--version",
