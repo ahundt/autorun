@@ -113,6 +113,22 @@ class TaskLifecycle:
     - Audit logs are per-session files
     """
 
+    # Schema version for task lifecycle data stored in shelve files
+    # (~/.claude/sessions/plugin___task_lifecycle__{session_id}.db).
+    # Bump when the task dict structure or status transition rules change.
+    # Migration runs automatically on first access via _migrate_if_needed().
+    #
+    # Version history:
+    #   v1: Initial task schema. No version field stored in shelve. Ghost tasks
+    #       (tasks first seen via TaskUpdate, not TaskCreate) could transition
+    #       to in_progress/pending, causing them to block Stop hook permanently
+    #       if the completed update was lost (e.g., session end, context compaction).
+    #   v2: Ghost task protection. Ghost tasks (metadata.ghost_task=True) can only
+    #       transition to terminal statuses (completed/deleted/ignored). Non-terminal
+    #       status requests (in_progress/pending) are silently skipped. Existing v1
+    #       ghost tasks with blocking statuses are reset to "ignored" on migration.
+    SCHEMA_VERSION = 2
+
     # Status constants (single source of truth - DRY)
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
     BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
@@ -151,15 +167,67 @@ class TaskLifecycle:
 
     # === State Access (REUSES session_state() - DRY) ===
 
+    def _migrate_if_needed(self, state: Dict) -> None:
+        """Migrate shelve state to current schema version (lazy self-healing).
+
+        LIFECYCLE: Called automatically on every .tasks access and atomic_update_tasks().
+        This ensures old data gets fixed when accessed, no manual intervention needed.
+
+        CRITICAL INVARIANTS:
+        1. Migrations are idempotent (safe to run multiple times)
+        2. Runs inside session_state() context (SessionLock protection)
+        3. Updates both tasks AND schema_version atomically
+        4. Each version bump preserves backward compatibility
+
+        WHY LAZY MIGRATION:
+        - Daemon restarts don't trigger migration (shelve just sits on disk)
+        - Session resume/continuation triggers migration via first .tasks access
+        - Failed sessions get fixed when next session accesses their data
+        - No need for batch migration scripts or manual database edits
+        """
+        stored_version = state.get("schema_version", 1)
+        if stored_version >= self.SCHEMA_VERSION:
+            return  # Already current - no work needed
+
+        tasks = state.get("tasks", {})
+
+        # === v1 → v2 Migration: Fix Ghost Task Blocking Bug ===
+        # PROBLEM (v1): Ghost tasks (created via TaskUpdate on unknown ID) could
+        # transition from initial "ignored" to "in_progress". If session ended
+        # before the "completed" update persisted, ghost stayed "in_progress"
+        # forever, blocking all Stop hooks in that session.
+        #
+        # FIX (v2): Reset any ghost task with non-terminal status back to "ignored".
+        # Going forward, ghost tasks can't transition to blocking statuses (see
+        # status transition code at line ~395), but existing v1 data needs fixing.
+        if stored_version < 2:
+            fixed_count = 0
+            for task in tasks.values():
+                is_ghost = task.get("metadata", {}).get("ghost_task", False)
+                if is_ghost and task.get("status") not in self.BLOCKING_STATUSES:
+                    # Reset blocking ghost to ignored
+                    task["status"] = "ignored"
+                    fixed_count += 1
+
+            if fixed_count > 0 and self.config.debug_logging:
+                self.log_event("MIGRATION", "v1->v2", f"Fixed {fixed_count} ghost tasks",
+                              "schema_update", {"fixed_count": fixed_count})
+
+        # Atomic update: tasks + version together
+        state["tasks"] = tasks
+        state["schema_version"] = self.SCHEMA_VERSION
+
     @property
     def tasks(self) -> Dict[str, Dict]:
         """Get tasks dict. For modifications, use atomic_update_tasks()."""
         with session_state(self.global_key) as state:
+            self._migrate_if_needed(state)
             return dict(state.get("tasks", {}))
 
     def atomic_update_tasks(self, updater: Callable[[Dict], None]) -> None:
         """Atomically update tasks. updater(tasks) modifies in-place."""
         with session_state(self.global_key) as state:
+            self._migrate_if_needed(state)
             tasks = state.get("tasks", {})
             updater(tasks)
             state["tasks"] = tasks
@@ -314,8 +382,9 @@ class TaskLifecycle:
             # Get or create task entry
             if task_id not in tasks:
                 # Task created before tracking started - initialize as ignored
-                # so ghost tasks don't block stopping. The AI's update (below)
-                # will set the real status if one is provided.
+                # so ghost tasks don't block stopping. Ghost tasks can only
+                # transition to terminal statuses (completed/deleted/ignored),
+                # never to in_progress/pending (which would block stopping).
                 tasks[task_id] = {
                     "id": task_id,
                     "subject": "(unknown - created before tracking)",
@@ -351,22 +420,51 @@ class TaskLifecycle:
                     else:
                         task["metadata"][k] = v
 
-            # Status transition
+            # Status transition (with ghost task protection)
             if "status" in updates:
                 old_status = task["status"]
-                task["status"] = updates["status"]
+                new_status = updates["status"]
 
-                # Log status transitions
-                event_type = {
-                    "completed": "COMPLETE",
-                    "in_progress": "START",
-                    "deleted": "DELETE",
-                    "paused": "PAUSE",
-                    "ignored": "IGNORE"
-                }.get(updates["status"], "UPDATE")
+                # CRITICAL GHOST TASK PROTECTION:
+                # Ghost tasks are created when AI calls TaskUpdate(id=X) for unknown X
+                # (task created before daemon tracking started). In v1, these could
+                # transition to in_progress/pending, then if the session ended before
+                # TaskUpdate(id=X, status=completed), they'd block Stop hooks forever.
+                #
+                # V2 FIX: Ghost tasks can ONLY accept terminal statuses (completed,
+                # deleted, ignored). Requests for in_progress/pending are logged as
+                # GHOST_SKIP but status stays "ignored". This prevents permanent blocking.
+                #
+                # WHY THIS WORKS:
+                # - get_incomplete_tasks() filters by BLOCKING_STATUSES (includes "ignored")
+                # - Ghost tasks with "ignored" never appear in incomplete list
+                # - Stop hook only blocks if incomplete tasks exist
+                # - Migration (v1→v2) automatically fixes old ghost tasks on first access
+                is_ghost = task.get("metadata", {}).get("ghost_task", False)
+                terminal_statuses = {"completed", "deleted", "ignored"}
 
-                self.log_event(event_type, task_id, task["subject"], updates["status"],
-                              {"old_status": old_status})
+                if is_ghost and new_status not in terminal_statuses:
+                    # Ghost task protection triggered - log for debugging
+                    self.log_event("GHOST_SKIP", task_id, task["subject"], new_status,
+                                  {"old_status": old_status,
+                                   "reason": "ghost task cannot become blocking",
+                                   "requested_status": new_status,
+                                   "maintained_status": "ignored"})
+                    # Status stays "ignored" - do NOT update to blocking status
+                else:
+                    # Normal status transition (non-ghost or terminal status)
+                    task["status"] = new_status
+
+                    event_type = {
+                        "completed": "COMPLETE",
+                        "in_progress": "START",
+                        "deleted": "DELETE",
+                        "paused": "PAUSE",
+                        "ignored": "IGNORE"
+                    }.get(new_status, "UPDATE")
+
+                    self.log_event(event_type, task_id, task["subject"], new_status,
+                                  {"old_status": old_status})
 
             task["updated_at"] = time.time()
             task["tool_outputs"].append(result)
@@ -404,7 +502,11 @@ class TaskLifecycle:
         return task_id in self.tasks
 
     def prune_old_tasks(self) -> int:
-        """Prune completed tasks older than TTL (Problem 4 solution).
+        """Prune non-blocking tasks older than TTL.
+
+        Prunes tasks with any status in BLOCKING_STATUSES (completed, deleted,
+        paused, ignored) that are older than task_ttl_days. This includes ghost
+        tasks with "ignored" status, which would otherwise persist indefinitely.
 
         Returns:
             Number of tasks pruned
@@ -417,7 +519,9 @@ class TaskLifecycle:
             nonlocal pruned_count
             for task_id in list(tasks.keys()):
                 task = tasks[task_id]
-                if task["status"] in self.COMPLETED_STATUSES:
+                # Prune any non-blocking task past TTL (completed, deleted,
+                # paused, ignored - all terminal/parked statuses)
+                if task["status"] in self.BLOCKING_STATUSES:
                     age = now - task["updated_at"]
                     if age > ttl_seconds:
                         del tasks[task_id]
@@ -953,6 +1057,255 @@ You CANNOT stop until all tasks are marked completed or deleted.
         except Exception as e:
             print(f"Error clearing tasks: {e}", file=sys.stderr)
             return 1
+
+
+    @classmethod
+    def cli_gc(cls, archive: bool = True, dry_run: bool = False,
+               pattern: str = "*", ttl_days: int | None = None,
+               config: TaskLifecycleConfig | None = None) -> int:
+        """Garbage-collect stale task lifecycle data (archive-then-purge).
+
+        SAFETY GUARANTEES (fail-safe design):
+        1. Protects current active session (CLAUDE_SESSION_ID) - NEVER deleted
+        2. Skips sessions with incomplete tasks (in_progress/pending work)
+        3. Respects TTL - only cleans sessions older than ttl_days
+        4. Uses session_state() for SessionLock protection (never direct shelve.open())
+        5. Archives non-empty data to JSON before deletion (restorable backup)
+        6. dry_run=True preview mode - reports without modifications
+        7. Atomic archive-then-clear within single SessionLock (no data loss window)
+
+        LIFECYCLE & USAGE:
+        - GC is manual-only (never automatic) - user controls when to clean
+        - Daemon doesn't auto-GC - shelves persist until user runs this
+        - Recommended: Run with dry_run=True first to preview
+        - Safe to run anytime - protections prevent active session damage
+
+        CRITICAL ORDERING (prevents corruption):
+        1. Find session IDs matching pattern
+        2. For each session:
+           a. Check if current session → skip (protected)
+           b. Acquire SessionLock via session_state(global_key, timeout=2s)
+           c. Read tasks, check incomplete → skip if found
+           d. Check age against TTL → skip if too recent
+           e. Archive to JSON (if archive=True) - within lock
+           f. Clear shelve content (state.clear()) - within lock
+           g. Release lock (exit session_state context)
+           h. Delete shelve files from disk
+           i. Clean empty audit directories
+        3. Report summary with skip reasons and error guidance
+
+        Archive location: {config.storage_dir}/archive/{session_id}.json
+        Archive format: JSON with session_id, schema_version, tasks, metadata
+
+        Args:
+            archive: Export data to JSON before deleting (default: True for safety)
+            dry_run: Report what would be cleaned without modifying (default: False)
+            pattern: Glob pattern for session IDs (default: "*" = all sessions)
+            ttl_days: Only GC sessions older than this (default: config.task_ttl_days)
+            config: Config override for testing (default: load from ~/.clautorun/)
+
+        Returns:
+            0 on success (even if sessions skipped/errored), 1 on fatal error
+
+        Examples:
+            # Preview before cleaning (RECOMMENDED)
+            TaskLifecycle.cli_gc(dry_run=True)
+
+            # Clean only test sessions immediately (ignore TTL)
+            TaskLifecycle.cli_gc(pattern="test-*", ttl_days=0)
+
+            # Clean without archiving (DANGEROUS - permanent data loss)
+            TaskLifecycle.cli_gc(archive=False)
+
+            # Clean old sessions, keep last 7 days
+            TaskLifecycle.cli_gc(ttl_days=7)
+        """
+        import sys, fnmatch, shutil
+        from .session_manager import get_session_manager
+
+        try:
+            config = config or cls._get_config()
+            ttl = ttl_days if ttl_days is not None else config.task_ttl_days
+            ttl_seconds = ttl * 86400
+            mgr = get_session_manager()
+            sessions_dir = mgr.state_dir
+            prefix = "plugin___task_lifecycle__"
+            current = os.environ.get("CLAUDE_SESSION_ID", "")
+            archive_dir = config.storage_dir / "archive"
+
+            if not sessions_dir.exists():
+                print("No session directory found.")
+                return 0
+
+            # Find session IDs from file names
+            sids = set()
+            for f in sessions_dir.iterdir():
+                if f.name.startswith(prefix) and ".db" in f.suffix:
+                    # Extract session_id from plugin___task_lifecycle__SESSIONID.db[.db]
+                    name = f.stem if not f.stem.endswith(".db") else f.stem[:-3]
+                    sid = name[len(prefix):]
+                    if fnmatch.fnmatch(sid, pattern):
+                        sids.add(sid)
+
+            if not sids:
+                print(f"No shelves matching '{pattern}'.")
+                return 0
+
+            archived = cleared = skip_active = skip_incomplete = skip_young = errors = 0
+
+            # Step 2: Process each session with safety checks
+            error_details = []
+
+            for sid in sorted(sids):
+                # Safety check 1: Never GC current active session
+                # Even if it has zero tasks or all completed, active session is OFF LIMITS
+                if sid == current:
+                    skip_active += 1
+                    if dry_run:
+                        print(f"  PROTECT {sid[:12]}... (current session - never GC active)")
+                    continue
+
+                global_key = f"__task_lifecycle__{sid}"
+
+                try:
+                    # CRITICAL LOCKING: Use session_state() for SessionLock coordination.
+                    # This prevents race conditions with daemon writing to same shelve.
+                    # Direct shelve.open() would bypass locking and corrupt data.
+                    #
+                    # Timeout 2s = fail fast if daemon holds lock (indicates session active).
+                    with session_state(global_key, timeout=2.0) as state:
+                        tasks = state.get("tasks", {})
+
+                        # Skip incomplete
+                        incomplete = [t for t in tasks.values()
+                                      if t.get("status") not in cls.BLOCKING_STATUSES]
+                        if incomplete:
+                            skip_incomplete += 1
+                            if dry_run:
+                                print(f"  SKIP    {sid[:12]}... ({len(incomplete)} incomplete)")
+                            continue
+
+                        # Skip young (respect TTL)
+                        if tasks:
+                            newest = max(t.get("updated_at", 0) for t in tasks.values())
+                            age = time.time() - newest
+                            if age < ttl_seconds:
+                                skip_young += 1
+                                if dry_run:
+                                    print(f"  SKIP    {sid[:12]}... ({age/86400:.1f}d old)")
+                                continue
+
+                        if dry_run:
+                            label = "ARCHIVE+" if archive and tasks else ""
+                            print(f"  {label}CLEAR  {sid[:12]}... ({len(tasks)} tasks)")
+                            cleared += 1
+                            continue
+
+                        # Archive to JSON (within lock)
+                        if archive and tasks:
+                            archive_dir.mkdir(parents=True, exist_ok=True)
+                            (archive_dir / f"{sid}.json").write_text(
+                                json.dumps({
+                                    "session_id": sid,
+                                    "archived_at": time.time(),
+                                    "schema_version": state.get("schema_version", 1),
+                                    "session_metadata": state.get("session_metadata", {}),
+                                    "tasks": tasks,
+                                }, indent=2, default=str))
+                            archived += 1
+
+                        # Clear state (within lock)
+                        state.clear()
+
+                    # Delete shelve files (after lock released)
+                    import shutil
+                    for f in sessions_dir.glob(f"{prefix}{sid}*"):
+                        f.unlink()
+
+                    # Clean audit dir
+                    audit_dir = config.storage_dir / sid
+                    if audit_dir.exists():
+                        shutil.rmtree(audit_dir, ignore_errors=True)
+
+                    cleared += 1
+
+                except PermissionError as e:
+                    errors += 1
+                    error_details.append((sid, "Permission", str(e)[:60]))
+                    print(f"  ERROR   {sid[:12]}... Permission denied")
+                except Exception as e:
+                    errors += 1
+                    error_details.append((sid, type(e).__name__, str(e)[:60]))
+                    print(f"  ERROR   {sid[:12]}... {type(e).__name__}: {e}")
+
+            # Step 8: Summary with actionable guidance
+            verb = "Would" if dry_run else "Did"
+            print(f"\n=== Task Lifecycle GC {'(dry run) ' if dry_run else ''}===")
+            print(f"Scanned: {len(sids)} matching pattern '{pattern}'")
+
+            # Skipped sessions (grouped for clarity)
+            if skip_active or skip_incomplete or skip_young:
+                print("\nProtected/Skipped:")
+                if skip_active:
+                    print(f"  • Current session: {skip_active} (CLAUDE_SESSION_ID - never GC)")
+                if skip_incomplete:
+                    print(f"  • Incomplete tasks: {skip_incomplete} (active work in progress)")
+                if skip_young:
+                    print(f"  • Too recent: {skip_young} (age < {ttl}d TTL)")
+
+            # Actions taken
+            print(f"\nActions:")
+            print(f"  • {verb} archive: {archived} sessions")
+            print(f"  • {verb} clear: {cleared} sessions")
+
+            # Error reporting with actionable guidance
+            if errors:
+                print(f"\n⚠️  Errors: {errors} sessions failed to GC")
+                print("\nFailed sessions:")
+                for sid, err_type, msg in error_details[:5]:
+                    print(f"  • {sid[:16]}... {err_type}: {msg}")
+                if len(error_details) > 5:
+                    print(f"  • ... and {len(error_details) - 5} more errors")
+
+                print("\n━━━ TROUBLESHOOTING ━━━")
+                print("Common Issues:")
+                print("  1. Permission denied:")
+                print(f"     → Check file ownership: ls -la {sessions_dir}")
+                print("     → Fix: sudo chown -R $USER ~/.claude/sessions/")
+                print("  2. Lock timeout:")
+                print("     → Daemon actively using session (wait or refine pattern)")
+                print("     → Check: ps aux | grep clautorun")
+                print("  3. db type errors:")
+                print("     → Backend detection failed (corrupted shelve)")
+                print("     → Try: pattern='*' to see all, or delete manually")
+
+            # Archive location
+            if archived and not dry_run:
+                print(f"\n📦 Archive saved to: {archive_dir}/")
+                print("To restore archived session:")
+                print("  1. Load {session_id}.json")
+                print("  2. Use TaskLifecycle API to recreate tasks")
+                print("  3. Or manually inspect archived task data")
+
+            return 0
+
+        except Exception as e:
+            print(f"\n❌ FATAL GC ERROR: {type(e).__name__}", file=sys.stderr)
+            print(f"\n{e}", file=sys.stderr)
+            print("\n━━━ BUG REPORT INFO ━━━", file=sys.stderr)
+            print(f"Pattern: '{pattern if 'pattern' in locals() else 'unknown'}'", file=sys.stderr)
+            print(f"TTL: {ttl_days}d", file=sys.stderr)
+            if 'sessions_dir' in locals():
+                print(f"Sessions dir: {sessions_dir}", file=sys.stderr)
+            print("\nPlease report at: https://github.com/ahundt/clautorun/issues", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return 1
+
+    @classmethod
+    def _get_config(cls) -> TaskLifecycleConfig:
+        """Get config (DRY helper for CLI methods)."""
+        return TaskLifecycleConfig.load()
 
     @classmethod
     def cli_configure(cls, interactive: bool = False) -> int:

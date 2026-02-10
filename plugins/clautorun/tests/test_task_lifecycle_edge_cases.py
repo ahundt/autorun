@@ -175,21 +175,33 @@ class TestEdgeCases:
         print("✅ Edge 5 passed: Self-blocking task handled")
 
     def test_06_update_nonexistent_task(self):
-        """Edge 6: Update non-existent task (creates minimal entry)."""
+        """Edge 6: Update non-existent task (creates ghost entry that stays ignored).
+
+        Ghost tasks (created before tracking) must NEVER transition to
+        in_progress/pending because we can't reliably track their completion.
+        Only terminal statuses (completed, deleted, ignored) are accepted.
+        """
         print("\n=== Edge 6: Update non-existent task ===")
 
         session_id = f'test-nonexist-{int(time.time())}'
         manager = TaskLifecycle(session_id=session_id)
 
-        # Update task that doesn't exist
+        # Update task that doesn't exist with in_progress - should be BLOCKED
         manager.update_task('999', {'status': 'in_progress'}, 'Updated non-existent')
 
-        # Should create minimal task entry - status overridden by update
+        # Ghost task created but stays ignored (in_progress blocked for ghosts)
         tasks = manager.tasks
         assert '999' in tasks
-        assert tasks['999']['status'] == 'in_progress'
+        assert tasks['999']['status'] == 'ignored', \
+            "Ghost task must stay ignored when non-terminal status requested (prevents stale blocking)"
         assert tasks['999']['subject'] == '(unknown - created before tracking)'
         assert tasks['999']['metadata'].get('ghost_task') == True
+
+        # Ghost task CAN transition to completed (terminal status accepted)
+        manager.update_task('999', {'status': 'completed'}, 'Completed ghost')
+        tasks = manager.tasks
+        assert tasks['999']['status'] == 'completed', \
+            "Ghost task should accept terminal status 'completed'"
 
         # Verify ghost task without status update defaults to "ignored" (not "pending")
         # so it doesn't block stopping
@@ -206,7 +218,7 @@ class TestEdgeCases:
         with session_state(manager.global_key) as state:
             state.clear()
 
-        print("✅ Edge 6 passed: Ghost tasks default to 'ignored' and don't block stopping")
+        print("✅ Edge 6 passed: Ghost tasks default to 'ignored' and can't become blocking")
 
     def test_07_ignore_already_ignored_task(self):
         """Edge 7: Ignore already-ignored task (idempotent)."""
