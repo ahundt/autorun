@@ -289,5 +289,38 @@ def test_both_hooks_files_are_valid_json():
                 pytest.fail(f"{hooks_file.name} is not valid JSON: {e}")
 
 
+def test_plugin_json_references_hooks():
+    """Test that plugin.json has 'hooks' field pointing to hooks/hooks.json.
+
+    Without this field, Claude Code will NOT discover or execute hooks.
+    This was a critical bug: hooks.json existed but Claude Code never loaded it
+    because plugin.json didn't reference it.
+
+    RED: plugin.json was missing "hooks" field entirely
+    GREEN: Added "hooks": "./hooks/hooks.json" to plugin.json
+    """
+    plugin_json = get_plugin_root() / ".claude-plugin" / "plugin.json"
+    assert plugin_json.exists(), ".claude-plugin/plugin.json not found"
+
+    with open(plugin_json) as f:
+        manifest = json.load(f)
+
+    assert "hooks" in manifest, \
+        "plugin.json MUST have 'hooks' field for Claude Code to discover hooks. " \
+        "Without it, hooks.json is ignored and PreToolUse blocking doesn't work."
+
+    hooks_path = manifest["hooks"]
+    assert "hooks.json" in hooks_path, \
+        f"hooks field should reference hooks.json, got: {hooks_path}"
+
+    # Verify the referenced file actually exists
+    hooks_file = get_plugin_root() / ".claude-plugin" / Path(hooks_path)
+    # Resolve relative to .claude-plugin directory
+    if not hooks_file.exists():
+        hooks_file = get_plugin_root() / hooks_path.lstrip("./")
+    assert hooks_file.exists(), \
+        f"Referenced hooks file does not exist: {hooks_file}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
