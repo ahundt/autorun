@@ -23,6 +23,39 @@ All clautorun commands use the `/cr:` prefix:
 - **Three-Stage Verification**: Ensures thorough task completion
 - **Task Tracking**: Monitor task completion across sessions
 
+## Required Settings
+
+**IMPORTANT**: Hooks require explicit enablement in Gemini CLI settings.
+
+Edit `~/.gemini/settings.json` and add:
+
+```json
+{
+  "tools": {
+    "enableHooks": true,
+    "enableMessageBusIntegration": true
+  }
+}
+```
+
+**Why Required**: Without these settings, clautorun hooks will not execute even if properly installed. The safety features (command blocking, file policies) depend on hooks.
+
+**Version Requirement**: Gemini CLI v0.28.0 or later recommended.
+
+Update Gemini CLI:
+```bash
+# Using Bun (faster)
+bun install -g @google/gemini-cli@latest
+
+# Or using npm
+npm install -g @google/gemini-cli@latest
+```
+
+Verify version:
+```bash
+gemini --version  # Should show 0.28.0 or later
+```
+
 ## Installation
 
 This plugin is installed as part of the clautorun marketplace.
