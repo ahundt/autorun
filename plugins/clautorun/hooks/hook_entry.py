@@ -104,9 +104,10 @@ def get_plugin_root() -> str:
         str: Absolute path to plugin root directory
 
     Safety: Works with both CLAUDE_PLUGIN_ROOT and Gemini's CLAUTORUN_PLUGIN_ROOT.
+            Falls back to using __file__ location if env vars not set.
     """
     try:
-        # Try CLAUTORUN_PLUGIN_ROOT first (set by both Claude and Gemini hooks)
+        # Try CLAUTORUN_PLUGIN_ROOT first (set by Claude Code hooks when specified)
         plugin_root = os.environ.get("CLAUTORUN_PLUGIN_ROOT")
         if plugin_root:
             return plugin_root
@@ -116,9 +117,15 @@ def get_plugin_root() -> str:
         if plugin_root:
             return plugin_root
 
-        # Final fallback to current directory
-        return os.getcwd()
+        # Gemini CLI doesn't set env vars, so infer from script location
+        # This file is at: <plugin_root>/hooks/hook_entry.py
+        # So plugin_root is two directories up
+        script_path = os.path.abspath(__file__)
+        hooks_dir = os.path.dirname(script_path)  # <plugin_root>/hooks/
+        plugin_root = os.path.dirname(hooks_dir)  # <plugin_root>/
+        return plugin_root
     except Exception:
+        # Ultimate fallback: current directory (may not be correct)
         return os.getcwd()
 
 
