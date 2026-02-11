@@ -839,9 +839,9 @@ def _install_for_gemini(
     marketplace_root: Path,
     force: bool = False,
 ) -> tuple[bool, str]:
-    """Install workspace for Gemini CLI.
+    """Install each plugin separately for Gemini CLI.
 
-    Note: Gemini uses workspace-level installation (single command installs all plugins).
+    Note: Gemini treats each plugin as a separate extension, not a workspace.
 
     Args:
         marketplace_root: Path to marketplace root directory (plugin directory)
@@ -860,27 +860,64 @@ def _install_for_gemini(
         print("~/.gemini/ directory not found. Run 'gemini' once to initialize.")
         return (False, "~/.gemini/ not found")
 
-    # Gemini needs workspace root (2 levels up from plugin dir)
+    # Find all plugins in the marketplace
     # marketplace_root: /Users/user/.claude/clautorun/plugins/clautorun
-    # workspace_root:   /Users/user/.claude/clautorun
-    workspace_root = marketplace_root.parent.parent
+    # plugins_dir: /Users/user/.claude/clautorun/plugins
+    plugins_dir = marketplace_root.parent
+
+    # Find all plugin directories (must have gemini-extension.json)
+    plugins_to_install = []
+    for plugin_dir in plugins_dir.iterdir():
+        if plugin_dir.is_dir() and (plugin_dir / "gemini-extension.json").exists():
+            plugins_to_install.append(plugin_dir)
+
+    if not plugins_to_install:
+        return (False, "No plugins found with gemini-extension.json")
 
     print()
-    print("Installing clautorun workspace for Gemini CLI...")
+    print(f"Installing {len(plugins_to_install)} plugin(s) for Gemini CLI...")
 
-    if force:
-        print("Force mode: uninstalling existing workspace...")
-        run_cmd(["gemini", "extensions", "uninstall", "clautorun-workspace"])
+    success_count = 0
+    failed_plugins = []
 
-    result = run_cmd(["gemini", "extensions", "install", str(workspace_root), "--consent"])
+    for plugin_dir in plugins_to_install:
+        plugin_name = plugin_dir.name
 
-    if result.ok or result.has_text("already installed"):
-        print("   Workspace installed: clautorun-workspace@0.8.0")
-        print("   Includes plugins: cr, pdf-extractor")
+        # Read gemini-extension.json to get the extension name
+        try:
+            import json
+            with open(plugin_dir / "gemini-extension.json") as f:
+                ext_config = json.load(f)
+                ext_name = ext_config.get("name", plugin_name)
+        except Exception:
+            ext_name = plugin_name
+
+        print(f"   Installing {plugin_name} (name: {ext_name})...")
+
+        if force:
+            run_cmd(["gemini", "extensions", "uninstall", ext_name])
+
+        result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
+
+        if result.ok or result.has_text("already installed"):
+            print(f"   ✓ {ext_name} installed successfully")
+            success_count += 1
+        else:
+            print(f"   ✗ {ext_name} installation failed: {result.output}")
+            failed_plugins.append(ext_name)
+
+    print()
+    if success_count == len(plugins_to_install):
+        print(f"✓ All {success_count} plugin(s) installed successfully")
         return (True, "success")
+    elif success_count > 0:
+        msg = f"Partial success: {success_count}/{len(plugins_to_install)} plugins installed. Failed: {', '.join(failed_plugins)}"
+        print(f"⚠ {msg}")
+        return (True, msg)
     else:
-        print(f"   Installation failed: {result.output}")
-        return (False, result.output)
+        msg = f"All plugins failed to install: {', '.join(failed_plugins)}"
+        print(f"✗ {msg}")
+        return (False, msg)
 
 
 def _install_conductor(force: bool = False) -> tuple[bool, str]:

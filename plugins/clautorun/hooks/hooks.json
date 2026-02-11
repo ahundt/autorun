@@ -1,41 +1,66 @@
 {
-  "description": "clautorun v0.7 - unified daemon-based hook handler",
+  "description": "clautorun v0.8 - Gemini CLI native compatibility hooks",
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Write|Bash|ExitPlanMode",
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "ExitPlanMode|Write|Edit",
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      },
-      {
-        "matcher": "TaskCreate|TaskUpdate|TaskGet|TaskList",
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      }
-    ],
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{
+          "name": "clautorun-init",
+          "type": "command",
+          "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
       }
     ],
-    "Stop": [
+    "BeforeAgent": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+        "hooks": [{
+          "name": "clautorun-command",
+          "type": "command",
+          "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
       }
     ],
-    "SubagentStop": [
+    "BeforeTool": [
       {
-        "hooks": [{ "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "matcher": "write_file|run_shell_command|replace",
+        "hooks": [{
+          "name": "clautorun-pretool",
+          "type": "command",
+          "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [{
+          "name": "clautorun-posttool-plan",
+          "type": "command",
+          "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      },
+      {
+        "matcher": "write_todos",
+        "hooks": [{
+          "name": "clautorun-posttool-task",
+          "type": "command",
+          "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{
+          "name": "clautorun-cleanup",
+          "type": "command",
+          "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 10000
+        }]
       }
     ]
   }
