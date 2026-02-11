@@ -146,6 +146,36 @@ claude plugin marketplace list
 
 **clautorun works identically in both Claude Code and Gemini CLI**, providing the same safety features, commands, and autonomous execution capabilities across both platforms.
 
+#### Gemini CLI Requirements
+
+**Version**: Gemini CLI v0.28.0 or later (hooks require explicit enablement)
+
+**Required Settings**: Edit `~/.gemini/settings.json` and add:
+
+```json
+{
+  "tools": {
+    "enableHooks": true,
+    "enableMessageBusIntegration": true
+  }
+}
+```
+
+**Update Gemini CLI**:
+
+```bash
+# Using Bun (recommended - 2x faster)
+bun install -g @google/gemini-cli@latest
+
+# Or using npm
+npm install -g @google/gemini-cli@latest
+
+# Verify version
+gemini --version  # Should show 0.28.0 or later
+```
+
+For troubleshooting, see [TROUBLESHOOTING.md](plugins/clautorun/TROUBLESHOOTING.md).
+
 #### Gemini CLI Installation
 
 ```bash
