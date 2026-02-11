@@ -894,10 +894,31 @@ def _install_for_gemini(
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 
+        # Prepare hooks for Gemini: copy gemini-hooks.json → hooks/hooks.json
+        # This allows different hook configs for Claude (hooks.json) vs Gemini (gemini-hooks.json)
+        gemini_hooks_file = plugin_dir / "hooks" / "gemini-hooks.json"
+        hooks_file = plugin_dir / "hooks" / "hooks.json"
+        hooks_backup = plugin_dir / "hooks" / "hooks.json.claude-backup"
+
+        if gemini_hooks_file.exists():
+            # Backup Claude hooks.json before overwriting
+            if hooks_file.exists() and not hooks_backup.exists():
+                shutil.copy2(hooks_file, hooks_backup)
+
+            # Copy Gemini hooks into place
+            shutil.copy2(gemini_hooks_file, hooks_file)
+            print(f"   → Prepared Gemini hooks (backed up Claude hooks to hooks.json.claude-backup)")
+
         if force:
             run_cmd(["gemini", "extensions", "uninstall", ext_name])
 
         result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
+
+        # Restore Claude hooks after Gemini installation
+        if hooks_backup.exists():
+            shutil.copy2(hooks_backup, hooks_file)
+            hooks_backup.unlink()  # Remove backup after restoring
+            print(f"   → Restored Claude hooks.json")
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
