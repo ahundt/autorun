@@ -10,8 +10,7 @@
   "repository": "https://github.com/ahundt/clautorun.git",
   "license": "Apache-2.0",
   "keywords": ["gemini-cli", "agent-sdk", "file-policy", "autonomous-sessions", "safety-guards"],
-  "contextFileName": "../../GEMINI.md",
+  "contextFileName": "GEMINI.md",
   "commands": "./commands/",
-  "skills": "./skills/",
-  "hooks": "./hooks/gemini-hooks.json"
+  "skills": "./skills/"
 }
