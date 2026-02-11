@@ -1,0 +1,293 @@
+"""
+Test hooks.json format for Claude Code and Gemini CLI compatibility.
+
+This test suite ensures:
+1. Source hooks.json uses Claude Code format
+2. gemini-hooks.json uses Gemini CLI format
+3. Formats are mutually exclusive and correct
+4. All required hook events are present
+"""
+
+import json
+import pytest
+from pathlib import Path
+
+
+def get_plugin_root():
+    """Get plugin root directory."""
+    return Path(__file__).parent.parent
+
+
+def test_source_hooks_json_is_claude_format():
+    """Test that source hooks.json uses Claude Code format.
+
+    RED: Initially failed because hooks.json had Gemini format
+    GREEN: Fixed by restoring Claude format
+    REFACTOR: Improved test coverage
+    """
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+    assert hooks_file.exists(), "hooks.json not found"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    # Check description mentions Claude or daemon
+    description = hooks_data.get("description", "")
+    assert "daemon" in description.lower() or "claude" in description.lower(), \
+        f"Description should mention daemon or Claude, got: {description}"
+
+    # Check uses CLAUDE_PLUGIN_ROOT not extensionPath
+    hooks_json_str = json.dumps(hooks_data)
+    assert "${CLAUDE_PLUGIN_ROOT}" in hooks_json_str, \
+        "Claude hooks.json should use ${CLAUDE_PLUGIN_ROOT}"
+    assert "${extensionPath}" not in hooks_json_str, \
+        "Claude hooks.json should NOT use ${extensionPath}"
+
+
+def test_source_hooks_json_has_claude_events():
+    """Test that source hooks.json uses Claude Code event names."""
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_section = hooks_data.get("hooks", {})
+
+    # Claude Code event names
+    claude_events = {
+        "PreToolUse", "PostToolUse", "UserPromptSubmit",
+        "SessionStart", "Stop", "SubagentStop"
+    }
+
+    # Gemini CLI event names (should NOT be present)
+    gemini_events = {
+        "BeforeTool", "AfterTool", "BeforeAgent", "SessionEnd"
+    }
+
+    # Check Claude events present
+    for event in claude_events:
+        if event in {"Stop", "SubagentStop", "SessionStart"}:
+            # These are optional
+            continue
+        assert event in hooks_section, \
+            f"Claude event '{event}' should be in hooks.json"
+
+    # Check Gemini events NOT present
+    for event in gemini_events:
+        assert event not in hooks_section, \
+            f"Gemini event '{event}' should NOT be in Claude hooks.json"
+
+
+def test_source_hooks_json_has_claude_tool_names():
+    """Test that source hooks.json uses Claude Code tool names."""
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_json_str = json.dumps(hooks_data)
+
+    # Claude Code tool names should be present
+    claude_tools = ["Write", "Bash", "Edit", "ExitPlanMode", "TaskCreate"]
+    found_claude_tools = [tool for tool in claude_tools if tool in hooks_json_str]
+
+    assert len(found_claude_tools) > 0, \
+        f"Should find Claude tool names like {claude_tools}"
+
+    # Gemini CLI tool names should NOT be present
+    gemini_tools = ["write_file", "run_shell_command", "replace"]
+    found_gemini_tools = [tool for tool in gemini_tools if tool in hooks_json_str]
+
+    assert len(found_gemini_tools) == 0, \
+        f"Should NOT find Gemini tool names {gemini_tools}, found: {found_gemini_tools}"
+
+
+def test_gemini_hooks_json_is_gemini_format():
+    """Test that gemini-hooks.json uses Gemini CLI format."""
+    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+    assert hooks_file.exists(), "gemini-hooks.json not found"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    # Check description mentions Gemini
+    description = hooks_data.get("description", "")
+    assert "gemini" in description.lower(), \
+        f"Description should mention Gemini, got: {description}"
+
+    # Check uses ${extensionPath} not CLAUDE_PLUGIN_ROOT
+    hooks_json_str = json.dumps(hooks_data)
+    assert "${extensionPath}" in hooks_json_str, \
+        "Gemini hooks should use ${extensionPath}"
+    assert "${CLAUDE_PLUGIN_ROOT}" not in hooks_json_str, \
+        "Gemini hooks should NOT use ${CLAUDE_PLUGIN_ROOT}"
+
+
+def test_gemini_hooks_json_has_gemini_events():
+    """Test that gemini-hooks.json uses Gemini CLI event names."""
+    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_section = hooks_data.get("hooks", {})
+
+    # Gemini CLI event names
+    gemini_events = {
+        "BeforeTool", "AfterTool", "SessionStart", "SessionEnd"
+    }
+
+    # Check at least some Gemini events present
+    found_events = [event for event in gemini_events if event in hooks_section]
+    assert len(found_events) >= 2, \
+        f"Should find Gemini events like {gemini_events}, found: {found_events}"
+
+    # Claude Code specific events should NOT be present
+    claude_only_events = {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SubagentStop"}
+
+    for event in claude_only_events:
+        assert event not in hooks_section, \
+            f"Claude-only event '{event}' should NOT be in Gemini hooks"
+
+
+def test_gemini_hooks_json_has_gemini_tool_names():
+    """Test that gemini-hooks.json uses Gemini CLI tool names."""
+    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_json_str = json.dumps(hooks_data)
+
+    # Gemini CLI tool names should be present
+    gemini_tools = ["write_file", "run_shell_command", "replace"]
+    found_gemini_tools = [tool for tool in gemini_tools if tool in hooks_json_str]
+
+    assert len(found_gemini_tools) >= 2, \
+        f"Should find Gemini tool names like {gemini_tools}, found: {found_gemini_tools}"
+
+    # Claude Code tool names should NOT be present (except common ones)
+    claude_only_tools = ["Bash", "Write|Edit", "TaskCreate|TaskUpdate"]
+
+    for tool_pattern in claude_only_tools:
+        assert tool_pattern not in hooks_json_str, \
+            f"Claude-only tool pattern '{tool_pattern}' should NOT be in Gemini hooks"
+
+
+def test_gemini_hooks_have_type_field():
+    """Test that Gemini hooks include 'type' field (required by Gemini CLI)."""
+    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_section = hooks_data.get("hooks", {})
+
+    # Check at least one hook has type: command
+    found_type_field = False
+
+    for event_name, event_configs in hooks_section.items():
+        for config in event_configs:
+            hooks_list = config.get("hooks", [])
+            for hook in hooks_list:
+                if "type" in hook and hook["type"] == "command":
+                    found_type_field = True
+                    break
+
+    assert found_type_field, "Gemini hooks should have 'type': 'command' field"
+
+
+def test_gemini_hooks_have_timeout():
+    """Test that Gemini hooks include timeout (recommended for Gemini CLI)."""
+    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_section = hooks_data.get("hooks", {})
+
+    # Check at least one hook has timeout
+    found_timeout = False
+
+    for event_name, event_configs in hooks_section.items():
+        for config in event_configs:
+            hooks_list = config.get("hooks", [])
+            for hook in hooks_list:
+                if "timeout" in hook:
+                    found_timeout = True
+                    # Gemini uses milliseconds, Claude uses seconds
+                    # Gemini timeout should be > 100 (at least 100ms)
+                    assert hook["timeout"] >= 100, \
+                        f"Gemini timeout should be in milliseconds (>= 100), got: {hook['timeout']}"
+                    break
+
+    assert found_timeout, "Gemini hooks should have 'timeout' field"
+
+
+def test_claude_hooks_timeout_is_seconds():
+    """Test that Claude hooks use seconds for timeout (not milliseconds)."""
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_section = hooks_data.get("hooks", {})
+
+    # Check timeouts if present
+    for event_name, event_configs in hooks_section.items():
+        if isinstance(event_configs, list):
+            for config in event_configs:
+                hooks_list = config.get("hooks", [])
+                for hook in hooks_list:
+                    if "timeout" in hook:
+                        # Claude uses seconds, so should be small number (< 100)
+                        assert hook["timeout"] < 100, \
+                            f"Claude timeout should be in seconds (< 100), got: {hook['timeout']}"
+
+
+def test_no_environment_variable_assignment_in_gemini_hooks():
+    """Test that Gemini hooks don't use environment variable assignment syntax.
+
+    Gemini CLI doesn't support: VAR=value command
+    Should just use: python3 ${extensionPath}/...
+    """
+    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+
+    with open(hooks_file) as f:
+        hooks_data = json.load(f)
+
+    hooks_json_str = json.dumps(hooks_data)
+
+    # Check for env var assignment pattern (should NOT exist)
+    patterns_to_avoid = [
+        "CLAUTORUN_PLUGIN_ROOT=",
+        "CLAUDE_PLUGIN_ROOT=",
+        "PLUGIN_ROOT="
+    ]
+
+    for pattern in patterns_to_avoid:
+        assert pattern not in hooks_json_str, \
+            f"Gemini hooks should NOT use env var assignment '{pattern}'"
+
+
+def test_both_hooks_files_are_valid_json():
+    """Test that both hooks files are valid JSON."""
+    hooks_files = [
+        get_plugin_root() / "hooks" / "hooks.json",
+        get_plugin_root() / "hooks" / "gemini-hooks.json"
+    ]
+
+    for hooks_file in hooks_files:
+        assert hooks_file.exists(), f"{hooks_file.name} not found"
+
+        with open(hooks_file) as f:
+            try:
+                data = json.load(f)
+                assert isinstance(data, dict), f"{hooks_file.name} should be a JSON object"
+                assert "hooks" in data, f"{hooks_file.name} should have 'hooks' key"
+            except json.JSONDecodeError as e:
+                pytest.fail(f"{hooks_file.name} is not valid JSON: {e}")
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
