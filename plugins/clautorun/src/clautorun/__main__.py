@@ -188,7 +188,7 @@ For more information: https://github.com/ahundt/clautorun
              "Specify plugins: --install clautorun or --install clautorun,pdf-extractor",
     )
     install_group.add_argument(
-        "--force-install",
+        "--force",
         "-f",
         action="store_true",
         help="Force reinstall even if same version (for development)",
@@ -634,7 +634,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return install_plugins(
             args.install,
             tool=args.tool,
-            force=args.force_install,
+            force=args.force,
             claude_only=args.claude,
             gemini_only=args.gemini,
             conductor=args.conductor,
