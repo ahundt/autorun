@@ -249,7 +249,7 @@ def test_no_environment_variable_assignment_in_gemini_hooks():
     """Test that Gemini hooks don't use environment variable assignment syntax.
 
     Gemini CLI doesn't support: VAR=value command
-    Should just use: python3 ${extensionPath}/...
+    Should use: uv run --project ${extensionPath} python ${extensionPath}/...
     """
     hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
 

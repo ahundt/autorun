@@ -603,8 +603,13 @@ class TestPredicateFunctions:
         """Test that when predicate returns False, command is allowed."""
         from clautorun.main import _PREDICATES, should_block_command
 
-        # Mock predicate to return False (allow)
-        with patch.dict(_PREDICATES, {"_has_unstaged_changes": lambda cmd: False}):
+        # Mock ALL predicates that match "git checkout ." to return False (allow)
+        # "git checkout ." matches both "git checkout ." (when: _has_unstaged_changes)
+        # and "git checkout" (when: _file_has_unstaged_changes)
+        with patch.dict(_PREDICATES, {
+            "_has_unstaged_changes": lambda cmd: False,
+            "_file_has_unstaged_changes": lambda cmd: False,
+        }):
             block_info = should_block_command(self.test_session_id, "git checkout .")
             assert block_info is None  # Not blocked
 

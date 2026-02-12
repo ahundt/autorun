@@ -1005,22 +1005,22 @@ def build_pretooluse_response(decision="allow", reason=""):
     Returns a response compatible with BOTH Claude Code and Gemini CLI:
     - Claude Code reads: hookSpecificOutput.permissionDecision (allow/deny/ask)
     - Gemini CLI reads: top-level decision (allow/deny/block)
-
-    The 'continue' field is always True so the conversation continues.
-    The tool-level blocking is controlled by the decision fields.
+    - continue=false stops the tool when decision is "deny"
 
     References:
     - Claude Code: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
     - Gemini CLI: https://geminicli.com/docs/hooks/reference/
     """
     safe_reason = json.dumps(reason)[1:-1] if reason else ""
+    # When denying, set continue=false to actually block tool execution
+    should_continue = decision != "deny"
     return {
         # Top-level decision for Gemini CLI compatibility
         "decision": decision,
         "reason": safe_reason,
         # Universal fields
-        "continue": True,
-        "stopReason": "",
+        "continue": should_continue,
+        "stopReason": safe_reason if not should_continue else "",
         "suppressOutput": False,
         "systemMessage": safe_reason,
         # Claude Code hookSpecificOutput for PreToolUse

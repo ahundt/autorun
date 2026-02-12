@@ -227,7 +227,7 @@ def main():
         show_help()
     else:
         print(f"Unknown command: {command}")
-        print("Use 'python3 plan_export_config.py help' for usage information")
+        print("Use 'uv run python plan_export_config.py help' for usage information")
         sys.exit(1)
 
 

@@ -472,20 +472,37 @@ class TestHookResponseFormatCompliance:
         assert "permissionDecisionReason" in hook_output, \
             "Missing 'permissionDecisionReason'"
 
-    def test_continue_always_true(self):
-        """Verify 'continue' is always True (conversation should continue)."""
+    def test_continue_matches_decision(self):
+        """Verify 'continue' field matches decision: False for deny, True for allow.
+
+        Regression test for commit 662d789 which hardcoded continue=True even for
+        deny decisions, making command blocking non-functional. The 'continue' field
+        is what actually controls whether Claude Code executes the tool.
+
+        - decision="deny" → continue=False (blocks tool execution)
+        - decision="allow" → continue=True (allows tool execution)
+        """
         test_cases = [
-            ("bash_command", {"command": "cat file.txt"}),  # Blocked
-            ("bash_command", {"command": "ls -la"}),  # Allowed
-            ("write_file", {"file_path": "/tmp/new.txt", "content": "x"}),  # May block
+            # (tool_name, tool_input, expected_continue, description)
+            ("bash_command", {"command": "cat file.txt"}, False, "blocked command must have continue=False"),
+            ("bash_command", {"command": "ls -la"}, True, "safe command must have continue=True"),
         ]
 
-        for tool_name, tool_input in test_cases:
+        for tool_name, tool_input, expected_continue, description in test_cases:
             ctx = create_test_context(tool_name=tool_name, tool_input=tool_input)
             result = pretooluse_handler(ctx)
 
-            assert result.get("continue") is True, \
-                f"continue not True for {tool_name} with {tool_input}"
+            assert result.get("continue") is expected_continue, \
+                f"{description}: got continue={result.get('continue')} for {tool_name} {tool_input}"
+
+            # Verify continue and decision are consistent
+            decision = result.get("decision") or result.get("hookSpecificOutput", {}).get("permissionDecision")
+            if decision == "deny":
+                assert result.get("continue") is False, \
+                    f"decision=deny but continue=True — tool will NOT be blocked! ({tool_name})"
+            elif decision == "allow":
+                assert result.get("continue") is True, \
+                    f"decision=allow but continue=False — tool will be incorrectly blocked! ({tool_name})"
 
     def test_permission_decision_valid_values(self):
         """Verify permissionDecision only uses valid values."""
