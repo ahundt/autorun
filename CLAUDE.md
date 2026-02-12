@@ -1,8 +1,10 @@
-# clautorun Marketplace
+# clautorun Marketplace - Claude Code
 
 UV workspace containing 2 Claude Code plugins: **clautorun**, **pdf-extractor**.
 
-## Installation
+**For Gemini CLI:** See [GEMINI.md](GEMINI.md) for Gemini-specific installation and configuration.
+
+## Installation (Claude Code)
 
 ### From GitHub (Production - Recommended)
 
@@ -20,10 +22,10 @@ claude plugin list  # Should show: cr, pdf-extractor
 git clone https://github.com/ahundt/clautorun.git && cd clautorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force-install
+uv run python -m plugins.clautorun.src.clautorun.install --install --force
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force-install
+pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
 
 # Optional: Install as UV tool for global CLI availability
 cd plugins/clautorun && uv tool install --force --editable .

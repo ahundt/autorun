@@ -8,7 +8,7 @@ Superset of install.py and install_plugins.py capabilities.
 Usage:
     clautorun --install                    # Install all plugins
     clautorun --install clautorun          # Install specific plugin
-    clautorun --install --force-install    # Force reinstall
+    clautorun --install --force            # Force reinstall
     clautorun --install --tool             # Also install UV CLI tools
     clautorun --uninstall                  # Uninstall plugins
     clautorun --status                     # Show installation status
@@ -1783,7 +1783,7 @@ def _map_legacy_flags(args: list[str]) -> list[str]:
         result = ["--install"]
         for flag in rest:
             if flag in ("--force", "-f"):
-                result.append("--force-install")
+                result.append("--force")
             elif flag == "--tool":
                 result.append("--tool")
             # --marketplace, -m: ignored (all is already the default)

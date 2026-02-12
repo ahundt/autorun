@@ -1,8 +1,10 @@
-# Clautorun Workspace - Gemini CLI Integration
+# Clautorun Workspace - Gemini CLI
 
 **clautorun works identically in both Claude Code and Gemini CLI**, providing unified safety features, commands, and autonomous execution capabilities across both platforms.
 
-## Installation
+**For Claude Code:** See [CLAUDE.md](CLAUDE.md) for Claude Code-specific installation (uses `claude plugin install`).
+
+## Installation (Gemini CLI)
 
 ### From GitHub (Production - Recommended)
 
@@ -21,15 +23,18 @@ git clone https://github.com/ahundt/clautorun.git && cd clautorun
 
 # Option 1: UV (recommended - faster, better dependency management)
 uv run python -m plugins.clautorun.src.clautorun.install --install --force
-uv run python plugins/clautorun/scripts/restart_daemon.py
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && \
-python -m plugins.clautorun.src.clautorun.install --install --force && \
-python plugins/clautorun/scripts/restart_daemon.py
+pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+
+# Optional: Install as UV tool for global CLI availability (works with both Gemini and Claude)
+cd plugins/clautorun && uv tool install --force --editable .
+# This makes 'clautorun', 'clautorun-install', 'claude-session-tools' globally available
+# Useful for: clautorun --restart-daemon, clautorun --status, etc.
 
 # Verify
-gemini extensions list  # Should show: clautorun-workspace@0.8.0
+gemini extensions list    # Should show: clautorun-workspace@0.8.0
+clautorun --status        # If installed as UV tool
 ```
 
 **Install UV (if needed):**
@@ -52,6 +57,39 @@ gemini
 
 # Test
 /cr:st  # Expected: "AutoFile policy: allow-all"
+```
+
+### Gemini-Specific Configuration
+
+**IMPORTANT**: Hooks require explicit enablement in Gemini CLI settings (not required for Claude Code).
+
+Edit `~/.gemini/settings.json` and add:
+
+```json
+{
+  "tools": {
+    "enableHooks": true,
+    "enableMessageBusIntegration": true
+  }
+}
+```
+
+**Why Required**: Without these settings, clautorun hooks will not execute in Gemini CLI. The safety features (command blocking, file policies) depend on hooks.
+
+**Version Requirement**: Gemini CLI v0.28.0 or later recommended.
+
+Update Gemini CLI:
+```bash
+# Using Bun (faster)
+bun install -g @google/gemini-cli@latest
+
+# Or using npm
+npm install -g @google/gemini-cli@latest
+```
+
+Verify version:
+```bash
+gemini --version  # Should show 0.28.0 or later
 ```
 
 ## Clautorun Integration Benefits
