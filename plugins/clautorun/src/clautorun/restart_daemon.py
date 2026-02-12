@@ -103,8 +103,6 @@ def cleanup_stale_files() -> None:
 def verify_bashlex() -> bool:
     """Check if bashlex available in daemon."""
     try:
-        plugin_root = Path(__file__).parent.parent
-        sys.path.insert(0, str(plugin_root / "src"))
         from clautorun.command_detection import BASHLEX_AVAILABLE
         return BASHLEX_AVAILABLE
     except Exception:
@@ -153,9 +151,9 @@ def _resolve_src_dir() -> Path | None:
     Returns:
         Path to src/ directory, or None with error printed if not found.
     """
-    # Use absolute path to ensure sys.path works regardless of CWD
-    plugin_root = Path(__file__).resolve().parent.parent
-    src_dir = plugin_root / "src"
+    # Now that restart_daemon.py is in src/clautorun/, go up two levels to src/
+    # src/clautorun/restart_daemon.py -> parent -> clautorun -> parent -> src
+    src_dir = Path(__file__).resolve().parent.parent
 
     if not src_dir.exists():
         print(f"  ✗ ERROR: Source directory not found: {src_dir}")

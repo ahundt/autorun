@@ -134,7 +134,7 @@ def _restart_daemon_if_running() -> None:
     """Restart the clautorun daemon if it's currently running.
 
     Called at the end of install to ensure the daemon picks up new code/config.
-    Imports restart_daemon() from scripts/restart_daemon.py.
+    Imports restart_daemon() from clautorun.restart_daemon.
     Non-fatal: installation succeeds even if daemon restart fails.
     """
     lock_path = Path.home() / ".clautorun" / "daemon.lock"
@@ -151,30 +151,14 @@ def _restart_daemon_if_running() -> None:
     print()
     print("Restarting daemon to pick up changes...")
 
-    # Import restart_daemon from scripts module
-    scripts_dir = Path(__file__).resolve().parent.parent.parent / "scripts"
-    if not scripts_dir.exists():
-        try:
-            scripts_dir = find_marketplace_root() / "scripts"
-        except FileNotFoundError:
-            pass
-
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "restart_daemon",
-            scripts_dir / "restart_daemon.py",
-        )
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            result = module.restart_daemon()
-            if result == 0:
-                print("   Daemon restarted")
-            else:
-                print("   Daemon restart returned non-zero (non-fatal)")
+        from clautorun.restart_daemon import restart_daemon
+
+        result = restart_daemon()
+        if result == 0:
+            print("   Daemon restarted")
         else:
-            print("   Could not load restart_daemon module (non-fatal)")
+            print("   Daemon restart returned non-zero (non-fatal)")
     except Exception as e:
         logger.warning(f"Daemon restart failed: {e}")
         print(f"   Daemon restart failed (non-fatal): {e}")
