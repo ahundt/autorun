@@ -224,11 +224,10 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
             timeout=HOOK_TIMEOUT,
         )
 
-        # Exit code 2: Blocking error - print stderr and exit with code 2
-        # This is the workaround for Claude Code bug #4669
+        # Exit code 2: Blocking error - forward JSON stdout and exit with code 2
+        # NO stderr output allowed - causes "hook error" in Claude Code!
+        # Workaround for Claude Code bug #4669: exit code 2 blocks the tool
         if result.returncode == 2:
-            if result.stderr:
-                print(result.stderr, file=sys.stderr, end="")
             if result.stdout:
                 print(result.stdout, end="")
             sys.exit(2)

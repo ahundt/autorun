@@ -78,8 +78,8 @@ def run_client():
                 print(json.dumps(resp_json))
 
                 if exit_code_2:
-                    # Write reason to stderr (Claude Code shows this)
-                    print(reason, file=sys.stderr)
+                    # Exit with code 2 to block tool (NO stderr - causes hook error!)
+                    # Claude Code displays systemMessage from JSON, not stderr
                     sys.exit(2)
             except json.JSONDecodeError:
                 # Not valid JSON, just print as-is
