@@ -800,7 +800,7 @@ class ClautorunDaemon:
             payload = json.loads(data.decode())
 
             # Debug logging (ALWAYS enabled)
-            logger.debug(f"Daemon received payload ({len(data)} bytes): {str(payload)[:500]}")
+            logger.debug(f"Daemon received payload ({len(data)} bytes): {str(payload)}")
 
             # Track the Claude session PID (injected by client)
             pid = payload.get("_pid")
@@ -849,9 +849,10 @@ class ClautorunDaemon:
 
         finally:
             # Debug logging (ALWAYS enabled)
-            logger.debug(f"Daemon sending response: {str(response)[:500]}")
+            response_json = json.dumps(response)
+            logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")
 
-            writer.write(json.dumps(response).encode() + b'\n')
+            writer.write(response_json.encode() + b'\n')
             await writer.drain()
             writer.close()
             await writer.wait_closed()

@@ -231,8 +231,15 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
             debug_log = DebugPath.home() / ".clautorun" / "hook_entry_debug.log"
             with open(debug_log, 'a') as f:
                 f.write(f"CLI exit code: {result.returncode}\n")
-                f.write(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout[:500]}\n")
-                f.write(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr[:500]}\n")
+                f.write(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}\n")
+                f.write(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr}\n")
+                # Validate JSON
+                try:
+                    import json
+                    json.loads(result.stdout)
+                    f.write("✓ JSON valid\n")
+                except json.JSONDecodeError as e:
+                    f.write(f"✗ JSON INVALID: {e}\n")
         except Exception:
             pass  # Never fail hook due to debug logging
 
