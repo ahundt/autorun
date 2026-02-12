@@ -193,11 +193,11 @@ class TestPreToolUsePolicyEnforcement:
                     assert result["continue"] is True
                     assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
                 elif policy == "SEARCH":
-                    assert result["continue"] is True
+                    assert result["continue"] is False  # continue=False when deny
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
                     assert "STRICT SEARCH" in result["systemMessage"]
                 elif policy == "JUSTIFY":
-                    assert result["continue"] is True
+                    assert result["continue"] is False  # continue=False when deny
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
                     assert "JUSTIFIED" in result["systemMessage"]
 
@@ -220,11 +220,11 @@ class TestPreToolUsePolicyEnforcement:
                     assert result["continue"] is True
                     assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
                 elif policy == "SEARCH":
-                    assert result["continue"] is True
+                    assert result["continue"] is False  # continue=False when deny
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
                     assert "STRICT SEARCH" in result["systemMessage"]
                 elif policy == "JUSTIFY":
-                    assert result["continue"] is True
+                    assert result["continue"] is False  # continue=False when deny
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
                     assert "JUSTIFIED" in result["systemMessage"]
 
@@ -265,7 +265,7 @@ class TestPreToolUsePolicyEnforcement:
             result = pretooluse_handler(ctx)
 
             # Should block when no justification is present
-            assert result["continue"] is True
+            assert result["continue"] is False  # continue=False when deny
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "JUSTIFIED" in result["systemMessage"]
 
@@ -287,7 +287,7 @@ class TestPreToolUsePolicyEnforcement:
             result = pretooluse_handler(ctx)
 
             # Should block all Write operations
-            assert result["continue"] is True
+            assert result["continue"] is False  # continue=False when deny
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "STRICT SEARCH" in result["systemMessage"]
             assert "NO new files" in result["systemMessage"]

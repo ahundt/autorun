@@ -81,9 +81,9 @@ class TestActualCommandBlocking:
         assert "cat" in reason.lower(), "Blocking reason doesn't mention cat"
         assert "read" in reason.lower(), "Blocking reason doesn't suggest Read tool"
 
-        # Verify continue=True (conversation continues)
-        assert result.get("continue") is True, \
-            "continue should be True to allow conversation"
+        # Verify continue=False when decision is deny (blocks tool execution)
+        assert result.get("continue") is False, \
+            "continue should be False when permissionDecision is deny"
 
     def test_head_command_blocked(self):
         """Verify head command is blocked with permissionDecision='deny'."""

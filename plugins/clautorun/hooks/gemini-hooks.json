@@ -6,7 +6,7 @@
         "hooks": [{
           "name": "clautorun-init",
           "type": "command",
-          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
         }]
       }
@@ -17,7 +17,7 @@
         "hooks": [{
           "name": "clautorun-command",
           "type": "command",
-          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
         }]
       }
@@ -28,7 +28,7 @@
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",
-          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
         }]
       }
@@ -39,7 +39,7 @@
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",
-          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
         }]
       },
@@ -48,7 +48,7 @@
         "hooks": [{
           "name": "clautorun-posttool-task",
           "type": "command",
-          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
         }]
       }
@@ -58,7 +58,7 @@
         "hooks": [{
           "name": "clautorun-cleanup",
           "type": "command",
-          "command": "python3 ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
         }]
       }

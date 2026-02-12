@@ -530,13 +530,15 @@ class EventContext:
 
         # PreToolUse needs hookSpecificOutput + top-level decision
         if self._event == "PreToolUse":
+            # When denying, set continue=false to actually block tool execution
+            should_continue = decision != "deny"
             return {
                 # Top-level decision for Gemini CLI
                 "decision": decision,
                 "reason": reason_escaped,
-                # Universal fields
-                "continue": True,
-                "stopReason": "",
+                # Universal fields - continue=false blocks tool when decision="deny"
+                "continue": should_continue,
+                "stopReason": reason_escaped if not should_continue else "",
                 "suppressOutput": False,
                 "systemMessage": reason_escaped,
                 # Claude Code hookSpecificOutput

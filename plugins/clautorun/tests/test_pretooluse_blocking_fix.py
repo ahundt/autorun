@@ -143,7 +143,7 @@ class TestPreToolUseBlockingFix:
             result = pretooluse_handler(mock_ctx)
 
             # Should deny execution
-            assert result["continue"] is True  # PreToolUse always continues
+            assert result["continue"] is False  # continue=False when decision=deny
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "SEARCH policy" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
@@ -172,7 +172,7 @@ class TestPreToolUseBlockingFix:
             result = pretooluse_handler(mock_ctx)
 
             # Should deny execution
-            assert result["continue"] is True  # PreToolUse always continues
+            assert result["continue"] is False  # continue=False when decision=deny
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "justification" in result["hookSpecificOutput"]["permissionDecisionReason"].lower()
 

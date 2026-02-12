@@ -424,7 +424,7 @@ class TestGarbageCollection:
         os.environ["CLAUDE_SESSION_ID"] = session_id
 
         try:
-            result = TaskLifecycle.cli_gc(archive=True, dry_run=False, config=isolated_config)
+            result = TaskLifecycle.cli_gc(archive=True, dry_run=False, config=isolated_config, confirm=False)
             assert result == 0
 
             # Verify still exists
@@ -445,7 +445,7 @@ class TestGarbageCollection:
         manager.update_task('1', {'status': 'in_progress'}, 'Started')
 
         result = TaskLifecycle.cli_gc(archive=True, dry_run=False, pattern="gc-incomplete-*",
-                                       ttl_days=0, config=isolated_config)
+                                       ttl_days=0, config=isolated_config, confirm=False)
         assert result == 0
 
         # Should still exist
@@ -460,7 +460,7 @@ class TestGarbageCollection:
         manager.update_task('1', {'status': 'completed'}, 'Done')
 
         result = TaskLifecycle.cli_gc(archive=True, dry_run=False, pattern="gc-archive-*",
-                                       ttl_days=0, config=isolated_config)
+                                       ttl_days=0, config=isolated_config, confirm=False)
         assert result == 0
 
         # Verify archive
@@ -502,7 +502,7 @@ class TestGarbageCollection:
         manager.update_task('1', {'status': 'completed'}, 'Done')
 
         result = TaskLifecycle.cli_gc(archive=False, dry_run=False, pattern="gc-noarch-*",
-                                       ttl_days=0, config=isolated_config)
+                                       ttl_days=0, config=isolated_config, confirm=False)
         assert result == 0
 
         # No archive

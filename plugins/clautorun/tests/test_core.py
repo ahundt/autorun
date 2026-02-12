@@ -393,10 +393,22 @@ class TestEventContext:
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Policy blocked")
 
+        # Critical: continue=false blocks tool execution for deny decisions
+        assert response["continue"] is False, "PreToolUse deny must set continue=false to block tool"
+        assert response["stopReason"] == "Policy blocked"
         assert "hookSpecificOutput" in response
         assert response["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert response["hookSpecificOutput"]["permissionDecisionReason"] == "Policy blocked"
+
+    def test_respond_pretooluse_allow(self):
+        """respond for PreToolUse allow should have continue=true."""
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.respond("allow", "Allowed")
+
+        assert response["continue"] is True, "PreToolUse allow must set continue=true"
+        assert response["decision"] == "allow"
+        assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_respond_block(self):
         """respond with block should return injection format."""

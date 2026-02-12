@@ -143,7 +143,7 @@ def test_main_py_ai_monitor_workflow():
         print(f"Debug - PreToolUse response: {response}")
         print(f"Debug - hookSpecificOutput: {response.get('hookSpecificOutput', {})}")
 
-        assert response["continue"], "Should allow tool execution but deny file creation"
+        assert response["continue"] is False, "continue=False when decision=deny (SEARCH blocks Write)"
         assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", f"Should deny file creation in SEARCH mode, got: {response.get('hookSpecificOutput', {}).get('permissionDecision')}"
 
     print("✅ AutoFile policy enforcement works")
@@ -213,7 +213,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
     with patch('clautorun.main.session_state', return_value=mock_session_manager):
         response = pretooluse_handler(ctx)
 
-        assert response["continue"], "Should allow tool execution but deny file creation"
+        assert response["continue"] is False, "continue=False when decision=deny (SEARCH blocks Write)"
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny", "Should deny file creation in SEARCH mode"
 
         print("✅ Hook AutoFile policy enforcement works")

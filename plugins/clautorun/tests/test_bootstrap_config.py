@@ -50,7 +50,7 @@ def sample_hooks_json():
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
+                            "command": "uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
                             "timeout": 10,
                         }
                     ],
@@ -62,7 +62,7 @@ def sample_hooks_json():
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
+                            "command": "uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
                             "timeout": 10,
                         }
                     ],
@@ -73,7 +73,7 @@ def sample_hooks_json():
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
+                            "command": "uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
                             "timeout": 10,
                         }
                     ]
@@ -95,7 +95,7 @@ def sample_hooks_json_disabled():
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --no-bootstrap",
+                            "command": "uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --no-bootstrap",
                             "timeout": 10,
                         }
                     ],
@@ -107,7 +107,7 @@ def sample_hooks_json_disabled():
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --no-bootstrap",
+                            "command": "uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --no-bootstrap",
                             "timeout": 10,
                         }
                     ],
@@ -118,7 +118,7 @@ def sample_hooks_json_disabled():
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --no-bootstrap",
+                            "command": "uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --no-bootstrap",
                             "timeout": 10,
                         }
                     ]
@@ -450,11 +450,14 @@ class TestMainFunctionRouting:
         from clautorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install_plugins.install_plugins", return_value=0
+            "clautorun.install.install_plugins", return_value=0
         ) as mock_install:
             result = main(["--install"])
 
-        mock_install.assert_called_once_with("all", tool=False, force=False)
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, conductor=True, use_aix=None,
+        )
         assert result == 0
 
     def test_install_with_force_passes_force_flag(self):
@@ -462,11 +465,14 @@ class TestMainFunctionRouting:
         from clautorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install_plugins.install_plugins", return_value=0
+            "clautorun.install.install_plugins", return_value=0
         ) as mock_install:
             result = main(["--install", "--force-install"])
 
-        mock_install.assert_called_once_with("all", tool=False, force=True)
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=True,
+            claude_only=False, gemini_only=False, conductor=True, use_aix=None,
+        )
         assert result == 0
 
     def test_install_with_plugins_passes_selection(self):
@@ -474,12 +480,13 @@ class TestMainFunctionRouting:
         from clautorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install_plugins.install_plugins", return_value=0
+            "clautorun.install.install_plugins", return_value=0
         ) as mock_install:
             result = main(["--install", "clautorun,plan-export"])
 
         mock_install.assert_called_once_with(
-            "clautorun,plan-export", tool=False, force=False
+            "clautorun,plan-export", tool=False, force=False,
+            claude_only=False, gemini_only=False, conductor=True, use_aix=None,
         )
         assert result == 0
 
@@ -488,7 +495,7 @@ class TestMainFunctionRouting:
         from clautorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install_plugins.show_status", return_value=0
+            "clautorun.install.show_status", return_value=0
         ) as mock_status:
             result = main(["--status"])
 
