@@ -14,6 +14,8 @@ import sys
 import os
 from unittest.mock import patch
 
+pytestmark = pytest.mark.tmux
+
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 

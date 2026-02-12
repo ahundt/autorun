@@ -536,15 +536,27 @@ class EventContext:
 
         # PreToolUse needs hookSpecificOutput + top-level decision
         if self._event == "PreToolUse":
-            # When denying, set continue=false to actually block tool execution
-            should_continue = decision != "deny"
+            # PreToolUse deny must NOT set continue=false — that stops the AI entirely.
+            # Blocking is handled by:
+            #   - Exit code 2 (Claude Code bug #4669 workaround)
+            #   - decision:"deny" (Gemini CLI BeforeTool)
+            #   - permissionDecision:"deny" (Claude Code, when bug #4669 is fixed)
+            # Per docs: continue=false "stops processing entirely, takes precedence
+            # over any event-specific decision fields" — NOT what we want.
             return {
                 # Top-level decision for Gemini CLI
                 "decision": decision,
                 "reason": reason_escaped,
-                # Universal fields - continue=false blocks tool when decision="deny"
-                "continue": should_continue,
-                "stopReason": reason_escaped if not should_continue else "",
+                # Universal fields - always continue=true, blocking handled elsewhere
+                # continue=true is correct because:
+                #   - Claude Code: "continue:false stops processing entirely"
+                #     https://code.claude.com/docs/en/hooks#json-output
+                #   - Gemini CLI: "continue:false stops agent loop"
+                #     https://geminicli.com/docs/hooks/reference/
+                # We want to block the TOOL (via exit code 2 + decision:"deny")
+                # but let the AI continue running to suggest alternatives.
+                "continue": True,
+                "stopReason": "",
                 "suppressOutput": False,
                 "systemMessage": reason_escaped,
                 # Claude Code hookSpecificOutput

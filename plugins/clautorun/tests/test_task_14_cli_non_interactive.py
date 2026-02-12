@@ -12,6 +12,9 @@ Verifies that:
 import sys
 import subprocess
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.subprocess
 
 # Add src to path
 plugin_root = Path(__file__).parent.parent
@@ -29,7 +32,8 @@ class TestCLINonInteractive:
              "--configure"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL  # Non-TTY (no stdin)
+            stdin=subprocess.DEVNULL,  # Non-TTY (no stdin)
+            timeout=30
         )
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
@@ -50,7 +54,8 @@ class TestCLINonInteractive:
              "--configure"],
             capture_output=True,
             text=True,
-            input="y\n"  # Provide input via pipe (still non-TTY)
+            input="y\n",  # Provide input via pipe (still non-TTY)
+            timeout=30
         )
 
         assert result.returncode == 0
@@ -65,7 +70,8 @@ class TestCLINonInteractive:
              "--no-confirm"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL
+            stdin=subprocess.DEVNULL,
+            timeout=30
         )
 
         # Should succeed without prompting
@@ -82,7 +88,8 @@ class TestCLINonInteractive:
              "--clear", "--all"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL  # Non-TTY
+            stdin=subprocess.DEVNULL,  # Non-TTY
+            timeout=30
         )
 
         # Should refuse or exit with error code
@@ -96,7 +103,8 @@ class TestCLINonInteractive:
              "--status"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL
+            stdin=subprocess.DEVNULL,
+            timeout=30
         )
 
         # Status may fail with exit code 1 if no session, but should never hang
@@ -115,7 +123,8 @@ class TestCLINonInteractive:
              "--enable"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL
+            stdin=subprocess.DEVNULL,
+            timeout=30
         )
 
         assert result_enable.returncode == 0
@@ -127,7 +136,8 @@ class TestCLINonInteractive:
              "--disable"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL
+            stdin=subprocess.DEVNULL,
+            timeout=30
         )
 
         assert result_disable.returncode == 0

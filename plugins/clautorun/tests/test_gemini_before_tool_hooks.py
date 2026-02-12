@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 import shutil
 
+pytestmark = pytest.mark.e2e
+
 # Add src to path for tmux_utils import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from clautorun.tmux_utils import get_tmux_utilities

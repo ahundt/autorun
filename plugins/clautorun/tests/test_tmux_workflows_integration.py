@@ -11,6 +11,8 @@ import time
 import os
 import subprocess
 
+pytestmark = pytest.mark.tmux
+
 # Add src to path for imports
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))

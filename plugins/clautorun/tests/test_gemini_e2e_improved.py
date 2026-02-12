@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.e2e
+
 # Check for CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
 ENABLE_REAL_MONEY_TESTS = os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
