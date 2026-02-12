@@ -58,8 +58,6 @@ all = ["bashlex>=0.18"]
 
 [project.scripts]
 clautorun = "clautorun.__main__:main"
-clautorun-interactive = "clautorun.__main__:main"
-clautorun-install = "clautorun.install:install_main"
 claude-session-tools = "clautorun.claude_session_tools:main"
 
 [project.urls]

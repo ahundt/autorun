@@ -29,8 +29,8 @@ pip install -e . && python -m plugins.clautorun.src.clautorun.install --install 
 
 # Optional: Install as UV tool for global CLI availability (works with both Gemini and Claude)
 cd plugins/clautorun && uv tool install --force --editable .
-# This makes 'clautorun', 'clautorun-install', 'claude-session-tools' globally available
-# Useful for: clautorun --restart-daemon, clautorun --status, etc.
+# This makes 'clautorun' and 'claude-session-tools' globally available
+# Useful for: clautorun --restart-daemon, clautorun --install, clautorun --status, etc.
 
 # Verify
 gemini extensions list    # Should show: clautorun-workspace@0.8.0
