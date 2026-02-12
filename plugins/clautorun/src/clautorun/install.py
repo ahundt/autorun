@@ -12,7 +12,6 @@ Usage:
     clautorun --install --tool             # Also install UV CLI tools
     clautorun --uninstall                  # Uninstall plugins
     clautorun --status                     # Show installation status
-    clautorun --sync                       # Sync source to cache (dev)
 """
 from __future__ import annotations
 
@@ -35,7 +34,6 @@ __all__ = [
     "install_plugins",
     "uninstall_plugins",
     "show_status",
-    "sync_to_cache",
     "install_main",
     "PluginName",
     "CmdResult",
@@ -738,7 +736,14 @@ def _install_to_cache(plugin_name: str) -> bool:
         True if cache install succeeded, False otherwise
     """
     root = find_marketplace_root()
-    plugin_dir = root / "plugins" / plugin_name
+    # find_marketplace_root() returns a plugin directory (e.g., plugins/clautorun/)
+    # not the workspace root. To find the requested plugin:
+    # 1. If root IS the requested plugin, use it directly
+    # 2. Otherwise, check sibling directories (root.parent / plugin_name)
+    if root.name == plugin_name and (root / ".claude-plugin").exists():
+        plugin_dir = root
+    else:
+        plugin_dir = root.parent / plugin_name
     if not plugin_dir.exists():
         return False
 
@@ -1727,31 +1732,6 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 # =============================================================================
 
 
-def sync_to_cache() -> int:
-    """Dev workflow: copy source to Claude Code cache without full reinstall.
-
-    Returns:
-        Exit code: 0 = success
-    """
-    root = find_marketplace_root()
-    print("Syncing plugins to cache...")
-
-    for plugin in PluginName.all():
-        plugin_dir = root / "plugins" / plugin
-        if not plugin_dir.exists():
-            print(f"   {plugin}: not found, skipping")
-            continue
-
-        print(f"   {plugin}...", end=" ", flush=True)
-        if _install_to_cache(plugin):
-            print("ok")
-        else:
-            print("failed")
-
-    print()
-    print("Sync complete. Restart Claude Code for changes to take effect.")
-    return 0
-
 
 # =============================================================================
 # CLI Entry Points
@@ -1781,8 +1761,6 @@ def _map_legacy_flags(args: list[str]) -> list[str]:
         return ["--uninstall"]
     elif args[0] in ("check", "status"):
         return ["--status"]
-    elif args[0] == "sync":
-        return ["--sync"]
     else:
         # Unknown subcommand → default to install
         return ["--install"]
