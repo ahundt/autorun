@@ -527,6 +527,52 @@ def _read_plugin_version(plugin_dir: Path) -> str:
     return "0.8.0"
 
 
+def _check_hook_conflicts() -> None:
+    """Check for plugins with conflicting PreToolUse hooks.
+
+    Warns if hookify or other plugins have PreToolUse hooks that might
+    override clautorun's command blocking.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return
+
+    try:
+        settings = json.loads(settings_path.read_text())
+        enabled = settings.get("enabledPlugins", {})
+
+        # Check hookify specifically (known to conflict)
+        if enabled.get("hookify@claude-code-plugins", False):
+            print("\n⚠️  WARNING: hookify plugin is enabled")
+            print("   hookify has PreToolUse hooks that may override clautorun's command blocking.")
+            print("   If rm/git-reset commands are not being blocked, disable hookify:")
+            print("   Edit ~/.claude/settings.json and set:")
+            print('   "hookify@claude-code-plugins": false')
+            print("   Then restart Claude Code.")
+
+        # Check for other plugins with PreToolUse hooks
+        cache_dir = Path.home() / ".claude" / "plugins" / "cache"
+        if cache_dir.exists():
+            conflicting = []
+            for hooks_file in cache_dir.glob("*/*/*/hooks/hooks.json"):
+                try:
+                    hooks_data = json.loads(hooks_file.read_text())
+                    if "PreToolUse" in hooks_data.get("hooks", {}):
+                        plugin_name = hooks_file.parts[-4] + "@" + hooks_file.parts[-3]
+                        if plugin_name != "clautorun@clautorun" and enabled.get(plugin_name, False):
+                            conflicting.append(plugin_name)
+                except:
+                    continue
+
+            if conflicting:
+                print(f"\n⚠️  Other plugins with PreToolUse hooks detected: {', '.join(conflicting)}")
+                print("   These may interfere with clautorun's command blocking.")
+
+    except Exception as e:
+        # Non-fatal - just log
+        logger.debug(f"Could not check for hook conflicts: {e}")
+
+
 # =============================================================================
 # Validation Functions
 # =============================================================================
@@ -1376,6 +1422,9 @@ def install_plugins(
             print("   uv tool: ok")
         else:
             print(f"   uv tool: {result.output}")
+
+    # Check for hook conflicts (warn if hookify or others might interfere)
+    _check_hook_conflicts()
 
     # Summary
     print()
