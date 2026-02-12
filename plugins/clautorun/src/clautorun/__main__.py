@@ -649,25 +649,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Restart daemon mode
     if args.restart_daemon:
-        from pathlib import Path
-        import importlib.util
+        from clautorun.restart_daemon import restart_daemon
 
-        # Import restart_daemon from scripts module
-        scripts_dir = Path(__file__).parent.parent.parent / "scripts"
-        restart_script = scripts_dir / "restart_daemon.py"
-
-        if not restart_script.exists():
-            print(f"Error: restart_daemon.py not found at {restart_script}")
-            return 1
-
-        spec = importlib.util.spec_from_file_location("restart_daemon", restart_script)
-        if not spec or not spec.loader:
-            print("Error: Could not load restart_daemon module")
-            return 1
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module.restart_daemon()
+        return restart_daemon()
 
     # Uninstall mode
     if args.uninstall:
