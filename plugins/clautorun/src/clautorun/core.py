@@ -799,6 +799,9 @@ class ClautorunDaemon:
             data = await reader.readuntil(b'\n')
             payload = json.loads(data.decode())
 
+            # Debug logging (ALWAYS enabled)
+            logger.debug(f"Daemon received payload ({len(data)} bytes): {str(payload)[:500]}")
+
             # Track the Claude session PID (injected by client)
             pid = payload.get("_pid")
             if pid and pid not in self.active_pids:
@@ -845,6 +848,9 @@ class ClautorunDaemon:
             response["systemMessage"] = f"Daemon error (fail-open): {e}"
 
         finally:
+            # Debug logging (ALWAYS enabled)
+            logger.debug(f"Daemon sending response: {str(response)[:500]}")
+
             writer.write(json.dumps(response).encode() + b'\n')
             await writer.drain()
             writer.close()

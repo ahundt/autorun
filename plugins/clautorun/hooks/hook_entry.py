@@ -225,6 +225,17 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
             timeout=HOOK_TIMEOUT,
         )
 
+        # Debug logging (ALWAYS enabled)
+        try:
+            from pathlib import Path as DebugPath
+            debug_log = DebugPath.home() / ".clautorun" / "hook_entry_debug.log"
+            with open(debug_log, 'a') as f:
+                f.write(f"CLI exit code: {result.returncode}\n")
+                f.write(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout[:500]}\n")
+                f.write(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr[:500]}\n")
+        except Exception:
+            pass  # Never fail hook due to debug logging
+
         # Exit code 0 = CLI succeeded (even when denying tool access)
         # Exit code 2 would be a blocking ERROR causing "hook error"
         # The JSON permissionDecision: "deny" blocks the tool, not exit code
@@ -462,9 +473,21 @@ def main() -> None:
         for the fallback path.
     """
     import io
+    from pathlib import Path
 
     # Read stdin once — it can only be consumed once
     stdin_data = "" if sys.stdin.isatty() else sys.stdin.read()
+
+    # Debug logging (ALWAYS enabled to diagnose hook issues)
+    try:
+        debug_log = Path.home() / ".clautorun" / "hook_entry_debug.log"
+        debug_log.parent.mkdir(exist_ok=True)
+        with open(debug_log, 'a') as f:
+            import datetime
+            f.write(f"\n=== {datetime.datetime.now()} ===\n")
+            f.write(f"Hook entry stdin ({len(stdin_data)} bytes):\n{stdin_data[:500]}\n")
+    except Exception:
+        pass  # Never fail hook due to debug logging
 
     clautorun_bin = get_clautorun_bin()
 
