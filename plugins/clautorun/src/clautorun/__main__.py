@@ -267,6 +267,11 @@ For more information: https://github.com/ahundt/clautorun
         action="store_true",
         help="Show version and exit",
     )
+    info_group.add_argument(
+        "--restart-daemon",
+        action="store_true",
+        help="Restart the clautorun daemon (stops, cleans up, and starts fresh)",
+    )
 
     # Update group
     update_group = parser.add_argument_group("Update")
@@ -641,6 +646,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         from clautorun.install import show_status
 
         return show_status()
+
+    # Restart daemon mode
+    if args.restart_daemon:
+        from pathlib import Path
+        import importlib.util
+
+        # Import restart_daemon from scripts module
+        scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+        restart_script = scripts_dir / "restart_daemon.py"
+
+        if not restart_script.exists():
+            print(f"Error: restart_daemon.py not found at {restart_script}")
+            return 1
+
+        spec = importlib.util.spec_from_file_location("restart_daemon", restart_script)
+        if not spec or not spec.loader:
+            print("Error: Could not load restart_daemon module")
+            return 1
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.restart_daemon()
 
     # Uninstall mode
     if args.uninstall:
