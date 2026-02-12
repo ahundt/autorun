@@ -1551,7 +1551,7 @@ def show_status() -> int:
     # Check UV CLI tools in PATH
     print()
     print("UV CLI Tools:")
-    for tool_name in ["clautorun", "clautorun-install", "clautorun-interactive"]:
+    for tool_name in ["clautorun", "claude-session-tools"]:
         path = shutil.which(tool_name)
         if path:
             print(f"  {tool_name}: {path}")
@@ -1767,49 +1767,8 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 # =============================================================================
 # CLI Entry Points
 # =============================================================================
-
-
-def _map_legacy_flags(args: list[str]) -> list[str]:
-    """Map legacy install.py flags to modern __main__.py flags.
-
-    Args:
-        args: sys.argv[1:] from clautorun-install invocation
-
-    Returns:
-        Mapped argv for __main__.main()
-    """
-    if not args or args[0] == "install":
-        rest = args[1:] if args else []
-        result = ["--install"]
-        for flag in rest:
-            if flag in ("--force", "-f"):
-                result.append("--force")
-            elif flag == "--tool":
-                result.append("--tool")
-            # --marketplace, -m: ignored (all is already the default)
-        return result
-    elif args[0] == "uninstall":
-        return ["--uninstall"]
-    elif args[0] in ("check", "status"):
-        return ["--status"]
-    else:
-        # Unknown subcommand → default to install
-        return ["--install"]
-
-
-def install_main() -> None:
-    """Entry point for clautorun-install command.
-
-    Maps legacy install.py subcommands to modern __main__.py flags.
-    Uses argv parameter passing (no sys.argv mutation).
-    """
-    # Configure logging for CLI use (simple format)
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
-
-    mapped_argv = _map_legacy_flags(sys.argv[1:])
-
-    from .__main__ import main
-    sys.exit(main(argv=mapped_argv))
+# Note: Legacy clautorun-install entry point removed in v0.8.0
+# Use 'clautorun --install' instead
 
 
 if __name__ == "__main__":
