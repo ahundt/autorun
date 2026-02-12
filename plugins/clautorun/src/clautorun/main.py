@@ -1007,8 +1007,18 @@ def build_pretooluse_response(decision="allow", reason=""):
     - Gemini CLI reads: top-level decision (allow/deny/block)
     - continue=false stops the tool when decision is "deny"
 
+    IMPORTANT: Claude Code Bug #4669 Workaround
+    -------------------------------------------
+    As of 2026-02, Claude Code ignores permissionDecision: "deny" in JSON output.
+    GitHub Issues: #4669, #18312, #13744, #20946
+
+    To ACTUALLY block tools, the hook must exit with code 2 and write the
+    reason to stderr. This is implemented in main() after response output.
+
     References:
-    - Claude Code: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
+    - Claude Code hooks: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
+    - Exit code 2 docs: https://claude.com/blog/how-to-configure-hooks
+    - DataCamp guide: https://www.datacamp.com/tutorial/claude-code-hooks
     - Gemini CLI: https://geminicli.com/docs/hooks/reference/
     """
     safe_reason = json.dumps(reason)[1:-1] if reason else ""
@@ -1029,6 +1039,8 @@ def build_pretooluse_response(decision="allow", reason=""):
             "permissionDecision": decision,
             "permissionDecisionReason": safe_reason,
         },
+        # Internal marker for exit code 2 handling (not in JSON output)
+        "_exit_code_2": decision == "deny",
     }
 
 
@@ -2214,8 +2226,29 @@ def main():
             handler = HANDLERS.get(event, default_handler)
             response = handler(ctx)
 
+            # Extract exit code marker before JSON serialization
+            # (marker is for internal use, not included in output)
+            exit_code_2 = response.pop("_exit_code_2", False)
+            reason = response.get("systemMessage", "")
+
             print(json.dumps(response, sort_keys=True))
             sys.stdout.flush()
+
+            # Claude Code Bug #4669 Workaround: Exit code 2 for blocking
+            # ----------------------------------------------------------
+            # Claude Code ignores permissionDecision: "deny" in JSON output.
+            # To ACTUALLY block tools, we must exit with code 2 and write
+            # the reason to stderr. Claude Code shows stderr to the user.
+            #
+            # References:
+            # - GitHub Issues: #4669, #18312, #13744, #20946
+            # - Exit code 2 docs: https://claude.com/blog/how-to-configure-hooks
+            # - DataCamp: "Exit code 2 tells Claude Code that an operation
+            #   should be blocked, and it sends your error message (written
+            #   to stderr) directly to Claude"
+            if exit_code_2:
+                print(reason, file=sys.stderr)
+                sys.exit(2)
 
         except Exception:
             print(json.dumps(build_hook_response()))

@@ -20,6 +20,16 @@ Clautorun v0.7 Client - Thin Forwarder to Daemon
 Forwards hook payloads to daemon via Unix socket.
 Auto-starts daemon if not running.
 Fails open on any errors.
+
+Claude Code Bug #4669 Workaround:
+---------------------------------
+When daemon returns a deny decision, exit with code 2 to ACTUALLY block
+the tool. Claude Code ignores permissionDecision: "deny" in JSON output,
+but respects exit code 2 as a blocking error.
+
+References:
+- GitHub Issues: #4669, #18312, #13744, #20946
+- Exit code 2 docs: https://claude.com/blog/how-to-configure-hooks
 """
 import os
 import sys
@@ -54,7 +64,26 @@ def run_client():
             await writer.drain()
 
             resp = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=5.0)
-            print(resp.decode().strip())
+            resp_text = resp.decode().strip()
+
+            # Parse response to check for exit code 2 marker
+            try:
+                resp_json = json.loads(resp_text)
+                # Check for deny decision requiring exit code 2
+                # (workaround for Claude Code bug #4669)
+                exit_code_2 = resp_json.pop("_exit_code_2", False)
+                reason = resp_json.get("systemMessage", "")
+
+                # Re-serialize without the internal marker
+                print(json.dumps(resp_json))
+
+                if exit_code_2:
+                    # Write reason to stderr (Claude Code shows this)
+                    print(reason, file=sys.stderr)
+                    sys.exit(2)
+            except json.JSONDecodeError:
+                # Not valid JSON, just print as-is
+                print(resp_text)
 
             writer.close()
             await writer.wait_closed()
@@ -87,6 +116,8 @@ def run_client():
 
     try:
         asyncio.run(forward())
+    except SystemExit:
+        raise  # Re-raise SystemExit to preserve exit code
     except Exception:
         # Fail open
         print(json.dumps({

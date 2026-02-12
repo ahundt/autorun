@@ -197,6 +197,16 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
     Returns:
         True if CLI executed successfully with valid output, False otherwise.
 
+    Exit Code Handling:
+        Exit code 2 is special - it means "blocking error" per Claude Code docs.
+        When the CLI exits with code 2, we print stderr and exit with code 2
+        ourselves. This is the workaround for Claude Code bug #4669 where
+        permissionDecision: "deny" in JSON is ignored.
+
+        References:
+        - GitHub Issues: #4669, #18312, #13744, #20946
+        - Exit code 2 docs: https://claude.com/blog/how-to-configure-hooks
+
     Bug history:
         - Previously returned True unconditionally even when subprocess failed
           (non-zero exit code, argparse errors, empty stdout). This caused
@@ -213,6 +223,15 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
             text=True,
             timeout=HOOK_TIMEOUT,
         )
+
+        # Exit code 2: Blocking error - print stderr and exit with code 2
+        # This is the workaround for Claude Code bug #4669
+        if result.returncode == 2:
+            if result.stderr:
+                print(result.stderr, file=sys.stderr, end="")
+            if result.stdout:
+                print(result.stdout, end="")
+            sys.exit(2)
 
         # Must check return code — stale CLI installs fail with argparse errors
         if result.returncode != 0:

@@ -351,12 +351,20 @@ except ImportError:
 
         DRY: This is a fallback for tests if main.py import fails.
         Source of truth: main.py build_pretooluse_response()
+
+        Claude Code Bug #4669 Workaround:
+        _exit_code_2 marker signals that hook should exit with code 2 to
+        actually block the tool (JSON permissionDecision is ignored).
         """
         safe_reason = json.dumps(reason)[1:-1] if reason else ""
+        should_continue = decision != "deny"
         return {
             "decision": decision,
             "reason": safe_reason,
-            "continue": True, "stopReason": "", "suppressOutput": False,
+            "continue": should_continue,
+            "stopReason": safe_reason if not should_continue else "",
+            "suppressOutput": False,
             "systemMessage": safe_reason,
             "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                  "permissionDecisionReason": safe_reason}}
+                                  "permissionDecisionReason": safe_reason},
+            "_exit_code_2": decision == "deny"}
