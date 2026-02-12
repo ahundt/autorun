@@ -230,6 +230,10 @@ def _start_daemon(src_dir: Path) -> bool:
 
     Returns:
         True if daemon process was spawned.
+
+    Note: Called after _stop_daemon() in restart_daemon(), so we assume
+    all existing daemons have been killed. No safety check here because
+    that would prevent restart when cleanup was incomplete.
     """
     # Enhanced daemon startup with detailed logging
     daemon_code = (
@@ -356,15 +360,29 @@ def restart_daemon() -> int:
         # Step 1: Current state
         pid = get_daemon_pid()
 
-        # Steps 2-3: Stop existing daemon (graceful + cleanup)
+        # Steps 2-3: Stop ALL existing daemons (handles multiple daemon edge case)
         if pid:
             print(f"Daemon running (PID {pid})")
             _stop_daemon(pid)
         else:
             print("Daemon not running")
-            # Cleanup any stale files from crashed daemon
-            if SOCKET_PATH.exists() or LOCK_PATH.exists():
-                cleanup_stale_files()
+
+        # Kill any remaining daemon processes (edge case: multiple daemons)
+        # This handles daemons spawned from different code locations that don't
+        # own the daemon.lock file
+        remaining = subprocess.run(
+            ["pgrep", "-f", "from clautorun.daemon import main"],
+            capture_output=True,
+            text=True
+        )
+        if remaining.stdout.strip():
+            print(f"  Killing {len(remaining.stdout.strip().splitlines())} remaining daemon(s)")
+            subprocess.run(["pkill", "-9", "-f", "from clautorun.daemon import main"])
+            time.sleep(0.5)
+
+        # Cleanup any stale files
+        if SOCKET_PATH.exists() or LOCK_PATH.exists():
+            cleanup_stale_files()
 
         # Step 4: Start fresh daemon
         src_dir = _resolve_src_dir()
