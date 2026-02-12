@@ -252,12 +252,6 @@ For more information: https://github.com/ahundt/clautorun
         action="store_true",
         help="Uninstall plugins and UV tools",
     )
-    install_group.add_argument(
-        "--sync",
-        action="store_true",
-        help="Sync source to cache (dev workflow)",
-    )
-
     # Status/info options
     info_group = parser.add_argument_group("Information")
     info_group.add_argument(
@@ -653,12 +647,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         from clautorun.install import uninstall_plugins
 
         return uninstall_plugins()
-
-    # Sync mode
-    if args.sync:
-        from clautorun.install import sync_to_cache
-
-        return sync_to_cache()
 
     # Update mode
     if args.update:

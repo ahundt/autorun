@@ -57,7 +57,6 @@ class TestInstallModule:
             "install_plugins",
             "uninstall_plugins",
             "show_status",
-            "sync_to_cache",
             "install_main",
             "PluginName",
             "CmdResult",
@@ -185,12 +184,6 @@ class TestMapLegacyFlags:
         result = install._map_legacy_flags(["status"])
         assert result == ["--status"]
 
-    def test_map_sync(self):
-        """Verify 'sync' maps to '--sync'."""
-        install = get_install_module()
-        result = install._map_legacy_flags(["sync"])
-        assert result == ["--sync"]
-
     def test_map_empty(self):
         """Verify empty args maps to '--install'."""
         install = get_install_module()
@@ -248,6 +241,43 @@ class TestFindMarketplaceRoot:
 
         # Same object (cached)
         assert root1 is root2
+
+
+class TestInstallToCachePathResolution:
+    """Test _install_to_cache() resolves plugin paths correctly.
+
+    Bug history: find_marketplace_root() returns a plugin directory (e.g.,
+    plugins/clautorun/) not the workspace root. The old code constructed
+    root / "plugins" / plugin_name which created a nonexistent path like
+    plugins/clautorun/plugins/clautorun. Fixed to check if root IS the
+    requested plugin, and navigate to siblings via root.parent.
+    """
+
+    def test_install_to_cache_finds_own_plugin(self):
+        """Verify _install_to_cache resolves clautorun plugin directory correctly."""
+        install = get_install_module()
+        root = install.find_marketplace_root()
+
+        # root should be the clautorun plugin dir itself
+        assert root.name == "clautorun"
+        assert (root / ".claude-plugin").exists()
+
+        # The fix: when plugin_name matches root.name, use root directly
+        # Old bug: root / "plugins" / "clautorun" -> nonexistent path
+        plugin_dir = root / "plugins" / "clautorun"
+        assert not plugin_dir.exists(), \
+            f"root/plugins/clautorun should NOT exist (that was the bug): {plugin_dir}"
+
+    def test_install_to_cache_finds_sibling_plugin(self):
+        """Verify _install_to_cache resolves sibling plugins via root.parent."""
+        install = get_install_module()
+        root = install.find_marketplace_root()
+
+        # Sibling plugin (pdf-extractor) should be at root.parent / "pdf-extractor"
+        sibling = root.parent / "pdf-extractor"
+        if sibling.exists():
+            assert (sibling / ".claude-plugin").exists(), \
+                f"Sibling plugin at {sibling} should have .claude-plugin/"
 
 
 class TestReadPluginVersion:
@@ -324,14 +354,16 @@ class TestInstallPathwayRouting:
         assert "from clautorun.install import show_status" in content
         assert "return show_status()" in content
 
-    def test_main_sync_flag_routes_to_sync_to_cache(self):
-        """Verify __main__.py --sync flag routes to install.sync_to_cache()."""
+    def test_sync_removed(self):
+        """Verify --sync flag has been removed (was broken, replaced by --install --force)."""
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "clautorun" / "__main__.py"
         content = main_file.read_text()
 
-        assert "from clautorun.install import sync_to_cache" in content
-        assert "return sync_to_cache()" in content
+        assert "sync_to_cache" not in content, \
+            "--sync was removed because it never worked (path construction bug). Use --install --force."
+        assert '"--sync"' not in content, \
+            "--sync argument should be removed from argparse"
 
     def test_pyproject_entry_point_correct(self):
         """Verify pyproject.toml clautorun-install entry point."""

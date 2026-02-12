@@ -608,6 +608,239 @@ class TestCacheSync:
 # =============================================================================
 
 
+class TestCommandBlockingE2E:
+    """End-to-end tests for command blocking through the hook system.
+
+    These tests exercise the real should_block_command() and
+    build_pretooluse_response() functions to verify that dangerous commands
+    are blocked with decision="deny" + continue=false, and safe commands
+    are allowed.
+
+    Bug history:
+    - UV stderr from deprecated pyproject.toml fields caused Claude Code to
+      treat hook output as "hook error" → fail-open → ALL commands passed
+    - Substring matching caused "/cr:plannew" to match "rm" pattern (substring
+      of "plannew") → false positive blocking of slash commands
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_main(self):
+        """Import main module functions for testing."""
+        # Add source to path so we can import clautorun
+        src_dir = PLUGIN_ROOT / "src"
+        if str(src_dir) not in sys.path:
+            sys.path.insert(0, str(src_dir))
+        from clautorun.main import (
+            should_block_command,
+            build_pretooluse_response,
+            command_matches_pattern,
+        )
+        self.should_block_command = should_block_command
+        self.build_pretooluse_response = build_pretooluse_response
+        self.command_matches_pattern = command_matches_pattern
+
+    # ─── Dangerous commands MUST be blocked ───────────────────────────
+
+    def test_rm_is_blocked(self):
+        """rm /tmp/file MUST be blocked by default integrations."""
+        result = self.should_block_command("test-session", "rm /tmp/file")
+        assert result is not None, \
+            "rm should be blocked but was allowed. Check DEFAULT_INTEGRATIONS in config.py"
+        assert result["pattern"] == "rm"
+        assert "trash" in result["suggestion"].lower()
+
+    def test_rm_rf_is_blocked(self):
+        """rm -rf /tmp/dir MUST be blocked."""
+        result = self.should_block_command("test-session", "rm -rf /tmp/dir")
+        assert result is not None, \
+            "rm -rf should be blocked. Check DEFAULT_INTEGRATIONS in config.py"
+
+    def test_sudo_rm_is_blocked(self):
+        """sudo rm /tmp/file MUST be blocked (prefix detection)."""
+        result = self.should_block_command("test-session", "sudo rm /tmp/file")
+        assert result is not None, \
+            "sudo rm should be blocked via command prefix detection"
+
+    def test_git_reset_hard_matches_pattern(self):
+        """'git reset --hard' pattern MUST match the command."""
+        assert self.command_matches_pattern(
+            "git reset --hard HEAD~1", "git reset --hard"
+        ), "git reset --hard should match pattern"
+
+    # ─── Safe commands MUST be allowed ────────────────────────────────
+
+    def test_echo_is_allowed(self):
+        """echo is a safe command, must not be blocked."""
+        result = self.should_block_command("test-session", "echo hello")
+        assert result is None, \
+            f"echo should be allowed but was blocked: {result}"
+
+    def test_ls_is_allowed(self):
+        """ls is a safe command, must not be blocked."""
+        result = self.should_block_command("test-session", "ls -la")
+        assert result is None, \
+            f"ls should be allowed but was blocked: {result}"
+
+    def test_pwd_is_allowed(self):
+        """pwd is a safe command, must not be blocked."""
+        result = self.should_block_command("test-session", "pwd")
+        assert result is None, \
+            f"pwd should be allowed but was blocked: {result}"
+
+    def test_git_status_is_allowed(self):
+        """git status is safe, must not be blocked."""
+        result = self.should_block_command("test-session", "git status")
+        assert result is None, \
+            f"git status should be allowed but was blocked: {result}"
+
+    def test_git_log_is_allowed(self):
+        """git log is safe, must not be blocked."""
+        result = self.should_block_command("test-session", "git log --oneline -5")
+        assert result is None, \
+            f"git log should be allowed but was blocked: {result}"
+
+    def test_uv_run_is_allowed(self):
+        """uv run is safe, must not be blocked."""
+        result = self.should_block_command("test-session", "uv run pytest -v")
+        assert result is None, \
+            f"uv run should be allowed but was blocked: {result}"
+
+    # ─── Response format validation ───────────────────────────────────
+
+    def test_deny_response_has_continue_false(self):
+        """deny response MUST have continue=false to actually block the tool."""
+        response = self.build_pretooluse_response(decision="deny", reason="test")
+        assert response["continue"] is False, \
+            "deny response must set continue=false to block tool execution"
+        assert response["decision"] == "deny"
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_allow_response_has_continue_true(self):
+        """allow response MUST have continue=true to let tool proceed."""
+        response = self.build_pretooluse_response(decision="allow", reason="ok")
+        assert response["continue"] is True, \
+            "allow response must set continue=true"
+        assert response["decision"] == "allow"
+
+    def test_deny_response_has_stop_reason(self):
+        """deny response MUST include stop reason for user feedback."""
+        response = self.build_pretooluse_response(decision="deny", reason="blocked rm")
+        assert response["stopReason"] != "", \
+            "deny response must include non-empty stopReason"
+        assert "blocked rm" in response["stopReason"]
+
+
+class TestSlashCommandFalsePositives:
+    """Tests that slash commands are NOT falsely blocked by hook patterns.
+
+    Bug history: Substring matching caused "/cr:plannew" to match "rm"
+    pattern because "rm" is a substring of "plannew". The AST-based
+    command detection (command_detection.py) fixes this by parsing the
+    command as a shell AST and only matching commands in command position,
+    not as substrings of arguments or other tokens.
+
+    These tests prevent regression of the fix by verifying that all
+    clautorun slash commands are not falsely blocked.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_main(self):
+        """Import main module functions for testing."""
+        src_dir = PLUGIN_ROOT / "src"
+        if str(src_dir) not in sys.path:
+            sys.path.insert(0, str(src_dir))
+        from clautorun.main import (
+            should_block_command,
+            command_matches_pattern,
+        )
+        self.should_block_command = should_block_command
+        self.command_matches_pattern = command_matches_pattern
+
+    # ─── Pattern matching must not match substrings ───────────────────
+
+    def test_rm_pattern_does_not_match_plannew(self):
+        """'rm' pattern must NOT match '/cr:plannew' (substring bug)."""
+        assert not self.command_matches_pattern("/cr:plannew", "rm"), \
+            "'rm' falsely matched '/cr:plannew' — substring matching bug. " \
+            "command_matches_pattern must use AST-based detection."
+
+    def test_rm_pattern_does_not_match_autorun(self):
+        """'rm' pattern must NOT match '/cr:autorun' (substring 'run')."""
+        assert not self.command_matches_pattern("/cr:autorun task", "rm"), \
+            "'rm' falsely matched '/cr:autorun' — substring matching bug"
+
+    def test_rm_pattern_does_not_match_planrefine(self):
+        """'rm' pattern must NOT match '/cr:planrefine'."""
+        assert not self.command_matches_pattern("/cr:planrefine", "rm")
+
+    def test_rm_pattern_does_not_match_commit(self):
+        """'rm' pattern must NOT match '/cr:commit'."""
+        assert not self.command_matches_pattern("/cr:commit", "rm")
+
+    def test_rm_pattern_does_not_match_echo_rm(self):
+        """'rm' pattern must NOT match 'echo rm' (argument position)."""
+        assert not self.command_matches_pattern("echo rm", "rm"), \
+            "'rm' falsely matched 'echo rm' — rm is an argument, not a command"
+
+    # ─── Slash commands must not be blocked ───────────────────────────
+
+    def test_slash_plannew_not_blocked(self):
+        """'/cr:plannew' must not be blocked by any pattern."""
+        result = self.should_block_command("test-session", "/cr:plannew")
+        assert result is None, \
+            f"/cr:plannew was falsely blocked: {result}"
+
+    def test_slash_go_not_blocked(self):
+        """'/cr:go task' must not be blocked."""
+        result = self.should_block_command("test-session", "/cr:go implement feature")
+        assert result is None, \
+            f"/cr:go was falsely blocked: {result}"
+
+    def test_slash_status_not_blocked(self):
+        """'/cr:st' must not be blocked."""
+        result = self.should_block_command("test-session", "/cr:st")
+        assert result is None, \
+            f"/cr:st was falsely blocked: {result}"
+
+    def test_slash_commit_not_blocked(self):
+        """'/cr:commit' must not be blocked."""
+        result = self.should_block_command("test-session", "/cr:commit")
+        assert result is None, \
+            f"/cr:commit was falsely blocked: {result}"
+
+    def test_slash_philosophy_not_blocked(self):
+        """'/cr:philosophy' must not be blocked."""
+        result = self.should_block_command("test-session", "/cr:philosophy")
+        assert result is None, \
+            f"/cr:philosophy was falsely blocked: {result}"
+
+    def test_slash_estop_not_blocked(self):
+        """'/cr:sos' (emergency stop) must not be blocked."""
+        result = self.should_block_command("test-session", "/cr:sos")
+        assert result is None, \
+            f"/cr:sos was falsely blocked: {result}"
+
+    # ─── Edge cases: rm in various positions ──────────────────────────
+
+    def test_rm_actual_command_IS_blocked(self):
+        """Actual 'rm file' command must still be blocked."""
+        result = self.should_block_command("test-session", "rm /tmp/test.txt")
+        assert result is not None, \
+            "Actual 'rm' command should be blocked"
+
+    def test_trash_is_allowed(self):
+        """'trash' (the safe alternative) must be allowed."""
+        result = self.should_block_command("test-session", "trash /tmp/test.txt")
+        assert result is None, \
+            f"'trash' should be allowed (it's the safe alternative to rm): {result}"
+
+    def test_echo_rm_is_allowed(self):
+        """'echo rm' — rm as argument to echo must be allowed (not blocked as rm)."""
+        result = self.should_block_command("test-session", "echo rm")
+        assert result is None, \
+            f"'echo rm' should be allowed (rm is an echo argument, not a command): {result}"
+
+
 class TestCleanup:
     """Verify old/unused files are removed."""
 
