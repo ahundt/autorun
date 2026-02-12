@@ -96,10 +96,9 @@ Claude Code treats ANY stderr output from hooks as "hook error" and ignores the 
 4. **Cache sync**: After fixing pyproject.toml or hooks.json in the source, run the installer to sync to cache:
    ```bash
    uv run --project plugins/clautorun python -m clautorun --install --force
-   # Or from the plugin root:
-   clautorun --sync
    ```
    Manual file copies to `~/.claude/plugins/cache/` are fragile and will be overwritten on next install. Always use the installer.
+   NOTE: `clautorun --sync` is broken (bug: `find_marketplace_root()` returns plugin root, not workspace root). Use `--install --force` instead.
 
 5. **Session restart**: Hook configuration is cached at session start. Fixes to hooks.json or pyproject.toml only take effect on the NEXT Claude Code session.
 
