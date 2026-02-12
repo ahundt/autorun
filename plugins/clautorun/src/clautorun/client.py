@@ -40,6 +40,14 @@ import asyncio
 import subprocess
 from pathlib import Path
 
+try:
+    from .logging_utils import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    # Fallback if logging_utils not available (shouldn't happen)
+    import logging
+    logger = logging.getLogger(__name__)
+
 SOCKET_PATH = Path.home() / ".clautorun" / "daemon.sock"
 
 
@@ -57,6 +65,8 @@ def run_client():
     payload["_pid"] = os.getppid()  # Claude session PID
     payload["_cwd"] = os.getcwd()   # Current working directory
 
+    logger.debug(f"Forwarding hook to daemon: event={payload.get('hook_event_name')}, tool={payload.get('tool_name')}")
+
     async def forward(depth: int = 0):
         if depth > 2:
             raise RuntimeError("Daemon failed to start after 3 attempts")
@@ -73,6 +83,9 @@ def run_client():
                 resp_json = json.loads(resp_text)
                 # Remove internal marker (not part of hook response)
                 resp_json.pop("_exit_code_2", None)
+                # Log decision for diagnostics (file-only, never stdout/stderr)
+                decision = resp_json.get('hookSpecificOutput', {}).get('permissionDecision', resp_json.get('decision', 'allow'))
+                logger.info(f"Hook response: decision={decision}")
                 # Re-serialize without the internal marker
                 print(json.dumps(resp_json))
             except json.JSONDecodeError:
@@ -88,6 +101,7 @@ def run_client():
 
         except asyncio.LimitOverrunError as e:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
+            logger.error(f"Client buffer error: {e}")
             print(json.dumps({
                 "continue": True,
                 "stopReason": "",
@@ -112,6 +126,7 @@ def run_client():
 
             if not daemon_alive:
                 # Auto-start daemon - use -c to run directly (works with editable installs)
+                logger.info("Daemon not running, auto-starting...")
                 src_dir = Path(__file__).parent.parent
                 daemon_code = "import sys; sys.path.insert(0, '{0}'); from clautorun.daemon import main; main()".format(
                     str(src_dir)
@@ -122,6 +137,8 @@ def run_client():
                     stderr=subprocess.DEVNULL,
                     start_new_session=True
                 )
+            else:
+                logger.debug(f"Daemon alive (PID in lock file), retrying connection (depth={depth})")
             await asyncio.sleep(0.5)
             await forward(depth + 1)  # Retry with incremented depth
 
@@ -129,8 +146,9 @@ def run_client():
         asyncio.run(forward())
     except SystemExit:
         raise  # Re-raise SystemExit to preserve exit code
-    except Exception:
+    except Exception as e:
         # Fail open
+        logger.error(f"Client exception (fail-open): {e}", exc_info=True)
         print(json.dumps({
             "continue": True,
             "stopReason": "",

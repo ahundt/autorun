@@ -40,8 +40,19 @@ except ImportError:
         """Fallback logging"""
         print(f"INFO: {message}")
 
-# Configure logging - minimal to avoid interfering with hook output
-logging.basicConfig(level=logging.WARNING)
+# Configure logging - file-only when CLAUTORUN_DEBUG=1, disabled otherwise
+# CRITICAL: No stderr output to avoid breaking hooks
+if os.environ.get('CLAUTORUN_DEBUG') == '1':
+    from pathlib import Path
+    log_file = Path.home() / ".clautorun" / "daemon.log"
+    logging.basicConfig(
+        handlers=[logging.FileHandler(log_file)],
+        level=logging.DEBUG,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+    )
+else:
+    # Disabled - use NullHandler to prevent default stderr handler
+    logging.basicConfig(handlers=[logging.NullHandler()], level=logging.CRITICAL + 1)
 logger = logging.getLogger(__name__)
 
 # Follow main.py pattern for handlers

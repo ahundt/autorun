@@ -886,7 +886,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             if not session_id:
                 session_id = os.environ.get('CLAUDE_SESSION_ID')
                 if not session_id:
-                    print("Error: No session ID provided and CLAUDE_SESSION_ID not set", file=sys.stderr)
+                    print("Error: No session ID provided and CLAUDE_SESSION_ID not set")
                     return 1
 
             manager = cls(session_id=session_id)
@@ -937,7 +937,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 return 0
 
         except Exception as e:
-            print(f"Error showing task status: {e}", file=sys.stderr)
+            print(f"Error showing task status: {e}")
             return 1
 
     @classmethod
@@ -1009,7 +1009,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             return 0
 
         except Exception as e:
-            print(f"Error exporting tasks: {e}", file=sys.stderr)
+            print(f"Error exporting tasks: {e}")
             return 1
 
     @classmethod
@@ -1059,7 +1059,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 if not session_id:
                     session_id = os.environ.get('CLAUDE_SESSION_ID')
                     if not session_id:
-                        print("Error: No session ID provided and CLAUDE_SESSION_ID not set", file=sys.stderr)
+                        print("Error: No session ID provided and CLAUDE_SESSION_ID not set")
                         return 1
 
                 manager = cls(session_id=session_id)
@@ -1090,7 +1090,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 return 0
 
         except Exception as e:
-            print(f"Error clearing tasks: {e}", file=sys.stderr)
+            print(f"Error clearing tasks: {e}")
             return 1
 
 
@@ -1385,16 +1385,16 @@ You CANNOT stop until all tasks are marked completed or deleted.
             return 0
 
         except Exception as e:
-            print(f"\n❌ FATAL GC ERROR: {type(e).__name__}", file=sys.stderr)
-            print(f"\n{e}", file=sys.stderr)
-            print("\n━━━ BUG REPORT INFO ━━━", file=sys.stderr)
-            print(f"Pattern: '{pattern if 'pattern' in locals() else 'unknown'}'", file=sys.stderr)
-            print(f"TTL: {ttl_days}d", file=sys.stderr)
+            print(f"\n❌ FATAL GC ERROR: {type(e).__name__}")
+            print(f"\n{e}")
+            print("\n━━━ BUG REPORT INFO ━━━")
+            print(f"Pattern: '{pattern if 'pattern' in locals() else 'unknown'}'")
+            print(f"TTL: {ttl_days}d")
             if 'sessions_dir' in locals():
-                print(f"Sessions dir: {sessions_dir}", file=sys.stderr)
-            print("\nPlease report at: https://github.com/ahundt/clautorun/issues", file=sys.stderr)
+                print(f"Sessions dir: {sessions_dir}")
+            print("\nPlease report at: https://github.com/ahundt/clautorun/issues")
             import traceback
-            traceback.print_exc(file=sys.stderr)
+            traceback.print_exc()  # CLI only - defaults to stderr but not in hook path
             return 1
 
     @classmethod
@@ -1468,7 +1468,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             return 0
 
         except Exception as e:
-            print(f"Error configuring: {e}", file=sys.stderr)
+            print(f"Error configuring: {e}")
             return 1
 
     @classmethod
@@ -1486,7 +1486,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             print("✅ Task lifecycle tracking enabled")
             return 0
         except Exception as e:
-            print(f"Error enabling: {e}", file=sys.stderr)
+            print(f"Error enabling: {e}")
             return 1
 
     @classmethod
@@ -1504,7 +1504,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             print("✅ Task lifecycle tracking disabled")
             return 0
         except Exception as e:
-            print(f"Error disabling: {e}", file=sys.stderr)
+            print(f"Error disabling: {e}")
             return 1
 
 
