@@ -81,12 +81,38 @@ pwd
 # Should be: /Users/athundt/.claude/clautorun/plugins/clautorun/
 ```
 
+## Hook Error Prevention (CRITICAL)
+
+Claude Code treats ANY stderr output from hooks as "hook error" and ignores the hook's JSON response. This silently disables ALL hook protections (rm blocking, git safety, etc.) while appearing to work.
+
+**Rules to prevent hook errors:**
+
+1. **pyproject.toml [tool.uv]**: NEVER add deprecated UV fields. UV versions remove fields silently. When UV encounters an unknown field, it prints a warning to stderr, which breaks ALL hooks. The `default-extras` field was removed in UV 0.9+. If you need default extras, put them in `[project] dependencies` instead.
+
+2. **Slash commands**: ALL bash commands in `.md` files MUST use `uv run --project ${CLAUDE_PLUGIN_ROOT} python` — never bare `python3`. The `allowed-tools` frontmatter must use `Bash(uv *)` not `Bash(python3:*)`.
+
+3. **Hook stderr**: hook_entry.py must NEVER write to stderr. All error handling must go through `fail_open()` which writes JSON to stdout.
+
+4. **Cache sync**: After fixing pyproject.toml or hooks.json in the source, run the installer to sync to cache:
+   ```bash
+   uv run --project plugins/clautorun python -m clautorun --install --force
+   # Or from the plugin root:
+   clautorun --sync
+   ```
+   Manual file copies to `~/.claude/plugins/cache/` are fragile and will be overwritten on next install. Always use the installer.
+
+5. **Session restart**: Hook configuration is cached at session start. Fixes to hooks.json or pyproject.toml only take effect on the NEXT Claude Code session.
+
+**Regression tests**: `test_hook_entry.py::TestUVCompatibility` and `test_hook_entry.py::TestCacheSync`
+
+**Diagnosis**: Run `uv run --project <plugin_root> python -c "pass" 2>&1` — any output beyond "Building/Installed" lines is a problem.
+
 ## Dynamic Content in Slash Commands
 
 Markdown commands can include dynamic bash output using `!` prefix ([docs](https://docs.anthropic.com/en/docs/claude-code/slash-commands)). To access CONFIG:
 
 ```bash
-!`python3 -c "import sys; sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/src'); from clautorun.config import CONFIG; print(CONFIG['key'])"`
+!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "from clautorun.config import CONFIG; print(CONFIG['key'])"`
 ```
 
 ## If You See This File in Cache Location

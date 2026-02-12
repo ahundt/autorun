@@ -324,6 +324,286 @@ class TestDaemonBootstrapClautorun:
 
 
 # =============================================================================
+# Test: UV Compatibility (catches pyproject.toml / UV version mismatches)
+# =============================================================================
+
+
+class TestUVCompatibility:
+    """Verify pyproject.toml works with installed UV without warnings.
+
+    Root cause this catches: UV versions may deprecate/remove [tool.uv] fields
+    (e.g., `default-extras` was removed in UV 0.9+). When UV encounters unknown
+    fields, it prints warnings to stderr. Claude Code interprets any hook stderr
+    as "hook error", causing ALL hooks to fail silently — the hook returns valid
+    JSON but Claude reports "PreToolUse:Bash hook error" and ignores it.
+
+    This class of bug is invisible: hooks appear to "work" (no crash) but provide
+    no protection (all blocked commands pass through).
+    """
+
+    def test_uv_available(self):
+        """UV must be installed for hook execution."""
+        import shutil
+        uv_path = shutil.which("uv")
+        assert uv_path is not None, (
+            "UV not found in PATH. Hooks require UV for execution. "
+            "Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+        )
+
+    def test_uv_run_no_stderr_warnings(self):
+        """uv run --project <plugin_root> must produce no stderr.
+
+        Claude Code hooks run via 'uv run --project ${CLAUDE_PLUGIN_ROOT} python ...'.
+        Any stderr output causes Claude Code to report 'hook error' and ignore
+        the hook's JSON response, effectively disabling all hook protections.
+
+        Common causes of stderr:
+        - Deprecated [tool.uv] fields (e.g., default-extras removed in UV 0.9+)
+        - Invalid pyproject.toml syntax
+        - Missing dependencies during resolution
+        """
+        import shutil
+        if not shutil.which("uv"):
+            pytest.skip("UV not installed")
+
+        result = subprocess.run(
+            ["uv", "run", "--project", str(PLUGIN_ROOT), "python", "-c", "print('ok')"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        # Filter out expected UV output (build/install messages go to stderr)
+        stderr_lines = [
+            line for line in result.stderr.strip().splitlines()
+            if line.strip()
+            and not line.strip().startswith("Building ")
+            and not line.strip().startswith("Built ")
+            and not line.strip().startswith("Installed ")
+            and not line.strip().startswith("Uninstalled ")
+            and not line.strip().startswith("Resolved ")
+            and not line.strip().startswith("Prepared ")
+            and not line.strip().startswith("Audited ")
+        ]
+
+        assert len(stderr_lines) == 0, (
+            f"UV produced unexpected stderr (causes Claude Code 'hook error'):\n"
+            f"{''.join(stderr_lines)}\n\n"
+            f"Fix: Check [tool.uv] section in {PLUGIN_ROOT}/pyproject.toml for "
+            f"deprecated fields. Run 'uv run --project {PLUGIN_ROOT} python -c pass' "
+            f"to reproduce."
+        )
+        assert result.returncode == 0, (
+            f"uv run failed with exit code {result.returncode}.\n"
+            f"stderr: {result.stderr}\n"
+            f"Fix: Run 'uv run --project {PLUGIN_ROOT} python -c pass' to diagnose."
+        )
+
+    def test_pyproject_toml_no_deprecated_uv_fields(self):
+        """pyproject.toml [tool.uv] must not contain deprecated fields.
+
+        UV has removed fields across versions:
+        - default-extras: removed in UV 0.9+ (use main dependencies instead)
+
+        When deprecated fields are present, UV prints warnings to stderr,
+        which Claude Code interprets as hook errors.
+        """
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        pyproject_path = PLUGIN_ROOT / "pyproject.toml"
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+
+        uv_config = data.get("tool", {}).get("uv", {})
+
+        # Known deprecated fields
+        deprecated_fields = {
+            "default-extras": "Removed in UV 0.9+. Move extras to main [project] dependencies instead.",
+        }
+
+        found_deprecated = []
+        for field, fix in deprecated_fields.items():
+            if field in uv_config:
+                found_deprecated.append(f"  - {field}: {fix}")
+
+        assert len(found_deprecated) == 0, (
+            f"pyproject.toml [tool.uv] contains deprecated fields that cause UV stderr warnings.\n"
+            f"Claude Code treats hook stderr as errors, disabling all hook protections.\n\n"
+            f"Deprecated fields found:\n" + "\n".join(found_deprecated) + "\n\n"
+            f"File: {pyproject_path}"
+        )
+
+    def test_hook_entry_via_uv_no_stderr(self):
+        """hook_entry.py invoked via UV must produce no stderr.
+
+        This is the actual command Claude Code runs. Tests the full chain:
+        UV project resolution → Python launch → hook_entry.py → JSON output.
+
+        Any stderr output = Claude Code reports 'hook error' = hooks disabled.
+        """
+        import shutil
+        if not shutil.which("uv"):
+            pytest.skip("UV not installed")
+
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+
+        result = subprocess.run(
+            [
+                "uv", "run", "--project", str(PLUGIN_ROOT),
+                "python", str(HOOK_ENTRY),
+            ],
+            capture_output=True,
+            text=True,
+            input='{"tool_name":"Bash","tool_input":{"command":"echo test"}}',
+            env=env,
+            timeout=15,
+        )
+
+        assert result.returncode == 0, (
+            f"Hook exited with code {result.returncode}.\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        # Verify valid JSON on stdout
+        try:
+            output = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            pytest.fail(
+                f"Hook produced invalid JSON on stdout: {result.stdout!r}\n"
+                f"stderr: {result.stderr}"
+            )
+
+        # Check for unexpected stderr (filter build/install noise)
+        stderr_lines = [
+            line for line in result.stderr.strip().splitlines()
+            if line.strip()
+            and not line.strip().startswith("Building ")
+            and not line.strip().startswith("Built ")
+            and not line.strip().startswith("Installed ")
+            and not line.strip().startswith("Uninstalled ")
+            and not line.strip().startswith("Resolved ")
+            and not line.strip().startswith("Prepared ")
+            and not line.strip().startswith("Audited ")
+        ]
+
+        assert len(stderr_lines) == 0, (
+            f"Hook produced unexpected stderr (Claude Code treats as 'hook error'):\n"
+            f"{''.join(stderr_lines)}\n\n"
+            f"JSON output was valid: {output}\n"
+            f"Fix: Check pyproject.toml [tool.uv] for deprecated fields, or "
+            f"check hook_entry.py for stderr output."
+        )
+
+    def test_hook_entry_rm_blocked_or_warned(self):
+        """Hook should handle 'rm' commands (block, warn, or pass through cleanly).
+
+        Regardless of whether rm is blocked or allowed, the hook must:
+        1. Return valid JSON
+        2. Exit 0
+        3. Produce no stderr warnings
+        """
+        import shutil
+        if not shutil.which("uv"):
+            pytest.skip("UV not installed")
+
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+
+        result = subprocess.run(
+            [
+                "uv", "run", "--project", str(PLUGIN_ROOT),
+                "python", str(HOOK_ENTRY),
+            ],
+            capture_output=True,
+            text=True,
+            input='{"tool_name":"Bash","tool_input":{"command":"rm /tmp/nonexistent_file_xyz"}}',
+            env=env,
+            timeout=15,
+        )
+
+        assert result.returncode == 0, (
+            f"Hook crashed on 'rm' command (exit {result.returncode}).\n"
+            f"stderr: {result.stderr}"
+        )
+
+        try:
+            output = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            pytest.fail(
+                f"Hook produced invalid JSON for 'rm' command: {result.stdout!r}\n"
+                f"stderr: {result.stderr}"
+            )
+
+        assert "continue" in output, (
+            f"Hook response missing 'continue' field for 'rm' command: {output}"
+        )
+
+
+# =============================================================================
+# Test: Cache Sync (source vs installed plugin)
+# =============================================================================
+
+
+class TestCacheSync:
+    """Verify source and cache pyproject.toml stay in sync.
+
+    When the plugin cache has a stale pyproject.toml with deprecated fields,
+    hooks fail even though the source is fixed. This test catches the case
+    where a developer fixes the source but forgets to update the cache.
+    """
+
+    CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "clautorun" / "clautorun"
+
+    def _get_cache_versions(self):
+        """Find installed cache versions."""
+        if not self.CACHE_ROOT.exists():
+            return []
+        return [d for d in self.CACHE_ROOT.iterdir() if d.is_dir() and (d / "pyproject.toml").exists()]
+
+    def test_cache_pyproject_no_deprecated_uv_fields(self):
+        """Cached pyproject.toml must not have deprecated [tool.uv] fields.
+
+        The plugin cache at ~/.claude/plugins/cache/ is what Claude Code
+        actually loads at runtime. Even if the source is fixed, a stale
+        cache causes hook errors.
+        """
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        versions = self._get_cache_versions()
+        if not versions:
+            pytest.skip("No plugin cache found (plugin not installed)")
+
+        deprecated_fields = {"default-extras"}
+        errors = []
+
+        for version_dir in versions:
+            pyproject_path = version_dir / "pyproject.toml"
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+            uv_config = data.get("tool", {}).get("uv", {})
+            found = deprecated_fields & set(uv_config.keys())
+            if found:
+                errors.append(
+                    f"  {pyproject_path}: deprecated fields {found}\n"
+                    f"  Fix: Copy source pyproject.toml to cache, or reinstall plugin"
+                )
+
+        assert len(errors) == 0, (
+            f"Plugin cache has deprecated [tool.uv] fields that cause hook errors:\n"
+            + "\n".join(errors) + "\n\n"
+            f"Source: {PLUGIN_ROOT / 'pyproject.toml'}\n"
+            f"Run: cp {PLUGIN_ROOT / 'pyproject.toml'} <cache_path>/pyproject.toml"
+        )
+
+
+# =============================================================================
 # Test: Old Files Removed
 # =============================================================================
 

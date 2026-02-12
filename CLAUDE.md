@@ -138,6 +138,8 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 
 See `plugins/clautorun/src/clautorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
 
+**Hook Error Prevention**: See `plugins/clautorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
+
 **Tmux/Session Tools**:
 
 | Short | Long | Description |
