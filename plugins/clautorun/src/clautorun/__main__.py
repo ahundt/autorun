@@ -752,7 +752,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         }.get(file_cmd)
 
         if not policy_value:
-            print(f"Error: Unknown file command: {file_cmd}", file=sys.stderr)
+            # CLI error message - use stdout (not stderr which breaks hooks)
+            print(f"Error: Unknown file command: {file_cmd}")
             return 1
 
         if is_global:
@@ -801,7 +802,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # task export
         elif args.task_command == "export":
             if not session_id:
-                print("Error: --session required when CLAUDE_SESSION_ID not set", file=sys.stderr)
+                # CLI error message - use stdout (not stderr which breaks hooks)
+                print("Error: --session required when CLAUDE_SESSION_ID not set")
                 return 1
             return TaskLifecycle.cli_export(
                 session_id=session_id,

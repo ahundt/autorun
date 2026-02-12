@@ -36,13 +36,13 @@ def setup_clautorun_logging():
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Setup logging to file with clautorun prefix
+    # CRITICAL: No stderr handler - breaks Claude Code hooks (any stderr = "hook error")
     log_file = log_dir / "clautorun_ai_monitor.log"
     logging.basicConfig(
         level=logging.INFO,
         format='[%(asctime)s] %(process)d: %(message)s',
         handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stderr)  # Also log to stderr for visibility
+            logging.FileHandler(log_file)  # File-only logging
         ]
     )
 

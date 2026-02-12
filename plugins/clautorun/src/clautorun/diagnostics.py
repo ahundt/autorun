@@ -48,8 +48,14 @@ except ImportError:
                 pass
         return DummyState()
     def log_info(message):
-        """Fallback logging"""
-        print(f"INFO: {message}")
+        """Fallback logging - file-only when CLAUTORUN_DEBUG=1"""
+        try:
+            from .logging_utils import get_logger
+            logger = get_logger(__name__)
+            logger.info(message)
+        except ImportError:
+            # If logging_utils not available, do nothing (don't print to avoid stderr)
+            pass
 
 # Follow main.py pattern for handlers
 DIAGNOSTIC_HANDLERS = {}
@@ -179,9 +185,17 @@ class DiagnosticLogger:
                 # Don't let logging errors crash the system
                 pass
 
-        # Console output for critical errors
-        if level == LogLevel.CRITICAL:
-            print(f"CRITICAL [{category}] {message}")
+        # Console output for critical errors - DISABLED to prevent stderr contamination
+        # CRITICAL errors are already logged to file above
+        # If needed for visibility, enable via CLAUTORUN_DEBUG=1
+        if level == LogLevel.CRITICAL and os.environ.get('CLAUTORUN_DEBUG') == '1':
+            # Only print when debug enabled (otherwise breaks hooks)
+            try:
+                from .logging_utils import get_logger
+                logger = get_logger(__name__)
+                logger.critical(f"[{category}] {message}")
+            except ImportError:
+                pass  # Silently skip if logging_utils not available
 
     def debug(self, category: str, message: str, session_id: str = "default", **kwargs):
         """Log debug message"""

@@ -36,8 +36,14 @@ except ImportError:
                 pass
         return DummyState()
     def log_info(message):
-        """Fallback logging"""
-        print(f"INFO: {message}")
+        """Fallback logging - file-only when CLAUTORUN_DEBUG=1"""
+        try:
+            from .logging_utils import get_logger
+            logger = get_logger(__name__)
+            logger.info(message)
+        except ImportError:
+            # If logging_utils not available, do nothing (don't print to avoid stderr)
+            pass
 
 # Follow main.py pattern for handlers
 VERIFICATION_HANDLERS = {}

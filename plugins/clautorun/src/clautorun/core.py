@@ -66,8 +66,8 @@ if _env_limit:
         READ_BUFFER_LIMIT = int(_env_limit)
     except ValueError:
         # Logger not available yet at module load time
-        import sys
-        print(f"WARNING: Invalid CLAUTORUN_BUFFER_LIMIT={_env_limit}, using default 1GB", file=sys.stderr)
+        # CRITICAL: Don't print to stderr - breaks hooks!
+        # Invalid buffer limit - silently use default 1GB
         READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)
 else:
     READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)

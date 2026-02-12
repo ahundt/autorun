@@ -294,8 +294,9 @@ def log_info(message):
                 debug_f.flush()
 
     except Exception as e:
-        # Fallback logging to stderr in case of write failure
-        print(f"Log write failed: {e}", file=sys.stderr)
+        # Fallback logging - silently skip to avoid breaking hooks
+        # If logging fails, it's better to continue than to break hooks with stderr output
+        pass
 
 # Import robust session state management from session_manager module
 # This provides RAII-based session state with proper file locking and backend selection
@@ -307,16 +308,22 @@ try:
     from clautorun.integrations import _not_in_pipe
 except ImportError as e:
     # Import failed - define fallback and log diagnostic info
-    print("=" * 70, file=sys.stderr)
-    print("IMPORT ERROR: Failed to load command predicate", file=sys.stderr)
-    print("=" * 70, file=sys.stderr)
-    print(f"Module: clautorun.integrations", file=sys.stderr)
-    print(f"Function: _not_in_pipe", file=sys.stderr)
-    print(f"Exception: {type(e).__name__}: {e}", file=sys.stderr)
-    print(f"\nIMPACT: Pipe detection will not work correctly", file=sys.stderr)
-    print(f"SYMPTOM: Commands like 'git log | grep fix' may be blocked", file=sys.stderr)
-    print(f"ACTION: Check clautorun installation and module paths", file=sys.stderr)
-    print("=" * 70, file=sys.stderr)
+    # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
+    try:
+        from .logging_utils import get_logger
+        logger = get_logger(__name__)
+        logger.error("=" * 70)
+        logger.error("IMPORT ERROR: Failed to load command predicate")
+        logger.error("=" * 70)
+        logger.error("Module: clautorun.integrations")
+        logger.error("Function: _not_in_pipe")
+        logger.error(f"Exception: {type(e).__name__}: {e}")
+        logger.error("IMPACT: Pipe detection will not work correctly")
+        logger.error("SYMPTOM: Commands like 'git log | grep fix' may be blocked")
+        logger.error("ACTION: Check clautorun installation and module paths")
+        logger.error("=" * 70)
+    except ImportError:
+        pass  # Silently skip if logging not available (don't break hooks)
     # Define a fallback that always returns True (block everything)
     def _not_in_pipe(ctx):
         return True
@@ -846,10 +853,16 @@ def _not_in_pipe_predicate(command: str) -> bool:
         return _not_in_pipe(ctx)
     except Exception as e:
         # Predicate evaluation failed - log details and fail-safe to BLOCK
-        print(f"ERROR: Predicate '_not_in_pipe' evaluation failed", file=sys.stderr)
-        print(f"  Command: {command[:100]}...", file=sys.stderr)
-        print(f"  Exception: {type(e).__name__}: {e}", file=sys.stderr)
-        print(f"  IMPACT: Command will be blocked (fail-safe behavior)", file=sys.stderr)
+        # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
+        try:
+            from .logging_utils import get_logger
+            logger = get_logger(__name__)
+            logger.error(f"ERROR: Predicate '_not_in_pipe' evaluation failed")
+            logger.error(f"  Command: {command[:100]}...")
+            logger.error(f"  Exception: {type(e).__name__}: {e}")
+            logger.error(f"  IMPACT: Command will be blocked (fail-safe behavior)")
+        except ImportError:
+            pass  # Silently skip if logging not available
         return True  # Fail-safe: block on error
 
 
@@ -871,16 +884,22 @@ for pattern, config in CONFIG.get("default_integrations", {}).items():
         _undefined_predicates.add((pattern, when_predicate))
 
 if _undefined_predicates:
-    print("=" * 70, file=sys.stderr)
-    print("CONFIGURATION ERROR: Predicate Mismatch Detected", file=sys.stderr)
-    print("=" * 70, file=sys.stderr)
-    print(f"Found {len(_undefined_predicates)} command pattern(s) referencing undefined predicates:", file=sys.stderr)
-    for pattern, predicate in sorted(_undefined_predicates):
-        print(f"  - Pattern '{pattern}' uses undefined predicate '{predicate}'", file=sys.stderr)
-    print(f"\nDefined predicates: {sorted(_PREDICATES.keys())}", file=sys.stderr)
-    print("\nIMPACT: Commands matching these patterns will be incorrectly blocked", file=sys.stderr)
-    print("ACTION: Add missing predicates to _PREDICATES lookup table in main.py", file=sys.stderr)
-    print("=" * 70, file=sys.stderr)
+    # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
+    try:
+        from .logging_utils import get_logger
+        logger = get_logger(__name__)
+        logger.error("=" * 70)
+        logger.error("CONFIGURATION ERROR: Predicate Mismatch Detected")
+        logger.error("=" * 70)
+        logger.error(f"Found {len(_undefined_predicates)} command pattern(s) referencing undefined predicates:")
+        for pattern, predicate in sorted(_undefined_predicates):
+            logger.error(f"  - Pattern '{pattern}' uses undefined predicate '{predicate}'")
+        logger.error(f"\nDefined predicates: {sorted(_PREDICATES.keys())}")
+        logger.error("\nIMPACT: Commands matching these patterns will be incorrectly blocked")
+        logger.error("ACTION: Add missing predicates to _PREDICATES lookup table in main.py")
+        logger.error("=" * 70)
+    except ImportError:
+        pass  # Silently skip if logging not available (don't break hooks)
 
 
 def should_block_command(session_id: str, command: str) -> Optional[Dict]:

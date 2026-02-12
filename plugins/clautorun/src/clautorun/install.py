@@ -1772,6 +1772,17 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 
 
 if __name__ == "__main__":
-    # Configure logging for CLI use
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    # Configure logging for CLI use (file-only when CLAUTORUN_DEBUG=1, disabled otherwise)
+    import os
+    if os.environ.get('CLAUTORUN_DEBUG') == '1':
+        from pathlib import Path
+        log_file = Path.home() / ".clautorun" / "daemon.log"
+        logging.basicConfig(
+            handlers=[logging.FileHandler(log_file)],
+            level=logging.DEBUG,
+            format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+        )
+    else:
+        # Disable logging - add NullHandler to prevent default stderr handler
+        logging.basicConfig(handlers=[logging.NullHandler()], level=logging.CRITICAL + 1)
     sys.exit(install_plugins())
