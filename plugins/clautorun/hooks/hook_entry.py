@@ -198,14 +198,15 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         True if CLI executed successfully with valid output, False otherwise.
 
     Exit Code Handling:
-        Exit code 2 is special - it means "blocking error" per Claude Code docs.
-        When the CLI exits with code 2, we print stderr and exit with code 2
-        ourselves. This is the workaround for Claude Code bug #4669 where
-        permissionDecision: "deny" in JSON is ignored.
+        Exit code 0 = CLI succeeded (even when denying tool access)
+        Exit code 2 = blocking ERROR causing "hook error"
+
+        The JSON permissionDecision: "deny" blocks the tool, not exit code.
 
         References:
         - GitHub Issues: #4669, #18312, #13744, #20946
-        - Exit code 2 docs: https://claude.com/blog/how-to-configure-hooks
+        - Exit code semantics: https://claude.com/blog/how-to-configure-hooks
+        - Hook docs: https://code.claude.com/docs/en/hooks
 
     Bug history:
         - Previously returned True unconditionally even when subprocess failed
@@ -224,13 +225,9 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
             timeout=HOOK_TIMEOUT,
         )
 
-        # Exit code 2: Blocking error - forward JSON stdout and exit with code 2
-        # NO stderr output allowed - causes "hook error" in Claude Code!
-        # Workaround for Claude Code bug #4669: exit code 2 blocks the tool
-        if result.returncode == 2:
-            if result.stdout:
-                print(result.stdout, end="")
-            sys.exit(2)
+        # Exit code 0 = CLI succeeded (even when denying tool access)
+        # Exit code 2 would be a blocking ERROR causing "hook error"
+        # The JSON permissionDecision: "deny" blocks the tool, not exit code
 
         # Must check return code — stale CLI installs fail with argparse errors
         if result.returncode != 0:
