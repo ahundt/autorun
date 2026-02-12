@@ -209,6 +209,7 @@ class EnvironmentController:
         if config["isolated"]:
             # Create temporary directory for isolation
             temp_dir = tempfile.mkdtemp(prefix=f"clautorun_test_{env_id}_")
+            temp_path = Path(temp_dir)
             env_info["temp_dir"] = temp_dir
 
             # Copy necessary files to temp directory
@@ -219,7 +220,7 @@ class EnvironmentController:
                 "CLAUTORUN_TEST_MODE": "true",
                 "CLAUTORUN_TEST_ID": env_id,
                 "CLAUTORUN_ISOLATED": "true",
-                "PYTHONPATH": str(temp_dir / "src"),
+                "PYTHONPATH": str(temp_path / "src"),
                 "CLAUTORUN_TEMP_DIR": temp_dir
             }
 
@@ -350,6 +351,7 @@ class TestRunner:
             tests=[test_id]
         )
 
+        self.register_test_suite(suite)
         results = self.run_test_suite(suite.name)
         return results[0] if results else None
 

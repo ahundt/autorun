@@ -1,8 +1,8 @@
 ---
 description: Toggle rejected plan export on/off
-allowed-tools: Bash(python3:*)
+allowed-tools: Bash(uv *)
 ---
 
 # Toggle Rejected Plan Export
 
-! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py rejected-toggle
+! uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py rejected-toggle

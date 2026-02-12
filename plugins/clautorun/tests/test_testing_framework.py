@@ -69,15 +69,13 @@ class TestEnvironmentController:
 
         test_id = "test_env_creation"
 
-        try:
-            with self.controller.create_environment(TestEnvironment.SANDBOX, test_id) as env_info:
-                assert env_info is not None
-                # Environment should have basic info
-                assert isinstance(env_info, dict)
-
-        except Exception:
-            # Some environment types may not be fully implemented
-            pytest.skip("Environment creation not fully implemented")
+        with self.controller.create_environment(TestEnvironment.SANDBOX, test_id) as env_info:
+            assert env_info is not None
+            assert isinstance(env_info, dict)
+            assert "id" in env_info
+            assert "temp_dir" in env_info
+            # Sandbox is isolated, so temp_dir should be set
+            assert env_info["temp_dir"] is not None
 
     def test_file_copying_to_isolated_environment(self):
         """Test file copying to isolated environment"""
@@ -86,14 +84,11 @@ class TestEnvironmentController:
 
         test_id = "test_file_copy"
 
-        try:
-            with self.controller.create_environment(TestEnvironment.ISOLATED, test_id) as env_info:
-                # Just verify the environment was created
-                assert env_info is not None
-                assert isinstance(env_info, dict)
-        except Exception:
-            # Isolated environment may not be fully implemented
-            pytest.skip("Isolated environment not fully implemented")
+        with self.controller.create_environment(TestEnvironment.ISOLATED, test_id) as env_info:
+            assert env_info is not None
+            assert isinstance(env_info, dict)
+            assert "id" in env_info
+            assert env_info["temp_dir"] is not None
 
 
 class TestTestRunner:
@@ -181,21 +176,17 @@ class TestTestRunner:
         if not TESTING_FRAMEWORK_AVAILABLE:
             pytest.skip("Testing framework not available")
 
-        try:
-            result = self.runner.run_single_test(
-                "command:/afs",
-                TestType.UNIT,
-                TestEnvironment.DEVELOPMENT
-            )
+        result = self.runner.run_single_test(
+            "command:/afs",
+            TestType.UNIT,
+            TestEnvironment.DEVELOPMENT
+        )
 
-            # Result should be returned
-            assert result is not None
-            # Verify it has expected attributes
-            assert hasattr(result, 'test_id')
-            assert hasattr(result, 'test_type')
-        except Exception:
-            # Single test execution may not be fully implemented
-            pytest.skip("Single test execution not fully implemented")
+        # Result should be returned
+        assert result is not None
+        # Verify it has expected attributes
+        assert hasattr(result, 'test_id')
+        assert hasattr(result, 'test_type')
 
     def test_test_timeout_handling(self):
         """Test test timeout handling"""

@@ -2,15 +2,15 @@
 """
 Configuration script for plan export (part of clautorun plugin).
 
-Usage:
-    python3 plan_export_config.py enable                  - Enable plan export
-    python3 plan_export_config.py disable                 - Disable plan export
-    python3 plan_export_config.py status                  - Show current status
-    python3 plan_export_config.py dir <path>              - Set output directory
-    python3 plan_export_config.py pattern <pattern>       - Set filename pattern
-    python3 plan_export_config.py rejected-toggle         - Toggle rejected plan export
-    python3 plan_export_config.py rejected-dir <path>     - Set rejected plan directory
-    python3 plan_export_config.py reset                   - Reset to defaults
+Usage (invoked via uv from slash commands):
+    uv run python plan_export_config.py enable            - Enable plan export
+    uv run python plan_export_config.py disable           - Disable plan export
+    uv run python plan_export_config.py status            - Show current status
+    uv run python plan_export_config.py dir <path>        - Set output directory
+    uv run python plan_export_config.py pattern <pattern> - Set filename pattern
+    uv run python plan_export_config.py rejected-toggle   - Toggle rejected plan export
+    uv run python plan_export_config.py rejected-dir <path> - Set rejected plan directory
+    uv run python plan_export_config.py reset             - Reset to defaults
 
 Template Variables (for dir and pattern):
     {YYYY}     - 4-digit year (2025)
@@ -203,22 +203,22 @@ def main():
         status()
     elif command == "dir" or command == "path":
         if len(sys.argv) < 3:
-            print("Usage: python3 plan_export_config.py dir <path>")
-            print("Example: python3 plan_export_config.py dir note/{YYYY}/{MM}")
+            print("Usage: uv run python plan_export_config.py dir <path>")
+            print("Example: uv run python plan_export_config.py dir note/{YYYY}/{MM}")
             sys.exit(1)
         set_dir(sys.argv[2])
     elif command == "pattern":
         if len(sys.argv) < 3:
-            print("Usage: python3 plan_export_config.py pattern <pattern>")
-            print("Example: python3 plan_export_config.py pattern {date}_{name}")
+            print("Usage: uv run python plan_export_config.py pattern <pattern>")
+            print("Example: uv run python plan_export_config.py pattern {date}_{name}")
             sys.exit(1)
         set_pattern(sys.argv[2])
     elif command == "rejected-toggle":
         toggle_rejected()
     elif command == "rejected-dir":
         if len(sys.argv) < 3:
-            print("Usage: python3 plan_export_config.py rejected-dir <path>")
-            print("Example: python3 plan_export_config.py rejected-dir notes/rejected")
+            print("Usage: uv run python plan_export_config.py rejected-dir <path>")
+            print("Example: uv run python plan_export_config.py rejected-dir notes/rejected")
             sys.exit(1)
         set_rejected_dir(sys.argv[2])
     elif command == "reset":

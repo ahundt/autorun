@@ -11,6 +11,8 @@ Tests:
 - Selection parsing
 - Execution formatting
 """
+import importlib.machinery
+import importlib.util
 import pytest
 import sys
 from pathlib import Path
@@ -21,76 +23,147 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "commands"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
-class TestIsClaudeSession:
-    """Test the is_claude_session() heuristic function.
+# Module-level loader replacing deprecated SourceFileLoader.load_module()
+_tabs_exec_module = None
 
-    NOTE: These tests are marked as skipped because the tabs-exec script was
-    refactored and the old is_claude_session() API no longer exists. The new
-    implementation uses discover_claude_sessions() and analyze_sessions_heuristic()
-    instead. These tests need to be rewritten to match the new API.
+
+def _load_tabs_exec():
+    """Load the tabs-exec command module using importlib.util.
+
+    Replaces deprecated SourceFileLoader(...).load_module() with the
+    modern spec_from_file_location + exec_module pattern.
+    """
+    global _tabs_exec_module
+    if _tabs_exec_module is None:
+        tabs_path = str(Path(__file__).parent.parent / "commands" / "tabs-exec")
+        loader = importlib.machinery.SourceFileLoader("tabs_exec", tabs_path)
+        spec = importlib.util.spec_from_file_location("tabs_exec", tabs_path, loader=loader)
+        _tabs_exec_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_tabs_exec_module)
+    return _tabs_exec_module
+
+
+class TestIsClaudeSession:
+    """Test TmuxUtilities.is_claude_session() process-based detection.
+
+    The old content-heuristic is_claude_session() was replaced by process-tree
+    detection in TmuxUtilities. These tests mock subprocess calls to verify
+    the detection logic for claude/happy/happy-dev process indicators.
     """
 
-    @pytest.mark.skip(reason="tabs-exec API changed - is_claude_session() no longer exists")
-    def test_claude_code_indicator(self):
-        """'Claude Code' is a strong indicator (weight 3)."""
-        # Import here to avoid module-level issues
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+    def _make_tmux_utils(self):
+        """Create a TmuxUtilities instance for testing."""
+        from clautorun.tmux_utils import TmuxUtilities
+        return TmuxUtilities(session_name="test-session")
 
-        content = "Welcome to Claude Code. How can I help?"
-        assert tabs_exec.is_claude_session(content) is True
+    def test_claude_process_detected(self):
+        """Detects 'claude' in child process command as Claude session."""
+        tmux = self._make_tmux_utils()
 
-    @pytest.mark.skip(reason="tabs-exec API changed - is_claude_session() no longer exists")
-    def test_anthropic_indicator(self):
-        """'anthropic' is a strong indicator (weight 2)."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
+             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+            # Pane PID query returns a PID
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            # pgrep returns child PIDs
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12346\n'),  # pgrep -P
+                Mock(returncode=0, stdout='/usr/local/bin/claude\n'),  # ps -p
+            ]
 
-        content = "Using anthropic API for analysis"
-        assert tabs_exec.is_claude_session(content) is True
+            assert tmux.is_claude_session('test-session', '0') is True
 
-    @pytest.mark.skip(reason="tabs-exec API changed - is_claude_session() no longer exists")
-    def test_multiple_weak_indicators(self):
-        """Multiple weak indicators should sum to pass threshold."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+    def test_happy_dev_process_detected(self):
+        """Detects 'happy-dev' in child process command as Claude session."""
+        tmux = self._make_tmux_utils()
 
-        content = "claude said something > here"
-        assert tabs_exec.is_claude_session(content) is True
+        with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
+             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12346\n'),  # pgrep
+                Mock(returncode=0, stdout='/usr/local/bin/happy-dev\n'),  # ps
+            ]
 
-    @pytest.mark.skip(reason="tabs-exec API changed - is_claude_session() no longer exists")
-    def test_no_indicators(self):
-        """Content without indicators should return False."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+            assert tmux.is_claude_session('test-session', '0') is True
 
-        content = "This is a regular shell session\n$ ls -la\ntotal 100"
-        assert tabs_exec.is_claude_session(content) is False
+    def test_no_claude_process(self):
+        """Returns False when child processes don't contain Claude indicators."""
+        tmux = self._make_tmux_utils()
 
-    @pytest.mark.skip(reason="tabs-exec API changed - is_claude_session() no longer exists")
-    def test_single_weak_indicator(self):
-        """Single weak indicator should not pass threshold."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
+             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12346\n'),  # pgrep
+                Mock(returncode=0, stdout='/bin/bash\n'),  # ps - regular shell
+            ]
 
-        # Just one '> ' is only weight 1
-        content = "Some text > here"
-        assert tabs_exec.is_claude_session(content) is False
+            assert tmux.is_claude_session('test-session', '0') is False
+
+    def test_no_child_processes(self):
+        """Returns False when pgrep finds no child processes."""
+        tmux = self._make_tmux_utils()
+
+        with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
+             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+            mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
+            mock_run.return_value = Mock(returncode=1, stdout='')  # pgrep: no children
+
+            assert tmux.is_claude_session('test-session', '0') is False
+
+    def test_tmux_command_fails(self):
+        """Returns False safely when tmux command fails (fail-open)."""
+        tmux = self._make_tmux_utils()
+
+        with patch.object(tmux, 'execute_tmux_command') as mock_tmux:
+            mock_tmux.return_value = {'returncode': 1, 'stdout': ''}
+
+            assert tmux.is_claude_session('test-session', '0') is False
+
+
+class TestIsClaudeSessionIntegration:
+    """Integration tests using real tmux to exercise is_claude_session().
+
+    These tests create actual tmux sessions and verify the process-based
+    detection works against real process trees.
+    """
+
+    @pytest.fixture(autouse=True)
+    def check_tmux(self):
+        """Skip if tmux is not available."""
+        import shutil
+        if not shutil.which("tmux"):
+            pytest.skip("tmux not installed")
+
+    def _make_tmux_utils(self):
+        from clautorun.tmux_utils import TmuxUtilities
+        return TmuxUtilities(session_name="clautorun-test-tabs")
+
+    def test_real_non_claude_session(self):
+        """A plain shell session should not be detected as Claude."""
+        import subprocess
+        import time
+
+        session_name = "clautorun-test-tabs"
+        # Create a tmux session with a plain shell
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session_name, "-x", "80", "-y", "24"],
+            check=False,
+            capture_output=True,
+        )
+        try:
+            time.sleep(0.3)  # Let session start
+            tmux = self._make_tmux_utils()
+            result = tmux.is_claude_session(session_name, "0")
+            assert result is False, "Plain shell should not be detected as Claude session"
+        finally:
+            subprocess.run(["tmux", "kill-session", "-t", session_name], check=False, capture_output=True)
+
+    def test_real_session_nonexistent(self):
+        """Querying a non-existent session should return False (fail-open)."""
+        tmux = self._make_tmux_utils()
+        result = tmux.is_claude_session("nonexistent-session-xyz", "0")
+        assert result is False
 
 
 class TestExtractDirectory:
@@ -98,11 +171,7 @@ class TestExtractDirectory:
 
     def test_pwd_pattern(self):
         """Extract directory from pwd output."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         content = "$ pwd\n/home/user/myproject\n$"
         # Should find the path pattern
@@ -112,11 +181,7 @@ class TestExtractDirectory:
 
     def test_working_directory_label(self):
         """Extract directory from 'Working directory:' label."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         content = "Working directory: ~/myproject"
         result = tabs_exec.extract_directory(content)
@@ -124,11 +189,7 @@ class TestExtractDirectory:
 
     def test_no_directory_found(self):
         """Return 'unknown' when no directory pattern found."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         content = "Just some random text without paths"
         result = tabs_exec.extract_directory(content)
@@ -140,11 +201,7 @@ class TestExtractPurpose:
 
     def test_skips_noise_lines(self):
         """Should skip prompt lines and find meaningful content."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         content = "$ ls\n> \nImplementing authentication middleware for the API"
         result = tabs_exec.extract_purpose(content)
@@ -152,11 +209,7 @@ class TestExtractPurpose:
 
     def test_returns_meaningful_line(self):
         """Should return first meaningful line (truncation handled by format_output)."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         content = "This is a very long line that should be truncated because it exceeds forty characters"
         result = tabs_exec.extract_purpose(content)
@@ -169,34 +222,19 @@ class TestGetDefaultActions:
 
     def test_active_status(self):
         """Active status should suggest letting it work."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
-
+        tabs_exec = _load_tabs_exec()
         actions = tabs_exec.get_default_actions('active')
         assert 'let it work' in actions
 
     def test_error_status(self):
         """Error status should suggest interrupt/retry."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
-
+        tabs_exec = _load_tabs_exec()
         actions = tabs_exec.get_default_actions('error')
         assert 'interrupt' in actions or 'retry' in actions
 
     def test_idle_status(self):
         """Idle status should suggest continue."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
-
+        tabs_exec = _load_tabs_exec()
         actions = tabs_exec.get_default_actions('idle')
         assert 'continue' in actions
 
@@ -206,11 +244,7 @@ class TestAnalyzeSessionsHeuristic:
 
     def test_detects_error_status(self):
         """Should detect error status from keywords."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         sessions = [{
             'session_name': 'test',
@@ -224,11 +258,7 @@ class TestAnalyzeSessionsHeuristic:
 
     def test_detects_idle_status(self):
         """Should detect idle status from prompt."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         sessions = [{
             'session_name': 'test',
@@ -242,11 +272,7 @@ class TestAnalyzeSessionsHeuristic:
 
     def test_detects_awaiting_input(self):
         """Should detect awaiting input from prompt at end."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         sessions = [{
             'session_name': 'test',
@@ -264,11 +290,7 @@ class TestFormatOutput:
 
     def test_formats_table_with_sessions(self):
         """Should format sessions into a table."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         sessions = [
             {
@@ -300,11 +322,7 @@ class TestFormatOutput:
 
     def test_letter_assignment(self):
         """Should assign letters A, B, C, etc."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         sessions = [
             {'tmux_target': f's{i}:0', 'directory': '~', 'purpose': 'test',
@@ -324,11 +342,7 @@ class TestFormatExecutionResults:
 
     def test_formats_success_results(self):
         """Should format successful results."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         results = [
             {'target': 'dev:0', 'command': 'git status', 'success': True, 'error': None},
@@ -344,11 +358,7 @@ class TestFormatExecutionResults:
 
     def test_formats_failed_results(self):
         """Should format failed results."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         results = [
             {'target': 'dev:0', 'command': 'cmd', 'success': False, 'error': 'session not found'}
@@ -366,11 +376,7 @@ class TestSelectionParsing:
 
     def test_parse_single_letter(self):
         """Test single letter selection."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         # Mock tmux utilities
         with patch.object(tabs_exec, 'get_tmux_utilities') as mock_get:
@@ -390,11 +396,7 @@ class TestSelectionParsing:
 
     def test_parse_multiple_letters(self):
         """Test 'AC' format."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         with patch.object(tabs_exec, 'get_tmux_utilities') as mock_get:
             mock_tmux = MagicMock()
@@ -415,11 +417,7 @@ class TestSelectionParsing:
 
     def test_parse_custom_command(self):
         """Test 'A:git status' format."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         with patch.object(tabs_exec, 'get_tmux_utilities') as mock_get:
             mock_tmux = MagicMock()
@@ -436,11 +434,7 @@ class TestSelectionParsing:
 
     def test_parse_all_selector(self):
         """Test 'all:continue' format."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         with patch.object(tabs_exec, 'get_tmux_utilities') as mock_get:
             mock_tmux = MagicMock()
@@ -459,11 +453,7 @@ class TestSelectionParsing:
 
     def test_parse_awaiting_selector(self):
         """Test 'awaiting:continue' format."""
-        from importlib.machinery import SourceFileLoader
-        tabs_exec = SourceFileLoader(
-            "tabs_exec",
-            str(Path(__file__).parent.parent / "commands" / "tabs-exec")
-        ).load_module()
+        tabs_exec = _load_tabs_exec()
 
         with patch.object(tabs_exec, 'get_tmux_utilities') as mock_get:
             mock_tmux = MagicMock()

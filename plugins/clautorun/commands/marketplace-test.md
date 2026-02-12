@@ -46,7 +46,7 @@ Run the test suite for all plugins in the clautorun marketplace that have tests,
        if [ -f "pytest.ini" ] || [ -f "pyproject.toml" ]; then
          # Run pytest with verbose output
          echo "Running pytest..."
-         python3 -m pytest tests/ -v --tb=short 2>&1 | head -100
+         uv run python -m pytest tests/ -v --tb=short 2>&1 | head -100
 
          # Check exit code
          if [ $? -eq 0 ]; then

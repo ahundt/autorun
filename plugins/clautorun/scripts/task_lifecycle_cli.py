@@ -19,13 +19,13 @@
 Called from slash commands in plugins/clautorun/commands/*.md.
 Delegates to TaskLifecycle class methods.
 
-Usage:
-    python3 task_lifecycle_cli.py --status [SESSION_ID]
-    python3 task_lifecycle_cli.py --export SESSION_ID OUTPUT_PATH [--format json|csv|markdown]
-    python3 task_lifecycle_cli.py --clear [SESSION_ID] [--all] [--no-confirm]
-    python3 task_lifecycle_cli.py --configure
-    python3 task_lifecycle_cli.py --enable
-    python3 task_lifecycle_cli.py --disable
+Usage (invoked via uv from slash commands):
+    uv run python task_lifecycle_cli.py --status [SESSION_ID]
+    uv run python task_lifecycle_cli.py --export SESSION_ID OUTPUT_PATH [--format json|csv|markdown]
+    uv run python task_lifecycle_cli.py --clear [SESSION_ID] [--all] [--no-confirm]
+    uv run python task_lifecycle_cli.py --configure
+    uv run python task_lifecycle_cli.py --enable
+    uv run python task_lifecycle_cli.py --disable
 """
 
 import sys

@@ -36,6 +36,11 @@ ENABLE_REAL_MONEY_TESTS = os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_
 def find_hook_script() -> Path:
     """Dynamically find hook_entry.py script.
 
+    Search order:
+        1. Installed Gemini extension (production)
+        2. Development source dir (from test file location)
+        3. Absolute path for dev workspace
+
     Returns:
         Path to hook_entry.py
 
@@ -44,8 +49,8 @@ def find_hook_script() -> Path:
     """
     possible_locations = [
         Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
-        Path.home() / ".claude/clautorun/plugins/clautorun/hooks/hook_entry.py",
         Path(__file__).parent.parent / "hooks/hook_entry.py",
+        Path.home() / ".claude/clautorun/plugins/clautorun/hooks/hook_entry.py",
     ]
 
     for location in possible_locations:
@@ -411,13 +416,18 @@ class TestGeminiCLIRealMoney:
         assert "clautorun" in combined_output, \
             f"clautorun extension not found. Output:\n{combined_output[:500]}"
 
-        # Verify hooks file exists
-        hooks_file = (
-            Path.home() /
-            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/gemini-hooks.json"
-        )
-        assert hooks_file.exists(), \
-            f"Hooks file not found: {hooks_file}"
+        # Verify hooks file exists (installed extension or source)
+        hooks_candidates = [
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/gemini-hooks.json",
+            Path(__file__).parent.parent / "hooks/gemini-hooks.json",
+        ]
+        hooks_file = None
+        for candidate in hooks_candidates:
+            if candidate.exists():
+                hooks_file = candidate
+                break
+        assert hooks_file is not None, \
+            f"gemini-hooks.json not found. Searched:\n" + "\n".join(f"  - {p}" for p in hooks_candidates)
 
         # Verify hooks file is valid JSON
         try:
@@ -449,31 +459,41 @@ class TestGeminiExtensionInstalledHook:
 
     @pytest.fixture
     def extension_hook(self):
-        """Get path to the installed hook in the Gemini extension."""
-        hook_path = (
-            Path.home() /
-            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py"
+        """Get path to hook_entry.py (installed extension or source fallback)."""
+        candidates = [
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path(__file__).parent.parent / "hooks/hook_entry.py",
+        ]
+        for hook_path in candidates:
+            if hook_path.exists():
+                return hook_path
+        pytest.skip(
+            f"Gemini hook_entry.py not found. Searched:\n"
+            + "\n".join(f"  - {p}" for p in candidates)
         )
-        if not hook_path.exists():
-            pytest.skip(f"Gemini extension hook not found: {hook_path}")
-        return hook_path
 
     def _run_hook(self, hook_path: Path, payload: dict) -> dict:
         """Run hook_entry.py as subprocess with JSON payload, return parsed response.
 
         This mirrors exactly how Gemini CLI invokes hooks: subprocess with
-        JSON on stdin, expecting JSON on stdout.
+        JSON on stdin, expecting JSON on stdout. Uses uv run for UV workspace.
         """
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-installed-hook"
         env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+        # Set plugin root so hook_entry.py can find the plugin source
+        plugin_root = str(Path(__file__).parent.parent)
+        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
+
+        # Use uv run for UV workspace (matches production hook commands)
+        cmd = ["uv", "run", "--project", plugin_root, "python", str(hook_path)]
 
         result = subprocess.run(
-            ["python3", str(hook_path)],
+            cmd,
             input=json.dumps(payload),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=15,
             env=env,
         )
 
@@ -640,27 +660,37 @@ class TestGeminiWriteFileBlocking:
 
     @pytest.fixture
     def extension_hook(self):
-        """Get path to the installed hook in the Gemini extension."""
-        hook_path = (
-            Path.home() /
-            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py"
+        """Get path to hook_entry.py (installed extension or source fallback)."""
+        candidates = [
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path(__file__).parent.parent / "hooks/hook_entry.py",
+        ]
+        for hook_path in candidates:
+            if hook_path.exists():
+                return hook_path
+        pytest.skip(
+            f"Gemini hook_entry.py not found. Searched:\n"
+            + "\n".join(f"  - {p}" for p in candidates)
         )
-        if not hook_path.exists():
-            pytest.skip(f"Gemini extension hook not found: {hook_path}")
-        return hook_path
 
     def _run_hook(self, hook_path: Path, payload: dict) -> dict:
         """Run hook_entry.py as subprocess with JSON payload."""
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-write-file"
         env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+        # Set plugin root so hook_entry.py can find the plugin source
+        plugin_root = str(Path(__file__).parent.parent)
+        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
+
+        # Use uv run for UV workspace (matches production hook commands)
+        cmd = ["uv", "run", "--project", plugin_root, "python", str(hook_path)]
 
         result = subprocess.run(
-            ["python3", str(hook_path)],
+            cmd,
             input=json.dumps(payload),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=15,
             env=env,
         )
 
@@ -895,19 +925,33 @@ class TestGeminiHighQualityMocks:
 
 
 class TestGeminiExtensionVerification:
-    """Verify Gemini extension configuration (NO COST - file checks only)."""
+    """Verify Gemini extension configuration (NO COST - file checks only).
+
+    Falls back to source directory when extension is not installed.
+    """
+
+    def _find_plugin_dir(self) -> Path:
+        """Find plugin directory (installed extension or source fallback)."""
+        candidates = [
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun",
+            Path(__file__).parent.parent,  # Source dir
+        ]
+        for candidate in candidates:
+            if (candidate / "hooks").exists():
+                return candidate
+        pytest.skip(
+            "Plugin directory not found. Searched:\n"
+            + "\n".join(f"  - {p}" for p in candidates)
+        )
 
     def test_extension_directory_structure(self):
-        """Verify extension directory structure is correct."""
-        base_dir = Path.home() / ".gemini/extensions/clautorun-workspace"
-
-        if not base_dir.exists():
-            pytest.skip(f"Extension directory not found: {base_dir}")
+        """Verify plugin directory structure is correct."""
+        base_dir = self._find_plugin_dir()
 
         # Check required directories
         required_dirs = [
-            base_dir / "plugins/clautorun/hooks",
-            base_dir / "plugins/clautorun/commands",
+            base_dir / "hooks",
+            base_dir / "commands",
         ]
 
         for required_dir in required_dirs:
@@ -916,13 +960,9 @@ class TestGeminiExtensionVerification:
 
     def test_gemini_hooks_config_valid(self):
         """Verify gemini-hooks.json is valid and complete."""
-        hooks_file = (
-            Path.home() /
-            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/gemini-hooks.json"
-        )
-
-        if not hooks_file.exists():
-            pytest.skip(f"Hooks file not found: {hooks_file}")
+        base_dir = self._find_plugin_dir()
+        hooks_file = base_dir / "hooks/gemini-hooks.json"
+        assert hooks_file.exists(), f"gemini-hooks.json not found at: {hooks_file}"
 
         # Read and parse
         try:

@@ -18,8 +18,14 @@
 import os
 import json
 import time
-import psutil
 import threading
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None  # type: ignore[assignment]
+    PSUTIL_AVAILABLE = False
 from pathlib import Path
 from typing import Dict, List, Any, Callable
 from dataclasses import dataclass, asdict
@@ -307,6 +313,10 @@ class SystemMonitor:
 
     def _collect_metrics(self):
         """Collect current system metrics"""
+        if not PSUTIL_AVAILABLE:
+            self.logger.warning("monitor", "psutil not installed, skipping metric collection")
+            return
+
         timestamp = time.time()
 
         try:
@@ -508,7 +518,10 @@ class DiagnosticManager:
         self._register_default_health_checks()
 
     def _register_default_health_checks(self):
-        """Register default health checks"""
+        """Register default health checks (requires psutil for system metrics)."""
+        if not PSUTIL_AVAILABLE:
+            self.logger.warning("diagnostics", "psutil not installed, system health checks disabled")
+            return
 
         @self.health_checker.register_check("disk_space", interval=300)
         def check_disk_space() -> HealthCheck:
