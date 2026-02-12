@@ -945,31 +945,29 @@ def _install_for_gemini(
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 
-        # Prepare hooks for Gemini: copy gemini-hooks.json → hooks/hooks.json
-        # This allows different hook configs for Claude (hooks.json) vs Gemini (gemini-hooks.json)
-        gemini_hooks_file = plugin_dir / "hooks" / "gemini-hooks.json"
-        hooks_file = plugin_dir / "hooks" / "hooks.json"
-        hooks_backup = plugin_dir / "hooks" / "hooks.json.claude-backup"
+        # Use temporary copy for Gemini to avoid modifying source marketplace
+        # This prevents Claude Code from seeing Gemini hooks if restoration fails
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix=f"gemini-install-{plugin_name}-") as temp_dir:
+            temp_plugin = Path(temp_dir) / plugin_name
 
-        if gemini_hooks_file.exists():
-            # Backup Claude hooks.json before overwriting
-            if hooks_file.exists() and not hooks_backup.exists():
-                shutil.copy2(hooks_file, hooks_backup)
+            # Copy plugin to temp location
+            shutil.copytree(plugin_dir, temp_plugin, symlinks=True)
 
-            # Copy Gemini hooks into place
-            shutil.copy2(gemini_hooks_file, hooks_file)
-            print(f"   → Prepared Gemini hooks (backed up Claude hooks to hooks.json.claude-backup)")
+            # Prepare Gemini hooks in temp copy (not source!)
+            gemini_hooks_file = temp_plugin / "hooks" / "gemini-hooks.json"
+            hooks_file = temp_plugin / "hooks" / "hooks.json"
 
-        if force:
-            run_cmd(["gemini", "extensions", "uninstall", ext_name])
+            if gemini_hooks_file.exists():
+                # Replace hooks.json with Gemini version in temp copy only
+                shutil.copy2(gemini_hooks_file, hooks_file)
+                print(f"   → Prepared Gemini hooks in temp copy")
 
-        result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
+            if force:
+                run_cmd(["gemini", "extensions", "uninstall", ext_name])
 
-        # Restore Claude hooks after Gemini installation
-        if hooks_backup.exists():
-            shutil.copy2(hooks_backup, hooks_file)
-            hooks_backup.unlink()  # Remove backup after restoring
-            print(f"   → Restored Claude hooks.json")
+            # Install from temp copy, not source
+            result = run_cmd(["gemini", "extensions", "install", str(temp_plugin), "--consent"])
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
