@@ -20,13 +20,18 @@ claude plugin list  # Should show: cr, pdf-extractor
 git clone https://github.com/ahundt/clautorun.git && cd clautorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force
+uv run python -m plugins.clautorun.src.clautorun.install --install --force-install
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force-install
+
+# Optional: Install as UV tool for global CLI availability
+cd plugins/clautorun && uv tool install --force --editable .
+# This makes 'clautorun', 'clautorun-install', 'claude-session-tools' globally available
 
 # Verify
 claude plugin list  # Should show: cr, pdf-extractor
+clautorun --status  # If installed as UV tool
 ```
 
 **Install UV (if needed):**
