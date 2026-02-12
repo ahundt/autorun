@@ -7,6 +7,7 @@ TDD-driven tests for hook entry point and daemon bootstrap functionality.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -184,6 +185,118 @@ class TestHookEntryIntegration:
         relative_src = hooks_dir.parent / "src"
         assert relative_src.exists(), f"Relative src not found: {relative_src}"
         assert (relative_src / "clautorun" / "__main__.py").exists()
+
+
+# =============================================================================
+# Test: try_cli Return Code and Stdin Preservation
+# =============================================================================
+
+
+class TestTryCliRobustness:
+    """Test that try_cli checks return codes and stdin is preserved for fallback.
+
+    Bug history:
+    - try_cli() returned True even when the subprocess failed (non-zero exit
+      code, argparse errors from stale UV tool installs, empty stdout). This
+      caused hook_entry.py to exit without printing any JSON → Claude Code
+      fail-open → rm/git-reset-hard executed unblocked.
+    - try_cli() consumed stdin, so if it failed the fallback path
+      (run_fallback → run_client → json.load(sys.stdin)) got empty input.
+    """
+
+    def test_try_cli_checks_return_code(self):
+        """try_cli must check returncode — must not return True on failure."""
+        content = HOOK_ENTRY.read_text()
+        assert "result.returncode" in content, \
+            "try_cli must check subprocess return code. Without this, " \
+            "a stale/broken CLI binary silently causes fail-open."
+
+    def test_try_cli_requires_stdout(self):
+        """try_cli must return False when stdout is empty."""
+        content = HOOK_ENTRY.read_text()
+        # After the returncode check, there should be a check for empty stdout
+        try_cli_idx = content.find("def try_cli(")
+        try_cli_end = content.find("\ndef ", try_cli_idx + 1)
+        try_cli_body = content[try_cli_idx:try_cli_end]
+        assert "return False" in try_cli_body, \
+            "try_cli must return False on empty stdout (no valid hook response)"
+
+    def test_stdin_read_once_in_main(self):
+        """stdin must be read once in main(), not inside try_cli."""
+        content = HOOK_ENTRY.read_text()
+        main_idx = content.find("def main()")
+        main_body = content[main_idx:]
+        # stdin should be read in main, not try_cli
+        assert "sys.stdin.read()" in main_body or "stdin.read()" in main_body, \
+            "main() must read stdin once to preserve it for fallback path"
+
+    def test_stdin_restored_for_fallback(self):
+        """After try_cli fails, stdin must be restored for run_fallback."""
+        content = HOOK_ENTRY.read_text()
+        assert "io.StringIO" in content, \
+            "main() must use io.StringIO to restore stdin for fallback path. " \
+            "Without this, run_client() gets empty stdin after try_cli consumes it."
+
+    def test_try_cli_accepts_stdin_data_param(self):
+        """try_cli must accept stdin_data parameter (not read stdin itself)."""
+        content = HOOK_ENTRY.read_text()
+        assert "def try_cli(bin_path" in content
+        try_cli_idx = content.find("def try_cli(")
+        sig_end = content.find(")", try_cli_idx) + 1
+        signature = content[try_cli_idx:sig_end]
+        assert "stdin_data" in signature, \
+            "try_cli must accept stdin_data as parameter, not read stdin itself"
+
+    def test_hook_rm_blocked_no_stderr(self):
+        """Full e2e: hook_entry.py blocks rm with deny on stdout, no stderr."""
+        env = os.environ.copy()
+        env['CLAUDE_PLUGIN_ROOT'] = str(PLUGIN_ROOT)
+        payload = json.dumps({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm /tmp/test"}
+        })
+
+        result = subprocess.run(
+            [sys.executable, str(HOOK_ENTRY)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10
+        )
+
+        assert result.returncode == 0, f"Exit {result.returncode}"
+
+        # Must have valid JSON on stdout
+        try:
+            output = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            pytest.fail(
+                f"No valid JSON on stdout (this causes Claude Code fail-open).\n"
+                f"stdout: {result.stdout[:200]}\n"
+                f"stderr: {result.stderr[:200]}"
+            )
+
+        # Must deny rm
+        assert output.get("continue") is False, \
+            f"rm should be blocked (continue=false) but got: {output}"
+        assert output.get("decision") == "deny", \
+            f"rm should get decision=deny but got: {output.get('decision')}"
+
+        # stderr MUST be empty — any stderr causes Claude Code "hook error"
+        # Filter out known-benign UV build lines
+        stderr_lines = [
+            line for line in result.stderr.strip().splitlines()
+            if line.strip() and not any(
+                line.strip().startswith(p) for p in
+                ("Building", "Built", "Installed", "Resolved", "Prepared", "Downloading")
+            )
+        ]
+        assert len(stderr_lines) == 0, (
+            f"stderr must be empty (Claude Code treats any stderr as 'hook error' → fail-open).\n"
+            f"stderr content: {result.stderr[:500]}"
+        )
 
 
 # =============================================================================
@@ -839,6 +952,136 @@ class TestSlashCommandFalsePositives:
         result = self.should_block_command("test-session", "echo rm")
         assert result is None, \
             f"'echo rm' should be allowed (rm is an echo argument, not a command): {result}"
+
+
+class TestAllLocationsSync:
+    """Verify all code locations stay synchronized across platforms.
+
+    This prevents recurring desync bugs where:
+    - Source is fixed but cache/UV tool/Gemini extension have old code
+    - UV tool install --force doesn't invalidate cache (uv#9492)
+    - Gemini extensions install creates separate copies
+    - Build/ artifacts lag behind source
+
+    9 code locations that can desync:
+    1. Source: plugins/clautorun/src/clautorun/
+    2. Dev venv: plugins/clautorun/.venv/.../clautorun/
+    3. Build: plugins/clautorun/build/lib/clautorun/
+    4. Claude cache: ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/
+    5. UV tool: ~/.local/share/uv/tools/clautorun/.../clautorun/
+    6. Gemini source: ~/.gemini/extensions/clautorun-workspace/plugins/clautorun/src/
+    7. Gemini plugin venv: ~/.gemini/extensions/clautorun-workspace/plugins/clautorun/.venv/
+    8. Gemini workspace venv: ~/.gemini/extensions/clautorun-workspace/.venv/
+    9. Gemini build: ~/.gemini/extensions/clautorun-workspace/plugins/clautorun/build/
+
+    Target state (after symlink migration):
+    - Source: 1 location (authoritative)
+    - Symlinks: UV tool (editable), Gemini extension (link)
+    - Caches: Claude Code cache (synced via --install --force)
+    - Deleted: Build artifacts (not needed)
+    """
+
+    def test_source_hooks_json_is_claude_format(self):
+        """Source hooks.json must have Claude Code format, not Gemini format."""
+        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
+        content = hooks_json.read_text()
+
+        assert "unified daemon-based hook handler" in content, \
+            "Source hooks.json has wrong format. Should be Claude Code, not Gemini. " \
+            "Restore from: ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hooks.json"
+
+        assert "PreToolUse" in content, \
+            "Must have Claude Code event names (not Gemini's BeforeTool)"
+        assert "${CLAUDE_PLUGIN_ROOT}" in content, \
+            "Must use Claude Code variables (not Gemini's ${extensionPath})"
+        assert "Bash" in content, \
+            "Must use Claude Code tool names (not Gemini's run_shell_command)"
+
+    def test_cache_matches_source_hook_entry(self):
+        """Location 4: Claude Code cache hook_entry.py must match source."""
+        cache_versions = list(Path.home().glob(
+            ".claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py"
+        ))
+
+        if not cache_versions:
+            pytest.skip("Claude Code cache not installed")
+
+        source_content = (PLUGIN_ROOT / "hooks" / "hook_entry.py").read_text()
+
+        for cache_file in cache_versions:
+            cache_content = cache_file.read_text()
+            assert cache_content == source_content, \
+                f"Cache {cache_file} doesn't match source. " \
+                f"Run: uv run --project plugins/clautorun python -m clautorun --install --force"
+
+    def test_uv_tool_is_editable_not_copy(self):
+        """Location 5: UV tool should be editable install (symlink), not copy."""
+        if not shutil.which("clautorun"):
+            pytest.skip("UV tool not installed")
+
+        # Check for direct_url.json (indicates editable)
+        tool_paths = list(Path.home().glob(
+            ".local/share/uv/tools/clautorun/lib/python*/site-packages/clautorun*.dist-info/direct_url.json"
+        ))
+
+        if not tool_paths:
+            pytest.fail(
+                "UV tool is not editable (no direct_url.json found). "
+                "This is a COPY which will desync from source. "
+                "Run: uv tool uninstall clautorun && "
+                "cd plugins/clautorun && uv tool install --editable ."
+            )
+
+        # Verify it's actually editable
+        import json
+        direct_url = json.loads(tool_paths[0].read_text())
+        assert direct_url.get("dir_info", {}).get("editable") is True, \
+            f"UV tool has direct_url.json but editable=false. Reinstall with --editable."
+
+    def test_gemini_extension_is_symlink_not_copy(self):
+        """Locations 6-9: Gemini extension should be symlink, not copy."""
+        gemini_ext = Path.home() / ".gemini/extensions/clautorun-workspace"
+
+        if not gemini_ext.exists():
+            pytest.skip("Gemini extension not installed")
+
+        assert gemini_ext.is_symlink(), \
+            "Gemini extension is a COPY which will desync from source. " \
+            "This creates 4 separate code locations that must be manually synced. " \
+            "Run: gemini extensions uninstall clautorun-workspace && " \
+            "gemini extensions link /Users/athundt/.claude/clautorun"
+
+    def test_build_artifacts_do_not_exist(self):
+        """Locations 3, 9: Build artifacts should be deleted."""
+        build_dirs = [
+            PLUGIN_ROOT / "build",
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/build"
+        ]
+
+        for build_dir in build_dirs:
+            if build_dir.exists() and not build_dir.is_symlink():
+                pytest.fail(
+                    f"Build artifacts at {build_dir} should not exist (gitignored). "
+                    f"These are setuptools artifacts that lag behind source. "
+                    f"Run: rm -rf {build_dir}"
+                )
+
+    def test_only_one_daemon_process(self):
+        """Verify only one daemon running (not multiple from different locations)."""
+        result = subprocess.run(
+            ["pgrep", "-f", "clautorun.daemon"],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            pids = result.stdout.strip().splitlines()
+            if len(pids) > 1:
+                pytest.fail(
+                    f"Multiple daemons running from different code locations: {pids}. "
+                    f"This causes inconsistent hook behavior. "
+                    f"Run: pkill -f 'clautorun.daemon'"
+                )
 
 
 class TestCleanup:

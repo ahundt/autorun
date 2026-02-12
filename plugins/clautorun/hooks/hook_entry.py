@@ -186,19 +186,26 @@ def get_clautorun_bin() -> Path | None:
     return None
 
 
-def try_cli(bin_path: Path) -> bool:
-    """Try to run clautorun CLI, passing stdin payload.
+def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
+    """Try to run clautorun CLI, passing pre-read stdin payload.
 
     Args:
         bin_path: Path to clautorun executable
+        stdin_data: Pre-read stdin payload (read once in main() to avoid
+            consuming stdin before the fallback path needs it)
 
     Returns:
-        True if CLI executed successfully, False otherwise.
+        True if CLI executed successfully with valid output, False otherwise.
+
+    Bug history:
+        - Previously returned True unconditionally even when subprocess failed
+          (non-zero exit code, argparse errors, empty stdout). This caused
+          hook_entry.py to exit without printing any JSON, and Claude Code
+          would fail-open (allow rm, git reset --hard, etc.).
+        - Previously read stdin inside try_cli, consuming it so the fallback
+          path (run_fallback → run_client) couldn't read the payload.
     """
     try:
-        # Read stdin (hook payload)
-        stdin_data = "" if sys.stdin.isatty() else sys.stdin.read()
-
         result = subprocess.run(
             [str(bin_path)],
             input=stdin_data,
@@ -207,11 +214,16 @@ def try_cli(bin_path: Path) -> bool:
             timeout=HOOK_TIMEOUT,
         )
 
-        # Output CLI response (stdout to Claude)
+        # Must check return code — stale CLI installs fail with argparse errors
+        if result.returncode != 0:
+            return False
+
+        # Must have stdout output — hook response is JSON on stdout
         if result.stdout:
             print(result.stdout, end="")
+            return True
 
-        return True
+        return False  # No output = something went wrong
 
     except subprocess.TimeoutExpired:
         return False
@@ -421,17 +433,33 @@ def main() -> None:
     """Hook entry point with fast path and background bootstrap.
 
     Flow:
-        1. Try installed CLI (venv or global) - fast path
-        2. If no CLI, try fallback (direct import)
-        3. If import fails, spawn background bootstrap via nohup
-        4. Return fail_open so Claude can continue; next hook will work
+        1. Read stdin once (payload is consumed on first read)
+        2. Try installed CLI (venv or global) - fast path
+        3. If CLI fails, restore stdin and try fallback (direct import)
+        4. If import fails, spawn background bootstrap via nohup
+        5. Return fail_open so Claude can continue; next hook will work
+
+    Bug history:
+        stdin was previously read inside try_cli(), so on CLI failure the
+        fallback path (run_fallback → run_client → json.load(sys.stdin))
+        would get empty input and fail silently. Now stdin is read once
+        here and passed explicitly to try_cli, then restored via StringIO
+        for the fallback path.
     """
+    import io
+
+    # Read stdin once — it can only be consumed once
+    stdin_data = "" if sys.stdin.isatty() else sys.stdin.read()
+
     clautorun_bin = get_clautorun_bin()
 
-    if clautorun_bin and try_cli(clautorun_bin):
+    if clautorun_bin and try_cli(clautorun_bin, stdin_data):
         return
 
-    # No CLI available - try fallback (spawns background bootstrap on import error)
+    # Restore stdin for fallback path (run_client reads from sys.stdin)
+    sys.stdin = io.StringIO(stdin_data)
+
+    # No CLI available or CLI failed - try fallback
     run_fallback()
 
 
