@@ -99,18 +99,31 @@ def run_client():
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
-            # Auto-start daemon - use -c to run directly (works with editable installs)
-            # Get the src directory: __file__ is src/clautorun/client.py, so parent.parent is src/
-            src_dir = Path(__file__).parent.parent
-            daemon_code = "import sys; sys.path.insert(0, '{0}'); from clautorun.daemon import main; main()".format(
-                str(src_dir)
-            )
-            subprocess.Popen(
-                [sys.executable, "-c", daemon_code],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
+            # Check if daemon is already running via PID file
+            # (pattern from install.py:140-149, PID written by core.py:987-990)
+            lock_path = Path.home() / ".clautorun" / "daemon.lock"
+            daemon_alive = False
+            if lock_path.exists():
+                try:
+                    pid = int(lock_path.read_text().strip())
+                    os.kill(pid, 0)  # Check if process is alive (signal 0)
+                    daemon_alive = True
+                except (ValueError, ProcessLookupError, PermissionError):
+                    # PID invalid or process dead — safe to spawn new daemon
+                    lock_path.unlink(missing_ok=True)
+
+            if not daemon_alive:
+                # Auto-start daemon - use -c to run directly (works with editable installs)
+                src_dir = Path(__file__).parent.parent
+                daemon_code = "import sys; sys.path.insert(0, '{0}'); from clautorun.daemon import main; main()".format(
+                    str(src_dir)
+                )
+                subprocess.Popen(
+                    [sys.executable, "-c", daemon_code],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
             await asyncio.sleep(0.5)
             await forward(depth + 1)  # Retry with incremented depth
 

@@ -12,6 +12,8 @@ import os
 import json
 from unittest.mock import Mock, patch
 
+pytestmark = pytest.mark.tmux
+
 # Add src to path for imports
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))

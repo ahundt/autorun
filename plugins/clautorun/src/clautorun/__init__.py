@@ -357,12 +357,18 @@ except ImportError:
         actually block the tool (JSON permissionDecision is ignored).
         """
         safe_reason = json.dumps(reason)[1:-1] if reason else ""
-        should_continue = decision != "deny"
         return {
             "decision": decision,
             "reason": safe_reason,
-            "continue": should_continue,
-            "stopReason": safe_reason if not should_continue else "",
+            # continue=true is correct because:
+            #   - Claude Code: "continue:false stops processing entirely"
+            #     https://code.claude.com/docs/en/hooks#json-output
+            #   - Gemini CLI: "continue:false stops agent loop"
+            #     https://geminicli.com/docs/hooks/reference/
+            # We want to block the TOOL (via exit code 2 + decision:"deny")
+            # but let the AI continue running to suggest alternatives.
+            "continue": True,
+            "stopReason": "",
             "suppressOutput": False,
             "systemMessage": safe_reason,
             "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,

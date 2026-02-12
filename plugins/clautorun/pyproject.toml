@@ -101,12 +101,17 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+timeout = 30
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
     "plugin: marks tests as plugin tests",
     "hook: marks tests as hook tests",
     "interactive: marks tests as interactive tests",
+    "slow: marks tests that take >5s (ThreadSafeDB concurrency, etc.)",
+    "subprocess: marks tests that spawn subprocesses",
+    "tmux: marks tests that require tmux sessions",
+    "e2e: marks end-to-end tests (may require Gemini CLI, real API calls)",
 ]
 asyncio_mode = "auto"
 
@@ -163,4 +168,5 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
+    "pytest-timeout>=2.1.0",
 ]

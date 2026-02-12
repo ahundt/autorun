@@ -33,11 +33,14 @@ import pytest
 ENABLE_REAL_MONEY_TESTS = os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
 # Skip entire module if flag not set
-pytestmark = pytest.mark.skipif(
-    not ENABLE_REAL_MONEY_TESTS,
-    reason="CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
-           "Set CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
-)
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        not ENABLE_REAL_MONEY_TESTS,
+        reason="CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
+               "Set CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
+    )
+]
 
 
 @pytest.fixture(scope="module")

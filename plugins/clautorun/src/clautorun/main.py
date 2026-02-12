@@ -1022,15 +1022,22 @@ def build_pretooluse_response(decision="allow", reason=""):
     - Gemini CLI: https://geminicli.com/docs/hooks/reference/
     """
     safe_reason = json.dumps(reason)[1:-1] if reason else ""
-    # When denying, set continue=false to actually block tool execution
-    should_continue = decision != "deny"
+    # PreToolUse deny must NOT set continue=false — that stops the AI entirely.
+    # Blocking handled by exit code 2 (bug #4669) and decision:"deny" (Gemini).
     return {
         # Top-level decision for Gemini CLI compatibility
         "decision": decision,
         "reason": safe_reason,
-        # Universal fields
-        "continue": should_continue,
-        "stopReason": safe_reason if not should_continue else "",
+        # Universal fields - always continue=true for PreToolUse
+        # continue=true is correct because:
+        #   - Claude Code: "continue:false stops processing entirely"
+        #     https://code.claude.com/docs/en/hooks#json-output
+        #   - Gemini CLI: "continue:false stops agent loop"
+        #     https://geminicli.com/docs/hooks/reference/
+        # We want to block the TOOL (via exit code 2 + decision:"deny")
+        # but let the AI continue running to suggest alternatives.
+        "continue": True,
+        "stopReason": "",
         "suppressOutput": False,
         "systemMessage": safe_reason,
         # Claude Code hookSpecificOutput for PreToolUse
