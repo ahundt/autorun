@@ -6,17 +6,16 @@ aliases: [ts, task-state, tasks]
 
 # Task Lifecycle Status
 
-!`python3 -c "
+!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "
 import sys
 import os
-sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/src')
 
 from clautorun.task_lifecycle import TaskLifecycle, is_enabled
 
 # Check if enabled
 if not is_enabled():
     print('Task lifecycle tracking is DISABLED.')
-    print('Run: python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable')
+    print('Run: uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable')
     sys.exit(0)
 
 # Get current session ID from environment
@@ -75,9 +74,9 @@ try:
 
     # Show storage info
     print('\\n## CLI Commands')
-    print(f'python3 \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --status {session_id}  # View from command line')
-    print(f'python3 \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --export {session_id} ./tasks.json  # Export to JSON')
-    print(f'python3 \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --clear {session_id}  # Clear this session\\'s tasks')
+    print(f'uv run --project \\${{CLAUDE_PLUGIN_ROOT}} python \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --status {session_id}  # View from command line')
+    print(f'uv run --project \\${{CLAUDE_PLUGIN_ROOT}} python \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --export {session_id} ./tasks.json  # Export to JSON')
+    print(f'uv run --project \\${{CLAUDE_PLUGIN_ROOT}} python \\${{CLAUDE_PLUGIN_ROOT}}/scripts/task_lifecycle_cli.py --clear {session_id}  # Clear this session\\'s tasks')
 
 except Exception as e:
     print(f'Error: {e}')

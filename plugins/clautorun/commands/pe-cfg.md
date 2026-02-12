@@ -1,12 +1,12 @@
 ---
 description: Configure plan export settings interactively
-allowed-tools: Bash(python3:*)
+allowed-tools: Bash(uv *)
 ---
 
 # Configure Plan Export
 
 Current configuration:
-! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py status
+! uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py status
 
 ## Configuration Options
 

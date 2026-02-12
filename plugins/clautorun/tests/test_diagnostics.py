@@ -23,11 +23,13 @@ try:
         HealthStatus,
         LogEntry,
         SystemMetric,
-        HealthCheck
+        HealthCheck,
+        PSUTIL_AVAILABLE,
     )
     DIAGNOSTICS_AVAILABLE = True
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
+    PSUTIL_AVAILABLE = False
     pytest.skip("Diagnostics not available", allow_module_level=True)
 
 
@@ -223,6 +225,11 @@ class TestSystemMonitor:
         # Collect metrics
         self.monitor.collect_metrics()
 
+        if not PSUTIL_AVAILABLE:
+            # Without psutil, collect_metrics() returns early with no metrics
+            assert len(self.monitor.metrics) == 0
+            return
+
         # Should have collected some metrics
         assert len(self.monitor.metrics) > 0
 
@@ -301,8 +308,12 @@ class TestSystemMonitor:
         self.monitor.stop_monitoring()
         assert self.monitor.monitoring is False
 
-        # Should have collected some metrics during monitoring
-        assert len(self.monitor.metrics) > 0
+        if PSUTIL_AVAILABLE:
+            # Should have collected some metrics during monitoring
+            assert len(self.monitor.metrics) > 0
+        else:
+            # Without psutil, monitoring thread runs but collect_metrics() is a no-op
+            assert len(self.monitor.metrics) == 0
 
 
 class TestHealthChecker:
@@ -423,8 +434,12 @@ class TestDiagnosticManager:
         assert self.manager.monitor is not None
         assert self.manager.health_checker is not None
 
-        # Should have default health checks registered
-        assert len(self.manager.health_checker.health_checks) >= 3
+        if PSUTIL_AVAILABLE:
+            # Should have default health checks registered (cpu, memory, disk)
+            assert len(self.manager.health_checker.health_checks) >= 3
+        else:
+            # Without psutil, no default health checks are registered
+            assert len(self.manager.health_checker.health_checks) == 0
 
     def test_manager_start_stop(self):
         """Test manager start and stop functionality"""

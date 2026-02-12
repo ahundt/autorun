@@ -1,8 +1,8 @@
 ---
 description: Reset plan export to default configuration
-allowed-tools: Bash(python3:*)
+allowed-tools: Bash(uv *)
 ---
 
 # Reset Plan Export Configuration
 
-! python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py reset
+! uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py reset

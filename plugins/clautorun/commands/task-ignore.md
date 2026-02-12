@@ -24,17 +24,16 @@ Mark a task as ignored - allows AI to stop without completing it.
 /task-ignore 7 "No longer relevant after design change"
 ```
 
-!`python3 -c "
+!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "
 import sys
 import os
-sys.path.insert(0, '${CLAUDE_PLUGIN_ROOT}/src')
 
 from clautorun.task_lifecycle import TaskLifecycle, is_enabled
 
 # Check if enabled
 if not is_enabled():
     print('Error: Task lifecycle tracking is disabled')
-    print('Run: python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable')
+    print('Run: uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable')
     sys.exit(1)
 
 # Parse arguments

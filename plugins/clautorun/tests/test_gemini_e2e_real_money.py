@@ -168,25 +168,34 @@ class TestGeminiHookEntryPoint:
     def test_hook_sessionstart_event(self):
         """Test SessionStart hook event (NO COST - direct Python call)."""
         # Set up Gemini environment
-        os.environ["GEMINI_SESSION_ID"] = "test-e2e-session"
-        os.environ["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-test"
+        env = os.environ.copy()
+        env["GEMINI_SESSION_ID"] = "test-e2e-session"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-test"
 
-        # Get hook script path
-        hook_script = (
-            Path.home() /
-            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py"
-        )
+        # Get hook script path (installed extension or source fallback)
+        candidates = [
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path(__file__).parent.parent / "hooks/hook_entry.py",
+        ]
+        hook_script = None
+        for candidate in candidates:
+            if candidate.exists():
+                hook_script = candidate
+                break
+        if hook_script is None:
+            pytest.skip(f"Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
 
-        if not hook_script.exists():
-            pytest.skip(f"Hook script not found: {hook_script}")
+        # Set plugin root for source fallback
+        plugin_root = str(Path(__file__).parent.parent)
+        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
 
-        # Run hook with no stdin (SessionStart event)
+        # Run hook with uv run (matches production hook commands)
         result = subprocess.run(
-            ["python3", str(hook_script)],
+            ["uv", "run", "--project", plugin_root, "python", str(hook_script)],
             capture_output=True,
             text=True,
-            timeout=10,
-            env=os.environ
+            timeout=15,
+            env=env,
         )
 
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
@@ -201,16 +210,26 @@ class TestGeminiHookEntryPoint:
 
     def test_hook_beforeagent_event(self):
         """Test BeforeAgent hook event (NO COST - direct Python call)."""
-        os.environ["GEMINI_SESSION_ID"] = "test-e2e-session"
-        os.environ["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-test"
+        env = os.environ.copy()
+        env["GEMINI_SESSION_ID"] = "test-e2e-session"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-test"
 
-        hook_script = (
-            Path.home() /
-            ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py"
-        )
+        # Get hook script path (installed extension or source fallback)
+        candidates = [
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path(__file__).parent.parent / "hooks/hook_entry.py",
+        ]
+        hook_script = None
+        for candidate in candidates:
+            if candidate.exists():
+                hook_script = candidate
+                break
+        if hook_script is None:
+            pytest.skip(f"Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
 
-        if not hook_script.exists():
-            pytest.skip(f"Hook script not found: {hook_script}")
+        # Set plugin root for source fallback
+        plugin_root = str(Path(__file__).parent.parent)
+        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
 
         # Simulate BeforeAgent event with /cr:st command
         stdin_data = json.dumps({
@@ -220,12 +239,12 @@ class TestGeminiHookEntryPoint:
         })
 
         result = subprocess.run(
-            ["python3", str(hook_script)],
+            ["uv", "run", "--project", plugin_root, "python", str(hook_script)],
             input=stdin_data,
             capture_output=True,
             text=True,
-            timeout=10,
-            env=os.environ
+            timeout=15,
+            env=env,
         )
 
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
