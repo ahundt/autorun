@@ -525,6 +525,12 @@ class EventContext:
             return ctx.respond("allow")
             return ctx.respond("deny", "File creation blocked")
             return ctx.respond("block", injection_prompt)  # For Stop events
+
+        Claude Code Bug #4669 Workaround:
+        ---------------------------------
+        _exit_code_2 marker signals that hook should exit with code 2 to
+        actually block the tool (JSON permissionDecision is ignored).
+        See: GitHub Issues #4669, #18312, #13744, #20946
         """
         reason_escaped = self._escape_for_json(reason) if reason else ""
 
@@ -546,7 +552,9 @@ class EventContext:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": decision,
                     "permissionDecisionReason": reason_escaped
-                }
+                },
+                # Internal marker for exit code 2 handling (workaround for bug #4669)
+                "_exit_code_2": decision == "deny",
             }
 
         # Stop/SubagentStop with "block" decision

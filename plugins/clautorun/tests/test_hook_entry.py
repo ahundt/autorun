@@ -248,7 +248,14 @@ class TestTryCliRobustness:
             "try_cli must accept stdin_data as parameter, not read stdin itself"
 
     def test_hook_rm_blocked_no_stderr(self):
-        """Full e2e: hook_entry.py blocks rm with deny on stdout, no stderr."""
+        """Full e2e: hook_entry.py blocks rm with exit code 2.
+
+        Claude Code Bug #4669 Workaround:
+        Blocked commands now exit with code 2 and write reason to stderr.
+        This is the only way to ACTUALLY block tools in Claude Code.
+        Exit code 2 + stderr message is shown to Claude, allowing it to
+        understand why the command was blocked and try alternatives.
+        """
         env = os.environ.copy()
         env['CLAUDE_PLUGIN_ROOT'] = str(PLUGIN_ROOT)
         payload = json.dumps({
@@ -266,7 +273,10 @@ class TestTryCliRobustness:
             timeout=10
         )
 
-        assert result.returncode == 0, f"Exit {result.returncode}"
+        # Blocked commands MUST exit with code 2 (Claude Code bug #4669 workaround)
+        # Exit code 2 = blocking error, Claude Code shows stderr to user
+        assert result.returncode == 2, \
+            f"Blocked rm should exit with code 2, got: {result.returncode}"
 
         # Must have valid JSON on stdout
         try:
@@ -284,19 +294,12 @@ class TestTryCliRobustness:
         assert output.get("decision") == "deny", \
             f"rm should get decision=deny but got: {output.get('decision')}"
 
-        # stderr MUST be empty — any stderr causes Claude Code "hook error"
-        # Filter out known-benign UV build lines
-        stderr_lines = [
-            line for line in result.stderr.strip().splitlines()
-            if line.strip() and not any(
-                line.strip().startswith(p) for p in
-                ("Building", "Built", "Installed", "Resolved", "Prepared", "Downloading")
-            )
-        ]
-        assert len(stderr_lines) == 0, (
-            f"stderr must be empty (Claude Code treats any stderr as 'hook error' → fail-open).\n"
-            f"stderr content: {result.stderr[:500]}"
-        )
+        # stderr SHOULD contain the denial reason (exit code 2 shows stderr to Claude)
+        # This is the workaround for bug #4669 - stderr is shown, stdout JSON ignored
+        assert result.stderr, \
+            f"Blocked command should have stderr message for exit code 2. stderr was empty."
+        assert "trash" in result.stderr.lower() or "blocked" in result.stderr.lower(), \
+            f"stderr should contain helpful message. Got: {result.stderr[:200]}"
 
 
 # =============================================================================
