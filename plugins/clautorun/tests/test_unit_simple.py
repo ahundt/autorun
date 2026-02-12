@@ -382,3 +382,156 @@ class TestSecurityFunctions:
         for pattern in invalid_patterns:
             assert is_safe_regex_pattern(pattern) is False, \
                 f"Invalid pattern should be rejected: {pattern}"
+
+
+class TestCodeQuality:
+    """Test code quality requirements - no stderr/stdout pollution"""
+
+    @pytest.mark.unit
+    def test_no_stderr_writes_in_hook_path(self):
+        """Test that hook execution path has zero stderr writes.
+
+        Hook execution path includes:
+        - hooks/hook_entry.py
+        - src/clautorun/client.py
+        - src/clautorun/core.py
+        - src/clautorun/plugins.py
+        - src/clautorun/integrations.py
+        - src/clautorun/command_detection.py
+        - src/clautorun/config.py
+        - src/clautorun/session_manager.py
+
+        Claude Code treats ANY stderr as "hook error" and silently ignores
+        hook JSON responses, disabling all safety features.
+        """
+        import subprocess
+        from pathlib import Path
+
+        src_dir = Path(__file__).parent.parent / "src" / "clautorun"
+        hook_path_files = [
+            "client.py",
+            "core.py",
+            "plugins.py",
+            "integrations.py",
+            "command_detection.py",
+            "config.py",
+            "session_manager.py",
+        ]
+
+        for filename in hook_path_files:
+            filepath = src_dir / filename
+            if not filepath.exists():
+                continue
+
+            # Search for stderr writes
+            result = subprocess.run(
+                ["grep", "-n", "file=sys.stderr", str(filepath)],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode == 0:  # grep found matches
+                violations = result.stdout.strip().split('\n')
+                pytest.fail(
+                    f"\n{'='*70}\n"
+                    f"CRITICAL: Found {len(violations)} stderr write(s) in {filename}\n"
+                    f"{'='*70}\n"
+                    f"Claude Code hook requirement: ZERO stderr output\n"
+                    f"Impact: Hook errors, silent safety feature failures\n\n"
+                    f"Violations found:\n{result.stdout}\n"
+                    f"{'='*70}\n"
+                    f"FIX: Replace with logging_utils.get_logger() or remove\n"
+                    f"{'='*70}"
+                )
+
+    @pytest.mark.unit
+    def test_no_default_logging_in_hook_path(self):
+        """Test that hook path has no logging.basicConfig without handlers.
+
+        Python's logging defaults to stderr when no handlers specified.
+        This breaks Claude Code hooks.
+        """
+        import subprocess
+        from pathlib import Path
+
+        src_dir = Path(__file__).parent.parent / "src" / "clautorun"
+        hook_path_files = [
+            "client.py",
+            "core.py",
+            "plugins.py",
+            "integrations.py",
+            "command_detection.py",
+            "session_manager.py",
+        ]
+
+        violations = []
+        for filename in hook_path_files:
+            filepath = src_dir / filename
+            if not filepath.exists():
+                continue
+
+            content = filepath.read_text()
+            lines = content.split('\n')
+
+            for i, line in enumerate(lines, 1):
+                # Check for logging.basicConfig without explicit handlers or filename
+                # Both handlers= and filename= are safe (create file handlers)
+                # Missing both means default stderr handler
+                if 'logging.basicConfig' in line:
+                    # Get context around this line (±10 lines)
+                    start_idx = max(0, i - 10)
+                    end_idx = min(len(lines), i + 10)
+                    context = '\n'.join(lines[start_idx:end_idx])
+
+                    # Check if handlers= or filename= appears in context
+                    if 'handlers=' not in context and 'filename=' not in context:
+                        violations.append(f"{filename}:{i}: {line.strip()}")
+
+        if violations:
+            pytest.fail(
+                f"\n{'='*70}\n"
+                f"CRITICAL: Found logging.basicConfig without handlers\n"
+                f"{'='*70}\n"
+                f"Python logging defaults to stderr when no handlers specified\n"
+                f"Impact: Hook errors, silent safety feature failures\n\n"
+                f"Violations:\n" + "\n".join(f"  {v}" for v in violations) + "\n"
+                f"{'='*70}\n"
+                f"FIX: Use handlers=[logging.FileHandler(...)] or handlers=[logging.NullHandler()]\n"
+                f"See: logging_utils.py for correct pattern\n"
+                f"{'='*70}"
+            )
+
+    @pytest.mark.unit
+    def test_no_print_to_stderr_anywhere(self):
+        """Test that NO Python files have print(..., file=sys.stderr).
+
+        This is a global check across all source files to prevent
+        accidental introduction of stderr output.
+        """
+        import subprocess
+        from pathlib import Path
+
+        src_dir = Path(__file__).parent.parent / "src" / "clautorun"
+
+        # Search all Python files recursively
+        result = subprocess.run(
+            ["grep", "-r", "-n", "file=sys.stderr", "--include=*.py", str(src_dir)],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:  # grep found matches
+            violations = result.stdout.strip().split('\n')
+            pytest.fail(
+                f"\n{'='*70}\n"
+                f"CRITICAL: Found {len(violations)} file=sys.stderr usage(s)\n"
+                f"{'='*70}\n"
+                f"Requirement: ZERO stderr output in entire codebase\n"
+                f"Impact: Breaks Claude Code hooks, disables safety features\n\n"
+                f"Files with violations:\n{result.stdout}\n"
+                f"{'='*70}\n"
+                f"FIX: Use logging_utils.get_logger() or print() without file= arg\n"
+                f"CLI error messages: Use print() to stdout (not stderr)\n"
+                f"Diagnostics: Use logger.error/info/debug (file-only)\n"
+                f"{'='*70}"
+            )
