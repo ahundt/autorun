@@ -112,6 +112,14 @@ uv run python -m plugins.clautorun.src.clautorun.install --install --force
 
 # Option 2: pip fallback (if UV not available)
 pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+
+# REQUIRED: Install as UV tool for global CLI availability
+# This makes 'clautorun' and 'claude-session-tools' commands globally available
+# which are needed for proper daemon operation and session management
+cd plugins/clautorun && uv tool install --force --editable .
+
+# Verify installation
+clautorun --status  # Verifies UV tool installation works
 ```
 
 **Install UV (if needed):**

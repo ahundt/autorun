@@ -526,11 +526,18 @@ class EventContext:
             return ctx.respond("deny", "File creation blocked")
             return ctx.respond("block", injection_prompt)  # For Stop events
 
-        Claude Code Bug #4669 Workaround:
-        ---------------------------------
-        _exit_code_2 marker signals that hook should exit with code 2 to
-        actually block the tool (JSON permissionDecision is ignored).
-        See: GitHub Issues #4669, #18312, #13744, #20946
+        Exit Code Semantics (CORRECTED):
+        --------------------------------
+        Exit code 0 = hook succeeded (even when denying tool access)
+        Exit code 2 = blocking ERROR causing "hook error" in UI
+        JSON permissionDecision: "deny" blocks the tool
+        JSON systemMessage shows suggestion
+        JSON continue: true lets Claude continue
+
+        References:
+        - GitHub Issues: #4669, #18312, #13744, #20946
+        - Hook docs: https://code.claude.com/docs/en/hooks
+        - CLAUDE.md: Hook Error Prevention section
         """
         reason_escaped = self._escape_for_json(reason) if reason else ""
 
@@ -538,9 +545,8 @@ class EventContext:
         if self._event == "PreToolUse":
             # PreToolUse deny must NOT set continue=false — that stops the AI entirely.
             # Blocking is handled by:
-            #   - Exit code 2 (Claude Code bug #4669 workaround)
+            #   - permissionDecision:"deny" (Claude Code - correct behavior)
             #   - decision:"deny" (Gemini CLI BeforeTool)
-            #   - permissionDecision:"deny" (Claude Code, when bug #4669 is fixed)
             # Per docs: continue=false "stops processing entirely, takes precedence
             # over any event-specific decision fields" — NOT what we want.
             return {
@@ -553,7 +559,7 @@ class EventContext:
                 #     https://code.claude.com/docs/en/hooks#json-output
                 #   - Gemini CLI: "continue:false stops agent loop"
                 #     https://geminicli.com/docs/hooks/reference/
-                # We want to block the TOOL (via exit code 2 + decision:"deny")
+                # We want to block the TOOL (via permissionDecision:"deny")
                 # but let the AI continue running to suggest alternatives.
                 "continue": True,
                 "stopReason": "",
@@ -565,8 +571,6 @@ class EventContext:
                     "permissionDecision": decision,
                     "permissionDecisionReason": reason_escaped
                 },
-                # Internal marker for exit code 2 handling (workaround for bug #4669)
-                "_exit_code_2": decision == "deny",
             }
 
         # Stop/SubagentStop with "block" decision

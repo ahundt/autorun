@@ -27,14 +27,15 @@ uv run python -m plugins.clautorun.src.clautorun.install --install --force
 # Option 2: pip fallback (if UV not available)
 pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
 
-# Optional: Install as UV tool for global CLI availability (works with both Gemini and Claude)
-cd plugins/clautorun && uv tool install --force --editable .
-# This makes 'clautorun' and 'claude-session-tools' globally available
+# REQUIRED: Install as UV tool for global CLI availability (works with both Gemini and Claude)
+# This makes 'clautorun' and 'claude-session-tools' commands globally available
+# which are needed for proper daemon operation and session management
 # Useful for: clautorun --restart-daemon, clautorun --install, clautorun --status, etc.
+cd plugins/clautorun && uv tool install --force --editable .
 
-# Verify
+# Verify installation
 gemini extensions list    # Should show: clautorun-workspace@0.8.0
-clautorun --status        # If installed as UV tool
+clautorun --status        # Verifies UV tool installation works
 ```
 
 **Install UV (if needed):**
