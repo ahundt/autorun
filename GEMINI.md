@@ -13,7 +13,7 @@
 gemini extensions install https://github.com/ahundt/clautorun.git
 
 # Verify
-gemini extensions list  # Should show: clautorun-workspace@0.8.0
+gemini extensions list  # Should show: cr@0.8.0, pdf-extractor@0.8.0
 ```
 
 ### From Local Clone (Development)
@@ -34,7 +34,7 @@ pip install -e . && python -m plugins.clautorun.src.clautorun.install --install 
 cd plugins/clautorun && uv tool install --force --editable .
 
 # Verify installation
-gemini extensions list    # Should show: clautorun-workspace@0.8.0
+gemini extensions list    # Should show: cr@0.8.0, pdf-extractor@0.8.0
 clautorun --status        # Verifies UV tool installation works
 ```
 
@@ -323,7 +323,8 @@ claude plugin list  # Verify: cr@0.8.0, pdf-extractor@0.8.0
 ```bash
 cd /path/to/clautorun
 gemini extensions install .
-gemini extensions list  # Verify: clautorun-workspace@0.8.0
+gemini extensions list # Verify: cr@0.8.0, pdf-extractor@0.8.0
+
 ```
 
 ### Verification

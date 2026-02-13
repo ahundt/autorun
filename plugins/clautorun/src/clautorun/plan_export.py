@@ -911,79 +911,40 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 
 
 @app.on("SessionStart")
-
-
 def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
-
-
     """Recover plans from Option 1 (fresh context) on session start.
 
-
-
-
-
     CRITICAL: Runs in NEW session after Option 1 clears context.
-
-
     Uses GLOBAL_SESSION_ID to read active_plans from OLD session.
-
-
     Daemon integration: Shares ThreadSafeDB cache across sessions.
-
-
     """
-
-
     # Note: ctx.payload doesn't exist - EventContext uses individual properties (core.py:397-419)
-
-
     logger.info(f"SessionStart handler called (event: {ctx.event})")
 
-
-
-
-
     try:
-
-
         config = PlanExportConfig.load()
-
-
         if not config.enabled:
-
-
             return None
 
-
         exporter = PlanExport(ctx, config)
-
+        recovered_count = 0
+        last_msg = ""
 
         for plan in exporter.get_unexported():
-
-
             result = exporter.export(plan)
+            if result["success"]:
+                recovered_count += 1
+                last_msg = result['message']
 
-
-            if result["success"] and config.notify_claude:
-
-
-                return ctx.respond("allow", f"📋 Recovered: {result['message']} (from fresh context)")
-
+        if recovered_count > 0:
+            msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context): {last_msg}"
+            return ctx.respond("allow", msg)
 
     except SessionTimeoutError as e:
-
-
         logger.warning(f"SessionStart plan recovery timeout: {e}")
-
-
         return None  # Lock timeout, skip silently
-
-
     except Exception as e:
-
-
         logger.error(f"recover_unexported_plans error: {e}", exc_info=True)
-
 
     return None
 

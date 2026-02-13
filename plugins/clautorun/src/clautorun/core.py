@@ -518,8 +518,11 @@ class EventContext:
         - Claude Code reads: hookSpecificOutput.permissionDecision
         - Gemini CLI reads: top-level decision field
 
+        Ensures both CLIs are first-class citizens by mapping decisions
+        to their respective capabilities (e.g., 'ask' for Claude, 'deny' for Gemini).
+
         Args:
-            decision: One of "allow", "deny", "block"
+            decision: One of "allow", "deny", "ask", "block"
             reason: Message to include in response
 
         Returns:
@@ -533,16 +536,25 @@ class EventContext:
         Exit Code Semantics (CORRECTED):
         --------------------------------
         Exit code 0 = hook succeeded (even when denying tool access)
-        Exit code 2 = blocking ERROR causing "hook error" in UI
+        Exit code 2 = blocking ERROR causing "hook error" in UI (Claude Code only)
         JSON permissionDecision: "deny" blocks the tool
         JSON systemMessage shows suggestion
-        JSON continue: true lets Claude continue
+        JSON continue: true lets AI continue
 
         References:
-        - GitHub Issues: #4669, #18312, #13744, #20946
+        - GitHub Issues: #4669, #18312, #13744, #20946, #10964
         - Hook docs: https://code.claude.com/docs/en/hooks
         - CLAUDE.md: Hook Error Prevention section
         """
+        from .config import detect_cli_type
+        cli_type = detect_cli_type()
+
+        # Map 'ask' to 'deny' for Gemini CLI (it doesn't support the 'ask' prompt)
+        # This keeps both CLIs as first-class citizens by using the best available
+        # blocking mechanism for each.
+        if decision == "ask" and cli_type == "gemini":
+            decision = "deny"
+
         reason_escaped = self._escape_for_json(reason) if reason else ""
 
         # PreToolUse needs hookSpecificOutput + top-level decision

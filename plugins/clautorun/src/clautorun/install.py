@@ -1585,8 +1585,10 @@ def show_status() -> int:
 
         result = run_cmd(["gemini", "extensions", "list"])
         if result.ok:
-            workspace = "clautorun-workspace" in result.output
-            print(f"  clautorun-workspace: {'✓ installed' if workspace else '✗ not installed'}")
+            # Check for each plugin separately (new Gemini architecture)
+            for plugin in ["cr", "pdf-extractor"]:
+                is_installed = plugin in result.output
+                print(f"  {plugin}: {'✓ installed' if is_installed else '✗ not installed'}")
 
             conductor = "conductor" in result.output
             print(f"  conductor: {'✓ installed' if conductor else '✗ not installed (optional)'}")
