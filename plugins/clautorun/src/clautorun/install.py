@@ -572,7 +572,19 @@ def _parse_selection(selection: str) -> list[str]:
     Returns:
         List of validated plugin names
     """
+    # Dynamic discovery for "all"
     if not selection or selection == "all":
+        try:
+            root = find_marketplace_root()
+            manifest = root / ".claude-plugin" / "marketplace.json"
+            if manifest.exists():
+                import json
+                with open(manifest) as f:
+                    data = json.load(f)
+                    return [p["name"] for p in data.get("plugins", [])]
+        except Exception as e:
+            logger.warning(f"Dynamic marketplace discovery failed: {e}")
+            # Fallback to hardcoded list if discovery fails
         return PluginName.all()
 
     seen: set[str] = set()
@@ -873,14 +885,16 @@ def _substitute_paths(plugin_dir: Path) -> None:
 
 def _install_for_gemini(
     marketplace_root: Path,
+    plugins: list[str],
     force: bool = False,
 ) -> tuple[bool, str]:
-    """Install each plugin separately for Gemini CLI.
+    """Install selected plugins for Gemini CLI.
 
     Note: Gemini treats each plugin as a separate extension, not a workspace.
 
     Args:
         marketplace_root: Path to marketplace root directory (plugin directory)
+        plugins: List of plugin names to install (e.g., ["clautorun", "pdf-extractor"])
         force: Force reinstall even if same version
 
     Returns:
@@ -897,18 +911,21 @@ def _install_for_gemini(
         return (False, "~/.gemini/ not found")
 
     # Find all plugins in the marketplace
-    # marketplace_root: /Users/user/.claude/clautorun/plugins/clautorun
-    # plugins_dir: /Users/user/.claude/clautorun/plugins
     plugins_dir = marketplace_root.parent
 
-    # Find all plugin directories (must have gemini-extension.json)
+    # Find directories for requested plugins (must have gemini-extension.json)
     plugins_to_install = []
-    for plugin_dir in plugins_dir.iterdir():
+    for name in plugins:
+        plugin_dir = plugins_dir / name
         if plugin_dir.is_dir() and (plugin_dir / "gemini-extension.json").exists():
             plugins_to_install.append(plugin_dir)
+        elif name == "clautorun" and marketplace_root.name == "clautorun":
+            # Handle case where marketplace_root is the plugin directory
+            if (marketplace_root / "gemini-extension.json").exists():
+                plugins_to_install.append(marketplace_root)
 
     if not plugins_to_install:
-        return (False, "No plugins found with gemini-extension.json")
+        return (False, f"No plugins found matching selection: {', '.join(plugins)}")
 
     print()
     print(f"Installing {len(plugins_to_install)} plugin(s) for Gemini CLI...")
@@ -1389,7 +1406,7 @@ def install_plugins(
 
     # Install for Gemini CLI
     if "gemini" in target_clis:
-        gemini_success, gemini_msg = _install_for_gemini(marketplace_root, force)
+        gemini_success, gemini_msg = _install_for_gemini(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and gemini_success
 
         # Install Conductor if requested and Gemini install succeeded
