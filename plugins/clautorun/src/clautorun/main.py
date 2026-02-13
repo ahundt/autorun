@@ -1024,7 +1024,21 @@ def build_pretooluse_response(decision="allow", reason=""):
     Returns a response compatible with BOTH Claude Code and Gemini CLI:
     - Claude Code reads: hookSpecificOutput.permissionDecision (allow/deny/ask)
     - Gemini CLI reads: top-level decision (allow/deny/block)
-    - continue=true lets Claude continue (suggest alternatives when denying tool)
+    - permissionDecisionReason is displayed to the user (not to Claude)
+
+    Decision Values:
+    - "allow": Tool executes immediately, no prompt
+    - "ask": Shows confirmation prompt to user with permissionDecisionReason
+    - "deny": Exit code 2 workaround (blocks command but doesn't show reason)
+
+    IMPORTANT: Claude Code Bugs #4669 and #10964
+    ---------------------------------------------
+    Bug #4669: permissionDecision: "deny" in JSON is ignored
+    Bug #10964: Exit code 2 stderr goes to Claude, not to user
+
+    Solution for command blocking: Use decision="ask" instead of "deny".
+    This shows a confirmation prompt to the user with the reason/suggestion,
+    allowing them to see safe alternatives (e.g., "Use 'trash' instead...").
 
     IMPORTANT: Tool Denial vs Hook Success
     ---------------------------------------
@@ -1033,7 +1047,7 @@ def build_pretooluse_response(decision="allow", reason=""):
     Exit code 0 means "hook worked correctly", NOT "tool allowed".
     Exit code 2 would be a blocking ERROR causing "hook error".
 
-    GitHub Issues: #4669, #18312, #13744, #20946
+    GitHub Issues: #4669, #18312, #13744, #20946, #10964
 
     References:
     - Claude Code hooks: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
@@ -1042,22 +1056,16 @@ def build_pretooluse_response(decision="allow", reason=""):
     - Gemini CLI: https://geminicli.com/docs/hooks/reference/
     """
     safe_reason = json.dumps(reason)[1:-1] if reason else ""
-    # PreToolUse deny must NOT set continue=false — that stops the AI entirely.
-    # Blocking handled by permissionDecision:"deny" (Claude/Gemini).
+    # For "deny", use exit code 2 to actually block (bug #4669 workaround)
+    # For "ask", let Claude Code handle the user prompt
+    should_continue = decision != "deny"
     return {
         # Top-level decision for Gemini CLI compatibility
         "decision": decision,
         "reason": safe_reason,
-        # Universal fields - always continue=true for PreToolUse
-        # continue=true is correct because:
-        #   - Claude Code: "continue:false stops processing entirely"
-        #     https://code.claude.com/docs/en/hooks#json-output
-        #   - Gemini CLI: "continue:false stops agent loop"
-        #     https://geminicli.com/docs/hooks/reference/
-        # We want to block the TOOL (via permissionDecision:"deny")
-        # but let the AI continue running to suggest alternatives.
-        "continue": True,
-        "stopReason": "",
+        # Universal fields
+        "continue": should_continue,
+        "stopReason": safe_reason if not should_continue else "",
         "suppressOutput": False,
         "systemMessage": safe_reason,
         # Claude Code hookSpecificOutput for PreToolUse
@@ -1066,6 +1074,9 @@ def build_pretooluse_response(decision="allow", reason=""):
             "permissionDecision": decision,
             "permissionDecisionReason": safe_reason,
         },
+        # Internal marker for exit code 2 handling (not in JSON output)
+        # Only use exit code 2 for "deny" decision
+        "_exit_code_2": decision == "deny",
     }
 
 

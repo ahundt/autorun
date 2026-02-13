@@ -326,6 +326,7 @@ def find_marketplace_root() -> Path:
     # Works for: source repo, Gemini extensions, Claude cache, editable installs
     # This ensures Gemini/Claude use their own copies, not jumping to dev repo
     current = Path(__file__).resolve()
+    root = None
     for parent in [current, *current.parents]:
         marker = parent / ".claude-plugin" / "marketplace.json"
         if marker.exists():
@@ -334,10 +335,12 @@ def find_marketplace_root() -> Path:
             if "backup" in parent_str or "reference" in parent_str:
                 # Only use backup/reference if we're actually running FROM them
                 if str(Path(__file__).resolve()).startswith(str(parent)):
-                    return parent
+                    root = parent
                 # Otherwise skip and keep searching
                 continue
-            return parent
+            root = parent
+    if root:
+        return root
 
     # Strategy 2: Check if this is an editable install - look for direct_url.json
     # Works for: uv pip install -e . (points back to source)
@@ -1526,7 +1529,11 @@ def show_status() -> int:
     # UV environment check
     try:
         marketplace_root = find_marketplace_root()
-        plugin_dir = marketplace_root / "plugins" / "clautorun"
+        # Ensure we don't double-append plugins/clautorun
+        if (marketplace_root / "pyproject.toml").exists():
+            plugin_dir = marketplace_root
+        else:
+            plugin_dir = marketplace_root / "plugins" / "clautorun"
         uv_result = _check_uv_env(plugin_dir)
         print(f"  UV environment: {'OK' if uv_result.ok else uv_result.output}")
     except FileNotFoundError:

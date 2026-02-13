@@ -225,7 +225,7 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
             timeout=HOOK_TIMEOUT,
         )
 
-        # Debug logging (ALWAYS enabled)
+        # Debug logging (ALWAYS enabled to diagnose hook issues)
         try:
             from pathlib import Path as DebugPath
             debug_log = DebugPath.home() / ".clautorun" / "hook_entry_debug.log"
@@ -259,8 +259,16 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         if not result.stdout:
             return False
 
-        # Print JSON to stdout (required for Claude Code)
-        print(result.stdout, end="")
+        # Proposed: Extract only the JSON block to strip any noise/warnings
+        import re
+        # Look for the last JSON-like block in the output
+        json_match = re.findall(r'(\{.*?\})', result.stdout, re.DOTALL)
+        if json_match:
+            # Use the last match (allows for leading logs but only one response)
+            print(json_match[-1], end="")
+        else:
+            # Fallback to raw output if no JSON found
+            print(result.stdout, end="")
 
         # Pass through stderr if present (Bug #4669: stderr → AI for exit 2)
         if result.stderr:

@@ -129,12 +129,12 @@ def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
     if policy == "SEARCH":
         if ctx.file_exists:
             return None
-        return ctx.deny(CONFIG["policy_blocked"]["SEARCH"])
+        return ctx.ask(CONFIG["policy_blocked"]["SEARCH"])
 
     if policy == "JUSTIFY":
         if ctx.file_exists or ctx.has_justification:
             return None
-        return ctx.deny(CONFIG["policy_blocked"]["JUSTIFY"])
+        return ctx.ask(CONFIG["policy_blocked"]["JUSTIFY"])
 
     return None
 
@@ -158,7 +158,7 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 
     # First check: Stage 3 message must be in transcript
     if CONFIG["stage3_message"] not in transcript:
-        return ctx.deny(
+        return ctx.ask(
             f"Cannot exit plan mode yet. Complete plan verification first.\n\n"
             f"Current requirement: Output **{CONFIG['stage3_message']}** when Stage 3 is complete.\n\n"
             f"Continue with plan verification using the three-stage system:\n"
@@ -170,7 +170,7 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     # Second check: Current autorun session must have actually completed Stage 2
     # STAGE_2_COMPLETED means AI output stage2_message and countdown is complete
     if stage != EventContext.STAGE_2_COMPLETED:
-        return ctx.deny(
+        return ctx.ask(
             f"Stage 3 not reached in current autorun session.\n\n"
             f"Current stage: {stage} (expected: {EventContext.STAGE_2_COMPLETED})\n\n"
             f"The stage3_message was found in transcript, but current session hasn't progressed to Stage 3.\n"
@@ -465,15 +465,19 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if not cmd:
         return None
 
+    # Centralized prefix check (DRY): Internal clautorun commands are always allowed
+    if cmd.strip().startswith("/cr:"):
+        return ctx.allow()
+
     # Check session blocks first (highest priority)
     for b in ScopeAccessor(ctx, "session").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:ok {b['pattern']}")
+            return ctx.ask(f"{b['suggestion']}\n\nTo allow: /cr:ok {b['pattern']}")
 
     # Then global blocks
     for b in ScopeAccessor(ctx, "global").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:globalok {b['pattern']}")
+            return ctx.ask(f"{b['suggestion']}\n\nTo allow: /cr:globalok {b['pattern']}")
 
     # User files + Python defaults (sorted by specificity) - FIX Bug 2
     try:
@@ -534,7 +538,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             return ctx.respond("allow", msg)
                         else:
                             # Block command
-                            return ctx.deny(msg)
+                            return ctx.ask(msg)
                 except Exception as e:
                     logger.warning(f"Pattern match error for '{pattern}': {e}")
                     continue

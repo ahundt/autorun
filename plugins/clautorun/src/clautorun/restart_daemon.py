@@ -402,7 +402,14 @@ def restart_daemon() -> int:
             traceback.print_exc()
             return 1
 
-        time.sleep(0.5)  # Let daemon initialize
+        # Poll for socket readiness (designs-intended indicator)
+        start = time.time()
+        ready = False
+        while time.time() - start < 3.0:
+            if is_daemon_responding():
+                ready = True
+                break
+            time.sleep(0.1)
 
         # Step 5: Verify new daemon started
         new_pid = get_daemon_pid()
@@ -410,8 +417,11 @@ def restart_daemon() -> int:
             if new_pid == pid:
                 print(f"  ⚠️ Same PID {new_pid} (may not have restarted)")
                 return 1
+            elif not ready:
+                print("  ✗ ERROR: Daemon started but not responding to socket")
+                return 1
             else:
-                print(f"  ✓ New daemon started (PID {new_pid})")
+                print(f"  ✓ New daemon started (PID {new_pid}) and responding")
         else:
             print("  ✗ ERROR: Daemon did not start")
             return 1
