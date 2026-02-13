@@ -424,25 +424,30 @@ class TestCodeQuality:
                 continue
 
             # Search for stderr writes
+            # EXCEPTION: print(reason, file=sys.stderr) is ALLOWED for exit code 2 workaround (Bug #4669)
             result = subprocess.run(
                 ["grep", "-n", "file=sys.stderr", str(filepath)],
                 capture_output=True,
                 text=True
             )
-
+    
             if result.returncode == 0:  # grep found matches
-                violations = result.stdout.strip().split('\n')
-                pytest.fail(
-                    f"\n{'='*70}\n"
-                    f"CRITICAL: Found {len(violations)} stderr write(s) in {filename}\n"
-                    f"{'='*70}\n"
-                    f"Claude Code hook requirement: ZERO stderr output\n"
-                    f"Impact: Hook errors, silent safety feature failures\n\n"
-                    f"Violations found:\n{result.stdout}\n"
-                    f"{'='*70}\n"
-                    f"FIX: Replace with logging_utils.get_logger() or remove\n"
-                    f"{'='*70}"
-                )
+                # Filter out the intentional workaround
+                violations = [v for v in result.stdout.strip().split('\n') 
+                             if "print(reason, file=sys.stderr)" not in v]
+                
+                if violations:
+                    pytest.fail(
+                        f"\n{'='*70}\n"
+                        f"CRITICAL: Found {len(violations)} stderr write(s) in {filename}\n"
+                        f"{'='*70}\n"
+                        f"Claude Code hook requirement: ZERO stderr output\n"
+                        f"Impact: Hook errors, silent safety feature failures\n\n"
+                        f"Violations found:\n" + "\n".join(violations) + "\n"
+                        f"{'='*70}\n"
+                        f"FIX: Replace with logging_utils.get_logger() or remove\n"
+                        f"{'='*70}"
+                    )
 
     @pytest.mark.unit
     def test_no_default_logging_in_hook_path(self):
@@ -521,17 +526,23 @@ class TestCodeQuality:
         )
 
         if result.returncode == 0:  # grep found matches
-            violations = result.stdout.strip().split('\n')
-            pytest.fail(
-                f"\n{'='*70}\n"
-                f"CRITICAL: Found {len(violations)} file=sys.stderr usage(s)\n"
-                f"{'='*70}\n"
-                f"Requirement: ZERO stderr output in entire codebase\n"
-                f"Impact: Breaks Claude Code hooks, disables safety features\n\n"
-                f"Files with violations:\n{result.stdout}\n"
-                f"{'='*70}\n"
-                f"FIX: Use logging_utils.get_logger() or print() without file= arg\n"
-                f"CLI error messages: Use print() to stdout (not stderr)\n"
-                f"Diagnostics: Use logger.error/info/debug (file-only)\n"
-                f"{'='*70}"
-            )
+            # EXCEPTION: print(reason, file=sys.stderr) is ALLOWED for exit code 2 workaround (Bug #4669)
+            violations = [v for v in result.stdout.strip().split('\n')
+                         if "print(reason, file=sys.stderr)" not in v]
+            
+            if violations:
+                pytest.fail(
+                    f"\n{'='*70}\n"
+                    f"CRITICAL: Found {len(violations)} file=sys.stderr usage(s)\n"
+                    f"{'='*70}\n"
+                    f"Requirement: ZERO stderr output in entire codebase\n"
+                    f"Impact: Breaks Claude Code hooks, disables safety features\n\n"
+                    f"Files with violations:\n" + "\n".join(violations) + "\n"
+                    f"{'='*70}\n"
+                    f"FIX: Use logging_utils.get_logger() or print() without file= arg\n"
+                    f"CLI error messages: Use print() to stdout (not stderr)\n"
+                    f"Diagnostics: Use logger.error/info/debug (file-only)\n"
+                    f"{'='*70}"
+                )
+
+        

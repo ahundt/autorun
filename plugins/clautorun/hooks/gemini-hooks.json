@@ -6,8 +6,8 @@
         "hooks": [{
           "name": "clautorun-init",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
-          "timeout": 10000
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
         }]
       }
     ],
@@ -17,30 +17,41 @@
         "hooks": [{
           "name": "clautorun-command",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
-          "timeout": 10000
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
         }]
       }
     ],
     "BeforeTool": [
       {
-        "matcher": "write_file|run_shell_command|replace",
+        "matcher": "write_file|run_shell_command|replace|read_file|glob|grep_search",
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
-          "timeout": 10000
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "AUTORUN|/cr:",
+        "hooks": [{
+          "name": "clautorun-afteragent",
+          "type": "command",
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
         }]
       }
     ],
     "AfterTool": [
       {
-        "matcher": "write_file|replace",
+        "matcher": "write_file|replace|read_file",
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
-          "timeout": 10000
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
         }]
       },
       {
@@ -48,8 +59,8 @@
         "hooks": [{
           "name": "clautorun-posttool-task",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
-          "timeout": 10000
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
         }]
       }
     ],
@@ -58,8 +69,8 @@
         "hooks": [{
           "name": "clautorun-cleanup",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
-          "timeout": 10000
+          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
         }]
       }
     ]

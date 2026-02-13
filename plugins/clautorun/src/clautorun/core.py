@@ -89,6 +89,7 @@ GEMINI_EVENT_MAP = {
     "BeforeTool": "PreToolUse",
     "AfterTool": "PostToolUse",
     "BeforeAgent": "UserPromptSubmit",
+    "AfterAgent": "Stop",
     "SessionStart": "SessionStart",
     "SessionEnd": "SessionEnd",
 }
@@ -628,6 +629,9 @@ class EventContext:
         # =====================================================================
         # PATHWAY 1: PreToolUse (Permission Decisions)
         # =====================================================================
+        # =====================================================================
+        # PATHWAY 1: PreToolUse (Permission Decisions)
+        # =====================================================================
         if self._event == "PreToolUse":
             # Claude Code PreToolUse Schema:
             # - top-level 'decision': "approve" | "block"
@@ -635,10 +639,14 @@ class EventContext:
             # - hookSpecificOutput: { permissionDecision, permissionDecisionReason }
             top_decision = "block" if decision == "deny" else "approve"
             
+            # For Gemini, the top-level 'decision' should be 'allow' or 'deny'
+            if cli_type == "gemini":
+                top_decision = decision
+
             # To avoid triple-printing in the UI, we only provide the reason 
             # in hookSpecificOutput. Claude will also show stderr for exit 2.
             is_deny = decision == "deny"
-            return {
+            resp = {
                 "decision": top_decision,
                 "permissionDecision": decision,
                 "reason": "" if is_deny else msg_reason,
@@ -653,6 +661,7 @@ class EventContext:
                     "permissionDecisionReason": msg_reason
                 },
             }
+            return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # PATHWAY 2: UserPromptSubmit & PostToolUse (Context Injection)
@@ -661,7 +670,7 @@ class EventContext:
             # Claude Code UserPromptSubmit/PostToolUse Schema:
             # - top-level 'decision': "approve"
             # - hookSpecificOutput: { additionalContext }
-            return {
+            resp = {
                 "decision": "approve",
                 "reason": msg_reason,
                 "continue": True,
@@ -674,6 +683,7 @@ class EventContext:
                     "additionalContext": msg_reason
                 },
             }
+            return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # PATHWAY 3: Stop & SubagentStop (Stop Prevention)
@@ -683,20 +693,25 @@ class EventContext:
             # - MUST NOT contain 'decision' or 'reason' for standard allow
             # - ONLY supports 'continue', 'stopReason', 'suppressOutput', 'systemMessage'
             if decision == "block":
-                return {
+                # For Gemini, 'block' decision must be 'deny' to trigger retry
+                actual_decision = "deny" if cli_type == "gemini" else "block"
+                resp = {
                     "continue": True,  # Keep AI working
-                    "decision": "block",
+                    "decision": actual_decision,
                     "reason": msg_reason,
                     "stopReason": "",
                     "suppressOutput": False,
                     "systemMessage": msg_reason,
                 }
-            return {
+                return validate_hook_response(self._event, resp, cli_type=cli_type)
+            
+            resp = {
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
                 "systemMessage": "",
             }
+            return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # PATHWAY 4: SessionStart (Startup Injections)
@@ -704,12 +719,13 @@ class EventContext:
         if self._event == "SessionStart":
             # Claude Code SessionStart Schema:
             # - MUST NOT contain 'decision', 'reason', or 'hookSpecificOutput'
-            return {
+            resp = {
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
                 "systemMessage": msg_reason,
             }
+            return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # FALLBACK: Universal Default

@@ -22,12 +22,12 @@ bashlex = ">=0.18"
 [[skills]]
 name = "CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS"
 description = "Simple and safe tmux session management. Creates isolated sessions that won't interfere with your current Claude Code session."
-path = "plugins/clautorun/skills/CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS.md"
+path = "plugins/clautorun/skills/tmux-automation/SKILL.md"
 
 [[skills]]
 name = "parallel_process_subagent_execution"
 description = "Parallel Merge and Commit Workflow. Execute multiple subagents in parallel for faster development."
-path = "plugins/clautorun/skills/parallelmerge.md"
+path = "plugins/clautorun/skills/parallel-subagent/SKILL.md"
 
 [[skills]]
 name = "claude_session_tools"

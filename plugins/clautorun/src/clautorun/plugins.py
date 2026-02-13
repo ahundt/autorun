@@ -493,6 +493,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 allowed_tools = set(intg.tool_matcher.split("|"))
                 expanded = set()
                 for tool in allowed_tools:
+                    # Tool sets from config.py: BASH_TOOLS, WRITE_TOOLS, etc.
                     for family in (BASH_TOOLS, FILE_TOOLS, PLAN_TOOLS):
                         if tool in family:
                             expanded |= family
