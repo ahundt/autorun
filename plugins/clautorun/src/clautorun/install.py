@@ -822,8 +822,6 @@ def _install_to_cache(plugin_name: str) -> bool:
         else:
             return False
 
-    print(f"   Debug: Copying {plugin_name} from {plugin_dir} to cache...")
-
     # Read version from plugin.json
     version = _read_plugin_version(plugin_dir)
 
@@ -1239,36 +1237,53 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
 def _update_package_metadata(marketplace_root: Path) -> None:
     """Automatically update metadata.json with current commit and build time."""
     try:
-        # Get git commit (try marketplace root first, then its parent)
+        # 1. Get git commit (try marketplace root first, then its parent)
         commit_dir = marketplace_root
         if not (commit_dir / ".git").exists():
             commit_dir = marketplace_root.parent
             
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], 
-            cwd=commit_dir, text=True
-        ).strip()
+        if not (commit_dir / ".git").exists():
+            msg = f"No .git directory found in {commit_dir}. Run from a git clone to include version metadata."
+            logger.info(msg)
+            print(f"   ℹ️  Note: {msg}")
+            return
+
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], 
+                cwd=commit_dir, text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            msg = "Git command failed or not installed. Version metadata will be 'unknown'."
+            logger.warning(msg)
+            print(f"   ⚠️  Warning: {msg}")
+            commit = "unknown"
         
-        # Get current time
+        # 2. Get current time
         build_time = datetime.now(timezone.utc).isoformat()
         
+        # 3. Resolve metadata file path
         # Marketplace root is /plugins/clautorun
         meta_file = marketplace_root / "src" / "clautorun" / "metadata.json"
         
-        # Ensure directory exists before writing
-        meta_file.parent.mkdir(parents=True, exist_ok=True)
+        # 4. Write metadata with robust error handling
+        try:
+            meta_file.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            data = {
+                "version": "0.8.0",
+                "commit": commit,
+                "build_time": build_time
+            }
+            meta_file.write_text(json.dumps(data, indent=2))
+            logger.info(f"Updated metadata: commit {commit[:7]}, time {build_time}")
+        except (OSError, PermissionError) as e:
+            msg = f"Permission denied writing {meta_file}. Check directory permissions: {e}"
+            logger.warning(msg)
+            print(f"   ❌ Error: {msg}")
             
-        import json
-        data = {
-            "version": "0.8.0",
-            "commit": commit,
-            "build_time": build_time
-        }
-        meta_file.write_text(json.dumps(data, indent=2))
-        print(f"   ✓ Updated metadata: commit {commit[:7]}, time {build_time}")
     except Exception as e:
-        logger.warning(f"Failed to update package metadata: {e}")
-        print(f"   ⚠️ Metadata update skipped: {e}")
+        logger.warning(f"Unexpected error updating metadata: {e}")
 
 
 # =============================================================================
@@ -1439,7 +1454,7 @@ def install_plugins(
     # Install for Claude Code
     if "claude" in target_clis:
         print()
-        print(f"Adding clautorun marketplace for Claude Code from {marketplace_root}...")
+        print(f"Adding clautorun marketplace for Claude Code...")
         result = run_cmd(["claude", "plugin", "marketplace", "add", str(marketplace_root)])
         if result.ok:
             print("   Added clautorun marketplace")
