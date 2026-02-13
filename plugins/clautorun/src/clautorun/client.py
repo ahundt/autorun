@@ -51,6 +51,68 @@ except ImportError:
 SOCKET_PATH = Path.home() / ".clautorun" / "daemon.sock"
 
 
+def output_hook_response(response: dict | str, source: str = "daemon") -> None:
+    """Unified hook response output handler (DRY, WOLOG).
+
+    Single consolidation point for ALL output paths:
+    - Normal daemon response
+    - JSON decode error fallback
+    - Buffer error response
+    - Exception fail-open response
+
+    Handles:
+    1. Print JSON to stdout (always)
+    2. Auto-detect CLI type (Claude vs Gemini)
+    3. Apply exit-2 workaround if needed (bug #4669)
+    4. Exit with correct code
+
+    Args:
+        response: Response dict OR raw string (for fallback cases)
+        source: Source of response ("daemon", "daemon-raw", "buffer-error", "exception") - for logging
+
+    Exits:
+        0: Normal (allow decision OR Gemini with deny)
+        2: Claude Code workaround (deny decision with exit-2 + stderr)
+
+    Reference: notes/hooks_api_reference.md lines 395-427 (unified blocking pattern)
+    """
+    from .config import should_use_exit2_workaround
+
+    # Handle raw string fallback (JSON decode error)
+    if isinstance(response, str):
+        logger.debug(f"Outputting raw response from {source}")
+        print(response)
+        sys.exit(0)
+        return
+
+    # Extract decision from response (works for both Claude and Gemini formats)
+    decision = response.get('hookSpecificOutput', {}).get('permissionDecision',
+                                                          response.get('decision', 'allow'))
+
+    # Log decision for diagnostics (file-only)
+    logger.info(f"Hook response: source={source}, decision={decision}")
+
+    # Always print JSON to stdout first
+    print(json.dumps(response))
+
+    # Apply exit-2 workaround if needed (Claude Code bug #4669)
+    if decision == "deny" and should_use_exit2_workaround():
+        # Extract reason (try Claude format first, then Gemini format)
+        reason = response.get('hookSpecificOutput', {}).get('permissionDecisionReason',
+                                                            response.get('reason', 'Tool blocked'))
+
+        logger.info("Applying exit-2 workaround (Claude Code bug #4669)")
+
+        # Print reason to stderr (Claude Code feeds this back to AI)
+        print(reason, file=sys.stderr)
+
+        # Exit with code 2 (actual blocking)
+        sys.exit(2)
+
+    # Normal exit (allow decision OR Gemini CLI with deny)
+    sys.exit(0)
+
+
 def run_client():
     """Forward hook payload to daemon."""
     # Read stdin payload
@@ -78,23 +140,13 @@ def run_client():
             resp = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=5.0)
             resp_text = resp.decode().strip()
 
-            # Parse response to strip internal markers
+            # Parse response and route through unified output handler
             try:
                 resp_json = json.loads(resp_text)
-                # Remove internal marker (not part of hook response)
-                resp_json.pop("_exit_code_2", None)
-                # Log decision for diagnostics (file-only, never stdout/stderr)
-                decision = resp_json.get('hookSpecificOutput', {}).get('permissionDecision', resp_json.get('decision', 'allow'))
-                logger.info(f"Hook response: decision={decision}")
-                # Re-serialize without the internal marker
-                print(json.dumps(resp_json))
+                output_hook_response(resp_json, source="daemon")
             except json.JSONDecodeError:
-                # Not valid JSON, just print as-is
-                print(resp_text)
-
-            # Exit code 0 = hook succeeded (even when denying tool)
-            # The JSON permissionDecision: "deny" blocks the tool
-            # Exit code 2 is a blocking ERROR that causes "hook error"
+                # Not valid JSON, output as-is
+                output_hook_response(resp_text, source="daemon-raw")
 
             writer.close()
             await writer.wait_closed()
@@ -102,12 +154,14 @@ def run_client():
         except asyncio.LimitOverrunError as e:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
             logger.error(f"Client buffer error: {e}")
-            print(json.dumps({
+            output_hook_response({
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": f"Client buffer error: Daemon response too large. This is a bug. {e}"
-            }))
+                "systemMessage": f"Client buffer error: Daemon response too large. {e}",
+                "decision": "allow",
+                "hookSpecificOutput": {"permissionDecision": "allow"}
+            }, source="buffer-error")
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
@@ -149,12 +203,14 @@ def run_client():
     except Exception as e:
         # Fail open
         logger.error(f"Client exception (fail-open): {e}", exc_info=True)
-        print(json.dumps({
+        output_hook_response({
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": ""
-        }))
+            "systemMessage": "",
+            "decision": "allow",
+            "hookSpecificOutput": {"permissionDecision": "allow"}
+        }, source="exception")
 
 
 if __name__ == "__main__":

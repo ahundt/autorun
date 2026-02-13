@@ -584,12 +584,14 @@ class EventContext:
                 "reason": reason
             }
 
-        # Default hook response
+        # Default hook response (unified format for both Claude and Gemini)
         return {
-            "continue": decision != "deny",
-            "stopReason": reason if decision == "deny" else "",
+            "continue": True,
+            "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": reason if decision != "deny" else ""
+            "systemMessage": "",
+            "decision": decision,
+            "reason": reason_escaped
         }
 
     def command_response(self, response_text: str) -> Dict:

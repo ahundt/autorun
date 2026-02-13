@@ -105,6 +105,46 @@ Claude Code treats ANY stderr output from hooks as "hook error" and ignores the 
 
 **Diagnosis**: Run `uv run --project <plugin_root> python -c "pass" 2>&1` — any output beyond "Building/Installed" lines is a problem.
 
+## Bug #4669 Workaround (Claude Code v1.0.62+)
+
+**Problem**: Claude Code ignores `permissionDecision:"deny"` at exit 0. Tool executes anyway despite JSON deny decision.
+
+**Solution**: Auto-detect CLI and apply exit-2 workaround for Claude Code only. Gemini CLI respects JSON decision field correctly.
+
+**Behavior**:
+- **Claude Code**: Uses exit 2 + stderr (only way blocking works due to bug #4669)
+- **Gemini CLI**: Uses JSON `decision` field (works correctly per spec)
+- **Auto-detect**: Based on `GEMINI_SESSION_ID` and `GEMINI_PROJECT_DIR` environment variables
+
+**Configuration**:
+
+Environment variable (set before running Claude Code/Gemini):
+```bash
+# Auto-detect (default - recommended)
+export CLAUTORUN_EXIT2_WORKAROUND=auto
+
+# Force enable for testing
+export CLAUTORUN_EXIT2_WORKAROUND=always
+
+# Disable for testing/future
+export CLAUTORUN_EXIT2_WORKAROUND=never
+```
+
+CLI argument (applies to current execution):
+```bash
+clautorun --exit2-mode auto    # Default - auto-detect CLI
+clautorun --exit2-mode always  # Force exit-2 for all CLIs
+clautorun --exit2-mode never   # Disable workaround for all CLIs
+```
+
+**Technical Details**:
+- Detection: `plugins/clautorun/src/clautorun/config.py:detect_cli_type()`
+- Unified output: `plugins/clautorun/src/clautorun/client.py:output_hook_response()`
+- Response format: Both `decision` (Gemini) and `hookSpecificOutput.permissionDecision` (Claude) fields included
+- Exit codes: 0 for allow/Gemini-deny, 2 for Claude-deny (stderr contains reason)
+
+**Reference**: `notes/hooks_api_reference.md` lines 326-440 (workaround details), lines 1187-1221 (outcome matrices)
+
 ## Dynamic Content in Slash Commands
 
 Markdown commands can include dynamic bash output using `!` prefix ([docs](https://docs.anthropic.com/en/docs/claude-code/slash-commands)). To access CONFIG:

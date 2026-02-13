@@ -210,6 +210,14 @@ For more information: https://github.com/ahundt/clautorun
         help="Re-enable automatic bootstrap (removes --no-bootstrap from hooks.json commands)",
     )
     install_group.add_argument(
+        "--exit2-mode",
+        choices=['auto', 'always', 'never'],
+        default=None,
+        help="Bug #4669 workaround mode: 'auto' (detect CLI - default), 'always' (force exit-2), 'never' (disable). "
+             "Controls whether deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI). "
+             "Can also be set via CLAUTORUN_EXIT2_WORKAROUND environment variable.",
+    )
+    install_group.add_argument(
         "--claude",
         action="store_true",
         help="Install for Claude Code only (default: install for both CLIs if available)",
@@ -620,6 +628,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         print(f"clautorun {__version__}")
         return 0
+
+    # Bug #4669 workaround configuration (set env var from CLI arg)
+    if hasattr(args, 'exit2_mode') and args.exit2_mode is not None:
+        import os
+        os.environ['CLAUTORUN_EXIT2_WORKAROUND'] = args.exit2_mode
 
     # Bootstrap config
     if args.no_bootstrap:

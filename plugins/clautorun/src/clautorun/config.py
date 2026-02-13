@@ -413,3 +413,60 @@ After every step and substep you must say "Wait," and execute this sequential th
         ".claude/clautorun.*.local.md",   # Default pattern (like hookify)
     ],
 }
+
+
+# =============================================================================
+# CLI Detection and Bug #4669 Workaround (v0.8.0+)
+# =============================================================================
+
+
+def detect_cli_type() -> str:
+    """Detect which CLI is calling (Claude Code vs Gemini CLI).
+
+    Detection order (most reliable first):
+    1. GEMINI_SESSION_ID - Gemini-specific variable
+    2. GEMINI_PROJECT_DIR without CLAUDE_PROJECT_DIR - Gemini only
+    3. Default to "claude" (safer to apply workaround when uncertain)
+
+    Returns:
+        "claude": Claude Code (needs exit-2 workaround)
+        "gemini": Gemini CLI (respects JSON decision)
+
+    Reference: notes/hooks_api_reference.md lines 249-272
+    """
+    import os
+
+    if os.environ.get("GEMINI_SESSION_ID"):
+        return "gemini"
+
+    if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
+        return "gemini"
+
+    # Default to Claude (safer to apply workaround if uncertain)
+    return "claude"
+
+
+def should_use_exit2_workaround() -> bool:
+    """Check if exit-2 workaround should be applied for bug #4669.
+
+    Modes (CLAUTORUN_EXIT2_WORKAROUND env var):
+    - "auto" (default): Use workaround ONLY for Claude Code
+    - "always": Force workaround for all CLIs (testing)
+    - "never": Disable workaround for all CLIs (testing/future)
+
+    Returns:
+        bool: True if should apply exit-2 workaround
+
+    Reference: notes/hooks_api_reference.md lines 326-440
+    """
+    import os
+
+    mode = os.environ.get('CLAUTORUN_EXIT2_WORKAROUND', 'auto').lower()
+
+    if mode == "always":
+        return True
+    elif mode == "never":
+        return False
+    else:  # "auto" or any other value
+        cli_type = detect_cli_type()
+        return cli_type == "claude"
