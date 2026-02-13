@@ -243,20 +243,31 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         except Exception:
             pass  # Never fail hook due to debug logging
 
-        # Exit code 0 = CLI succeeded (even when denying tool access)
-        # Exit code 2 would be a blocking ERROR causing "hook error"
-        # The JSON permissionDecision: "deny" blocks the tool, not exit code
+        # ═══════════════════════════════════════════════════════════════
+        # TWO PATHWAYS: Primary (exit 0) and Workaround (exit 2)
+        # ═══════════════════════════════════════════════════════════════
+        # Exit 0: Normal (allow OR Gemini deny)
+        # Exit 2: Claude Code Bug #4669 workaround (deny + stderr → AI)
+        # Other: Error (stale install, import failure, etc.)
+        # ═══════════════════════════════════════════════════════════════
 
-        # Must check return code — stale CLI installs fail with argparse errors
-        if result.returncode != 0:
+        # Must check return code — only 0 and 2 are valid
+        if result.returncode not in (0, 2):
             return False
 
         # Must have stdout output — hook response is JSON on stdout
-        if result.stdout:
-            print(result.stdout, end="")
-            return True
+        if not result.stdout:
+            return False
 
-        return False  # No output = something went wrong
+        # Print JSON to stdout (required for Claude Code)
+        print(result.stdout, end="")
+
+        # Pass through stderr if present (Bug #4669: stderr → AI for exit 2)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+
+        # Pass through exit code to Claude Code (DRY: client.py decides)
+        sys.exit(result.returncode)
 
     except subprocess.TimeoutExpired:
         return False
