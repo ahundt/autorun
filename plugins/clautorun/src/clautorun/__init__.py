@@ -353,8 +353,8 @@ except ImportError:
         Source of truth: main.py build_pretooluse_response()
 
         Claude Code Bug #4669 Workaround:
-        _exit_code_2 marker signals that hook should exit with code 2 to
-        actually block the tool (JSON permissionDecision is ignored).
+        The decision and exit code are now handled by the unified output logic
+        in client.py and the main dispatch loop in main.py.
         """
         safe_reason = json.dumps(reason)[1:-1] if reason else ""
         return {
