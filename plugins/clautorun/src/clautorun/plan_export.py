@@ -935,7 +935,8 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
 
     Reference: hook_entry_debug.log line 5476 - SessionStart:resume with no output
     """
-    logger.info(f"SessionStart handler called (source: {ctx.payload.get('source', 'unknown')})")
+    # Note: ctx.payload doesn't exist - EventContext uses individual properties (core.py:397-419)
+    logger.info(f"SessionStart handler called (event: {ctx.event})")
     return None  # Disabled temporarily - see TODO above
 
     # Original code (disabled - DO NOT DELETE):
