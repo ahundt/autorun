@@ -71,69 +71,79 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
 
 
 def output_hook_response(response: dict | str, source: str = "daemon") -> None:
-    """Unified hook response output handler (DRY, WOLOG).
+    """Unified hook response output handler with two clear pathways (DRY).
 
-    Single consolidation point for ALL output paths:
-    - Normal daemon response
-    - JSON decode error fallback
-    - Buffer error response
-    - Exception fail-open response
+    Single consolidation point for ALL 4 input paths:
+    - Path 1: Normal daemon response (success)
+    - Path 2: JSON decode error (fallback)
+    - Path 3: Buffer overflow error (fail-open)
+    - Path 4: Exception (fail-open)
 
-    Handles:
-    1. Print JSON to stdout (always)
-    2. Auto-detect CLI type (Claude vs Gemini)
-    3. Apply exit-2 workaround if needed (bug #4669)
-    4. Exit with correct code
+    TWO OUTPUT PATHWAYS selected by single flag check:
+    - Pathway A (Bug #4669 Workaround): JSON + stderr + exit 2
+    - Pathway B (Standard): JSON + exit 0
 
     Args:
         response: Response dict OR raw string (for fallback cases)
-        source: Source of response ("daemon", "daemon-raw", "buffer-error", "exception") - for logging
+        source: Source ("daemon", "daemon-raw", "buffer-error", "exception")
 
     Exits:
-        0: Normal (allow decision OR Gemini with deny)
-        2: Claude Code workaround (deny decision with exit-2 + stderr)
+        0: Pathway B (standard - allow OR Gemini deny)
+        2: Pathway A (workaround - Claude Code deny)
 
-    Reference: notes/hooks_api_reference.md lines 395-427 (unified blocking pattern)
+    Reference: notes/hooks_api_reference.md lines 395-427
     """
     from .config import should_use_exit2_workaround
 
-    # Handle raw string fallback (JSON decode error)
+    # ═══════════════════════════════════════════════════════════════
+    # SHARED: Handle raw string fallback (JSON decode error)
+    # ═══════════════════════════════════════════════════════════════
     if isinstance(response, str):
         logger.debug(f"Outputting raw response from {source}")
         print(response)
         sys.exit(0)
         return
 
-    # Extract decision from response (works for both Claude and Gemini formats)
+    # ═══════════════════════════════════════════════════════════════
+    # SHARED: Extract decision (DRY - works for Claude and Gemini)
+    # ═══════════════════════════════════════════════════════════════
     decision = response.get('hookSpecificOutput', {}).get('permissionDecision',
                                                           response.get('decision', 'allow'))
 
-    # Log decision for diagnostics (file-only)
     logger.info(f"Hook response: source={source}, decision={decision}")
 
-    # Always print JSON to stdout first
+    # ═══════════════════════════════════════════════════════════════
+    # SHARED: Always print JSON to stdout first
+    # ═══════════════════════════════════════════════════════════════
     print(json.dumps(response))
 
     # Lifecycle logging before exit (DRY)
     exit_code = 2 if (decision == "deny" and should_use_exit2_workaround()) else 0
     _log_hook_lifecycle("DAEMON→CLIENT RESPONSE", Source=source, Decision=decision, ExitCode=exit_code)
 
-    # Apply exit-2 workaround if needed (Claude Code bug #4669)
+    # ═══════════════════════════════════════════════════════════════
+    # SINGLE FLAG CHECK: Select pathway
+    # ═══════════════════════════════════════════════════════════════
     if decision == "deny" and should_use_exit2_workaround():
-        # Extract reason (try Claude format first, then Gemini format)
+        # ╔═══════════════════════════════════════════════════════════╗
+        # ║ PATHWAY A: Bug #4669 Workaround (Claude Code)           ║
+        # ║ - Print reason to stderr (AI sees this)                 ║
+        # ║ - Exit code 2 (ONLY way blocking works in Claude Code)  ║
+        # ╚═══════════════════════════════════════════════════════════╝
         reason = response.get('hookSpecificOutput', {}).get('permissionDecisionReason',
                                                             response.get('reason', 'Tool blocked'))
 
         logger.info("Applying exit-2 workaround (Claude Code bug #4669)")
-
-        # Print reason to stderr (Claude Code feeds this back to AI)
         print(reason, file=sys.stderr)
-
-        # Exit with code 2 (actual blocking)
         sys.exit(2)
-
-    # Normal exit (allow decision OR Gemini CLI with deny)
-    sys.exit(0)
+    else:
+        # ╔═══════════════════════════════════════════════════════════╗
+        # ║ PATHWAY B: Standard Behavior                             ║
+        # ║ - Gemini respects JSON decision field                    ║
+        # ║ - Allow decisions in Claude Code                         ║
+        # ║ - Exit code 0 (normal success)                           ║
+        # ╚═══════════════════════════════════════════════════════════╝
+        sys.exit(0)
 
 
 def run_client():

@@ -449,13 +449,16 @@ def detect_cli_type() -> str:
 def should_use_exit2_workaround() -> bool:
     """Check if exit-2 workaround should be applied for bug #4669.
 
+    SINGLE FLAG CHECK for pathway selection.
+
     Modes (CLAUTORUN_EXIT2_WORKAROUND env var):
     - "auto" (default): Use workaround ONLY for Claude Code
     - "always": Force workaround for all CLIs (testing)
     - "never": Disable workaround for all CLIs (testing/future)
 
     Returns:
-        bool: True if should apply exit-2 workaround
+        bool: True → Pathway A (exit 2 + stderr)
+              False → Pathway B (exit 0 only)
 
     Reference: notes/hooks_api_reference.md lines 326-440
     """

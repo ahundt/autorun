@@ -266,13 +266,8 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr)
 
-        # Handle exit code pathways
-        if result.returncode == 2:
-            # Bug #4669 workaround: Exit with code 2 for actual blocking
-            sys.exit(2)
-        else:
-            # Normal success path (exit 0)
-            return True
+        # Pass through exit code to Claude Code (DRY: client.py decides)
+        sys.exit(result.returncode)
 
     except subprocess.TimeoutExpired:
         return False
