@@ -29,6 +29,7 @@ dependencies = [
     "claude-agent-sdk>=0.1.4",
     "ruff>=0.14.1",
     "bashlex>=0.18",
+    "psutil",
 ]
 
 [project.optional-dependencies]

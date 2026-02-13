@@ -1,15 +1,22 @@
 {
   "name": "cr",
   "version": "0.8.0",
-  "description": "clautorun plugin - uses 'cr' as command prefix for easy typing (/cr:st, /cr:a, etc.). Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
+  "description": "Autonomous execution, file policies, safety guards for AI coding assistants",
   "author": {
-    "name": "clautorun contributors",
+    "name": "Andrew Hundt <athundt@gmail.com>",
     "url": "https://github.com/ahundt/clautorun"
   },
   "homepage": "https://github.com/ahundt/clautorun#readme",
-  "repository": "https://github.com/ahundt/clautorun.git",
+  "repository": "https://github.com/ahundt/clautorun",
   "license": "Apache-2.0",
-  "keywords": ["claude-code", "agent-sdk", "command-interceptor", "file-policy", "autonomous-sessions", "extended-workflow", "no-new-files", "justify-new-files", "claude-session-tools"],
+  "keywords": [
+    "claude-code",
+    "gemini-cli",
+    "agent-sdk",
+    "file-policy",
+    "autonomous-sessions",
+    "safety-guards"
+  ],
   "commands": "./commands/",
   "skills": "./skills/"
 }

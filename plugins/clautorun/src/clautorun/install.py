@@ -895,25 +895,48 @@ def _register_in_json(install_path: Path, plugin_name: str, version: str) -> boo
 
 
 def _substitute_paths(plugin_dir: Path) -> None:
-    """Replace ${CLAUDE_PLUGIN_ROOT} with actual path in plugin.json and hooks.json.
+    """Replace path placeholders with actual paths in manifests and commands.
 
-    Only needed for cache-installed plugins — Claude Code handles this
-    for marketplace-installed plugins.
+    Handles both Claude Code (${CLAUDE_PLUGIN_ROOT}) and Gemini CLI (${extensionPath}).
+    Recursively processes .json and .md files in core directories.
 
     Args:
-        plugin_dir: Path to plugin directory in cache
+        plugin_dir: Path to plugin directory
     """
-    for rel_path in [".claude-plugin/plugin.json", "hooks/hooks.json"]:
+    abs_path = str(plugin_dir.resolve())
+    
+    # 1. Manifests and Hooks (Fixed paths)
+    target_files = [
+        ".claude-plugin/plugin.json",
+        "gemini-extension.json",
+        "hooks/hooks.json",
+        "hooks/gemini-hooks.json"
+    ]
+    
+    # 2. Commands and Skills (Recursive discovery)
+    for folder in ["commands", "skills"]:
+        folder_path = plugin_dir / folder
+        if folder_path.is_dir():
+            for md_file in folder_path.rglob("*.md"):
+                target_files.append(str(md_file.relative_to(plugin_dir)))
+
+    for rel_path in target_files:
         fp = plugin_dir / rel_path
-        if not fp.exists():
+        if not fp.exists() or fp.is_symlink():
             continue
+            
         try:
             content = fp.read_text()
-            marker = "${CLAUDE_PLUGIN_ROOT}"
-            if marker in content:
-                # Perform the substitution with the absolute path
-                new_content = content.replace(marker, str(plugin_dir.resolve()))
-                fp.write_text(new_content)
+            original_content = content
+            
+            # Substitute both platform variables
+            for marker in ["${CLAUDE_PLUGIN_ROOT}", "${extensionPath}"]:
+                if marker in content:
+                    content = content.replace(marker, abs_path)
+            
+            if content != original_content:
+                fp.write_text(content)
+                logger.debug(f"Substituted paths in {rel_path}")
         except OSError as e:
             logger.warning(f"Failed to substitute paths in {rel_path}: {e}")
 
@@ -993,29 +1016,27 @@ def _install_for_gemini(
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 
-        # Use temporary copy for Gemini to avoid modifying source marketplace
-        # This prevents Claude Code from seeing Gemini hooks if restoration fails
-        import tempfile
-        with tempfile.TemporaryDirectory(prefix=f"gemini-install-{plugin_name}-") as temp_dir:
-            temp_plugin = Path(temp_dir) / plugin_name
+        # CRITICAL FIX: Stop using TemporaryDirectory for Gemini installation.
+        # Gemini (0.28.2) creates absolute symlinks to the source path during
+        # local extension installation. If we install from /tmp, the links
+        # break immediately after the installer exits.
+        
+        # 1. Ensure Gemini hooks are ready in-place (idempotent)
+        gemini_hooks_file = plugin_dir / "hooks" / "gemini-hooks.json"
+        hooks_file = plugin_dir / "hooks" / "hooks.json"
+        
+        if gemini_hooks_file.exists():
+            shutil.copy2(gemini_hooks_file, hooks_file)
+            logger.debug(f"Prepared Gemini hooks in-place: {hooks_file}")
 
-            # Copy plugin to temp location
-            shutil.copytree(plugin_dir, temp_plugin, symlinks=True)
+        # 2. Perform path substitution in-place
+        _substitute_paths(plugin_dir)
 
-            # Prepare Gemini hooks in temp copy (not source!)
-            gemini_hooks_file = temp_plugin / "hooks" / "gemini-hooks.json"
-            hooks_file = temp_plugin / "hooks" / "hooks.json"
+        if force:
+            run_cmd(["gemini", "extensions", "uninstall", ext_name])
 
-            if gemini_hooks_file.exists():
-                # Replace hooks.json with Gemini version in temp copy only
-                shutil.copy2(gemini_hooks_file, hooks_file)
-                print(f"   → Prepared Gemini hooks in temp copy")
-
-            if force:
-                run_cmd(["gemini", "extensions", "uninstall", ext_name])
-
-            # Install from temp copy, not source
-            result = run_cmd(["gemini", "extensions", "install", str(temp_plugin), "--consent"])
+        # 3. Install directly from the persistent repository path
+        result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
@@ -1335,6 +1356,18 @@ def install_plugins(
     # Ensure metadata is fresh before install starts
     root = find_marketplace_root()
     _update_package_metadata(root)
+
+    # NEW: Harmonize manifests from aix.toml (Single Source of Truth)
+    try:
+        from clautorun.aix_manifest import generate_manifests
+        # root could be workspace root or plugin root
+        plugin_root = root if (root / ".claude-plugin").exists() else root / "plugins" / "clautorun"
+        if plugin_root.exists():
+            generate_manifests(plugin_root)
+    except ImportError:
+        logger.warning("Could not import generate_manifests, skipping manifest harmonization")
+    except Exception as e:
+        logger.error(f"Manifest generation failed: {e}")
 
     # Re-import to get fresh values if we're in the same process
     import importlib

@@ -37,7 +37,9 @@ from typing import NoReturn
 # Constants
 # =============================================================================
 
-HOOK_TIMEOUT = 9  # Leave 1s buffer for Claude's 10s hook timeout
+# Gemini CLI enforces 5s timeout; Claude Code enforces 10s.
+# We use 4s to stay safe on both platforms.
+HOOK_TIMEOUT = 4
 BOOTSTRAP_LOCKFILE = "/tmp/clautorun_bootstrap.lock"
 BOOTSTRAP_MSG = (
     "clautorun deps not installed. Run: uv pip install clautorun && clautorun --install"
@@ -547,9 +549,19 @@ def main() -> None:
 
     if clautorun_bin:
         try:
+            # OPTIMIZATION: Bypassing 'uv run' overhead by using venv python directly.
+            # If clautorun_bin is in a .venv, we use its python to run the module.
+            cmd = [str(clautorun_bin)]
+            if ".venv/bin/clautorun" in str(clautorun_bin):
+                venv_python = clautorun_bin.parent / "python"
+                if venv_python.exists():
+                    # Check if it's a script we can run as a module
+                    cmd = [str(venv_python), "-m", "clautorun"]
+                    log_debug(f"Using optimized venv path: {' '.join(cmd)}")
+
             # Inline try_cli logic to allow for better logging
             result = subprocess.run(
-                [str(clautorun_bin)],
+                cmd,
                 input=stdin_data,
                 capture_output=True,
                 text=True,

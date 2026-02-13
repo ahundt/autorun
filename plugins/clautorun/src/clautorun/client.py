@@ -146,6 +146,29 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
         sys.exit(0)
 
 
+def get_stable_pid() -> int:
+    """Traverse up process tree to find the stable CLI process ID.
+
+    Avoids using the ephemeral hook_entry.py PID. Looks for 'gemini' or 'claude'.
+    Falls back to ppid if discovery fails.
+    """
+    try:
+        import psutil
+        current = psutil.Process()
+        # Search up to 5 levels for CLI binary
+        for _ in range(5):
+            parent = current.parent()
+            if not parent:
+                break
+            name = parent.name().lower()
+            if "gemini" in name or "claude" in name:
+                return parent.pid
+            current = parent
+    except (ImportError, Exception):
+        pass
+    return os.getppid()
+
+
 def run_client():
     """Forward hook payload to daemon."""
     # Read stdin payload
@@ -157,7 +180,8 @@ def run_client():
         pass
 
     # Inject context for daemon lifecycle management
-    payload["_pid"] = os.getppid()  # Claude session PID
+    # CRITICAL: Use stable PID to prevent premature daemon cleanup
+    payload["_pid"] = get_stable_pid()
     payload["_cwd"] = os.getcwd()   # Current working directory
 
     # Lifecycle logging (DRY)
