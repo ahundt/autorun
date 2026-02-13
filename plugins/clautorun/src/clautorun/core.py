@@ -577,21 +577,6 @@ class EventContext:
             return False
 
     # === UNIFIED RESPONSE BUILDER (DRY: single method handles all events) ===
-    @staticmethod
-    def _escape_for_json(s: str) -> str:
-        """
-        Escape string for safe JSON embedding.
-
-        Args:
-            s: String to escape (will be converted if not string)
-
-        Returns:
-            str: JSON-escaped string without surrounding quotes
-        """
-        if not isinstance(s, str):
-            s = str(s)
-        return json.dumps(s)[1:-1]
-
     def respond(self, decision: str = "allow", reason: str = "") -> dict:
         """
         Unified response builder - automatically formats for event type.
@@ -637,7 +622,8 @@ class EventContext:
         if decision == "ask" and cli_type == "gemini":
             decision = "deny"
 
-        reason_escaped = self._escape_for_json(reason) if reason else ""
+        # Use the raw reason - final json.dumps() in the daemon/client will handle escaping.
+        msg_reason = reason if reason else ""
 
         # =====================================================================
         # PATHWAY 1: PreToolUse (Permission Decisions)
@@ -648,18 +634,23 @@ class EventContext:
             # - top-level 'permissionDecision': "allow" | "deny" | "ask"
             # - hookSpecificOutput: { permissionDecision, permissionDecisionReason }
             top_decision = "block" if decision == "deny" else "approve"
+            
+            # To avoid triple-printing in the UI, we only provide the reason 
+            # in hookSpecificOutput. Claude will also show stderr for exit 2.
+            is_deny = decision == "deny"
             return {
                 "decision": top_decision,
                 "permissionDecision": decision,
-                "reason": reason_escaped,
+                "reason": "" if is_deny else msg_reason,
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": reason_escaped,
+                "systemMessage": "" if is_deny else msg_reason,
+                # Claude Code hookSpecificOutput (REQUIRED for PreToolUse)
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": decision,
-                    "permissionDecisionReason": reason_escaped
+                    "permissionDecisionReason": msg_reason
                 },
             }
 
@@ -672,14 +663,15 @@ class EventContext:
             # - hookSpecificOutput: { additionalContext }
             return {
                 "decision": "approve",
-                "reason": reason_escaped,
+                "reason": msg_reason,
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": reason_escaped,
+                "systemMessage": msg_reason,
+                # Claude Code hookSpecificOutput (REQUIRED for context injection)
                 "hookSpecificOutput": {
                     "hookEventName": self._event,
-                    "additionalContext": reason_escaped
+                    "additionalContext": msg_reason
                 },
             }
 
@@ -694,10 +686,10 @@ class EventContext:
                 return {
                     "continue": True,  # Keep AI working
                     "decision": "block",
-                    "reason": reason_escaped,
+                    "reason": msg_reason,
                     "stopReason": "",
                     "suppressOutput": False,
-                    "systemMessage": reason_escaped,
+                    "systemMessage": msg_reason,
                 }
             return {
                 "continue": True,
@@ -716,7 +708,7 @@ class EventContext:
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": reason_escaped,
+                "systemMessage": msg_reason,
             }
 
         # =====================================================================
@@ -726,7 +718,7 @@ class EventContext:
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": reason_escaped,
+            "systemMessage": msg_reason,
         }
         
         # Enforce strict schema validation before returning
