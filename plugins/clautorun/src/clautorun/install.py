@@ -335,12 +335,10 @@ def find_marketplace_root() -> Path:
             if "backup" in parent_str or "reference" in parent_str:
                 # Only use backup/reference if we're actually running FROM them
                 if str(Path(__file__).resolve()).startswith(str(parent)):
-                    root = parent
+                    return parent
                 # Otherwise skip and keep searching
                 continue
-            root = parent
-    if root:
-        return root
+            return parent
 
     # Strategy 2: Check if this is an editable install - look for direct_url.json
     # Works for: uv pip install -e . (points back to source)
@@ -1427,7 +1425,7 @@ def install_plugins(
 
     if "gemini" in target_clis:
         if gemini_success:
-            print(f"✓ Gemini CLI: Workspace installed (clautorun-workspace@0.8.0)")
+            print(f"✓ Gemini CLI: Plugins installed (cr, pdf-extractor)")
             if conductor:
                 conductor_ok = _verify_conductor_installation()
                 if conductor_ok:
