@@ -335,10 +335,13 @@ def find_marketplace_root() -> Path:
             if "backup" in parent_str or "reference" in parent_str:
                 # Only use backup/reference if we're actually running FROM them
                 if str(Path(__file__).resolve()).startswith(str(parent)):
-                    return parent
+                    root = parent
                 # Otherwise skip and keep searching
                 continue
-            return parent
+            root = parent
+    
+    if root:
+        return root
 
     # Strategy 2: Check if this is an editable install - look for direct_url.json
     # Works for: uv pip install -e . (points back to source)
@@ -572,20 +575,22 @@ def _parse_selection(selection: str) -> list[str]:
     Returns:
         List of validated plugin names
     """
-    # Dynamic discovery for "all"
+    # Get the source of truth for valid plugins
+    valid_plugins = PluginName.all()
+    try:
+        root = find_marketplace_root()
+        manifest = root / ".claude-plugin" / "marketplace.json"
+        if manifest.exists():
+            import json
+            with open(manifest) as f:
+                data = json.load(f)
+                valid_plugins = [p["name"] for p in data.get("plugins", [])]
+    except Exception as e:
+        logger.warning(f"Dynamic marketplace discovery failed: {e}")
+
+    # Handle "all" case
     if not selection or selection == "all":
-        try:
-            root = find_marketplace_root()
-            manifest = root / ".claude-plugin" / "marketplace.json"
-            if manifest.exists():
-                import json
-                with open(manifest) as f:
-                    data = json.load(f)
-                    return [p["name"] for p in data.get("plugins", [])]
-        except Exception as e:
-            logger.warning(f"Dynamic marketplace discovery failed: {e}")
-            # Fallback to hardcoded list if discovery fails
-        return PluginName.all()
+        return valid_plugins
 
     seen: set[str] = set()
     plugins = []
@@ -593,9 +598,9 @@ def _parse_selection(selection: str) -> list[str]:
         name = name.strip()
         if not name or name in seen:
             continue
-        if not PluginName.validate(name):
-            logger.warning(f"Unknown plugin: {name!r} (valid: {', '.join(PluginName.all())})")
-            print(f"Unknown plugin: {name!r} (valid: {', '.join(PluginName.all())})")
+        if name not in valid_plugins:
+            logger.warning(f"Unknown plugin: {name!r} (valid: {', '.join(valid_plugins)})")
+            print(f"Unknown plugin: {name!r} (valid: {', '.join(valid_plugins)})")
             continue
         seen.add(name)
         plugins.append(name)
@@ -756,9 +761,26 @@ def _install_pdf_deps() -> CmdResult:
         CmdResult indicating success/failure, or success if plugin not present
     """
     root = find_marketplace_root()
-    pdf_dir = root / "plugins" / "pdf-extractor"
-    if not pdf_dir.exists():
-        return CmdResult(True, "pdf-extractor not present, skipping")
+    
+    # Robust plugin discovery
+    potential_paths = [
+        root / "plugins" / "pdf-extractor",
+        root / "pdf-extractor",
+        root.parent / "pdf-extractor"
+    ]
+    
+    pdf_dir = None
+    for p in potential_paths:
+        if p.is_dir() and (p / ".claude-plugin").exists():
+            pdf_dir = p
+            break
+            
+    if not pdf_dir:
+        # Fallback: if root itself is pdf-extractor
+        if root.name == "pdf-extractor":
+            pdf_dir = root
+        else:
+            return CmdResult(True, "pdf-extractor not present, skipping")
 
     return run_cmd(
         ["uv", "pip", "install", "--python", sys.executable, "-q",
@@ -779,16 +801,26 @@ def _install_to_cache(plugin_name: str) -> bool:
         True if cache install succeeded, False otherwise
     """
     root = find_marketplace_root()
-    # find_marketplace_root() returns a plugin directory (e.g., plugins/clautorun/)
-    # not the workspace root. To find the requested plugin:
-    # 1. If root IS the requested plugin, use it directly
-    # 2. Otherwise, check sibling directories (root.parent / plugin_name)
-    if root.name == plugin_name and (root / ".claude-plugin").exists():
-        plugin_dir = root
-    else:
-        plugin_dir = root.parent / plugin_name
-    if not plugin_dir.exists():
-        return False
+    
+    # Robust plugin discovery
+    potential_paths = [
+        root / "plugins" / plugin_name,
+        root / plugin_name,
+        root.parent / plugin_name
+    ]
+    
+    plugin_dir = None
+    for p in potential_paths:
+        if p.is_dir() and (p / ".claude-plugin").exists():
+            plugin_dir = p
+            break
+            
+    if not plugin_dir:
+        # Fallback: if root itself matches the name
+        if root.name == plugin_name and (root / ".claude-plugin").exists():
+            plugin_dir = root
+        else:
+            return False
 
     # Read version from plugin.json
     version = _read_plugin_version(plugin_dir)
@@ -911,21 +943,32 @@ def _install_for_gemini(
         return (False, "~/.gemini/ not found")
 
     # Find all plugins in the marketplace
-    plugins_dir = marketplace_root.parent
+    # Strategy 1: marketplace_root contains plugins/ (workspace root)
+    # Strategy 2: marketplace_root/.. contains other plugins (plugin root)
+    potential_plugin_dirs = [
+        marketplace_root / "plugins",
+        marketplace_root.parent
+    ]
 
     # Find directories for requested plugins (must have gemini-extension.json)
     plugins_to_install = []
     for name in plugins:
-        plugin_dir = plugins_dir / name
-        if plugin_dir.is_dir() and (plugin_dir / "gemini-extension.json").exists():
-            plugins_to_install.append(plugin_dir)
-        elif name == "clautorun" and marketplace_root.name == "clautorun":
-            # Handle case where marketplace_root is the plugin directory
-            if (marketplace_root / "gemini-extension.json").exists():
+        found = False
+        for p_dir in potential_plugin_dirs:
+            target = p_dir / name
+            if target.is_dir() and (target / "gemini-extension.json").exists():
+                plugins_to_install.append(target)
+                found = True
+                break
+        
+        if not found:
+            # Check if marketplace_root itself is the plugin
+            if marketplace_root.name == name and (marketplace_root / "gemini-extension.json").exists():
                 plugins_to_install.append(marketplace_root)
+                found = True
 
     if not plugins_to_install:
-        return (False, f"No plugins found matching selection: {', '.join(plugins)}")
+        return (False, f"No plugins found matching selection: {', '.join(plugins)} in {marketplace_root}")
 
     print()
     print(f"Installing {len(plugins_to_install)} plugin(s) for Gemini CLI...")
@@ -1342,7 +1385,7 @@ def install_plugins(
     # Install for Claude Code
     if "claude" in target_clis:
         print()
-        print("Adding clautorun marketplace for Claude Code...")
+        print(f"Adding clautorun marketplace for Claude Code from {marketplace_root}...")
         result = run_cmd(["claude", "plugin", "marketplace", "add", str(marketplace_root)])
         if result.ok:
             print("   Added clautorun marketplace")
@@ -1356,6 +1399,7 @@ def install_plugins(
             print()
             print("Force mode: uninstalling existing plugins...")
             for name in plugins:
+                # Use name@MARKETPLACE to ensure we hit the right one
                 run_cmd(["claude", "plugin", "uninstall", f"{name}@{MARKETPLACE}"])
 
         # Install + enable each plugin
@@ -1364,12 +1408,15 @@ def install_plugins(
 
         for name in plugins:
             print(f"   {name}...", end=" ", flush=True)
+            
+            # Use fully qualified name for all operations
+            fq_name = f"{name}@{MARKETPLACE}"
 
             # Try update first (faster, preserves settings)
-            upd = run_cmd(["claude", "plugin", "update", f"{name}@{MARKETPLACE}"])
+            upd = run_cmd(["claude", "plugin", "update", fq_name])
             if upd.ok:
                 # Enable after update (update doesn't guarantee enabled state)
-                enable_result = run_cmd(["claude", "plugin", "enable", f"{name}@{MARKETPLACE}"])
+                enable_result = run_cmd(["claude", "plugin", "enable", fq_name])
                 if enable_result.ok or enable_result.has_text("already"):
                     print("updated")
                     claude_succeeded.append(name)
@@ -1380,7 +1427,7 @@ def install_plugins(
                     continue
 
             # Fall back to fresh install
-            result = run_cmd(["claude", "plugin", "install", f"{name}@{MARKETPLACE}"])
+            result = run_cmd(["claude", "plugin", "install", fq_name])
             if not result.ok and not result.has_text("already"):
                 # Marketplace install failed — try cache fallback
                 print("marketplace failed, trying cache...", end=" ", flush=True)
@@ -1393,7 +1440,7 @@ def install_plugins(
                 continue
 
             # Enable (critical: without this, hooks don't run)
-            result = run_cmd(["claude", "plugin", "enable", f"{name}@{MARKETPLACE}"])
+            result = run_cmd(["claude", "plugin", "enable", fq_name])
             if result.ok or result.has_text("already"):
                 print("ok")
                 claude_succeeded.append(name)
