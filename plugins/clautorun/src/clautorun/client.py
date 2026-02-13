@@ -38,6 +38,7 @@ import sys
 import json
 import asyncio
 import subprocess
+import datetime
 from pathlib import Path
 
 try:
@@ -49,6 +50,24 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 SOCKET_PATH = Path.home() / ".clautorun" / "daemon.sock"
+DEBUG_LOG = Path.home() / ".clautorun" / "daemon.log"
+
+
+def _log_hook_lifecycle(message: str, **kwargs) -> None:
+    """DRY helper for hook lifecycle logging.
+
+    Args:
+        message: Log message
+        **kwargs: Key-value pairs to log
+    """
+    try:
+        DEBUG_LOG.parent.mkdir(exist_ok=True)
+        with open(DEBUG_LOG, 'a') as f:
+            f.write(f"[{datetime.datetime.now()}] {message}\n")
+            for key, value in kwargs.items():
+                f.write(f"{key}: {value}\n")
+    except Exception:
+        pass  # Never fail on logging
 
 
 def output_hook_response(response: dict | str, source: str = "daemon") -> None:
@@ -95,6 +114,10 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
     # Always print JSON to stdout first
     print(json.dumps(response))
 
+    # Lifecycle logging before exit (DRY)
+    exit_code = 2 if (decision == "deny" and should_use_exit2_workaround()) else 0
+    _log_hook_lifecycle("DAEMON→CLIENT RESPONSE", Source=source, Decision=decision, ExitCode=exit_code)
+
     # Apply exit-2 workaround if needed (Claude Code bug #4669)
     if decision == "deny" and should_use_exit2_workaround():
         # Extract reason (try Claude format first, then Gemini format)
@@ -127,7 +150,16 @@ def run_client():
     payload["_pid"] = os.getppid()  # Claude session PID
     payload["_cwd"] = os.getcwd()   # Current working directory
 
-    logger.debug(f"Forwarding hook to daemon: event={payload.get('hook_event_name')}, tool={payload.get('tool_name')}")
+    # Lifecycle logging (DRY)
+    hook_event = payload.get('hook_event_name', 'unknown')
+    hook_source = payload.get('source', '')
+    tool_name = payload.get('tool_name', '')
+
+    _log_hook_lifecycle("\n" + "="*80 + "\nCLIENT→DAEMON REQUEST",
+                        Event=hook_event, Source=hook_source, Tool=tool_name,
+                        PayloadKeys=list(payload.keys()))
+
+    logger.debug(f"Forwarding hook to daemon: event={hook_event}, tool={tool_name}")
 
     async def forward(depth: int = 0):
         if depth > 2:
