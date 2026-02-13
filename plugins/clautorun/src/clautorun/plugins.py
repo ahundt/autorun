@@ -129,12 +129,12 @@ def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
     if policy == "SEARCH":
         if ctx.file_exists:
             return None
-        return ctx.ask(CONFIG["policy_blocked"]["SEARCH"])
+        return ctx.deny(CONFIG["policy_blocked"]["SEARCH"])
 
     if policy == "JUSTIFY":
         if ctx.file_exists or ctx.has_justification:
             return None
-        return ctx.ask(CONFIG["policy_blocked"]["JUSTIFY"])
+        return ctx.deny(CONFIG["policy_blocked"]["JUSTIFY"])
 
     return None
 
@@ -472,12 +472,12 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # Check session blocks first (highest priority)
     for b in ScopeAccessor(ctx, "session").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.ask(f"{b['suggestion']}\n\nTo allow: /cr:ok {b['pattern']}")
+            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:ok {b['pattern']}")
 
     # Then global blocks
     for b in ScopeAccessor(ctx, "global").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.ask(f"{b['suggestion']}\n\nTo allow: /cr:globalok {b['pattern']}")
+            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:globalok {b['pattern']}")
 
     # User files + Python defaults (sorted by specificity) - FIX Bug 2
     try:
@@ -538,7 +538,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             return ctx.respond("allow", msg)
                         else:
                             # Block command
-                            return ctx.ask(msg)
+                            return ctx.deny(msg)
                 except Exception as e:
                     logger.warning(f"Pattern match error for '{pattern}': {e}")
                     continue

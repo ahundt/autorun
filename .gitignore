@@ -194,3 +194,5 @@ settings.local.json
 # Symlink artifacts (root level only)
 /clautorun
 /debug/latest
+metadata.json
+
