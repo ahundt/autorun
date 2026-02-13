@@ -2227,6 +2227,8 @@ def main():
 
     if operation_mode == "HOOK_INTEGRATION":
         # Run as Claude Code hook - handle all hook events
+        import time
+        start_time = time.time()
         try:
             payload = json.loads(sys.stdin.read())
 
@@ -2237,6 +2239,9 @@ def main():
 
             event = normalized.get("hook_event_name", "?")
             _session_id = normalized.get("session_id", "?")
+            
+            from .client import _log_hook_lifecycle
+            _log_hook_lifecycle("LEGACY PATHWAY START", Event=event, Session=_session_id)
 
             # DEBUG: Log all hook calls to track when script is called
             # Security: Sanitize prompt to prevent log injection
@@ -2297,6 +2302,8 @@ def main():
                 sys.exit(2)
 
             # Normal success path (exit 0)
+            duration = (time.time() - start_time) * 1000
+            _log_hook_lifecycle("LEGACY PATHWAY END", Event=event, Duration=f"{duration:.2f}ms")
             sys.exit(0)
 
         except Exception:

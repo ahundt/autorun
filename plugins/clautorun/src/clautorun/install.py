@@ -822,6 +822,8 @@ def _install_to_cache(plugin_name: str) -> bool:
         else:
             return False
 
+    print(f"   Debug: Copying {plugin_name} from {plugin_dir} to cache...")
+
     # Read version from plugin.json
     version = _read_plugin_version(plugin_dir)
 
@@ -909,8 +911,11 @@ def _substitute_paths(plugin_dir: Path) -> None:
             continue
         try:
             content = fp.read_text()
-            if "${CLAUDE_PLUGIN_ROOT}" in content:
-                fp.write_text(content.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_dir)))
+            marker = "${CLAUDE_PLUGIN_ROOT}"
+            if marker in content:
+                # Perform the substitution with the absolute path
+                new_content = content.replace(marker, str(plugin_dir.resolve()))
+                fp.write_text(new_content)
         except OSError as e:
             logger.warning(f"Failed to substitute paths in {rel_path}: {e}")
 
@@ -1231,6 +1236,41 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
         return (False, result.output)
 
 
+def _update_package_metadata(marketplace_root: Path) -> None:
+    """Automatically update metadata.json with current commit and build time."""
+    try:
+        # Get git commit (try marketplace root first, then its parent)
+        commit_dir = marketplace_root
+        if not (commit_dir / ".git").exists():
+            commit_dir = marketplace_root.parent
+            
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], 
+            cwd=commit_dir, text=True
+        ).strip()
+        
+        # Get current time
+        build_time = datetime.now(timezone.utc).isoformat()
+        
+        # Marketplace root is /plugins/clautorun
+        meta_file = marketplace_root / "src" / "clautorun" / "metadata.json"
+        
+        # Ensure directory exists before writing
+        meta_file.parent.mkdir(parents=True, exist_ok=True)
+            
+        import json
+        data = {
+            "version": "0.8.0",
+            "commit": commit,
+            "build_time": build_time
+        }
+        meta_file.write_text(json.dumps(data, indent=2))
+        print(f"   ✓ Updated metadata: commit {commit[:7]}, time {build_time}")
+    except Exception as e:
+        logger.warning(f"Failed to update package metadata: {e}")
+        print(f"   ⚠️ Metadata update skipped: {e}")
+
+
 # =============================================================================
 # Main Function - Installation
 # =============================================================================
@@ -1276,6 +1316,20 @@ def install_plugins(
     Note:
         Commands and skills work natively via extension manifest.
     """
+    # Ensure metadata is fresh before install starts
+    root = find_marketplace_root()
+    _update_package_metadata(root)
+
+    # Re-import to get fresh values if we're in the same process
+    import importlib
+    import clautorun
+    importlib.reload(clautorun)
+    from clautorun import __version__, __commit__, __build_time__
+    
+    print(f"clautorun v{__version__}")
+    print(f"Commit: {__commit__}")
+    print(f"Build Time: {__build_time__}")
+
     # Python version check
     if sys.version_info < (3, 10):
         print(f"Python {sys.version_info.major}.{sys.version_info.minor} detected. "
@@ -1419,6 +1473,19 @@ def install_plugins(
                 enable_result = run_cmd(["claude", "plugin", "enable", fq_name])
                 if enable_result.ok or enable_result.has_text("already"):
                     print("updated")
+                    
+                    # NEW: Perform manual substitution even after success for local marketplaces
+                    # Discover version to find the cache path
+                    plugin_dir_src = marketplace_root / "plugins" / name
+                    if not plugin_dir_src.exists():
+                        plugin_dir_src = marketplace_root / name
+                    
+                    if plugin_dir_src.exists():
+                        version = _read_plugin_version(plugin_dir_src)
+                        cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
+                        if cache_path.exists():
+                            _substitute_paths(cache_path)
+                    
                     claude_succeeded.append(name)
                     continue
                 else:
@@ -1443,6 +1510,18 @@ def install_plugins(
             result = run_cmd(["claude", "plugin", "enable", fq_name])
             if result.ok or result.has_text("already"):
                 print("ok")
+                
+                # NEW: Perform manual substitution even after success for local marketplaces
+                plugin_dir_src = marketplace_root / "plugins" / name
+                if not plugin_dir_src.exists():
+                    plugin_dir_src = marketplace_root / name
+                
+                if plugin_dir_src.exists():
+                    version = _read_plugin_version(plugin_dir_src)
+                    cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
+                    if cache_path.exists():
+                        _substitute_paths(cache_path)
+                
                 claude_succeeded.append(name)
             else:
                 print(f"enable failed: {result.output}")

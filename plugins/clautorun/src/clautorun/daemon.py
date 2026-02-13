@@ -283,6 +283,11 @@ def main():
     # Bootstrap optional dependencies in background (non-blocking)
     _bootstrap_optional_deps()
 
+    from clautorun import __version__, __commit__, __build_time__
+    logger.info(f"=== clautorun Daemon v{__version__} starting ===")
+    logger.info(f"Commit: {__commit__}")
+    logger.info(f"Build Time: {__build_time__}")
+
     # Import plugins to register handlers (deferred to avoid circular imports)
     # May fail on first run if claude-agent-sdk not yet installed by bootstrap
     MAX_BOOTSTRAP_WAIT_SECONDS = 30

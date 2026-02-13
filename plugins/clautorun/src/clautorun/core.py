@@ -341,6 +341,88 @@ class LazyTranscript:
 
 
 # === MAGIC STATE CONTEXT ===
+# =============================================================================
+# HOOK SCHEMAS & VALIDATION
+# =============================================================================
+# Documentation References:
+# - Claude Code Hooks: https://code.claude.com/docs/en/hooks
+# - Gemini CLI Hooks:   https://geminicli.com/docs/hooks/reference/
+# - Claude Schema:     https://code.claude.com/docs/en/hooks#json-output
+# =============================================================================
+# Strict filtering prevents "Invalid input" errors in Claude Code.
+# Gemini CLI is more lenient but we maintain its fields for compatibility.
+# =============================================================================
+HOOK_SCHEMAS = {
+    "PreToolUse": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", 
+                 "decision", "permissionDecision", "reason", "hookSpecificOutput"},
+        "hso": {"hookEventName", "permissionDecision", "permissionDecisionReason", "updatedInput"}
+    },
+    "UserPromptSubmit": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", 
+                 "decision", "reason", "hookSpecificOutput"},
+        "hso": {"hookEventName", "additionalContext"}
+    },
+    "PostToolUse": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", 
+                 "decision", "reason", "hookSpecificOutput"},
+        "hso": {"hookEventName", "additionalContext"}
+    },
+    "SessionStart": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage"},
+        "hso": {}
+    },
+    "Stop": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"},
+        "hso": {}
+    },
+    "SubagentStop": {
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"},
+        "hso": {}
+    }
+}
+
+def validate_hook_response(event: str, response: dict, cli_type: str = "claude") -> dict:
+    """
+    Perform strict code-based enforcement of hook schemas.
+    Filters the response dictionary to contain ONLY allowed fields for the target CLI.
+    
+    Args:
+        event: Normalized event name (e.g. PreToolUse, Stop)
+        response: Dictionary to validate and filter
+        cli_type: Target CLI ("claude" or "gemini")
+        
+    Returns:
+        Filtered dictionary containing only schema-compliant fields.
+    """
+    if cli_type == "gemini":
+        # Gemini CLI is lenient - it ignores unknown fields.
+        # We ensure it gets the standard decision/reason fields it expects.
+        # Reference: https://geminicli.com/docs/hooks/reference/
+        allowed_gemini = {"continue", "decision", "reason", "systemMessage", "stopReason"}
+        return {k: v for k, v in response.items() if k in allowed_gemini}
+
+    # Strict validation for Claude Code (fails on unknown fields)
+    schema = HOOK_SCHEMAS.get(event)
+    if not schema:
+        # Fallback for unknown events: allow universal common fields
+        allowed_root = {"continue", "stopReason", "suppressOutput", "systemMessage"}
+        return {k: v for k, v in response.items() if k in allowed_root}
+
+    # 1. Filter root fields
+    filtered = {k: v for k, v in response.items() if k in schema["root"]}
+    
+    # 2. Filter hookSpecificOutput if present and supported
+    if "hookSpecificOutput" in filtered and schema["hso"]:
+        hso = filtered["hookSpecificOutput"]
+        filtered["hookSpecificOutput"] = {k: v for k, v in hso.items() if k in schema["hso"]}
+    elif "hookSpecificOutput" in filtered:
+        # Event does not support hookSpecificOutput (e.g. Stop, SessionStart)
+        del filtered["hookSpecificOutput"]
+        
+    return filtered
+
+
 class EventContext:
     """
     Rich context with MAGIC STATE PERSISTENCE.
@@ -557,31 +639,23 @@ class EventContext:
 
         reason_escaped = self._escape_for_json(reason) if reason else ""
 
-        # PreToolUse needs hookSpecificOutput + top-level decision
+        # =====================================================================
+        # PATHWAY 1: PreToolUse (Permission Decisions)
+        # =====================================================================
         if self._event == "PreToolUse":
-            # PreToolUse deny must NOT set continue=false — that stops the AI entirely.
-            # Blocking is handled by:
-            #   - permissionDecision:"deny" (Claude Code - correct behavior)
-            #   - decision:"deny" (Gemini CLI BeforeTool)
-            # Per docs: continue=false "stops processing entirely, takes precedence
-            # over any event-specific decision fields" — NOT what we want.
+            # Claude Code PreToolUse Schema:
+            # - top-level 'decision': "approve" | "block"
+            # - top-level 'permissionDecision': "allow" | "deny" | "ask"
+            # - hookSpecificOutput: { permissionDecision, permissionDecisionReason }
+            top_decision = "block" if decision == "deny" else "approve"
             return {
-                # Top-level decision for Gemini CLI
-                "decision": decision,
+                "decision": top_decision,
+                "permissionDecision": decision,
                 "reason": reason_escaped,
-                # Universal fields - always continue=true, blocking handled elsewhere
-                # continue=true is correct because:
-                #   - Claude Code: "continue:false stops processing entirely"
-                #     https://code.claude.com/docs/en/hooks#json-output
-                #   - Gemini CLI: "continue:false stops agent loop"
-                #     https://geminicli.com/docs/hooks/reference/
-                # We want to block the TOOL (via permissionDecision:"deny")
-                # but let the AI continue running to suggest alternatives.
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
                 "systemMessage": reason_escaped,
-                # Claude Code hookSpecificOutput
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": decision,
@@ -589,38 +663,74 @@ class EventContext:
                 },
             }
 
-        # Stop/SubagentStop with "block" decision
-        if decision == "block":
+        # =====================================================================
+        # PATHWAY 2: UserPromptSubmit & PostToolUse (Context Injection)
+        # =====================================================================
+        if self._event in ("UserPromptSubmit", "PostToolUse"):
+            # Claude Code UserPromptSubmit/PostToolUse Schema:
+            # - top-level 'decision': "approve"
+            # - hookSpecificOutput: { additionalContext }
             return {
-                "continue": False,
+                "decision": "approve",
+                "reason": reason_escaped,
+                "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": reason,
-                "decision": "block",
-                "reason": reason,
-                # Claude Code hookSpecificOutput (required for all events)
+                "systemMessage": reason_escaped,
                 "hookSpecificOutput": {
                     "hookEventName": self._event,
-                    "permissionDecision": "block",
-                    "permissionDecisionReason": reason
-                }
+                    "additionalContext": reason_escaped
+                },
             }
 
-        # Default hook response (unified format for both Claude and Gemini)
-        return {
+        # =====================================================================
+        # PATHWAY 3: Stop & SubagentStop (Stop Prevention)
+        # =====================================================================
+        if self._event in ("Stop", "SubagentStop"):
+            # Claude Code Stop Schema:
+            # - MUST NOT contain 'decision' or 'reason' for standard allow
+            # - ONLY supports 'continue', 'stopReason', 'suppressOutput', 'systemMessage'
+            if decision == "block":
+                return {
+                    "continue": True,  # Keep AI working
+                    "decision": "block",
+                    "reason": reason_escaped,
+                    "stopReason": "",
+                    "suppressOutput": False,
+                    "systemMessage": reason_escaped,
+                }
+            return {
+                "continue": True,
+                "stopReason": "",
+                "suppressOutput": False,
+                "systemMessage": "",
+            }
+
+        # =====================================================================
+        # PATHWAY 4: SessionStart (Startup Injections)
+        # =====================================================================
+        if self._event == "SessionStart":
+            # Claude Code SessionStart Schema:
+            # - MUST NOT contain 'decision', 'reason', or 'hookSpecificOutput'
+            return {
+                "continue": True,
+                "stopReason": "",
+                "suppressOutput": False,
+                "systemMessage": reason_escaped,
+            }
+
+        # =====================================================================
+        # FALLBACK: Universal Default
+        # =====================================================================
+        final_response = {
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": "",
-            "decision": decision,
-            "reason": reason_escaped,
-            # Claude Code hookSpecificOutput (required for all events)
-            "hookSpecificOutput": {
-                "hookEventName": self._event,
-                "permissionDecision": decision,
-                "permissionDecisionReason": reason_escaped
-            }
+            "systemMessage": reason_escaped,
         }
+        
+        # Enforce strict schema validation before returning
+        return validate_hook_response(self._event, final_response, cli_type=cli_type)
 
     def command_response(self, response_text: str) -> Dict:
         """
@@ -823,7 +933,9 @@ class ClautorunDaemon:
         Note: Server uses READ_BUFFER_LIMIT (1GB) to accept large payloads,
         then truncates transcript to ~64KB after reading (see normalize_hook_payload).
         """
-        self.last_activity = time.time()
+        import time
+        start_time = time.time()
+        self.last_activity = start_time
         response = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
         try:
@@ -831,6 +943,12 @@ class ClautorunDaemon:
             # Truncates transcript to ~64KB AFTER reading (see normalize_hook_payload below)
             data = await reader.readuntil(b'\n')
             payload = json.loads(data.decode())
+
+            event = payload.get("hook_event_name", "unknown")
+            tool = payload.get("tool_name", "")
+
+            from .client import _log_hook_lifecycle
+            _log_hook_lifecycle("DAEMON PROCESSING START", Event=event, Tool=tool)
 
             # Debug logging (ALWAYS enabled)
             logger.debug(f"Daemon received payload ({len(data)} bytes): {str(payload)}")
@@ -889,6 +1007,10 @@ class ClautorunDaemon:
             await writer.drain()
             writer.close()
             await writer.wait_closed()
+
+            duration = (time.time() - start_time) * 1000
+            from .client import _log_hook_lifecycle
+            _log_hook_lifecycle("DAEMON PROCESSING END", Event=event, Duration=f"{duration:.2f}ms")
 
     async def watchdog(self):
         """

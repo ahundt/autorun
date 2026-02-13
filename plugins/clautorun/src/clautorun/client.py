@@ -167,7 +167,8 @@ def run_client():
 
     _log_hook_lifecycle("\n" + "="*80 + "\nCLIENT→DAEMON REQUEST",
                         Event=hook_event, Source=hook_source, Tool=tool_name,
-                        PayloadKeys=list(payload.keys()))
+                        PayloadKeys=list(payload.keys()),
+                        FullPayload=json.dumps(payload, indent=2))
 
     logger.debug(f"Forwarding hook to daemon: event={hook_event}, tool={tool_name}")
 
@@ -185,6 +186,8 @@ def run_client():
 
             resp = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=5.0)
             resp_text = resp.decode().strip()
+            
+            _log_hook_lifecycle("DAEMON→CLIENT RAW RESPONSE", FullResponse=resp_text)
 
             # Parse response and route through unified output handler
             try:
