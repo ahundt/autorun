@@ -528,26 +528,98 @@ def main() -> None:
     stdin_data = "" if sys.stdin.isatty() else sys.stdin.read()
 
     # Debug logging (ALWAYS enabled to diagnose hook issues)
-    try:
-        debug_log = Path.home() / ".clautorun" / "hook_entry_debug.log"
-        debug_log.parent.mkdir(exist_ok=True)
-        with open(debug_log, 'a') as f:
-            import datetime
-            f.write(f"\n=== {datetime.datetime.now()} ===\n")
-            f.write(f"Hook entry stdin ({len(stdin_data)} bytes):\n{stdin_data[:500]}\n")
-    except Exception:
-        pass  # Never fail hook due to debug logging
+    def log_debug(msg: str):
+        try:
+            debug_log = Path.home() / ".clautorun" / "hook_entry_debug.log"
+            debug_log.parent.mkdir(exist_ok=True)
+            with open(debug_log, 'a') as f:
+                import datetime
+                f.write(f"[{datetime.datetime.now()}] {msg}\n")
+        except Exception:
+            pass
+
+    log_debug("=" * 80)
+    log_debug(f"Hook entry started (Event: {json.loads(stdin_data).get('hook_event_name', 'unknown') if stdin_data else 'none'})")
+    log_debug(f"Hook entry stdin ({len(stdin_data)} bytes):\n{stdin_data[:1000]}")
 
     clautorun_bin = get_clautorun_bin()
+    log_debug(f"Selected binary: {clautorun_bin}")
 
-    if clautorun_bin and try_cli(clautorun_bin, stdin_data):
-        return
+    if clautorun_bin:
+        try:
+            # Inline try_cli logic to allow for better logging
+            result = subprocess.run(
+                [str(clautorun_bin)],
+                input=stdin_data,
+                capture_output=True,
+                text=True,
+                timeout=HOOK_TIMEOUT,
+            )
+            log_debug(f"CLI exit code: {result.returncode}")
+            log_debug(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}")
+            if result.stderr:
+                log_debug(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr}")
+
+            if result.stdout:
+                # Extract valid JSON from stdout (filters out noise like environment warnings)
+                def extract_json(text: str) -> str | None:
+                    """Find valid JSON block efficiently."""
+                    if not text:
+                        return None
+                    
+                    cleaned = text.strip()
+                    # Fast path: whole output is valid JSON
+                    if cleaned.startswith('{') and cleaned.endswith('}'):
+                        try:
+                            json.loads(cleaned)
+                            return cleaned
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    # Fallback: search for last valid JSON line (filters leading/trailing noise)
+                    for line in reversed(cleaned.splitlines()):
+                        line = line.strip()
+                        if line.startswith('{') and line.endswith('}'):
+                            try:
+                                json.loads(line)
+                                return line
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    return None
+
+                json_block = extract_json(result.stdout)
+                if json_block:
+                    log_debug("✓ JSON valid")
+                    # CRITICAL: Print ONLY the JSON block. Do not print result.stdout
+                    # which might contain leading/trailing noise or multiple JSONs.
+                    print(json_block, end="")
+                else:
+                    log_debug("✗ JSON NOT found or invalid")
+                    # If no JSON found, something is wrong. Printing raw stdout 
+                    # is risky but may contain the error message.
+                    print(result.stdout, end="")
+
+                # Pass through stderr if present (Bug #4669: stderr → AI for exit 2)
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+
+                log_debug(f"Hook entry finished with exit code {result.returncode}")
+                sys.exit(result.returncode)
+            else:
+                log_debug("✗ CLI returned empty stdout")
+        except subprocess.TimeoutExpired:
+            log_debug("✗ CLI timed out")
+        except Exception as e:
+            log_debug(f"✗ CLI exception: {e}")
 
     # Restore stdin for fallback path (run_client reads from sys.stdin)
     sys.stdin = io.StringIO(stdin_data)
 
     # No CLI available or CLI failed - try fallback
+    log_debug("Starting fallback (direct import)...")
     run_fallback()
+    log_debug("Hook entry finished (fallback path)")
 
 
 if __name__ == "__main__":
