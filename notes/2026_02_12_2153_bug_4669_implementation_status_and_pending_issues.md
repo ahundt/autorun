@@ -3,6 +3,95 @@
 **Date**: 2026-02-12 21:53
 **Branch**: feature/gemini-cli-integration
 
+## Quick Start: Install and Test
+
+**Run from repository root** (`/Users/athundt/.claude/clautorun/`):
+
+```bash
+# Full install with daemon restart (requires 3-minute timeout)
+(uv run --project plugins/clautorun python -m clautorun --install --force && \
+  cd plugins/clautorun && \
+  uv tool install --force --editable . && \
+  cd ../.. && \
+  clautorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
+```
+
+**What this does:**
+1. Syncs plugin to cache (both Claude Code and Gemini CLI)
+2. Installs UV tool globally (`clautorun`, `claude-session-tools` commands)
+3. Restarts daemon to pick up code changes (PID will change)
+4. Logs output to timestamped file: `install-YYYYMMDD-HHMMSS.log`
+
+**After installation:**
+- Daemon running with latest code
+- Check PID: `ps aux | grep "clautorun.*daemon"`
+- Check socket: `ls -la ~/.clautorun/daemon.sock`
+- **IMPORTANT**: Restart Claude Code session completely (quit and reopen) for hook changes to take effect
+
+**Current daemon:** PID 99240
+
+## Immediate Action Items
+
+### 1. Fix NoneType Error in Daemon (BLOCKING)
+**Error**: `'NoneType' object has no attribute 'get'`
+
+**Action Steps:**
+```bash
+# Find event processing code
+grep -rn "for.*handler\|process.*event\|\.chains\[" plugins/clautorun/src/clautorun/*.py
+
+# Look for .get() calls on handler return values
+grep -rn "handler(.*).get\|result.get\|response.get" plugins/clautorun/src/clautorun/daemon.py
+
+# Add defensive None check before .get() calls
+```
+
+**What to fix:**
+- Add `if result is None: result = default_response()` before accessing result.get()
+- Or skip handlers that return None
+- Or ensure all handlers return dict (never None)
+
+**Test after fix:**
+```bash
+# Run install + restart
+(install command from above)
+
+# Restart Claude Code session
+# Check for SessionStart:resume error - should be gone
+```
+
+### 2. Test Current State
+**What works:**
+- All 7 commits applied
+- Daemon running with latest code
+- Manual tests pass
+
+**What to verify:**
+```bash
+# Restart Claude Code completely (Cmd+Q then reopen)
+
+# Check for errors on startup:
+# - SessionStart:resume should show NoneType error (known)
+# - Stop hook error should be GONE (hookSpecificOutput added)
+
+# Test rm blocking (Bug #4669 workaround):
+echo "test" > /tmp/test-workaround.txt
+rm /tmp/test-workaround.txt
+# Expected: Tool blocked, file exists, trash suggestion shown
+
+# Check logs:
+tail -50 ~/.clautorun/daemon.log | grep "SessionStart\|Stop"
+```
+
+### 3. Re-enable Plan Recovery (After #1 Fixed)
+**Location**: `plugins/clautorun/src/clautorun/plan_export.py:913-945`
+
+**Action:**
+- Uncomment lines 923-943 (original code)
+- Remove temporary disable comment and logger.info
+- Test SessionStart:resume completes without hang
+- Verify plan export actually works
+
 ## Current Status
 
 ### ✅ Completed Work
@@ -380,6 +469,307 @@ lock_context = SessionLock(session_id, timeout=5.0)
 
 **Uncertainty**: Without seeing actual SessionTimeoutError in logs, can't confirm lock was the issue
 
+## Pre-Mortem Analysis: What Could Still Go Wrong
+
+### Pre-Mortem 1: Bug #4669 Workaround Doesn't Actually Block Tools
+
+**Scenario**: After restarting Claude Code, rm commands still execute files despite workaround
+
+**Possible Failure Modes:**
+
+1. **Claude Code Version Incompatibility**
+   - Exit code 2 behavior may have changed in newer Claude Code versions
+   - Stderr may not be fed back to AI in current version
+   - JSON permissionDecision may have been fixed (making workaround unnecessary but harmless)
+   - **Test**: Check Claude Code version, compare with known working versions
+
+2. **Hook Execution Order Issue**
+   - Other plugins' PreToolUse hooks may run after clautorun
+   - Later hook returns exit 0, overriding our exit 2
+   - Claude Code may only use the last hook's exit code
+   - **Evidence to check**: Hook execution order in Claude Code logs
+
+3. **Cache Not Actually Updated**
+   - Claude Code may cache hooks.json separately from plugin code
+   - May need to clear Claude Code's internal cache
+   - Installation command may not trigger cache refresh
+   - **Test**: Check if ~/.claude has other cache directories we're not updating
+
+4. **Exit Code Lost in Subprocess Chain**
+   - hook_entry.py calls sys.exit(2) but shell may not pass it through
+   - UV or Python subprocess handling may normalize exit codes
+   - Claude Code may sanitize hook exit codes
+   - **Test**: Add logging to verify exit code reaches Claude Code process
+
+5. **Auto-Detection Fails**
+   - GEMINI_SESSION_ID detection logic may be wrong
+   - Claude Code may set variables that look like Gemini
+   - Always defaulting to "claude" may be incorrect
+   - **Test**: Log actual environment variables during hook execution
+
+**Risk Mitigation:**
+- Manual testing required before claiming fix works
+- Document exact Claude Code version where tested
+- Provide rollback plan if workaround doesn't work
+
+### Pre-Mortem 2: NoneType Error Fix Doesn't Resolve SessionStart:resume Issue
+
+**Scenario**: After fixing NoneType.get() error, SessionStart:resume still fails or hangs
+
+**Possible Failure Modes:**
+
+1. **Multiple Root Causes**
+   - NoneType error is symptom, not root cause
+   - Plan recovery has additional issues beyond None handling
+   - SessionLock may have deadlock conditions
+   - **Next**: May need to debug plan recovery logic itself
+
+2. **Wrong Error Location**
+   - NoneType error may be in different code path than event processing
+   - Could be in plan_export.py itself when re-enabled
+   - Could be in session_manager.py SessionLock code
+   - **Test**: Add try/except with full stack trace logging
+
+3. **Race Condition**
+   - Resume and startup hooks run 0.6ms apart
+   - Concurrent database/file access may cause issues
+   - Lock contention between parallel sessions
+   - **Evidence**: Two SessionStart hooks logged almost simultaneously
+
+4. **Missing Response Fields**
+   - Even with hookSpecificOutput, Claude Code may need other fields
+   - Response schema may have changed between versions
+   - SessionStart may have different requirements than PreToolUse
+   - **Test**: Compare working SessionStart:startup response format with resume attempt
+
+5. **Transcript File Access Issue**
+   - Resume may try to read previous session's transcript
+   - Transcript file may be locked or unavailable
+   - File I/O errors may cause silent failures
+   - **Evidence to check**: Look for file access errors in daemon.log
+
+**Risk Mitigation:**
+- Don't re-enable plan recovery until NoneType fix proven to work
+- Add comprehensive error logging before re-enabling
+- Have disable-on-error fallback ready
+
+### Pre-Mortem 3: Re-enabling Plan Recovery Causes New Problems
+
+**Scenario**: After fixing NoneType error and re-enabling, new issues appear
+
+**Possible Failure Modes:**
+
+1. **Different Timeout Behavior**
+   - SessionTimeoutError may manifest differently after fix
+   - 5-second timeout may be too short under load
+   - May timeout on valid operations, not just errors
+   - **Consider**: Make timeout configurable, increase to 10 seconds
+
+2. **Lock Cleanup Issues**
+   - Previous sessions may leave stale locks
+   - Lock files not properly cleaned up on crash
+   - No mechanism to detect and remove stale locks
+   - **Check**: session_manager.py lock cleanup logic
+
+3. **Database Corruption**
+   - ThreadSafeDB cache may have corrupted state
+   - Active_plans tracking may have inconsistencies
+   - Concurrent writes may cause data races
+   - **Test**: Clear ~/.clautorun cache and test fresh
+
+4. **Plan Detection Logic Bugs**
+   - get_unexported() may return invalid data
+   - Transcript parsing may fail on certain formats
+   - Content hashing may have collisions
+   - **Evidence needed**: Log what get_unexported() actually returns
+
+5. **Notification Causes Hang**
+   - Returning response with systemMessage may block
+   - Long messages may exceed buffer limits
+   - Response formatting may cause JSON issues
+   - **Test**: Disable notify_claude and see if that helps
+
+**Risk Mitigation:**
+- Add timeout protection around entire recovery operation
+- Wrap in try/except with specific error handling for each failure mode
+- Add circuit breaker pattern (disable after N failures)
+- Make plan recovery optional via config flag
+
+### Pre-Mortem 4: Stop Hook Still Fails Despite hookSpecificOutput Fix
+
+**Scenario**: After restart, Stop hooks show "Invalid input" error again
+
+**Possible Failure Modes:**
+
+1. **Missing Other Required Fields**
+   - hookSpecificOutput alone may not be sufficient
+   - Claude Code may validate other fields we haven't included
+   - Field types may be wrong (string vs bool, etc.)
+   - **Evidence needed**: Compare Stop response with working PreToolUse response
+
+2. **Event Name Mismatch**
+   - self._event may not match Claude Code's expected event name
+   - May need "Stop" vs "SubagentStop" distinction
+   - hookEventName validation may be case-sensitive
+   - **Check**: core.py EventContext initialization for self._event value
+
+3. **Response Schema Changed**
+   - Claude Code version may expect different schema
+   - Stop hooks may have different requirements than documented
+   - Undocumented required fields
+   - **Test**: Capture actual working hook response from another plugin
+
+4. **Cache Staleness**
+   - Plugin cache may not have been updated
+   - Claude Code may load old version despite installation
+   - Need to manually clear cache directories
+   - **Verify**: Check md5 hash of cached core.py vs repo
+
+5. **Multiple Hooks Conflict**
+   - Other plugins may have Stop hooks that return invalid JSON
+   - Claude Code may aggregate responses incorrectly
+   - Last hook's response may override our correct one
+   - **Check**: Find all plugins with Stop hooks
+
+**Risk Mitigation:**
+- Have manual test procedure ready to validate hook responses
+- Document exact response format that works
+- Add JSON schema validation before returning response
+
+### Pre-Mortem 5: Exit Code 2 Path Causes Unintended Side Effects
+
+**Scenario**: Exit code 2 works for blocking but breaks other functionality
+
+**Possible Failure Modes:**
+
+1. **Claude Code Treats Exit 2 as Fatal Error**
+   - May disable hooks entirely after seeing exit 2
+   - May show error UI that disrupts workflow
+   - May mark plugin as "failed" and stop loading it
+   - **Monitor**: Plugin status after several deny operations
+
+2. **Stderr Pollution**
+   - Every blocked command adds stderr output
+   - Large stderr may overwhelm AI context
+   - Repeated suggestions may confuse AI
+   - **Consider**: Limit stderr output length or frequency
+
+3. **Performance Impact**
+   - Exit code 2 path may be slower than exit 0
+   - May cause noticeable lag on every tool call
+   - Daemon may handle exit 2 differently (slower path)
+   - **Test**: Measure hook execution time before/after
+
+4. **Shell Script Failures**
+   - Scripts may check `$?` and treat exit 2 as error
+   - Automation tools may abort on non-zero exit
+   - CI/CD pipelines may fail
+   - **Scope**: This affects Claude Code process, not user scripts
+
+5. **Gemini CLI Compatibility Broken**
+   - Auto-detection may be wrong, applying workaround to Gemini
+   - Gemini may not handle exit 2 gracefully
+   - May need manual testing with both CLIs
+   - **Test**: Set GEMINI_SESSION_ID and verify exit 0 path used
+
+**Risk Mitigation:**
+- Document how to disable workaround (CLAUTORUN_EXIT2_WORKAROUND=never)
+- Add escape hatch via environment variable
+- Monitor for unexpected behavior after deployment
+- Have rollback plan ready
+
+### Pre-Mortem 6: Hook Lifecycle Logging Causes New Issues
+
+**Scenario**: The DRY logging we added causes performance or stability problems
+
+**Possible Failure Modes:**
+
+1. **Log File Growth**
+   - daemon.log grows unbounded (already 1.4MB)
+   - May fill disk on long-running sessions
+   - No log rotation mechanism
+   - **Solution needed**: Add log rotation or size limits
+
+2. **I/O Bottleneck**
+   - Every hook call writes to disk
+   - High-frequency tools (Read, Grep) may cause I/O bottleneck
+   - File locking on log writes may cause contention
+   - **Test**: Monitor hook latency under heavy load
+
+3. **Exception in Logging Breaks Hooks**
+   - Despite try/except, logging errors may propagate
+   - Disk full may cause unhandled exceptions
+   - Permission errors on log file may fail hooks
+   - **Verify**: Ensure all logging has proper exception handling
+
+4. **Logging to Wrong File**
+   - Changed from hook_entry_debug.log to daemon.log
+   - May interfere with daemon's own logging
+   - File handle conflicts if daemon also writes to same file
+   - **Check**: Verify daemon.log has proper file locking
+
+5. **Timestamp Overhead**
+   - datetime.datetime.now() called on every hook
+   - May add measurable latency
+   - String formatting may be expensive
+   - **Consider**: Use simpler timestamp or disable in production
+
+**Risk Mitigation:**
+- Make logging conditional via CLAUTORUN_DEBUG env var
+- Add log rotation after debugging complete
+- Consider removing logging once issues resolved
+- Document how to disable if causing problems
+
+## Critical Assumptions That May Be Wrong
+
+### Assumption 1: Claude Code Actually Respects Exit Code 2
+- **Assumption**: Exit code 2 causes Claude Code to block tool execution
+- **What if wrong**: Workaround doesn't work, tools still execute
+- **How to validate**: Manual rm test with file existence check
+- **Alternative**: May need different blocking mechanism
+
+### Assumption 2: Daemon Processes Events Synchronously
+- **Assumption**: Event handlers run in order, responses sent sequentially
+- **What if wrong**: Race conditions, out-of-order responses
+- **How to validate**: Check daemon threading/asyncio implementation
+- **Alternative**: May need request/response correlation IDs
+
+### Assumption 3: SessionStart:resume NoneType Error is in Daemon
+- **Assumption**: Error occurs in daemon event processing code
+- **What if wrong**: Error may be in client.py or hook_entry.py
+- **How to validate**: Add try/except with stack traces everywhere
+- **Alternative**: May be in plan_export.py itself when re-enabled
+
+### Assumption 4: hookSpecificOutput Fix Solves Stop Hook Error
+- **Assumption**: Missing hookSpecificOutput was the only issue
+- **What if wrong**: Stop hooks may have other validation requirements
+- **How to validate**: Test Stop hook after Claude Code restart
+- **Alternative**: May need to match exact schema from working examples
+
+### Assumption 5: Auto-Detection Correctly Identifies CLI Type
+- **Assumption**: GEMINI_SESSION_ID is reliable indicator
+- **What if wrong**: May apply workaround to Gemini or vice versa
+- **How to validate**: Test with both CLIs, log detected type
+- **Alternative**: May need additional detection heuristics
+
+### Assumption 6: Cache Updates Take Effect Immediately
+- **Assumption**: Running install command updates cache for current session
+- **What if wrong**: Claude Code may require full restart to pick up changes
+- **How to validate**: Check cache timestamps vs code changes
+- **Alternative**: Always document "restart required" for changes
+
+### Assumption 7: Disabling Plan Recovery Fixes Hang
+- **Assumption**: recover_unexported_plans() was causing timeout
+- **What if wrong**: Hang may be in other SessionStart handler (task_lifecycle.py)
+- **How to validate**: Check if task_lifecycle also has SessionStart handler
+- **Alternative**: May need to disable all SessionStart handlers to isolate
+
+### Assumption 8: Returning None is Safe for Event Handlers
+- **Assumption**: Handlers can return None without causing errors
+- **What if wrong**: Daemon may expect all handlers to return dict
+- **How to validate**: Check daemon event processing code contract
+- **Alternative**: All handlers should return explicit allow response
+
 ## Key File Locations for Investigation
 
 **Event Processing (Unknown - Need to Find):**
@@ -532,6 +922,117 @@ Claude Code → hook_entry.py → client.py → daemon → client.py → hook_en
 1. Update README.md with Bug #4669 workaround details
 2. Document the two-pathway architecture
 3. Add troubleshooting section for hook errors
+
+## Summary: What We Know vs What We Don't Know
+
+### ✅ What We Know (Evidence-Based)
+
+**Bug #4669 Workaround Architecture:**
+- Code changes complete: 7 commits on feature/gemini-cli-integration
+- Auto-detection implemented: detect_cli_type() and should_use_exit2_workaround()
+- Exit code pathway: hook_entry.py accepts 0 and 2, passes through to Claude Code
+- Manual tests pass: Stop hook returns valid JSON, SessionStart works in isolation
+- Daemon running: PID 99240, loaded from source directory
+
+**SessionStart:resume Hang:**
+- SessionStart:resume hooks produce no output (hook_entry_debug.log:5476)
+- SessionStart:startup works immediately after with full output
+- Sessions have different IDs (not lock conflict on same session)
+- After disabling plan recovery: NoneType error appears instead of hang
+- daemon.log shows no DAEMON→CLIENT RESPONSE for resume events
+
+**Stop Hook Issue:**
+- Previously missing hookSpecificOutput field in default responses
+- Fix applied: Added to all response paths in core.py
+- Manual test confirms valid JSON with hookSpecificOutput
+- Production verification pending (needs Claude Code restart)
+
+### ❌ What We Don't Know (Uncertainties)
+
+**NoneType Error Root Cause:**
+- **Unknown**: Exact line where `.get()` is called on None
+- **Unknown**: Whether error is in daemon.py, main.py, or core.py
+- **Unknown**: If this affects other event types when handlers return None
+- **Need**: Stack trace or line-by-line debugging to locate
+
+**Bug #4669 Workaround Effectiveness:**
+- **Unknown**: If exit code 2 actually blocks tools in current Claude Code version
+- **Unknown**: If stderr is actually fed back to AI context
+- **Unknown**: If cache updates are actually being loaded by Claude Code
+- **Need**: End-to-end test with fresh Claude Code session
+
+**Plan Recovery Hang Cause:**
+- **Unknown**: If SessionTimeoutError was actually occurring (not logged)
+- **Unknown**: Why lock timeout would happen for resume but not startup
+- **Unknown**: If there are stale lock files we haven't found
+- **Need**: Re-enable with comprehensive error logging to capture actual exception
+
+**Daemon Event Processing:**
+- **Unknown**: How daemon iterates through event handler chains
+- **Unknown**: What happens when all handlers return None
+- **Unknown**: If there's supposed to be a default response mechanism
+- **Need**: Read daemon.py or main.py code to understand architecture
+
+**Hook Execution Order:**
+- **Unknown**: If clautorun hooks run before or after other plugins
+- **Unknown**: If other plugins' hooks can override our responses
+- **Unknown**: How Claude Code aggregates multiple hook responses
+- **Need**: Test with multiple plugins enabled, check execution order
+
+### ⚠️ High-Risk Areas
+
+**1. Exit Code 2 Pathway (Unverified in Production)**
+- Theory: Works based on Bug #4669 discussion
+- Reality: Not tested in actual Claude Code session
+- Risk: May not block tools, may cause "hook error", may disable plugin
+- **Mitigation**: Manual test required before claiming success
+
+**2. Event Handler None Returns (Architectural Assumption)**
+- Theory: Handlers can safely return None
+- Reality: May violate daemon's contract expectations
+- Risk: May cause errors in all event types, not just SessionStart
+- **Mitigation**: Check if None is documented as valid return value
+
+**3. Cache Synchronization (Timing Assumption)**
+- Theory: Install command updates cache for current session
+- Reality: Claude Code may cache hooks at app startup, not session startup
+- Risk: Changes may not take effect until full app restart
+- **Mitigation**: Always document "requires app restart" for hook changes
+
+**4. Auto-Detection Logic (Environment Variable Assumption)**
+- Theory: GEMINI_SESSION_ID reliably distinguishes CLIs
+- Reality: May have false positives/negatives
+- Risk: Wrong exit code path applied, breaking one or both CLIs
+- **Mitigation**: Add logging to verify detected CLI type
+
+**5. Plan Recovery Re-enable (Multiple Unknowns)**
+- Theory: Fixing NoneType error will allow safe re-enable
+- Reality: May have additional issues (locks, timeouts, race conditions)
+- Risk: Hang may return, or new errors may appear
+- **Mitigation**: Re-enable incrementally with extensive error logging
+
+## What Success Looks Like (Testable Outcomes)
+
+### ✅ Bug #4669 Workaround Working
+**Concrete test:**
+```bash
+echo "test" > /tmp/test.txt
+rm /tmp/test.txt
+ls /tmp/test.txt  # File still exists
+```
+**Expected**: File exists, AI sees trash suggestion, no hook error
+
+### ✅ SessionStart:resume Fixed
+**Observable**: Restart Claude Code session
+**Expected**: No "SessionStart:resume hook error" message
+
+### ✅ Stop Hook Fixed
+**Observable**: Stop hook executes during session
+**Expected**: No "JSON validation failed" error
+
+### ✅ Plan Recovery Working
+**Observable**: Exit plan mode with Option 1 (fresh context), start new session
+**Expected**: Plan exported to notes/ with "(from fresh context)" notation
 
 ## References
 
