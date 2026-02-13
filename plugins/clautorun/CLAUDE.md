@@ -21,6 +21,34 @@
 - ✅ Test files can be run and modified
 - ✅ Has latest bug fixes and improvements
 
+## Quick Install/Update Command
+
+**Primary installation command** (run from repository root):
+```bash
+(uv run --project plugins/clautorun python -m clautorun --install --force && \
+  cd plugins/clautorun && \
+  uv tool install --force --editable . && \
+  cd ../.. && \
+  clautorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
+```
+
+**IMPORTANT:** Use a **3-minute timeout** when running via Bash tool - the UV tool
+install step can take 1-2 minutes on first run or when dependencies change.
+
+**What this does:**
+1. Syncs plugin to cache (both Claude Code and Gemini CLI)
+2. Installs UV tool globally (`clautorun`, `claude-session-tools` commands)
+3. Restarts daemon to pick up code changes
+4. Logs output to timestamped file: `install-YYYYMMDD-HHMMSS.log`
+
+**When to run:**
+- After editing Python source files in `src/clautorun/`
+- After modifying hook files in `hooks/`
+- After changing plugin configuration
+- When testing fixes or new features
+
+**Log file:** Check `install-*.log` for installation details and troubleshooting
+
 ## WRONG Location: Plugin Cache (READ-ONLY)
 
 **DO NOT read from:**
