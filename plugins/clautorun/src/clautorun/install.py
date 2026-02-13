@@ -960,7 +960,9 @@ def _install_for_gemini(
             print(f"   ✓ {ext_name} installed successfully")
             success_count += 1
         else:
-            print(f"   ✗ {ext_name} installation failed: {result.output}")
+            print(f"   ✗ {ext_name} installation failed:")
+            print(f"     Status: {result.ok}")
+            print(f"     Output: {result.output}")
             failed_plugins.append(ext_name)
 
     print()
