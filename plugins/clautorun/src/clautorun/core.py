@@ -581,7 +581,13 @@ class EventContext:
                 "suppressOutput": False,
                 "systemMessage": reason,
                 "decision": "block",
-                "reason": reason
+                "reason": reason,
+                # Claude Code hookSpecificOutput (required for all events)
+                "hookSpecificOutput": {
+                    "hookEventName": self._event,
+                    "permissionDecision": "block",
+                    "permissionDecisionReason": reason
+                }
             }
 
         # Default hook response (unified format for both Claude and Gemini)
@@ -591,7 +597,13 @@ class EventContext:
             "suppressOutput": False,
             "systemMessage": "",
             "decision": decision,
-            "reason": reason_escaped
+            "reason": reason_escaped,
+            # Claude Code hookSpecificOutput (required for all events)
+            "hookSpecificOutput": {
+                "hookEventName": self._event,
+                "permissionDecision": decision,
+                "permissionDecisionReason": reason_escaped
+            }
         }
 
     def command_response(self, response_text: str) -> Dict:
