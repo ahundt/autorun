@@ -371,6 +371,7 @@ except ImportError:
             "stopReason": "",
             "suppressOutput": False,
             "systemMessage": safe_reason,
-            "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                  "permissionDecisionReason": safe_reason},
-            "_exit_code_2": decision == "deny"}
+                                    "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                                          "permissionDecisionReason": safe_reason}}
+                        
+            
