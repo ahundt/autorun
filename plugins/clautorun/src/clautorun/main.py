@@ -1074,9 +1074,6 @@ def build_pretooluse_response(decision="allow", reason=""):
             "permissionDecision": decision,
             "permissionDecisionReason": safe_reason,
         },
-        # Internal marker for exit code 2 handling (not in JSON output)
-        # Only use exit code 2 for "deny" decision
-        "_exit_code_2": decision == "deny",
     }
 
 
@@ -2262,29 +2259,45 @@ def main():
             handler = HANDLERS.get(event, default_handler)
             response = handler(ctx)
 
-            # Remove internal marker before JSON output (not part of hook response)
-            response.pop("_exit_code_2", None)
-
+            # Output JSON to stdout
             print(json.dumps(response, sort_keys=True))
             sys.stdout.flush()
 
-            # Exit code 0 = hook succeeded (even when denying tool access)
-            # The JSON permissionDecision: "deny" blocks the tool
-            # systemMessage shows the suggestion to the user
-            # continue: true lets Claude keep working
-            #
-            # CRITICAL: Exit code 0, NOT 2! Exit code 2 is a blocking ERROR
-            # which causes "hook error" and stops everything. We want to
-            # deny the TOOL (via JSON) while letting the hook and Claude succeed.
-            #
-            # NO stderr output - ANY stderr causes "hook error" and Claude Code
-            # ignores the entire JSON response, silently disabling all protections.
-            #
+            # Bug #4669 Workaround (Legacy Path)
+            # ----------------------------------
+            # Ensure both pathways (daemon and standalone) are first-class citizens.
+            # 
+            # Exit code semantics (Bug #4669 / Bug #10964):
+            # - Exit 0: Hook succeeded (for allow decisions or Gemini CLI)
+            # - Exit 2: Blocking workaround for Claude Code (required when decision="deny")
+            # 
+            # CRITICAL: Claude Code ignores permissionDecision:"deny" at exit 0.
+            # We must exit with code 2 and provide the reason on stderr for 
+            # blocking to actually work. This feedback is fed back to the AI.
+            # 
             # References:
-            # - GitHub Issues: #4669, #18312, #13744, #20946
+            # - GitHub Issues: #4669, #18312, #13744, #20946, #10964
             # - Exit code semantics: https://claude.com/blog/how-to-configure-hooks
             # - Hook docs: https://code.claude.com/docs/en/hooks
             # - CLAUDE.md: Hook Error Prevention section
+
+            from .config import should_use_exit2_workaround
+            
+            # Extract decision (supports both Claude and Gemini formats)
+            decision = response.get('hookSpecificOutput', {}).get('permissionDecision', 
+                                                                  response.get('decision', 'allow'))
+            
+            if decision == "deny" and should_use_exit2_workaround():
+                # Extract reason for stderr feedback
+                reason = response.get('hookSpecificOutput', {}).get('permissionDecisionReason',
+                                                                    response.get('reason', 'Tool blocked'))
+                # Print to stderr so AI sees the suggestion (Bug #4669 workaround)
+                print(reason, file=sys.stderr)
+                # Exit with code 2 to trigger actual blocking in Claude Code
+                sys.exit(2)
+
+            # Normal success path (exit 0)
+            sys.exit(0)
 
         except Exception:
             print(json.dumps(build_hook_response()))

@@ -259,15 +259,38 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         if not result.stdout:
             return False
 
-        # Proposed: Extract only the JSON block to strip any noise/warnings
-        import re
-        # Look for the last JSON-like block in the output
-        json_match = re.findall(r'(\{.*?\})', result.stdout, re.DOTALL)
-        if json_match:
-            # Use the last match (allows for leading logs but only one response)
-            print(json_match[-1], end="")
+        # Extract valid JSON from stdout (filters out noise like environment warnings)
+        def extract_json(text: str) -> str | None:
+            """Find valid JSON block efficiently."""
+            if not text:
+                return None
+            
+            cleaned = text.strip()
+            # Fast path: whole output is valid JSON
+            if cleaned.startswith('{') and cleaned.endswith('}'):
+                try:
+                    json.loads(cleaned)
+                    return cleaned
+                except json.JSONDecodeError:
+                    pass
+            
+            # Fallback: search for last valid JSON line (filters leading/trailing noise)
+            for line in reversed(cleaned.splitlines()):
+                line = line.strip()
+                if line.startswith('{') and line.endswith('}'):
+                    try:
+                        json.loads(line)
+                        return line
+                    except json.JSONDecodeError:
+                        continue
+            
+            return None
+
+        json_block = extract_json(result.stdout)
+        if json_block:
+            print(json_block, end="")
         else:
-            # Fallback to raw output if no JSON found
+            # Fallback to raw output if no JSON found (likely an error message)
             print(result.stdout, end="")
 
         # Pass through stderr if present (Bug #4669: stderr → AI for exit 2)
