@@ -1249,8 +1249,9 @@ def _update_package_metadata(marketplace_root: Path) -> None:
             return
 
         try:
+            # Get git commit with '+' suffix for uncommitted changes
             commit = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], 
+                ["git", "describe", "--always", "--dirty=+", "--exclude", "*"], 
                 cwd=commit_dir, text=True, stderr=subprocess.DEVNULL
             ).strip()
         except (subprocess.CalledProcessError, FileNotFoundError):
