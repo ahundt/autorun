@@ -290,6 +290,10 @@ def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
                 pass
 
     # Layer 3: Fallback to session_id from payload
+    if not fallback_id or fallback_id == "unknown":
+        # Use stable PID-based identity if session_id is missing (startup hooks)
+        # pid is the Claude session PID (parent of the hook process)
+        return f"pid:{pid}" if pid else "default_session"
     return fallback_id
 
 
@@ -635,6 +639,9 @@ class EventContext:
 
     def deny(self, reason: str) -> Dict:
         return self.respond("deny", reason)
+
+    def ask(self, reason: str) -> Dict:
+        return self.respond("ask", reason)
 
     def block(self, reason: str) -> Dict:
         return self.respond("block", reason)

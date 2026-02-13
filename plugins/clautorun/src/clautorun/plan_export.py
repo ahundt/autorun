@@ -911,50 +911,84 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 
 
 @app.on("SessionStart")
+
+
 def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
+
+
     """Recover plans from Option 1 (fresh context) on session start.
 
+
+
+
+
     CRITICAL: Runs in NEW session after Option 1 clears context.
+
+
     Uses GLOBAL_SESSION_ID to read active_plans from OLD session.
+
+
     Daemon integration: Shares ThreadSafeDB cache across sessions.
 
-    TODO: RE-ENABLE AFTER FIXING SessionStart:resume HANG
 
-    TEMPORARY DISABLE: Debugging SessionStart:resume hang issue.
-
-    Evidence: SessionStart:resume hooks hang/timeout (no output in hook_entry_debug.log)
-    while SessionStart:startup works fine. Likely causes:
-    1. SessionTimeoutError on line 930 when trying to acquire lock
-    2. Returning None doesn't trigger default response from daemon
-    3. Client waits forever for response that never comes
-
-    Re-enable when:
-    1. Verify disabling fixes the hang (restart Claude Code, check for error)
-    2. Fix root cause (ensure daemon sends default response when all handlers return None)
-    3. Test plan recovery works without hanging
-
-    Reference: hook_entry_debug.log line 5476 - SessionStart:resume with no output
     """
-    # Note: ctx.payload doesn't exist - EventContext uses individual properties (core.py:397-419)
-    logger.info(f"SessionStart handler called (event: {ctx.event})")
-    return None  # Disabled temporarily - see TODO above
 
-    # Original code (disabled - DO NOT DELETE):
-    # try:
-    #     config = PlanExportConfig.load()
-    #     if not config.enabled:
-    #         return None
-    #     exporter = PlanExport(ctx, config)
-    #     for plan in exporter.get_unexported():
-    #         result = exporter.export(plan)
-    #         if result["success"] and config.notify_claude:
-    #             return ctx.respond("allow", f"📋 Recovered: {result['message']} (from fresh context)")
-    # except SessionTimeoutError as e:
-    #     logger.warning(f"SessionStart plan recovery timeout: {e}")
-    #     return None  # Lock timeout, skip silently
-    # except Exception as e:
-    #     logger.error(f"recover_unexported_plans error: {e}", exc_info=True)
-    # return None
+
+    # Note: ctx.payload doesn't exist - EventContext uses individual properties (core.py:397-419)
+
+
+    logger.info(f"SessionStart handler called (event: {ctx.event})")
+
+
+
+
+
+    try:
+
+
+        config = PlanExportConfig.load()
+
+
+        if not config.enabled:
+
+
+            return None
+
+
+        exporter = PlanExport(ctx, config)
+
+
+        for plan in exporter.get_unexported():
+
+
+            result = exporter.export(plan)
+
+
+            if result["success"] and config.notify_claude:
+
+
+                return ctx.respond("allow", f"📋 Recovered: {result['message']} (from fresh context)")
+
+
+    except SessionTimeoutError as e:
+
+
+        logger.warning(f"SessionStart plan recovery timeout: {e}")
+
+
+        return None  # Lock timeout, skip silently
+
+
+    except Exception as e:
+
+
+        logger.error(f"recover_unexported_plans error: {e}", exc_info=True)
+
+
+    return None
+
+
+
 
 
 # === Public API ===

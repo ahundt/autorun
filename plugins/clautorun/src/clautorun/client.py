@@ -175,7 +175,11 @@ def run_client():
         if depth > 2:
             raise RuntimeError("Daemon failed to start after 3 attempts")
         try:
-            reader, writer = await asyncio.open_unix_connection(path=str(SOCKET_PATH))
+            from .core import READ_BUFFER_LIMIT
+            reader, writer = await asyncio.open_unix_connection(
+                path=str(SOCKET_PATH),
+                limit=READ_BUFFER_LIMIT
+            )
             writer.write(json.dumps(payload).encode() + b'\n')
             await writer.drain()
 
