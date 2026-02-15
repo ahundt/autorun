@@ -575,6 +575,56 @@ class PlanExport:
                 return Path(path)
         return None
 
+    def get_plan_from_exit_message(self) -> Optional[Path]:
+        """Extract plan file path from ExitPlanMode response message.
+
+        ExitPlanMode returns messages like:
+        "Your plan has been saved to: /Users/athundt/.claude/plans/foo.md"
+
+        This method parses the tool_result to extract the file path when
+        filePath field is missing.
+        """
+        tool_result = getattr(self.ctx, 'tool_result', None)
+        if not tool_result:
+            return None
+
+        # Collect string values to search for "saved to:" pattern
+        search_fields = []
+        if isinstance(tool_result, dict):
+            search_fields = list(tool_result.values())
+        elif isinstance(tool_result, str):
+            # Try to parse as JSON first
+            try:
+                parsed = json.loads(tool_result)
+                if isinstance(parsed, dict):
+                    search_fields = list(parsed.values())
+                elif isinstance(parsed, list):
+                    search_fields = parsed
+                else:
+                    search_fields = [tool_result]
+            except (json.JSONDecodeError, TypeError):
+                # Not JSON, treat as plain string
+                search_fields = [tool_result]
+        else:
+            return None
+
+        # Look for "saved to:" pattern in any field.
+        # Uses greedy match to handle .md in directory names (e.g. .mdbackup/).
+        # path.exists() validates the extracted path.
+        for value in search_fields:
+            if not isinstance(value, str):
+                continue
+            if "saved to:" in value.lower():
+                match = re.search(r"saved to:\s*([^\n]+\.md)\b", value, re.IGNORECASE)
+                if match:
+                    path_str = match.group(1).strip()
+                    path = Path(path_str)
+                    if path.exists():
+                        logger.info(f"Extracted plan path from ExitPlanMode message: {path}")
+                        return path
+
+        return None
+
     def get_unexported(self) -> List[Path]:
         """Get unexported plans for current project. ATOMIC cleanup."""
         try:
@@ -592,6 +642,14 @@ class PlanExport:
                 continue
             path = Path(path_str)
             if not path.exists():
+                to_remove.append(path_str)
+                continue
+            # Skip empty plans (no content to export)
+            try:
+                if not path.read_text(encoding="utf-8").strip():
+                    to_remove.append(path_str)
+                    continue
+            except (IOError, UnicodeDecodeError):
                 to_remove.append(path_str)
                 continue
             if get_content_hash(path) in tracking:
@@ -902,6 +960,12 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
             return None
         exporter = PlanExport(ctx, config)
         plan = exporter.get_current_plan()
+
+        # If plan not found via tool_result or active_plans,
+        # try parsing from ExitPlanMode's response message
+        if not plan:
+            plan = exporter.get_plan_from_exit_message()
+
         if plan:
             result = exporter.export(plan)
             if result["success"] and config.notify_claude:
@@ -941,7 +1005,10 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
 
         if recovered_count > 0:
             msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context): {last_msg}"
-            return ctx.respond("allow", msg)
+            # IMPORTANT: SessionStart is a lifecycle event, not a tool event.
+            # It doesn't support decision/reason/hookSpecificOutput fields.
+            # Use minimal response format with systemMessage only.
+            return {"continue": True, "systemMessage": msg}
 
     except SessionTimeoutError as e:
         logger.warning(f"SessionStart plan recovery timeout: {e}")
