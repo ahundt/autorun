@@ -661,9 +661,6 @@ class EventContext:
         # =====================================================================
         # PATHWAY 1: PreToolUse (Permission Decisions)
         # =====================================================================
-        # =====================================================================
-        # PATHWAY 1: PreToolUse (Permission Decisions)
-        # =====================================================================
         if self._event == "PreToolUse":
             # Claude Code PreToolUse Schema:
             # - top-level 'decision': "approve" | "block"

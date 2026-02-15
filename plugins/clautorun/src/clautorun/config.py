@@ -435,7 +435,10 @@ def detect_cli_type(payload: dict = None) -> str:
     4. Default to "claude" (safer for bug #4669 workaround)
 
     Returns:
-        "claude" or "gemini"
+        "claude": Claude Code (needs exit-2 workaround for bug #4669)
+        "gemini": Gemini CLI (respects JSON decision natively)
+
+    Reference: notes/hooks_api_reference.md lines 249-272
     """
     import os
 
@@ -466,10 +469,18 @@ def detect_cli_type(payload: dict = None) -> str:
 def should_use_exit2_workaround(payload: dict = None) -> bool:
     """Check if exit-2 workaround should be applied for bug #4669.
 
+    SINGLE FLAG CHECK for pathway selection.
+
     Modes (CLAUTORUN_EXIT2_WORKAROUND env var):
-    - "auto" (default): Workaround ONLY for Claude Code
-    - "always": Force for all CLIs (testing)
-    - "never": Disable for all CLIs (testing/future)
+    - "auto" (default): Use workaround ONLY for Claude Code
+    - "always": Force workaround for all CLIs (testing)
+    - "never": Disable workaround for all CLIs (testing/future)
+
+    Returns:
+        bool: True → Pathway A (exit 2 + stderr)
+              False → Pathway B (exit 0 only)
+
+    Reference: notes/hooks_api_reference.md lines 326-440
     """
     import os
     mode = os.environ.get('CLAUTORUN_EXIT2_WORKAROUND', 'auto').lower()

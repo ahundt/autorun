@@ -913,6 +913,14 @@ if _undefined_predicates:
 def should_block_command(session_id: str, command: str) -> Optional[Dict]:
     """
     Check if a command should be blocked.
+
+    Args:
+        session_id: Claude/Gemini session identifier
+        command: Command string to check
+
+    Returns:
+        Block dict with 'pattern', 'suggestion', 'pattern_type', 'decision' if blocked,
+        None otherwise
     """
     log_info(f"should_block_command(session_id={session_id}, command='{command}')")
     # Check session blocks first (highest priority)
