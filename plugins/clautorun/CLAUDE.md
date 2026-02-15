@@ -3,14 +3,14 @@
 ## You Are Reading the WRONG Location If:
 
 - Path contains: `~/.claude/plugins/cache/`
-- Path contains: `/Users/athundt/.claude/plugins/cache/`
+- Path contains: `/.claude/plugins/cache/`
 - You see version numbers like `0.5.0/` in the path
 
 ## CORRECT Location: Git Repository
 
-**Always read from this location:**
+**Always read from this location (relative to git root):**
 ```
-/Users/athundt/.claude/clautorun/plugins/clautorun/
+plugins/clautorun/
 ```
 
 **Why:**
@@ -106,7 +106,7 @@ git status
 
 # Check current working directory
 pwd
-# Should be: /Users/athundt/.claude/clautorun/plugins/clautorun/
+# Should end with: plugins/clautorun/
 ```
 
 ## Hook Error Prevention (CRITICAL)
@@ -183,7 +183,7 @@ Markdown commands can include dynamic bash output using `!` prefix ([docs](https
 
 ## If You See This File in Cache Location
 
-1. Navigate to git repository: `cd /Users/athundt/.claude/clautorun/plugins/clautorun/`
+1. Navigate to git repository: `cd <git-root>/plugins/clautorun/`
 2. Read CLAUDE.md from that location
 3. Edit source files in that location
 4. Run tests from that location
@@ -192,9 +192,9 @@ Markdown commands can include dynamic bash output using `!` prefix ([docs](https
 
 ## Summary
 
-- **READ**: `/Users/athundt/.claude/clautorun/plugins/clautorun/`
-- **EDIT**: `/Users/athundt/.claude/clautorun/plugins/clautorun/`
-- **TEST**: `/Users/athundt/.claude/clautorun/plugins/clautorun/`
-- **COMMIT**: `/Users/athundt/.claude/clautorun/` (git root)
+- **READ**: `<git-root>/plugins/clautorun/`
+- **EDIT**: `<git-root>/plugins/clautorun/`
+- **TEST**: `<git-root>/plugins/clautorun/`
+- **COMMIT**: `<git-root>/` (git root)
 
 **NEVER**: `~/.claude/plugins/cache/...` (wrong location, may be outdated)

@@ -79,7 +79,7 @@ result = tmux_dangerous_batch_execute(tmux, 'continue', targets)
 ## Discovery Script
 
 ```bash
-uv run --project "/Users/athundt/.claude/clautorun/plugins/clautorun" python -c "
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
 from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows
 import json
 
@@ -134,7 +134,7 @@ print(json.dumps(result, indent=2))
 ### Continue on Awaiting Sessions
 
 ```bash
-uv run --project "/Users/athundt/.claude/clautorun/plugins/clautorun" python -c "
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
 from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
@@ -153,7 +153,7 @@ print(f'\\nSuccess: {result[\"success_count\"]}, Failed: {result[\"failure_count
 ### Stop All Active Generation
 
 ```bash
-uv run --project "/Users/athundt/.claude/clautorun/plugins/clautorun" python -c "
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
 from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
@@ -172,7 +172,7 @@ print(f'\\nSuccess: {result[\"success_count\"]}, Failed: {result[\"failure_count
 ### Send Custom Message to Specific Target
 
 ```bash
-uv run --project "/Users/athundt/.claude/clautorun/plugins/clautorun" python -c "
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
 from clautorun.tmux_utils import get_tmux_utilities, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
@@ -185,7 +185,7 @@ print(f'Result: {result}')
 ### Set Mode on Multiple Sessions
 
 ```bash
-uv run --project "/Users/athundt/.claude/clautorun/plugins/clautorun" python -c "
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
 from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()

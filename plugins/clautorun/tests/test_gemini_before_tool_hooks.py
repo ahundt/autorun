@@ -182,10 +182,43 @@ def test_gemini_before_tool_hook_fires_on_write_file(
     """
     hook_script, debug_log = debug_hook_script
 
-    # Install debug hook temporarily
+    # Find the actual hook_entry.py that Gemini will execute.
+    # The installed hooks.json may reference the dev repo path (absolute)
+    # rather than the extension dir copy, so we parse the command to find it.
     ext_dir = gemini_extension_installed
-    hook_entry = ext_dir / "hooks" / "hook_entry.py"
-    hook_backup = ext_dir / "hooks" / "hook_entry.py.backup"
+    hooks_json_path = ext_dir / "hooks" / "gemini-hooks.json"
+    if not hooks_json_path.exists():
+        hooks_json_path = ext_dir / "hooks" / "hooks.json"
+
+    with open(hooks_json_path) as f:
+        hooks_data = json.load(f)
+
+    # Extract hook_entry.py path from the first hook command
+    first_command = ""
+    for event_configs in hooks_data.get("hooks", {}).values():
+        for config in event_configs:
+            hook_list = config.get("hooks", [])
+            if hook_list:
+                first_command = hook_list[0].get("command", "")
+                break
+        if first_command:
+            break
+
+    # Parse the actual hook_entry.py path from the command string
+    # Command format: "uv run --quiet --project <path> python <path>/hooks/hook_entry.py"
+    # or: "<path>/.venv/bin/python <path>/hooks/hook_entry.py"
+    actual_hook_entry = None
+    for part in first_command.split():
+        if part.endswith("hook_entry.py"):
+            actual_hook_entry = Path(part)
+            break
+
+    if actual_hook_entry is None or not actual_hook_entry.exists():
+        # Fallback to extension dir copy
+        actual_hook_entry = ext_dir / "hooks" / "hook_entry.py"
+
+    hook_entry = actual_hook_entry
+    hook_backup = hook_entry.parent / "hook_entry.py.backup"
 
     # Backup original hook
     shutil.copy2(hook_entry, hook_backup)
@@ -451,10 +484,35 @@ def test_before_tool_hook_input_structure_has_required_fields(
     """
     hook_script, debug_log = debug_hook_script
 
-    # Install debug hook
+    # Find the actual hook_entry.py that Gemini will execute (same logic as above)
     ext_dir = gemini_extension_installed
-    hook_entry = ext_dir / "hooks" / "hook_entry.py"
-    hook_backup = ext_dir / "hooks" / "hook_entry.py.backup"
+    hooks_json_path = ext_dir / "hooks" / "gemini-hooks.json"
+    if not hooks_json_path.exists():
+        hooks_json_path = ext_dir / "hooks" / "hooks.json"
+
+    with open(hooks_json_path) as f:
+        hooks_data = json.load(f)
+
+    actual_hook_entry = None
+    for event_configs in hooks_data.get("hooks", {}).values():
+        for config in event_configs:
+            hook_list = config.get("hooks", [])
+            if hook_list:
+                cmd = hook_list[0].get("command", "")
+                for part in cmd.split():
+                    if part.endswith("hook_entry.py"):
+                        actual_hook_entry = Path(part)
+                        break
+            if actual_hook_entry:
+                break
+        if actual_hook_entry:
+            break
+
+    if actual_hook_entry is None or not actual_hook_entry.exists():
+        actual_hook_entry = ext_dir / "hooks" / "hook_entry.py"
+
+    hook_entry = actual_hook_entry
+    hook_backup = hook_entry.parent / "hook_entry.py.backup"
 
     shutil.copy2(hook_entry, hook_backup)
 

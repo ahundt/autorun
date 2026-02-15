@@ -70,7 +70,7 @@ clautorun --restart-daemon
 ```
 
 ### Critical Installer Fixes:
-1.  **Invisible Variable**: For local marketplaces, Claude **fails** to substitute `/Users/athundt/.claude/clautorun/plugins/clautorun`. `install.py` MUST manually substitute this in the `~/.claude/plugins/cache/` directory.
+1.  **Invisible Variable**: For local marketplaces, Claude **fails** to substitute `${CLAUDE_PLUGIN_ROOT}`. `install.py` MUST manually substitute this in the `~/.claude/plugins/cache/` directory.
 2.  **Path Doubling**: `clautorun --status` previously failed because it unconditionally appended `/plugins/clautorun` to the marketplace root. Discovery must be **idempotent**.
 
 ---
@@ -108,7 +108,7 @@ Before declaring a task "Complete," you MUST:
 1.  [ ] **Schema Test**: `echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"rm test"}}' | clautorun`
 2.  [ ] **Metadata Test**: `clautorun --version` (Verify commit matches current git).
 3.  [ ] **Restart Test**: Confirm PID in `~/.clautorun/daemon.lock` has changed.
-4.  [ ] **Path Test**: Verify `~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hooks.json` does NOT contain `/Users/athundt/.claude/clautorun/plugins/clautorun`.
+4.  [ ] **Path Test**: Verify `~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hooks.json` does NOT contain `${CLAUDE_PLUGIN_ROOT}`.
 5.  [ ] **Pipes Test**: `cargo build 2>&1 | head -50` (Should be ALLOWED).
 6. [ ] **Status Test**: `clautorun --status` (Ensure paths aren't doubled).
 
@@ -197,7 +197,7 @@ If hooks fail to connect or present errors, follow this repair guide.
 | Symptom | Probable Cause | Diagnostic Command | Repair Action |
 | :--- | :--- | :--- | :--- |
 | **"Connection Refused"** | Daemon not running or socket stale. | `ls -l ~/.clautorun/daemon.*` | Run `clautorun --restart-daemon`. |
-| **"No such file" (Hook CLI)**| `/Users/athundt/.claude/clautorun/plugins/clautorun` missing. | `cat hooks/hook_entry_debug.log` | Run `clautorun --install --force`. |
+| **"No such file" (Hook CLI)**| `${CLAUDE_PLUGIN_ROOT}` missing. | `cat hooks/hook_entry_debug.log` | Run `clautorun --install --force`. |
 | **"ImportError"** | Python deps missing in venv. | `uv pip list --project plugins/clautorun` | Run `uv sync --project plugins/clautorun`. |
 | **"Hang" (Claude wait)** | Daemon frozen or buffer full. | `ps aux | grep clautorun.daemon` | `pkill -f daemon` + `clautorun --restart-daemon`. |
 | **"Hook Error" (UI)** | Stderr noise or bad JSON. | `tail -n 20 ~/.clautorun/hook_entry_debug.log`| Check for double-printing or UV warnings. |
@@ -250,9 +250,9 @@ Any non-JSON output on `stdout` causes a parsing error.
 ### Layer 3: The Execution Gap ("No such file")
 The hook script is registered but cannot be found or executed.
 
-*   **Symptom**: `Stop hook error: can't open file '/Users/athundt/.claude/clautorun/plugins/clautorun/hooks/hook_entry.py': [Errno 2] No such file or directory`
+*   **Symptom**: `Stop hook error: can't open file '${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py': [Errno 2] No such file or directory`
 *   **The Trap**:
-    1.  **Missing Substitution**: Claude fails to replace `/Users/athundt/.claude/clautorun/plugins/clautorun` for local marketplaces.
+    1.  **Missing Substitution**: Claude fails to replace `${CLAUDE_PLUGIN_ROOT}` for local marketplaces.
     2.  **Partial Install**: `hooks/` directory skipped during `shutil.copytree` due to path logic.
 *   **Solution**:
     1.  `install.py` must manually `sed`-replace the variables in `~/.claude/plugins/cache/`.
