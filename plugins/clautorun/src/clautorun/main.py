@@ -180,6 +180,14 @@ except ImportError:
     AST_COMMAND_DETECTION_AVAILABLE = False
     ast_command_matches_pattern = None
 
+# Import schema validation for dual-platform compatibility
+try:
+    from .core import validate_hook_response
+except ImportError:
+    # Fallback if core.py not available
+    def validate_hook_response(event, response, cli_type="claude"):
+        return response
+
 # Global tmux utilities instance for session management
 _tmux_utilities = None
 
@@ -905,25 +913,27 @@ if _undefined_predicates:
 def should_block_command(session_id: str, command: str) -> Optional[Dict]:
     """
     Check if a command should be blocked.
-
-    Args:
-        session_id: Claude session identifier
-        command: Command string to check
-
-    Returns:
-        Block dict with 'pattern', 'suggestion', 'pattern_type' if blocked, None otherwise
     """
+    log_info(f"should_block_command(session_id={session_id}, command='{command}')")
     # Check session blocks first (highest priority)
     for block in get_session_blocks(session_id):
         pattern_type = block.get("pattern_type", "literal")
         if command_matches_pattern(command, block["pattern"], pattern_type):
-            return block
+            log_info(f"Command blocked by session pattern: {block['pattern']}")
+            # Ensure decision field is present for consistent handling
+            res = block.copy()
+            res["decision"] = "deny"
+            return res
 
     # Check global blocks (fallback)
     for block in get_global_blocks():
         pattern_type = block.get("pattern_type", "literal")
         if command_matches_pattern(command, block["pattern"], pattern_type):
-            return block
+            log_info(f"Command blocked by global pattern: {block['pattern']}")
+            # Ensure decision field is present for consistent handling
+            res = block.copy()
+            res["decision"] = "deny"
+            return res
 
     # Check default integrations (built-in safety rules)
     for pattern, config in CONFIG["default_integrations"].items():
@@ -939,12 +949,13 @@ def should_block_command(session_id: str, command: str) -> Optional[Dict]:
                 if not _PREDICATES[when_name](command):
                     continue  # Predicate says allow (no changes to lose)
 
+            log_info(f"Command blocked by default integration: {pattern}")
             result = {
                 "pattern": pattern,
                 "suggestion": config["suggestion"],
-                "pattern_type": "literal"
+                "pattern_type": "literal",
+                "decision": "deny"
             }
-            # Add optional fields if present
             if config.get("commands"):
                 result["commands"] = config["commands"]
             if config.get("commands_description"):
@@ -999,7 +1010,7 @@ def get_command_warning(session_id: str, command: str) -> Optional[str]:
 # =============================================================================
 
 def build_hook_response(continue_execution=True, stop_reason="", system_message="",
-                        decision=None, reason=None):
+                        decision=None, reason=None, event_name="unknown", ctx=None):
     """Build standardized JSON hook response.
 
     For Stop/SubagentStop hooks that need to keep Claude working:
@@ -1009,16 +1020,28 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
 
     See documentation block above for full semantics.
     """
+    from .config import detect_cli_type
+    
+    # Priority: explicit ctx cli_type > global detection
+    if ctx and hasattr(ctx, 'cli_type'):
+        cli_type = ctx.cli_type
+    else:
+        cli_type = detect_cli_type()
+
     response = {"continue": continue_execution, "stopReason": stop_reason,
                 "suppressOutput": False, "systemMessage": system_message}
     # Stop-hook-specific fields for blocking stops
     if decision is not None:
-        response["decision"] = decision
+        actual_decision = decision
+        if cli_type == "gemini" and decision == "block":
+            actual_decision = "deny"
+        response["decision"] = actual_decision
     if reason is not None:
         response["reason"] = reason
-    return response
+        
+    return validate_hook_response(event_name, response, cli_type=cli_type)
 
-def build_pretooluse_response(decision="allow", reason=""):
+def build_pretooluse_response(decision="allow", reason="", ctx=None):
     """Build PreToolUse hook response for permission decisions.
 
     Returns a response compatible with BOTH Claude Code and Gemini CLI:
@@ -1055,26 +1078,39 @@ def build_pretooluse_response(decision="allow", reason=""):
     - DataCamp guide: https://www.datacamp.com/tutorial/claude-code-hooks
     - Gemini CLI: https://geminicli.com/docs/hooks/reference/
     """
-    safe_reason = json.dumps(reason)[1:-1] if reason else ""
-    # For "deny", use exit code 2 to actually block (bug #4669 workaround)
-    # For "ask", let Claude Code handle the user prompt
-    should_continue = decision != "deny"
-    return {
-        # Top-level decision for Gemini CLI compatibility
-        "decision": decision,
-        "reason": safe_reason,
-        # Universal fields
-        "continue": should_continue,
-        "stopReason": safe_reason if not should_continue else "",
+    from .config import detect_cli_type
+    
+    # Priority: explicit ctx cli_type > global detection
+    if ctx and hasattr(ctx, 'cli_type'):
+        cli_type = ctx.cli_type
+    else:
+        cli_type = detect_cli_type()
+
+    # CRITICAL SEMANTICS:
+    # 1. 'continue: True' - Keep AI working even on denial so the AI loop keeps running,
+    #    sees feedback and suggests alternatives. False would kill the session.
+    # 2. 'decision' / 'permissionDecision' controls the TOOL, not the AI.
+    # 3. Bug #4669 workaround is exit code 2 (in client.py), NOT decision remapping.
+    if cli_type == "gemini":
+        top_decision = "allow" if decision == "allow" else "deny"
+    else:
+        top_decision = "approve" if decision == "allow" else "block"
+
+    response = {
+        "decision": top_decision,
+        "reason": reason,
+        "continue": True,
+        "stopReason": "",
         "suppressOutput": False,
-        "systemMessage": safe_reason,
-        # Claude Code hookSpecificOutput for PreToolUse
+        "systemMessage": reason,
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": decision,
-            "permissionDecisionReason": safe_reason,
+            "permissionDecisionReason": reason
         },
     }
+
+    return validate_hook_response("PreToolUse", response, cli_type=cli_type)
 
 
 def has_valid_justification(*texts: str) -> bool:
@@ -1611,23 +1647,25 @@ def claude_code_handler(ctx):
             state['session_id'] = session_id
             if command == "activate":
                 response = COMMAND_HANDLERS[command](state, prompt)
-                # Autorun command should NOT continue to AI - injection template is complete
-                return build_hook_response(False, "", response)
+                # Autorun activation: continue=True so AI processes injection template as context
+                # The systemMessage contains the full autorun injection template
+                return build_hook_response(True, "", response, event_name="UserPromptSubmit", ctx=ctx)
             elif command in ["stop", "emergency_stop"]:
                 response = COMMAND_HANDLERS[command](state)
                 # Stop commands should NOT continue to AI
-                return build_hook_response(False, "", response)
+                return build_hook_response(False, "", response, event_name="UserPromptSubmit", ctx=ctx)
             else:
                 response = COMMAND_HANDLERS[command](state)
                 # Policy and status commands should continue to AI
-                return build_hook_response(True, "", response)
+                return build_hook_response(True, "", response, event_name="UserPromptSubmit", ctx=ctx)
 
     # Let AI handle non-commands
-    return build_hook_response()
+    return build_hook_response(event_name="UserPromptSubmit", ctx=ctx)
 
 @handler("PreToolUse")
 def pretooluse_handler(ctx):
     """PreToolUse hook - command blocking and file policy enforcement"""
+    log_info(f"pretooluse_handler started: tool={ctx.tool_name}, cli={ctx.cli_type}")
     # =========================================================================
     # NEW: Command blocking check (highest priority)
     # =========================================================================
@@ -1648,13 +1686,14 @@ def pretooluse_handler(ctx):
                 decision="deny",
                 reason=f"Command blocked: {pattern}\n{suggestion}\n\n"
                        f"To allow in this session: /cr:ok {pattern}\n"
-                       f"To show status: /cr:status"
+                       f"To show status: /cr:status",
+                ctx=ctx
             )
 
         # Check for warnings (allow but show message for action: "warn")
         warning = get_command_warning(ctx.session_id, command)
         if warning:
-            return build_pretooluse_response("allow", warning)
+            return build_pretooluse_response("allow", warning, ctx=ctx)
 
     # =========================================================================
     # EXISTING: AutoFile policy enforcement
@@ -1676,7 +1715,7 @@ def pretooluse_handler(ctx):
         # For non-Write tools, always allow - file policies only apply to file creation
         # The Write tool is the only tool that creates files, so other tools don't need policy checks
         if ctx.tool_name not in WRITE_TOOLS:
-            return build_pretooluse_response("allow", "Non-Write tool allowed - file policies only apply to Write tool")
+            return build_pretooluse_response("allow", "Non-Write tool allowed - file policies only apply to Write tool", ctx=ctx)
 
         # Write tools - always apply policy
         if file_policy == "SEARCH":
@@ -1707,12 +1746,12 @@ def pretooluse_handler(ctx):
             if file_path and file_exists:
                 # File exists - allow editing
                 log_info("  Decision: ALLOW (Existing file modification)")
-                return build_pretooluse_response("allow", "Existing file modification allowed under SEARCH policy")
+                return build_pretooluse_response("allow", "Existing file modification allowed under SEARCH policy", ctx=ctx)
             else:
                 # No file path or file doesn't exist - block new file creation
                 # Use policy description which contains "NO new files" as expected by tests
                 log_info("  Decision: DENY (No file or does not exist)")
-                return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}")
+                return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}", ctx=ctx)
 
         elif file_policy == "JUSTIFY":
             # JUSTIFY policy: Allow existing file modifications, require justification for NEW files only
@@ -1727,7 +1766,7 @@ def pretooluse_handler(ctx):
 
             # If file exists, allow modification without justification
             if file_exists:
-                return build_pretooluse_response("allow", "Existing file modification allowed under JUSTIFY policy")
+                return build_pretooluse_response("allow", "Existing file modification allowed under JUSTIFY policy", ctx=ctx)
 
             # For NEW files, check for justification in state flag, transcript, OR Write tool content
             justification_found = (
@@ -1735,13 +1774,13 @@ def pretooluse_handler(ctx):
                 has_valid_justification(str(ctx.session_transcript), str(tool_input.get("content", "")))
             )
             if not justification_found:
-                return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}")
+                return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}", ctx=ctx)
 
         # ALLOW policy - allow all operations
-        return build_pretooluse_response("allow", "File operations allowed under ALLOW policy")
+        return build_pretooluse_response("allow", "File operations allowed under ALLOW policy", ctx=ctx)
 
 # ai_monitor integration: Continuation enforcement functions
-def inject_continue_prompt(state):
+def inject_continue_prompt(state, event_name="unknown", ctx=None):
     """Inject continue working prompt - ai_monitor functionality with monitoring"""
     log_info("Injecting continue working prompt - preventing premature stop")
 
@@ -1805,10 +1844,12 @@ def inject_continue_prompt(state):
         stop_reason="",
         system_message=continue_message,
         decision="block",
-        reason=continue_message
+        reason=continue_message,
+        event_name=event_name,
+        ctx=ctx
     )
 
-def inject_verification_prompt(state):
+def inject_verification_prompt(state, event_name="unknown", ctx=None):
     """Inject verification prompt - enhanced two-stage verification with forced compliance and monitoring"""
     verification_attempts = state.get('verification_attempts', 1)
     log_info(f"Injecting verification prompt - attempt {verification_attempts}")
@@ -1903,7 +1944,9 @@ def inject_verification_prompt(state):
         stop_reason="",
         system_message=verification_prompt,
         decision="block",
-        reason=verification_prompt
+        reason=verification_prompt,
+        event_name=event_name,
+        ctx=ctx
     )
 
 def analyze_verification_results(state, transcript):
@@ -2080,13 +2123,14 @@ def stop_handler(ctx):
     STOP HOOK SEMANTICS - See documentation at build_hook_response() (~line 546)
 
     To KEEP CLAUDE WORKING from a Stop hook:
-      return build_hook_response(True, "", msg, decision="block", reason=msg)
+      return build_hook_response(True, "", msg, decision="block", reason=msg, event_name=hook_event)
 
     To ALLOW CLAUDE TO STOP:
-      return build_hook_response()  # defaults work
+      return build_hook_response(event_name=hook_event)  # defaults work
     """
     session_id = getattr(ctx, 'session_id', 'default')
     transcript = str(getattr(ctx, 'session_transcript', []))
+    hook_event = getattr(ctx, 'hook_event_name', 'Stop')
 
     with session_state(session_id) as state:
         # Ensure session_id is in state for _manage_monitor
@@ -2097,7 +2141,6 @@ def stop_handler(ctx):
         # Check for plan acceptance trigger - activate autorun if plan was just accepted
         # Only trigger on main agent Stop, not SubagentStop (subagents may echo plan content)
         plan_marker = CONFIG.get("plan_accepted_marker", "PLAN ACCEPTED")
-        hook_event = getattr(ctx, 'hook_event_name', 'Stop')
         is_main_agent_stop = hook_event == "Stop"
         if is_main_agent_stop and plan_marker in transcript and state.get("session_status") != "active":
             log_info(f"Plan acceptance detected, activating autorun for session {session_id}")
@@ -2106,13 +2149,13 @@ def stop_handler(ctx):
             # continue=True allows hook processing to complete, decision="block" prevents the Stop event
             # reason=injection tells Claude what to do next
             # See https://code.claude.com/docs/en/hooks and build_hook_response() (~line 546)
-            return build_hook_response(True, "", injection, decision="block", reason=injection)
+            return build_hook_response(True, "", injection, decision="block", reason=injection, event_name=hook_event, ctx=ctx)
 
         # Only intervene in active autorun sessions
         if state.get("session_status") != "active":
             # Normal cleanup for non-autorun sessions
             state.clear()
-            return build_hook_response()
+            return build_hook_response(event_name=hook_event, ctx=ctx)
 
         current_stage = state.get("autorun_stage", "INITIAL")
         log_info(f"Three-stage system: stage={current_stage}, hook_calls={state['hook_call_count']}")
@@ -2129,19 +2172,19 @@ def stop_handler(ctx):
                 # KEEP CLAUDE WORKING: Inject stage 2 instructions
                 # decision="block" prevents Stop, reason tells Claude what to do next
                 stage2_prompt = f"STAGE 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
-                return build_hook_response(True, "", stage2_prompt, decision="block", reason=stage2_prompt)
+                return build_hook_response(True, "", stage2_prompt, decision="block", reason=stage2_prompt, event_name=hook_event, ctx=ctx)
 
             # Handle premature stage 3 attempt in stage 1 (also recognize descriptive completion_marker)
             elif CONFIG["stage3_message"] in transcript or CONFIG["completion_marker"] in transcript:
                 log_info(f"Premature stage 3 attempt detected in stage 1 for session {session_id}")
                 # KEEP CLAUDE WORKING: Block premature completion, redirect to stage 1
                 stage1_continuation = f"You must complete Stage 1 first. Output **{CONFIG['stage1_message']}** when done."
-                return build_hook_response(True, "", stage1_continuation, decision="block", reason=stage1_continuation)
+                return build_hook_response(True, "", stage1_continuation, decision="block", reason=stage1_continuation, event_name=hook_event, ctx=ctx)
 
             # Handle premature stop (no completion markers)
             elif is_premature_stop(ctx, state):
                 log_info(f"Premature stop detected in Stage 1 for session {session_id}")
-                return inject_continue_prompt(state)
+                return inject_continue_prompt(state, event_name=hook_event, ctx=ctx)
 
         # STAGE 2: Critical evaluation
         elif current_stage == "STAGE2":
@@ -2156,7 +2199,7 @@ def stop_handler(ctx):
                 # decision="block" prevents Stop, reason tells Claude what to do next
                 remaining_calls = CONFIG["stage3_countdown_calls"]
                 countdown_msg = f"Stage 2 complete. Continue working for {remaining_calls} more cycles before Stage 3 instructions are revealed."
-                return build_hook_response(True, "", countdown_msg, decision="block", reason=countdown_msg)
+                return build_hook_response(True, "", countdown_msg, decision="block", reason=countdown_msg, event_name=hook_event, ctx=ctx)
 
             # Block premature stage 3 attempt in stage 2 (also recognize descriptive completion_marker)
             # Check BEFORE is_premature_stop to prevent dual-marker bypass
@@ -2164,14 +2207,14 @@ def stop_handler(ctx):
                 log_info(f"Premature stage 3 attempt detected in stage 2 for session {session_id}")
                 # KEEP CLAUDE WORKING: Block premature completion, redirect to stage 2
                 stage2_continuation = f"You must complete Stage 2 first. Output **{CONFIG['stage2_message']}** when done."
-                return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation)
+                return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation, event_name=hook_event, ctx=ctx)
 
             # Handle premature stop in stage 2
             elif is_premature_stop(ctx, state):
                 log_info(f"Premature stop detected in Stage 2 for session {session_id}")
                 # KEEP CLAUDE WORKING: Resume stage 2 work
                 stage2_continuation = f"Continue with Stage 2: {CONFIG['stage2_instruction']}. Output **{CONFIG['stage2_message']}** when complete."
-                return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation)
+                return build_hook_response(True, "", stage2_continuation, decision="block", reason=stage2_continuation, event_name=hook_event, ctx=ctx)
 
         # STAGE 2 COMPLETED: Countdown to stage 3
         elif current_stage == "STAGE2_COMPLETED":
@@ -2187,7 +2230,7 @@ def stop_handler(ctx):
                     reset_msg = f"Too early for Stage 3. Continue with Stage 2: {CONFIG['stage2_instruction']}"
                     state["autorun_stage"] = "STAGE2"
                     # Don't reset stage1_completed - preserve progress
-                    return build_hook_response(True, "", reset_msg, decision="block", reason=reset_msg)
+                    return build_hook_response(True, "", reset_msg, decision="block", reason=reset_msg, ctx=ctx)
                 else:
                     log_info(f"Stage 3 completion detected for session {session_id}")
                     # Proper stage 3 completion - stop monitor and cleanup
@@ -2196,7 +2239,7 @@ def stop_handler(ctx):
                     state.clear()
                     # ALLOW CLAUDE TO STOP: All stages complete, we WANT Claude to stop here
                     # continue=False means Claude will stop (this is the desired behavior)
-                    return build_hook_response(False, "", "✅ Three-stage completion successful!")
+                    return build_hook_response(False, "", "✅ Three-stage completion successful!", ctx=ctx)
 
             # Continue countdown and provide status updates
             elif remaining_calls > 0:
@@ -2205,24 +2248,36 @@ def stop_handler(ctx):
                 if hook_call_count % 2 == 0:  # Provide simple status updates every 2 calls
                     # KEEP CLAUDE WORKING: Countdown status, continue working
                     status_msg = f"Stage 3 countdown: {remaining_calls} calls remaining. Continue with evaluation."
-                    return build_hook_response(True, "", status_msg, decision="block", reason=status_msg)
+                    return build_hook_response(True, "", status_msg, decision="block", reason=status_msg, ctx=ctx)
                 else:
                     # Recovery mechanism: Inject full task context if AI stops working
-                    return inject_continue_prompt(state)
+                    return inject_continue_prompt(state, ctx=ctx)
             else:
                 # KEEP CLAUDE WORKING: Reveal stage 3 instructions and continue
                 stage3_instructions = f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_message']}** to complete."
-                return build_hook_response(True, "", stage3_instructions, decision="block", reason=stage3_instructions)
+                return build_hook_response(True, "", stage3_instructions, decision="block", reason=stage3_instructions, ctx=ctx)
 
-        # Fallback: unknown stage or state
-        log_info(f"Unknown state in three-stage stop_handler: stage={current_stage}, session={session_id}")
-        return inject_continue_prompt(state)
+        # Handle call limit pausing
+        max_calls = state.get('max_calls', 50)
+        if state['hook_call_count'] > max_calls:
+            # STOP HOOK SEMANTICS - See documentation at build_hook_response() (~line 546)
+            msg = f"AUTORUN PAUSED: Session reached call limit ({max_calls}). Use /cr:run to resume."
+            log_info(msg)
+            return build_hook_response(True, "", msg, decision="block", reason=msg, event_name=hook_event, ctx=ctx)
+
+        # If autorun not active, just allow stop
+        if not state.get("autorun_active", False):
+            return build_hook_response(event_name=hook_event, ctx=ctx)  # defaults work
 
 # Default handler
-def default_handler(ctx): return build_hook_response()
+def default_handler(ctx): return build_hook_response(ctx=ctx)
 
-def main():
-    """Entry point - unified with efficient dispatch"""
+def main(_exit=True):
+    """Entry point - unified with efficient dispatch
+    
+    Returns:
+        int: Exit code (0, 1, or 2)
+    """
     operation_mode = os.getenv("AGENT_MODE", "HOOK_INTEGRATION").upper()
 
     if operation_mode == "HOOK_INTEGRATION":
@@ -2250,17 +2305,19 @@ def main():
             with open(debug_log, "a") as f:
                 f.write(f"[{time.strftime('%H:%M:%S')}] HOOK_CALLED: {event} | session: {_session_id} | prompt: {safe_prompt}...\n")
 
-            # Context object for event handling (uses normalized keys)
             class Ctx:
-                def __init__(self, p):
-                    self.hook_event_name = p.get("hook_event_name", "")
-                    self.session_id = p.get("session_id", "")
-                    self.prompt = p.get("prompt", "")
-                    self.tool_name = p.get("tool_name", "")
-                    self.tool_input = p.get("tool_input", {})
-                    self.session_transcript = p.get("session_transcript", [])
+                def __init__(self, p, n):
+                    self.hook_event_name = n["hook_event_name"]
+                    self.session_id = n["session_id"]
+                    self.prompt = n["prompt"]
+                    self.tool_name = n["tool_name"]
+                    self.tool_input = n["tool_input"]
+                    self.session_transcript = n["session_transcript"]
+                    # Detect CLI type for this context using RAW payload
+                    from .config import detect_cli_type
+                    self.cli_type = detect_cli_type(p)
 
-            ctx = Ctx(normalized)
+            ctx = Ctx(payload, normalized)
             handler = HANDLERS.get(event, default_handler)
             response = handler(ctx)
 
@@ -2292,23 +2349,33 @@ def main():
             decision = response.get('hookSpecificOutput', {}).get('permissionDecision', 
                                                                   response.get('decision', 'allow'))
             
-            if decision == "deny" and should_use_exit2_workaround():
+            if decision == "deny" and should_use_exit2_workaround(payload):
                 # Extract reason for stderr feedback
                 reason = response.get('hookSpecificOutput', {}).get('permissionDecisionReason',
                                                                     response.get('reason', 'Tool blocked'))
                 # Print to stderr so AI sees the suggestion (Bug #4669 workaround)
                 print(reason, file=sys.stderr)
                 # Exit with code 2 to trigger actual blocking in Claude Code
-                sys.exit(2)
+                if _exit:
+                    sys.exit(2)
+                return 2
 
             # Normal success path (exit 0)
             duration = (time.time() - start_time) * 1000
             _log_hook_lifecycle("LEGACY PATHWAY END", Event=event, Duration=f"{duration:.2f}ms")
-            sys.exit(0)
+            if _exit:
+                sys.exit(0)
+            return 0
 
         except Exception:
-            print(json.dumps(build_hook_response()))
-            sys.exit(1)
+            # Re-read ctx if possible, or use None
+            try:
+                print(json.dumps(build_hook_response(ctx=ctx)))
+            except NameError:
+                print(json.dumps(build_hook_response()))
+            if _exit:
+                sys.exit(1)
+            return 1
 
     else:
         # Run as standalone Agent SDK - Interactive mode

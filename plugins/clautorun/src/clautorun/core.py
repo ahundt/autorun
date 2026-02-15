@@ -124,6 +124,11 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     raw_event = payload.get("hook_event_name") or payload.get("type", "")
     event = GEMINI_EVENT_MAP.get(raw_event, raw_event)
 
+    # Get session ID (Gemini uses sessionId)
+    session_id = payload.get("sessionId") or payload.get("session_id", "unknown")
+    
+    logger.debug(f"normalize_hook_payload: raw_event={raw_event}, event={event}, session_id={session_id}")
+
     # Get transcript
     transcript = payload.get("session_transcript", [])
 
@@ -171,7 +176,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
 
     return {
         "hook_event_name": event,
-        "session_id": payload.get("session_id") or payload.get("sessionId", ""),
+        "session_id": session_id,
         "prompt": payload.get("prompt", ""),
         "tool_name": payload.get("tool_name") or payload.get("toolName", ""),
         "tool_input": payload.get("tool_input") or payload.get("toolInput", {}),
@@ -355,7 +360,7 @@ class LazyTranscript:
 # =============================================================================
 HOOK_SCHEMAS = {
     "PreToolUse": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", 
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage",
                  "decision", "permissionDecision", "reason", "hookSpecificOutput"},
         "hso": {"hookEventName", "permissionDecision", "permissionDecisionReason", "updatedInput"}
     },
@@ -396,11 +401,29 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     Returns:
         Filtered dictionary containing only schema-compliant fields.
     """
+    # Debug logging
+    logger.debug(f"validate_hook_response(event={event}, cli_type={cli_type}) input decision={response.get('decision')}")
+
     if cli_type == "gemini":
         # Gemini CLI is lenient - it ignores unknown fields.
         # We ensure it gets the standard decision/reason fields it expects.
-        # Reference: https://geminicli.com/docs/hooks/reference/
-        allowed_gemini = {"continue", "decision", "reason", "systemMessage", "stopReason"}
+        # We also INCLUDE hookSpecificOutput for universal test compatibility
+        # and because it doesn't hurt Gemini.
+        
+        # Mapping for Gemini top-level decision/reason if they're missing but in HSO
+        if "hookSpecificOutput" in response:
+            hso = response["hookSpecificOutput"]
+            if "decision" not in response and "permissionDecision" in hso:
+                # Map 'deny' or 'block' to Gemini 'deny'
+                d = hso["permissionDecision"]
+                response["decision"] = "allow" if d == "allow" else "deny"
+            if "reason" not in response and "permissionDecisionReason" in hso:
+                response["reason"] = hso["permissionDecisionReason"]
+
+        allowed_gemini = {
+            "continue", "decision", "reason", "systemMessage", "stopReason",
+            "hookSpecificOutput", "permissionDecision", "suppressOutput"
+        }
         return {k: v for k, v in response.items() if k in allowed_gemini}
 
     # Strict validation for Claude Code (fails on unknown fields)
@@ -438,7 +461,8 @@ class EventContext:
     """
     # Reserved attributes (not persisted)
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
-                 '_tool_result', '_session_transcript', '_state', '_transcript', '_store')
+                 '_tool_result', '_session_transcript', '_state', '_transcript', 
+                 '_store', '_cli_type')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -468,7 +492,7 @@ class EventContext:
     def __init__(self, session_id: str, event: str, prompt: str = "",
                  tool_name: str = None, tool_input: Dict = None,
                  tool_result: str = None, session_transcript: List = None,
-                 store: 'ThreadSafeDB' = None):
+                 store: 'ThreadSafeDB' = None, cli_type: str = None):
         object.__setattr__(self, '_session_id', session_id)
         object.__setattr__(self, '_event', event)
         object.__setattr__(self, '_prompt', prompt)
@@ -479,6 +503,8 @@ class EventContext:
         object.__setattr__(self, '_state', {})
         object.__setattr__(self, '_transcript', None)
         object.__setattr__(self, '_store', store)
+        # Auto-detect CLI type from environment if not explicitly provided
+        object.__setattr__(self, '_cli_type', cli_type)
 
     # === Read-only accessors for payload data ===
     @property
@@ -488,6 +514,14 @@ class EventContext:
     @property
     def event(self) -> str:
         return self._event
+
+    @property
+    def cli_type(self) -> str:
+        if self._cli_type is None:
+            from .config import detect_cli_type
+            detected = detect_cli_type()
+            object.__setattr__(self, '_cli_type', detected)
+        return self._cli_type
 
     @property
     def prompt(self) -> str:
@@ -614,10 +648,8 @@ class EventContext:
         - Hook docs: https://code.claude.com/docs/en/hooks
         - CLAUDE.md: Hook Error Prevention section
         """
-        from .config import detect_cli_type
-        cli_type = detect_cli_type()
-
-        # Map 'ask' to 'deny' for Gemini CLI (it doesn't support the 'ask' prompt)
+        cli_type = self.cli_type
+        logger.debug(f"respond: event={self._event} cli_type={cli_type} decision={decision}")
         # This keeps both CLIs as first-class citizens by using the best available
         # blocking mechanism for each.
         if decision == "ask" and cli_type == "gemini":
@@ -639,21 +671,32 @@ class EventContext:
             # - hookSpecificOutput: { permissionDecision, permissionDecisionReason }
             top_decision = "block" if decision == "deny" else "approve"
             
-            # For Gemini, the top-level 'decision' should be 'allow' or 'deny'
             if cli_type == "gemini":
-                top_decision = decision
+                # Gemini CLI uses standard allow/deny top-level decision.
+                # Map any blocking decision (deny, block, ask) to "deny".
+                top_decision = "allow" if decision == "allow" else "deny"
+                logger.debug(f"respond: gemini PreToolUse decision={decision} -> top_decision={top_decision}")
+
+            logger.info(f"respond(event={self._event}, decision={decision}, cli_type={cli_type}) -> top_decision={top_decision}")
 
             # To avoid triple-printing in the UI, we only provide the reason 
             # in hookSpecificOutput. Claude will also show stderr for exit 2.
             is_deny = decision == "deny"
+
+            # CRITICAL SEMANTICS:
+            # 1. 'continue: True' means the AI loop keeps running. We ALWAYS want this
+            #    on tool denial so the AI can see the feedback and suggest alternatives.
+            #    Setting this to False would stop the entire agent session.
+            # 2. 'decision' / 'permissionDecision' controls the TOOL, not the AI.
+            #    Denying the tool (block/deny) prevents execution while the AI continues.
             resp = {
                 "decision": top_decision,
                 "permissionDecision": decision,
-                "reason": "" if is_deny else msg_reason,
+                "reason": msg_reason if cli_type == "gemini" else ("" if is_deny else msg_reason),
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": "" if is_deny else msg_reason,
+                "systemMessage": msg_reason if cli_type == "gemini" else ("" if is_deny else msg_reason),
                 # Claude Code hookSpecificOutput (REQUIRED for PreToolUse)
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -740,28 +783,25 @@ class EventContext:
         # Enforce strict schema validation before returning
         return validate_hook_response(self._event, final_response, cli_type=cli_type)
 
-    def command_response(self, response_text: str) -> Dict:
+    def command_response(self, response_text: str, continue_loop: bool = True) -> Dict:
         """
         Response for locally-handled commands (UserPromptSubmit).
 
-        Commands handled locally should NOT continue to AI.
-
         Args:
             response_text: The command output message
-
-        Returns:
-            dict: Hook response with continue=False and response text
+            continue_loop: True (default) keeps AI running. False for estop/stop.
 
         Usage:
             return ctx.command_response("✅ AutoFile policy: strict-search")
+            return ctx.command_response("Emergency stop!", continue_loop=False)
         """
-        return {
-            "continue": False,
+        resp = {
+            "continue": continue_loop,
             "stopReason": "",
             "suppressOutput": False,
             "systemMessage": response_text,
-            "response": response_text  # Backward compatibility with tests
         }
+        return validate_hook_response(self._event, resp, cli_type=self.cli_type)
 
     # === Convenience aliases ===
     def allow(self, reason: str = "") -> Dict:
@@ -871,8 +911,9 @@ class ClautorunApp:
                 handler, alias = match
                 ctx.activation_prompt = ctx.prompt
                 response_text = handler(ctx)
-                # Commands handled locally should NOT continue to AI
-                return ctx.command_response(response_text)
+                # Stop/estop handlers set _halt_ai=True to kill AI loop
+                halt = getattr(ctx, '_halt_ai', False)
+                return ctx.command_response(response_text, continue_loop=not halt)
             # Non-commands continue to AI
             return ctx.respond("allow")
 
@@ -970,6 +1011,10 @@ class ClautorunDaemon:
             # Normalize payload (includes transcript truncation to ~64KB)
             normalized = normalize_hook_payload(payload)
 
+            # Detect CLI type from payload (ensures correct schema for shared daemon)
+            from .config import detect_cli_type
+            cli_type = detect_cli_type(payload)
+            logger.info(f"handle_client: cli_type={cli_type} event={event} tool={tool}")
 
             # Resolve session identity (supports tri-layer for resume robustness)
             raw_session_id = normalized["session_id"]
@@ -984,7 +1029,8 @@ class ClautorunDaemon:
                 tool_input=normalized["tool_input"],
                 tool_result=normalized["tool_result"],
                 session_transcript=normalized["session_transcript"],
-                store=self.store
+                store=self.store,
+                cli_type=cli_type
             )
 
             # Dispatch

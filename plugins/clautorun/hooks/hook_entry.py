@@ -527,7 +527,12 @@ def main() -> None:
     from pathlib import Path
 
     # Read stdin once — it can only be consumed once
-    stdin_data = "" if sys.stdin.isatty() else sys.stdin.read()
+    stdin_data = ""
+    try:
+        if not sys.stdin.isatty():
+            stdin_data = sys.stdin.read()
+    except EOFError:
+        pass
 
     # Debug logging (ALWAYS enabled to diagnose hook issues)
     def log_debug(msg: str):
@@ -541,11 +546,23 @@ def main() -> None:
             pass
 
     log_debug("=" * 80)
-    log_debug(f"Hook entry started (Event: {json.loads(stdin_data).get('hook_event_name', 'unknown') if stdin_data else 'none'})")
-    log_debug(f"Hook entry stdin ({len(stdin_data)} bytes):\n{stdin_data[:1000]}")
+    event_name = "unknown"
+    if stdin_data:
+        try:
+            event_name = json.loads(stdin_data).get('hook_event_name', 'unknown')
+        except json.JSONDecodeError:
+            pass
+    
+    log_debug(f"Hook entry started (Event: {event_name})")
+    log_debug(f"Hook entry stdin ({len(stdin_data)} bytes)")
 
     clautorun_bin = get_clautorun_bin()
     log_debug(f"Selected binary: {clautorun_bin}")
+    cli_type = detect_cli_type()
+    log_debug(f"Detected CLI: {cli_type}")
+    log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
+    log_debug(f"Env GEMINI_PROJECT_DIR: {os.environ.get('GEMINI_PROJECT_DIR')}")
+    log_debug(f"Env CLAUDE_PROJECT_DIR: {os.environ.get('CLAUDE_PROJECT_DIR')}")
 
     if clautorun_bin:
         try:

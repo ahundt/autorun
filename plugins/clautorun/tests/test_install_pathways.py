@@ -246,11 +246,8 @@ class TestFindMarketplaceRoot:
 class TestInstallToCachePathResolution:
     """Test _install_to_cache() resolves plugin paths correctly.
 
-    Bug history: find_marketplace_root() returns a plugin directory (e.g.,
-    plugins/clautorun/) not the workspace root. The old code constructed
-    root / "plugins" / plugin_name which created a nonexistent path like
-    plugins/clautorun/plugins/clautorun. Fixed to check if root IS the
-    requested plugin, and navigate to siblings via root.parent.
+    find_marketplace_root() returns the workspace root (e.g., clautorun/)
+    which contains plugins/ subdirectory with individual plugin directories.
     """
 
     def test_install_to_cache_finds_own_plugin(self):
@@ -258,23 +255,24 @@ class TestInstallToCachePathResolution:
         install = get_install_module()
         root = install.find_marketplace_root()
 
-        # root should be the clautorun plugin dir itself
+        # root is the workspace root (named "clautorun")
         assert root.name == "clautorun"
         assert (root / ".claude-plugin").exists()
 
-        # The fix: when plugin_name matches root.name, use root directly
-        # Old bug: root / "plugins" / "clautorun" -> nonexistent path
+        # The workspace root contains plugins/ with individual plugin dirs
         plugin_dir = root / "plugins" / "clautorun"
-        assert not plugin_dir.exists(), \
-            f"root/plugins/clautorun should NOT exist (that was the bug): {plugin_dir}"
+        assert plugin_dir.exists(), \
+            f"Workspace should contain plugins/clautorun: {plugin_dir}"
+        assert (plugin_dir / "src" / "clautorun").exists(), \
+            f"Plugin dir should contain src/clautorun: {plugin_dir}"
 
     def test_install_to_cache_finds_sibling_plugin(self):
-        """Verify _install_to_cache resolves sibling plugins via root.parent."""
+        """Verify _install_to_cache resolves sibling plugins."""
         install = get_install_module()
         root = install.find_marketplace_root()
 
-        # Sibling plugin (pdf-extractor) should be at root.parent / "pdf-extractor"
-        sibling = root.parent / "pdf-extractor"
+        # Sibling plugin (pdf-extractor) is at root / "plugins" / "pdf-extractor"
+        sibling = root / "plugins" / "pdf-extractor"
         if sibling.exists():
             assert (sibling / ".claude-plugin").exists(), \
                 f"Sibling plugin at {sibling} should have .claude-plugin/"

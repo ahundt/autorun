@@ -57,6 +57,7 @@ class MockContext:
         self.prompt = ""
         self.hook_event_name = ""
         self.session_transcript = []
+        self.cli_type = "claude"
 
 
 class TestCommandBlockingHandlers:

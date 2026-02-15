@@ -6,7 +6,7 @@ allowed-tools: Bash(uv *)
 # Configure Plan Export
 
 Current configuration:
-! uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py status
+! uv run --project /Users/athundt/.claude/clautorun/plugins/clautorun python /Users/athundt/.claude/clautorun/plugins/clautorun/scripts/plan_export_config.py status
 
 ## Configuration Options
 

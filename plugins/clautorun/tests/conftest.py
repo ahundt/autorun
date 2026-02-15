@@ -6,15 +6,214 @@ Environment Variables:
     CLAUTORUN_KEEP_TEST_ARTIFACTS: Set to 'true', '1', or 'yes' to keep test artifacts
                                    for debugging instead of cleaning them up.
 """
-import pytest
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
+import time
+import uuid
+from pathlib import Path
+
+import pytest
 
 
 def pytest_configure(config):
-    """Configure pytest with custom markers for plan export tests."""
+    """Configure pytest with custom markers."""
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "stress: marks tests as stress tests")
     config.addinivalue_line("markers", "race: marks tests as race condition tests")
+    config.addinivalue_line("markers", "daemon: marks tests that require a running daemon")
+    config.addinivalue_line("markers", "e2e: marks end-to-end tests")
+    config.addinivalue_line("markers", "serial: marks tests that must run serially")
+
+
+# Test file groups for automatic serial/parallel assignment
+_SERIAL_SHELVE_TESTS = {
+    "test_database_functionality", "test_stale_lock_recovery",
+    "test_same_session_multi_process", "test_race_condition_fix",
+    "test_command_blocking_comprehensive", "test_command_blocking",
+    "test_policy_enforcement_matrix", "test_three_stage_completion",
+    "test_task_lifecycle_integration", "test_task_lifecycle_failure_modes",
+    "test_task_lifecycle_edge_cases", "test_task_lifecycle_ghost_task_bug",
+    "test_thread_safety_simple", "test_e2e_policy_lifecycle",
+    "test_session_lifecycle_edge_cases",
+}
+
+_SERIAL_DAEMON_TESTS = {
+    "test_hook_entry", "test_dual_platform_hooks_install",
+    "test_session_persistence_hooks", "test_gemini_e2e_improved",
+    "test_gemini_e2e_real_money", "test_gemini_before_tool_hooks",
+    "test_task_cli_commands",
+}
+
+_SERIAL_TMUX_TESTS = {
+    "test_tmux_injector", "test_tmux_workflows_integration",
+    "test_tmux_automation_agents", "test_tmux_compliance",
+    "test_tmux_utils_enhanced", "test_session_targeting_diagnostic",
+    "test_session_targeting_regression", "test_bang_syntax",
+    "test_injection_monitoring", "test_injection_integration",
+    "test_session_start_handler", "test_edge_cases_comprehensive",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-assign serial/parallel markers based on test file dependencies."""
+    for item in items:
+        # Extract test file stem from nodeid
+        parts = item.nodeid.split("::")
+        if not parts:
+            continue
+        file_stem = parts[0].rsplit("/", 1)[-1].replace(".py", "")
+
+        if file_stem in _SERIAL_SHELVE_TESTS:
+            item.add_marker(pytest.mark.serial)
+        elif file_stem in _SERIAL_DAEMON_TESTS:
+            item.add_marker(pytest.mark.daemon)
+            item.add_marker(pytest.mark.serial)
+        elif file_stem in _SERIAL_TMUX_TESTS:
+            item.add_marker(pytest.mark.serial)
+
+
+# Add src directory to Python path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from clautorun import CONFIG
+
+
+# =============================================================================
+# DAEMON LIFECYCLE MANAGEMENT (DRY — all daemon ops consolidated here)
+# =============================================================================
+
+class DaemonManager:
+    """Centralized daemon lifecycle management for tests.
+
+    Tracks production daemon PIDs (recorded before tests) so tests never kill
+    daemons belonging to real coding sessions. All pgrep/pkill/kill calls for
+    daemon processes go through this class — no daemon management code elsewhere.
+
+    Usage:
+        # In pytest_sessionstart: DaemonManager.snapshot_production_pids()
+        # In fixture:             DaemonManager.kill_test_daemons()
+        # In pytest_sessionfinish: DaemonManager.cleanup()
+    """
+
+    # PIDs that existed before the test suite started — never killed
+    _production_pids: set = set()
+
+    # PIDs spawned by tests — killed on cleanup
+    _test_spawned_pids: set = set()
+
+    @classmethod
+    def _get_all_daemon_pids(cls) -> list:
+        """Get all clautorun daemon PIDs currently running."""
+        result = subprocess.run(
+            ["pgrep", "-f", "clautorun.daemon"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return []
+        return [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
+
+    @classmethod
+    def snapshot_production_pids(cls):
+        """Record daemon PIDs that exist before tests start.
+
+        Called once in pytest_sessionstart. These PIDs are protected from
+        all test cleanup operations.
+        """
+        cls._production_pids = set(cls._get_all_daemon_pids())
+        if cls._production_pids and os.getenv("DEBUG", "").lower() in {"true", "1", "yes"}:
+            print(f"\n[DEBUG] Production daemon PIDs (protected): {cls._production_pids}")
+
+    @classmethod
+    def get_test_daemon_pids(cls) -> list:
+        """Get PIDs of daemons spawned during testing (excludes production)."""
+        all_pids = set(cls._get_all_daemon_pids())
+        return sorted(all_pids - cls._production_pids)
+
+    @classmethod
+    def kill_test_daemons(cls):
+        """Kill only test-spawned daemon processes. Never touches production PIDs."""
+        test_pids = cls.get_test_daemon_pids()
+        for pid in test_pids:
+            try:
+                subprocess.run(["kill", pid], capture_output=True)
+            except Exception:
+                pass
+        if test_pids:
+            time.sleep(0.3)
+            # Also remove from tracked set
+            cls._test_spawned_pids -= set(test_pids)
+
+    @classmethod
+    def spawn_test_daemon(cls):
+        """Start a test daemon and track its PID.
+
+        Returns the PID of the spawned daemon, or None on failure.
+        """
+        before = set(cls._get_all_daemon_pids())
+        subprocess.run(
+            ["clautorun", "--restart-daemon"],
+            capture_output=True, timeout=30
+        )
+        time.sleep(0.5)
+        after = set(cls._get_all_daemon_pids())
+        new_pids = after - before
+        cls._test_spawned_pids.update(new_pids)
+        return next(iter(new_pids), None)
+
+    @classmethod
+    def verify_daemon_count(cls) -> tuple:
+        """Check test-spawned daemon count.
+
+        Returns:
+            (test_pids, production_pids) — both as lists
+        """
+        return cls.get_test_daemon_pids(), sorted(cls._production_pids)
+
+    @classmethod
+    def cleanup(cls):
+        """Kill all test-spawned daemons. Called at session end.
+
+        Idempotent — safe to call multiple times.
+        """
+        cls.kill_test_daemons()
+        cls._test_spawned_pids.clear()
+
+    @classmethod
+    def assert_daemon_count(cls, max_test_daemons: int = 1):
+        """Assert test daemon count is within limits. Cleans extras first.
+
+        Returns (test_pids, production_pids) for diagnostics.
+        Use this in tests instead of raw pgrep/kill calls.
+        """
+        import warnings
+
+        # Kill extras first, keep oldest
+        test_pids = cls.get_test_daemon_pids()
+        if len(test_pids) > max_test_daemons:
+            for pid in test_pids[max_test_daemons:]:
+                subprocess.run(["kill", pid], capture_output=True)
+            time.sleep(0.3)
+            test_pids = cls.get_test_daemon_pids()
+
+        prod_pids = sorted(cls._production_pids & set(cls._get_all_daemon_pids()))
+
+        if len(test_pids) > max_test_daemons:
+            pytest.fail(
+                f"Too many test daemons ({len(test_pids)}): {test_pids}. "
+                f"Production daemons ({len(prod_pids)}): {prod_pids}. "
+                f"Run: pkill -f 'clautorun.daemon'"
+            )
+        elif len(test_pids) > 0:
+            warnings.warn(
+                f"Test daemons running ({len(test_pids)}): {test_pids}. "
+                f"Production daemons ({len(prod_pids)}): {prod_pids}.",
+                stacklevel=2
+            )
+
+        return test_pids, prod_pids
 
 
 @pytest.fixture(scope="session")
@@ -27,34 +226,6 @@ def test_timeout():
 def stress_test_timeout():
     """Extended timeout for stress tests."""
     return 60.0
-import shutil
-import sys
-import os
-import uuid
-
-# Python 2/3 compatibility
-try:
-    from pathlib import Path
-except ImportError:
-    # Python 2.7 fallback
-    import os as os_module
-    class Path(object):
-        def __init__(self, path):
-            self.path = str(path)
-        def __str__(self):
-            return self.path
-        def __div__(self, other):
-            return Path(os_module.path.join(self.path, str(other)))
-        def __truediv__(self, other):
-            return Path(os_module.path.join(self.path, str(other)))
-        @property
-        def parent(self):
-            return Path(os_module.path.dirname(self.path))
-
-# Add src directory to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from clautorun import CONFIG
 
 
 
@@ -92,13 +263,15 @@ def cleanup_test_sessions():
 
     cleaned = 0
     for session_id in _test_session_ids:
-        # Clean up all files matching this session ID pattern
-        for pattern in [f"{session_id}*", f"test_backend_{session_id}*", f"test_dumbdbm_{session_id}*"]:
-            for filepath in state_dir.glob(pattern):
+        # Direct file removal with known shelve suffixes (no glob — slow with 10K+ files)
+        for prefix in [session_id, f"test_backend_{session_id}", f"test_dumbdbm_{session_id}",
+                       f"plugin_{session_id}.db", f"plugin_{session_id}_dumb.db"]:
+            base = str(state_dir / prefix)
+            for suffix in ["", ".db", ".dir", ".bak", ".dat"]:
                 try:
-                    filepath.unlink()
+                    os.remove(base + suffix)
                     cleaned += 1
-                except (OSError, IOError):
+                except OSError:
                     pass
 
     _test_session_ids.clear()
@@ -144,23 +317,69 @@ def unique_session_id():
 
     yield _generate
 
-    # Cleanup specific to this test
+    # Cleanup specific to this test (no glob — slow with 10K+ files)
     if not should_keep_test_artifacts():
         state_dir = Path.home() / ".claude" / "sessions"
         if state_dir.exists():
             for session_id in created_ids:
-                for pattern in [f"{session_id}*", f"test_backend_{session_id}*", f"test_dumbdbm_{session_id}*"]:
-                    for filepath in state_dir.glob(pattern):
+                for prefix in [session_id, f"test_backend_{session_id}", f"test_dumbdbm_{session_id}",
+                               f"plugin_{session_id}.db", f"plugin_{session_id}_dumb.db"]:
+                    base = str(state_dir / prefix)
+                    for suffix in ["", ".db", ".dir", ".bak", ".dat"]:
                         try:
-                            filepath.unlink()
-                        except (OSError, IOError):
+                            os.remove(base + suffix)
+                        except OSError:
                             pass
 
 
-# Register cleanup to run at session end
+# =============================================================================
+# PYTEST SESSION HOOKS (daemon + session lifecycle)
+# =============================================================================
+
+def pytest_sessionstart(session):
+    """Record production daemon PIDs before any tests run."""
+    DaemonManager.snapshot_production_pids()
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """Clean up all test sessions after pytest finishes."""
+    """Clean up test sessions and test-spawned daemons after pytest finishes."""
     cleanup_test_sessions()
+    DaemonManager.cleanup()
+
+
+@pytest.fixture(scope="session")
+def ensure_single_daemon():
+    """Session-scoped fixture that ensures a test daemon is running.
+
+    Uses DaemonManager to:
+    - Kill only test-spawned daemons (never production ones)
+    - Start a fresh test daemon
+    - Clean up on teardown
+
+    Tests that need a daemon should depend on this fixture.
+    """
+    # Kill any test-spawned daemons from previous runs
+    DaemonManager.kill_test_daemons()
+
+    # Spawn a fresh test daemon
+    DaemonManager.spawn_test_daemon()
+
+    yield
+
+    # Cleanup test-spawned daemons
+    DaemonManager.kill_test_daemons()
+
+
+@pytest.fixture
+def daemon_manager():
+    """Per-test access to DaemonManager for daemon lifecycle operations.
+
+    Usage:
+        def test_daemon_count(daemon_manager):
+            test_pids, prod_pids = daemon_manager.verify_daemon_count()
+            assert len(test_pids) <= 1
+    """
+    return DaemonManager
 
 
 @pytest.fixture

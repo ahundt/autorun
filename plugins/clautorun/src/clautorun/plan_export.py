@@ -764,10 +764,13 @@ def handle_session_start(hook_input: dict) -> None:
 
     Prints JSON response to stdout for Claude Code.
     """
-    from .core import ThreadSafeDB
+    from .core import ThreadSafeDB, validate_hook_response
+    from .config import detect_cli_type
+    
     store = ThreadSafeDB()
     session_id = hook_input.get("session_id", "unknown")
     cwd = hook_input.get("cwd", str(Path.cwd()))
+    cli_type = detect_cli_type(hook_input)
 
     ctx = EventContext(
         session_id=session_id,
@@ -778,22 +781,22 @@ def handle_session_start(hook_input: dict) -> None:
 
     config = PlanExportConfig.load()
     if not config.enabled:
-        print(json.dumps({"continue": True, "suppressOutput": True}))
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True, "suppressOutput": True}, cli_type=cli_type)))
         return
 
     if not session_id or session_id == "unknown":
-        print(json.dumps({"continue": True}))
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
         return
 
     transcript_path = hook_input.get("transcript_path")
     if not transcript_path:
-        print(json.dumps({"continue": True}))
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
         return
 
     try:
         lock_context = SessionLock(session_id, timeout=5.0)
     except Exception:
-        print(json.dumps({"continue": True}))
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
         return
 
     try:
@@ -803,24 +806,24 @@ def handle_session_start(hook_input: dict) -> None:
             # Try transcript-based recovery first
             plan_path = get_plan_from_transcript(transcript_path)
             if not plan_path:
-                print(json.dumps({"continue": True}))
+                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
                 return
 
             # Skip empty plans
             try:
                 content = plan_path.read_text(encoding="utf-8")
                 if not content.strip():
-                    print(json.dumps({"continue": True}))
+                    print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
                     return
             except (IOError, UnicodeDecodeError):
-                print(json.dumps({"continue": True}))
+                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
                 return
 
             # Check if already exported (content-hash dedup)
             content_hash = get_content_hash(plan_path)
             tracking = load_tracking()
             if content_hash in tracking:
-                print(json.dumps({"continue": True}))
+                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
                 return
 
             # Export the plan
@@ -828,19 +831,19 @@ def handle_session_start(hook_input: dict) -> None:
             if result["success"]:
                 record_export(plan_path, result.get("destination", ""))
                 if config.notify_claude:
-                    print(json.dumps({
+                    print(json.dumps(validate_hook_response("SessionStart", {
                         "continue": True,
                         "systemMessage": f"📋 Recovered unexported plan: {result['message']}",
-                    }))
+                    }, cli_type=cli_type)))
                     return
 
-            print(json.dumps({"continue": True}))
+            print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
 
     except SessionTimeoutError:
-        print(json.dumps({"continue": True}))
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
     except Exception as e:
         log_warning(f"SessionStart handler error: {e}", config)
-        print(json.dumps({"continue": True}))
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
 
 
 def embed_plan_metadata(plan_path, session_id: str, export_destination) -> None:

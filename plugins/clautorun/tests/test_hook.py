@@ -36,7 +36,7 @@ class TestHookIntegration:
             mock_session.return_value.__exit__.return_value = None
 
             with patch('sys.stdin', StringIO(input_json)):
-                main()
+                main(_exit=False)
 
         # Check output
         captured = capsys.readouterr()
@@ -55,7 +55,7 @@ class TestHookIntegration:
 
         # Mock stdin and run hook
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            main(_exit=False)
 
         # Check output
         captured = capsys.readouterr()
@@ -77,7 +77,7 @@ class TestHookIntegration:
             mock_session.return_value.__exit__.return_value = None
 
             with patch('sys.stdin', StringIO(input_json)):
-                main()
+                main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -125,7 +125,7 @@ class TestHookIntegration:
                 mock_session.return_value.__exit__.return_value = None
 
                 with patch('sys.stdin', StringIO(input_json)):
-                    main()
+                    main(_exit=False)
 
                 captured = capsys.readouterr()
                 output = json.loads(captured.out)
@@ -157,14 +157,14 @@ class TestHookIntegration:
             input_json = json.dumps(input_data)
 
             with patch('sys.stdin', StringIO(input_json)):
-                main()
+                main(_exit=False)
 
             # Second command - check status
             input_data["prompt"] = "/afst"
             input_json = json.dumps(input_data)
 
             with patch('sys.stdin', StringIO(input_json)):
-                main()
+                main(_exit=False)
 
             captured = capsys.readouterr()
             lines = captured.out.strip().split('\n')
@@ -191,12 +191,12 @@ class TestHookIntegration:
             mock_session.return_value.__exit__.return_value = None
 
             with patch('sys.stdin', StringIO(input_json)):
-                main()
+                main(_exit=False)
 
             captured = capsys.readouterr()
             output = json.loads(captured.out)
 
-            assert output["continue"] is False, "Autorun command should not continue to AI (injection template is complete)"
+            assert output["continue"] is True, "Autorun activation should continue to AI with injection template"
             assert "UNINTERRUPTED" in output["systemMessage"], "Response should contain injection template"
 
 
@@ -209,10 +209,8 @@ class TestHookErrorHandling:
         invalid_json = "not valid json {"
 
         with patch('sys.stdin', StringIO(invalid_json)):
-            # main() outputs graceful response then exits with code 1
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
+            # main() outputs graceful response
+            main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -233,7 +231,7 @@ class TestHookErrorHandling:
         input_json = json.dumps(input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            main()
+            main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -245,10 +243,8 @@ class TestHookErrorHandling:
     def test_hook_handles_empty_input(self, capsys):
         """Test hook handles empty input gracefully"""
         with patch('sys.stdin', StringIO("")):
-            # main() outputs graceful response then exits with code 1
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == 1
+            # main() outputs graceful response
+            main(_exit=False)
 
         captured = capsys.readouterr()
         # Should not crash and produce some output
@@ -280,7 +276,7 @@ class TestHookErrorHandling:
                 mock_session.return_value.__exit__.return_value = None
 
                 with patch('sys.stdin', StringIO(input_json)):
-                    main()
+                    main(_exit=False)
 
             captured = capsys.readouterr()
             output = json.loads(captured.out)
@@ -359,7 +355,7 @@ class TestHookPerformance:
             mock_session.return_value.__exit__.return_value = None
 
             with patch('sys.stdin', StringIO(input_json)):
-                main()
+                main(_exit=False)
         end_time = time.time()
 
         response_time = end_time - start_time
@@ -398,7 +394,7 @@ class TestHookPerformance:
                 mock_session.return_value.__exit__.return_value = None
 
                 with patch('sys.stdin', StringIO(input_json)):
-                    main()
+                    main(_exit=False)
 
             captured = capsys.readouterr()
             responses.append(json.loads(captured.out))

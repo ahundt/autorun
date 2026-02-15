@@ -21,7 +21,7 @@ python -m pdf_extraction "<input_path>" "<output_path>"
 
 **Standalone script:**
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/cli.py" "<input_path>" "<output_path>"
+python "/Users/athundt/.claude/clautorun/plugins/pdf-extractor/src/pdf_extraction/cli.py" "<input_path>" "<output_path>"
 ```
 
 ## Parameters

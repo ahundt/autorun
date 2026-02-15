@@ -70,7 +70,8 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
         pass  # Never fail on logging
 
 
-def output_hook_response(response: dict | str, source: str = "daemon") -> None:
+def output_hook_response(response: dict | str, event: str = "unknown", 
+                         cli_type: str = "claude", source: str = "daemon") -> int:
     """Unified hook response output handler with two clear pathways (DRY).
 
     Single consolidation point for ALL 4 input paths:
@@ -85,15 +86,17 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
 
     Args:
         response: Response dict OR raw string (for fallback cases)
+        event: Normalized event name (e.g., PreToolUse)
+        cli_type: Target CLI ("claude" or "gemini")
         source: Source ("daemon", "daemon-raw", "buffer-error", "exception")
 
-    Exits:
-        0: Pathway B (standard - allow OR Gemini deny)
-        2: Pathway A (workaround - Claude Code deny)
+    Returns:
+        int: Exit code (0, 1, or 2)
 
     Reference: notes/hooks_api_reference.md lines 395-427
     """
     from .config import should_use_exit2_workaround
+    from .core import validate_hook_response
 
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Handle raw string fallback (JSON decode error)
@@ -101,8 +104,13 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
     if isinstance(response, str):
         logger.debug(f"Outputting raw response from {source}")
         print(response)
-        sys.exit(0)
-        return
+        return 0
+
+    # ═══════════════════════════════════════════════════════════════
+    # SHARED: Enforce strict schema filtering (CRITICAL for Claude Code)
+    # ═══════════════════════════════════════════════════════════════
+    # This prevents "Invalid input" errors when daemon returns Gemini-style fields to Claude.
+    response = validate_hook_response(event, response, cli_type=cli_type)
 
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Extract decision (DRY - works for Claude and Gemini)
@@ -110,7 +118,7 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
     decision = response.get('hookSpecificOutput', {}).get('permissionDecision',
                                                           response.get('decision', 'allow'))
 
-    logger.info(f"Hook response: source={source}, decision={decision}")
+    logger.info(f"Hook response: event={event}, cli={cli_type}, source={source}, decision={decision}")
 
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Always print JSON to stdout first
@@ -118,13 +126,13 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
     print(json.dumps(response))
 
     # Lifecycle logging before exit (DRY)
-    exit_code = 2 if (decision == "deny" and should_use_exit2_workaround()) else 0
+    exit_code = 2 if (decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type})) else 0
     _log_hook_lifecycle("DAEMON→CLIENT RESPONSE", Source=source, Decision=decision, ExitCode=exit_code)
 
     # ═══════════════════════════════════════════════════════════════
     # SINGLE FLAG CHECK: Select pathway
     # ═══════════════════════════════════════════════════════════════
-    if decision == "deny" and should_use_exit2_workaround():
+    if decision == "deny" and should_use_exit2_workaround({"cli_type": cli_type}):
         # ╔═══════════════════════════════════════════════════════════╗
         # ║ PATHWAY A: Bug #4669 Workaround (Claude Code)           ║
         # ║ - Print reason to stderr (AI sees this)                 ║
@@ -135,7 +143,7 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
 
         logger.info("Applying exit-2 workaround (Claude Code bug #4669)")
         print(reason, file=sys.stderr)
-        sys.exit(2)
+        return 2
     else:
         # ╔═══════════════════════════════════════════════════════════╗
         # ║ PATHWAY B: Standard Behavior                             ║
@@ -143,7 +151,7 @@ def output_hook_response(response: dict | str, source: str = "daemon") -> None:
         # ║ - Allow decisions in Claude Code                         ║
         # ║ - Exit code 0 (normal success)                           ║
         # ╚═══════════════════════════════════════════════════════════╝
-        sys.exit(0)
+        return 0
 
 
 def get_stable_pid() -> int:
@@ -169,8 +177,12 @@ def get_stable_pid() -> int:
     return os.getppid()
 
 
-def run_client():
-    """Forward hook payload to daemon."""
+def run_client() -> int:
+    """Forward hook payload to daemon.
+    
+    Returns:
+        int: Exit code (0, 1, or 2)
+    """
     # Read stdin payload
     payload = {}
     try:
@@ -184,6 +196,10 @@ def run_client():
     payload["_pid"] = get_stable_pid()
     payload["_cwd"] = os.getcwd()   # Current working directory
 
+    # Detect CLI type for schema enforcement
+    from .config import detect_cli_type
+    cli_type = detect_cli_type(payload)
+
     # Lifecycle logging (DRY)
     hook_event = payload.get('hook_event_name', 'unknown')
     hook_source = payload.get('source', '')
@@ -194,7 +210,7 @@ def run_client():
                         PayloadKeys=list(payload.keys()),
                         FullPayload=json.dumps(payload, indent=2))
 
-    logger.debug(f"Forwarding hook to daemon: event={hook_event}, tool={tool_name}")
+    logger.debug(f"Forwarding hook to daemon: event={hook_event}, cli={cli_type}, tool={tool_name}")
 
     async def forward(depth: int = 0):
         if depth > 2:
@@ -216,10 +232,10 @@ def run_client():
             # Parse response and route through unified output handler
             try:
                 resp_json = json.loads(resp_text)
-                output_hook_response(resp_json, source="daemon")
+                return output_hook_response(resp_json, event=hook_event, cli_type=cli_type, source="daemon")
             except json.JSONDecodeError:
                 # Not valid JSON, output as-is
-                output_hook_response(resp_text, source="daemon-raw")
+                return output_hook_response(resp_text, event=hook_event, cli_type=cli_type, source="daemon-raw")
 
             writer.close()
             await writer.wait_closed()
@@ -227,14 +243,12 @@ def run_client():
         except asyncio.LimitOverrunError as e:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
             logger.error(f"Client buffer error: {e}")
-            output_hook_response({
+            return output_hook_response({
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": f"Client buffer error: Daemon response too large. {e}",
-                "decision": "allow",
-                "hookSpecificOutput": {"permissionDecision": "allow"}
-            }, source="buffer-error")
+                "systemMessage": f"Client buffer error: Daemon response too large. {e}"
+            }, event=hook_event, cli_type=cli_type, source="buffer-error")
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
@@ -267,23 +281,19 @@ def run_client():
             else:
                 logger.debug(f"Daemon alive (PID in lock file), retrying connection (depth={depth})")
             await asyncio.sleep(0.5)
-            await forward(depth + 1)  # Retry with incremented depth
+            return await forward(depth + 1)  # Retry with incremented depth
 
     try:
-        asyncio.run(forward())
-    except SystemExit:
-        raise  # Re-raise SystemExit to preserve exit code
+        return asyncio.run(forward())
     except Exception as e:
         # Fail open
         logger.error(f"Client exception (fail-open): {e}", exc_info=True)
-        output_hook_response({
+        return output_hook_response({
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": "",
-            "decision": "allow",
-            "hookSpecificOutput": {"permissionDecision": "allow"}
-        }, source="exception")
+            "systemMessage": ""
+        }, event=hook_event, cli_type=cli_type, source="exception")
 
 
 if __name__ == "__main__":

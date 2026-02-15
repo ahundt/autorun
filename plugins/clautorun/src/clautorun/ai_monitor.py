@@ -49,7 +49,7 @@ def setup_clautorun_logging():
 # Monitor state using shelve for persistence
 @contextmanager
 def monitor_state(session_id):
-    s = shelve.open(str(STATE_DIR / f"monitor-{session_id}.db"), writeback=True)
+    s = shelve.open(str(STATE_DIR / f"monitor-{session_id}.db"), writeback=False)
     try:
         yield s
     finally:
@@ -179,7 +179,8 @@ def run_monitor(session_id, config):
                 if not windows:
                     logging.info("clautorun AI monitor: No tmux windows found - running in degraded mode")
                     windows = {}
-                    state["windows"] = windows
+
+                state["windows"] = windows
 
             # Initial prompt
             if config.get("prompt_on_start"):
@@ -199,18 +200,20 @@ def run_monitor(session_id, config):
                         time.time() - state["start_time"] > config["max_runtime"] * 60):
                     break
 
-                # Scan windows
+                # Scan windows (explicit reassignment for writeback=False shelve)
                 changed = []
                 all_content = ""
-                for w in list(state["windows"].keys()):
+                windows_copy = dict(state.get("windows", {}))
+                for w in list(windows_copy.keys()):
                     curr = WIN_OPS['read'](session_id, w)
                     if not curr or '🤖[AI-MONITOR]🤖' in curr:
-                        del state["windows"][w]
+                        del windows_copy[w]
                         continue
                     all_content += curr
-                    if curr != state["windows"][w]:
+                    if curr != windows_copy[w]:
                         changed.append(w)
-                        state["windows"][w] = curr
+                        windows_copy[w] = curr
+                state["windows"] = windows_copy
 
                 # Check stop marker
                 if config.get("stop_marker") and config.get("stop_marker") in all_content:

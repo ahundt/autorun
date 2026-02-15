@@ -289,10 +289,12 @@ class TestTryCliRobustness:
             )
 
         # Must deny rm
-        assert output.get("continue") is False, \
-            f"rm should be blocked (continue=false) but got: {output}"
-        assert output.get("decision") == "deny", \
-            f"rm should get decision=deny but got: {output.get('decision')}"
+        # continue=True: AI keeps running. Tool blocked by permissionDecision + exit code 2 (Bug #4669)
+        assert output.get("continue") is True, \
+            f"PreToolUse must have continue=True (AI keeps running). Got: {output}"
+        perm_decision = output.get("hookSpecificOutput", {}).get("permissionDecision", output.get("decision"))
+        assert perm_decision == "deny", \
+            f"rm should get permissionDecision=deny but got: {perm_decision}"
 
         # stderr SHOULD contain the denial reason (exit code 2 shows stderr to Claude)
         # This is the workaround for bug #4669 - stderr is shown, stdout JSON ignored
@@ -823,12 +825,11 @@ class TestCommandBlockingE2E:
 
     # ─── Response format validation ───────────────────────────────────
 
-    def test_deny_response_has_continue_false(self):
-        """deny response MUST have continue=false to actually block the tool."""
+    def test_deny_response_has_continue_true(self):
+        """deny response MUST have continue=True (AI keeps running, tool blocked by permissionDecision)."""
         response = self.build_pretooluse_response(decision="deny", reason="test")
-        assert response["continue"] is False, \
-            "deny response must set continue=false to block tool execution"
-        assert response["decision"] == "deny"
+        assert response["continue"] is True, \
+            "deny response must set continue=True (AI keeps running). Tool blocked by permissionDecision + exit 2."
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_allow_response_has_continue_true(self):
@@ -836,14 +837,15 @@ class TestCommandBlockingE2E:
         response = self.build_pretooluse_response(decision="allow", reason="ok")
         assert response["continue"] is True, \
             "allow response must set continue=true"
-        assert response["decision"] == "allow"
+        # Top-level decision is CLI-mapped (approve for Claude, allow for Gemini)
+        assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
 
-    def test_deny_response_has_stop_reason(self):
-        """deny response MUST include stop reason for user feedback."""
+    def test_deny_response_has_permission_decision(self):
+        """deny response MUST have permissionDecision='deny' to block tool."""
         response = self.build_pretooluse_response(decision="deny", reason="blocked rm")
-        assert response["stopReason"] != "", \
-            "deny response must include non-empty stopReason"
-        assert "blocked rm" in response["stopReason"]
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny", \
+            "deny response must have permissionDecision='deny'"
+        assert "blocked rm" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 class TestSlashCommandFalsePositives:
@@ -1069,22 +1071,16 @@ class TestAllLocationsSync:
                     f"Run: rm -rf {build_dir}"
                 )
 
-    def test_only_one_daemon_process(self):
-        """Verify only one daemon running (not multiple from different locations)."""
-        result = subprocess.run(
-            ["pgrep", "-f", "clautorun.daemon"],
-            capture_output=True,
-            text=True
-        )
+    def test_only_one_daemon_process(self, daemon_manager):
+        """Verify test-spawned daemons don't accumulate.
 
-        if result.returncode == 0:
-            pids = result.stdout.strip().splitlines()
-            if len(pids) > 1:
-                pytest.fail(
-                    f"Multiple daemons running from different code locations: {pids}. "
-                    f"This causes inconsistent hook behavior. "
-                    f"Run: pkill -f 'clautorun.daemon'"
-                )
+        Uses DaemonManager.assert_daemon_count() which:
+        - Distinguishes test-spawned from production daemons
+        - Kills extras (keeps oldest test daemon)
+        - Fails at >2 test daemons, warns at 1-2
+        - Never touches production daemons
+        """
+        daemon_manager.assert_daemon_count(max_test_daemons=2)
 
 
 class TestCleanup:

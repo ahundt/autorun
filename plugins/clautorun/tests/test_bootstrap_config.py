@@ -321,23 +321,23 @@ class TestCLIArgumentParsing:
     """Tests for CLI argument parsing in __main__.py."""
 
     def test_force_install_flag_parsed(self):
-        """Test that --force-install flag is parsed correctly."""
+        """Test that --force flag is parsed correctly."""
         from clautorun.__main__ import create_parser
 
         parser = create_parser()
-        args = parser.parse_args(["--install", "--force-install"])
+        args = parser.parse_args(["--install", "--force"])
 
         assert args.install == "all"
-        assert args.force_install is True
+        assert args.force is True
 
     def test_force_install_short_flag_parsed(self):
-        """Test that -f short flag works for --force-install."""
+        """Test that -f short flag works for --force."""
         from clautorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--install", "-f"])
 
-        assert args.force_install is True
+        assert args.force is True
 
     def test_no_bootstrap_flag_parsed(self):
         """Test that --no-bootstrap flag is parsed correctly."""
@@ -461,13 +461,13 @@ class TestMainFunctionRouting:
         assert result == 0
 
     def test_install_with_force_passes_force_flag(self):
-        """Test that --install --force-install passes force=True."""
+        """Test that --install --force passes force=True."""
         from clautorun.__main__ import main
 
         with mock.patch(
             "clautorun.install.install_plugins", return_value=0
         ) as mock_install:
-            result = main(["--install", "--force-install"])
+            result = main(["--install", "--force"])
 
         mock_install.assert_called_once_with(
             "all", tool=False, force=True,

@@ -30,7 +30,7 @@ If no arguments provided, discover all Claude sessions and present them to the u
 ## Discovery
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec"
+"/Users/athundt/.claude/clautorun/plugins/clautorun/commands/tabs-exec"
 ```
 
 ## User Selection Syntax
@@ -49,7 +49,7 @@ After user confirms, execute via:
 
 ```bash
 # Using tabs-exec
-echo '{"selections": "B,C", "command": "continue"}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+echo '{"selections": "B,C", "command": "continue"}' | "/Users/athundt/.claude/clautorun/plugins/clautorun/commands/tabs-exec" --execute
 
 # Direct tmux (for simple commands)
 tmux send-keys -t "session:window" "command" C-m
