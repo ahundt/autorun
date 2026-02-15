@@ -10,7 +10,7 @@ Restarts the clautorun daemon to load updated Python code.
 
 **When to use:** After modifying Python files in the plugin (integrations.py, config.py, etc.)
 
-!`uv run --project /Users/athundt/.claude/clautorun/plugins/clautorun python /Users/athundt/.claude/clautorun/plugins/clautorun/scripts/restart_daemon.py`
+!`uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/restart_daemon.py`
 
 **What it does:**
 1. Gracefully stops daemon (SIGTERM, waits 5s, SIGKILL if needed)

@@ -1054,7 +1054,7 @@ class TestAllLocationsSync:
             "Gemini extension is a COPY which will desync from source. " \
             "This creates 4 separate code locations that must be manually synced. " \
             "Run: gemini extensions uninstall clautorun-workspace && " \
-            "gemini extensions link /Users/athundt/.claude/clautorun"
+            f"gemini extensions link {PLUGIN_ROOT.parent.parent}"
 
     def test_build_artifacts_do_not_exist(self):
         """Locations 3, 9: Build artifacts should be deleted."""
