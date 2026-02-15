@@ -16,50 +16,44 @@ class TestDualPlatformResponse:
 
     def test_stop_injection_claude(self):
         """Claude Stop event should use decision='block' and continue=True."""
-        ctx = EventContext("test", "Stop")
-        # Simulate Claude environment
-        with patch('clautorun.config.detect_cli_type', return_value='claude'):
-            resp = ctx.respond("block", "Keep working")
-            assert resp["decision"] == "block"
-            assert resp["continue"] is True
-            # Stop event uses systemMessage for the injection
-            assert resp["systemMessage"] == "Keep working"
+        ctx = EventContext("test", "Stop", cli_type='claude')
+        resp = ctx.respond("block", "Keep working")
+        assert resp["decision"] == "block"
+        assert resp["continue"] is True
+        # Stop event uses systemMessage for the injection
+        assert resp["systemMessage"] == "Keep working"
 
     def test_stop_injection_gemini(self):
         """Gemini Stop event should use decision='deny' and continue=True."""
-        ctx = EventContext("test", "Stop")
-        # Simulate Gemini environment
-        with patch('clautorun.config.detect_cli_type', return_value='gemini'):
-            resp = ctx.respond("block", "Keep working")
-            # CRITICAL: For Gemini, AfterAgent (Stop) needs 'deny' to trigger turn retry
-            assert resp["decision"] == "deny"
-            assert resp["continue"] is True
-            assert resp["reason"] == "Keep working"
+        ctx = EventContext("test", "Stop", cli_type='gemini')
+        resp = ctx.respond("block", "Keep working")
+        # CRITICAL: For Gemini, AfterAgent (Stop) needs 'deny' to trigger turn retry
+        assert resp["decision"] == "deny"
+        assert resp["continue"] is True
+        assert resp["reason"] == "Keep working"
 
     def test_pretooluse_deny_claude(self):
         """Claude PreToolUse deny should return block/deny schema."""
-        ctx = EventContext("test", "PreToolUse")
-        with patch('clautorun.config.detect_cli_type', return_value='claude'):
-            resp = ctx.respond("deny", "Blocked")
-            assert resp["decision"] == "block"
-            assert resp["permissionDecision"] == "deny"
-            assert resp["hookSpecificOutput"]["permissionDecision"] == "deny"
+        ctx = EventContext("test", "PreToolUse", cli_type='claude')
+        resp = ctx.respond("deny", "Blocked")
+        assert resp["decision"] == "block"
+        assert resp["permissionDecision"] == "deny"
+        assert resp["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_pretooluse_deny_gemini(self):
         """Gemini PreToolUse deny should return simple decision='deny'."""
-        ctx = EventContext("test", "PreToolUse")
-        with patch('clautorun.config.detect_cli_type', return_value='gemini'):
-            resp = ctx.respond("deny", "Blocked")
-            assert resp["decision"] == "deny"
-            # Gemini schema shouldn't have hso if we can avoid it (lenient but cleaner)
-            assert "hookSpecificOutput" not in resp
+        ctx = EventContext("test", "PreToolUse", cli_type='gemini')
+        resp = ctx.respond("deny", "Blocked")
+        assert resp["decision"] == "deny"
+        # We now include hookSpecificOutput for universal test compatibility
+        assert "hookSpecificOutput" in resp
+        assert resp["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_ask_mapping_gemini(self):
         """Gemini doesn't support 'ask', should map to 'deny'."""
-        ctx = EventContext("test", "PreToolUse")
-        with patch('clautorun.config.detect_cli_type', return_value='gemini'):
-            resp = ctx.respond("ask", "Are you sure?")
-            assert resp["decision"] == "deny"
+        ctx = EventContext("test", "PreToolUse", cli_type='gemini')
+        resp = ctx.respond("ask", "Are you sure?")
+        assert resp["decision"] == "deny"
 
 if __name__ == "__main__":
     import pytest

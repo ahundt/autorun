@@ -41,7 +41,7 @@ class TestPluginIntegration:
             mock_session.return_value.__exit__.return_value = None
 
             with patch('sys.stdin', StringIO(input_json)):
-                plugin_module.main()
+                plugin_module.main(_exit=False)
 
         # Check output - policy commands use systemMessage for response text
         # and continue=True (policy is set locally, AI continues)
@@ -62,7 +62,7 @@ class TestPluginIntegration:
 
         # Mock stdin and run plugin
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         # Check output - actual format uses stopReason/systemMessage, not "response"
         captured = capsys.readouterr()
@@ -101,7 +101,7 @@ class TestPluginIntegration:
                 mock_session.return_value.__exit__.return_value = None
 
                 with patch('sys.stdin', StringIO(input_json)):
-                    plugin_module.main()
+                    plugin_module.main(_exit=False)
 
                 captured = capsys.readouterr()
                 output = json.loads(captured.out)
@@ -136,7 +136,7 @@ class TestPluginIntegration:
                 mock_session.return_value.__exit__.return_value = None
 
                 with patch('sys.stdin', StringIO(input_json)):
-                    plugin_module.main()
+                    plugin_module.main(_exit=False)
 
                 captured = capsys.readouterr()
                 output = json.loads(captured.out)
@@ -164,13 +164,13 @@ class TestPluginIntegration:
             mock_session.return_value.__exit__.return_value = None
 
             with patch('sys.stdin', StringIO(input_json)):
-                plugin_module.main()
+                plugin_module.main(_exit=False)
 
             captured = capsys.readouterr()
             output = json.loads(captured.out)
 
-            # Autorun command sets continue=False and puts injection template in systemMessage
-            assert output["continue"] is False, "Autorun command should not continue to AI"
+            # Autorun activation: continue=True so AI processes injection template as context
+            assert output["continue"] is True, "Autorun command should continue to AI with injection template"
             assert "UNINTERRUPTED" in output["systemMessage"], "systemMessage should contain injection template"
             assert "AUTONOMOUS" in output["systemMessage"], "systemMessage should contain injection template"
 
@@ -197,14 +197,14 @@ class TestPluginIntegration:
             input_json = json.dumps(input_data)
 
             with patch('sys.stdin', StringIO(input_json)):
-                plugin_module.main()
+                plugin_module.main(_exit=False)
 
             # Second command - check status
             input_data["prompt"] = "/afst"
             input_json = json.dumps(input_data)
 
             with patch('sys.stdin', StringIO(input_json)):
-                plugin_module.main()
+                plugin_module.main(_exit=False)
 
             captured = capsys.readouterr()
             lines = captured.out.strip().split('\n')
@@ -245,7 +245,7 @@ class TestPluginIntegration:
         input_json = json.dumps(input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -266,7 +266,7 @@ class TestPluginJsonOutput:
         input_json = json.dumps(plugin_input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         captured = capsys.readouterr()
 
@@ -282,7 +282,7 @@ class TestPluginJsonOutput:
         input_json = json.dumps(plugin_input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -298,7 +298,7 @@ class TestPluginJsonOutput:
         input_json = json.dumps(plugin_input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -339,7 +339,7 @@ class TestPluginErrorHandling:
         input_json = json.dumps(input_data, ensure_ascii=False)
 
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
@@ -359,7 +359,7 @@ class TestPluginErrorHandling:
         input_json = json.dumps(input_data)
 
         with patch('sys.stdin', StringIO(input_json)):
-            plugin_module.main()
+            plugin_module.main(_exit=False)
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)

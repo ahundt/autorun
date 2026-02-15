@@ -6,7 +6,7 @@ aliases: [ts, task-state, tasks]
 
 # Task Lifecycle Status
 
-!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "
+!`uv run --project /Users/athundt/.claude/clautorun/plugins/clautorun python -c "
 import sys
 import os
 
@@ -15,7 +15,7 @@ from clautorun.task_lifecycle import TaskLifecycle, is_enabled
 # Check if enabled
 if not is_enabled():
     print('Task lifecycle tracking is DISABLED.')
-    print('Run: uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --enable')
+    print('Run: uv run --project /Users/athundt/.claude/clautorun/plugins/clautorun python /Users/athundt/.claude/clautorun/plugins/clautorun/scripts/task_lifecycle_cli.py --enable')
     sys.exit(0)
 
 # Get current session ID from environment

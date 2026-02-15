@@ -158,7 +158,7 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 
     # First check: Stage 3 message must be in transcript
     if CONFIG["stage3_message"] not in transcript:
-        return ctx.ask(
+        return ctx.deny(
             f"Cannot exit plan mode yet. Complete plan verification first.\n\n"
             f"Current requirement: Output **{CONFIG['stage3_message']}** when Stage 3 is complete.\n\n"
             f"Continue with plan verification using the three-stage system:\n"
@@ -170,7 +170,7 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     # Second check: Current autorun session must have actually completed Stage 2
     # STAGE_2_COMPLETED means AI output stage2_message and countdown is complete
     if stage != EventContext.STAGE_2_COMPLETED:
-        return ctx.ask(
+        return ctx.deny(
             f"Stage 3 not reached in current autorun session.\n\n"
             f"Current stage: {stage} (expected: {EventContext.STAGE_2_COMPLETED})\n\n"
             f"The stage3_message was found in transcript, but current session hasn't progressed to Stage 3.\n"
@@ -592,12 +592,14 @@ def _deactivate(ctx: EventContext, msg: str) -> str:
 @app.command("/cr:x", "/cr:stop", "/autostop", "stop")
 def handle_stop(ctx: EventContext) -> str:
     """Graceful stop."""
+    ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, "✅ Stopped")
 
 
 @app.command("/cr:sos", "/cr:estop", "/estop", "emergency_stop")
 def handle_sos(ctx: EventContext) -> str:
     """Emergency stop."""
+    ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, f"⚠️ EMERGENCY STOP\n{CONFIG['emergency_stop']}")
 
 

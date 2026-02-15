@@ -152,6 +152,11 @@ if __name__ == "__main__":
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    not os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
+    reason="CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
+           "this test runs Gemini CLI which costs real money"
+)
 def test_gemini_before_tool_hook_fires_on_write_file(
     gemini_available,
     gemini_settings_enabled,
@@ -313,10 +318,10 @@ def test_gemini_before_tool_hook_structure(
     assert first_hook["type"] == "command", \
         f"Hook type should be 'command', got: {first_hook['type']}"
 
-    # Check command uses ${extensionPath}
+    # Check command references hook_entry.py (via template var or resolved path)
     command = first_hook["command"]
-    assert "${extensionPath}" in command, \
-        f"Hook command should use ${{extensionPath}}, got: {command}"
+    assert "hook_entry.py" in command, \
+        f"Hook command should reference hook_entry.py, got: {command}"
 
 
 @pytest.mark.integration

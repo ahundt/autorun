@@ -420,56 +420,61 @@ After every step and substep you must say "Wait," and execute this sequential th
 # =============================================================================
 
 
-def detect_cli_type() -> str:
+# Gemini-only event names (pre-normalization)
+_GEMINI_EVENTS = frozenset({"BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
+                             "BeforeModel", "AfterModel", "BeforeToolSelection"})
+
+
+def detect_cli_type(payload: dict = None) -> str:
     """Detect which CLI is calling (Claude Code vs Gemini CLI).
 
     Detection order (most reliable first):
-    1. GEMINI_SESSION_ID - Gemini-specific variable
-    2. GEMINI_PROJECT_DIR without CLAUDE_PROJECT_DIR - Gemini only
-    3. Default to "claude" (safer to apply workaround when uncertain)
+    1. Explicit cli_type or source in payload
+    2. Gemini-specific event names or markers in payload (pre-normalization only)
+    3. GEMINI_SESSION_ID or GEMINI_PROJECT_DIR env vars
+    4. Default to "claude" (safer for bug #4669 workaround)
 
     Returns:
-        "claude": Claude Code (needs exit-2 workaround)
-        "gemini": Gemini CLI (respects JSON decision)
-
-    Reference: notes/hooks_api_reference.md lines 249-272
+        "claude" or "gemini"
     """
     import os
 
-    if os.environ.get("GEMINI_SESSION_ID"):
+    if payload:
+        # Tier 1: Explicit markers
+        if payload.get("cli_type") in ("gemini", "claude"):
+            return payload["cli_type"]
+        if payload.get("source") in ("gemini", "claude"):
+            return payload["source"]
+
+        # Tier 2: Gemini-specific signals
+        if payload.get("GEMINI_SESSION_ID") or payload.get("sessionId"):
+            return "gemini"
+        if payload.get("hook_event_name") in _GEMINI_EVENTS:
+            return "gemini"
+        transcript_path = str(payload.get("transcript_path", ""))
+        if ".gemini" in transcript_path:
+            return "gemini"
+
+    # Tier 3: Environment variables
+    if os.environ.get("GEMINI_SESSION_ID") or os.environ.get("GEMINI_PROJECT_DIR"):
         return "gemini"
 
-    if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
-        return "gemini"
-
-    # Default to Claude (safer to apply workaround if uncertain)
+    # Default: Claude (safer - applies exit-2 workaround)
     return "claude"
 
 
-def should_use_exit2_workaround() -> bool:
+def should_use_exit2_workaround(payload: dict = None) -> bool:
     """Check if exit-2 workaround should be applied for bug #4669.
 
-    SINGLE FLAG CHECK for pathway selection.
-
     Modes (CLAUTORUN_EXIT2_WORKAROUND env var):
-    - "auto" (default): Use workaround ONLY for Claude Code
-    - "always": Force workaround for all CLIs (testing)
-    - "never": Disable workaround for all CLIs (testing/future)
-
-    Returns:
-        bool: True → Pathway A (exit 2 + stderr)
-              False → Pathway B (exit 0 only)
-
-    Reference: notes/hooks_api_reference.md lines 326-440
+    - "auto" (default): Workaround ONLY for Claude Code
+    - "always": Force for all CLIs (testing)
+    - "never": Disable for all CLIs (testing/future)
     """
     import os
-
     mode = os.environ.get('CLAUTORUN_EXIT2_WORKAROUND', 'auto').lower()
-
     if mode == "always":
         return True
-    elif mode == "never":
+    if mode == "never":
         return False
-    else:  # "auto" or any other value
-        cli_type = detect_cli_type()
-        return cli_type == "claude"
+    return detect_cli_type(payload) == "claude"

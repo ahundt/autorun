@@ -59,6 +59,7 @@ all = ["bashlex>=0.18"]
 
 [project.scripts]
 clautorun = "clautorun.__main__:main"
+clautorun-install = "clautorun.install:install_main"
 claude-session-tools = "clautorun.claude_session_tools:main"
 
 [project.urls]
@@ -91,10 +92,6 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=src/clautorun",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -111,32 +108,36 @@ markers = [
     "subprocess: marks tests that spawn subprocesses",
     "tmux: marks tests that require tmux sessions",
     "e2e: marks end-to-end tests (may require Gemini CLI, real API calls)",
+    "daemon: marks tests that require a running daemon process",
+    "serial: marks tests that must run serially (not in parallel)",
+    "stress: marks stress tests",
+    "race: marks race condition tests",
 ]
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["src/clautorun"]
+source = ["plugins/clautorun/src/clautorun", "src/clautorun"]
 omit = [
     # Entry points and system integration
-    "src/clautorun/install.py",
-    "src/clautorun/mcp_server.py",
-    "src/clautorun/python_check.py",
-    "src/clautorun/diagnostics.py",
-    "src/clautorun/__main__.py",
+    "**/install.py",
+    "**/mcp_server.py",
+    "**/python_check.py",
+    "**/diagnostics.py",
+    "**/__main__.py",
     # External system integration (requires tmux)
-    "src/clautorun/tmux_injector.py",
-    "src/clautorun/tmux_utils.py",
+    "**/tmux_injector.py",
+    "**/tmux_utils.py",
     # Test utilities (tested indirectly)
-    "src/clautorun/testing_framework.py",
+    "**/testing_framework.py",
     # Discovery utilities (runtime-dependent)
-    "src/clautorun/command_discovery.py",
+    "**/command_discovery.py",
     # AI monitoring (requires running sessions)
-    "src/clautorun/ai_monitor.py",
+    "**/ai_monitor.py",
     # Complex integration modules (require full environment)
-    "src/clautorun/injection_monitoring.py",
+    "**/injection_monitoring.py",
     # Analysis modules (require complex transcript data)
-    "src/clautorun/transcript_analyzer.py",
-    "src/clautorun/verification_engine.py",
+    "**/transcript_analyzer.py",
+    "**/verification_engine.py",
 ]
 
 [tool.coverage.report]

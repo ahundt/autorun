@@ -79,8 +79,8 @@ def test_install_command_parsing():
     assert args.install == 'clautorun', "Should install specific plugin"
 
     # Install with force
-    args = parse_args(['--install', '--force-install'])
-    assert args.force_install is True, "Force install flag should be set"
+    args = parse_args(['--install', '--force'])
+    assert args.force is True, "Force install flag should be set"
 
     print("✅ Install command parsing works")
 

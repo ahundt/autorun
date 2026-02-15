@@ -34,7 +34,7 @@ def test_main_py_ai_monitor_workflow():
     print(f"Debug - available mappings: {CONFIG['command_mappings']}")
     print(f"Debug - main.py response: {response}")
 
-    assert not response["continue"], "Should handle /autorun command locally"
+    assert response["continue"], "Autorun activation should continue to AI with injection template"
     response_content = response.get("response") or response.get("systemMessage", "")
     assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response_content, "Should include full injection template"
     print("✅ Stage 1 activation works")
@@ -143,7 +143,7 @@ def test_main_py_ai_monitor_workflow():
         print(f"Debug - PreToolUse response: {response}")
         print(f"Debug - hookSpecificOutput: {response.get('hookSpecificOutput', {})}")
 
-        assert response["continue"] is False, "continue=False when decision=deny (SEARCH blocks Write)"
+        assert response["continue"] is True, "continue=True (AI keeps running); tool blocked by permissionDecision=deny"
         assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", f"Should deny file creation in SEARCH mode, got: {response.get('hookSpecificOutput', {}).get('permissionDecision')}"
 
     print("✅ AutoFile policy enforcement works")
@@ -168,7 +168,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
 
     response = claude_code_handler(ctx)
 
-    assert not response["continue"], "Should handle /autorun command locally"
+    assert response["continue"], "Autorun activation should continue to AI with injection template"
     # Check both possible response keys (response for hook, systemMessage for direct calls)
     response_content = response.get("response") or response.get("systemMessage", "")
     assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response_content, "Should include full injection template"
@@ -213,7 +213,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
     with patch('clautorun.main.session_state', return_value=mock_session_manager):
         response = pretooluse_handler(ctx)
 
-        assert response["continue"] is False, "continue=False when decision=deny (SEARCH blocks Write)"
+        assert response["continue"] is True, "continue=True (AI keeps running); tool blocked by permissionDecision=deny"
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny", "Should deny file creation in SEARCH mode"
 
         print("✅ Hook AutoFile policy enforcement works")

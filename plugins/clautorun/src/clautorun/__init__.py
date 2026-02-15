@@ -63,6 +63,7 @@ __all__ = [
     "__email__",
     "session_state",
     "shared_session_state",
+    "clear_test_session_state",
     "SessionStateError",
     "SessionTimeoutError",
     "show_comprehensive_uv_error",
@@ -89,6 +90,7 @@ try:
     from .session_manager import (
         session_state,
         shared_session_state,
+        clear_test_session_state,
         SessionStateError,
         SessionTimeoutError
     )
@@ -105,6 +107,9 @@ except ImportError:
         raise ImportError("Session manager not available - check UV environment")
 
     def shared_session_state(session_id: str, timeout: float = 5.0):
+        raise ImportError("Session manager not available - check UV environment")
+
+    def clear_test_session_state(session_id: str) -> None:
         raise ImportError("Session manager not available - check UV environment")
 
 # Export error handling functionality
@@ -301,11 +306,11 @@ try:
     from .main import build_hook_response
 except ImportError:
     def build_hook_response(continue_execution=True, stop_reason="", system_message="",
-                            decision=None, reason=None):
+                            decision=None, reason=None, event_name="unknown", ctx=None):
         """Fallback build_hook_response function - matches main.py signature.
 
         DRY: This is a fallback for tests if main.py import fails.
-        Source of truth: main.py:877-895
+        Source of truth: main.py build_hook_response()
         """
         response = {"continue": continue_execution, "stopReason": stop_reason,
                     "suppressOutput": False, "systemMessage": system_message}
@@ -367,7 +372,7 @@ except ImportError:
         """Fallback analyze_verification_results function"""
         return {}
 
-    def build_pretooluse_response(decision="allow", reason=""):
+    def build_pretooluse_response(decision="allow", reason="", ctx=None):
         """Fallback build_pretooluse_response function - matches main.py signature.
 
         DRY: This is a fallback for tests if main.py import fails.

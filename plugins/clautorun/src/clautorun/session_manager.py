@@ -267,16 +267,19 @@ class SessionBackendManager:
         shelve may create files with various suffixes (.db, .dir, .bak, .dat)
         depending on the platform's dbm backend. On macOS with dbm.gnu/ndbm,
         shelve.open("foo.db") creates "foo.db.db", so os.remove("foo.db") fails.
-        This method uses glob to clean up all related files.
+        Uses direct file removal with known suffixes instead of glob (which
+        requires listing entire directory — slow with 10K+ files).
         """
-        import glob
-        # Match the exact path and any path with additional extensions
-        for pattern in [str(db_path), str(db_path) + ".*", str(db_path) + ".db"]:
-            for filepath in glob.glob(pattern):
-                try:
-                    os.remove(filepath)
-                except OSError:
-                    pass
+        base = str(db_path)
+        # Try all known shelve suffixes plus the base path itself
+        candidates = [
+            base, base + ".db", base + ".dir", base + ".bak", base + ".dat",
+        ]
+        for filepath in candidates:
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
 
     def _test_default_backend(self, session_id: str) -> bool:
         """Test default shelve backend"""
@@ -394,23 +397,27 @@ class SessionStateManager:
         import shelve
 
         if backend == "default":
-            return shelve.open(str(self.state_dir / f"plugin_{session_id}.db"), writeback=True)
+            return shelve.open(str(self.state_dir / f"plugin_{session_id}.db"), writeback=False)
         elif backend == "dumbdbm":
-            return shelve.open(str(self.state_dir / f"plugin_{session_id}_dumb.db"), writeback=True)
+            return shelve.open(str(self.state_dir / f"plugin_{session_id}_dumb.db"), writeback=False)
         else:
             raise SessionBackendError(f"Unknown backend: {backend}")
 
     def _track_shared_access(self, state: Dict[str, Any], session_id: str, increment: bool):
-        """Track shared access for monitoring"""
+        """Track shared access for monitoring.
+
+        Note: With writeback=False, all assignments to state[key] are explicit
+        writes that persist immediately. No in-place mutation (e.g., += on
+        mutable values) — always reassign the full value.
+        """
         try:
             if increment:
-                if "_shared_access_count" not in state:
-                    state["_shared_access_count"] = 0
-                state["_shared_access_count"] += 1
+                count = state.get("_shared_access_count", 0) if hasattr(state, 'get') else 0
+                state["_shared_access_count"] = count + 1
                 state["_last_shared_access"] = time.time()
             else:
-                if "_shared_access_count" in state:
-                    state["_shared_access_count"] = max(0, state["_shared_access_count"] - 1)
+                count = state.get("_shared_access_count", 0) if hasattr(state, 'get') else 0
+                state["_shared_access_count"] = max(0, count - 1)
         except Exception:
             pass  # Silently handle tracking errors
 
@@ -464,19 +471,14 @@ def clear_test_session_state(session_id: str) -> None:
         if session_id in _global_session_manager._memory_locks:
             del _global_session_manager._memory_locks[session_id]
 
-    # Clear shelve backend files
-    import glob
+    # Clear shelve backend files using direct removal (no glob — slow with 10K+ files)
     state_dir = _global_session_manager.state_dir
 
-    # Remove all shelve files for this session
-    patterns = [
-        str(state_dir / f"plugin_{session_id}.db*"),
-        str(state_dir / f"plugin_{session_id}_dumb.db*"),
-    ]
-
-    for pattern in patterns:
-        for filepath in glob.glob(pattern):
+    # Try all known shelve suffixes for both backends
+    for prefix in [f"plugin_{session_id}.db", f"plugin_{session_id}_dumb.db"]:
+        base = str(state_dir / prefix)
+        for suffix in ["", ".db", ".dir", ".bak", ".dat"]:
             try:
-                os.remove(filepath)
+                os.remove(base + suffix)
             except OSError:
                 pass  # Silently handle cleanup errors

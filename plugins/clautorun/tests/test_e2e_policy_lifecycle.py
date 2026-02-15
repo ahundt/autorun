@@ -234,3 +234,5 @@ print(f"DECISION:{{decision}}")
         # Policy should persist and deny without justification
         assert "DECISION:deny" in result2.stdout, \
             f"Expected deny, got: {result2.stdout}"
+
+        

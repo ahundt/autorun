@@ -16,6 +16,7 @@
 """tmux-based prompt injection system for clautorun - Using centralized tmux utilities"""
 
 import time
+import os
 from typing import Optional, Dict, Tuple
 import logging
 

@@ -49,7 +49,8 @@ def generate_manifests(plugin_dir: Path):
             "autonomous-sessions", "safety-guards"
         ],
         "commands": "./commands/",
-        "skills": "./skills/"
+        "skills": "./skills/",
+        "hooks": "./hooks/hooks.json"
     }
 
     # 2. Write Claude Manifest
@@ -63,6 +64,7 @@ def generate_manifests(plugin_dir: Path):
     with open(plugin_dir / "gemini-extension.json", "w") as f:
         gemini_manifest = manifest.copy()
         gemini_manifest["contextFileName"] = "GEMINI.md"
+        gemini_manifest["hooks"] = "./hooks/gemini-hooks.json"
         json.dump(gemini_manifest, f, indent=2)
     print(f"   ✓ Generated gemini-extension.json")
 

@@ -54,7 +54,7 @@ If the `extract-pdfs` CLI isn't installed, use these alternatives:
 python -m pdf_extraction document.pdf
 
 # Standalone script execution
-python "${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/cli.py" document.pdf
+python "/Users/athundt/.claude/clautorun/plugins/pdf-extractor/src/pdf_extraction/cli.py" document.pdf
 ```
 
 ## Backend Selection Guide
@@ -223,7 +223,7 @@ The output will contain markdown tables when detected:
 
 ### Source Code Layout
 
-**Location:** `${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/`
+**Location:** `/Users/athundt/.claude/clautorun/plugins/pdf-extractor/src/pdf_extraction/`
 
 | File | Purpose |
 |------|---------|

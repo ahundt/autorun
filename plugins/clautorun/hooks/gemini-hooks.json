@@ -6,7 +6,7 @@
         "hooks": [{
           "name": "clautorun-init",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       }
@@ -17,7 +17,7 @@
         "hooks": [{
           "name": "clautorun-command",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       }
@@ -28,7 +28,7 @@
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       }
@@ -39,7 +39,17 @@
         "hooks": [{
           "name": "clautorun-afteragent",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterModel": [
+      {
+        "hooks": [{
+          "name": "clautorun-aftermodel",
+          "type": "command",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       }
@@ -50,7 +60,7 @@
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       },
@@ -59,7 +69,7 @@
         "hooks": [{
           "name": "clautorun-posttool-task",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       }
@@ -69,7 +79,7 @@
         "hooks": [{
           "name": "clautorun-cleanup",
           "type": "command",
-          "command": "${extensionPath}/.venv/bin/python ${extensionPath}/hooks/hook_entry.py",
+          "command": "${extensionPath}/plugins/clautorun/.venv/bin/python ${extensionPath}/plugins/clautorun/hooks/hook_entry.py",
           "timeout": 5000
         }]
       }

@@ -142,8 +142,8 @@ class TestPreToolUseBlockingFix:
 
             result = pretooluse_handler(mock_ctx)
 
-            # Should deny execution
-            assert result["continue"] is False  # continue=False when decision=deny
+            # Should deny tool execution (continue=True: AI keeps running, permissionDecision blocks tool)
+            assert result["continue"] is True  # AI keeps running per official hooks docs
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "SEARCH policy" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
@@ -171,8 +171,8 @@ class TestPreToolUseBlockingFix:
 
             result = pretooluse_handler(mock_ctx)
 
-            # Should deny execution
-            assert result["continue"] is False  # continue=False when decision=deny
+            # Should deny tool execution (continue=True: AI keeps running, permissionDecision blocks tool)
+            assert result["continue"] is True  # AI keeps running per official hooks docs
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
             assert "justification" in result["hookSpecificOutput"]["permissionDecisionReason"].lower()
 

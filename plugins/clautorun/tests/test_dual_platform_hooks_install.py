@@ -36,6 +36,30 @@ from clautorun.main import pretooluse_handler
 from clautorun.session_manager import session_state, clear_test_session_state
 
 # =============================================================================
+# Utilities
+# =============================================================================
+
+
+def _extract_function(content: str, func_name: str) -> str:
+    """Extract a function body from source code by finding the next def at same indent level.
+
+    This avoids hardcoded character windows that break when code grows.
+    """
+    import re
+    func_idx = content.find(f"def {func_name}(")
+    if func_idx < 0:
+        return ""
+    # Find the indentation of this function
+    line_start = content.rfind("\n", 0, func_idx) + 1
+    indent = func_idx - line_start
+    # Find next function/class at same or lesser indent
+    pattern = re.compile(rf'\n.{{0,{indent}}}(?:def |class )\w+', re.MULTILINE)
+    match = pattern.search(content, func_idx + 1)
+    end = match.start() if match else len(content)
+    return content[func_idx:end]
+
+
+# =============================================================================
 # Constants
 # =============================================================================
 
@@ -122,8 +146,9 @@ class TestClaudeHooksJson:
         commands = extract_all_commands(data)
         assert len(commands) > 0
         for cmd in commands:
-            assert cmd.startswith("uv run --project"), \
-                f"Command must start with 'uv run --project', got: {cmd}"
+            # Allow either uv run or direct venv path
+            is_valid = cmd.startswith("uv run") or ".venv/bin/python" in cmd
+            assert is_valid, f"Command must use uv or venv python, got: {cmd}"
 
     def test_no_bare_python3(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -213,8 +238,8 @@ class TestGeminiHooksJson:
         commands = extract_all_commands(data)
         assert len(commands) > 0
         for cmd in commands:
-            assert cmd.startswith("uv run --project"), \
-                f"Command must start with 'uv run --project', got: {cmd}"
+            is_valid = cmd.startswith("uv run") or ".venv/bin/python" in cmd
+            assert is_valid, f"Gemini command must use uv or venv python, got: {cmd}"
 
     def test_no_bare_python3(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
@@ -327,9 +352,9 @@ class TestCrossPlatformConsistency:
 
     def test_both_use_uv_run(self):
         for cmd in extract_all_commands(load_hooks_json(HOOKS_JSON)):
-            assert "uv run" in cmd
+            assert "uv run" in cmd or ".venv/bin/python" in cmd
         for cmd in extract_all_commands(load_hooks_json(GEMINI_HOOKS_JSON)):
-            assert "uv run" in cmd
+            assert "uv run" in cmd or ".venv/bin/python" in cmd
 
     def test_neither_uses_cd(self):
         for cmd in extract_all_commands(load_hooks_json(HOOKS_JSON)):
@@ -390,9 +415,14 @@ class TestHookEntryDualPlatform:
         env = os.environ.copy()
         env["CLAUDE_PLUGIN_ROOT"] = "/test/claude/path"
         env.pop("CLAUTORUN_PLUGIN_ROOT", None)
+        script = (
+            "import sys; import os; "
+            f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
+            "import hook_entry; "
+            "print(hook_entry.get_plugin_root())"
+        )
         result = subprocess.run(
-            [sys.executable, "-c",
-             f"exec(open('{HOOK_ENTRY_PY}').read()); print(get_plugin_root())"],
+            [sys.executable, "-c", script],
             capture_output=True, text=True, env=env, timeout=5
         )
         assert "/test/claude/path" in result.stdout.strip()
@@ -401,9 +431,14 @@ class TestHookEntryDualPlatform:
         env = os.environ.copy()
         env["CLAUTORUN_PLUGIN_ROOT"] = "/test/clautorun/path"
         env["CLAUDE_PLUGIN_ROOT"] = "/test/claude/path"
+        script = (
+            "import sys; import os; "
+            f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
+            "import hook_entry; "
+            "print(hook_entry.get_plugin_root())"
+        )
         result = subprocess.run(
-            [sys.executable, "-c",
-             f"exec(open('{HOOK_ENTRY_PY}').read()); print(get_plugin_root())"],
+            [sys.executable, "-c", script],
             capture_output=True, text=True, env=env, timeout=5
         )
         assert "/test/clautorun/path" in result.stdout.strip()
@@ -413,14 +448,17 @@ class TestHookEntryDualPlatform:
         env = os.environ.copy()
         env.pop("CLAUDE_PLUGIN_ROOT", None)
         env.pop("CLAUTORUN_PLUGIN_ROOT", None)
+        script = (
+            "import sys; import os; "
+            f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
+            "import hook_entry; "
+            "print(hook_entry.get_plugin_root())"
+        )
         result = subprocess.run(
-            [sys.executable, "-c",
-             f"exec(open('{HOOK_ENTRY_PY}').read()); print(get_plugin_root())"],
+            [sys.executable, "-c", script],
             capture_output=True, text=True, env=env, timeout=5
         )
         inferred = result.stdout.strip()
-        # When exec'd, __file__ is the calling script, not hook_entry.py
-        # So this test validates the fallback to os.getcwd() or similar
         assert len(inferred) > 0, "Should return some path"
 
     def test_detect_cli_type_claude_default(self):
@@ -618,23 +656,23 @@ class TestClaudeInstallPathway:
 
 
 class TestDaemonContinueField:
-    """Validate daemon path correctly sets continue=false for deny."""
+    """Validate daemon path correctly sets continue=True for tool denial."""
 
-    def test_core_py_pretooluse_deny_uses_decision(self):
+    def test_core_py_pretooluse_deny_keeps_ai_working(self):
         content = CORE_PY.read_text()
-        respond_idx = content.find("def respond(")
-        assert respond_idx > 0
-        respond_block = content[respond_idx:respond_idx + 2000]
-        assert 'decision != "deny"' in respond_block or \
-               'should_continue' in respond_block
+        respond_block = _extract_function(content, "respond")
+        assert respond_block, "Could not find def respond() in core.py"
+        # Verify continue: True is used even on denial to keep AI loop running
+        assert '"continue": True' in respond_block
+        assert "keep AI working" in respond_block or "loop keeps running" in respond_block
 
-    def test_main_py_pretooluse_deny_uses_decision(self):
+    def test_main_py_pretooluse_deny_keeps_ai_working(self):
         content = MAIN_PY.read_text()
-        func_idx = content.find("def build_pretooluse_response(")
-        assert func_idx > 0
-        func_block = content[func_idx:func_idx + 1000]
-        assert 'decision != "deny"' in func_block or \
-               'should_continue' in func_block
+        func_block = _extract_function(content, "build_pretooluse_response")
+        assert func_block, "Could not find def build_pretooluse_response() in main.py"
+        # Verify continue: True is used even on denial to keep AI loop running
+        assert '"continue": True' in func_block
+        assert "Keep AI working" in func_block or "loop keeps running" in func_block
 
 
 # =============================================================================
@@ -666,7 +704,8 @@ class TestRmBlockingBothPaths:
         ctx = self._create_test_context("Bash", {"command": "rm -rf /tmp/test"})
         result = pretooluse_handler(ctx)
         assert result is not None
-        assert result.get("continue") is False
+        # continue should be True to keep AI working even if tool is blocked
+        assert result.get("continue") is True
 
     def test_rm_blocked_mentions_trash(self):
         ctx = self._create_test_context("Bash", {"command": "rm important.txt"})
@@ -688,19 +727,19 @@ class TestRmBlockingBothPaths:
         ctx = self._create_test_context("Bash", {"command": "cat /etc/passwd"})
         result = pretooluse_handler(ctx)
         assert result is not None
-        assert result.get("continue") is False
+        assert result.get("continue") is True
 
     def test_gemini_tool_name_run_shell_command(self):
         ctx = self._create_test_context("run_shell_command", {"command": "rm file.txt"})
         result = pretooluse_handler(ctx)
         if result is not None:
-            assert result.get("continue") is False
+            assert result.get("continue") is True
 
     def test_gemini_tool_name_bash_command(self):
         ctx = self._create_test_context("bash_command", {"command": "rm file.txt"})
         result = pretooluse_handler(ctx)
         if result is not None:
-            assert result.get("continue") is False
+            assert result.get("continue") is True
 
 
 # =============================================================================

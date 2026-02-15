@@ -601,13 +601,12 @@ def run_hook_handler() -> int:
         # New daemon mode - forwards to Unix socket daemon
         from .client import run_client
 
-        run_client()
+        return run_client()
     else:
         # Legacy mode - direct hook handling
         from .main import main as app_main
 
-        app_main()
-    return 0
+        return app_main()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

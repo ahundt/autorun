@@ -1021,11 +1021,17 @@ def _install_for_gemini(
         # local extension installation. If we install from /tmp, the links
         # break immediately after the installer exits.
         
-        # 1. Ensure Gemini hooks are ready in-place (idempotent)
+        # 1. Ensure Gemini hooks are ready in-place (with backup for Claude)
         gemini_hooks_file = plugin_dir / "hooks" / "gemini-hooks.json"
         hooks_file = plugin_dir / "hooks" / "hooks.json"
+        hooks_backup = plugin_dir / "hooks" / "hooks.json.claude-backup"
         
         if gemini_hooks_file.exists():
+            # Backup original Claude hooks if they exist
+            if hooks_file.exists():
+                shutil.copy2(hooks_file, hooks_backup)
+            
+            # Use Gemini hooks during installation
             shutil.copy2(gemini_hooks_file, hooks_file)
             logger.debug(f"Prepared Gemini hooks in-place: {hooks_file}")
 
@@ -1037,6 +1043,12 @@ def _install_for_gemini(
 
         # 3. Install directly from the persistent repository path
         result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
+
+        # 4. Restore Claude hooks (mandatory for test compliance and Claude usage)
+        if hooks_backup.exists():
+            shutil.copy2(hooks_backup, hooks_file)
+            hooks_backup.unlink()
+            logger.debug("Restored Claude hooks after Gemini installation")
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
@@ -1970,6 +1982,65 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 # =============================================================================
 # Note: Legacy clautorun-install entry point removed in v0.8.0
 # Use 'clautorun --install' instead
+
+
+def _map_legacy_flags(args: list[str]) -> list[str]:
+    """Map legacy clautorun-install subcommands to __main__.py flags.
+
+    Provides backward compatibility for the old `clautorun-install install`
+    style commands by converting them to `clautorun --install` style flags.
+
+    Args:
+        args: Legacy positional arguments (e.g., ["install", "--force"])
+
+    Returns:
+        Mapped flag-style arguments (e.g., ["--install", "--force-install"])
+    """
+    if not args:
+        return ["--install"]
+
+    subcommand = args[0].lower()
+    remaining = args[1:]
+
+    mapping = {
+        "install": "--install",
+        "uninstall": "--uninstall",
+        "check": "--status",
+        "status": "--status",
+    }
+
+    if subcommand not in mapping:
+        return ["--install"]
+
+    result = [mapping[subcommand]]
+
+    for flag in remaining:
+        if flag == "--force":
+            result.append("--force-install")
+        else:
+            result.append(flag)
+
+    return result
+
+
+def install_main():
+    """Entry point for clautorun-install console script.
+
+    Provides backward compatibility with the legacy `clautorun-install`
+    command by mapping legacy subcommands to the unified CLI flags.
+    """
+    args = sys.argv[1:]
+    mapped = _map_legacy_flags(args)
+
+    # Route to appropriate function based on mapped flags
+    if "--uninstall" in mapped:
+        sys.exit(uninstall_plugins())
+    elif "--status" in mapped:
+        sys.exit(show_status())
+    else:
+        force = "--force-install" in mapped
+        tool = "--tool" in mapped
+        sys.exit(install_plugins(force_install=force, install_tool=tool))
 
 
 if __name__ == "__main__":

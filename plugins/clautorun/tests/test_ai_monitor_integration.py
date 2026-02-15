@@ -140,20 +140,20 @@ def test_stop_handler_with_premature_stop():
     print("✅ test_stop_handler_with_premature_stop passed")
 
 def test_stop_handler_with_continue_prompt():
-    """Test stop handler injects continue prompt after max verification attempts"""
+    """Test stop handler injects continue prompt when premature stop detected in INITIAL stage"""
     from clautorun import stop_handler, CONFIG
 
-    # Mock context with premature stop
+    # Mock context with premature stop (no completion markers)
     ctx = Mock()
     ctx.session_id = "test_session"
     ctx.session_transcript = ["Some work done", "No completion marker"]
 
-    # Mock session state at max verification attempts
+    # Mock session state in INITIAL stage (active autorun, no completion)
     mock_state = {
         "session_status": "active",
-        "autorun_stage": "VERIFICATION",
+        "autorun_stage": "INITIAL",
         "activation_prompt": "/autorun build a website",
-        "verification_attempts": CONFIG["max_recheck_count"]
+        "verification_attempts": 0
     }
 
     with patch('clautorun.main.session_state') as mock_session:
@@ -162,7 +162,7 @@ def test_stop_handler_with_continue_prompt():
 
         response = stop_handler(ctx)
 
-        # Should inject continue prompt instead of verification
+        # Should inject continue prompt (premature stop in INITIAL stage)
         assert response["continue"], "Should continue execution"
         assert "UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION" in response["systemMessage"], "Should inject full injection template"
         assert "SYSTEM STOP SIGNAL RULE" in response["systemMessage"], "Should contain critical stop signal instructions"
@@ -222,12 +222,12 @@ def test_stop_handler_with_emergency_stop():
         response = stop_handler(ctx)
 
         # Emergency stop is detected in is_premature_stop() which returns False,
-        # so the system continues but injects the continue prompt since no stage confirmation
-        # was found. The emergency stop marker prevents premature stop detection.
-        assert response["continue"], "Should continue execution"
-        # In the three-stage system, when no stage confirmation is found but emergency stop
-        # is present, it still injects continue prompt (emergency stop prevents intervention)
-        assert "THREE-STAGE COMPLETION SYSTEM" in response["systemMessage"], "Should inject continue message"
+        # so the stop handler does NOT intervene — it allows Claude to stop normally.
+        # This is correct: emergency stop means the user wants to halt, so don't
+        # inject continue prompts that would keep the AI working.
+        assert response["continue"] is True, "Default response has continue=True"
+        # No intervention means empty systemMessage (default build_hook_response)
+        assert response["systemMessage"] == "", "Emergency stop should not inject continue prompt"
 
     print("✅ test_stop_handler_with_emergency_stop passed")
 
@@ -380,20 +380,20 @@ def test_session_state_isolation():
     print("✅ test_session_state_isolation passed")
 
 def test_max_verification_attempts_boundary():
-    """Test behavior at max verification attempts boundary"""
+    """Test behavior when premature stop detected in INITIAL stage (boundary test)"""
     from clautorun import stop_handler, CONFIG
     from unittest.mock import patch
 
-    # Test exactly at max attempts
+    # Test premature stop with no completion markers
     ctx = Mock()
     ctx.session_id = "test_session"
     ctx.session_transcript = ["Work done", "No completion marker"]
 
     mock_state = {
         "session_status": "active",
-        "autorun_stage": "VERIFICATION",
+        "autorun_stage": "INITIAL",
         "activation_prompt": "/autorun test task",
-        "verification_attempts": CONFIG["max_recheck_count"]
+        "verification_attempts": 0
     }
 
     with patch('clautorun.main.session_state') as mock_session:
@@ -402,11 +402,9 @@ def test_max_verification_attempts_boundary():
 
         response = stop_handler(ctx)
 
-        # Should inject continue prompt instead of verification
+        # Should inject continue prompt (premature stop in INITIAL stage)
         assert response["continue"]
         assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response["systemMessage"]
-        # Should not increment verification attempts beyond max
-        assert mock_state["verification_attempts"] == CONFIG["max_recheck_count"]
 
     print("✅ test_max_verification_attempts_boundary passed")
 

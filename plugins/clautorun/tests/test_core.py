@@ -385,17 +385,18 @@ class TestEventContext:
         ctx = EventContext(session_id="test", event="UserPromptSubmit")
         response = ctx.respond("deny", "Blocked")
 
-        assert response["continue"] is False
-        assert response["stopReason"] == "Blocked"
+        # clautorun mandate: Always keep AI working unless it's a local command
+        assert response["continue"] is True
+        assert response["decision"] == "approve"
 
     def test_respond_pretooluse(self):
         """respond for PreToolUse should include hookSpecificOutput."""
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Policy blocked")
 
-        # Critical: continue=false blocks tool execution for deny decisions
-        assert response["continue"] is False, "PreToolUse deny must set continue=false to block tool"
-        assert response["stopReason"] == "Policy blocked"
+        # Critical: clautorun uses permissionDecision: deny to block tool,
+        # but continue: true to let AI suggest alternatives.
+        assert response["continue"] is True, "PreToolUse should keep AI working"
         assert "hookSpecificOutput" in response
         assert response["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
@@ -407,7 +408,8 @@ class TestEventContext:
         response = ctx.respond("allow", "Allowed")
 
         assert response["continue"] is True, "PreToolUse allow must set continue=true"
-        assert response["decision"] == "allow"
+        # respond() maps 'allow' to 'approve' for top-level Claude decision
+        assert response["decision"] == "approve"
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_respond_block(self):
@@ -415,7 +417,8 @@ class TestEventContext:
         ctx = EventContext(session_id="test", event="Stop")
         response = ctx.respond("block", "Continue working...")
 
-        assert response["continue"] is False
+        # Stop injection MUST use continue: True to trigger retry
+        assert response["continue"] is True
         assert response["decision"] == "block"
         assert response["reason"] == "Continue working..."
 
@@ -429,7 +432,8 @@ class TestEventContext:
         """deny() convenience method should work."""
         ctx = EventContext(session_id="test", event="test")
         response = ctx.deny("Blocked")
-        assert response["continue"] is False
+        # Convenience deny should follow the same keep-working pattern
+        assert response["continue"] is True
 
     def test_block_convenience(self):
         """block() convenience method should work."""
@@ -437,17 +441,27 @@ class TestEventContext:
         response = ctx.block("Injection")
         assert response["decision"] == "block"
 
-    def test_command_response(self):
-        """command_response should return correct format for local commands."""
+    def test_command_response_continues_by_default(self):
+        """command_response must return continue=True so AI processes output."""
         ctx = EventContext(session_id="test", event="UserPromptSubmit")
-        response = ctx.command_response("test message")
-
-        # Commands handled locally should NOT continue to AI
-        assert response["continue"] is False
-        assert response["systemMessage"] == "test message"
-        assert response["response"] == "test message"  # Backward compat
+        response = ctx.command_response("Policy: allow-all")
+        assert response["continue"] is True, "AI loop must continue after command"
+        assert response["systemMessage"] == "Policy: allow-all"
         assert response["stopReason"] == ""
         assert response["suppressOutput"] is False
+
+    def test_command_response_can_halt(self):
+        """estop/stop commands can opt into continue=False."""
+        ctx = EventContext(session_id="test", event="UserPromptSubmit")
+        response = ctx.command_response("Emergency stop!", continue_loop=False)
+        assert response["continue"] is False
+        assert response["systemMessage"] == "Emergency stop!"
+
+    def test_command_response_no_response_key(self):
+        """command_response must not include non-spec 'response' key."""
+        ctx = EventContext(session_id="test", event="UserPromptSubmit")
+        response = ctx.command_response("test")
+        assert "response" not in response, "'response' is not in hook spec"
 
     def test_stage_constants(self):
         """Stage constants should have correct values."""
@@ -589,10 +603,9 @@ class TestClautorunApp:
         ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/test")
         result = test_app.dispatch(ctx)
 
-        # Commands handled locally should NOT continue to AI
-        assert result["continue"] is False
+        # Commands handled locally: AI continues (sees systemMessage)
+        assert result["continue"] is True
         assert "test response" in result["systemMessage"]
-        assert "test response" in result["response"]  # Backward compat
 
     def test_dispatch_user_prompt_submit_no_command(self):
         """dispatch should allow non-command prompts."""

@@ -4,16 +4,22 @@
 These tests prevent regressions for bugs found during the Gemini CLI integration
 session (2026-02-11). Each test documents the specific bug it prevents.
 
+Semantics (per official Claude Code hooks docs):
+- continue: True = AI keeps running (ALWAYS True for PreToolUse and Stop events)
+- continue: False = AI stops entirely (only for emergency stop via command_response)
+- permissionDecision: "deny" = blocks the tool call (independent of continue)
+- Tool blocking relies on permissionDecision + exit code 2 (Bug #4669 workaround)
+
 Bugs covered:
-1. core.py EventContext.respond("deny") returned continue=True for PreToolUse
-   (daemon path) — commit 662d789 introduced, this session fixed
-2. main.py build_pretooluse_response("deny") returned continue=True
-   (legacy path) — commit 662d789 regressed commit 89030a9's fix
+1. core.py EventContext.respond("deny") correctly returns continue=True for PreToolUse
+   (per official hooks docs: continue controls AI lifecycle, not tool blocking)
+   Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround)
+2. main.py build_pretooluse_response("deny") correctly returns continue=True
 3. Both code paths (daemon vs legacy) must produce identical continue values
 4. hooks.json must use 'uv run', not bare 'python3' (UV-centric system)
 5. hook_entry.py must not have debug logging that consumes stdin
 6. Non-blocked commands must still return continue=True (no false positives)
-7. continue=False must be paired with decision="deny" and vice versa
+7. permissionDecision="deny" must be present for blocked tools (continue is always True)
 
 NO COST - Direct Python function calls, no API usage.
 """
@@ -31,40 +37,41 @@ sys.path.insert(0, str(plugin_root / "src"))
 
 # =============================================================================
 # Bug 1: core.py EventContext.respond("deny") for PreToolUse (daemon path)
-# The daemon's EventContext.respond() hardcoded "continue": True at line 538,
-# ignoring the decision parameter. This made all PreToolUse denials ineffective
-# through the daemon code path.
+# Per official hooks docs, continue=True is CORRECT for PreToolUse deny.
+# Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
+# continue=False would stop the AI entirely, which is NOT what we want.
 # =============================================================================
 
 class TestDaemonPreToolUseDenyBlocks:
-    """Regression: core.py EventContext.respond() must set continue=False for deny."""
+    """core.py EventContext.respond() must set continue=True for deny (AI keeps running)."""
 
-    def test_pretooluse_deny_returns_continue_false(self):
-        """EventContext.respond('deny') for PreToolUse must return continue=False.
+    def test_pretooluse_deny_returns_continue_true(self):
+        """EventContext.respond('deny') for PreToolUse must return continue=True.
 
-        Bug: core.py:538 hardcoded 'continue': True for PreToolUse responses.
-        Fix: Changed to 'continue': decision != 'deny'.
+        Per official hooks docs: continue controls AI lifecycle, not tool blocking.
+        Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
+        continue=False would stop the entire AI session.
         """
         from clautorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Blocked command")
 
-        assert response["continue"] is False, (
-            "REGRESSION: PreToolUse deny must have continue=False to block tool execution. "
-            "See core.py:EventContext.respond() — was hardcoded True before fix."
+        assert response["continue"] is True, (
+            "PreToolUse deny must have continue=True (AI keeps running). "
+            "Tool blocking uses permissionDecision='deny' + exit code 2 (Bug #4669)."
         )
 
-    def test_pretooluse_deny_has_stop_reason(self):
-        """When denying, stopReason must contain the reason for blocking."""
+    def test_pretooluse_deny_has_permission_decision(self):
+        """When denying, permissionDecision must be 'deny' to block the tool."""
         from clautorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Use trash instead")
 
-        assert response["stopReason"] != "", (
-            "REGRESSION: PreToolUse deny must include stopReason. "
-            "Was empty string before fix."
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny", (
+            "PreToolUse deny must have permissionDecision='deny' to block the tool. "
+            "This + exit code 2 is the actual blocking mechanism (Bug #4669 workaround)."
         )
 
     def test_pretooluse_allow_returns_continue_true(self):
@@ -80,15 +87,16 @@ class TestDaemonPreToolUseDenyBlocks:
         )
 
     def test_pretooluse_deny_convenience_method(self):
-        """ctx.deny() convenience method must also return continue=False."""
+        """ctx.deny() convenience method must also return continue=True (AI keeps running)."""
         from clautorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.deny("Blocked")
 
-        assert response["continue"] is False, (
-            "REGRESSION: ctx.deny() convenience method must return continue=False."
+        assert response["continue"] is True, (
+            "ctx.deny() must return continue=True. Tool blocking uses permissionDecision."
         )
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_pretooluse_allow_convenience_method(self):
         """ctx.allow() convenience method must return continue=True."""
@@ -104,27 +112,28 @@ class TestDaemonPreToolUseDenyBlocks:
 
 # =============================================================================
 # Bug 2: main.py build_pretooluse_response("deny") (legacy/non-daemon path)
-# Commit 662d789 reverted the fix from commit 89030a9 by rewriting
-# build_pretooluse_response() with continue=True always.
+# Per official hooks docs, continue=True is CORRECT for PreToolUse deny.
+# Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
 # =============================================================================
 
 class TestLegacyPreToolUseDenyBlocks:
-    """Regression: main.py build_pretooluse_response() must set continue=False for deny."""
+    """main.py build_pretooluse_response() must set continue=True for deny (AI keeps running)."""
 
     def test_build_pretooluse_response_deny(self):
-        """build_pretooluse_response('deny') must return continue=False.
+        """build_pretooluse_response('deny') must return continue=True.
 
-        Bug: Commit 662d789 rewrote the function with 'continue': True always,
-        reverting the fix from commit 89030a9.
+        Per official hooks docs: continue controls AI lifecycle, not tool blocking.
+        Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
         """
         from clautorun.main import build_pretooluse_response
 
         response = build_pretooluse_response("deny", "Use trash instead")
 
-        assert response["continue"] is False, (
-            "REGRESSION: build_pretooluse_response('deny') must have continue=False. "
-            "Commit 89030a9 fixed this, commit 662d789 regressed it."
+        assert response["continue"] is True, (
+            "build_pretooluse_response('deny') must have continue=True. "
+            "Tool blocking uses permissionDecision='deny' + exit code 2 (Bug #4669)."
         )
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_build_pretooluse_response_allow(self):
         """build_pretooluse_response('allow') must return continue=True."""
@@ -137,14 +146,14 @@ class TestLegacyPreToolUseDenyBlocks:
             "Fix must not introduce false positives."
         )
 
-    def test_build_pretooluse_response_deny_has_stop_reason(self):
-        """When denying, stopReason must be populated."""
+    def test_build_pretooluse_response_deny_has_permission_decision(self):
+        """When denying, permissionDecision must be 'deny'."""
         from clautorun.main import build_pretooluse_response
 
         response = build_pretooluse_response("deny", "Use trash instead")
 
-        assert response["stopReason"] != "", (
-            "REGRESSION: deny response must include stopReason."
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny", (
+            "deny response must have permissionDecision='deny' to block tool."
         )
 
     def test_build_pretooluse_response_allow_empty_stop_reason(self):
@@ -163,22 +172,21 @@ class TestLegacyPreToolUseDenyBlocks:
 # Two separate code paths exist:
 # - Daemon: core.py EventContext.respond() (used when USE_DAEMON=1)
 # - Legacy: main.py build_pretooluse_response() (used when USE_DAEMON=0)
-# Both must agree on continue=True/False for same decision.
+# Both must agree: continue=True always for PreToolUse (tool blocking via permissionDecision).
 # =============================================================================
 
 class TestDaemonLegacyConsistency:
     """Both code paths must produce identical continue values for same inputs."""
 
     @pytest.mark.parametrize("decision,expected_continue", [
-        ("deny", False),
-        ("allow", True),
+        ("deny", True),   # continue=True: AI keeps running, tool blocked by permissionDecision
+        ("allow", True),   # continue=True: AI keeps running, tool allowed
     ])
     def test_continue_consistency(self, decision, expected_continue):
         """Daemon and legacy paths must agree on continue value for same decision.
 
-        Bug: core.py had continue=True always for PreToolUse, while main.py
-        was fixed to use continue=False for deny. This inconsistency meant
-        the daemon path (default) was broken while legacy path worked.
+        Per official hooks docs: continue=True always for PreToolUse.
+        Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669).
         """
         from clautorun.core import EventContext
         from clautorun.main import build_pretooluse_response
@@ -216,13 +224,16 @@ class TestDaemonLegacyConsistency:
         daemon_response = ctx.respond(decision, "test")
         legacy_response = build_pretooluse_response(decision, "test")
 
-        # Both must have top-level decision for Gemini CLI
-        assert daemon_response.get("decision") == decision
-        assert legacy_response.get("decision") == decision
-
-        # Both must have hookSpecificOutput for Claude Code
+        # Both must have hookSpecificOutput with raw permissionDecision
         assert daemon_response["hookSpecificOutput"]["permissionDecision"] == decision
         assert legacy_response["hookSpecificOutput"]["permissionDecision"] == decision
+
+        # Top-level decision is CLI-mapped (approve/block for Claude, allow/deny for Gemini)
+        # Both paths must agree on the mapped value
+        assert daemon_response.get("decision") == legacy_response.get("decision"), (
+            f"Decision mismatch: daemon={daemon_response.get('decision')} "
+            f"vs legacy={legacy_response.get('decision')}"
+        )
 
 
 # =============================================================================
@@ -375,69 +386,63 @@ class TestHookEntryClean:
 
 
 # =============================================================================
-# Bug 6 & 7: continue field invariants
-# continue=False MUST be paired with decision="deny" and vice versa.
-# This invariant must hold across all response builders.
+# Bug 6 & 7: continue and permissionDecision invariants
+# Per official hooks docs:
+# - continue=True ALWAYS for PreToolUse (AI keeps running)
+# - permissionDecision="deny" blocks the tool (independent of continue)
+# - For Stop events, continue=True keeps AI working (block prevents stopping)
 # =============================================================================
 
 class TestContinueDecisionInvariant:
-    """continue and decision fields must be consistent across all responses."""
+    """continue is always True for PreToolUse/Stop; permissionDecision controls tool blocking."""
 
-    @pytest.mark.parametrize("decision,expected_continue", [
-        ("deny", False),
-        ("allow", True),
-    ])
-    def test_daemon_respond_invariant(self, decision, expected_continue):
-        """Daemon EventContext.respond() must maintain continue/decision invariant."""
+    @pytest.mark.parametrize("decision", ["deny", "allow"])
+    def test_daemon_respond_continue_always_true(self, decision):
+        """Daemon EventContext.respond() must always return continue=True for PreToolUse."""
         from clautorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond(decision, "test reason")
 
-        assert response["continue"] is expected_continue, (
-            f"Invariant violated: decision={decision} but continue={response['continue']}. "
-            f"Expected continue={expected_continue}."
+        assert response["continue"] is True, (
+            f"PreToolUse must always have continue=True (AI keeps running). "
+            f"Got continue={response['continue']} for decision={decision}."
         )
-        assert response["decision"] == decision
         assert response["hookSpecificOutput"]["permissionDecision"] == decision
 
-    @pytest.mark.parametrize("decision,expected_continue", [
-        ("deny", False),
-        ("allow", True),
-    ])
-    def test_legacy_response_invariant(self, decision, expected_continue):
-        """Legacy build_pretooluse_response() must maintain continue/decision invariant."""
+    @pytest.mark.parametrize("decision", ["deny", "allow"])
+    def test_legacy_response_continue_always_true(self, decision):
+        """Legacy build_pretooluse_response() must always return continue=True."""
         from clautorun.main import build_pretooluse_response
 
         response = build_pretooluse_response(decision, "test reason")
 
-        assert response["continue"] is expected_continue, (
-            f"Invariant violated: decision={decision} but continue={response['continue']}. "
-            f"Expected continue={expected_continue}."
+        assert response["continue"] is True, (
+            f"PreToolUse must always have continue=True (AI keeps running). "
+            f"Got continue={response['continue']} for decision={decision}."
         )
-        assert response["decision"] == decision
         assert response["hookSpecificOutput"]["permissionDecision"] == decision
 
-    def test_non_pretooluse_deny_still_works(self):
-        """Non-PreToolUse events (Stop, etc.) must also respect deny/continue invariant."""
+    def test_stop_deny_keeps_ai_running(self):
+        """Stop deny keeps AI running (prevents premature stopping)."""
         from clautorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="Stop")
         response = ctx.respond("deny", "Stop denied")
 
-        assert response["continue"] is False, (
-            "Non-PreToolUse deny must also have continue=False."
+        assert response["continue"] is True, (
+            "Stop deny must have continue=True (keeps AI working, prevents premature stopping)."
         )
 
-    def test_stop_block_decision(self):
-        """Stop events with 'block' decision must have continue=False."""
+    def test_stop_block_keeps_ai_running(self):
+        """Stop block keeps AI running (prevents premature stopping)."""
         from clautorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="Stop")
         response = ctx.respond("block", "Continue working")
 
-        assert response["continue"] is False, (
-            "Stop block must have continue=False to prevent premature stopping."
+        assert response["continue"] is True, (
+            "Stop block must have continue=True (keeps AI working)."
         )
 
 
@@ -476,16 +481,13 @@ class TestRmBlockingEndToEnd:
 
         result = pretooluse_handler(ctx)
 
-        assert result["continue"] is False, (
-            "REGRESSION: rm command not blocked! continue must be False. "
-            "Check build_pretooluse_response() and should_block_command()."
+        assert result["continue"] is True, (
+            "PreToolUse must have continue=True (AI keeps running). "
+            "Tool blocking uses permissionDecision='deny' + exit code 2 (Bug #4669)."
         )
-        decision = (
-            result.get("decision")
-            or result.get("hookSpecificOutput", {}).get("permissionDecision")
-        )
-        assert decision == "deny", (
-            f"REGRESSION: rm command decision is '{decision}', expected 'deny'."
+        perm_decision = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm_decision == "deny", (
+            f"REGRESSION: rm command permissionDecision is '{perm_decision}', expected 'deny'."
         )
 
     def test_rm_blocked_mentions_trash(self):
@@ -549,7 +551,12 @@ class TestRmBlockingEndToEnd:
 
         result = pretooluse_handler(ctx)
 
-        assert result["continue"] is False, (
+        assert result["continue"] is True, (
+            "PreToolUse must have continue=True (AI keeps running). "
+            "Tool blocking uses permissionDecision='deny'."
+        )
+        perm_decision = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm_decision == "deny", (
             f"REGRESSION: rm not blocked for tool_name='{tool_name}'. "
-            f"continue={result['continue']}."
+            f"permissionDecision={perm_decision}."
         )

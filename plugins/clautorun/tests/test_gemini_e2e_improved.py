@@ -519,6 +519,7 @@ class TestGeminiExtensionInstalledHook:
         """
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "cat /etc/passwd"},
             "session_id": "test-installed-hook",
@@ -526,19 +527,20 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        # Gemini CLI reads top-level 'decision'
-        assert response.get("decision") == "deny", \
-            f"INSTALLED hook did NOT block 'cat'! Response: {json.dumps(response, indent=2)}"
-
-        # Claude Code reads hookSpecificOutput
+        # Check canonical permissionDecision (raw value, always deny/allow)
         hso = response.get("hookSpecificOutput", {})
         assert hso.get("permissionDecision") == "deny", \
             f"hookSpecificOutput.permissionDecision not 'deny': {hso}"
+
+        # Top-level 'decision' is CLI-mapped: "deny" (Gemini) or "block" (Claude)
+        assert response.get("decision") in ("deny", "block"), \
+            f"INSTALLED hook did NOT block 'cat'! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_blocks_head(self, extension_hook):
         """Verify INSTALLED hook blocks 'head' via bash_command."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "head -20 /etc/hosts"},
             "session_id": "test-installed-hook",
@@ -546,13 +548,14 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") == "deny", \
+        assert response.get("decision") in ("deny", "block"), \
             f"INSTALLED hook did NOT block 'head'! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_blocks_tail(self, extension_hook):
         """Verify INSTALLED hook blocks 'tail' via bash_command."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "tail -f /var/log/system.log"},
             "session_id": "test-installed-hook",
@@ -560,13 +563,14 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") == "deny", \
+        assert response.get("decision") in ("deny", "block"), \
             f"INSTALLED hook did NOT block 'tail'! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_blocks_run_shell_command(self, extension_hook):
         """Verify INSTALLED hook blocks via 'run_shell_command' tool name."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "run_shell_command",
             "tool_input": {"command": "cat /etc/shadow"},
             "session_id": "test-installed-hook",
@@ -574,13 +578,14 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") == "deny", \
+        assert response.get("decision") in ("deny", "block"), \
             f"INSTALLED hook did NOT block via run_shell_command! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_allows_safe_command(self, extension_hook):
         """Verify INSTALLED hook allows safe commands like 'ls'."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "ls -la /tmp"},
             "session_id": "test-installed-hook",
@@ -588,13 +593,14 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") == "allow", \
+        assert response.get("decision") in ("allow", "approve"), \
             f"INSTALLED hook incorrectly blocked safe 'ls'! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_allows_piped_cat(self, extension_hook):
         """Verify INSTALLED hook allows piped 'cat' (e.g., 'echo foo | cat')."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "echo hello | cat"},
             "session_id": "test-installed-hook",
@@ -602,13 +608,14 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") == "allow", \
+        assert response.get("decision") in ("allow", "approve"), \
             f"INSTALLED hook incorrectly blocked piped cat! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_allows_git_status(self, extension_hook):
         """Verify INSTALLED hook allows git status."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "git status"},
             "session_id": "test-installed-hook",
@@ -616,7 +623,7 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") == "allow", \
+        assert response.get("decision") in ("allow", "approve"), \
             f"INSTALLED hook incorrectly blocked git status! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_dual_format_consistency(self, extension_hook):
@@ -630,6 +637,7 @@ class TestGeminiExtensionInstalledHook:
         # Test with a blocked command
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "cat README.md"},
             "session_id": "test-installed-hook",
@@ -647,9 +655,16 @@ class TestGeminiExtensionInstalledHook:
         assert hso_decision is not None, \
             "Missing hookSpecificOutput.permissionDecision (needed for Claude Code)"
 
-        # Both must agree
-        assert top_level_decision == hso_decision, \
-            f"Decision mismatch! top-level={top_level_decision}, hso={hso_decision}"
+        # Both must agree semantically (top-level may use CLI-mapped values)
+        # Claude: "block"/"approve", Gemini: "deny"/"allow", Raw: "deny"/"allow"
+        deny_values = {"deny", "block"}
+        allow_values = {"allow", "approve"}
+        if hso_decision == "deny":
+            assert top_level_decision in deny_values, \
+                f"Decision mismatch! top-level={top_level_decision} should be deny/block, hso={hso_decision}"
+        else:
+            assert top_level_decision in allow_values, \
+                f"Decision mismatch! top-level={top_level_decision} should be allow/approve, hso={hso_decision}"
 
 
 class TestGeminiWriteFileBlocking:
@@ -708,6 +723,7 @@ class TestGeminiWriteFileBlocking:
         """Verify write_file tool returns a well-formed response with both formats."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "write_file",
             "tool_input": {"file_path": "/tmp/test.txt", "content": "hello"},
             "session_id": "test-write-file",
@@ -720,13 +736,22 @@ class TestGeminiWriteFileBlocking:
             f"Missing top-level decision for write_file: {response}"
         assert "hookSpecificOutput" in response, \
             f"Missing hookSpecificOutput for write_file: {response}"
-        assert response["decision"] == response["hookSpecificOutput"]["permissionDecision"], \
-            "Decision format mismatch between top-level and hookSpecificOutput"
+        # Top-level decision may be CLI-mapped (block/approve for Claude, deny/allow for Gemini)
+        # while permissionDecision is always raw (deny/allow). Check semantic agreement.
+        raw = response["hookSpecificOutput"]["permissionDecision"]
+        top = response["decision"]
+        if raw in ("deny", "block"):
+            assert top in ("deny", "block"), \
+                f"Decision format mismatch: top={top}, raw={raw}"
+        else:
+            assert top in ("allow", "approve"), \
+                f"Decision format mismatch: top={top}, raw={raw}"
 
     def test_edit_file_returns_valid_response(self, extension_hook):
         """Verify edit_file tool returns a well-formed response."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "edit_file",
             "tool_input": {"file_path": "/tmp/test.txt", "old_string": "a", "new_string": "b"},
             "session_id": "test-edit-file",
@@ -743,6 +768,7 @@ class TestGeminiWriteFileBlocking:
         """Verify exit_plan_mode tool returns a well-formed response."""
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "exit_plan_mode",
             "tool_input": {},
             "session_id": "test-exit-plan",
@@ -762,6 +788,7 @@ class TestGeminiWriteFileBlocking:
         """
         payload = {
             "hook_event_name": "BeforeTool",
+            "source": "gemini",
             "tool_name": "bash_command",
             "tool_input": {"command": "echo test"},
             "session_id": "test-schema",
@@ -815,8 +842,10 @@ class TestGeminiHighQualityMocks:
         to be registered via plugins import (done in setup_class).
         """
         from clautorun.core import EventContext, normalize_hook_payload, app
+        from clautorun.config import detect_cli_type
 
         normalized = normalize_hook_payload(payload)
+        cli_type = detect_cli_type(payload)
         ctx = EventContext(
             session_id=normalized["session_id"] or "mock-session",
             event=normalized["hook_event_name"],
@@ -825,6 +854,7 @@ class TestGeminiHighQualityMocks:
             tool_input=normalized["tool_input"],
             tool_result=normalized["tool_result"],
             session_transcript=normalized["session_transcript"],
+            cli_type=cli_type
         )
         return app.dispatch(ctx)
 
