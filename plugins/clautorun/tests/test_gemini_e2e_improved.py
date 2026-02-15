@@ -873,24 +873,42 @@ class TestGeminiHighQualityMocks:
         """Mock: 'git reset --hard' blocked when unstaged changes exist.
 
         The git reset --hard integration uses when: _has_unstaged_changes,
-        so it only blocks when there are changes to lose. We patch the
-        predicate lookup dict to simulate that condition in mock tests.
+        which checks real git state. We create a temporary git repo with
+        actual unstaged changes so the predicate fires naturally.
         """
-        from clautorun.integrations import _WHEN_PREDICATES, invalidate_caches
-        original = _WHEN_PREDICATES.get("_has_unstaged_changes")
-        _WHEN_PREDICATES["_has_unstaged_changes"] = lambda ctx: True
-        invalidate_caches()  # Force re-evaluation with patched predicate
-        try:
-            response = self._simulate_hook({
-                "hook_event_name": "BeforeTool",
-                "tool_name": "bash_command",
-                "tool_input": {"command": "git reset --hard HEAD~5"},
-                "session_id": "mock-2",
-            })
-        finally:
-            if original is not None:
-                _WHEN_PREDICATES["_has_unstaged_changes"] = original
+        import subprocess
+        import tempfile
+        from clautorun.integrations import invalidate_caches
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a real git repo with a commit and unstaged changes
+            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"],
+                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"],
+                           cwd=tmpdir, capture_output=True)
+            test_file = Path(tmpdir) / "file.txt"
+            test_file.write_text("initial")
+            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"],
+                           cwd=tmpdir, capture_output=True)
+            # Create unstaged change so _has_unstaged_changes returns True
+            test_file.write_text("modified")
+
+            original_cwd = os.getcwd()
+            os.chdir(tmpdir)
             invalidate_caches()
+            try:
+                response = self._simulate_hook({
+                    "hook_event_name": "BeforeTool",
+                    "tool_name": "bash_command",
+                    "tool_input": {"command": "git reset --hard HEAD~5"},
+                    "session_id": "mock-2",
+                })
+            finally:
+                os.chdir(original_cwd)
+                invalidate_caches()
+
         assert response.get("decision") == "deny", \
             f"git reset --hard should be blocked: {response.get('decision')}"
 
