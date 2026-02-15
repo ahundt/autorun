@@ -191,6 +191,12 @@ settings.json
 settings.local.json
 .claude/settings.local.json
 
+# Git worktrees (local development)
+.worktrees/
+
+# Stashed files (originals before symlinking)
+.stashed/
+
 # Symlink artifacts (root level only)
 /clautorun
 /debug/latest
