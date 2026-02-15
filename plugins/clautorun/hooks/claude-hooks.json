@@ -9,7 +9,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Bash|ExitPlanMode",
+        "matcher": "Write|Edit|Bash|ExitPlanMode",
         "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
       }
     ],

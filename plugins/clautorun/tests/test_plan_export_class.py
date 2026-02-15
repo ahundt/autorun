@@ -1587,6 +1587,165 @@ class TestDeduplication:
 
 
 # =============================================================================
+# TEST: PreToolUse Backup Handlers
+# =============================================================================
+
+
+class TestPreToolUseBackup:
+    """Tests for PreToolUse handlers that back up unreliable PostToolUse.
+
+    PostToolUse hooks don't fire in some Claude Code sessions. PreToolUse handlers
+    provide backup tracking and export. Content-hash dedup prevents double-export.
+    """
+
+    def test_pretooluse_tracking_populates_active_plans(self, temp_project):
+        """track_and_export_plans_early() records Write to plan file in active_plans."""
+        from clautorun.plan_export import track_and_export_plans_early
+
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-pre",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan), "content": "test", "cwd": str(project_dir)},
+            store=store
+        )
+        result = track_and_export_plans_early(ctx)
+        assert result is None  # Never blocks
+
+        # Verify active_plans was populated
+        with session_state(GLOBAL_SESSION_ID) as state:
+            active = state.get("active_plans", {})
+            assert str(plan) in active
+
+    def test_pretooluse_export_on_exit_plan_mode(self, temp_project):
+        """track_and_export_plans_early() exports when active_plans has entry."""
+        from clautorun.plan_export import track_and_export_plans_early
+
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        store = ThreadSafeDB()
+
+        # First, track the write
+        ctx_write = EventContext(
+            session_id="test-pre",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store
+        )
+        track_and_export_plans_early(ctx_write)
+
+        # Now trigger export on ExitPlanMode PreToolUse
+        ctx_exit = EventContext(
+            session_id="test-pre",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store
+        )
+        result = track_and_export_plans_early(ctx_exit)
+        assert result is None  # Never blocks
+
+        # Verify plan was exported to notes/
+        exported = list(notes_dir.glob("*.md"))
+        assert len(exported) >= 1
+
+    def test_dedup_prevents_double_export_pre_and_post(self, temp_project):
+        """Content hash prevents double-export when both Pre and Post fire."""
+        from clautorun.plan_export import (
+            track_and_export_plans_early,
+            track_plan_writes, export_on_exit_plan_mode
+        )
+
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        store = ThreadSafeDB()
+
+        # Track + export via PreToolUse
+        ctx_write = EventContext(
+            session_id="test-dedup",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store
+        )
+        track_and_export_plans_early(ctx_write)
+
+        ctx_exit_pre = EventContext(
+            session_id="test-dedup",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store
+        )
+        track_and_export_plans_early(ctx_exit_pre)
+
+        # Also track + export via PostToolUse (simulating both firing)
+        ctx_write_post = EventContext(
+            session_id="test-dedup",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store
+        )
+        track_plan_writes(ctx_write_post)
+
+        ctx_exit_post = EventContext(
+            session_id="test-dedup",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store
+        )
+        export_on_exit_plan_mode(ctx_exit_post)
+
+        # Should only have ONE export (dedup via content hash)
+        exported = list(notes_dir.glob("*.md"))
+        assert len(exported) == 1
+
+    def test_pretooluse_handler_never_blocks(self, temp_project):
+        """PreToolUse handler always returns None, even on errors."""
+        from clautorun.plan_export import track_and_export_plans_early
+
+        store = ThreadSafeDB()
+
+        # Write with invalid path
+        ctx = EventContext(
+            session_id="test-never-block",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": "/nonexistent/path.md"},
+            store=store
+        )
+        assert track_and_export_plans_early(ctx) is None
+
+        # ExitPlanMode with no active plans
+        ctx2 = EventContext(
+            session_id="test-never-block",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={},
+            store=store
+        )
+        assert track_and_export_plans_early(ctx2) is None
+
+        # Non-matching tool name — returns None early
+        ctx3 = EventContext(
+            session_id="test-never-block",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "ls"},
+            store=store
+        )
+        assert track_and_export_plans_early(ctx3) is None
+
+
+# =============================================================================
 # TEST: Edge Cases and Robustness
 # =============================================================================
 
