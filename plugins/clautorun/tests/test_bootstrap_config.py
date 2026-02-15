@@ -134,7 +134,7 @@ def temp_hooks_dir(sample_hooks_json):
     with tempfile.TemporaryDirectory() as tmpdir:
         hooks_dir = Path(tmpdir) / "hooks"
         hooks_dir.mkdir()
-        hooks_file = hooks_dir / "hooks.json"
+        hooks_file = hooks_dir / "claude-hooks.json"
         hooks_file.write_text(json.dumps(sample_hooks_json, indent=2))
         yield tmpdir
 
@@ -145,7 +145,7 @@ def temp_hooks_dir_disabled(sample_hooks_json_disabled):
     with tempfile.TemporaryDirectory() as tmpdir:
         hooks_dir = Path(tmpdir) / "hooks"
         hooks_dir.mkdir()
-        hooks_file = hooks_dir / "hooks.json"
+        hooks_file = hooks_dir / "claude-hooks.json"
         hooks_file.write_text(json.dumps(sample_hooks_json_disabled, indent=2))
         yield tmpdir
 
@@ -168,7 +168,7 @@ class TestSetBootstrapConfig:
         assert result == 0
 
         # Verify hooks.json was modified
-        hooks_file = Path(temp_hooks_dir) / "hooks" / "hooks.json"
+        hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
         content = hooks_file.read_text()
 
         # All commands should now have --no-bootstrap
@@ -185,7 +185,7 @@ class TestSetBootstrapConfig:
         assert result == 0
 
         # Verify hooks.json was modified
-        hooks_file = Path(temp_hooks_dir_disabled) / "hooks" / "hooks.json"
+        hooks_file = Path(temp_hooks_dir_disabled) / "hooks" / "claude-hooks.json"
         content = hooks_file.read_text()
 
         # No commands should have --no-bootstrap
@@ -231,7 +231,7 @@ class TestSetBootstrapConfig:
         """Test that disabling bootstrap preserves overall JSON structure."""
         from clautorun.__main__ import set_bootstrap_config
 
-        hooks_file = Path(temp_hooks_dir) / "hooks" / "hooks.json"
+        hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
         original_data = json.loads(hooks_file.read_text())
 
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir}):
@@ -414,7 +414,7 @@ class TestMainFunctionRouting:
         assert result == 0
 
         # Verify flag was added
-        hooks_file = Path(temp_hooks_dir) / "hooks" / "hooks.json"
+        hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
         assert "--no-bootstrap" in hooks_file.read_text()
 
     def test_enable_bootstrap_calls_set_bootstrap_config_true(
@@ -431,7 +431,7 @@ class TestMainFunctionRouting:
         assert result == 0
 
         # Verify flag was removed
-        hooks_file = Path(temp_hooks_dir_disabled) / "hooks" / "hooks.json"
+        hooks_file = Path(temp_hooks_dir_disabled) / "hooks" / "claude-hooks.json"
         assert "--no-bootstrap" not in hooks_file.read_text()
 
     def test_version_returns_zero(self, capsys):

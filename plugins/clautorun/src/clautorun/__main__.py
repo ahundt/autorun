@@ -555,15 +555,15 @@ def set_bootstrap_config(enabled: bool) -> int:
 
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     if not plugin_root:
-        # Try to find hooks.json relative to this file
+        # Try to find hooks relative to this file
         plugin_root = str(Path(__file__).parent.parent)
 
-    hooks_path = Path(plugin_root) / "hooks" / "hooks.json"
+    hooks_path = Path(plugin_root) / "hooks" / "claude-hooks.json"
     if not hooks_path.exists():
-        print(f"hooks.json not found at {hooks_path}")
+        print(f"claude-hooks.json not found at {hooks_path}")
         return 1
 
-    # Read current hooks.json
+    # Read current claude-hooks.json
     with open(hooks_path) as f:
         content = f.read()
 

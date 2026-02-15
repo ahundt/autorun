@@ -137,7 +137,7 @@ class TestGetHooksDir:
 
         hooks_dir = get_hooks_dir()
         # hooks.json is the primary hook configuration for Claude Code
-        assert (hooks_dir / "hooks.json").exists(), "hooks.json not found"
+        assert (hooks_dir / "claude-hooks.json").exists(), "claude-hooks.json not found"
         assert (hooks_dir / "hook_entry.py").exists(), "hook_entry.py not found"
 
 

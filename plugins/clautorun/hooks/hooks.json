@@ -1,41 +1,87 @@
 {
-  "description": "clautorun v0.8 - unified daemon-based hook handler",
+  "description": "clautorun v0.8 - Gemini CLI native compatibility hooks",
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Write|Bash|ExitPlanMode",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "ExitPlanMode|Write|Edit",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      },
-      {
-        "matcher": "TaskCreate|TaskUpdate|TaskGet|TaskList",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
-      }
-    ],
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{
+          "name": "clautorun-init",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
       }
     ],
-    "Stop": [
+    "BeforeAgent": [
       {
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+        "hooks": [{
+          "name": "clautorun-command",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
       }
     ],
-    "SubagentStop": [
+    "BeforeTool": [
       {
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "matcher": "write_file|run_shell_command|replace|read_file|glob|grep_search",
+        "hooks": [{
+          "name": "clautorun-pretool",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "AUTORUN|/cr:",
+        "hooks": [{
+          "name": "clautorun-afteragent",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterModel": [
+      {
+        "hooks": [{
+          "name": "clautorun-aftermodel",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace|read_file",
+        "hooks": [{
+          "name": "clautorun-posttool-plan",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      },
+      {
+        "matcher": "write_todos",
+        "hooks": [{
+          "name": "clautorun-posttool-task",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{
+          "name": "clautorun-cleanup",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "timeout": 5000
+        }]
       }
     ]
   }

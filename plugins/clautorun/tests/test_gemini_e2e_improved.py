@@ -420,8 +420,8 @@ class TestGeminiCLIRealMoney:
 
         # Verify hooks file exists (installed extension or source)
         hooks_candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/gemini-hooks.json",
-            Path(__file__).parent.parent / "hooks/gemini-hooks.json",
+            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hooks.json",
+            Path(__file__).parent.parent / "hooks/hooks.json",
         ]
         hooks_file = None
         for candidate in hooks_candidates:
@@ -429,7 +429,7 @@ class TestGeminiCLIRealMoney:
                 hooks_file = candidate
                 break
         assert hooks_file is not None, \
-            f"gemini-hooks.json not found. Searched:\n" + "\n".join(f"  - {p}" for p in hooks_candidates)
+            f"hooks.json not found. Searched:\n" + "\n".join(f"  - {p}" for p in hooks_candidates)
 
         # Verify hooks file is valid JSON
         try:
@@ -870,13 +870,27 @@ class TestGeminiHighQualityMocks:
             f"rm -rf should be blocked: {response.get('decision')}"
 
     def test_mock_gemini_git_reset_hard_blocked(self):
-        """Mock: 'git reset --hard' blocked."""
-        response = self._simulate_hook({
-            "hook_event_name": "BeforeTool",
-            "tool_name": "bash_command",
-            "tool_input": {"command": "git reset --hard HEAD~5"},
-            "session_id": "mock-2",
-        })
+        """Mock: 'git reset --hard' blocked when unstaged changes exist.
+
+        The git reset --hard integration uses when: _has_unstaged_changes,
+        so it only blocks when there are changes to lose. We patch the
+        predicate lookup dict to simulate that condition in mock tests.
+        """
+        from clautorun.integrations import _WHEN_PREDICATES, invalidate_caches
+        original = _WHEN_PREDICATES.get("_has_unstaged_changes")
+        _WHEN_PREDICATES["_has_unstaged_changes"] = lambda ctx: True
+        invalidate_caches()  # Force re-evaluation with patched predicate
+        try:
+            response = self._simulate_hook({
+                "hook_event_name": "BeforeTool",
+                "tool_name": "bash_command",
+                "tool_input": {"command": "git reset --hard HEAD~5"},
+                "session_id": "mock-2",
+            })
+        finally:
+            if original is not None:
+                _WHEN_PREDICATES["_has_unstaged_changes"] = original
+            invalidate_caches()
         assert response.get("decision") == "deny", \
             f"git reset --hard should be blocked: {response.get('decision')}"
 
@@ -991,10 +1005,10 @@ class TestGeminiExtensionVerification:
                 f"Required directory missing: {required_dir}"
 
     def test_gemini_hooks_config_valid(self):
-        """Verify gemini-hooks.json is valid and complete."""
+        """Verify hooks.json is valid and complete."""
         base_dir = self._find_plugin_dir()
-        hooks_file = base_dir / "hooks/gemini-hooks.json"
-        assert hooks_file.exists(), f"gemini-hooks.json not found at: {hooks_file}"
+        hooks_file = base_dir / "hooks/hooks.json"
+        assert hooks_file.exists(), f"hooks.json not found at: {hooks_file}"
 
         # Read and parse
         try:

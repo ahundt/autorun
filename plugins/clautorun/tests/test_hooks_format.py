@@ -2,8 +2,8 @@
 Test hooks.json format for Claude Code and Gemini CLI compatibility.
 
 This test suite ensures:
-1. Source hooks.json uses Claude Code format
-2. gemini-hooks.json uses Gemini CLI format
+1. Source claude-hooks.json uses Claude Code format
+2. hooks.json uses Gemini CLI format
 3. Formats are mutually exclusive and correct
 4. All required hook events are present
 """
@@ -25,7 +25,7 @@ def test_source_hooks_json_is_claude_format():
     GREEN: Fixed by restoring Claude format
     REFACTOR: Improved test coverage
     """
-    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
     assert hooks_file.exists(), "hooks.json not found"
 
     with open(hooks_file) as f:
@@ -39,14 +39,14 @@ def test_source_hooks_json_is_claude_format():
     # Check uses CLAUDE_PLUGIN_ROOT not extensionPath
     hooks_json_str = json.dumps(hooks_data)
     assert "${CLAUDE_PLUGIN_ROOT}" in hooks_json_str, \
-        "Claude hooks.json should use ${CLAUDE_PLUGIN_ROOT}"
+        "Claude claude-hooks.json should use ${CLAUDE_PLUGIN_ROOT}"
     assert "${extensionPath}" not in hooks_json_str, \
-        "Claude hooks.json should NOT use ${extensionPath}"
+        "Claude claude-hooks.json should NOT use ${extensionPath}"
 
 
 def test_source_hooks_json_has_claude_events():
     """Test that source hooks.json uses Claude Code event names."""
-    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -75,12 +75,12 @@ def test_source_hooks_json_has_claude_events():
     # Check Gemini events NOT present
     for event in gemini_events:
         assert event not in hooks_section, \
-            f"Gemini event '{event}' should NOT be in Claude hooks.json"
+            f"Gemini event '{event}' should NOT be in Claude claude-hooks.json"
 
 
 def test_source_hooks_json_has_claude_tool_names():
     """Test that source hooks.json uses Claude Code tool names."""
-    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -103,9 +103,9 @@ def test_source_hooks_json_has_claude_tool_names():
 
 
 def test_gemini_hooks_json_is_gemini_format():
-    """Test that gemini-hooks.json uses Gemini CLI format."""
-    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
-    assert hooks_file.exists(), "gemini-hooks.json not found"
+    """Test that hooks.json uses Gemini CLI format."""
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+    assert hooks_file.exists(), "hooks.json not found"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -124,8 +124,8 @@ def test_gemini_hooks_json_is_gemini_format():
 
 
 def test_gemini_hooks_json_has_gemini_events():
-    """Test that gemini-hooks.json uses Gemini CLI event names."""
-    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+    """Test that hooks.json uses Gemini CLI event names."""
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -151,8 +151,8 @@ def test_gemini_hooks_json_has_gemini_events():
 
 
 def test_gemini_hooks_json_has_gemini_tool_names():
-    """Test that gemini-hooks.json uses Gemini CLI tool names."""
-    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+    """Test that hooks.json uses Gemini CLI tool names."""
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -176,7 +176,7 @@ def test_gemini_hooks_json_has_gemini_tool_names():
 
 def test_gemini_hooks_have_type_field():
     """Test that Gemini hooks include 'type' field (required by Gemini CLI)."""
-    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -199,7 +199,7 @@ def test_gemini_hooks_have_type_field():
 
 def test_gemini_hooks_have_timeout():
     """Test that Gemini hooks include timeout (recommended for Gemini CLI)."""
-    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -226,7 +226,7 @@ def test_gemini_hooks_have_timeout():
 
 def test_claude_hooks_timeout_is_seconds():
     """Test that Claude hooks use seconds for timeout (not milliseconds)."""
-    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -251,7 +251,7 @@ def test_no_environment_variable_assignment_in_gemini_hooks():
     Gemini CLI doesn't support: VAR=value command
     Should use: uv run --project ${extensionPath} python ${extensionPath}/...
     """
-    hooks_file = get_plugin_root() / "hooks" / "gemini-hooks.json"
+    hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -273,8 +273,8 @@ def test_no_environment_variable_assignment_in_gemini_hooks():
 def test_both_hooks_files_are_valid_json():
     """Test that both hooks files are valid JSON."""
     hooks_files = [
-        get_plugin_root() / "hooks" / "hooks.json",
-        get_plugin_root() / "hooks" / "gemini-hooks.json"
+        get_plugin_root() / "hooks" / "claude-hooks.json",
+        get_plugin_root() / "hooks" / "hooks.json"
     ]
 
     for hooks_file in hooks_files:
@@ -310,7 +310,7 @@ def test_plugin_json_references_hooks():
         "Without it, hooks.json is ignored and PreToolUse blocking doesn't work."
 
     hooks_path = manifest["hooks"]
-    assert "hooks.json" in hooks_path, \
+    assert "claude-hooks.json" in hooks_path, \
         f"hooks field should reference hooks.json, got: {hooks_path}"
 
     # Verify the referenced file actually exists

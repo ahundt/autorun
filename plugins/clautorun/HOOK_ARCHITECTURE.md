@@ -45,7 +45,7 @@ clautorun implements a unified hook system that works across both **Claude Code*
 │  Claude Code                         Gemini CLI             │
 │  ─────────────                       ──────────             │
 │                                                              │
-│  hooks.json                          gemini-hooks.json      │
+│  claude-hooks.json                   hooks.json             │
 │  ├─ PreToolUse                       ├─ BeforeTool          │
 │  ├─ PostToolUse                      ├─ AfterTool           │
 │  ├─ UserPromptSubmit                 ├─ BeforeAgent         │
@@ -84,13 +84,12 @@ clautorun implements a unified hook system that works across both **Claude Code*
 
 **Installer Logic** (`plugins/clautorun/src/clautorun/install.py:883-920`):
 
-1. **Before Gemini Install**: Backup `hooks.json` to `hooks.json.claude-backup`
-2. **Swap Hooks**: Copy `gemini-hooks.json` → `hooks.json`
-3. **Run Install**: `gemini extensions install`
-4. **Restore Hooks**: Copy `hooks.json.claude-backup` → `hooks.json`
-5. **Cleanup**: Delete backup file
+1. `hooks/hooks.json` is always Gemini format (`${extensionPath}`, Gemini event names)
+2. `hooks/claude-hooks.json` is always Claude Code format (`${CLAUDE_PLUGIN_ROOT}`)
+3. Gemini CLI hardcodes reading `hooks/hooks.json` — no swap needed
+4. Claude Code reads the `"hooks"` field from `plugin.json` → `./hooks/claude-hooks.json`
 
-This ensures source repository always uses Claude Code format.
+No swap logic required. Each CLI reads its own hooks file.
 
 ---
 
@@ -151,7 +150,7 @@ This ensures source repository always uses Claude Code format.
 - Tool names: `Write`, `Bash`, `Edit`, `ExitPlanMode`, `TaskCreate`
 - Timeout: 10 seconds (seconds, not milliseconds)
 
-### Gemini CLI Format (`hooks/gemini-hooks.json`)
+### Gemini CLI Format (`hooks/hooks.json`)
 
 ```json
 {
@@ -678,7 +677,7 @@ if __name__ == "__main__":
 
 **Wrong Format**:
 1. Check `hooks.json` uses `${CLAUDE_PLUGIN_ROOT}` (Claude)
-2. Check `gemini-hooks.json` uses `${extensionPath}` (Gemini)
+2. Check `hooks.json` uses `${extensionPath}` (Gemini)
 3. Verify no environment variable assignment in Gemini hooks
 4. Run format validation tests: `uv run pytest test_hooks_format.py`
 
@@ -724,7 +723,7 @@ vim ~/.gemini/extensions/cr/hooks/hooks.json
 ```bash
 # Edit source repository
 cd ~/.claude/clautorun
-vim plugins/clautorun/hooks/gemini-hooks.json
+vim plugins/clautorun/hooks/hooks.json
 
 # Reinstall
 uv run python -m plugins.clautorun.src.clautorun.install --install --gemini-only --force

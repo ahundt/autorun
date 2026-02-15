@@ -186,9 +186,7 @@ def test_gemini_before_tool_hook_fires_on_write_file(
     # The installed hooks.json may reference the dev repo path (absolute)
     # rather than the extension dir copy, so we parse the command to find it.
     ext_dir = gemini_extension_installed
-    hooks_json_path = ext_dir / "hooks" / "gemini-hooks.json"
-    if not hooks_json_path.exists():
-        hooks_json_path = ext_dir / "hooks" / "hooks.json"
+    hooks_json_path = ext_dir / "hooks" / "hooks.json"
 
     with open(hooks_json_path) as f:
         hooks_data = json.load(f)
@@ -486,9 +484,7 @@ def test_before_tool_hook_input_structure_has_required_fields(
 
     # Find the actual hook_entry.py that Gemini will execute (same logic as above)
     ext_dir = gemini_extension_installed
-    hooks_json_path = ext_dir / "hooks" / "gemini-hooks.json"
-    if not hooks_json_path.exists():
-        hooks_json_path = ext_dir / "hooks" / "hooks.json"
+    hooks_json_path = ext_dir / "hooks" / "hooks.json"
 
     with open(hooks_json_path) as f:
         hooks_data = json.load(f)
