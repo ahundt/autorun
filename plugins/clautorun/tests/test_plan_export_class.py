@@ -524,16 +524,19 @@ class TestRecordWrite:
         """record_write() updates existing entry (latest wins)."""
         plan_path = str(temp_project["plan_file"])
 
-        # Write twice
-        exporter.record_write(plan_path)
-        old_time = exporter.active_plans[plan_path]["recorded_at"]
+        # Write twice with mocked timestamps for determinism
+        with patch("clautorun.plan_export.datetime") as mock_dt:
+            mock_dt.now.return_value.isoformat.return_value = "2026-01-01T12:00:00"
+            exporter.record_write(plan_path)
+            old_time = exporter.active_plans[plan_path]["recorded_at"]
 
-        import time
-        time.sleep(0.01)
-        exporter.record_write(plan_path)
-        new_time = exporter.active_plans[plan_path]["recorded_at"]
+            mock_dt.now.return_value.isoformat.return_value = "2026-01-01T12:00:01"
+            exporter.record_write(plan_path)
+            new_time = exporter.active_plans[plan_path]["recorded_at"]
 
         assert new_time > old_time
+        assert old_time == "2026-01-01T12:00:00"
+        assert new_time == "2026-01-01T12:00:01"
 
 
 # =============================================================================
@@ -710,14 +713,26 @@ class TestConcurrencySafety:
             except Exception as e:
                 errors.append((worker_id, str(e)))
 
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+        num_workers = 5
+        plans_per_worker = 5
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(num_workers)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
         assert len(errors) == 0, f"Errors occurred: {errors}"
-        assert len(results) == 5
+        assert len(results) == num_workers
+
+        # Verify ALL entries persisted (not just that threads completed)
+        with session_state(GLOBAL_SESSION_ID) as state:
+            active_plans = state.get("active_plans", {})
+            expected_count = num_workers * plans_per_worker
+            matching = [k for k in active_plans if k.startswith("/home/user/.claude/plans/plan-")]
+            assert len(matching) == expected_count, (
+                f"Expected {expected_count} plan entries, got {len(matching)}. "
+                f"TOCTOU race may have caused lost updates."
+            )
 
     def test_cross_session_state_not_corrupted(self, temp_project):
         """Multiple sessions don't corrupt shared state."""
@@ -1040,3 +1055,816 @@ class TestProjectDirectoryIsolation:
                         plan1.unlink()
                     if plan2.exists():
                         plan2.unlink()
+
+
+# =============================================================================
+# TEST: get_plan_from_exit_message() - NEW METHOD FOR OPTION 2 FIX
+# =============================================================================
+
+
+class TestGetPlanFromExitMessage:
+    """Tests for the new get_plan_from_exit_message() method.
+
+    This method extracts plan file path from ExitPlanMode response message when
+    tool_result doesn't include filePath field directly.
+
+    ExitPlanMode returns messages like:
+    "Your plan has been saved to: /Users/athundt/.claude/plans/foo.md"
+    """
+
+    def test_extracts_path_from_dict_message_field(self, temp_project):
+        """Extract path from dict tool_result with message field."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"status": "success", "message": f"Your plan has been saved to: {plan_file}"}),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+    def test_extracts_path_from_string_tool_result(self, temp_project):
+        """Extract path from string tool_result."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=f"Your plan has been saved to: {plan_file}",
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+    def test_extracts_path_from_any_dict_field(self, temp_project):
+        """Extract path from any dict field containing "saved to:" pattern."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"field1": "data", "description": f"Plan saved to: {plan_file}"}),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+    def test_case_insensitive_matching(self, temp_project):
+        """Match "saved to:" pattern case-insensitively."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=f"Your PLAN HAS BEEN SAVED TO: {plan_file}",
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+    def test_returns_none_for_nonexistent_path(self, exporter):
+        """Return None if extracted path doesn't exist."""
+        exporter.ctx.tool_result = "Your plan has been saved to: /nonexistent/path/plan.md"
+        result = exporter.get_plan_from_exit_message()
+        assert result is None
+
+    def test_returns_none_for_missing_pattern(self, exporter):
+        """Return None if 'saved to:' pattern not found."""
+        exporter.ctx.tool_result = {"message": "Plan processing completed"}
+        result = exporter.get_plan_from_exit_message()
+        assert result is None
+
+    def test_returns_none_for_none_tool_result(self, exporter):
+        """Return None if tool_result is None."""
+        exporter.ctx.tool_result = None
+        result = exporter.get_plan_from_exit_message()
+        assert result is None
+
+    def test_returns_none_for_invalid_tool_result_type(self, exporter):
+        """Return None if tool_result is neither dict nor string."""
+        exporter.ctx.tool_result = 12345
+        result = exporter.get_plan_from_exit_message()
+        assert result is None
+
+    def test_stops_at_newline_in_path(self, temp_project):
+        """Stop path extraction at newline character."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=f"Your plan has been saved to: {plan_file}\nNext line of output",
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+    def test_finds_first_match_with_multiple_patterns(self, temp_project):
+        """Use first match if multiple 'saved to:' patterns exist."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=f"First saved to: {plan_file}\nSecond saved to: /other/plan.md",
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+    def test_extracts_path_from_json_array(self, temp_project):
+        """Extract path when tool_result is a JSON array of strings."""
+        plan_file = temp_project['plan_file']
+        if not plan_file.exists():
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            plan_file.write_text("# Test Plan")
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps([f"Your plan has been saved to: {plan_file}", "other data"]),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file
+
+
+# =============================================================================
+# TEST: SessionStart Response Schema - OPTION 1 FIX
+# =============================================================================
+
+
+class TestSessionStartResponseSchema:
+    """Tests for SessionStart hook response schema fixes.
+
+    SessionStart is a lifecycle event, not a tool event. It must use minimal
+    response format: {"continue": True, "systemMessage": msg}
+
+    WRONG: ctx.respond("allow", msg) - produces decision/reason/hookSpecificOutput
+    RIGHT: {"continue": True, "systemMessage": msg} - correct lifecycle format
+
+    These tests call the actual recover_unexported_plans() function to verify
+    the response format matches the lifecycle event schema.
+    """
+
+    def test_recovery_response_schema_from_production_code(self, temp_project):
+        """recover_unexported_plans() returns correct lifecycle event schema."""
+        from clautorun.plan_export import recover_unexported_plans
+
+        # Session 1: Record a plan
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="session-1",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store1
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(temp_project['plan_file']))
+
+        # Session 2: Call recover_unexported_plans (the actual production function)
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="session-2-recovery",
+            event="SessionStart",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store2
+        )
+        response = recover_unexported_plans(ctx2)
+
+        # Must return a response (plan was unexported)
+        assert response is not None, "Expected recovery response for unexported plan"
+
+        # Verify CORRECT fields present
+        assert "continue" in response
+        assert response["continue"] is True
+        assert "systemMessage" in response
+        assert "Recovered" in response["systemMessage"]
+
+        # Verify FORBIDDEN fields absent (lifecycle events don't support these)
+        assert "decision" not in response
+        assert "reason" not in response
+        assert "hookSpecificOutput" not in response
+
+    def test_recovery_returns_none_when_no_plans(self, temp_project):
+        """recover_unexported_plans() returns None when nothing to recover."""
+        from clautorun.plan_export import recover_unexported_plans
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="empty-session",
+            event="SessionStart",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        response = recover_unexported_plans(ctx)
+        assert response is None
+
+    def test_recovery_response_contains_plan_count(self, temp_project):
+        """Recovery systemMessage includes the number of recovered plans."""
+        from clautorun.plan_export import recover_unexported_plans
+
+        # Record a plan
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="session-record",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store1
+        )
+        PlanExport(ctx1, PlanExportConfig()).record_write(str(temp_project['plan_file']))
+
+        # Recover
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="session-recover",
+            event="SessionStart",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store2
+        )
+        response = recover_unexported_plans(ctx2)
+        assert response is not None
+        assert "1 plan(s)" in response["systemMessage"]
+
+
+# =============================================================================
+# TEST: Integration - Option 2 Export Flow
+# =============================================================================
+
+
+class TestOption2ExportFlow:
+    """Integration test for Option 2 (regular accept) export flow.
+
+    Flow:
+    1. User creates plan → track_plan_writes fires
+    2. User clicks Accept → ExitPlanMode fires
+    3. export_on_exit_plan_mode gets current plan or parses message
+    4. Exports to notes/
+    5. User sees confirmation
+    """
+
+    def test_export_with_tool_result_filepath_field(self, temp_project):
+        """Export works when tool_result includes filePath field."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project['plan_file'])}),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        plan = exporter.get_current_plan()
+        assert plan == temp_project['plan_file']
+
+        # Export succeeds
+        result = exporter.export(plan)
+        assert result["success"]
+        assert result["message"]
+
+    def test_export_with_message_parsing_fallback(self, temp_project):
+        """Export works by parsing message when filePath not provided."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"status": "success", "message": f"Your plan has been saved to: {temp_project['plan_file']}"}),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # get_current_plan returns None (no filePath)
+        plan = exporter.get_current_plan()
+        assert plan is None
+
+        # Fallback to parsing message
+        plan = exporter.get_plan_from_exit_message()
+        assert plan == temp_project['plan_file']
+
+        # Export succeeds
+        result = exporter.export(plan)
+        assert result["success"]
+
+    def test_export_marks_plan_as_exported(self, temp_project):
+        """Exported plans are marked in tracking dict (prevents double-export)."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"message": f"Your plan has been saved to: {temp_project['plan_file']}"}),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        plan = exporter.get_plan_from_exit_message()
+        result = exporter.export(plan)
+        assert result["success"]
+
+        # Verify it's in tracking dict
+        assert get_content_hash(plan) in exporter.tracking
+
+
+# =============================================================================
+# TEST: Integration - Option 1 Recovery Flow
+# =============================================================================
+
+
+class TestOption1RecoveryFlow:
+    """Integration test for Option 1 (fresh context) recovery flow.
+
+    Flow:
+    1. User creates plan → track_plan_writes fires, stores in active_plans
+    2. User clicks "Accept with fresh context" → Option 1 flow
+    3. Claude Code clears session (changes session_id)
+    4. PostToolUse hook NEVER fires (Bug #4669)
+    5. Next session starts → SessionStart fires
+    6. recover_unexported_plans checks GLOBAL_SESSION_ID's active_plans
+    7. Exports unexported plans
+    8. Returns correct minimal response schema
+    """
+
+    def test_recovery_finds_plans_across_session_clear(self, temp_project):
+        """Unexported plans survive session clear via GLOBAL_SESSION_ID."""
+        # Session 1: Record a plan using shared session manager
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="session-before-clear",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store1
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(temp_project['plan_file']))
+
+        # Verify plan was recorded in GLOBAL_SESSION_ID
+        with session_state(GLOBAL_SESSION_ID) as state:
+            active_plans = state.get('active_plans', {})
+            assert str(temp_project['plan_file']) in active_plans
+
+        # Session 2: After session clear (new session_id, but accessing same GLOBAL_SESSION_ID state)
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="session-after-clear",  # Different session_id!
+            event="SessionStart",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store2
+        )
+        exp2 = PlanExport(ctx2, PlanExportConfig())
+
+        # Should still find unexported plan via GLOBAL_SESSION_ID
+        unexported = exp2.get_unexported()
+        assert len(unexported) > 0
+        assert temp_project['plan_file'] in unexported
+
+    def test_recovery_response_uses_minimal_schema(self, temp_project):
+        """recover_unexported_plans() returns lifecycle schema, not tool schema."""
+        from clautorun.plan_export import recover_unexported_plans
+
+        # Session 1: Record a plan
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="session-record-schema-test",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store1
+        )
+        PlanExport(ctx1, PlanExportConfig()).record_write(str(temp_project['plan_file']))
+
+        # Session 2: Recover via production code path
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="session-recover-schema-test",
+            event="SessionStart",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store2
+        )
+        response = recover_unexported_plans(ctx2)
+
+        assert response is not None
+        # Lifecycle event fields only
+        assert response["continue"] is True
+        assert "systemMessage" in response
+        # Tool event fields must be absent
+        assert "decision" not in response
+        assert "reason" not in response
+        assert "hookSpecificOutput" not in response
+
+
+# =============================================================================
+# TEST: Deduplication - Prevent Double-Export
+# =============================================================================
+
+
+class TestDeduplication:
+    """Tests for content hash deduplication.
+
+    Both Option 2 (immediate export) and Option 1 (SessionStart recovery) might
+    run on the same plan. Deduplication prevents duplicate exports.
+    """
+
+    def test_hash_prevents_double_export(self, temp_project):
+        """Same plan hash is filtered out by get_unexported()."""
+        plan = temp_project['plan_file']
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # Record the plan as written
+        exporter.record_write(str(plan))
+
+        # First export (Option 2)
+        result1 = exporter.export(plan)
+        assert result1["success"]
+
+        # Verify hash is tracked
+        hash1 = get_content_hash(plan)
+        assert hash1 in exporter.tracking
+
+        # Second call to get_unexported() should NOT include it (deduplication)
+        unexported = exporter.get_unexported()
+        assert plan not in unexported  # Deduplicated - not in unexported list
+
+    def test_modified_file_exports_again(self, temp_project):
+        """Modified plan file gets new hash and is excluded from exported list."""
+        plan = temp_project['plan_file']
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # Record and export
+        exporter.record_write(str(plan))
+        result1 = exporter.export(plan)
+        assert result1["success"]
+        hash1 = get_content_hash(plan)
+
+        # Verify it's in tracking with original hash
+        assert hash1 in exporter.tracking
+
+        # Modify file (changes content and hash)
+        plan.write_text("# Modified Plan\n\nContent changed.")
+        hash2 = get_content_hash(plan)
+        assert hash2 != hash1
+
+        # Record the modification (simulates new Write event)
+        exporter.record_write(str(plan))
+
+        # New hash means it's NOT in the exported list
+        # (because hash2 is different from hash1, and hash2 is not in tracking yet)
+        unexported = exporter.get_unexported()
+        assert plan in unexported  # Different hash, should be in unexported list
+
+
+# =============================================================================
+# TEST: Edge Cases and Robustness
+# =============================================================================
+
+
+class TestEdgeCases:
+    """Test edge cases and robustness of plan export system."""
+
+    def test_unicode_path_handling(self, temp_project):
+        """Handle plan paths with unicode characters."""
+        # Use temp_project's plan dir to avoid writing to real ~/.claude/plans/
+        plans_dir = temp_project['plan_file'].parent
+        unicode_plan = plans_dir / "plan_📋_unicode.md"
+        unicode_plan.write_text("# Unicode Plan")
+
+        try:
+            store = ThreadSafeDB()
+            ctx = EventContext(
+                session_id="test-session",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(temp_project["project_dir"])},
+                tool_result=json.dumps({"message": f"Your plan has been saved to: {unicode_plan}"}),
+                store=store
+            )
+            exporter = PlanExport(ctx, PlanExportConfig())
+
+            result = exporter.get_plan_from_exit_message()
+            assert result == unicode_plan
+        finally:
+            if unicode_plan.exists():
+                unicode_plan.unlink()
+
+    def test_path_with_spaces(self, temp_project):
+        """Handle plan paths with spaces."""
+        # Use temp_project's plan dir to avoid writing to real ~/.claude/plans/
+        plans_dir = temp_project['plan_file'].parent
+        space_plan = plans_dir / "my plan with spaces.md"
+        space_plan.write_text("# Spaced Plan")
+
+        try:
+            store = ThreadSafeDB()
+            ctx = EventContext(
+                session_id="test-session",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(temp_project["project_dir"])},
+                tool_result=f"Your plan has been saved to: {space_plan}",
+                store=store
+            )
+            exporter = PlanExport(ctx, PlanExportConfig())
+
+            result = exporter.get_plan_from_exit_message()
+            assert result == space_plan
+        finally:
+            if space_plan.exists():
+                space_plan.unlink()
+
+    def test_empty_tool_result(self, temp_project):
+        """Handle empty or missing tool_result gracefully."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=None,
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        result = exporter.get_plan_from_exit_message()
+        assert result is None
+
+    def test_malformed_json_in_tool_result(self, temp_project):
+        """Handle malformed JSON in tool_result."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result="{bad json: not valid}",  # Invalid JSON
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # Should treat as plain string and try to extract path
+        result = exporter.get_plan_from_exit_message()
+        # No valid path pattern, so should return None
+        assert result is None
+
+    def test_large_tool_result(self, temp_project):
+        """Handle large tool_result values gracefully."""
+        plan_file = temp_project['plan_file']
+
+        # Create large tool result with pattern in it
+        large_content = "X" * 100000 + f"\nYour plan has been saved to: {plan_file}\n" + "Y" * 100000
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=large_content,
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        result = exporter.get_plan_from_exit_message()
+        assert result == plan_file  # Should still find path
+
+    def test_concurrent_exports(self, temp_project):
+        """Verify thread-safe concurrent exports don't corrupt state."""
+        import threading
+
+        plan = temp_project['plan_file']
+        errors = []
+        results = []
+        lock = threading.Lock()
+
+        def export_plan():
+            try:
+                store = ThreadSafeDB()
+                ctx = EventContext(
+                    session_id=f"session-{threading.current_thread().ident}",
+                    event="PostToolUse",
+                    tool_name="ExitPlanMode",
+                    tool_input={"cwd": str(temp_project["project_dir"])},
+                    store=store
+                )
+                exporter = PlanExport(ctx, PlanExportConfig())
+                exporter.record_write(str(plan))
+                result = exporter.export(plan)
+                with lock:
+                    results.append(result)
+            except Exception as e:
+                with lock:
+                    errors.append(e)
+
+        # Run 5 concurrent exports
+        thread_count = 5
+        threads = [threading.Thread(target=export_plan) for _ in range(thread_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Concurrent export errors: {errors}"
+        assert len(results) == thread_count, f"Expected {thread_count} results, got {len(results)}"
+        # All exports should succeed (same content, dedup happens at get_unexported level)
+        success_count = sum(1 for r in results if r["success"])
+        assert success_count == thread_count
+
+        # Verify tracking state is intact (content hash should be present)
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="verify-session",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        verifier = PlanExport(ctx, PlanExportConfig())
+        content_hash = get_content_hash(plan)
+        assert content_hash in verifier.tracking, "Content hash should be in tracking after concurrent exports"
+
+    def test_symlink_handling(self, temp_project):
+        """Handle symlinked plan files."""
+        import tempfile
+        import os
+
+        plan_file = temp_project['plan_file']
+
+        # Create a temporary symlink target
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Symlinked Plan")
+            target = Path(f.name)
+
+        try:
+            # Create symlink to target
+            symlink = temp_project['plan_file'].parent / "symlink-plan.md"
+            symlink.symlink_to(target)
+
+            store = ThreadSafeDB()
+            ctx = EventContext(
+                session_id="test-session",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(temp_project["project_dir"])},
+                tool_result=f"Your plan has been saved to: {symlink}",
+                store=store
+            )
+            exporter = PlanExport(ctx, PlanExportConfig())
+
+            result = exporter.get_plan_from_exit_message()
+            # Returns the symlink path (not resolved) — path.exists() follows symlinks
+            assert result == symlink
+
+        finally:
+            if symlink.exists():
+                symlink.unlink()
+            if target.exists():
+                target.unlink()
+
+    def test_empty_plan_removed_from_active_plans(self, temp_project):
+        """Empty plan files are removed from active_plans by get_unexported()."""
+        plan_file = temp_project['plan_file']
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # Record a plan, then make it empty
+        exporter.record_write(str(plan_file))
+        assert str(plan_file) in exporter.active_plans
+
+        # Make plan empty
+        plan_file.write_text("")
+
+        # get_unexported should skip it AND clean it up
+        unexported = exporter.get_unexported()
+        assert plan_file not in unexported
+
+        # Verify it was removed from active_plans
+        assert str(plan_file) not in exporter.active_plans
+
+    def test_whitespace_only_plan_removed(self, temp_project):
+        """Whitespace-only plan files are treated as empty and cleaned up."""
+        plan_file = temp_project['plan_file']
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        exporter.record_write(str(plan_file))
+        plan_file.write_text("   \n\n  \t  \n")
+
+        unexported = exporter.get_unexported()
+        assert plan_file not in unexported
+        assert str(plan_file) not in exporter.active_plans
+
+    def test_unreadable_plan_removed(self, temp_project):
+        """Plans that can't be read (IOError) are cleaned up from active_plans."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # Record a plan path that exists but will cause IOError when read
+        plan_file = temp_project['plan_file']
+        exporter.record_write(str(plan_file))
+
+        # Make the file unreadable by removing it and recreating as directory
+        # (reading a directory raises IOError/IsADirectoryError)
+        plan_file.unlink()
+        plan_file.mkdir()
+
+        try:
+            unexported = exporter.get_unexported()
+            assert Path(str(plan_file)) not in [Path(str(p)) for p in unexported]
+            assert str(plan_file) not in exporter.active_plans
+        finally:
+            plan_file.rmdir()
