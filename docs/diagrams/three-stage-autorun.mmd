@@ -1,0 +1,14 @@
+graph TD
+    A["/cr:go task description"] --> B[Stage 1: Initial Implementation]
+    B --> C{AUTORUN_STAGE1_COMPLETE?}
+    C -->|No| D[Continue working]
+    D --> B
+    C -->|Yes| E[Stage 2: Critical Evaluation]
+    E --> F{AUTORUN_STAGE2_COMPLETE?}
+    F -->|No| G[Continue evaluation]
+    G --> E
+    F -->|Yes| H[Stage 3: Final Verification]
+    H --> I{AUTORUN_STAGE3_COMPLETE?}
+    I -->|No| J[Continue verification]
+    J --> H
+    I -->|Yes| K[Task Complete - Session Ends]
