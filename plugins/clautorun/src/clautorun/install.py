@@ -539,10 +539,12 @@ def _check_hook_conflicts() -> None:
             print("   Then restart Claude Code.")
 
         # Check for other plugins with PreToolUse hooks
+        # Scan both hooks.json and claude-hooks.json since plugins may use either name
         cache_dir = Path.home() / ".claude" / "plugins" / "cache"
         if cache_dir.exists():
             conflicting = []
-            for hooks_file in cache_dir.glob("*/*/*/hooks/hooks.json"):
+            for hooks_file in list(cache_dir.glob("*/*/*/hooks/hooks.json")) + \
+                              list(cache_dir.glob("*/*/*/hooks/claude-hooks.json")):
                 try:
                     hooks_data = json.loads(hooks_file.read_text())
                     if "PreToolUse" in hooks_data.get("hooks", {}):
@@ -895,9 +897,11 @@ def _register_in_json(install_path: Path, plugin_name: str, version: str) -> boo
 
 
 def _substitute_paths(plugin_dir: Path) -> None:
-    """Replace path placeholders with actual paths in manifests and commands.
+    """Replace ${CLAUDE_PLUGIN_ROOT} placeholder with actual absolute path.
 
-    Handles both Claude Code (${CLAUDE_PLUGIN_ROOT}) and Gemini CLI (${extensionPath}).
+    Only substitutes ${CLAUDE_PLUGIN_ROOT} (Claude Code).
+    ${extensionPath} is resolved at runtime by Gemini CLI and must NOT be
+    pre-resolved here (see https://geminicli.com/docs/extensions/reference/).
     Recursively processes .json and .md files in core directories.
 
     Args:
@@ -909,8 +913,8 @@ def _substitute_paths(plugin_dir: Path) -> None:
     target_files = [
         ".claude-plugin/plugin.json",
         "gemini-extension.json",
-        "hooks/hooks.json",
-        "hooks/gemini-hooks.json"
+        "hooks/claude-hooks.json",
+        "hooks/hooks.json"
     ]
     
     # 2. Commands and Skills (Recursive discovery)
@@ -929,10 +933,12 @@ def _substitute_paths(plugin_dir: Path) -> None:
             content = fp.read_text()
             original_content = content
             
-            # Substitute both platform variables
-            for marker in ["${CLAUDE_PLUGIN_ROOT}", "${extensionPath}"]:
-                if marker in content:
-                    content = content.replace(marker, abs_path)
+            # Substitute Claude Code variable only.
+            # ${extensionPath} is resolved at runtime by Gemini CLI
+            # (see https://geminicli.com/docs/extensions/reference/)
+            # and must NOT be pre-resolved by the installer.
+            if "${CLAUDE_PLUGIN_ROOT}" in content:
+                content = content.replace("${CLAUDE_PLUGIN_ROOT}", abs_path)
             
             if content != original_content:
                 fp.write_text(content)
@@ -1021,34 +1027,21 @@ def _install_for_gemini(
         # local extension installation. If we install from /tmp, the links
         # break immediately after the installer exits.
         
-        # 1. Ensure Gemini hooks are ready in-place (with backup for Claude)
-        gemini_hooks_file = plugin_dir / "hooks" / "gemini-hooks.json"
-        hooks_file = plugin_dir / "hooks" / "hooks.json"
-        hooks_backup = plugin_dir / "hooks" / "hooks.json.claude-backup"
-        
-        if gemini_hooks_file.exists():
-            # Backup original Claude hooks if they exist
-            if hooks_file.exists():
-                shutil.copy2(hooks_file, hooks_backup)
-            
-            # Use Gemini hooks during installation
-            shutil.copy2(gemini_hooks_file, hooks_file)
-            logger.debug(f"Prepared Gemini hooks in-place: {hooks_file}")
-
-        # 2. Perform path substitution in-place
-        _substitute_paths(plugin_dir)
+        # hooks/hooks.json is Gemini format (${extensionPath}, Gemini event names).
+        # hooks/claude-hooks.json is Claude Code format (${CLAUDE_PLUGIN_ROOT}).
+        # Gemini CLI hardcodes reading hooks/hooks.json, so no swap needed.
+        # See: https://geminicli.com/docs/extensions/writing-extensions/
+        #
+        # DO NOT call _substitute_paths() here. It resolves ${CLAUDE_PLUGIN_ROOT}
+        # in source files, which is destructive. Gemini uses ${extensionPath}
+        # (resolved at runtime by Gemini CLI), not ${CLAUDE_PLUGIN_ROOT}.
+        # Path substitution is only needed for the Claude Code cache copy.
 
         if force:
             run_cmd(["gemini", "extensions", "uninstall", ext_name])
 
-        # 3. Install directly from the persistent repository path
+        # Install directly from the persistent repository path
         result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
-
-        # 4. Restore Claude hooks (mandatory for test compliance and Claude usage)
-        if hooks_backup.exists():
-            shutil.copy2(hooks_backup, hooks_file)
-            hooks_backup.unlink()
-            logger.debug("Restored Claude hooks after Gemini installation")
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")

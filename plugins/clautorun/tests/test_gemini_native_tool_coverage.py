@@ -5,7 +5,7 @@ from pathlib import Path
 
 def test_gemini_native_tool_matcher_coverage():
     """Verify that BeforeTool matcher includes Gemini native tools."""
-    hooks_file = Path(__file__).parent.parent / "hooks" / "gemini-hooks.json"
+    hooks_file = Path(__file__).parent.parent / "hooks" / "hooks.json"
     
     with open(hooks_file) as f:
         hooks_data = json.load(f)
@@ -29,13 +29,13 @@ def test_gemini_native_tool_matcher_coverage():
 
 def test_after_agent_hook_exists():
     """Verify that AfterAgent hook is configured."""
-    hooks_file = Path(__file__).parent.parent / "hooks" / "gemini-hooks.json"
+    hooks_file = Path(__file__).parent.parent / "hooks" / "hooks.json"
     
     with open(hooks_file) as f:
         hooks_data = json.load(f)
     
     after_agent_hooks = hooks_data.get("hooks", {}).get("AfterAgent", [])
-    assert after_agent_hooks, "AfterAgent hooks missing from gemini-hooks.json"
+    assert after_agent_hooks, "AfterAgent hooks missing from hooks.json"
     
     # Check for clautorun-afteragent
     found = False

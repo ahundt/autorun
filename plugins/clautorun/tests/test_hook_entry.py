@@ -305,22 +305,22 @@ class TestTryCliRobustness:
 
 
 # =============================================================================
-# Test: hooks.json Configuration
+# Test: claude-hooks.json Configuration
 # =============================================================================
 
 
 class TestHooksJson:
-    """Verify hooks.json is correctly configured."""
+    """Verify claude-hooks.json is correctly configured."""
 
     def test_uses_hook_entry(self):
-        """hooks.json calls hook_entry.py."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
+        """claude-hooks.json calls hook_entry.py."""
+        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
         content = hooks_json.read_text()
         assert "hook_entry.py" in content
 
     def test_no_direct_cli_reference(self):
-        """hooks.json uses hook_entry.py, not direct CLI."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
+        """claude-hooks.json uses hook_entry.py, not direct CLI."""
+        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
         data = json.loads(hooks_json.read_text())
 
         for event, matchers in data.get("hooks", {}).items():
@@ -332,8 +332,8 @@ class TestHooksJson:
                         assert "hook_entry.py" in command
 
     def test_no_shell_script_reference(self):
-        """hooks.json does not reference old shell script."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
+        """claude-hooks.json does not reference old shell script."""
+        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
         content = hooks_json.read_text()
         assert "clautorun-hook.sh" not in content
 
@@ -987,13 +987,13 @@ class TestAllLocationsSync:
     """
 
     def test_source_hooks_json_is_claude_format(self):
-        """Source hooks.json must have Claude Code format, not Gemini format."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
+        """Source claude-hooks.json must have Claude Code format, not Gemini format."""
+        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
         content = hooks_json.read_text()
 
         assert "unified daemon-based hook handler" in content, \
-            "Source hooks.json has wrong format. Should be Claude Code, not Gemini. " \
-            "Restore from: ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hooks.json"
+            "Source claude-hooks.json has wrong format. Should be Claude Code, not Gemini. " \
+            "Restore from: ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/claude-hooks.json"
 
         assert "PreToolUse" in content, \
             "Must have Claude Code event names (not Gemini's BeforeTool)"

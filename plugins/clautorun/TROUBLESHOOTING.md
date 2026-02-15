@@ -232,14 +232,14 @@ chmod +x ~/.claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py
 
 2. **Verify Source hooks.json**
 
-   Check that source file has correct format:
+   Check that source files have correct format:
    ```bash
-   cat ~/.claude/clautorun/plugins/clautorun/hooks/hooks.json | head -5
+   head -5 ~/.claude/clautorun/plugins/clautorun/hooks/claude-hooks.json  # Claude Code
+   head -5 ~/.claude/clautorun/plugins/clautorun/hooks/hooks.json         # Gemini CLI
    ```
 
-   Should show `"clautorun v0.8 - unified daemon-based hook handler"` (Claude Code version)
-
-   Gemini version is in `hooks/gemini-hooks.json`
+   Claude version (`claude-hooks.json`) uses `${CLAUDE_PLUGIN_ROOT}` and Claude event names.
+   Gemini version (`hooks.json`) uses `${extensionPath}` and Gemini event names.
 
 3. **Reinstall**
 

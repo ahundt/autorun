@@ -8,7 +8,7 @@ Coverage:
 1. Hook files - correct format, UV-centric commands, path variables, events, matchers
 2. Hook entry point - works with both env vars and __file__ inference
 3. Installation pathways - Claude plugin system and Gemini extension system
-4. Hook swap logic - Gemini installation correctly swaps hooks.json
+4. Hook file naming - Gemini reads hooks.json, Claude reads claude-hooks.json
 5. Daemon code path - continue field correctness for both platforms
 6. End-to-end blocking - rm/cat commands blocked through both pathways
 
@@ -65,8 +65,8 @@ def _extract_function(content: str, func_name: str) -> str:
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 HOOKS_DIR = PLUGIN_ROOT / "hooks"
-HOOKS_JSON = HOOKS_DIR / "hooks.json"
-GEMINI_HOOKS_JSON = HOOKS_DIR / "gemini-hooks.json"
+HOOKS_JSON = HOOKS_DIR / "claude-hooks.json"
+GEMINI_HOOKS_JSON = HOOKS_DIR / "hooks.json"
 HOOK_ENTRY_PY = HOOKS_DIR / "hook_entry.py"
 PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 GEMINI_EXT_JSON = PLUGIN_ROOT / "gemini-extension.json"
@@ -122,12 +122,12 @@ def extract_all_matchers(hooks_data: dict) -> list:
 
 
 # =============================================================================
-# Test Class 1: Claude hooks.json correctness
+# Test Class 1: Claude claude-hooks.json correctness
 # =============================================================================
 
 
 class TestClaudeHooksJson:
-    """Validate Claude Code hooks.json is correct and complete."""
+    """Validate Claude Code claude-hooks.json is correct and complete."""
 
     def test_valid_json(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -211,12 +211,12 @@ class TestClaudeHooksJson:
 
 
 # =============================================================================
-# Test Class 2: Gemini gemini-hooks.json correctness
+# Test Class 2: Gemini hooks.json correctness
 # =============================================================================
 
 
 class TestGeminiHooksJson:
-    """Validate Gemini CLI gemini-hooks.json is correct and complete."""
+    """Validate Gemini CLI hooks.json is correct and complete."""
 
     def test_valid_json(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
@@ -376,7 +376,7 @@ class TestManifestFiles:
             manifest = json.load(f)
         assert "hooks" in manifest, \
             "plugin.json MUST have 'hooks' field for Claude Code hook discovery"
-        assert "hooks.json" in manifest["hooks"]
+        assert "claude-hooks.json" in manifest["hooks"]
 
     def test_plugin_json_hooks_file_exists(self):
         with open(PLUGIN_JSON) as f:
@@ -521,62 +521,46 @@ class TestHookEntryDualPlatform:
 
 
 class TestGeminiHookSwapLogic:
-    """Test the hook swap mechanism used during Gemini installation."""
+    """Test that hooks.json is Gemini format and claude-hooks.json is Claude format.
 
-    def test_install_py_has_hook_swap_code(self):
+    No swap needed: hooks.json is always Gemini format (Gemini hardcodes this filename).
+    Claude Code reads plugin.json 'hooks' field pointing to claude-hooks.json.
+    See: https://geminicli.com/docs/extensions/writing-extensions/
+    """
+
+    def test_install_py_references_both_hooks_files(self):
         content = INSTALL_PY.read_text()
-        assert "gemini-hooks.json" in content
-        assert "hooks.json.claude-backup" in content
+        assert "claude-hooks.json" in content
+        assert "hooks.json" in content
 
-    def test_hook_swap_backup_before_overwrite(self):
+    def test_hooks_json_is_gemini_format(self):
+        """hooks.json must be Gemini format since Gemini CLI hardcodes this filename."""
+        hooks_file = HOOKS_DIR / "hooks.json"
+        with open(hooks_file) as f:
+            data = json.load(f)
+        hooks = data.get("hooks", {})
+        assert "BeforeTool" in hooks, "hooks.json should use Gemini event name BeforeTool"
+        assert "PreToolUse" not in hooks, "hooks.json should NOT use Claude event name PreToolUse"
+
+    def test_claude_hooks_json_is_claude_format(self):
+        """claude-hooks.json must be Claude format."""
+        hooks_file = HOOKS_DIR / "claude-hooks.json"
+        with open(hooks_file) as f:
+            data = json.load(f)
+        hooks = data.get("hooks", {})
+        assert "PreToolUse" in hooks, "claude-hooks.json should use Claude event name PreToolUse"
+        assert "BeforeTool" not in hooks, "claude-hooks.json should NOT use Gemini event name BeforeTool"
+
+    def test_no_swap_logic_in_installer(self):
+        """Installer should not need swap logic since filenames are correct."""
         content = INSTALL_PY.read_text()
-        backup_pos = content.find("shutil.copy2(hooks_file, hooks_backup)")
-        overwrite_pos = content.find("shutil.copy2(gemini_hooks_file, hooks_file)")
-        assert backup_pos > 0
-        assert overwrite_pos > 0
-        assert backup_pos < overwrite_pos, "Backup must happen before overwrite"
+        assert "hooks.json.claude-backup" not in content, \
+            "Swap logic removed — hooks.json is always Gemini format"
 
-    def test_hook_swap_restore_after_install(self):
-        content = INSTALL_PY.read_text()
-        restore_pos = content.find("shutil.copy2(hooks_backup, hooks_file)")
-        gemini_install_pos = content.find('"gemini", "extensions", "install"')
-        assert restore_pos > 0
-        assert gemini_install_pos > 0
-        assert restore_pos > gemini_install_pos, "Restore must happen after install"
-
-    def test_hook_swap_cleans_up_backup(self):
-        content = INSTALL_PY.read_text()
-        assert "hooks_backup.unlink()" in content
-
-    def test_hook_swap_end_to_end(self):
-        """Simulate hook swap: backup -> overwrite -> restore preserves original."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            hooks_dir = Path(tmpdir) / "hooks"
-            hooks_dir.mkdir()
-            original_claude = {"description": "claude hooks", "hooks": {"PreToolUse": []}}
-            hooks_file = hooks_dir / "hooks.json"
-            with open(hooks_file, "w") as f:
-                json.dump(original_claude, f)
-            gemini_hooks = {"description": "gemini hooks", "hooks": {"BeforeTool": []}}
-            gemini_file = hooks_dir / "gemini-hooks.json"
-            with open(gemini_file, "w") as f:
-                json.dump(gemini_hooks, f)
-            backup_file = hooks_dir / "hooks.json.claude-backup"
-
-            # Step 1: Backup
-            shutil.copy2(hooks_file, backup_file)
-            # Step 2: Overwrite
-            shutil.copy2(gemini_file, hooks_file)
-            with open(hooks_file) as f:
-                current = json.load(f)
-            assert "gemini" in current["description"].lower()
-            # Step 3: Restore
-            shutil.copy2(backup_file, hooks_file)
-            backup_file.unlink()
-            with open(hooks_file) as f:
-                restored = json.load(f)
-            assert restored == original_claude
-            assert not backup_file.exists()
+    def test_both_hooks_files_coexist(self):
+        """Both hooks files exist side by side — no swap needed."""
+        assert (HOOKS_DIR / "hooks.json").exists(), "Gemini hooks.json must exist"
+        assert (HOOKS_DIR / "claude-hooks.json").exists(), "Claude claude-hooks.json must exist"
 
 
 # =============================================================================
@@ -751,13 +735,13 @@ class TestBuildDirectorySync:
     """Verify build directory hooks match source hooks."""
 
     def test_build_hooks_json_matches_source(self):
-        build_hooks = PLUGIN_ROOT / "build" / "hooks" / "hooks.json"
+        build_hooks = PLUGIN_ROOT / "build" / "hooks" / "claude-hooks.json"
         if not build_hooks.exists():
             pytest.skip("Build directory not present")
         assert load_hooks_json(HOOKS_JSON) == load_hooks_json(build_hooks)
 
     def test_build_gemini_hooks_matches_source(self):
-        build_gemini = PLUGIN_ROOT / "build" / "hooks" / "gemini-hooks.json"
+        build_gemini = PLUGIN_ROOT / "build" / "hooks" / "hooks.json"
         if not build_gemini.exists():
             pytest.skip("Build directory not present")
         assert load_hooks_json(GEMINI_HOOKS_JSON) == load_hooks_json(build_gemini)
