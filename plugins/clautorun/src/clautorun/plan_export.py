@@ -668,9 +668,27 @@ class PlanExport:
 
     # --- Export Logic ---
 
-    def export(self, plan_path: Path, rejected: bool = False) -> Dict:
-        """Export plan to project notes directory."""
+    def export(self, plan_path: Path, rejected: bool = False, force: bool = False) -> Dict:
+        """Export plan to project notes directory.
+
+        Args:
+            plan_path: Source plan file
+            rejected: Export to rejected directory
+            force: Skip content-hash dedup check (for explicit re-export)
+        """
         try:
+            # Check content hash dedup BEFORE copying (prevents Pre+Post double-export)
+            if not force:
+                content_hash = get_content_hash(plan_path)
+                if content_hash in self.tracking:
+                    prev = self.tracking[content_hash]
+                    return {
+                        "success": True,
+                        "message": "Already exported (dedup)",
+                        "destination": prev.get("exported_to", ""),
+                        "skipped": True,
+                    }
+
             dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
             output_dir = getattr(self.config, dir_key)
             useful_name = self.extract_useful_name(plan_path)
@@ -753,7 +771,7 @@ def export_plan(plan_path, project_dir, session_id: str = None) -> dict:
     )
     config = PlanExportConfig.load()
     exporter = PlanExport(ctx, config)
-    result = exporter.export(Path(plan_path))
+    result = exporter.export(Path(plan_path), force=True)
 
     if result["success"]:
         return {
@@ -792,7 +810,7 @@ def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict
     )
     config = PlanExportConfig.load()
     exporter = PlanExport(ctx, config)
-    result = exporter.export(Path(plan_path), rejected=True)
+    result = exporter.export(Path(plan_path), rejected=True, force=True)
 
     if result["success"]:
         return {
@@ -884,8 +902,8 @@ def handle_session_start(hook_input: dict) -> None:
                 print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
                 return
 
-            # Export the plan
-            result = exporter.export(plan_path)
+            # Export the plan (force=True: dedup already checked above via load_tracking)
+            result = exporter.export(plan_path, force=True)
             if result["success"]:
                 record_export(plan_path, result.get("destination", ""))
                 if config.notify_claude:
@@ -931,6 +949,41 @@ export_destination: {export_destination}
 
 
 # --- Daemon-Integrated Handlers (Sugar + Error Handling) ---
+
+# PreToolUse backup: PostToolUse is unreliable in some Claude Code sessions.
+# Content-hash deduplication prevents double-export if both Pre and Post fire.
+
+@app.on("PreToolUse")
+def track_and_export_plans_early(ctx: EventContext) -> Optional[Dict]:
+    """Track plan writes and export on ExitPlanMode via PreToolUse.
+
+    PostToolUse hooks don't fire in some Claude Code sessions. This PreToolUse
+    handler provides the same tracking + export as the PostToolUse handlers below.
+    Content-hash dedup in export() prevents double-export if both fire.
+    Always returns None — never blocks tool execution.
+    """
+    try:
+        config = PlanExportConfig.load()
+        if not config.enabled:
+            return None
+
+        # Track Write/Edit to plan files
+        if ctx.tool_name in (WRITE_TOOLS | EDIT_TOOLS):
+            file_path = ctx.tool_input.get("file_path", "")
+            PlanExport(ctx, config).record_write(file_path)
+
+        # Export on ExitPlanMode
+        elif ctx.tool_name in PLAN_TOOLS:
+            exporter = PlanExport(ctx, config)
+            plan = exporter.get_current_plan()
+            if plan:
+                result = exporter.export(plan)
+                if result["success"]:
+                    logger.info(f"PreToolUse export: {result['message']}")
+    except Exception as e:
+        logger.debug(f"PreToolUse plan_export: {e}")
+    return None
+
 
 @app.on("PostToolUse")
 def track_plan_writes(ctx: EventContext) -> Optional[Dict]:
