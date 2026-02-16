@@ -382,6 +382,22 @@ except ImportError:
         The decision and exit code are now handled by the unified output logic
         in client.py and the main dispatch loop in main.py.
         """
+        # Try to import dynamic event name mapping
+        try:
+            from .core import get_cli_event_name
+            from .config import detect_cli_type
+
+            # Detect CLI type
+            if ctx and hasattr(ctx, 'cli_type'):
+                cli_type = ctx.cli_type
+            else:
+                cli_type = detect_cli_type()
+
+            event_name = get_cli_event_name("PreToolUse", cli_type)
+        except ImportError:
+            # Fallback to hardcoded event name if imports fail
+            event_name = "PreToolUse"
+
         safe_reason = json.dumps(reason)[1:-1] if reason else ""
         return {
             "decision": decision,
@@ -397,7 +413,11 @@ except ImportError:
             "stopReason": "",
             "suppressOutput": False,
             "systemMessage": safe_reason,
-                                    "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
-                                                          "permissionDecisionReason": safe_reason}}
+            "hookSpecificOutput": {
+                "hookEventName": event_name,
+                "permissionDecision": decision,
+                "permissionDecisionReason": safe_reason
+            }
+        }
                         
             
