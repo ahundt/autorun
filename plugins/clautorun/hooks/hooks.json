@@ -56,7 +56,7 @@
     ],
     "AfterTool": [
       {
-        "matcher": "write_file|replace|read_file",
+        "matcher": "write_file|replace|read_file|exit_plan_mode",
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",

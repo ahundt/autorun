@@ -182,11 +182,13 @@ except ImportError:
 
 # Import schema validation for dual-platform compatibility
 try:
-    from .core import validate_hook_response
+    from .core import validate_hook_response, get_cli_event_name
 except ImportError:
     # Fallback if core.py not available
     def validate_hook_response(event, response, cli_type="claude"):
         return response
+    def get_cli_event_name(internal_event, cli_type):
+        return internal_event
 
 # Global tmux utilities instance for session management
 _tmux_utilities = None
@@ -1112,7 +1114,7 @@ def build_pretooluse_response(decision="allow", reason="", ctx=None):
         "suppressOutput": False,
         "systemMessage": reason,
         "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
+            "hookEventName": get_cli_event_name("PreToolUse", cli_type),
             "permissionDecision": decision,
             "permissionDecisionReason": reason
         },

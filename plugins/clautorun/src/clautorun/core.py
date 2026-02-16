@@ -94,6 +94,42 @@ GEMINI_EVENT_MAP = {
     "SessionEnd": "SessionEnd",
 }
 
+# Reverse mapping: Internal event name → CLI-specific name
+# For converting normalized internal events back to original CLI format
+INTERNAL_TO_CLAUDE = {
+    "PreToolUse": "PreToolUse",
+    "PostToolUse": "PostToolUse",
+    "UserPromptSubmit": "UserPromptSubmit",
+    "Stop": "Stop",
+    "SessionStart": "SessionStart",
+    "SessionEnd": "SessionEnd",
+}
+
+INTERNAL_TO_GEMINI = {
+    "PreToolUse": "BeforeTool",
+    "PostToolUse": "AfterTool",
+    "UserPromptSubmit": "BeforeAgent",
+    "Stop": "AfterAgent",
+    "SessionStart": "SessionStart",
+    "SessionEnd": "SessionEnd",
+}
+
+
+def get_cli_event_name(internal_event: str, cli_type: str) -> str:
+    """Convert internal event name to CLI-specific name for responses.
+
+    Args:
+        internal_event: Normalized internal event name (e.g., "PreToolUse")
+        cli_type: Target CLI ("claude" or "gemini")
+
+    Returns:
+        CLI-specific event name (e.g., "BeforeTool" for Gemini, "PreToolUse" for Claude)
+    """
+    if cli_type == "gemini":
+        return INTERNAL_TO_GEMINI.get(internal_event, internal_event)
+    else:
+        return INTERNAL_TO_CLAUDE.get(internal_event, internal_event)
+
 
 def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> dict:
     """Normalize hook payload from any CLI format and optionally truncate transcript.
@@ -695,8 +731,9 @@ class EventContext:
                 "suppressOutput": False,
                 "systemMessage": msg_reason if cli_type == "gemini" else ("" if is_deny else msg_reason),
                 # Claude Code hookSpecificOutput (REQUIRED for PreToolUse)
+                # Gemini CLI hookSpecificOutput (BeforeTool expects hookEventName: "BeforeTool")
                 "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
+                    "hookEventName": get_cli_event_name(self._event, cli_type),
                     "permissionDecision": decision,
                     "permissionDecisionReason": msg_reason
                 },
