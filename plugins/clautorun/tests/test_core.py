@@ -41,6 +41,9 @@ from clautorun.core import (
     ClautorunApp,
     ClautorunDaemon,
     resolve_session_key,
+    get_cli_event_name,
+    INTERNAL_TO_CLAUDE,
+    INTERNAL_TO_GEMINI,
     app,
     logger
 )
@@ -470,6 +473,119 @@ class TestEventContext:
         assert EventContext.STAGE_2 == 2
         assert EventContext.STAGE_2_COMPLETED == 3
         assert EventContext.STAGE_3 == 4
+
+
+# ============================================================================
+# P1.3.1: CLI Event Name Mapping Tests
+# ============================================================================
+
+class TestCLIEventNameMapping:
+    """Test dynamic event name mapping for Gemini/Claude Code compatibility.
+
+    Regression test for Bug: Hardcoded "PreToolUse" sent to Gemini CLI
+    causing "Invalid hook event name" warning.
+
+    The daemon normalizes incoming event names to internal format (PreToolUse),
+    processes them, then denormalizes to CLI-specific format in responses:
+    - Gemini expects: BeforeTool, AfterTool, BeforeAgent, AfterAgent
+    - Claude expects: PreToolUse, PostToolUse, UserPromptSubmit, Stop
+    """
+
+    def test_gemini_event_name_mapping(self):
+        """Test internal events map to Gemini CLI event names."""
+        assert get_cli_event_name("PreToolUse", "gemini") == "BeforeTool"
+        assert get_cli_event_name("PostToolUse", "gemini") == "AfterTool"
+        assert get_cli_event_name("UserPromptSubmit", "gemini") == "BeforeAgent"
+        assert get_cli_event_name("Stop", "gemini") == "AfterAgent"
+        assert get_cli_event_name("SessionStart", "gemini") == "SessionStart"
+        assert get_cli_event_name("SessionEnd", "gemini") == "SessionEnd"
+
+    def test_claude_event_name_mapping(self):
+        """Test internal events map to Claude Code event names (identity)."""
+        assert get_cli_event_name("PreToolUse", "claude") == "PreToolUse"
+        assert get_cli_event_name("PostToolUse", "claude") == "PostToolUse"
+        assert get_cli_event_name("UserPromptSubmit", "claude") == "UserPromptSubmit"
+        assert get_cli_event_name("Stop", "claude") == "Stop"
+        assert get_cli_event_name("SessionStart", "claude") == "SessionStart"
+        assert get_cli_event_name("SessionEnd", "claude") == "SessionEnd"
+
+    def test_unknown_event_passthrough(self):
+        """Test unknown events pass through unchanged."""
+        assert get_cli_event_name("UnknownEvent", "gemini") == "UnknownEvent"
+        assert get_cli_event_name("UnknownEvent", "claude") == "UnknownEvent"
+
+    def test_gemini_pretooluse_regression(self):
+        """Regression test: Gemini MUST receive 'BeforeTool', not 'PreToolUse'.
+
+        Bug: Daemon was sending hardcoded "PreToolUse" to Gemini CLI,
+        causing warning: "Invalid hook event name: PreToolUse"
+
+        Fix: get_cli_event_name("PreToolUse", "gemini") → "BeforeTool"
+        """
+        # This is the critical test that detects the original bug
+        event_name = get_cli_event_name("PreToolUse", "gemini")
+        assert event_name == "BeforeTool", \
+            f"Gemini CLI expects 'BeforeTool' but got '{event_name}'"
+        assert event_name != "PreToolUse", \
+            "Bug detected: Sending Claude event name 'PreToolUse' to Gemini CLI"
+
+    def test_claude_pretooluse_identity(self):
+        """Test Claude Code receives 'PreToolUse' unchanged."""
+        event_name = get_cli_event_name("PreToolUse", "claude")
+        assert event_name == "PreToolUse"
+
+    def test_mapping_constants_complete(self):
+        """Test mapping constants contain all expected events."""
+        # Verify Gemini mapping
+        assert "PreToolUse" in INTERNAL_TO_GEMINI
+        assert "PostToolUse" in INTERNAL_TO_GEMINI
+        assert "UserPromptSubmit" in INTERNAL_TO_GEMINI
+        assert "Stop" in INTERNAL_TO_GEMINI
+
+        # Verify Claude mapping (should be identity mapping)
+        assert "PreToolUse" in INTERNAL_TO_CLAUDE
+        assert "PostToolUse" in INTERNAL_TO_CLAUDE
+        assert "UserPromptSubmit" in INTERNAL_TO_CLAUDE
+        assert "Stop" in INTERNAL_TO_CLAUDE
+
+    def test_eventcontext_respond_uses_dynamic_event_names(self):
+        """Test EventContext.respond() uses get_cli_event_name() for hookSpecificOutput."""
+        # Create mock context for Gemini
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            prompt="test",
+            tool_name="write_file",
+            tool_input={},
+            cli_type="gemini"
+        )
+
+        # Test respond with allow
+        response = ctx.respond(decision="allow", reason="test")
+
+        # Verify hookSpecificOutput uses Gemini event name
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["hookEventName"] == "BeforeTool", \
+            "EventContext.respond() must use get_cli_event_name() for Gemini"
+
+    def test_eventcontext_respond_claude_uses_pretooluse(self):
+        """Test EventContext.respond() uses 'PreToolUse' for Claude Code."""
+        # Create mock context for Claude
+        ctx = EventContext(
+            session_id="test",
+            event="PreToolUse",
+            prompt="test",
+            tool_name="Write",
+            tool_input={},
+            cli_type="claude"
+        )
+
+        # Test respond
+        response = ctx.respond(decision="allow", reason="test")
+
+        # Verify hookSpecificOutput uses Claude event name
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
 
 
 # ============================================================================
