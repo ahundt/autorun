@@ -6,7 +6,7 @@
         "hooks": [{
           "name": "clautorun-init",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }
@@ -17,7 +17,7 @@
         "hooks": [{
           "name": "clautorun-command",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }
@@ -28,7 +28,7 @@
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }
@@ -39,7 +39,7 @@
         "hooks": [{
           "name": "clautorun-afteragent",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }
@@ -49,7 +49,7 @@
         "hooks": [{
           "name": "clautorun-aftermodel",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }
@@ -60,7 +60,7 @@
         "hooks": [{
           "name": "clautorun-posttool-plan",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       },
@@ -69,7 +69,7 @@
         "hooks": [{
           "name": "clautorun-posttool-task",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }
@@ -79,7 +79,7 @@
         "hooks": [{
           "name": "clautorun-cleanup",
           "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
         }]
       }

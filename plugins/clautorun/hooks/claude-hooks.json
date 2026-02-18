@@ -4,38 +4,38 @@
     "UserPromptSubmit": [
       {
         "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit|Bash|ExitPlanMode",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "ExitPlanMode|Write|Edit",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       },
       {
         "matcher": "TaskCreate|TaskUpdate|TaskGet|TaskList",
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
     "SubagentStop": [
       {
-        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ]
   }

@@ -53,21 +53,40 @@ BOOTSTRAP_MSG = (
 def detect_cli_type() -> str:
     """Detect which CLI is calling the hook.
 
+    Detection priority:
+    1. --cli <type> argument in sys.argv (explicit, set by hooks.json/claude-hooks.json)
+    2. GEMINI_SESSION_ID environment variable
+    3. GEMINI_PROJECT_DIR present without CLAUDE_PROJECT_DIR
+    4. Default to "claude"
+
+    The hooks files pass --cli explicitly so both CLIs can call the shared daemon
+    simultaneously without ambiguity:
+    - hooks.json (Gemini): hook_entry.py --cli gemini
+    - claude-hooks.json (Claude): hook_entry.py --cli claude
+
     Returns:
         str: "claude" or "gemini"
-
-    Safety: Defaults to "claude" to preserve existing behavior if detection fails.
     """
     try:
-        # Check for Gemini-specific environment variables (most specific first)
+        # Priority 1: Explicit --cli argument (most reliable - set by hooks.json)
+        for i, arg in enumerate(sys.argv[1:], 1):
+            if arg == "--cli" and i < len(sys.argv):
+                value = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
+                if value in ("gemini", "claude"):
+                    return value
+            elif arg.startswith("--cli="):
+                value = arg.split("=", 1)[1]
+                if value in ("gemini", "claude"):
+                    return value
+
+        # Priority 2: Gemini-specific environment variables
         if os.environ.get("GEMINI_SESSION_ID"):
             return "gemini"
         elif os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
-            # GEMINI_PROJECT_DIR exists but CLAUDE_PROJECT_DIR doesn't (pure Gemini)
             return "gemini"
+
         # Default to Claude (safe fallback - preserves existing behavior)
-        else:
-            return "claude"
+        return "claude"
     except Exception:
         # Ultimate fail-safe: if detection crashes, assume Claude
         return "claude"
@@ -559,10 +578,22 @@ def main() -> None:
     clautorun_bin = get_clautorun_bin()
     log_debug(f"Selected binary: {clautorun_bin}")
     cli_type = detect_cli_type()
-    log_debug(f"Detected CLI: {cli_type}")
+    log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
     log_debug(f"Env GEMINI_PROJECT_DIR: {os.environ.get('GEMINI_PROJECT_DIR')}")
     log_debug(f"Env CLAUDE_PROJECT_DIR: {os.environ.get('CLAUDE_PROJECT_DIR')}")
+
+    # Inject cli_type into stdin payload so daemon gets explicit CLI identity.
+    # This allows both CLIs to call the shared daemon simultaneously without
+    # ambiguity — each hook file passes --cli gemini or --cli claude.
+    if stdin_data and cli_type:
+        try:
+            payload = json.loads(stdin_data)
+            payload["cli_type"] = cli_type
+            stdin_data = json.dumps(payload)
+            log_debug(f"Injected cli_type={cli_type} into payload")
+        except (json.JSONDecodeError, Exception) as e:
+            log_debug(f"Could not inject cli_type: {e}")
 
     if clautorun_bin:
         try:
