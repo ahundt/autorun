@@ -34,7 +34,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Dict
 
-from .core import app, EventContext, logger
+from .core import app, EventContext, logger, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS
@@ -129,12 +129,12 @@ def enforce_file_policy(ctx: EventContext) -> Optional[Dict]:
     if policy == "SEARCH":
         if ctx.file_exists:
             return None
-        return ctx.deny(CONFIG["policy_blocked"]["SEARCH"])
+        return ctx.deny(format_suggestion(CONFIG["policy_blocked"]["SEARCH"], ctx.cli_type))
 
     if policy == "JUSTIFY":
         if ctx.file_exists or ctx.has_justification:
             return None
-        return ctx.deny(CONFIG["policy_blocked"]["JUSTIFY"])
+        return ctx.deny(format_suggestion(CONFIG["policy_blocked"]["JUSTIFY"], ctx.cli_type))
 
     return None
 
@@ -525,7 +525,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 try:
                     if command_matches_pattern(cmd, pattern):  # O(1) cached
                         # Build message (add redirect if present)
-                        msg = intg.message
+                        msg = format_suggestion(intg.message, ctx.cli_type)
                         if intg.redirect:
                             # Substitute {args} with actual args
                             args = cmd.split(maxsplit=1)[1] if " " in cmd else ""

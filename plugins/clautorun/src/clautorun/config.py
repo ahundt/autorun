@@ -121,40 +121,40 @@ DEFAULT_INTEGRATIONS = {
     # Command-line tools that should use dedicated Claude tools instead (v0.8.0)
     "sed": {
         "action": "block",
-        "suggestion": "Use the Edit tool instead of sed for file modifications.\n\n**Why:**\n- Edit tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with Claude's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: Edit tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /cr:ok sed\n- Block globally: /cr:globalno sed",
+        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /cr:ok sed\n- Block globally: /cr:globalno sed",
     },
     "awk": {
         "action": "block",
-        "suggestion": "Use Python or the Read tool instead of awk for text processing.\n\n**Why:**\n- Read tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: Read tool + Python string processing\n\n**Commands:**\n- Allow in this session: /cr:ok awk\n- Block globally: /cr:globalno awk",
+        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow in this session: /cr:ok awk\n- Block globally: /cr:globalno awk",
     },
     "grep": {
         "action": "block",
-        "suggestion": "Command blocked: grep\nUse the Grep tool instead of bash grep command.\n\n**Why:**\n- Grep tool is optimized for Claude Code\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: Grep tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
+        "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
         "when": "_not_in_pipe",
     },
     "find": {
         "action": "block",
-        "suggestion": "Use the Glob tool instead of find command.\n\n**Why:**\n- Glob is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: Glob tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: Glob tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow in this session: /cr:ok find\n- Block globally: /cr:globalno find",
+        "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow in this session: /cr:ok find\n- Block globally: /cr:globalno find",
         "when": "_not_in_pipe",
     },
     "cat": {
         "action": "block",
-        "suggestion": "Command blocked: cat\nUse the Read tool instead of cat command.\n\n**Why:**\n- Read tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: Read tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
+        "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
         "when": "_not_in_pipe",
     },
     "head": {
         "action": "block",
-        "suggestion": "Command blocked: head\nUse the Read tool with limit parameter instead of head.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: Read tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
+        "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
         "when": "_not_in_pipe",
     },
     "tail": {
         "action": "block",
-        "suggestion": "Command blocked: tail\nUse the Read tool with offset parameter instead of tail.\n\n**Why:**\n- Read tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: Read tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
+        "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
         "when": "_not_in_pipe",
     },
     "echo >": {
         "action": "block",
-        "suggestion": "Use the Write tool instead of echo redirection.\n\n**Why:**\n- Write tool validates file paths\n- Better error handling\n- Integrates with Claude's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: Write tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /cr:ok 'echo >'\n- Block globally: /cr:globalno 'echo >'",
+        "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /cr:ok 'echo >'\n- Block globally: /cr:globalno 'echo >'",
     },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
@@ -337,13 +337,13 @@ After every step and substep you must say "Wait," and execute this sequential th
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
+        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep} tools. NO new files.")
     },
 
     # ─── Policy Blocked Messages ──────────────────────────────────────────────
     "policy_blocked": {
-        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using Glob patterns like "*related-topic*", 3) Use Grep to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using Glob/Grep related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
+        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using the {glob} tool with patterns like "*related-topic*", 3) Use the {grep} tool to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
+        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using the {glob} tool and {grep} tool related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
     },
 
     # ─── Command Mappings ─────────────────────────────────────────────────────
