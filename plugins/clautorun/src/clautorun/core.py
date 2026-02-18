@@ -120,8 +120,32 @@ INTERNAL_TO_GEMINI = {
 # Template keys ({grep}, {read}, etc.) are used in DEFAULT_INTEGRATIONS suggestion
 # strings, parallel to the {args} substitution in Integration.redirect (plugins.py:531).
 # Adding a new CLI: add one entry here. No other changes required.
+#
+# THREE NAMING LAYERS (as of Claude Code CLI v2.1.47):
+#
+#   1. API tool_name  — what the AI uses in its tool call (hooks key off this)
+#                       Claude Code: PascalCase  e.g. "Glob", "Grep", "Read"
+#                       Gemini CLI:  snake_case  e.g. "glob", "grep_search", "read_file"
+#                       Confirmed by hook matchers:
+#                         claude-hooks.json  PreToolUse  "Write|Edit|Bash|ExitPlanMode"
+#                         hooks.json         BeforeTool  "write_file|run_shell_command|replace|read_file|glob|grep_search"
+#
+#   2. CLI display name — what the user sees rendered in the terminal (cosmetic only)
+#                         Claude Code renders "Glob" as "Search" in terminal output.
+#                         Gemini CLI matches display name to API name.
+#                         This is a UI rendering choice; hooks and AI calls use API names.
+#
+#   3. Bash command     — the shell command being BLOCKED in DEFAULT_INTEGRATIONS
+#                         e.g. blocking "grep" (bash) and suggesting {grep} (AI tool)
+#                         These are different namespaces — "grep" bash ≠ "Grep" AI tool.
+#
+# The values in this table are API tool_names (layer 1), NOT CLI display names (layer 2).
+# Suggestions addressed to the AI must use API names so the AI calls the right tool.
+# The UX mismatch (Claude "Glob" displayed as "Search") is cosmetic, not functional.
 CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
     "claude": {
+        # API tool_names — PascalCase (Claude Code CLI v2.1.47)
+        # Note: Claude Code terminal renders Glob→"Search" but hook/API name is "Glob"
         "grep": "Grep",
         "glob": "Glob",
         "read": "Read",
@@ -131,6 +155,7 @@ CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
         "ls": "LS",
     },
     "gemini": {
+        # API tool_names — snake_case, confirmed by hooks.json BeforeTool matchers
         "grep": "grep_search",
         "glob": "glob",
         "read": "read_file",
