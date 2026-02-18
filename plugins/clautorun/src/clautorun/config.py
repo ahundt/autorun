@@ -118,7 +118,18 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /cr:ok fdisk",
     },
-    # Command-line tools that should use dedicated Claude tools instead (v0.8.0)
+    # Command-line tools that should use dedicated AI tools instead (v0.8.0)
+    # These block the BASH COMMAND (e.g. "grep") and suggest the AI TOOL (e.g. {grep}).
+    # These are distinct namespaces — bash "grep" ≠ AI tool "Grep"/"grep_search".
+    #
+    # Suggestion strings use {tool_key} format variables resolved by format_suggestion()
+    # in core.py to the correct API tool_name for the active CLI:
+    #
+    #   Claude Code CLI v2.1.47  — PascalCase API names (Grep, Glob, Read, Write, Edit)
+    #                               Terminal renders Glob→"Search" but API name is "Glob"
+    #   Gemini CLI               — snake_case API names (grep_search, glob, read_file, ...)
+    #                               Confirmed by hooks.json BeforeTool matcher:
+    #                               "write_file|run_shell_command|replace|read_file|glob|grep_search"
     "sed": {
         "action": "block",
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /cr:ok sed\n- Block globally: /cr:globalno sed",
