@@ -42,6 +42,9 @@ from clautorun.core import (
     ClautorunDaemon,
     resolve_session_key,
     get_cli_event_name,
+    format_suggestion,
+    get_tool_names,
+    CLI_TOOL_NAMES,
     INTERNAL_TO_CLAUDE,
     INTERNAL_TO_GEMINI,
     app,
@@ -984,3 +987,109 @@ class TestGlobalApp:
         assert "PreToolUse" in app.chains
         assert "Stop" in app.chains
         assert "SessionStart" in app.chains
+
+
+# ============================================================================
+# P1.5: TestFormatSuggestion - Platform-aware tool name substitution
+# ============================================================================
+
+class TestFormatSuggestion:
+    """TDD tests for format_suggestion() dispatch table.
+
+    Parallel to TestCLIEventNameMapping: same pattern, tool names instead of events.
+    The {grep}, {read}, etc. format variables allow suggestion strings to resolve
+    to the correct tool name per CLI, without duplicating the strings.
+    """
+
+    # ─── Dispatch table contract ─────────────────────────────────────────────
+
+    def test_cli_tool_names_has_claude_and_gemini(self):
+        assert "claude" in CLI_TOOL_NAMES
+        assert "gemini" in CLI_TOOL_NAMES
+
+    def test_get_tool_names_claude_has_all_keys(self):
+        tools = get_tool_names("claude")
+        for key in ("grep", "glob", "read", "write", "edit", "bash", "ls"):
+            assert key in tools, f"claude missing tool key: {key}"
+
+    def test_get_tool_names_gemini_has_all_keys(self):
+        tools = get_tool_names("gemini")
+        for key in ("grep", "glob", "read", "write", "edit", "bash", "ls"):
+            assert key in tools, f"gemini missing tool key: {key}"
+
+    def test_get_tool_names_unknown_cli_returns_empty(self):
+        """Unknown CLI → empty dict → all placeholders pass through."""
+        assert get_tool_names("vscode") == {}
+
+    # ─── format_suggestion() contract ────────────────────────────────────────
+
+    def test_claude_grep(self):
+        assert format_suggestion("Use the {grep} tool", "claude") == "Use the Grep tool"
+
+    def test_gemini_grep(self):
+        """Regression: Gemini MUST receive 'grep_search', not 'Grep'."""
+        assert format_suggestion("Use the {grep} tool", "gemini") == "Use the grep_search tool"
+
+    def test_claude_all_tools(self):
+        msg = "{grep} {glob} {read} {write} {edit} {bash} {ls}"
+        result = format_suggestion(msg, "claude")
+        assert result == "Grep Glob Read Write Edit Bash LS"
+
+    def test_gemini_all_tools(self):
+        msg = "{grep} {glob} {read} {write} {edit} {bash} {ls}"
+        result = format_suggestion(msg, "gemini")
+        assert result == "grep_search glob read_file write_file replace run_shell_command list_directory"
+
+    def test_unknown_cli_passthrough(self):
+        """Unknown CLI leaves all placeholders unchanged — generic safe fallback."""
+        result = format_suggestion("Use the {grep} tool", "vscode")
+        assert result == "Use the {grep} tool"
+
+    def test_non_tool_placeholder_preserved(self):
+        """{args} in redirect strings must NOT be substituted."""
+        assert format_suggestion("trash {args}", "gemini") == "trash {args}"
+        assert format_suggestion("trash {args}", "claude") == "trash {args}"
+
+    def test_mixed_tool_and_args_placeholder(self):
+        """Both {grep} and {args} in same string — only tool name substitutes."""
+        result = format_suggestion("Use {grep} tool on {args}", "gemini")
+        assert result == "Use grep_search tool on {args}"
+
+    # ─── Regression: actual DEFAULT_INTEGRATIONS strings ────────────────────
+
+    def test_real_grep_suggestion_claude(self):
+        from clautorun.config import DEFAULT_INTEGRATIONS
+        msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
+        result = format_suggestion(msg, "claude")
+        assert "Grep" in result
+        assert "grep_search" not in result
+
+    def test_real_grep_suggestion_gemini(self):
+        """Regression: grep suggestion must name grep_search for Gemini."""
+        from clautorun.config import DEFAULT_INTEGRATIONS
+        msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
+        result = format_suggestion(msg, "gemini")
+        assert "grep_search" in result
+        assert "{grep}" not in result
+
+    def test_real_find_suggestion_gemini(self):
+        from clautorun.config import DEFAULT_INTEGRATIONS
+        msg = DEFAULT_INTEGRATIONS["find"]["suggestion"]
+        result = format_suggestion(msg, "gemini")
+        assert "glob" in result.lower()
+        assert "{glob}" not in result
+
+    def test_real_cat_suggestion_gemini(self):
+        from clautorun.config import DEFAULT_INTEGRATIONS
+        msg = DEFAULT_INTEGRATIONS["cat"]["suggestion"]
+        result = format_suggestion(msg, "gemini")
+        assert "read_file" in result
+        assert "{read}" not in result
+
+    def test_policy_blocked_search_gemini(self):
+        from clautorun.config import CONFIG
+        msg = CONFIG["policy_blocked"]["SEARCH"]
+        result = format_suggestion(msg, "gemini")
+        assert "grep_search" in result
+        assert "glob" in result.lower()
+        assert "{grep}" not in result

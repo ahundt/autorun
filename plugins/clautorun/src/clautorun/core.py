@@ -115,6 +115,70 @@ INTERNAL_TO_GEMINI = {
 }
 
 
+# === CLI TOOL NAME DISPATCH TABLE ===
+# Maps CLI type → {template_key: tool_name} for suggestion string substitution.
+# Template keys ({grep}, {read}, etc.) are used in DEFAULT_INTEGRATIONS suggestion
+# strings, parallel to the {args} substitution in Integration.redirect (plugins.py:531).
+# Adding a new CLI: add one entry here. No other changes required.
+CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
+    "claude": {
+        "grep": "Grep",
+        "glob": "Glob",
+        "read": "Read",
+        "write": "Write",
+        "edit": "Edit",
+        "bash": "Bash",
+        "ls": "LS",
+    },
+    "gemini": {
+        "grep": "grep_search",
+        "glob": "glob",
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "replace",
+        "bash": "run_shell_command",
+        "ls": "list_directory",
+    },
+}
+
+
+class _ToolNameMap(dict):
+    """Format map for tool name substitution. Unknown keys pass through unchanged.
+
+    Allows partial templates: {grep} substitutes, {args} stays as-is.
+    This ensures Integration.redirect strings ("trash {args}") are unaffected.
+    """
+
+    def __missing__(self, key: str) -> str:
+        return f"{{{key}}}"  # Return original placeholder text
+
+
+def get_tool_names(cli_type: str) -> dict[str, str]:
+    """Get tool name dict for a CLI. Returns empty dict for unknown CLIs.
+
+    Unknown CLI → all placeholders pass through unchanged (safe, generic).
+    """
+    return CLI_TOOL_NAMES.get(cli_type, {})
+
+
+def format_suggestion(msg: str, cli_type: str) -> str:
+    """Apply CLI-specific tool name substitution to suggestion strings.
+
+    Uses Python format_map with _ToolNameMap for safe partial substitution.
+    Template variables: {grep}, {glob}, {read}, {write}, {edit}, {bash}, {ls}
+    Non-tool placeholders like {args} pass through unchanged.
+
+    Args:
+        msg: Message string with optional {tool_key} format placeholders.
+        cli_type: CLI identifier ("claude", "gemini", or any future CLI).
+
+    Returns:
+        Message with tool names resolved for the given CLI. Unknown CLI
+        returns msg unchanged (all {placeholders} preserved).
+    """
+    return msg.format_map(_ToolNameMap(get_tool_names(cli_type)))
+
+
 def get_cli_event_name(internal_event: str, cli_type: str) -> str:
     """Convert internal event name to CLI-specific name for responses.
 
