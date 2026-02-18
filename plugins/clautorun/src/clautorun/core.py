@@ -167,17 +167,6 @@ CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
 }
 
 
-class _ToolNameMap(dict):
-    """Format map for tool name substitution. Unknown keys pass through unchanged.
-
-    Allows partial templates: {grep} substitutes, {args} stays as-is.
-    This ensures Integration.redirect strings ("trash {args}") are unaffected.
-    """
-
-    def __missing__(self, key: str) -> str:
-        return f"{{{key}}}"  # Return original placeholder text
-
-
 def get_tool_names(cli_type: str) -> dict[str, str]:
     """Get tool name dict for a CLI. Returns empty dict for unknown CLIs.
 
@@ -186,22 +175,44 @@ def get_tool_names(cli_type: str) -> dict[str, str]:
     return CLI_TOOL_NAMES.get(cli_type, {})
 
 
+@lru_cache(maxsize=64)
 def format_suggestion(msg: str, cli_type: str) -> str:
-    """Apply CLI-specific tool name substitution to suggestion strings.
+    """Resolve {tool_key} placeholders in safety-guard suggestion strings to the
+    correct CLI-specific tool name, so the AI receives actionable instructions.
 
-    Uses Python format_map with _ToolNameMap for safe partial substitution.
-    Template variables: {grep}, {glob}, {read}, {write}, {edit}, {bash}, {ls}
-    Non-tool placeholders like {args} pass through unchanged.
+    WHY THIS EXISTS:
+        Safety guards block bash commands (grep, find, cat, etc.) and suggest the
+        equivalent AI tool instead. Without this, Claude would be told "use Grep"
+        while Gemini (which calls it grep_search) would receive wrong instructions.
+        The daemon handles both CLIs on the same socket, so cli_type determines
+        which tool names to use per request.
+
+    WHY lru_cache:
+        The daemon is shared across all concurrent AI sessions (multiple Claude and
+        Gemini instances). AIs retry blocked commands, and multiple sessions trigger
+        the same integrations independently. Input space is bounded: ~14 integrations
+        × 2 CLIs + 2 policy_blocked × 2 CLIs ≈ 32 unique (msg, cli_type) pairs.
+        maxsize=64 comfortably covers this with room for growth.
+
+    WHY str.replace() NOT str.format_map():
+        format_map() raises ValueError on positional fields like `xargs -I{} mv {}`,
+        which appear in shell examples in the git clean suggestion string. str.replace()
+        is safe for arbitrary text and only substitutes exact dispatch table keys.
+
+    Only replaces {grep}, {glob}, {read}, {write}, {edit}, {bash}, {ls}.
+    Everything else — {args}, {}, {0}, shell syntax — passes through unchanged.
 
     Args:
-        msg: Message string with optional {tool_key} format placeholders.
+        msg: Suggestion string with optional {tool_key} placeholders.
         cli_type: CLI identifier ("claude", "gemini", or any future CLI).
 
     Returns:
-        Message with tool names resolved for the given CLI. Unknown CLI
-        returns msg unchanged (all {placeholders} preserved).
+        msg with tool names resolved for cli_type. Unknown CLI or unknown
+        placeholder leaves msg unchanged.
     """
-    return msg.format_map(_ToolNameMap(get_tool_names(cli_type)))
+    for key, value in get_tool_names(cli_type).items():
+        msg = msg.replace(f"{{{key}}}", value)
+    return msg
 
 
 def get_cli_event_name(internal_event: str, cli_type: str) -> str:

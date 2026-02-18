@@ -1093,3 +1093,119 @@ class TestFormatSuggestion:
         assert "grep_search" in result
         assert "glob" in result.lower()
         assert "{grep}" not in result
+
+    # ─── Canary: API tool name stability ────────────────────────────────────
+    # These tests document exact API tool names as of specific CLI versions.
+    # A failure means the CLI renamed a tool at the API level.
+    # → Update CLI_TOOL_NAMES and file an issue: https://github.com/ahundt/clautorun/issues
+    # → Note: terminal display names can differ from API names.
+    #   e.g. Claude Code CLI v2.1.47 renders Glob→"Search" but API name is still "Glob".
+
+    def test_canary_claude_api_names_v2_1_47(self):
+        """Claude Code CLI v2.1.47: PascalCase API tool names.
+
+        If this fails, Anthropic renamed a tool at the API level.
+        Update CLI_TOOL_NAMES["claude"] and file an issue:
+        https://github.com/ahundt/clautorun/issues
+        """
+        claude = CLI_TOOL_NAMES["claude"]
+        assert claude["grep"]  == "Grep",   "Grep renamed? Update CLI_TOOL_NAMES['claude']['grep']"
+        assert claude["glob"]  == "Glob",   "Glob renamed? (terminal shows 'Search' but API is 'Glob' as of v2.1.47)"
+        assert claude["read"]  == "Read",   "Read renamed? Update CLI_TOOL_NAMES['claude']['read']"
+        assert claude["write"] == "Write",  "Write renamed? Update CLI_TOOL_NAMES['claude']['write']"
+        assert claude["edit"]  == "Edit",   "Edit renamed? Update CLI_TOOL_NAMES['claude']['edit']"
+        assert claude["bash"]  == "Bash",   "Bash renamed? Update CLI_TOOL_NAMES['claude']['bash']"
+        assert claude["ls"]    == "LS",     "LS renamed? Update CLI_TOOL_NAMES['claude']['ls']"
+
+    def test_canary_gemini_api_names(self):
+        """Gemini CLI: snake_case API tool names, confirmed by hooks.json BeforeTool matcher:
+        "write_file|run_shell_command|replace|read_file|glob|grep_search"
+
+        If this fails, Gemini renamed a tool. Update CLI_TOOL_NAMES["gemini"] and file:
+        https://github.com/ahundt/clautorun/issues
+        """
+        gemini = CLI_TOOL_NAMES["gemini"]
+        assert gemini["grep"]  == "grep_search",      "grep_search renamed? Update CLI_TOOL_NAMES['gemini']['grep']"
+        assert gemini["glob"]  == "glob",             "glob renamed? Update CLI_TOOL_NAMES['gemini']['glob']"
+        assert gemini["read"]  == "read_file",        "read_file renamed? Update CLI_TOOL_NAMES['gemini']['read']"
+        assert gemini["write"] == "write_file",       "write_file renamed? Update CLI_TOOL_NAMES['gemini']['write']"
+        assert gemini["edit"]  == "replace",          "replace renamed? Update CLI_TOOL_NAMES['gemini']['edit']"
+        assert gemini["bash"]  == "run_shell_command","run_shell_command renamed? Update CLI_TOOL_NAMES['gemini']['bash']"
+        assert gemini["ls"]    == "list_directory",   "list_directory renamed? Update CLI_TOOL_NAMES['gemini']['ls']"
+
+    # ─── Symmetry: all CLIs must map the same template keys ─────────────────
+
+    def test_all_clis_have_same_template_keys(self):
+        """Every CLI in CLI_TOOL_NAMES must map exactly the same set of template keys.
+
+        A failure means a new key was added to one CLI but not others.
+        Add the missing key to all CLIs, then update suggestion strings.
+        """
+        key_sets = {cli: frozenset(tools.keys()) for cli, tools in CLI_TOOL_NAMES.items()}
+        first_cli, first_keys = next(iter(key_sets.items()))
+        for cli, keys in key_sets.items():
+            assert keys == first_keys, (
+                f"CLI_TOOL_NAMES[{cli!r}] keys {sorted(keys)} differ from "
+                f"CLI_TOOL_NAMES[{first_cli!r}] keys {sorted(first_keys)}. "
+                f"Add missing keys to all CLIs."
+            )
+
+    # ─── Coverage: no unreplaced placeholders in any suggestion string ────────
+    # These tests scan ALL suggestion strings in DEFAULT_INTEGRATIONS and
+    # CONFIG["policy_blocked"] after format_suggestion() for each known CLI.
+    # A remaining {placeholder} means either:
+    #   (a) A new {key} was added to a suggestion string without updating CLI_TOOL_NAMES, OR
+    #   (b) A new CLI tool exists that nobody mapped yet.
+    # Fix: add the missing key to CLI_TOOL_NAMES for all CLIs, or file an issue:
+    # https://github.com/ahundt/clautorun/issues
+
+    def _collect_suggestion_strings(self):
+        """Return all (label, msg) pairs from suggestion strings and policy_blocked."""
+        import re
+        from clautorun.config import DEFAULT_INTEGRATIONS, CONFIG
+        items = []
+        for cmd, intg in DEFAULT_INTEGRATIONS.items():
+            msg = intg.get("suggestion", "")
+            if msg:
+                items.append((f"DEFAULT_INTEGRATIONS[{cmd!r}]['suggestion']", msg))
+        for key, msg in CONFIG["policy_blocked"].items():
+            items.append((f"CONFIG['policy_blocked'][{key!r}]", msg))
+        return items
+
+    def test_no_unreplaced_placeholders_claude(self):
+        """All {tool_key} placeholders in suggestion strings must resolve for Claude.
+
+        If this fails, either:
+        - A new {key} was added to a suggestion string → add to CLI_TOOL_NAMES["claude"]
+        - A new Claude tool exists not yet in the table → add it and file an issue
+        https://github.com/ahundt/clautorun/issues
+        """
+        import re
+        placeholder_re = re.compile(r'\{[a-z_]+\}')
+        for label, msg in self._collect_suggestion_strings():
+            result = format_suggestion(msg, "claude")
+            remaining = placeholder_re.findall(result)
+            assert not remaining, (
+                f"{label} has unreplaced placeholders for 'claude': {remaining}\n"
+                f"Add to CLI_TOOL_NAMES['claude'] or update the string.\n"
+                f"File an issue: https://github.com/ahundt/clautorun/issues"
+            )
+
+    def test_no_unreplaced_placeholders_gemini(self):
+        """All {tool_key} placeholders in suggestion strings must resolve for Gemini.
+
+        If this fails, either:
+        - A new {key} was added to a suggestion string → add to CLI_TOOL_NAMES["gemini"]
+        - A new Gemini tool exists not yet in the table → add it and file an issue
+        https://github.com/ahundt/clautorun/issues
+        """
+        import re
+        placeholder_re = re.compile(r'\{[a-z_]+\}')
+        for label, msg in self._collect_suggestion_strings():
+            result = format_suggestion(msg, "gemini")
+            remaining = placeholder_re.findall(result)
+            assert not remaining, (
+                f"{label} has unreplaced placeholders for 'gemini': {remaining}\n"
+                f"Add to CLI_TOOL_NAMES['gemini'] or update the string.\n"
+                f"File an issue: https://github.com/ahundt/clautorun/issues"
+            )
