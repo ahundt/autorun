@@ -597,8 +597,8 @@ class EventContext:
     """
     # Reserved attributes (not persisted)
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
-                 '_tool_result', '_session_transcript', '_state', '_transcript', 
-                 '_store', '_cli_type')
+                 '_tool_result', '_session_transcript', '_state', '_transcript',
+                 '_store', '_cli_type', '_cwd')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -628,7 +628,7 @@ class EventContext:
     def __init__(self, session_id: str, event: str, prompt: str = "",
                  tool_name: str = None, tool_input: Dict = None,
                  tool_result: str = None, session_transcript: List = None,
-                 store: 'ThreadSafeDB' = None, cli_type: str = None):
+                 store: 'ThreadSafeDB' = None, cli_type: str = None, cwd: str = None):
         object.__setattr__(self, '_session_id', session_id)
         object.__setattr__(self, '_event', event)
         object.__setattr__(self, '_prompt', prompt)
@@ -641,6 +641,8 @@ class EventContext:
         object.__setattr__(self, '_store', store)
         # Auto-detect CLI type from environment if not explicitly provided
         object.__setattr__(self, '_cli_type', cli_type)
+        # Working directory injected by client.py (_cwd field) for plan tracking
+        object.__setattr__(self, '_cwd', cwd)
 
     # === Read-only accessors for payload data ===
     @property
@@ -674,6 +676,15 @@ class EventContext:
     @property
     def tool_result(self) -> str:
         return self._tool_result
+
+    @property
+    def cwd(self) -> Optional[str]:
+        """Working directory injected by client.py via _cwd payload field.
+
+        Used by plan_export.py:project_dir to scope plan tracking to the correct
+        project. Returns None if not available (hooks fired without client injection).
+        """
+        return self._cwd
 
     # === MAGIC STATE: __getattr__ / __setattr__ ===
     def __getattr__(self, name: str):
@@ -1155,6 +1166,7 @@ class ClautorunDaemon:
             session_id = resolve_session_key(pid, payload.get("_cwd", ""), raw_session_id)
 
             # Build context with shared store for magic state persistence
+            # _cwd is injected by client.py:197 and used by plan_export.py:project_dir
             ctx = EventContext(
                 session_id=session_id,
                 event=normalized["hook_event_name"],
@@ -1164,7 +1176,8 @@ class ClautorunDaemon:
                 tool_result=normalized["tool_result"],
                 session_transcript=normalized["session_transcript"],
                 store=self.store,
-                cli_type=cli_type
+                cli_type=cli_type,
+                cwd=payload.get("_cwd")
             )
 
             # Dispatch

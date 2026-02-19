@@ -1051,13 +1051,15 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
         last_msg = ""
 
         for plan in exporter.get_unexported():
-            result = exporter.export(plan)
+            # Plans recovered at SessionStart were never accepted (Option 1 or abandoned).
+            # Export them as rejected so they go to notes/rejected/ not notes/.
+            result = exporter.export(plan, rejected=config.export_rejected)
             if result["success"]:
                 recovered_count += 1
                 last_msg = result['message']
 
         if recovered_count > 0:
-            msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context): {last_msg}"
+            msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context or abandoned): {last_msg}"
             # IMPORTANT: SessionStart is a lifecycle event, not a tool event.
             # It doesn't support decision/reason/hookSpecificOutput fields.
             # Use minimal response format with systemMessage only.

@@ -24,7 +24,7 @@
     ],
     "BeforeTool": [
       {
-        "matcher": "write_file|run_shell_command|replace|read_file|glob|grep_search",
+        "matcher": "write_file|run_shell_command|replace|read_file|glob|grep_search|exit_plan_mode",
         "hooks": [{
           "name": "clautorun-pretool",
           "type": "command",

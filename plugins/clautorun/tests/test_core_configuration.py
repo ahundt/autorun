@@ -82,7 +82,7 @@ def test_policy_descriptions():
     expected_policies = {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files.")
+        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep} tools. NO new files.")
     }
 
     for policy, expected_tuple in expected_policies.items():
@@ -94,8 +94,8 @@ def test_policy_descriptions():
 def test_policy_blocked_messages():
     """Test policy blocked messages match documented format"""
     expected_blocked = {
-        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using Glob patterns like "*related-topic*", 3) Use Grep to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using Glob/Grep related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
+        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using the {glob} tool with patterns like "*related-topic*", 3) Use the {grep} tool to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
+        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using the {glob} tool and {grep} tool related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
     }
 
     for policy, expected_message in expected_blocked.items():
@@ -230,7 +230,7 @@ def test_command_handlers():
     # Test policy commands (uppercase only - main.py doesn't have lowercase for policy commands)
     test_state.clear()
     response = COMMAND_HANDLERS["SEARCH"](test_state)
-    expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use Glob/Grep. NO new files."
+    expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep} tools. NO new files."
     assert response == expected, "SEARCH handler response mismatch"
     assert test_state["file_policy"] == "SEARCH", "SEARCH handler should update state"
 

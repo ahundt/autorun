@@ -558,25 +558,27 @@ graph TD
 ```mermaid
 graph TD
     A["/cr:go task description"] --> B[Stage 1: Initial Implementation]
-    B --> C{AUTORUN_STAGE1_COMPLETE?}
+    B --> C{AUTORUN_INITIAL_TASKS_COMPLETED?}
     C -->|No| D[Continue working]
     D --> B
     C -->|Yes| E[Stage 2: Critical Evaluation]
-    E --> F{AUTORUN_STAGE2_COMPLETE?}
+    E --> F{CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED?}
     F -->|No| G[Continue evaluation]
     G --> E
     F -->|Yes| H[Stage 3: Final Verification]
-    H --> I{AUTORUN_STAGE3_COMPLETE?}
+    H --> I{AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY?}
     I -->|No| J[Continue verification]
     J --> H
     I -->|Yes| K[Task Complete - Session Ends]
 ```
 
-**Stage 1 - Initial Implementation**: Claude works on the task, outputs `AUTORUN_STAGE1_COMPLETE` when done.
+**Stage 1 - Initial Implementation**: Claude works on the task, outputs `AUTORUN_INITIAL_TASKS_COMPLETED` when done.
 
-**Stage 2 - Critical Evaluation**: Claude critically evaluates work, identifies gaps, outputs `AUTORUN_STAGE2_COMPLETE` when satisfied.
+**Stage 2 - Critical Evaluation**: Claude critically evaluates work, identifies gaps, outputs `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED` when satisfied.
 
-**Stage 3 - Final Verification**: Claude verifies all requirements met, outputs `AUTORUN_STAGE3_COMPLETE` to finish.
+**Stage 3 - Final Verification**: Claude verifies all requirements met, outputs `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` to finish.
+
+**Emergency Stop**: At any point, `/cr:sos` outputs `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` and immediately halts.
 
 ### How It Works
 
@@ -597,9 +599,9 @@ graph TD
 
 **Before clautorun**: Claude stops after implementing basic login form
 **With clautorun three-stage verification**:
-1. Stage 1: "Login form implemented!" → `AUTORUN_STAGE1_COMPLETE`
-2. Stage 2: "Critically evaluated - added error handling, tests missing" → continues working → `AUTORUN_STAGE2_COMPLETE`
-3. Stage 3: "Verified: Form works, tests pass, error handling complete" → `AUTORUN_STAGE3_COMPLETE` → Session ends
+1. Stage 1: "Login form implemented!" → `AUTORUN_INITIAL_TASKS_COMPLETED`
+2. Stage 2: "Critically evaluated - added error handling, tests missing" → continues working → `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED`
+3. Stage 3: "Verified: Form works, tests pass, error handling complete" → `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` → Session ends
 
 ## Tmux Integration
 

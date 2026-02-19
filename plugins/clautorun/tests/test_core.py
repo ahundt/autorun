@@ -1209,3 +1209,42 @@ class TestFormatSuggestion:
                 f"Add to CLI_TOOL_NAMES['gemini'] or update the string.\n"
                 f"File an issue: https://github.com/ahundt/clautorun/issues"
             )
+
+    def test_format_suggestion_handles_shell_braces(self):
+        """format_suggestion must not raise ValueError on shell syntax like xargs -I{} mv {}.
+
+        Regression test for the bug where format_map() was used instead of str.replace(),
+        causing ValueError when suggestion strings contained shell brace syntax such as
+        `xargs -I{} mv {}` (used in git clean suggestions). The fix in commit c0e4367
+        replaced format_map with str.replace() so shell braces are preserved unchanged.
+        """
+        from clautorun.config import DEFAULT_INTEGRATIONS
+        from clautorun.core import format_suggestion
+
+        # Find any suggestion string that contains shell braces (non-template braces)
+        # These are braces that DON'T match {tool_key} pattern (e.g., xargs -I{} mv {})
+        shell_brace_suggestions = {
+            k: v["suggestion"]
+            for k, v in DEFAULT_INTEGRATIONS.items()
+            if "{}" in v.get("suggestion", "")
+        }
+
+        for cmd, msg in shell_brace_suggestions.items():
+            # This should NOT raise ValueError (previous bug with format_map)
+            try:
+                result_claude = format_suggestion(msg, "claude")
+                result_gemini = format_suggestion(msg, "gemini")
+            except ValueError as e:
+                raise AssertionError(
+                    f"format_suggestion raised ValueError on shell syntax in '{cmd}': {e}\n"
+                    f"Suggestion string: {msg!r}\n"
+                    f"This is a regression — str.replace() should handle bare {{}} safely."
+                ) from e
+
+            # Verify shell syntax is preserved (not replaced or removed)
+            assert "{}" in result_claude, (
+                f"Shell brace {{}} was incorrectly removed from '{cmd}' suggestion for claude"
+            )
+            assert "{}" in result_gemini, (
+                f"Shell brace {{}} was incorrectly removed from '{cmd}' suggestion for gemini"
+            )
