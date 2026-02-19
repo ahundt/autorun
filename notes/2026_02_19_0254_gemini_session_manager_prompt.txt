@@ -1,0 +1,92 @@
+You are reviewing a Python asyncio daemon (clautorun) that acts as a shared hook server for Claude Code and Gemini CLI sessions running concurrently. The daemon has a critical bug: its asyncio event loop permanently blocks when a handler spins at 98.5% CPU, causing all subsequent hook connections to time out.
+
+**Please use Google Search to research and answer these questions with current best practices.**
+
+## Context: What the storage is used for
+
+The daemon tracks two small dicts per project:
+1. `active_plans`: {plan_file_path_str -> metadata_dict} — plans currently in progress
+2. `tracking`: {content_hash -> {exported_to, exported_at}} — plans already exported
+
+These are written on ExitPlanMode (accepted/abandoned plans) and read on SessionStart (recovery). Multiple Claude Code sessions + Gemini CLI sessions connect to the same daemon concurrently via Unix socket.
+
+## Current Implementation (the problem)
+
+`session_manager.py` is ~420 lines implementing custom RAII locking around Python's `shelve`:
+- `SessionLock` class: uses `fcntl.flock(LOCK_EX | LOCK_NB)` with retry loop (100 retries × 0.01s = ~1s timeout)
+- `_lock_registry`: threading.Lock-guarded dict keyed by (pid, thread_id) for reentrant detection
+- `SessionBackendManager`: tests default/dumbdbm/memory backends at startup
+- `session_state()` contextmanager: acquires flock → opens shelve → yields → closes shelve → releases flock
+
+**The critical bugs this causes:**
+1. When `export_on_exit_plan_mode()` is called (PostToolUse handler), the daemon spins at 98.5% CPU and never returns — the asyncio event loop is completely blocked indefinitely
+2. FD leak: the lock file FD and 50MB shelve FD are never released (context manager's `__exit__` never called because handler never returns)
+3. macOS flock non-reentrance: same process, different fd → errno=35 (EAGAIN) even with `_lock_registry` protection
+4. `handle_client()` in core.py calls `self.app.dispatch(ctx)` **synchronously** — no `await`, no timeout — so any handler hang blocks the entire event loop
+
+**core.py:handle_client() critical section (line 1184):**
+```python
+async def handle_client(self, reader, writer):
+    # ... reads payload, builds ctx ...
+    response = self.app.dispatch(ctx)  # SYNCHRONOUS — blocks event loop forever if handler hangs
+    # ... finally: await writer.drain(), writer.close() ...
+```
+
+**session_manager.py key constants:**
+```python
+DEFAULT_SESSION_TIMEOUT = 30.0
+LOCK_RETRY_DELAY = 0.01
+MAX_LOCK_RETRIES = 100
+```
+
+**plan_export.py — how session_state is consumed (the problem area):**
+```python
+@property
+def active_plans(self):
+    with session_state(GLOBAL_SESSION_ID) as state:  # opens shelve, acquires flock
+        return dict(state.get("active_plans", {}).get(project_key, {}))
+
+@property  
+def tracking(self):
+    with session_state(GLOBAL_SESSION_ID) as state:  # separate flock acquire/release
+        return dict(state.get("tracking", {}))
+
+def export(self, plan_path, rejected=False, force=False):
+    # Accesses self.tracking (1st session_state open/close)
+    content_hash = get_content_hash(plan_path)
+    if content_hash in self.tracking:  # opens + closes session_state
+        return {"success": True, "skipped": True, ...}
+    # ... file copy, embed metadata ...
+    self.atomic_update_tracking(record_hash)   # 2nd session_state open/close
+    self.atomic_update_active_plans(remove_plan)  # 3rd session_state open/close
+```
+
+## Questions (please search Google for current best practices before answering)
+
+**Q1: Storage replacement**
+Search for: "Python multiprocess thread safe persistent dict asyncio daemon 2024 2025 diskcache sqlitedict"
+- Is `diskcache` (backed by SQLite) genuinely multiprocess + thread safe without custom locking? What does the diskcache documentation say about concurrent access from multiple processes?
+- Is `sqlitedict` multiprocess safe, or only thread safe?
+- Would SQLite3 WAL mode (stdlib) handle concurrent reads/writes from multiple processes correctly?
+- What is the recommended approach for a Python asyncio daemon that needs to share persistent state with multiple reader processes?
+
+**Q2: asyncio dispatch safety**
+Search for: "Python asyncio run_in_executor synchronous blocking handler daemon 2024"
+- What is the correct pattern for running synchronous blocking code in an asyncio server without blocking the event loop?
+- Should `handle_client()` use `asyncio.get_event_loop().run_in_executor(None, self.app.dispatch, ctx)` with `asyncio.wait_for(..., timeout=10)`?
+- What are the thread-safety concerns if dispatch() accesses shared state concurrently via a thread pool?
+
+**Q3: Concrete recommendation**
+Given:
+- Python stdlib preferred (fewer deps) but diskcache acceptable if it truly solves the problem
+- Must work across 5+ concurrent processes (Claude sessions + Gemini sessions + daemon)
+- Data is small (<<1MB total), simple dict operations, rare writes (~1/minute), frequent reads
+- asyncio daemon on macOS/Linux
+
+Please provide:
+1. Your recommended storage backend with reasoning
+2. A concrete BEFORE/AFTER code sketch showing how `session_manager.py`'s ~420 lines could be simplified
+3. The correct `handle_client()` pattern for non-blocking dispatch with timeout
+4. Any other architectural improvements you identify
+
+For each recommendation provide: (1) BEFORE code with problem, (2) AFTER code with fix, (3) concrete technical justification with citations as file_path:function_name:line_start-line_end. Be harshly critical.
