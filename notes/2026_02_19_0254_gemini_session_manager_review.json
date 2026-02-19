@@ -1,0 +1,72 @@
+{
+  "session_id": "539c5626-a147-4e0a-9542-70693259943c",
+  "response": "Here is a detailed analysis and set of recommendations based on current best practices.\n\n### Executive Summary\n\nThe critical bugs you've identified stem from two core architectural flaws:\n1.  **Unsafe State Management:** Using `shelve` with a complex, bespoke, and ultimately flawed `fcntl` locking mechanism is the source of the CPU spin, file descriptor leaks, and re-entrance bugs. It is not suitable for concurrent multiprocess access.\n2.  **Blocking I/O in Asyncio:** The synchronous call to `self.app.dispatch(ctx)` inside an `async def` function is a cardinal sin in asyncio. It guarantees that any slow handler will block the entire server's event loop, causing all other concurrent requests to fail.\n\nMy recommendations are to:\n1.  **Replace `shelve` and all custom locking with `diskcache`**. It is a battle-tested, multiprocess- and thread-safe library backed by SQLite that provides a simple dictionary interface, making it a near drop-in replacement that eliminates the need for any manual locking code.\n2.  **Execute the synchronous `dispatch` method in a thread pool executor** using `asyncio.run_in_executor()` and wrap it in `asyncio.wait_for()` to prevent any single handler from ever blocking the daemon.\n\n---\n\n### **Q1: Storage Replacement Analysis**\n\nBased on research into your suggested alternatives:\n\n*   **`diskcache`**: The documentation explicitly states it is **thread-safe and multiprocess-safe** out of the box. Operations are atomic. It uses a local SQLite database, which is perfect for this use case. Because it handles all locking internally, it allows for the complete removal of your custom `fcntl` and `threading.Lock` logic. This is the strongest candidate.\n*   **`sqlitedict`**: This library is thread-safe, but for multiprocess safety, it recommends that each process creates its own connection object. While viable, this is a slightly lower-level abstraction than `diskcache` and still requires more careful management than `diskcache` seems to offer for this scenario.\n*   **SQLite3 + WAL Mode**: This is a very robust standard library solution. In WAL (Write-Ahead Logging) mode, it allows for concurrent reads while a write is in progress. However, it still only allows one writer at a time. Any other process attempting to write would receive a `database is locked` error, requiring you to implement your own retry logic with backoff. `diskcache` handles this for you.\n\n**Recommendation:** Use **`diskcache`**. It provides the perfect level of abstraction (a persistent, concurrent dictionary) for your use case (`active_plans`, `tracking` dicts) and completely solves the problem of safe, concurrent access from multiple processes and threads without requiring any custom locking code.\n\n---\n\n### **Q2: `asyncio` Dispatch Safety Analysis**\n\n*   **The Correct Pattern**: The standard and correct way to run a synchronous blocking function in an asyncio application is to offload it to a separate thread using a thread pool executor. The main event loop can then `await` the result without blocking. The modern `asyncio.to_thread()` (Python 3.9+) or the more general `loop.run_in_executor()` are the tools for this.\n*   **Timeout Handling**: Wrapping the call in `asyncio.wait_for(..., timeout=...)` is essential. It prevents a misbehaving handler from blocking a thread in the pool forever from the perspective of the event loop. If the timeout is exceeded, `asyncio.wait_for` will raise an `asyncio.TimeoutError`, which you can catch to return a proper error to the client, while the rest of the daemon remains responsive.\n    *   **Caveat**: `asyncio.wait_for` **does not terminate the background thread**. The blocking code will continue to run to completion. However, this is an acceptable trade-off; you prevent a complete daemon freeze, log the issue, and move on.\n*   **Thread Safety**: With the handler running in a separate thread, any shared state it accesses must be thread-safe. By replacing `shelve` with `diskcache`, the storage layer is already safe. Your handlers can interact with the `diskcache.Cache` object from the thread pool without issues.\n\n---\n\n### **Q3: Concrete Recommendations & Code**\n\nHere is a harsh critique and concrete \"BEFORE/AFTER\" refactoring plan.\n\n#### 1. Recommended Storage Backend\n\n**`diskcache`**. It requires a single `pip install diskcache` and will allow you to delete ~400 lines of fragile, bug-prone code.\n\n#### 2. `session_manager.py` Simplification\n\nThe entire ~420 line file dedicated to `fcntl` locking, retry loops, and re-entrant lock tracking is fundamentally incorrect for this problem and should be deleted.\n\n**BEFORE (`session_manager.py`):**\n```python\n# ~420 lines of complex, buggy code:\n# - SessionLock class with fcntl.flock()\n# - _lock_registry with threading.Lock\n# - MAX_LOCK_RETRIES and LOCK_RETRY_DELAY for a spin-wait loop\n# - A session_state() context manager that orchestrates it all...\n# - ... and is the source of the 98.5% CPU spin and FD leaks.\n\n# plan_export.py (Consumer)\ndef active_plans(self):\n    with session_state(GLOBAL_SESSION_ID) as state: # Acquires flock, opens shelve\n        return dict(state.get(\"active_plans\", {}).get(project_key, {}))\n```\n\n**AFTER (New `storage.py` module):**\nCreate a new, simple module to manage the shared `diskcache` instance.\n\n```python\n# src/clautorun/storage.py\nimport diskcache\nimport os\nfrom .config import get_clautorun_dir\n\n# The cache object is process-safe and thread-safe.\n# It can be safely shared across all processes and threads.\n_cache_dir = os.path.join(get_clautorun_dir(), \"daemon_cache\")\ncache = diskcache.Cache(_cache_dir)\n\n# Now, all data access is just a simple dict-like method call on `cache`.\n# The library handles all file locking, concurrency, and atomicity.\n```\n\n**AFTER (`plan_export.py` consumer refactored):**\nNow, `plan_export.py` and other modules can import and use the `cache` object directly.\n\n```python\n# plugins/clautorun/src/clautorun/plan_export.py\nfrom clautorun.storage import cache # Import the shared cache object\n\n# ...\n@property\ndef active_plans(self):\n    # No more 'with' statement or locking. Just a dictionary get.\n    # diskcache handles the concurrent access safely.\n    project_plans = cache.get(\"active_plans\", default={})\n    return dict(project_plans.get(project_key, {}))\n\n@property\ndef tracking(self):\n    return dict(cache.get(\"tracking\", default={}))\n\n# Setters would also be simple 'cache.set(...)' calls\n```\n\n**Justification:** This change replaces ~420 lines of complex, incorrect, and platform-specific locking code with a single dependency that is expertly designed for this exact problem. It resolves the CPU spin, FD leaks, and concurrency bugs in one stroke.\n\n#### 3. `core.py:handle_client()` Non-Blocking Dispatch\n\nThe synchronous dispatch is the root cause of the event loop blockage.\n\n**BEFORE (`core.py:handle_client()`:line_1184):**\n```python\nasync def handle_client(self, reader, writer):\n    # ...\n    # CRITICAL BUG: This is a synchronous call. If dispatch() blocks for 10 seconds,\n    # the entire asyncio server is frozen for 10 seconds.\n    response = self.app.dispatch(ctx)\n    # ...\n```\n\n**AFTER (`core.py:handle_client()`):**\n```python\nimport asyncio\n\nasync def handle_client(self, reader, writer):\n    # ... reads payload, builds ctx ...\n    loop = asyncio.get_running_loop()\n    try:\n        # Run the synchronous, potentially-blocking dispatch function in a thread pool\n        # and wait for the result with a timeout.\n        future = loop.run_in_executor(None, self.app.dispatch, ctx)\n        response = await asyncio.wait_for(future, timeout=15.0) # e.g., 15-second timeout\n\n    except asyncio.TimeoutError:\n        # The handler took too long. Log it and return an error to the client.\n        # The daemon itself is NOT blocked and can serve other requests.\n        self.app.logger.error(f\"Handler for hook '{ctx.event_type}' timed out.\")\n        # You should construct a proper error response payload here\n        response = {\"error\": \"Hook handler timed out\", \"status\": \"timeout\"}\n\n    except Exception as e:\n        # Catch any other unexpected error from within the handler\n        self.app.logger.exception(f\"Handler for hook '{ctx.event_type}' raised an exception.\")\n        response = {\"error\": str(e), \"status\": \"handler_exception\"}\n\n    # ... finally: write response, await writer.drain(), writer.close() ...\n```\n\n**Justification:** This change isolates handler execution from the main event loop. A slow or hung handler will now only consume one thread from the executor pool for a limited time and will no longer cause a catastrophic failure of the entire daemon.\n\n#### 4. Additional Architectural Improvement: Atomic Operations\n\nYour current `plan_export.py:export` function is inefficient and prone to race conditions because it acquires/releases the lock three separate times for what should be a single atomic transaction.\n\n**BEFORE (`plan_export.py:export`):**\n```python\ndef export(self, plan_path, rejected=False, force=False):\n    # 1. Accesses self.tracking (1st lock/unlock)\n    content_hash = get_content_hash(plan_path)\n    if content_hash in self.tracking:\n        return {\"success\": True, \"skipped\": True, ...}\n\n    # ... file copy logic ...\n\n    # 2. Updates tracking (2nd lock/unlock)\n    self.atomic_update_tracking(record_hash)\n\n    # 3. Updates active plans (3rd lock/unlock)\n    self.atomic_update_active_plans(remove_plan)\n```\n\n**AFTER (`plan_export.py:export` using `diskcache`):**\n`diskcache` provides transactions for atomic updates. The operation can be consolidated into a single, atomic, and efficient block.\n\n```python\n# plugins/clautorun/src/clautorun/plan_export.py\nfrom clautorun.storage import cache\n\ndef export(self, plan_path, rejected=False, force=False):\n    content_hash = get_content_hash(plan_path)\n\n    # Use a transaction to ensure the read-modify-write is atomic.\n    # The 'with' block ensures all or nothing.\n    with cache.transact():\n        tracking = cache.get(\"tracking\", default={})\n        if content_hash in tracking and not force:\n            return {\"success\": True, \"skipped\": True, ...}\n\n        # ... Perform file copy logic BEFORE updating the cache ...\n\n        # Now, update the cache state in one atomic operation\n        new_tracking = tracking.copy()\n        new_tracking[content_hash] = create_tracking_record(...)\n        cache.set(\"tracking\", new_tracking)\n\n        # Update active plans\n        active_plans = cache.get(\"active_plans\", default={})\n        project_plans = active_plans.get(self.project_key, {})\n        if plan_path in project_plans:\n            del project_plans[plan_path]\n            active_plans[self.project_key] = project_plans\n            cache.set(\"active_plans\", active_plans)\n\n    return {\"success\": True, \"skipped\": False}\n```\n\n**Justification:** This refactoring makes the entire export operation atomic, preventing race conditions where two processes might try to export the same file simultaneously. It is also more performant as it only interacts with the database once within the transaction, instead of three separate times.",
+  "stats": {
+    "models": {
+      "gemini-2.5-pro": {
+        "api": {
+          "totalRequests": 5,
+          "totalErrors": 0,
+          "totalLatencyMs": 150508
+        },
+        "tokens": {
+          "input": 37288,
+          "prompt": 111543,
+          "candidates": 3005,
+          "total": 117835,
+          "cached": 74255,
+          "thoughts": 3287,
+          "tool": 0
+        }
+      },
+      "gemini-2.5-flash": {
+        "api": {
+          "totalRequests": 4,
+          "totalErrors": 0,
+          "totalLatencyMs": 46752
+        },
+        "tokens": {
+          "input": 39007,
+          "prompt": 39007,
+          "candidates": 3635,
+          "total": 46391,
+          "cached": 0,
+          "thoughts": 3096,
+          "tool": 653
+        }
+      }
+    },
+    "tools": {
+      "totalCalls": 4,
+      "totalSuccess": 4,
+      "totalFail": 0,
+      "totalDurationMs": 46803,
+      "totalDecisions": {
+        "accept": 4,
+        "reject": 0,
+        "modify": 0,
+        "auto_accept": 0
+      },
+      "byName": {
+        "google_web_search": {
+          "count": 4,
+          "success": 4,
+          "fail": 0,
+          "durationMs": 46803,
+          "decisions": {
+            "accept": 4,
+            "reject": 0,
+            "modify": 0,
+            "auto_accept": 0
+          }
+        }
+      }
+    },
+    "files": {
+      "totalLinesAdded": 0,
+      "totalLinesRemoved": 0
+    }
+  }
+}Created execution plan for SessionEnd: 1 hook(s) to execute in parallel
+Expanding hook command: uv run --quiet --project /Users/athundt/.gemini/extensions/cr python /Users/athundt/.gemini/extensions/cr/hooks/hook_entry.py --cli gemini (cwd: /Users/athundt/.claude/clautorun)
+ClearcutLogger: Re-queued 94 events for retry (queue size: 94)

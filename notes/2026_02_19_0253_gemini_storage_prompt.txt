@@ -1,0 +1,27 @@
+Review the clautorun daemon storage architecture in `plugins/clautorun/src/clautorun/session_manager.py`.
+
+**Context**: clautorun is a Python asyncio daemon that serves hooks from multiple concurrent Claude Code and Gemini CLI sessions. It uses `shelve` (backed by dbm.ndbm on macOS, writing to a 50MB `.db.db` file) as persistent shared state, protected by 420 lines of custom `fcntl.flock()` locking (SessionLock, SessionBackendManager, SessionStateManager). 
+
+**Current Bug**: The daemon gets permanently stuck at 98.5% CPU after handling `PostToolUse(ExitPlanMode)` — FDs for the lock file and shelve DB are leaked, the asyncio event loop blocks indefinitely because `handle_client()` calls `self.app.dispatch(ctx)` SYNCHRONOUSLY (no await). Tests timeout because no new connections can be served.
+
+**Key Questions**:
+
+1. Should `shelve` + custom `fcntl.flock()` be replaced with `diskcache` (SQLite-backed, multiprocess+thread-safe) or raw `sqlite3` + WAL mode? Which has lower risk of the exact deadlock/spin behavior observed?
+
+2. The asyncio daemon calls `response = self.app.dispatch(ctx)` SYNCHRONOUSLY in `async def handle_client()`. Should this be wrapped in `await loop.run_in_executor(None, self.app.dispatch, ctx)` with a timeout? What thread-safety implications does that have for the shared state?
+
+3. For the specific data being stored (two dicts: `active_plans: {plan_path: session_id}` and `tracking: {content_hash: {exported_to, exported_at}}`), is there a stdlib-only approach (sqlite3 WAL) that eliminates ALL custom locking code?
+
+4. The `PlanExport` class accesses `self.tracking` and `self.active_plans` as properties that EACH open+close a separate `session_state()` context. In `export()` there are 3 separate `session_state()` opens in sequence. Could this triple-open pattern be causing the deadlock on macOS with dbm.ndbm?
+
+**Relevant code sections**:
+
+`session_manager.py:SessionLock._acquire_lock():167-192` — retry loop with LOCK_NB, MAX_LOCK_RETRIES=100, LOCK_RETRY_DELAY=0.01s, timeout=DEFAULT_SESSION_TIMEOUT=30s
+
+`session_manager.py:session_state():333-382` — opens SessionLock + shelve per call; does NOT check for reentrant shelve opens (only flock is reentrant-aware)
+
+`plan_export.py:PlanExport.export():671-745` — calls `self.tracking` (opens session_state) then `self.atomic_update_tracking()` (opens session_state) then `self.atomic_update_active_plans()` (opens session_state) = 3 sequential opens
+
+`core.py:handle_client():1184` — `response = self.app.dispatch(ctx)` — SYNCHRONOUS call in async function
+
+**Output format**: CRITICAL/IMPORTANT/OPTIMIZATION. For each issue provide: (1) BEFORE code with problem (2) AFTER code with fix (3) concrete technical justification (4) preserve all references, citations, sources, and urls with academic rigor and format code citations as file_path:function_name:line_start-line_end. Be harshly critical and propose concrete, actionable solutions.
