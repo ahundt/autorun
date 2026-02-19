@@ -477,6 +477,39 @@ class TestEventContext:
         assert EventContext.STAGE_2_COMPLETED == 3
         assert EventContext.STAGE_3 == 4
 
+    # ------------------------------------------------------------------
+    # cwd propagation tests (regression: plan export cwd not available)
+    # Root cause: client.py:197 injects _cwd but core.py:handle_client()
+    # did not pass it to EventContext constructor, so ctx.cwd was always None.
+    # Fix: added _cwd slot + cwd param + cwd property + wiring in handle_client.
+    # Debug evidence: "record_write: cwd not available" repeated 40+ times.
+    # ------------------------------------------------------------------
+
+    def test_cwd_is_none_by_default(self):
+        """EventContext.cwd returns None when not provided (backward compatible)."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        assert ctx.cwd is None
+
+    def test_cwd_set_from_constructor(self):
+        """EventContext.cwd returns value passed to constructor."""
+        ctx = EventContext(session_id="test", event="PostToolUse", cwd="/Users/test/myproject")
+        assert ctx.cwd == "/Users/test/myproject"
+
+    def test_cwd_empty_string(self):
+        """EventContext.cwd can be empty string (no project dir available)."""
+        ctx = EventContext(session_id="test", event="PostToolUse", cwd="")
+        assert ctx.cwd == ""
+
+    def test_cwd_not_in_magic_state(self):
+        """EventContext.cwd must not be persisted to magic state (Shelve).
+
+        cwd is a transient per-request value (set by client.py from os.getcwd())
+        and must not leak into the cross-session shelve DB.
+        """
+        ctx = EventContext(session_id="test", event="PostToolUse", cwd="/some/path")
+        assert "cwd" not in ctx._DEFAULTS
+        assert "_cwd" in ctx.__slots__
+
 
 # ============================================================================
 # P1.3.1: CLI Event Name Mapping Tests

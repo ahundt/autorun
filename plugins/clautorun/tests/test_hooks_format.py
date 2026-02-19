@@ -322,5 +322,93 @@ def test_plugin_json_references_hooks():
         f"Referenced hooks file does not exist: {hooks_file}"
 
 
+class TestHookTimeouts:
+    """Verify hook timeouts are adequate for both CLIs.
+
+    Claude Code timeout unit: seconds (timeout: 10 = 10 seconds).
+    Gemini CLI timeout unit: milliseconds (timeout: 5000 = 5 seconds).
+    Source: notes/hooks_api_reference.md:825 (Claude), :857 (Gemini).
+    """
+
+    def test_claude_hooks_timeout_adequate(self):
+        """claude-hooks.json timeouts must be >= 5 seconds (Claude uses seconds)."""
+        hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text())
+        for event, handler_groups in hooks["hooks"].items():
+            for handler_group in handler_groups:
+                for hook in handler_group.get("hooks", []):
+                    timeout = hook.get("timeout", 0)
+                    assert timeout >= 5, (
+                        f"{event} hook timeout {timeout}s too short "
+                        f"(need >= 5s for daemon startup warmup)"
+                    )
+
+    def test_gemini_hooks_timeout_adequate(self):
+        """hooks.json timeouts must be >= 5000ms (Gemini uses milliseconds)."""
+        hooks_path = get_plugin_root() / "hooks" / "hooks.json"
+        hooks = json.loads(hooks_path.read_text())
+        for event, handler_groups in hooks["hooks"].items():
+            for handler_group in handler_groups:
+                for hook in handler_group.get("hooks", []):
+                    timeout = hook.get("timeout", 0)
+                    assert timeout >= 5000, (
+                        f"Gemini {event} hook timeout {timeout}ms too short "
+                        f"(need >= 5000ms = 5 seconds)"
+                    )
+
+
+class TestGeminiHookMatchers:
+    """Verify Gemini hooks.json matchers include all required tool names.
+
+    Gemini uses different tool names than Claude Code. Missing a tool name
+    in a matcher means the hook never fires for that tool.
+    """
+
+    def test_gemini_before_tool_matcher_includes_exit_plan_mode(self):
+        """Gemini BeforeTool matcher must include exit_plan_mode.
+
+        Without this, track_and_export_plans_early() (PreToolUse backup)
+        never fires for Gemini ExitPlanMode. Only the AfterTool path works.
+        Fixed: added |exit_plan_mode to hooks/hooks.json BeforeTool matcher.
+        """
+        hooks_path = get_plugin_root() / "hooks" / "hooks.json"
+        hooks = json.loads(hooks_path.read_text())
+        before_tool_groups = hooks["hooks"]["BeforeTool"]
+        assert len(before_tool_groups) > 0, "No BeforeTool hooks registered"
+        matcher = before_tool_groups[0]["matcher"]
+        assert "exit_plan_mode" in matcher, (
+            f"Gemini BeforeTool matcher missing exit_plan_mode. "
+            f"Current matcher: {matcher}"
+        )
+
+    def test_claude_hooks_exit_plan_mode_in_pre_tool_use(self):
+        """Claude PreToolUse matcher must include ExitPlanMode for backup export.
+
+        Structure: hooks["hooks"]["PreToolUse"] is a list of handler_groups.
+        Each handler_group has "matcher" at the top level (not inside "hooks" items).
+        """
+        hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text())
+        pre_tool_groups = hooks["hooks"]["PreToolUse"]
+        matchers = [g.get("matcher", "") for g in pre_tool_groups]
+        assert any("ExitPlanMode" in m for m in matchers), (
+            f"Claude PreToolUse must match ExitPlanMode. Matchers: {matchers}"
+        )
+
+    def test_claude_hooks_exit_plan_mode_in_post_tool_use(self):
+        """Claude PostToolUse matcher must include ExitPlanMode for primary export.
+
+        Structure: hooks["hooks"]["PostToolUse"] is a list of handler_groups.
+        Each handler_group has "matcher" at the top level (not inside "hooks" items).
+        """
+        hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text())
+        post_tool_groups = hooks["hooks"]["PostToolUse"]
+        matchers = [g.get("matcher", "") for g in post_tool_groups]
+        assert any("ExitPlanMode" in m for m in matchers), (
+            f"Claude PostToolUse must match ExitPlanMode. Matchers: {matchers}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

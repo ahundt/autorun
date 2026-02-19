@@ -12,6 +12,8 @@ from unittest.mock import Mock, patch, MagicMock
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from clautorun.config import CONFIG
+
 def test_main_py_ai_monitor_workflow():
     """Test that main.py implements complete AI monitor workflow"""
     from clautorun import (
@@ -371,6 +373,50 @@ def run_comprehensive_integration_tests():
         print("   ❌ Implementation doesn't match README documentation")
         print("   ❌ Integration options provide inconsistent functionality")
         return False
+
+def test_readme_stage_markers_match_config():
+    """README.md must not contain wrong AUTORUN_STAGE[123]_COMPLETE markers.
+
+    The correct markers are long, descriptive strings in config.py. Wrong short
+    markers (AUTORUN_STAGE1_COMPLETE etc.) cause autorun to never advance because
+    the hook system listens for the exact config.py strings.
+    Bug source: README.md had 9 wrong occurrences; CLAUDE.md had 6.
+    """
+    readme_path = Path(__file__).parent.parent.parent.parent / "README.md"
+    readme = readme_path.read_text()
+    for wrong in ("AUTORUN_STAGE1_COMPLETE", "AUTORUN_STAGE2_COMPLETE", "AUTORUN_STAGE3_COMPLETE"):
+        assert wrong not in readme, (
+            f"README.md contains wrong stage marker '{wrong}'. "
+            f"Use the correct descriptor strings from config.py."
+        )
+    # Verify correct strings are present
+    assert CONFIG["stage1_message"] in readme, \
+        f"README.md missing correct stage1_message: {CONFIG['stage1_message']}"
+    assert CONFIG["stage2_message"] in readme, \
+        f"README.md missing correct stage2_message: {CONFIG['stage2_message']}"
+    assert CONFIG["stage3_message"] in readme, \
+        f"README.md missing correct stage3_message: {CONFIG['stage3_message']}"
+
+
+def test_readme_emergency_stop_documented():
+    """README.md must document the emergency stop marker."""
+    readme_path = Path(__file__).parent.parent.parent.parent / "README.md"
+    readme = readme_path.read_text()
+    assert CONFIG["emergency_stop"] in readme, (
+        f"README.md missing emergency_stop marker: {CONFIG['emergency_stop']}"
+    )
+
+
+def test_claude_md_stage_markers_match_config():
+    """CLAUDE.md (repo root) must not contain wrong AUTORUN_STAGE[123]_COMPLETE markers."""
+    claude_md_path = Path(__file__).parent.parent.parent.parent / "CLAUDE.md"
+    claude_md = claude_md_path.read_text()
+    for wrong in ("AUTORUN_STAGE1_COMPLETE", "AUTORUN_STAGE2_COMPLETE", "AUTORUN_STAGE3_COMPLETE"):
+        assert wrong not in claude_md, (
+            f"CLAUDE.md contains wrong stage marker '{wrong}'. "
+            f"Use the correct descriptor strings from config.py."
+        )
+
 
 if __name__ == "__main__":
     success = run_comprehensive_integration_tests()

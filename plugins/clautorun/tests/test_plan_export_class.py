@@ -1419,6 +1419,86 @@ class TestOption2ExportFlow:
         # Verify it's in tracking dict
         assert get_content_hash(plan) in exporter.tracking
 
+    # ------------------------------------------------------------------
+    # Gemini CLI first-class citizen tests
+    # Gemini uses lowercase tool names: exit_plan_mode (not ExitPlanMode),
+    # write_file (not Write). Events are normalized by GEMINI_EVENT_MAP
+    # in core.py before reaching PlanExport, but tool_name stays lowercase.
+    # PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"} covers both CLIs.
+    # ------------------------------------------------------------------
+
+    def test_gemini_export_with_exit_plan_mode_tool_name(self, temp_project):
+        """Gemini's exit_plan_mode (lowercase) triggers plan export same as Claude's ExitPlanMode.
+
+        Gemini AfterTool → normalized to PostToolUse by GEMINI_EVENT_MAP.
+        Tool name stays as exit_plan_mode (lowercase). PLAN_TOOLS covers both.
+        """
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-gemini-session",
+            event="PostToolUse",  # normalized from AfterTool
+            tool_name="exit_plan_mode",  # Gemini's lowercase name
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project['plan_file'])}),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        plan = exporter.get_current_plan()
+        assert plan == temp_project['plan_file']
+
+        result = exporter.export(plan)
+        assert result["success"], f"Gemini export failed: {result}"
+
+    def test_gemini_export_with_message_parsing(self, temp_project):
+        """Gemini export works via message parsing when filePath not in tool_result."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-gemini-msg",
+            event="PostToolUse",  # normalized from AfterTool
+            tool_name="exit_plan_mode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({
+                "status": "success",
+                "message": f"Your plan has been saved to: {temp_project['plan_file']}"
+            }),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # filePath not in tool_result, but message parsing fallback works
+        plan = exporter.get_plan_from_exit_message()
+        assert plan == temp_project['plan_file']
+
+        result = exporter.export(plan)
+        assert result["success"]
+
+    def test_gemini_cwd_from_ctx_used_for_project_dir(self, temp_project):
+        """Gemini plan export uses ctx.cwd (injected by client.py) for project_dir.
+
+        For Gemini, tool_input may not contain 'cwd' key. ctx.cwd (from payload["_cwd"])
+        must be the fallback. This is the cwd regression fix applied to Gemini flow.
+        """
+        store = ThreadSafeDB()
+        project_dir = temp_project["project_dir"]
+        ctx = EventContext(
+            session_id="test-gemini-cwd",
+            event="PostToolUse",
+            tool_name="exit_plan_mode",
+            tool_input={},  # No cwd in tool_input (Gemini doesn't always include it)
+            tool_result=json.dumps({"filePath": str(temp_project['plan_file'])}),
+            cwd=str(project_dir),  # Injected by client.py payload["_cwd"]
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+
+        # project_dir must resolve from ctx.cwd even without tool_input.cwd
+        assert exporter.project_dir == project_dir
+
+        plan = exporter.get_current_plan()
+        result = exporter.export(plan)
+        assert result["success"]
+
 
 # =============================================================================
 # TEST: Integration - Option 1 Recovery Flow
@@ -1744,6 +1824,79 @@ class TestPreToolUseBackup:
         )
         assert track_and_export_plans_early(ctx3) is None
 
+    # ------------------------------------------------------------------
+    # Gemini CLI first-class citizen tests for PreToolUse backup
+    # Gemini tool names: write_file (not Write), exit_plan_mode (not ExitPlanMode)
+    # BeforeTool normalized to PreToolUse by GEMINI_EVENT_MAP in core.py
+    # ------------------------------------------------------------------
+
+    def test_gemini_write_file_tool_populates_active_plans(self, temp_project):
+        """Gemini write_file tool (not Write) also triggers plan tracking.
+
+        Gemini's BeforeTool(write_file) normalizes to PreToolUse.
+        track_and_export_plans_early() must handle write_file tool name.
+        """
+        from clautorun.plan_export import track_and_export_plans_early
+
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-gemini-pre",
+            event="PreToolUse",  # normalized from BeforeTool by GEMINI_EVENT_MAP
+            tool_name="write_file",  # Gemini's native tool name
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store
+        )
+        result = track_and_export_plans_early(ctx)
+        assert result is None  # Never blocks
+
+        # Verify active_plans was populated via Gemini write_file
+        with session_state(GLOBAL_SESSION_ID) as state:
+            active = state.get("active_plans", {})
+            assert str(plan) in active, \
+                "Gemini write_file must trigger plan tracking same as Claude Write"
+
+    def test_gemini_exit_plan_mode_triggers_backup_export(self, temp_project):
+        """Gemini exit_plan_mode (lowercase) in BeforeTool triggers backup export.
+
+        This tests the bug fix: hooks.json BeforeTool matcher now includes
+        exit_plan_mode so track_and_export_plans_early fires before AfterTool.
+        Provides redundancy if AfterTool times out or fails.
+        """
+        from clautorun.plan_export import track_and_export_plans_early
+
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        store = ThreadSafeDB()
+
+        # Simulate Gemini write_file tracking
+        ctx_write = EventContext(
+            session_id="test-gemini-exit",
+            event="PreToolUse",
+            tool_name="write_file",
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store
+        )
+        track_and_export_plans_early(ctx_write)
+
+        # Simulate Gemini BeforeTool(exit_plan_mode) backup export
+        ctx_exit = EventContext(
+            session_id="test-gemini-exit",
+            event="PreToolUse",
+            tool_name="exit_plan_mode",  # Gemini's lowercase name
+            tool_input={"cwd": str(project_dir)},
+            store=store
+        )
+        result = track_and_export_plans_early(ctx_exit)
+        assert result is None  # Never blocks
+
+        # Verify plan exported to notes/
+        exported = list(notes_dir.glob("*.md"))
+        assert len(exported) >= 1, \
+            "Gemini exit_plan_mode in BeforeTool must trigger backup plan export"
+
 
 # =============================================================================
 # TEST: Edge Cases and Robustness
@@ -2027,3 +2180,90 @@ class TestEdgeCases:
             assert str(plan_file) not in exporter.active_plans
         finally:
             plan_file.rmdir()
+
+    # ------------------------------------------------------------------
+    # cwd propagation regression tests
+    # Root cause: ctx.cwd was always None → record_write() skipped tracking
+    # Fix: EventContext now accepts cwd= from handle_client() payload["_cwd"]
+    # ------------------------------------------------------------------
+
+    def test_record_write_uses_ctx_cwd_when_tool_input_cwd_absent(self, temp_project):
+        """record_write() falls back to ctx.cwd when tool_input has no 'cwd' key.
+
+        The Write tool's tool_input contains file_path + content, not cwd.
+        plan_export.py:project_dir() must use ctx.cwd (injected by client.py
+        via payload["_cwd"]) when tool_input.get("cwd") is None.
+        """
+        store = ThreadSafeDB()
+        project_dir = temp_project["project_dir"]
+        plan_file = temp_project["plan_file"]
+        plan_file.write_text("# Test Plan\n\ntest content")
+
+        # No 'cwd' in tool_input — simulates real Write hook (only file_path + content)
+        ctx = EventContext(
+            session_id="test-cwd-fallback",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan_file)},
+            cwd=str(project_dir),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        exporter.record_write(str(plan_file))
+
+        # Plan should be tracked when ctx.cwd is available
+        assert str(plan_file) in exporter.active_plans
+
+    def test_record_write_skips_when_ctx_cwd_none(self, temp_project):
+        """record_write() skips plan tracking when both tool_input.cwd and ctx.cwd are None.
+
+        This is safe behavior — get_current_plan() still tries tool_result.filePath
+        and get_plan_from_exit_message() as fallbacks.
+        """
+        store = ThreadSafeDB()
+        plan_file = temp_project["plan_file"]
+        plan_file.write_text("# Test Plan\n\ntest content")
+
+        # Neither tool_input.cwd nor ctx.cwd available (both None)
+        ctx = EventContext(
+            session_id="test-no-cwd",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan_file)},
+            cwd=None,
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        exporter.record_write(str(plan_file))
+
+        # active_plans should be empty — plan was not tracked
+        assert exporter.active_plans == {}
+
+    def test_project_dir_uses_ctx_cwd(self, tmp_path):
+        """PlanExport.project_dir uses ctx.cwd when tool_input has no 'cwd' key."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-project-dir",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={},
+            cwd=str(tmp_path),
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        assert exporter.project_dir == tmp_path
+
+    def test_project_dir_raises_when_cwd_unavailable(self, tmp_path):
+        """PlanExport.project_dir raises ValueError when no cwd source is available."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-no-dir",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={},
+            cwd=None,
+            store=store
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        with pytest.raises(ValueError, match="cwd not available"):
+            _ = exporter.project_dir
