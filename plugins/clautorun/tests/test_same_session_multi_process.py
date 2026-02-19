@@ -34,7 +34,12 @@ from clautorun.plan_export import (
     get_plan_from_metadata,
     embed_plan_metadata,
 )
-from clautorun.session_manager import SessionLock, SessionTimeoutError
+from clautorun.session_manager import (
+    SessionLock,
+    SessionTimeoutError,
+    session_state,
+    _reset_for_testing,
+)
 
 
 # =============================================================================
@@ -43,8 +48,9 @@ from clautorun.session_manager import SessionLock, SessionTimeoutError
 
 def _worker_process_for_lock_test(session_id: str, state_dir: Path,
                                   lock_file, lock_acquired, lock_released):
-    """Worker process for testing cross-process lock coordination."""
-    with SessionLock(session_id, timeout=5.0, state_dir=state_dir):
+    """Worker process for testing cross-process lock coordination via session_state()."""
+    from clautorun.session_manager import session_state
+    with session_state(session_id, state_dir=str(state_dir), timeout=5.0):
         lock_acquired.value = True
         time.sleep(0.2)
     lock_released.value = True
@@ -141,6 +147,14 @@ def rapid_export_worker(session_id: str, plan_path: Path, project_dir: Path,
 # =============================================================================
 # TEST FIXTURES
 # =============================================================================
+
+@pytest.fixture(autouse=True)
+def reset_session_manager_singletons():
+    """Reset module-level singletons before and after each test for isolation."""
+    _reset_for_testing()
+    yield
+    _reset_for_testing()
+
 
 @pytest.fixture
 def multi_process_test_setup(tmp_path):
@@ -432,63 +446,71 @@ class TestProcessIsolation:
 
     def test_lock_file_per_process(self, multi_process_test_setup):
         """
-        Verify that lock files are properly isolated per process.
-
-        Even though they share the same session_id, different processes
-        should coordinate via the same lock file.
+        Verify the shared daemon_state.json.lock is created by session_state()
+        and that different processes coordinate via the same shared lock file.
         """
         setup = multi_process_test_setup
         session_id = setup["session_id"]
-        lock_file = setup["test_state_dir"] / f".{session_id}.lock"
+        # New: single shared lock file for all sessions
+        shared_lock_file = setup["test_state_dir"] / "daemon_state.json.lock"
 
-        # Verify lock file doesn't exist initially
-        assert not lock_file.exists()
+        assert not shared_lock_file.exists()
 
-        # Acquire lock in this process
-        with SessionLock(session_id, timeout=5.0, state_dir=setup["test_state_dir"]):
-            # Lock file should exist
-            assert lock_file.exists()
+        with session_state(session_id,
+                           state_dir=str(setup["test_state_dir"]),
+                           timeout=5.0) as s:
+            s["process_key"] = os.getpid()
+            # Shared lock file exists while session is held
+            assert shared_lock_file.exists()
 
-            # Verify lock file has process info
-            lock_content = lock_file.read_text()
-            assert "pid" in lock_content.lower()
+        # Lock file persists (filelock keeps it; only OS flock is released)
+        assert shared_lock_file.exists()
 
-        # Lock file should be cleaned up
-        assert not lock_file.exists(), "Lock file not cleaned up"
+        # A second acquire must succeed — confirms the OS flock was released
+        with session_state(session_id,
+                           state_dir=str(setup["test_state_dir"]),
+                           timeout=0.5) as s:
+            assert s.get("process_key") == os.getpid()
 
     def test_different_processes_see_same_lock(self, multi_process_test_setup):
         """
-        Verify that different processes see the same lock file for the same session.
+        Verify that different processes share the same daemon_state.json.lock.
 
-        This is critical for cross-process coordination.
+        Worker process holds session_state() (acquiring the shared filelock).
+        Parent process checks the shared lock file exists while worker holds it.
         """
         setup = multi_process_test_setup
         session_id = setup["session_id"]
-        lock_file = setup["test_state_dir"] / f".{session_id}.lock"
+        # Shared lock file path (not per-session)
+        shared_lock_file = setup["test_state_dir"] / "daemon_state.json.lock"
 
         lock_acquired = multiprocessing.Value('b', False)
         lock_released = multiprocessing.Value('b', False)
 
-        # Start worker process
+        # Start worker process — it holds session_state() for 0.2s
         process = multiprocessing.Process(
             target=_worker_process_for_lock_test,
-            args=(session_id, setup["test_state_dir"], lock_file,
+            args=(session_id, setup["test_state_dir"], shared_lock_file,
                   lock_acquired, lock_released)
         )
         process.start()
 
-        # Wait for lock to be acquired
+        # Wait for worker to acquire the lock
         for _ in range(50):  # 5 seconds max
             if lock_acquired.value:
-                assert lock_file.exists(), "Lock file should exist when lock is held"
+                # Shared lock file should exist while worker holds the filelock
+                assert shared_lock_file.exists(), \
+                    "daemon_state.json.lock should exist when lock is held"
                 break
             time.sleep(0.1)
 
-        # Wait for lock to be released
+        # Wait for worker to release
         process.join(timeout=10)
 
-        assert lock_released.value, "Lock was not released"
-        assert not lock_file.exists(), "Lock file should be cleaned up"
+        assert lock_released.value, "Worker did not release the lock"
+        # Lock file persists after release (filelock keeps the file)
+        assert shared_lock_file.exists(), \
+            "daemon_state.json.lock should persist after release (filelock semantics)"
 
 
 if __name__ == "__main__":

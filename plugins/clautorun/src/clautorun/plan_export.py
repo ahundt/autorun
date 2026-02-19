@@ -677,11 +677,15 @@ class PlanExport:
             force: Skip content-hash dedup check (for explicit re-export)
         """
         try:
-            # Check content hash dedup BEFORE copying (prevents Pre+Post double-export)
-            if not force:
-                content_hash = get_content_hash(plan_path)
-                if content_hash in self.tracking:
-                    prev = self.tracking[content_hash]
+            content_hash = get_content_hash(plan_path)
+
+            # Single session_state open: check dedup + update tracking + update active_plans
+            # Collapses the previous triple-open pattern to eliminate 3 lock cycles and
+            # 2 race windows between checks and updates.
+            with session_state(GLOBAL_SESSION_ID) as state:
+                tracking = state.get("tracking", {})
+                if not force and content_hash in tracking:
+                    prev = tracking[content_hash]
                     return {
                         "success": True,
                         "message": "Already exported (dedup)",
@@ -689,53 +693,46 @@ class PlanExport:
                         "skipped": True,
                     }
 
-            dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
-            output_dir = getattr(self.config, dir_key)
-            useful_name = self.extract_useful_name(plan_path)
+                dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
+                output_dir = getattr(self.config, dir_key)
+                useful_name = self.extract_useful_name(plan_path)
 
-            # Expand templates in directory path
-            expanded_dir = self.expand_template(output_dir, plan_path, useful_name)
-            notes_dir = self.project_dir / expanded_dir
-            notes_dir.mkdir(parents=True, exist_ok=True)
+                # Expand templates in directory path
+                expanded_dir = self.expand_template(output_dir, plan_path, useful_name)
+                notes_dir = self.project_dir / expanded_dir
+                notes_dir.mkdir(parents=True, exist_ok=True)
 
-            # Expand template in filename
-            base_filename = self.expand_template(
-                self.config.filename_pattern, plan_path, useful_name
-            )
-            base_filename = self._sanitize_filename(base_filename)
-            dest_filename = f"{base_filename}{self.config.extension}"
-            dest_path = notes_dir / dest_filename
-
-            # Handle collision
-            counter = 1
-            while dest_path.exists():
-                dest_filename = f"{base_filename}_{counter}{self.config.extension}"
+                # Expand template in filename
+                base_filename = self.expand_template(
+                    self.config.filename_pattern, plan_path, useful_name
+                )
+                base_filename = self._sanitize_filename(base_filename)
+                dest_filename = f"{base_filename}{self.config.extension}"
                 dest_path = notes_dir / dest_filename
-                counter += 1
 
-            # Copy file
-            shutil.copy2(plan_path, dest_path)
+                # Handle collision
+                counter = 1
+                while dest_path.exists():
+                    dest_filename = f"{base_filename}_{counter}{self.config.extension}"
+                    dest_path = notes_dir / dest_filename
+                    counter += 1
 
-            # Embed metadata
-            embed_plan_metadata(plan_path, self.ctx.session_id, dest_path)
+                # Copy file and embed metadata (inside lock — plan files are small, <1MB)
+                shutil.copy2(plan_path, dest_path)
+                embed_plan_metadata(plan_path, self.ctx.session_id, dest_path)
 
-            # Record hash to prevent duplicates (ATOMIC)
-            content_hash = get_content_hash(plan_path)
-            dest_str = str(dest_path)
-
-            def record_hash(tracking):
-                tracking[content_hash] = {
+                # Atomic update: tracking + active_plans in one write
+                dest_str = str(dest_path)
+                new_tracking = dict(tracking)
+                new_tracking[content_hash] = {
                     "exported_to": dest_str,
                     "exported_at": datetime.now().isoformat(),
                 }
-            self.atomic_update_tracking(record_hash)
+                state["tracking"] = new_tracking
 
-            # Clear from active (ATOMIC)
-            plan_path_str = str(plan_path)
-
-            def remove_plan(plans):
-                plans.pop(plan_path_str, None)
-            self.atomic_update_active_plans(remove_plan)
+                active_plans = dict(state.get("active_plans", {}))
+                active_plans.pop(str(plan_path), None)
+                state["active_plans"] = active_plans
 
             rel_path = dest_path.relative_to(self.project_dir)
             log_warning(f"Exported plan to {rel_path}", self.config)

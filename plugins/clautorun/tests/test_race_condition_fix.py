@@ -39,7 +39,12 @@ from clautorun.plan_export import (
     export_plan,
     log_warning,
 )
-from clautorun.session_manager import SessionLock, SessionTimeoutError
+from clautorun.session_manager import (
+    SessionLock,
+    SessionTimeoutError,
+    session_state,
+    _reset_for_testing,
+)
 
 
 # =============================================================================
@@ -105,6 +110,14 @@ class SyntheticPlanBuilder:
         }
         transcript_path.write_text(json.dumps(entry) + "\n")
         return transcript_path
+
+
+@pytest.fixture(autouse=True)
+def reset_session_manager_singletons():
+    """Reset module-level singletons before and after each test for isolation."""
+    _reset_for_testing()
+    yield
+    _reset_for_testing()
 
 
 @pytest.fixture
@@ -324,15 +337,19 @@ class TestConcurrentSameSession:
         timeout_occurred = {"value": False}
 
         def long_running_export():
-            """Hold lock for extended period."""
-            with SessionLock(session_id, timeout=10.0, state_dir=test_temp_dir["test_state_dir"]):
+            """Hold session_state lock for extended period."""
+            with session_state(session_id,
+                               state_dir=str(test_temp_dir["test_state_dir"]),
+                               timeout=10.0):
                 time.sleep(2.0)  # Hold lock longer than second export timeout
-                return export_plan(plan_path, test_session.project_dir)
+            return export_plan(plan_path, test_session.project_dir)
 
         def quick_timeout_export():
-            """Try to acquire lock with short timeout."""
+            """Try to acquire session_state lock with short timeout."""
             try:
-                with SessionLock(session_id, timeout=0.5, state_dir=test_temp_dir["test_state_dir"]):
+                with session_state(session_id,
+                                   state_dir=str(test_temp_dir["test_state_dir"]),
+                                   timeout=0.5):
                     return export_plan(plan_path, test_session.project_dir)
             except SessionTimeoutError as e:
                 timeout_occurred["value"] = True
@@ -722,36 +739,61 @@ class TestStressScenarios:
 class TestCleanupVerification:
     """Verify proper cleanup of resources."""
 
-    def test_lock_file_cleanup(self, test_temp_dir, mock_session_lock):
-        """Verify lock files are cleaned up after use."""
+    def test_lock_file_cleanup(self, test_temp_dir):
+        """
+        Verify the shared daemon_state.json.lock is created while session_state()
+        is held and the OS flock is released after (another acquire must succeed).
+        filelock keeps the lock file on disk after release — that is correct behavior.
+        """
         session_id = f"cleanup_test_{uuid.uuid4().hex[:8]}"
-        lock_file = test_temp_dir["test_state_dir"] / f".{session_id}.lock"
+        shared_lock_file = test_temp_dir["test_state_dir"] / "daemon_state.json.lock"
 
-        # Lock should not exist initially
-        assert not lock_file.exists()
+        assert not shared_lock_file.exists()
 
-        # Acquire and release lock
-        with SessionLock(session_id, timeout=5.0, state_dir=test_temp_dir["test_state_dir"]):
-            # Lock file exists during lock
-            assert lock_file.exists()
+        # Acquire via session_state — creates the shared lock file
+        with session_state(session_id,
+                           state_dir=str(test_temp_dir["test_state_dir"]),
+                           timeout=5.0) as s:
+            s["k"] = "v"
+            assert shared_lock_file.exists()
 
-        # Lock file should be cleaned up
-        assert not lock_file.exists(), "Lock file not cleaned up!"
+        # Lock file persists (filelock semantics — OS flock released, file remains)
+        assert shared_lock_file.exists()
 
-    def test_lock_file_cleanup_on_exception(self, test_temp_dir, mock_session_lock):
-        """Verify lock files are cleaned up even if exception occurs."""
+        # A second acquire must succeed — proving the OS flock was actually released
+        with session_state(session_id,
+                           state_dir=str(test_temp_dir["test_state_dir"]),
+                           timeout=0.5) as s:
+            assert s.get("k") == "v"
+
+    def test_lock_file_cleanup_on_exception(self, test_temp_dir):
+        """
+        Verify that exceptions inside session_state() don't leave the OS flock held.
+        Another acquire must succeed after the exception exits the context.
+        Writes inside a context that raises are rolled back (not persisted).
+        """
         session_id = f"exception_cleanup_{uuid.uuid4().hex[:8]}"
-        lock_file = test_temp_dir["test_state_dir"] / f".{session_id}.lock"
+        shared_lock_file = test_temp_dir["test_state_dir"] / "daemon_state.json.lock"
 
         try:
-            with SessionLock(session_id, timeout=5.0, state_dir=test_temp_dir["test_state_dir"]):
-                assert lock_file.exists()
+            with session_state(session_id,
+                               state_dir=str(test_temp_dir["test_state_dir"]),
+                               timeout=5.0) as s:
+                s["k"] = "before_exception"
+                assert shared_lock_file.exists()
                 raise ValueError("Simulated error")
         except ValueError:
             pass
 
-        # Lock file should still be cleaned up
-        assert not lock_file.exists(), "Lock file not cleaned up after exception!"
+        # Lock file persists (filelock keeps it), but OS flock must be released
+        assert shared_lock_file.exists()
+
+        # Must be able to re-acquire immediately — proves flock was released
+        with session_state(session_id,
+                           state_dir=str(test_temp_dir["test_state_dir"]),
+                           timeout=0.5) as s:
+            # Writes are rolled back on exception (not persisted — correct transactional behavior)
+            assert s.get("k") is None
 
     def test_temp_file_cleanup(self, test_temp_dir):
         """Verify test directories are properly isolated."""

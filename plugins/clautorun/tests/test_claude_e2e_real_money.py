@@ -838,6 +838,11 @@ class TestClaudeE2ERealMoney:
     they bypass the Claude AI entirely.
     """
 
+    @staticmethod
+    def _claude_env() -> dict:
+        """Return env without CLAUDECODE so nested claude -p calls are not blocked."""
+        return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
     def _log_claude_run(self, tmp_path: Path, test_name: str, result) -> Path:
         """Write full claude -p subprocess output to a log file in tmp_path."""
         log_path = tmp_path / f"{test_name}.log"
@@ -864,6 +869,7 @@ class TestClaudeE2ERealMoney:
         result = subprocess.run(
             ["claude", "-p", "What is 2+2? Answer with just the number, nothing else."],
             capture_output=True, text=True, timeout=90,
+            env=self._claude_env(),
         )
         log_path = self._log_claude_run(tmp_path, "basic_interaction", result)
         assert result.returncode == 0, (
@@ -906,6 +912,7 @@ class TestClaudeE2ERealMoney:
             text=True,
             timeout=120,
             cwd=str(tmp_path),
+            env=self._claude_env(),
         )
 
         log_path = self._log_claude_run(tmp_path, "rm_blocked", result)
@@ -938,6 +945,7 @@ class TestClaudeE2ERealMoney:
             text=True,
             timeout=120,
             cwd=str(tmp_path),
+            env=self._claude_env(),
         )
 
         log_path = self._log_claude_run(tmp_path, "grep_blocked", result)
@@ -964,6 +972,7 @@ class TestClaudeE2ERealMoney:
             text=True,
             timeout=90,
             cwd=str(tmp_path),
+            env=self._claude_env(),
         )
 
         log_path = self._log_claude_run(tmp_path, "cr_st_policy", result)

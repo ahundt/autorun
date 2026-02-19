@@ -44,19 +44,23 @@ def isolated_config(tmp_path):
 @pytest.fixture
 def isolated_session_manager(tmp_path):
     """Isolated session manager using temp directory."""
+    from clautorun import session_manager
+    from clautorun.session_manager import _reset_for_testing
+
     # Create fresh SessionStateManager with temp state_dir
     temp_state_dir = tmp_path / "sessions"
     temp_state_dir.mkdir(parents=True, exist_ok=True)
 
-    # Replace global session manager temporarily
-    from clautorun import session_manager
-    old_manager = session_manager._global_session_manager
-    session_manager._global_session_manager = SessionStateManager(state_dir=temp_state_dir)
+    # Reset and re-initialise with the temp state dir
+    _reset_for_testing()
+    new_manager = SessionStateManager(state_dir=temp_state_dir)
+    session_manager._manager = new_manager
+    session_manager._store = new_manager._store
 
-    yield session_manager._global_session_manager
+    yield new_manager
 
-    # Restore original
-    session_manager._global_session_manager = old_manager
+    # Restore clean state
+    _reset_for_testing()
 
 
 class TestGhostTaskBugReplication:

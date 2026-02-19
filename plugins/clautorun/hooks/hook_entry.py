@@ -496,7 +496,8 @@ def run_fallback() -> None:
     try:
         from clautorun.__main__ import main as clautorun_main
 
-        clautorun_main()
+        exit_code = clautorun_main()
+        sys.exit(exit_code if exit_code is not None else 0)
     except ImportError as e:
         # Deps missing - try background bootstrap
         if is_bootstrap_disabled():

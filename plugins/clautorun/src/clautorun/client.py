@@ -192,7 +192,8 @@ def run_client() -> int:
     # Inject context for daemon lifecycle management
     # CRITICAL: Use stable PID to prevent premature daemon cleanup
     payload["_pid"] = get_stable_pid()
-    payload["_cwd"] = os.getcwd()   # Current working directory
+    if "_cwd" not in payload:
+        payload["_cwd"] = os.getcwd()   # Current working directory (don't overwrite if already set)
 
     # Detect CLI type for schema enforcement
     from .config import detect_cli_type
