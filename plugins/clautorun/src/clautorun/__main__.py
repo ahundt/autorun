@@ -261,6 +261,17 @@ For more information: https://github.com/ahundt/clautorun
         help="Uninstall plugins and UV tools",
     )
     # Status/info options
+    # Hook integration group (used by hook_entry.py, valid on every code path)
+    hook_group = parser.add_argument_group("Hook Integration")
+    hook_group.add_argument(
+        "--cli",
+        choices=["claude", "gemini"],
+        default=None,
+        help="CLI type calling this invocation (claude or gemini). "
+             "Passed by hook_entry.py so every pathway receives CLI identity. "
+             "When present, also sets CLAUTORUN_CLI_TYPE env var for downstream use.",
+    )
+
     info_group = parser.add_argument_group("Information")
     info_group.add_argument(
         "--status",
@@ -628,9 +639,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"clautorun {__version__}")
         return 0
 
+    # Propagate --cli to env so run_hook_handler() / run_client() can use it
+    if getattr(args, 'cli', None):
+        os.environ['CLAUTORUN_CLI_TYPE'] = args.cli
+
     # Bug #4669 workaround configuration (set env var from CLI arg)
     if hasattr(args, 'exit2_mode') and args.exit2_mode is not None:
-        import os
         os.environ['CLAUTORUN_EXIT2_WORKAROUND'] = args.exit2_mode
 
     # Bootstrap config

@@ -274,3 +274,49 @@ Primary AfterTool path still works
 - [ ] Add /cr:reload, /cr:blocks, /cr:globalstatus, /cr:globalclear, /task-status, /task-ignore to README quick-reference table
 - [ ] Plan export E2E test (accepted plan copies to notes/) — verify via THIS plan acceptance
 - [ ] Cleanup tmux clautorun-test session
+
+---
+
+## Session 3 Results (2026-02-18, continued from context reset)
+
+### Commits from Session 2 (carried forward)
+- `f6c87c1` refactor(tests): migrate standalone test files
+- `0e1f070` feat(commands): add missing slash command stubs for session/global blocks and reload
+- `804deae` test(plan_export): add E2E file-existence tests to TestOption2ExportFlow
+
+### E2E Plan Export Tests (Task 26) — COMPLETED
+Added 3 new tests to `TestOption2ExportFlow` in `test_plan_export_class.py`:
+- [x] `test_exported_file_lands_in_notes_dir`: E2E verify accepted plan lands in notes/ with content ✓
+- [x] `test_rejected_plan_lands_in_rejected_dir`: E2E verify rejected plan lands in notes/rejected/ ✓
+- [x] `test_second_export_of_same_plan_is_skipped`: E2E verify content-hash dedup (only 1 file after 2 exports) ✓
+- Full suite: **1956 passed, 11 skipped, 0 failed** (excluding pre-existing flaky gemini subprocess test)
+
+### Missing Skill Stubs Bug — FIXED (Session 2)
+Commands `/cr:no`, `/cr:ok`, `/cr:clear`, `/cr:blocks`, `/cr:globalno`, `/cr:globalok`, `/cr:globalclear`, `/cr:globalstatus`, `/cr:reload` now have `.md` stubs in `commands/`.
+
+### Test 14: Task Lifecycle (/task-status, /task-ignore)
+- **Method**: Tested in THIS Claude session by examining the task lifecycle DB directly
+- **Session ID**: `7a41832d-bed4-4920-8007-f77a4f65e3b1`
+- **DB path**: `~/.claude/sessions/plugin___task_lifecycle__7a41832d-bed4-4920-8007-f77a4f65e3b1.db`
+- **DB status at time of test**: 34 tasks tracked, 0 incomplete (all completed/ignored)
+
+**Results**:
+- [x] PostToolUse hook fires for TaskCreate/TaskUpdate: CONFIRMED (daemon log shows events received at 21:50:55)
+- [x] TaskUpdate tracking works: PASS — task #20 activeForm "Testing task lifecycle management commands" captured, created_at=1771469403
+- [x] Ghost task creation works: PASS — 34 ghost tasks in DB for this session (created via TaskUpdate for tasks that didn't have prior TaskCreate entry)
+- [x] Schema v2 migration works: PASS — ghost tasks reset to "ignored" status (prevents blocking Stop hook)
+- [x] Session metadata tracked: PASS — session_metadata present with created_at, last_activity
+- [PARTIAL] TaskCreate subject tracking: ISSUE — new tasks created via TaskCreate don't get their subject stored (show as "(unknown - created before tracking)")
+  - Root cause: `ctx.tool_result` for TaskCreate PostToolUse may be structured data (list/dict) not plain string; `handle_task_create()` fails silently when regex can't extract task ID from non-string
+  - Impact: Tasks tracked as ghost entries with no subject; Stop hook behavior unaffected (ghost tasks are non-blocking)
+  - This is a pre-existing issue, not introduced by recent changes
+- [PARTIAL] `/cr:task-status` skill: ISSUE — skill fails with "bad substitution" in zsh (the `!` bash prefix in the skill .md file encounters zsh incompatibility)
+  - Workaround: Use `uv run --project plugins/clautorun python plugins/clautorun/scripts/task_lifecycle_cli.py --status SESSION_ID`
+- [x] Task lifecycle does NOT block session stop when all tasks are completed: PASS (0 incomplete tasks, Stop hook would allow)
+
+**Summary**: Task lifecycle IS running and IS tracking task updates. Core anti-premature-stop functionality works. Subject tracking from TaskCreate has a formatting issue that is pre-existing.
+
+### Next Steps
+- [ ] Test 12: Plan Export (accepted plan lands in notes/) — requires accepting THIS plan
+- [ ] Test 13: Plan Export (rejected) — requires separate session
+

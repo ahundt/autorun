@@ -431,6 +431,23 @@ class TestExpandTemplate:
 # EXPORT OPERATION TESTS
 # =============================================================================
 
+def make_mock_session_state():
+    """Return a fresh in-memory session_state context manager.
+
+    Used to avoid contention with the live daemon's shelve.open() on macOS:
+    shelve.open() blocks indefinitely when another process holds the ndbm
+    file lock, causing 10+ minute test hangs in CI and during development.
+    """
+    from contextlib import contextmanager
+    _state: dict = {}
+
+    @contextmanager
+    def _mock(session_id, timeout=30.0, shared_access=False):
+        yield _state.setdefault(session_id, {})
+
+    return _mock
+
+
 class TestExportPlan:
     """Tests for export_plan() function."""
 
@@ -439,7 +456,8 @@ class TestExportPlan:
         plan_file = plans_dir / "to-export.md"
         plan_file.write_text("# Plan to Export\n\nContent here")
 
-        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
+             patch('clautorun.plan_export.session_state', make_mock_session_state()):
             result = export_plan(plan_file, project_dir)
 
         assert result["success"] is True
@@ -450,7 +468,8 @@ class TestExportPlan:
         plan_file = plans_dir / "embed-test.md"
         plan_file.write_text("# Plan\n\nContent")
 
-        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
+             patch('clautorun.plan_export.session_state', make_mock_session_state()):
             result = export_plan(plan_file, project_dir, session_id="test-session")
 
         assert result["success"] is True
@@ -467,7 +486,8 @@ class TestExportRejectedPlan:
         plan_file = plans_dir / "rejected-plan.md"
         plan_file.write_text("# Rejected Plan\n\nNot approved")
 
-        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
+             patch('clautorun.plan_export.session_state', make_mock_session_state()):
             result = export_rejected_plan(plan_file, project_dir)
 
         assert result["success"] is True
@@ -628,7 +648,8 @@ class TestFullExportFlow:
         plan_file = plans_dir / "approved-plan.md"
         plan_file.write_text("# Approved Plan\n\nThis plan was approved.")
 
-        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
+             patch('clautorun.plan_export.session_state', make_mock_session_state()):
             result = export_plan(plan_file, project_dir, session_id="integration-test")
 
         assert result["success"] is True
@@ -641,7 +662,8 @@ class TestFullExportFlow:
         plan_file = plans_dir / "rejected-plan.md"
         plan_file.write_text("# Rejected Plan\n\nThis plan was not approved.")
 
-        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
+        with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
+             patch('clautorun.plan_export.session_state', make_mock_session_state()):
             result = export_rejected_plan(plan_file, project_dir, session_id="integration-test")
 
         assert result["success"] is True

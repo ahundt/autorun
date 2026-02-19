@@ -1144,8 +1144,8 @@ class ClautorunDaemon:
             from .client import _log_hook_lifecycle
             _log_hook_lifecycle("DAEMON PROCESSING START", Event=event, Tool=tool)
 
-            # Debug logging (ALWAYS enabled)
-            logger.debug(f"Daemon received payload ({len(data)} bytes): {str(payload)}")
+            # Debug logging (lazy % formatting avoids str(payload) when debug is off)
+            logger.debug("Daemon received payload (%d bytes): %s", len(data), payload)
 
             # Track the Claude session PID (injected by client)
             pid = payload.get("_pid")
