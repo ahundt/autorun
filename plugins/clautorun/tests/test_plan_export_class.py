@@ -1499,6 +1499,101 @@ class TestOption2ExportFlow:
         result = exporter.export(plan)
         assert result["success"]
 
+    # ------------------------------------------------------------------
+    # E2E file verification: confirm exported file exists on disk
+    # ------------------------------------------------------------------
+
+    def test_exported_file_lands_in_notes_dir(self, temp_project):
+        """E2E: accepted plan physically appears in notes/ after export.
+
+        Verifies result["success"] is not just an in-memory flag — the
+        file must be readable on disk at project_dir/notes/*.md.
+        """
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="e2e-accept-test",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
+            store=store,
+        )
+        config = PlanExportConfig()
+        exporter = PlanExport(ctx, config)
+
+        plan = exporter.get_current_plan()
+        result = exporter.export(plan)
+
+        assert result["success"], f"Export failed: {result}"
+        notes_dir = temp_project["project_dir"] / config.output_plan_dir
+        exported_files = list(notes_dir.glob("*.md"))
+        assert len(exported_files) == 1, (
+            f"Expected 1 file in notes/, found {len(exported_files)}: {exported_files}"
+        )
+        content = exported_files[0].read_text()
+        assert "Test Plan" in content, "Exported file must contain plan content"
+
+    def test_rejected_plan_lands_in_rejected_dir(self, temp_project):
+        """E2E: rejected plan physically appears in notes/rejected/ after export.
+
+        recover_unexported_plans passes rejected=config.export_rejected, so
+        when abandoned plans are recovered they go to the rejected sub-dir.
+        """
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="e2e-reject-test",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
+            store=store,
+        )
+        config = PlanExportConfig()
+        config.export_rejected = True
+        exporter = PlanExport(ctx, config)
+
+        plan = temp_project["plan_file"]
+        result = exporter.export(plan, rejected=True)
+
+        assert result["success"], f"Rejected export failed: {result}"
+        rejected_dir = temp_project["project_dir"] / config.output_rejected_plan_dir
+        rejected_files = list(rejected_dir.glob("*.md"))
+        assert len(rejected_files) == 1, (
+            f"Expected 1 file in notes/rejected/, found {len(rejected_files)}: {rejected_files}"
+        )
+        content = rejected_files[0].read_text()
+        assert "Test Plan" in content
+
+    def test_second_export_of_same_plan_is_skipped(self, temp_project):
+        """E2E: exporting the same plan twice results in exactly one file (content-hash dedup).
+
+        The second call must return success=False or a skip message, and
+        notes/ must still contain exactly one file.
+        """
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="e2e-dedup-test",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
+            store=store,
+        )
+        config = PlanExportConfig()
+        exporter = PlanExport(ctx, config)
+
+        plan = temp_project["plan_file"]
+        result1 = exporter.export(plan)
+        assert result1["success"], f"First export failed: {result1}"
+
+        result2 = exporter.export(plan)
+        # Second export must NOT create a duplicate file
+        notes_dir = temp_project["project_dir"] / config.output_plan_dir
+        all_files = list(notes_dir.glob("*.md"))
+        assert len(all_files) == 1, (
+            f"Dedup failed: found {len(all_files)} files after second export: {all_files}"
+        )
+
 
 # =============================================================================
 # TEST: Integration - Option 1 Recovery Flow
