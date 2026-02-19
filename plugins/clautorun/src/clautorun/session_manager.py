@@ -1,484 +1,297 @@
-#!/usr/bin/env python3
+"""filelock+JSON-backed session state — replaces shelve+fcntl implementation.
 
-# Copyright 2025 Andrew Hundt <ATHundt@gmail.com>
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+Design:
+- Single JSON file (~/.claude/sessions/daemon_state.json) for all sessions
+- filelock for cross-process mutual exclusion
+- threading.RLock for same-process thread serialization
+- Atomic tempfile+rename writes for crash safety
+- Re-read from disk on every lock acquisition (picks up other-process writes)
 """
-Robust session state manager with proper RAII and thread/process safety
-Follows CLAUDE.md principles: concrete, reliable, automatic, correct from start
-"""
-
-import os
-import time
-import threading
-import fcntl
-import errno
-from pathlib import Path
-from contextlib import contextmanager
-from typing import Optional, Dict, Any
+import contextlib
 import json
+import os
+import threading
+from filelock import FileLock, Timeout as FileLockTimeout
 
-# Constants for concrete behavior
 DEFAULT_SESSION_TIMEOUT = 30.0
 SHARED_ACCESS_TIMEOUT = 5.0
-LOCK_RETRY_DELAY = 0.01
-MAX_LOCK_RETRIES = 100
 
-# Global lock registry for reentrant lock support
-# Format: {lock_file_path: [(pid, thread_id, ref_count), ...]}
-_lock_registry: Dict[str, list] = {}
-_registry_lock = threading.Lock()
 
 class SessionStateError(Exception):
-    """Concrete session state error with specific details"""
     pass
+
 
 class SessionTimeoutError(SessionStateError):
-    """Session lock timeout with concrete timeout details"""
     pass
+
 
 class SessionBackendError(SessionStateError):
-    """Session backend failure with specific error details"""
     pass
 
-class SessionLock:
-    """RAII-style session lock with automatic acquisition and release.
 
-    Supports reentrant locking: the same process/thread can acquire the same
-    lock multiple times without blocking. The lock is only released when the
-    outermost lock context exits.
+class _StateProxy:
+    """dict-like view of one session_id's keys within the shared JSON store."""
+
+    def __init__(self, data: dict, prefix: str, store: "_JSONStore"):
+        self._data = data
+        self._prefix = prefix
+        self._store = store
+
+    def _k(self, key: str) -> str:
+        return f"{self._prefix}/{key}"
+
+    def get(self, key: str, default=None):
+        return self._data.get(self._k(key), default)
+
+    def __getitem__(self, key: str):
+        v = self._data.get(self._k(key))
+        if v is None:
+            raise KeyError(key)
+        return v
+
+    def __setitem__(self, key: str, value):
+        self._data[self._k(key)] = value
+        self._store._dirty = True
+
+    def __contains__(self, key: str) -> bool:
+        return self._k(key) in self._data
+
+    def __delitem__(self, key: str):
+        del self._data[self._k(key)]
+        self._store._dirty = True
+
+    def _logical_keys(self):
+        """Yield logical key names for this session (strips prefix)."""
+        pfx = f"{self._prefix}/"
+        for k in self._data:
+            if k.startswith(pfx):
+                yield k[len(pfx):]
+
+    def __iter__(self):
+        return self._logical_keys()
+
+    def __len__(self):
+        pfx = f"{self._prefix}/"
+        return sum(1 for k in self._data if k.startswith(pfx))
+
+    def keys(self):
+        return list(self._logical_keys())
+
+    def values(self):
+        return [self._data[self._k(k)] for k in self._logical_keys()]
+
+    def items(self):
+        return [(k, self._data[self._k(k)]) for k in self._logical_keys()]
+
+    def clear(self):
+        """Remove all keys for this session."""
+        pfx = f"{self._prefix}/"
+        keys = [k for k in self._data if k.startswith(pfx)]
+        for k in keys:
+            del self._data[k]
+        if keys:
+            self._store._dirty = True
+
+    def update(self, other=None, **kwargs):
+        """Update from dict or keyword arguments."""
+        if other is not None:
+            items = other.items() if hasattr(other, "items") else other
+            for k, v in items:
+                self[k] = v
+        for k, v in kwargs.items():
+            self[k] = v
+
+    def sync(self):
+        pass  # no-op for API compat — writes are deferred to context exit
+
+    def close(self):
+        pass  # no-op for API compat — store is shared
+
+
+class _JSONStore:
+    """Thread-safe + process-safe JSON file store.
+
+    Within one process: threading.RLock serializes concurrent threads.
+    Across processes: filelock serializes concurrent writers.
+    Reads re-load from disk inside the lock so they see latest state.
+    Writes use atomic tempfile+rename for crash safety.
+
+    Supports reentrant locking: the same thread can call session() while already
+    inside a session() context. Inner calls share the same _data dict and save
+    is deferred to the outermost context exit.
     """
 
-    def __init__(self, session_id: str, timeout: float, state_dir: Path):
-        self.session_id = session_id
-        self.timeout = timeout
-        self.state_dir = state_dir
-        self.lock_file = state_dir / f".{session_id}.lock"
-        self.lock_fd = None
-        self.acquired = False
-        self.start_time = time.time()
-        self.process_id = os.getpid()
-        self.thread_id = threading.get_ident()
-        self._is_reentrant = False  # Track if this is a reentrant acquisition
+    def __init__(self, state_file: str, lock_file: str):
+        self._state_file = state_file
+        self._lock_file = lock_file
+        self._rlock = threading.RLock()
+        self._dirty = False
+        self._data: dict = {}
+        # Thread-local reentrancy tracking: _held_by.active = True while locked
+        self._held_by = threading.local()
 
-    def _is_lock_held_by_current_thread(self) -> bool:
-        """Check if the lock is already held by the current thread."""
-        with _registry_lock:
-            lock_holders = _lock_registry.get(str(self.lock_file), [])
-            for holder in lock_holders:
-                if holder[0] == self.process_id and holder[1] == self.thread_id:
-                    return True
-            return False
-
-    def _register_lock(self):
-        """Register that this thread holds the lock."""
-        with _registry_lock:
-            lock_key = str(self.lock_file)
-            if lock_key not in _lock_registry:
-                _lock_registry[lock_key] = []
-
-            # Check if this thread already holds the lock
-            for holder in _lock_registry[lock_key]:
-                if holder[0] == self.process_id and holder[1] == self.thread_id:
-                    holder[2] += 1  # Increment reference count
-                    self._is_reentrant = True
-                    return
-
-            # New lock holder
-            _lock_registry[lock_key].append([self.process_id, self.thread_id, 1])
-
-    def _unregister_lock(self):
-        """Unregister that this thread releases the lock."""
-        with _registry_lock:
-            lock_key = str(self.lock_file)
-            if lock_key not in _lock_registry:
-                return
-
-            # Find and update/remove this thread's hold
-            for i, holder in enumerate(_lock_registry[lock_key]):
-                if holder[0] == self.process_id and holder[1] == self.thread_id:
-                    if holder[2] > 1:
-                        # Decrement reference count (reentrant lock)
-                        holder[2] -= 1
-                        return
-                    else:
-                        # Remove from registry
-                        _lock_registry[lock_key].pop(i)
-                        break
-
-            # Clean up empty registry entries
-            if not _lock_registry[lock_key]:
-                del _lock_registry[lock_key]
-
-    def __enter__(self):
-        """Acquire lock with concrete timeout behavior"""
+    def _load(self) -> dict:
         try:
-            # Create lock file directory
-            self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._state_file, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
-            # Check for reentrant acquisition (same thread)
-            if self._is_lock_held_by_current_thread():
-                # Already held by this thread, just track it
-                self._register_lock()
-                self.acquired = True
-                return None
+    def _save(self):
+        os.makedirs(os.path.dirname(self._state_file), exist_ok=True)
+        tmp = self._state_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self._data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self._state_file)
 
-            # Open lock file with concrete error handling
-            try:
-                self.lock_fd = open(self.lock_file, 'w')
-            except (OSError, IOError) as e:
-                raise SessionStateError(f"Failed to create lock file {self.lock_file}: {e}")
-
-            # Write process information for debugging
-            lock_info = {
-                'pid': self.process_id,
-                'start_time': self.start_time,
-                'session_id': self.session_id
-            }
-            self.lock_fd.write(json.dumps(lock_info))
-            self.lock_fd.flush()
-
-            # Acquire exclusive lock with retry logic
-            self._acquire_lock()
-
-            # Register this lock holder
-            self._register_lock()
-
-            return self.lock_fd
-
-        except Exception:
-            self._cleanup()
-            raise
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Release lock with guaranteed cleanup"""
-        self._cleanup()
-
-    def _acquire_lock(self):
-        """Acquire file lock with concrete retry logic"""
-        start_time = time.time()
-        retries = 0
-
-        while time.time() - start_time < self.timeout and retries < MAX_LOCK_RETRIES:
-            try:
-                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self.acquired = True
-                return
-            except (IOError, OSError) as e:
-                if e.errno == errno.EAGAIN:
-                    # Lock held by another process/thread
-                    retries += 1
-                    time.sleep(LOCK_RETRY_DELAY)
-                    continue
-                else:
-                    # Concrete error for lock acquisition failure
-                    raise SessionStateError(f"Lock acquisition failed: {e}")
-
-        # Timeout reached with concrete details
-        timeout_time = time.time() - start_time
-        raise SessionTimeoutError(
-            f"Failed to acquire session lock for '{self.session_id}' "
-            f"after {retries} retries in {timeout_time:.2f}s (timeout: {self.timeout}s)"
-        )
-
-    def _cleanup(self):
-        """Guaranteed cleanup of lock resources"""
-        # Unregister from lock registry first
-        self._unregister_lock()
-
-        # If this was a reentrant acquisition (no fd), skip fd cleanup
-        if self._is_reentrant:
-            self.acquired = False
+    @contextlib.contextmanager
+    def session(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT):
+        # Reentrant support: same thread already holds the lock — share _data, defer save
+        if getattr(self._held_by, 'active', False):
+            proxy = _StateProxy(self._data, session_id, self)
+            yield proxy
             return
 
-        if self.lock_fd:
-            try:
-                if self.acquired:
-                    # Release file lock
-                    fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
-                    self.acquired = False
-
-                # Close file descriptor
-                self.lock_fd.close()
-
-            except Exception:
-                pass  # Silently handle cleanup errors
-
-            self.lock_fd = None
-
-        # Remove lock file (only if not held by others)
         try:
-            with _registry_lock:
-                lock_key = str(self.lock_file)
-                # Only remove if no one holds it anymore
-                if lock_key not in _lock_registry or not _lock_registry[lock_key]:
-                    if self.lock_file.exists():
-                        self.lock_file.unlink()
-        except Exception:
-            pass
+            file_lock = FileLock(self._lock_file, timeout=timeout)
+            with file_lock:
+                with self._rlock:
+                    # Re-read inside lock: pick up any changes from other processes
+                    self._data = self._load()
+                    self._dirty = False
+                    self._held_by.active = True
+                    try:
+                        proxy = _StateProxy(self._data, session_id, self)
+                        yield proxy
+                        if self._dirty:
+                            self._save()
+                    finally:
+                        self._held_by.active = False
+        except FileLockTimeout as e:
+            raise SessionTimeoutError(
+                f"Could not acquire state lock for '{session_id}' after {timeout}s"
+            ) from e
 
-class SessionBackendManager:
-    """Manages shelve backend selection with concrete fallback logic"""
 
-    def __init__(self, state_dir: Path):
-        self.state_dir = state_dir
-        self._backend_lock = threading.Lock()
-        self._backends: Dict[str, str] = {}
+class SessionLock:
+    """No-op shim — filelock inside _JSONStore.session() handles concurrency."""
 
-    def get_backend(self, session_id: str) -> str:
-        """Get or determine backend for session with thread safety"""
-        with self._backend_lock:
-            if session_id not in self._backends:
-                self._backends[session_id] = self._test_backends(session_id)
-            return self._backends[session_id]
+    def __init__(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT,
+                 state_dir=None):
+        pass
 
-    def _test_backends(self, session_id: str) -> str:
-        """Test available backends and return the best working one"""
-        backends_to_test = [
-            ("default", self._test_default_backend),
-            ("dumbdbm", self._test_dumbdbm_backend),
-            ("memory", self._test_memory_backend)
-        ]
+    def __enter__(self):
+        return self
 
-        for backend_name, test_func in backends_to_test:
-            try:
-                if test_func(session_id):
-                    return backend_name
-            except Exception:
-                # Log and continue to next backend
-                pass
+    def __exit__(self, *args):
+        pass
 
-        # This should never happen due to memory fallback
-        raise SessionBackendError("No available session backend")
 
-    def _cleanup_shelve_files(self, db_path: Path):
-        """Remove all files created by shelve for a given db path.
+_store_lock = threading.Lock()
+_store: "_JSONStore | None" = None
 
-        shelve may create files with various suffixes (.db, .dir, .bak, .dat)
-        depending on the platform's dbm backend. On macOS with dbm.gnu/ndbm,
-        shelve.open("foo.db") creates "foo.db.db", so os.remove("foo.db") fails.
-        Uses direct file removal with known suffixes instead of glob (which
-        requires listing entire directory — slow with 10K+ files).
-        """
-        base = str(db_path)
-        # Try all known shelve suffixes plus the base path itself
-        candidates = [
-            base, base + ".db", base + ".dir", base + ".bak", base + ".dat",
-        ]
-        for filepath in candidates:
-            try:
-                os.remove(filepath)
-            except OSError:
-                pass
 
-    def _test_default_backend(self, session_id: str) -> bool:
-        """Test default shelve backend"""
-        import shelve
-        test_db = self.state_dir / f"test_backend_{session_id}.db"
+def _get_store(state_dir: "str | None" = None) -> "_JSONStore":
+    global _store
+    if _store is None:
+        with _store_lock:
+            if _store is None:
+                d = state_dir or os.path.expanduser("~/.claude/sessions")
+                _store = _JSONStore(
+                    os.path.join(d, "daemon_state.json"),
+                    os.path.join(d, "daemon_state.json.lock"),
+                )
+    return _store
 
-        try:
-            test_state = shelve.open(str(test_db), writeback=True)
-            test_state["test"] = "test"
-            test_state.sync()
-            test_state.close()
-            self._cleanup_shelve_files(test_db)
-            return True
-        except Exception:
-            self._cleanup_shelve_files(test_db)
-            return False
-
-    def _test_dumbdbm_backend(self, session_id: str) -> bool:
-        """Test dumbdbm backend"""
-        import shelve
-        test_db = self.state_dir / f"test_dumbdbm_{session_id}.db"
-
-        try:
-            test_state = shelve.open(str(test_db), writeback=True, protocol=2)
-            test_state["test"] = "test"
-            test_state.sync()
-            test_state.close()
-            self._cleanup_shelve_files(test_db)
-            return True
-        except Exception:
-            self._cleanup_shelve_files(test_db)
-            return False
-
-    def _test_memory_backend(self, session_id: str) -> bool:
-        """Memory backend always works"""
-        return True
 
 class SessionStateManager:
-    """Thread-safe and process-safe session state management"""
+    def __init__(self, state_dir: "str | None" = None):
+        self._store = _get_store(state_dir)
 
-    def __init__(self, state_dir: Optional[Path] = None):
-        self.state_dir = state_dir or Path.home() / ".claude" / "sessions"
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.backend_manager = SessionBackendManager(self.state_dir)
+    @property
+    def state_dir(self) -> "Path":
+        """Path to the directory containing daemon_state.json."""
+        import os
+        from pathlib import Path
+        return Path(os.path.dirname(self._store._state_file))
 
-        # Memory fallback storage with thread safety
-        self._memory_states: Dict[str, Dict[str, Any]] = {}
-        self._memory_locks: Dict[str, threading.Lock] = {}
-        self._memory_lock = threading.Lock()
+    @contextlib.contextmanager
+    def session_state(self, session_id: str,
+                      timeout: float = DEFAULT_SESSION_TIMEOUT, **_):
+        with self._store.session(session_id, timeout) as s:
+            yield s
 
-    @contextmanager
-    def session_state(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT,
-                     shared_access: bool = False):
-        """
-        Get thread-safe and process-safe session state
+    @contextlib.contextmanager
+    def shared_session_state(self, session_id: str,
+                              timeout: float = SHARED_ACCESS_TIMEOUT, **_):
+        with self._store.session(session_id, timeout) as s:
+            yield s
 
-        Args:
-            session_id: Concrete session identifier
-            timeout: Lock acquisition timeout in seconds
-            shared_access: Allow concurrent read access for AI monitor scenarios
+    def clear_test_session(self, session_id: str):
+        prefix = f"{session_id}/"
+        with self._store._rlock:
+            keys = [k for k in self._store._data if k.startswith(prefix)]
+            for k in keys:
+                del self._store._data[k]
+            if keys:
+                self._store._save()
 
-        Yields:
-            Dict: Session state dictionary for read/write operations
-        """
-        if not session_id or not isinstance(session_id, str):
-            raise SessionStateError("Session ID must be a non-empty string")
+    def clear_test_sessions_batch(self, session_ids):
+        """Clear multiple test sessions in one save operation (O(1) disk writes)."""
+        any_deleted = False
+        with self._store._rlock:
+            for session_id in session_ids:
+                prefix = f"{session_id}/"
+                keys = [k for k in self._store._data if k.startswith(prefix)]
+                for k in keys:
+                    del self._store._data[k]
+                if keys:
+                    any_deleted = True
+            if any_deleted:
+                self._store._save()
 
-        # Determine appropriate timeout for access type
-        lock_timeout = SHARED_ACCESS_TIMEOUT if shared_access else timeout
 
-        # Acquire session lock using RAII
-        with SessionLock(session_id, lock_timeout, self.state_dir):
-            # Get backend for this session
-            backend = self.backend_manager.get_backend(session_id)
+_manager: "SessionStateManager | None" = None
+_manager_lock = threading.Lock()
 
-            # Get state from appropriate backend
-            if backend == "memory":
-                state = self._get_memory_state(session_id)
-            else:
-                state = self._get_shelve_state(session_id, backend)
 
-            try:
-                # Handle shared access tracking
-                if shared_access:
-                    self._track_shared_access(state, session_id, increment=True)
+def get_session_manager(state_dir: "str | None" = None) -> SessionStateManager:
+    global _manager
+    if _manager is None:
+        with _manager_lock:
+            if _manager is None:
+                _manager = SessionStateManager(state_dir)
+    return _manager
 
-                yield state
 
-            finally:
-                # Handle shared access cleanup
-                if shared_access:
-                    self._track_shared_access(state, session_id, increment=False)
-
-                # Ensure proper cleanup for shelve backends
-                if hasattr(state, 'sync') and hasattr(state, 'close'):
-                    try:
-                        state.sync()
-                        state.close()
-                    except Exception:
-                        pass  # Silently handle cleanup errors
-
-    def _get_memory_state(self, session_id: str) -> Dict[str, Any]:
-        """Get thread-safe memory state for session"""
-        with self._memory_lock:
-            if session_id not in self._memory_locks:
-                self._memory_locks[session_id] = threading.Lock()
-
-        with self._memory_locks[session_id]:
-            if session_id not in self._memory_states:
-                self._memory_states[session_id] = {}
-            return self._memory_states[session_id]
-
-    def _get_shelve_state(self, session_id: str, backend: str) -> Any:
-        """Get shelve state for session"""
-        import shelve
-
-        if backend == "default":
-            return shelve.open(str(self.state_dir / f"plugin_{session_id}.db"), writeback=False)
-        elif backend == "dumbdbm":
-            return shelve.open(str(self.state_dir / f"plugin_{session_id}_dumb.db"), writeback=False)
-        else:
-            raise SessionBackendError(f"Unknown backend: {backend}")
-
-    def _track_shared_access(self, state: Dict[str, Any], session_id: str, increment: bool):
-        """Track shared access for monitoring.
-
-        Note: With writeback=False, all assignments to state[key] are explicit
-        writes that persist immediately. No in-place mutation (e.g., += on
-        mutable values) — always reassign the full value.
-        """
-        try:
-            if increment:
-                count = state.get("_shared_access_count", 0) if hasattr(state, 'get') else 0
-                state["_shared_access_count"] = count + 1
-                state["_last_shared_access"] = time.time()
-            else:
-                count = state.get("_shared_access_count", 0) if hasattr(state, 'get') else 0
-                state["_shared_access_count"] = max(0, count - 1)
-        except Exception:
-            pass  # Silently handle tracking errors
-
-# Global session manager instance following DRY principles
-_global_session_manager: Optional[SessionStateManager] = None
-
-def get_session_manager() -> SessionStateManager:
-    """Get or create global session manager (DRY pattern)"""
-    global _global_session_manager
-    if _global_session_manager is None:
-        _global_session_manager = SessionStateManager()
-    return _global_session_manager
-
-# Convenience context managers for common usage patterns
-@contextmanager
+@contextlib.contextmanager
 def session_state(session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT,
-                 shared_access: bool = False):
-    """Convenience wrapper for session state access"""
-    manager = get_session_manager()
-    with manager.session_state(session_id, timeout, shared_access) as state:
-        yield state
+                  state_dir: "str | None" = None, **_):
+    with get_session_manager(state_dir).session_state(session_id, timeout) as s:
+        yield s
 
-@contextmanager
-def shared_session_state(session_id: str, timeout: float = SHARED_ACCESS_TIMEOUT):
-    """Convenience wrapper for shared session access (AI monitor scenarios)"""
-    manager = get_session_manager()
-    with manager.session_state(session_id, timeout, shared_access=True) as state:
-        yield state
 
-def clear_test_session_state(session_id: str) -> None:
-    """Clear session state for testing (exported for test cleanup).
+@contextlib.contextmanager
+def shared_session_state(session_id: str, timeout: float = SHARED_ACCESS_TIMEOUT,
+                          state_dir: "str | None" = None, **_):
+    with get_session_manager(state_dir).shared_session_state(session_id, timeout) as s:
+        yield s
 
-    WARNING: This is a testing-only function. DO NOT use in production code.
-    Clears session state from both memory and shelve backends.
 
-    Args:
-        session_id: Session identifier to clear
+def clear_test_session_state(session_id: str, state_dir: "str | None" = None):
+    get_session_manager(state_dir).clear_test_session(session_id)
 
-    Example:
-        >>> clear_test_session_state("test-session-123")
-    """
-    global _global_session_manager
 
-    if _global_session_manager is None:
-        return  # Nothing to clear
+def clear_test_session_states_batch(session_ids, state_dir: "str | None" = None):
+    """Clear multiple test sessions in one save operation. Use instead of looping
+    over clear_test_session_state to avoid O(n) disk writes."""
+    get_session_manager(state_dir).clear_test_sessions_batch(session_ids)
 
-    # Clear from memory backend
-    with _global_session_manager._memory_lock:
-        if session_id in _global_session_manager._memory_states:
-            del _global_session_manager._memory_states[session_id]
-        if session_id in _global_session_manager._memory_locks:
-            del _global_session_manager._memory_locks[session_id]
 
-    # Clear shelve backend files using direct removal (no glob — slow with 10K+ files)
-    state_dir = _global_session_manager.state_dir
-
-    # Try all known shelve suffixes for both backends
-    for prefix in [f"plugin_{session_id}.db", f"plugin_{session_id}_dumb.db"]:
-        base = str(state_dir / prefix)
-        for suffix in ["", ".db", ".dir", ".bak", ".dat"]:
-            try:
-                os.remove(base + suffix)
-            except OSError:
-                pass  # Silently handle cleanup errors
+def _reset_for_testing():
+    """Reset module-level singletons. For use in test fixtures ONLY."""
+    global _store, _manager
+    _store = None
+    _manager = None

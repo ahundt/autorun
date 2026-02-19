@@ -1180,8 +1180,19 @@ class ClautorunDaemon:
                 cwd=payload.get("_cwd")
             )
 
-            # Dispatch
-            response = self.app.dispatch(ctx)
+            # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
+            # Synchronous/blocking work in handlers (file I/O, locks) runs in a thread.
+            loop = asyncio.get_running_loop()
+            try:
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(None, self.app.dispatch, ctx),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Handler for '{ctx.event}' timed out after 15s (fail-open)"
+                )
+                response["systemMessage"] = f"Daemon handler for '{ctx.event}' timed out after 15s"
 
         except asyncio.LimitOverrunError as e:
             # Buffer size exceeded - provide actionable guidance
@@ -1207,7 +1218,10 @@ class ClautorunDaemon:
             writer.write(response_json.encode() + b'\n')
             await writer.drain()
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass  # Ignore errors on close (connection may already be gone)
 
             duration = (time.time() - start_time) * 1000
             from .client import _log_hook_lifecycle

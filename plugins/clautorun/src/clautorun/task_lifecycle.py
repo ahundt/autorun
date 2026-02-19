@@ -1170,7 +1170,8 @@ You CANNOT stop until all tasks are marked completed or deleted.
             ttl_seconds = ttl * 86400
             mgr = get_session_manager()
             sessions_dir = mgr.state_dir
-            prefix = "plugin___task_lifecycle__"
+            # JSON key prefix for task lifecycle sessions (matches global_key format below)
+            json_key_prefix = "__task_lifecycle__"
             current = os.environ.get("CLAUDE_SESSION_ID", "")
             archive_dir = config.storage_dir / "archive"
 
@@ -1195,22 +1196,26 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 print(f"TTL: {ttl} days")
                 print()
 
-            if not sessions_dir.exists():
-                print("No session directory found.")
-                return 0
-
-            # Find session IDs from file names
+            # Find session IDs from daemon_state.json (filelock+JSON backend).
+            # Keys in the JSON are "{global_key}/{subkey}" where
+            # global_key = "__task_lifecycle__{sid}".
             sids = set()
-            for f in sessions_dir.iterdir():
-                if f.name.startswith(prefix) and ".db" in f.suffix:
-                    # Extract session_id from plugin___task_lifecycle__SESSIONID.db[.db]
-                    name = f.stem if not f.stem.endswith(".db") else f.stem[:-3]
-                    sid = name[len(prefix):]
-                    if fnmatch.fnmatch(sid, pattern):
-                        sids.add(sid)
+            state_file = sessions_dir / "daemon_state.json"
+            if state_file.exists():
+                try:
+                    raw = json.loads(state_file.read_text())
+                    for json_key in raw:
+                        # json_key = "__task_lifecycle__{sid}/{subkey}"
+                        if json_key.startswith(json_key_prefix) and "/" in json_key:
+                            rest = json_key[len(json_key_prefix):]
+                            sid = rest.split("/")[0]
+                            if sid and fnmatch.fnmatch(sid, pattern):
+                                sids.add(sid)
+                except (json.JSONDecodeError, OSError):
+                    pass
 
             if not sids:
-                print(f"No shelves matching '{pattern}'.")
+                print(f"No task lifecycle sessions matching '{pattern}'.")
                 return 0
 
             # Preview sessions that will be processed
@@ -1311,11 +1316,6 @@ You CANNOT stop until all tasks are marked completed or deleted.
 
                         # Clear state (within lock)
                         state.clear()
-
-                    # Delete shelve files (after lock released)
-                    import shutil
-                    for f in sessions_dir.glob(f"{prefix}{sid}*"):
-                        f.unlink()
 
                     # Clean audit dir
                     audit_dir = config.storage_dir / sid

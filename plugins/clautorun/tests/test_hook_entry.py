@@ -1004,9 +1004,12 @@ class TestAllLocationsSync:
 
     def test_cache_matches_source_hook_entry(self):
         """Location 4: Claude Code cache hook_entry.py must match source."""
-        cache_versions = list(Path.home().glob(
-            ".claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py"
-        ))
+        cache_versions = [
+            p for p in Path.home().glob(
+                ".claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py"
+            )
+            if not p.parts[-3].endswith(".backup")  # Ignore install-time rollback backups
+        ]
 
         if not cache_versions:
             pytest.skip("Claude Code cache not installed")

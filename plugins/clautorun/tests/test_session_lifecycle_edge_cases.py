@@ -156,6 +156,7 @@ def test_memory_leak_edge_cases():
     print("\n🔍 Testing Memory Leak Edge Cases...")
 
     from clautorun import session_state, clear_test_session_state
+    from clautorun.session_manager import clear_test_session_states_batch
 
     # Test rapid session creation and destruction
     created_sessions = []
@@ -169,9 +170,8 @@ def test_memory_leak_edge_cases():
     except Exception as e:
         print(f"❌ Memory leak test failed: {e}")
     finally:
-        # CLEANUP: Remove all 1000 sessions from global dicts
-        for session_id in created_sessions:
-            clear_test_session_state(session_id)
+        # CLEANUP: Remove all 1000 sessions in ONE disk write (O(1) vs O(n))
+        clear_test_session_states_batch(created_sessions)
         print(f"   Cleaned up {len(created_sessions)} test sessions")
 
     # Test session with large data
