@@ -1,5 +1,5 @@
 ---
-name: automated-cli-testing-sessions
+name: tmux-automation
 description: Complete CLI testing automation using tmux/byobu sessions with ai-monitor integration. Create automated workflows for testing plugins, CLIs, and terminal applications. Includes session management, keystroke control, output capture, and autonomous monitoring capabilities.
 ---
 

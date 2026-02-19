@@ -81,17 +81,17 @@ Ensures thorough task completion through mandatory stages:
 
 | Stage | Purpose | Completion Marker |
 |-------|---------|-------------------|
-| **Stage 1** | Initial implementation | `AUTORUN_STAGE1_COMPLETE` |
-| **Stage 2** | Critical evaluation - identify gaps, fix issues | `AUTORUN_STAGE2_COMPLETE` |
-| **Stage 3** | Final verification - all requirements met | `AUTORUN_STAGE3_COMPLETE` |
+| **Stage 1** | Initial implementation | `AUTORUN_INITIAL_TASKS_COMPLETED` |
+| **Stage 2** | Critical evaluation - identify gaps, fix issues | `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED` |
+| **Stage 3** | Final verification - all requirements met | `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` |
 
 **Concrete Example:**
 ```
 User: /cr:go Add login form with validation and tests
 
-Stage 1: Implements login form → outputs AUTORUN_STAGE1_COMPLETE
-Stage 2: Reviews work, finds missing error handling, adds it → AUTORUN_STAGE2_COMPLETE
-Stage 3: Verifies form works, tests pass, error handling complete → AUTORUN_STAGE3_COMPLETE → Session ends
+Stage 1: Implements login form → outputs AUTORUN_INITIAL_TASKS_COMPLETED
+Stage 2: Reviews work, finds missing error handling, adds it → CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED
+Stage 3: Verifies form works, tests pass, error handling complete → AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY → Session ends
 ```
 
 Without three-stage: Claude might stop after Stage 1 with incomplete work.
