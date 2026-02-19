@@ -42,24 +42,22 @@ import datetime
 from pathlib import Path
 
 try:
-    from .logging_utils import get_logger
+    from .logging_utils import get_logger, DEBUG_ENABLED
     logger = get_logger(__name__)
 except ImportError:
     # Fallback if logging_utils not available (shouldn't happen)
     import logging
     logger = logging.getLogger(__name__)
+    DEBUG_ENABLED = False
 
 SOCKET_PATH = Path.home() / ".clautorun" / "daemon.sock"
 DEBUG_LOG = Path.home() / ".clautorun" / "daemon.log"
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:
-    """DRY helper for hook lifecycle logging.
-
-    Args:
-        message: Log message
-        **kwargs: Key-value pairs to log
-    """
+    """DRY helper for hook lifecycle logging. Only active when CLAUTORUN_DEBUG=1."""
+    if not DEBUG_ENABLED:
+        return
     try:
         DEBUG_LOG.parent.mkdir(exist_ok=True)
         with open(DEBUG_LOG, 'a') as f:
@@ -207,8 +205,7 @@ def run_client() -> int:
 
     _log_hook_lifecycle("\n" + "="*80 + "\nCLIENT→DAEMON REQUEST",
                         Event=hook_event, Source=hook_source, Tool=tool_name,
-                        PayloadKeys=list(payload.keys()),
-                        FullPayload=json.dumps(payload, indent=2))
+                        PayloadKeys=list(payload.keys()))
 
     logger.debug(f"Forwarding hook to daemon: event={hook_event}, cli={cli_type}, tool={tool_name}")
 
