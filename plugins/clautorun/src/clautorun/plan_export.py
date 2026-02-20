@@ -975,8 +975,12 @@ def track_and_export_plans_early(ctx: EventContext) -> Optional[Dict]:
             plan = exporter.get_current_plan()
             if plan:
                 result = exporter.export(plan)
-                if result["success"]:
+                if result["success"] and config.notify_claude and not result.get("skipped"):
                     logger.info(f"PreToolUse export: {result['message']}")
+                    # No to_human needed: PATHWAY 1 allow → systemMessage = msg_reason (core.py:843)
+                    return ctx.respond("allow", f"📋 {result['message']}")
+                elif result["success"]:
+                    logger.info(f"PreToolUse export (dedup/no-notify): {result['message']}")
     except Exception as e:
         logger.debug(f"PreToolUse plan_export: {e}")
     return None
@@ -1018,10 +1022,12 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 
         if plan:
             result = exporter.export(plan)
-            if result["success"] and config.notify_claude:
-                return ctx.respond("allow", f"📋 {result['message']}")
+            # Skip dedup notifications ("Already exported (dedup)") — vague and unhelpful.
+            # Timeout is human-visible: user must know plan was NOT exported (to_human=True).
+            if result["success"] and config.notify_claude and not result.get("skipped"):
+                return ctx.respond("allow", f"📋 {result['message']}", to_human=True)
     except SessionTimeoutError:
-        return ctx.respond("allow", "Export skipped: lock timeout")
+        return ctx.respond("allow", "⚠️ Plan export skipped: lock timeout. Re-trigger ExitPlanMode to retry.", to_human=True)
     except Exception as e:
         logger.error(f"export_on_exit_plan_mode error: {e}")
     return None
@@ -1057,10 +1063,10 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
 
         if recovered_count > 0:
             msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context or abandoned): {last_msg}"
-            # IMPORTANT: SessionStart is a lifecycle event, not a tool event.
-            # It doesn't support decision/reason/hookSpecificOutput fields.
-            # Use minimal response format with systemMessage only.
-            return {"continue": True, "systemMessage": msg}
+            # PATHWAY 4 (SessionStart): ctx.respond() adds required schema fields
+            # (stopReason, suppressOutput) and applies schema validation via
+            # validate_hook_response(). systemMessage is always human-visible for SessionStart.
+            return ctx.respond("allow", msg)
 
     except SessionTimeoutError as e:
         logger.warning(f"SessionStart plan recovery timeout: {e}")

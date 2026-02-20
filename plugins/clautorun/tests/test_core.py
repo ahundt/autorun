@@ -512,6 +512,131 @@ class TestEventContext:
 
 
 # ============================================================================
+# to_human parameter tests — all 5 pathways
+# ============================================================================
+
+class TestRespondToHuman:
+    """Tests for to_human parameter across all pathways in EventContext.respond().
+
+    Pathway summary:
+      PATHWAY 1 (PreToolUse):      to_human silently ignored — hookSpecificOutput always kept
+      PATHWAY 2 (PostToolUse, UPS): to_human supported — False→AI injection, True/str→human-visible
+      PATHWAY 3 (Stop):            to_human silently ignored — systemMessage already human-visible
+      PATHWAY 4 (SessionStart):    to_human silently ignored — systemMessage always set, no AI-only path
+    """
+
+    # =========================================================================
+    # PATHWAY 2: PostToolUse — fully supported
+    # =========================================================================
+
+    def test_posttooluse_to_human_false_default_ai_injection(self):
+        """Default (to_human=False): hookSpecificOutput present → AI context injection."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "context msg")
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["additionalContext"] == "context msg"
+
+    def test_posttooluse_to_human_true_shows_reason_to_user(self):
+        """to_human=True: hookSpecificOutput absent, reason empty → no double-print."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "Plan exported to notes/plan.md", to_human=True)
+        assert response["systemMessage"] == "Plan exported to notes/plan.md"
+        assert "hookSpecificOutput" not in response  # absent → human-visible path
+        # reason must be empty — canonical example (claude-code-hooks-api.md:202-210) omits it
+        assert response.get("reason", "") == ""
+
+    def test_posttooluse_to_human_custom_string(self):
+        """to_human='custom': human sees custom string; reason empty to prevent double-print."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "verbose AI context", to_human="📋 Plan saved")
+        assert response["systemMessage"] == "📋 Plan saved"
+        assert "hookSpecificOutput" not in response
+        assert response.get("reason", "") == ""
+
+    def test_posttooluse_to_human_empty_string_treated_as_false(self):
+        """to_human='': empty string is falsy → behaves like False (AI injection)."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "context", to_human="")
+        assert "hookSpecificOutput" in response
+
+    def test_posttooluse_to_human_truthy_int_treated_as_false(self):
+        """to_human=1: truthy int but not True by identity → AI injection path."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "context", to_human=1)
+        assert "hookSpecificOutput" in response
+
+    def test_posttooluse_to_human_true_with_empty_reason(self):
+        """to_human=True + empty reason: human path taken but systemMessage is empty.
+        Documented trap — callers must pass non-empty reason when to_human=True."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "", to_human=True)
+        assert "hookSpecificOutput" not in response  # human path taken
+        assert response["systemMessage"] == ""       # empty — no visible output
+
+    def test_posttooluse_ai_injection_has_reason_not_empty(self):
+        """AI injection path (to_human=False): reason field carries context to AI."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "AI context here")
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["additionalContext"] == "AI context here"
+        assert response["reason"] == "AI context here"
+
+    def test_posttooluse_to_human_gemini_no_hso(self):
+        """Gemini AfterTool + to_human=True: hookSpecificOutput absent, systemMessage set.
+        decision: 'approve' — consistent with existing PATHWAY 2 AI path (pre-existing pattern).
+        reason: '' — no double-print."""
+        ctx = EventContext(session_id="test", event="PostToolUse", cli_type="gemini")
+        response = ctx.respond("allow", "Plan exported", to_human=True)
+        assert response["systemMessage"] == "Plan exported"
+        assert "hookSpecificOutput" not in response
+        assert response["decision"] == "approve"  # PATHWAY 2 uses "approve" for both CLIs
+        assert response.get("reason", "") == ""
+
+    # =========================================================================
+    # PATHWAY 1: PreToolUse — to_human silently ignored (security)
+    # =========================================================================
+
+    def test_pretooluse_to_human_true_deny_hso_always_kept(self):
+        """PreToolUse deny + to_human=True: hookSpecificOutput MUST be kept.
+        Prevents fail-open (tool executes if hookSpecificOutput absent).
+        systemMessage deliberately empty for deny on Claude Code (anti-triple-print, core.py:843)."""
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.respond("deny", "Blocked", to_human=True)
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert response.get("systemMessage", "") == ""  # anti-triple-print preserved
+
+    def test_pretooluse_to_human_true_allow_hso_kept(self):
+        """PreToolUse allow + to_human=True: hookSpecificOutput still kept."""
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.respond("allow", "Allowed", to_human=True)
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    # =========================================================================
+    # PATHWAY 3: Stop — to_human silently ignored
+    # =========================================================================
+
+    def test_stop_to_human_silently_ignored(self):
+        """Stop + to_human=True: silently ignored; response identical to without it."""
+        ctx = EventContext(session_id="test", event="Stop")
+        response_with = ctx.respond("block", "Keep working", to_human=True)
+        response_without = ctx.respond("block", "Keep working")
+        assert response_with == response_without
+
+    # =========================================================================
+    # PATHWAY 4: SessionStart — to_human silently ignored
+    # =========================================================================
+
+    def test_sessionstart_to_human_silently_ignored(self):
+        """SessionStart + to_human=True: silently ignored; systemMessage always set by PATHWAY 4."""
+        ctx = EventContext(session_id="test", event="SessionStart")
+        response_with = ctx.respond("allow", "Session started", to_human=True)
+        response_without = ctx.respond("allow", "Session started")
+        assert response_with == response_without
+
+
+# ============================================================================
 # P1.3.1: CLI Event Name Mapping Tests
 # ============================================================================
 
