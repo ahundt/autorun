@@ -37,7 +37,7 @@ import copy
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Optional, Dict, List, Callable, Set
+from typing import Any, Optional, Dict, List, Callable, Set, Union
 from functools import lru_cache
 
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
@@ -759,7 +759,7 @@ class EventContext:
             return False
 
     # === UNIFIED RESPONSE BUILDER (DRY: single method handles all events) ===
-    def respond(self, decision: str = "allow", reason: str = "") -> dict:
+    def respond(self, decision: str = "allow", reason: str = "", to_human: Union[bool, str] = False) -> dict:
         """
         Unified response builder - automatically formats for event type.
 
@@ -773,6 +773,14 @@ class EventContext:
         Args:
             decision: One of "allow", "deny", "ask", "block"
             reason: Message to include in response
+            to_human: Human-visible output routing. Only meaningful for PATHWAY 2
+                (PostToolUse and UserPromptSubmit events):
+                  False (default) — AI context injection via hookSpecificOutput.additionalContext
+                  True            — show `reason` to human user; hookSpecificOutput omitted
+                  "custom msg"    — show custom string to human; hookSpecificOutput omitted
+                All other pathways (PreToolUse, Stop, SessionStart, etc.) silently ignore
+                to_human to preserve their existing semantics and safety invariants.
+                Note: empty string "" and non-True truthy values (e.g. 1) behave like False.
 
         Returns:
             dict: Hook response compatible with Claude Code and Gemini CLI
@@ -809,6 +817,9 @@ class EventContext:
         # PATHWAY 1: PreToolUse (Permission Decisions)
         # =====================================================================
         if self._event == "PreToolUse":
+            # PATHWAY 1: to_human is silently ignored — hookSpecificOutput always kept for security.
+            if to_human:
+                logger.debug("respond: to_human ignored for PreToolUse — hookSpecificOutput always kept")
             # Claude Code PreToolUse Schema:
             # - top-level 'decision': "approve" | "block"
             # - top-level 'permissionDecision': "allow" | "deny" | "ask"
@@ -855,28 +866,59 @@ class EventContext:
         # PATHWAY 2: UserPromptSubmit & PostToolUse (Context Injection)
         # =====================================================================
         if self._event in ("UserPromptSubmit", "PostToolUse"):
-            # Claude Code UserPromptSubmit/PostToolUse Schema:
-            # - top-level 'decision': "approve"
-            # - hookSpecificOutput: { additionalContext }
-            resp = {
-                "decision": "approve",
-                "reason": msg_reason,
-                "continue": True,
-                "stopReason": "",
-                "suppressOutput": False,
-                "systemMessage": msg_reason,
-                # Claude Code hookSpecificOutput (REQUIRED for context injection)
-                "hookSpecificOutput": {
-                    "hookEventName": self._event,
-                    "additionalContext": msg_reason
-                },
-            }
+            # Resolve human_msg from to_human parameter:
+            # - to_human is True   → human sees reason; hookSpecificOutput omitted
+            # - to_human is a str  → human sees that string; hookSpecificOutput omitted
+            # - "" or non-True int → treated as False (AI injection)
+            if to_human is True:
+                if not msg_reason:
+                    logger.debug("respond: to_human=True but reason is empty — systemMessage will be empty (user sees nothing)")
+                human_msg = msg_reason
+            elif to_human and isinstance(to_human, str):
+                human_msg = to_human
+            else:
+                if to_human and to_human is not False:
+                    logger.debug(f"respond: to_human={to_human!r} is not True or str; treating as False")
+                human_msg = ""
+
+            if human_msg or to_human is True:
+                # Human-visible path: hookSpecificOutput absent → outcome matrix row 3 (shown to user).
+                # reason="" prevents double-print (canonical example: claude-code-hooks-api.md:202-210).
+                resp = {
+                    "decision": "approve",
+                    "reason": "",
+                    "continue": True,
+                    "stopReason": "",
+                    "suppressOutput": False,
+                    "systemMessage": human_msg,
+                }
+            else:
+                # AI injection path: hookSpecificOutput present → outcome matrix row 1 (AI only).
+                # Claude Code UserPromptSubmit/PostToolUse Schema:
+                # - top-level 'decision': "approve"
+                # - hookSpecificOutput: { additionalContext }
+                resp = {
+                    "decision": "approve",
+                    "reason": msg_reason,
+                    "continue": True,
+                    "stopReason": "",
+                    "suppressOutput": False,
+                    "systemMessage": msg_reason,
+                    # Claude Code hookSpecificOutput (REQUIRED for context injection)
+                    "hookSpecificOutput": {
+                        "hookEventName": self._event,
+                        "additionalContext": msg_reason
+                    },
+                }
             return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # PATHWAY 3: Stop & SubagentStop (Stop Prevention)
         # =====================================================================
         if self._event in ("Stop", "SubagentStop"):
+            # PATHWAY 3: to_human silently ignored — systemMessage already human+AI visible.
+            if to_human:
+                logger.debug(f"respond: to_human ignored for {self._event} — systemMessage already human-visible")
             # Claude Code Stop Schema:
             # - MUST NOT contain 'decision' or 'reason' for standard allow
             # - ONLY supports 'continue', 'stopReason', 'suppressOutput', 'systemMessage'
@@ -905,6 +947,10 @@ class EventContext:
         # PATHWAY 4: SessionStart (Startup Injections)
         # =====================================================================
         if self._event == "SessionStart":
+            # PATHWAY 4: to_human silently ignored — SessionStart systemMessage is always the
+            # only notification channel (hookSpecificOutput impossible per HOOK_SCHEMAS).
+            if to_human:
+                logger.debug("respond: to_human ignored for SessionStart — systemMessage always human-visible")
             # Claude Code SessionStart Schema:
             # - MUST NOT contain 'decision', 'reason', or 'hookSpecificOutput'
             resp = {

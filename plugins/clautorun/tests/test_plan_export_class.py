@@ -1823,7 +1823,9 @@ class TestPreToolUseBackup:
             store=store
         )
         result = track_and_export_plans_early(ctx_exit)
-        assert result is None  # Never blocks
+        # After Change 5: returns allow response (not None) when notify_claude=True.
+        # Still never blocks — permissionDecision must be "allow", not "deny".
+        assert result is None or result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
 
         # Verify plan was exported to notes/
         exported = list(notes_dir.glob("*.md"))
@@ -1985,7 +1987,9 @@ class TestPreToolUseBackup:
             store=store
         )
         result = track_and_export_plans_early(ctx_exit)
-        assert result is None  # Never blocks
+        # After Change 5: returns allow response (not None) when notify_claude=True.
+        # Still never blocks — permissionDecision must be "allow", not "deny".
+        assert result is None or result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
 
         # Verify plan exported to notes/
         exported = list(notes_dir.glob("*.md"))
@@ -2362,3 +2366,211 @@ class TestEdgeCases:
         exporter = PlanExport(ctx, PlanExportConfig())
         with pytest.raises(ValueError, match="cwd not available"):
             _ = exporter.project_dir
+
+
+# =============================================================================
+# TEST: Human-Visible Notifications (TDD for Changes 4, 5, 6)
+# =============================================================================
+
+
+class TestHumanVisibleNotifications:
+    """Integration tests for plan export notification visibility.
+
+    Verifies that export results are shown to the human user (not silently
+    injected into AI context only). Tests all three export paths:
+    - PostToolUse (export_on_exit_plan_mode) — Changes 2 & 4
+    - PreToolUse backup (track_and_export_plans_early) — Change 5
+    - SessionStart recovery (recover_unexported_plans) — Change 6
+
+    hookSpecificOutput absent + systemMessage → human-visible (outcome matrix row 3).
+    hookSpecificOutput present → AI context injection only (outcome matrix row 1).
+    """
+
+    def test_export_on_exit_plan_mode_response_is_human_visible(self, temp_project):
+        """export_on_exit_plan_mode() PostToolUse response must be human-visible.
+
+        Correct: systemMessage present, hookSpecificOutput absent, reason empty.
+        hookSpecificOutput absent → outcome matrix row 3: shown to user.
+        """
+        from clautorun.plan_export import export_on_exit_plan_mode
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-human-post",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
+            store=store,
+        )
+        response = export_on_exit_plan_mode(ctx)
+
+        assert response is not None
+        assert "systemMessage" in response
+        assert response["systemMessage"].startswith("📋")
+        assert "Plan exported to" in response["systemMessage"]
+        # hookSpecificOutput absent → human-visible path (outcome matrix row 3)
+        assert "hookSpecificOutput" not in response
+        # reason must be empty to prevent double-print (canonical pattern)
+        assert response.get("reason", "") == ""
+
+    def test_export_on_exit_plan_mode_dedup_no_notification(self, temp_project):
+        """Dedup (already exported): no user notification on second export.
+
+        Prevents vague 'Already exported (dedup)' from reaching user.
+        Change 4: not result.get('skipped') guard silences second notification.
+        """
+        from clautorun.plan_export import export_on_exit_plan_mode
+
+        store = ThreadSafeDB()
+
+        def make_ctx():
+            return EventContext(
+                session_id="test-human-dedup",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(temp_project["project_dir"])},
+                tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
+                store=store,
+            )
+
+        # First export: should notify user
+        response1 = export_on_exit_plan_mode(make_ctx())
+        assert response1 is not None and "systemMessage" in response1
+
+        # Second export (dedup): must be silent — no user notification
+        # Silent = None (no response) or AI-only (hookSpecificOutput present)
+        response2 = export_on_exit_plan_mode(make_ctx())
+        assert response2 is None or "hookSpecificOutput" in response2
+
+    def test_export_on_exit_plan_mode_timeout_is_human_visible(self, temp_project):
+        """Timeout: user MUST see warning — plan was NOT exported.
+
+        Silent timeout would leave user unaware their plan wasn't saved.
+        Change 4: timeout uses to_human=True so warning reaches the human.
+        """
+        from clautorun.plan_export import export_on_exit_plan_mode
+        from clautorun.session_manager import SessionTimeoutError
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-human-timeout",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
+            store=store,
+        )
+        with patch("clautorun.plan_export.PlanExport.export", side_effect=SessionTimeoutError("lock timeout")):
+            response = export_on_exit_plan_mode(ctx)
+
+        assert response is not None
+        assert "systemMessage" in response
+        # hookSpecificOutput absent → human-visible (not AI context injection only)
+        assert "hookSpecificOutput" not in response
+        assert "timeout" in response["systemMessage"].lower()
+
+    def test_pretooluse_backup_path_notifies_when_posttooluse_missing(self, temp_project):
+        """PreToolUse backup notifies user when PostToolUse doesn't fire.
+
+        Covers: PostToolUse unreliable bug (plan_export.py: 'PostToolUse hooks
+        don't fire in some Claude Code sessions').
+        Change 5: track_and_export_plans_early returns ctx.respond("allow", msg)
+        PreToolUse allow (PATHWAY 1) → systemMessage = msg_reason (core.py:843).
+
+        Dedup safety: content-hash ensures only one notification total.
+        If PreToolUse notifies, PostToolUse dedup guard skips its notification.
+        """
+        from clautorun.plan_export import track_and_export_plans_early, export_on_exit_plan_mode
+
+        plan = temp_project["plan_file"]
+        project_dir = temp_project["project_dir"]
+        store = ThreadSafeDB()
+
+        # Track the write (simulating user editing plan file)
+        ctx_write = EventContext(
+            session_id="test-pre-backup",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store,
+        )
+        track_and_export_plans_early(ctx_write)
+
+        # PreToolUse ExitPlanMode fires — backup export
+        ctx_exit = EventContext(
+            session_id="test-pre-backup",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        response = track_and_export_plans_early(ctx_exit)
+
+        # Must notify user (Change 5 returns non-None allow response)
+        assert response is not None
+        assert "systemMessage" in response
+        assert "📋" in response["systemMessage"]
+        assert "Plan exported to" in response["systemMessage"]
+        # Confirm tool still allowed (PATHWAY 1 allow — not blocked)
+        hso = response.get("hookSpecificOutput", {})
+        assert hso.get("permissionDecision") == "allow"
+
+        # PostToolUse fires afterward with separate ctx — must be silent (dedup)
+        ctx_post = EventContext(
+            session_id="test-pre-backup",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            tool_result=json.dumps({"filePath": str(plan)}),
+            store=store,
+        )
+        response2 = export_on_exit_plan_mode(ctx_post)
+        # Dedup: content hash already in tracking → skipped=True → silent
+        assert response2 is None or "hookSpecificOutput" in response2
+
+    def test_recover_unexported_plans_human_visible(self, temp_project):
+        """Recovery on SessionStart uses ctx.respond() → human-visible systemMessage.
+
+        Change 6: raw dict {"continue": True, "systemMessage": msg} replaced with
+        ctx.respond("allow", msg) → PATHWAY 4 → adds required schema fields.
+
+        PATHWAY 4 (SessionStart) always routes to systemMessage (human-visible).
+        hookSpecificOutput impossible for SessionStart (HOOK_SCHEMAS["SessionStart"]["hso"]={}).
+        validate_hook_response strips decision/reason/hookSpecificOutput from SessionStart output.
+        """
+        from clautorun.plan_export import recover_unexported_plans
+
+        # Session 1: Record a plan (simulate user writing plan file)
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="recovery-human-1",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store1,
+        )
+        PlanExport(ctx1, PlanExportConfig()).record_write(str(temp_project["plan_file"]))
+
+        # Session 2: Trigger SessionStart recovery (simulates fresh context or new session)
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="recovery-human-2",  # Different session_id!
+            event="SessionStart",
+            tool_input={"cwd": str(temp_project["project_dir"])},
+            store=store2,
+        )
+        response = recover_unexported_plans(ctx2)
+
+        assert response is not None
+        assert "systemMessage" in response
+        assert "📋" in response["systemMessage"]
+        assert "Recovered" in response["systemMessage"]
+        # PATHWAY 4 schema: these must NOT be present (stripped by validate_hook_response)
+        assert "hookSpecificOutput" not in response
+        assert "decision" not in response
+        assert "reason" not in response
+        # PATHWAY 4 via ctx.respond() adds these required schema fields.
+        # Raw dict {"continue": True, "systemMessage": msg} lacks these — Change 6 adds them.
+        assert "stopReason" in response
+        assert "suppressOutput" in response
