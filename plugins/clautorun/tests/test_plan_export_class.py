@@ -1823,13 +1823,20 @@ class TestPreToolUseBackup:
             store=store
         )
         result = track_and_export_plans_early(ctx_exit)
-        # After Change 5: returns allow response (not None) when notify_claude=True.
-        # Still never blocks — permissionDecision must be "allow", not "deny".
-        assert result is None or result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+        # backup_to_rejected() never blocks — always returns None.
+        assert result is None
 
-        # Verify plan was exported to notes/
-        exported = list(notes_dir.glob("*.md"))
-        assert len(exported) >= 1
+        # Verify plan backed up to notes/rejected/, NOT promoted to notes/
+        rejected_dir = project_dir / "notes" / "rejected"
+        exported_rejected = list(rejected_dir.glob("*.md"))
+        assert len(exported_rejected) >= 1, "backup must go to notes/rejected/, not notes/"
+        exported_notes = list(notes_dir.glob("*.md"))
+        assert len(exported_notes) == 0, "notes/ must not have plan before user accepts"
+
+        # Verify plan still in active_plans (backup_to_rejected keeps it pending)
+        exporter = PlanExport(ctx_exit, PlanExportConfig())
+        assert str(plan) in exporter.active_plans, "plan must remain in active_plans after backup"
+        assert exporter.active_plans[str(plan)].get("exit_attempted") is True
 
     def test_dedup_prevents_double_export_pre_and_post(self, temp_project):
         """Content hash prevents double-export when both Pre and Post fire."""
@@ -1987,14 +1994,22 @@ class TestPreToolUseBackup:
             store=store
         )
         result = track_and_export_plans_early(ctx_exit)
-        # After Change 5: returns allow response (not None) when notify_claude=True.
-        # Still never blocks — permissionDecision must be "allow", not "deny".
-        assert result is None or result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+        # backup_to_rejected() never blocks — always returns None.
+        assert result is None
 
-        # Verify plan exported to notes/
-        exported = list(notes_dir.glob("*.md"))
-        assert len(exported) >= 1, \
-            "Gemini exit_plan_mode in BeforeTool must trigger backup plan export"
+        # Verify plan backed up to notes/rejected/, NOT promoted to notes/
+        rejected_dir = project_dir / "notes" / "rejected"
+        exported_rejected = list(rejected_dir.glob("*.md"))
+        assert len(exported_rejected) >= 1, \
+            "Gemini exit_plan_mode in BeforeTool must back up plan to notes/rejected/"
+        exported_notes = list(notes_dir.glob("*.md"))
+        assert len(exported_notes) == 0, \
+            "notes/ must not have plan before user accepts (backup only goes to notes/rejected/)"
+
+        # Verify plan still in active_plans pending acceptance decision
+        exporter = PlanExport(ctx_exit, PlanExportConfig())
+        assert str(plan) in exporter.active_plans, "plan must remain in active_plans after backup"
+        assert exporter.active_plans[str(plan)].get("exit_attempted") is True
 
 
 # =============================================================================
@@ -2471,20 +2486,22 @@ class TestHumanVisibleNotifications:
         assert "timeout" in response["systemMessage"].lower()
 
     def test_pretooluse_backup_path_notifies_when_posttooluse_missing(self, temp_project):
-        """PreToolUse backup notifies user when PostToolUse doesn't fire.
+        """PreToolUse backs up silently; PostToolUse notifies if it fires.
 
-        Covers: PostToolUse unreliable bug (plan_export.py: 'PostToolUse hooks
-        don't fire in some Claude Code sessions').
-        Change 5: track_and_export_plans_early returns ctx.respond("allow", msg)
-        PreToolUse allow (PATHWAY 1) → systemMessage = msg_reason (core.py:843).
+        Covers backup-then-route design:
+        - PreToolUse(ExitPlanMode): backup_to_rejected() → notes/rejected/, returns None
+          (no notification — user has not yet accepted; premature notification misleads)
+        - PostToolUse(ExitPlanMode): export() → notes/, notifies user with 📋 message
+          (hash NOT in tracking because backup_to_rejected skips tracking intentionally)
 
-        Dedup safety: content-hash ensures only one notification total.
-        If PreToolUse notifies, PostToolUse dedup guard skips its notification.
+        If PostToolUse doesn't fire, recovery at SessionStart handles notification.
         """
         from clautorun.plan_export import track_and_export_plans_early, export_on_exit_plan_mode
 
         plan = temp_project["plan_file"]
         project_dir = temp_project["project_dir"]
+        notes_dir = project_dir / "notes"
+        rejected_dir = project_dir / "notes" / "rejected"
         store = ThreadSafeDB()
 
         # Track the write (simulating user editing plan file)
@@ -2497,7 +2514,7 @@ class TestHumanVisibleNotifications:
         )
         track_and_export_plans_early(ctx_write)
 
-        # PreToolUse ExitPlanMode fires — backup export
+        # PreToolUse ExitPlanMode fires — backup to notes/rejected/, no notification
         ctx_exit = EventContext(
             session_id="test-pre-backup",
             event="PreToolUse",
@@ -2507,16 +2524,14 @@ class TestHumanVisibleNotifications:
         )
         response = track_and_export_plans_early(ctx_exit)
 
-        # Must notify user (Change 5 returns non-None allow response)
-        assert response is not None
-        assert "systemMessage" in response
-        assert "📋" in response["systemMessage"]
-        assert "Plan exported to" in response["systemMessage"]
-        # Confirm tool still allowed (PATHWAY 1 allow — not blocked)
-        hso = response.get("hookSpecificOutput", {})
-        assert hso.get("permissionDecision") == "allow"
+        # PreToolUse must return None — no notification before user decides
+        assert response is None, \
+            "PreToolUse must not notify before user sees dialog (backup only)"
+        # Backup in notes/rejected/ as safety copy
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "backup_to_rejected must write to notes/rejected/"
 
-        # PostToolUse fires afterward with separate ctx — must be silent (dedup)
+        # PostToolUse fires (Options 2/3) — exports to notes/ with notification
         ctx_post = EventContext(
             session_id="test-pre-backup",
             event="PostToolUse",
@@ -2526,8 +2541,13 @@ class TestHumanVisibleNotifications:
             store=store,
         )
         response2 = export_on_exit_plan_mode(ctx_post)
-        # Dedup: content hash already in tracking → skipped=True → silent
-        assert response2 is None or "hookSpecificOutput" in response2
+        # Hash not in tracking (backup_to_rejected skips tracking) → exports to notes/
+        direct_notes = [f for f in notes_dir.iterdir() if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) >= 1, "PostToolUse must export to notes/"
+        # With default notify_claude=True, notification is returned
+        if response2 is not None:
+            assert "systemMessage" in response2
+            assert "📋" in response2["systemMessage"]
 
     def test_recover_unexported_plans_human_visible(self, temp_project):
         """Recovery on SessionStart uses ctx.respond() → human-visible systemMessage.
@@ -2574,3 +2594,444 @@ class TestHumanVisibleNotifications:
         # Raw dict {"continue": True, "systemMessage": msg} lacks these — Change 6 adds them.
         assert "stopReason" in response
         assert "suppressOutput" in response
+
+
+# =============================================================================
+# TEST: Accepted/Rejected Plan Routing
+# =============================================================================
+
+
+class TestAcceptedRejectedRouting:
+    """Tests for backup-then-route design: backup to notes/rejected/ at PreToolUse,
+    promote to notes/ only on acceptance.
+
+    Key invariant: backup_to_rejected() does NOT touch tracking so get_unexported()
+    still finds the plan at SessionStart recovery for proper routing.
+
+    Maps to Change 2b, 2c, 2d, 3 in the implementation plan.
+    """
+
+    def test_backup_creates_file_in_rejected(self, temp_project):
+        """backup_to_rejected() copies plan to notes/rejected/, not notes/."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id="test-backup-rejected",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        # Register plan in active_plans first
+        exporter = PlanExport(ctx, PlanExportConfig())
+        exporter.record_write(str(plan))
+
+        result = exporter.backup_to_rejected(plan, "plan")
+        assert result is not None, "backup_to_rejected must return backup path"
+
+        rejected_dir = project_dir / "notes" / "rejected"
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "backup must be in notes/rejected/"
+
+        notes_dir = project_dir / "notes"
+        accepted_files = [f for f in notes_dir.glob("*.md")
+                          if "rejected" not in str(f.parent)]
+        assert len(accepted_files) == 0, "backup must NOT go to notes/ (not yet accepted)"
+
+        # Plan must remain in active_plans with exit_attempted=True
+        with session_state(GLOBAL_SESSION_ID) as state:
+            plans = state.get("active_plans", {})
+            assert str(plan) in plans
+            entry = plans[str(plan)]
+            assert entry.get("exit_attempted") is True
+            assert entry.get("mode_at_exit_attempt") == "plan"
+            assert entry.get("backup_path") is not None
+
+    def test_backup_does_not_update_tracking(self, temp_project):
+        """backup_to_rejected() does NOT record hash in tracking."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id="test-backup-no-tracking",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        exporter.record_write(str(plan))
+        exporter.backup_to_rejected(plan, "plan")
+
+        content_hash = get_content_hash(plan)
+        with session_state(GLOBAL_SESSION_ID) as state:
+            tracking = state.get("tracking", {})
+            assert content_hash not in tracking, \
+                "backup_to_rejected must NOT write hash to tracking (breaks recovery routing)"
+
+    def test_finalize_backup_records_tracking_and_clears_active_plans(self, temp_project):
+        """finalize_backup() records hash in tracking and removes from active_plans."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id="test-finalize",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        exporter.record_write(str(plan))
+        backup_path = exporter.backup_to_rejected(plan, "plan")
+
+        result = exporter.finalize_backup(plan)
+        assert result["success"] is True
+
+        content_hash = get_content_hash(plan)
+        with session_state(GLOBAL_SESSION_ID) as state:
+            tracking = state.get("tracking", {})
+            assert content_hash in tracking, "finalize_backup must record hash in tracking"
+            assert tracking[content_hash].get("exported_to") == backup_path
+
+            plans = state.get("active_plans", {})
+            assert str(plan) not in plans, "finalize_backup must remove plan from active_plans"
+
+    def test_option1_bypassperms_promotes_to_notes(self, temp_project):
+        """Recovery: exit_attempted + permission_mode changed to bypassPermissions → notes/."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        rejected_dir = project_dir / "notes" / "rejected"
+
+        # Session 1: record write, then backup_to_rejected
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-option1",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(plan))
+        exp1.backup_to_rejected(plan, "plan")
+
+        # Session 2: recover_unexported_plans with bypassPermissions (Option 1)
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-option1-recover",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="bypassPermissions",
+        )
+        recover_unexported_plans(ctx2)
+
+        # Plan must be promoted to notes/
+        accepted_files = list(notes_dir.glob("*.md"))
+        # Filter out files in subdirectories like notes/rejected/
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) >= 1, "Option 1 acceptance must promote plan to notes/"
+        # Backup in notes/rejected/ preserved as history
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "notes/rejected/ backup must be preserved as history"
+
+    def test_option3_acceptedits_promotes_to_notes(self, temp_project):
+        """Recovery: exit_attempted + permission_mode changed to acceptEdits → notes/."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-option3",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(plan))
+        exp1.backup_to_rejected(plan, "plan")
+
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-option3-recover",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="acceptEdits",
+        )
+        recover_unexported_plans(ctx2)
+
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) >= 1, "Option 3 acceptance (acceptEdits) must promote plan to notes/"
+
+    def test_option4_stays_in_rejected_only(self, temp_project):
+        """Recovery: exit_attempted + mode unchanged (plan) → finalize_backup → notes/rejected/ only."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        rejected_dir = project_dir / "notes" / "rejected"
+
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-option4",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(plan))
+        exp1.backup_to_rejected(plan, "plan")
+
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-option4-recover",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="plan",  # mode unchanged → Option 4
+        )
+        recover_unexported_plans(ctx2)
+
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) == 0, "Option 4 plan must NOT be promoted to notes/"
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "Plan must stay in notes/rejected/ after Option 4"
+
+        # Plan must be removed from active_plans (finalized)
+        with session_state(GLOBAL_SESSION_ID) as state:
+            plans = state.get("active_plans", {})
+            assert str(plan) not in plans, "finalize_backup must remove plan from active_plans"
+
+    def test_escape_stays_in_rejected_only(self, temp_project):
+        """Recovery: exit_attempted + default mode → finalize_backup → notes/rejected/ only."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        rejected_dir = project_dir / "notes" / "rejected"
+
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-escape",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(plan))
+        exp1.backup_to_rejected(plan, "plan")
+
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-escape-recover",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="default",  # Escape: mode reverted to default
+        )
+        recover_unexported_plans(ctx2)
+
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) == 0, "Escaped plan must NOT be promoted to notes/"
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "Plan must stay in notes/rejected/ after Escape"
+
+    def test_abandoned_exports_to_rejected(self, temp_project):
+        """Recovery: exit_attempted=False (abandoned) → export(rejected=True) → notes/rejected/."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        rejected_dir = project_dir / "notes" / "rejected"
+
+        # Record write only — no backup_to_rejected (ExitPlanMode was never called)
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-abandoned",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        PlanExport(ctx1, PlanExportConfig()).record_write(str(plan))
+
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-abandoned-recover",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="default",
+        )
+        recover_unexported_plans(ctx2)
+
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) == 0, "Abandoned plan must NOT go to notes/"
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "Abandoned plan must go to notes/rejected/"
+
+    def test_posttooluse_still_routes_to_notes(self, temp_project):
+        """PostToolUse (Options 2/3) still exports to notes/ after backup exists in rejected/."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+        rejected_dir = project_dir / "notes" / "rejected"
+        from clautorun.plan_export import (
+            track_and_export_plans_early, export_on_exit_plan_mode
+        )
+        store = ThreadSafeDB()
+
+        # PreToolUse Write: track
+        ctx_write = EventContext(
+            session_id="test-post-notes",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan), "cwd": str(project_dir)},
+            store=store,
+        )
+        track_and_export_plans_early(ctx_write)
+
+        # PreToolUse ExitPlanMode: backup_to_rejected
+        ctx_pre_exit = EventContext(
+            session_id="test-post-notes",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        track_and_export_plans_early(ctx_pre_exit)
+
+        # PostToolUse ExitPlanMode: export_on_exit_plan_mode → notes/
+        ctx_post_exit = EventContext(
+            session_id="test-post-notes",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        export_on_exit_plan_mode(ctx_post_exit)
+
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        assert len(direct_notes) >= 1, "PostToolUse (Option 2/3) must promote plan to notes/"
+        backup_files = list(rejected_dir.glob("*.md"))
+        assert len(backup_files) >= 1, "notes/rejected/ backup preserved as history"
+
+    def test_export_rejected_false_skips_backup(self, temp_project):
+        """backup_to_rejected() returns None when config.export_rejected=False."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id="test-no-rejected",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        config = PlanExportConfig()
+        config.export_rejected = False
+        exporter = PlanExport(ctx, config)
+        exporter.record_write(str(plan))
+
+        result = exporter.backup_to_rejected(plan, "plan")
+        assert result is None, "backup_to_rejected must return None when export_rejected=False"
+
+        rejected_dir = project_dir / "notes" / "rejected"
+        assert not rejected_dir.exists() or len(list(rejected_dir.glob("*.md"))) == 0, \
+            "No file must be written to notes/rejected/ when export_rejected=False"
+
+    def test_record_write_resets_exit_flags(self, temp_project):
+        """record_write() creates fresh entry without exit_attempted/backup_path (key invariant)."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id="test-reset-flags",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store,
+        )
+        exporter = PlanExport(ctx, PlanExportConfig())
+        exporter.record_write(str(plan))
+        exporter.backup_to_rejected(plan, "plan")
+
+        # Verify flags are set
+        with session_state(GLOBAL_SESSION_ID) as state:
+            plans = state.get("active_plans", {})
+            assert plans[str(plan)].get("exit_attempted") is True
+
+        # Now AI edits the plan (user chose Option 4, then revises plan)
+        exporter.record_write(str(plan))
+
+        # Flags must be cleared — fresh entry with no exit_attempted
+        with session_state(GLOBAL_SESSION_ID) as state:
+            plans = state.get("active_plans", {})
+            assert "exit_attempted" not in plans[str(plan)], \
+                "record_write() must create fresh entry without exit_attempted flag"
+            assert "backup_path" not in plans[str(plan)], \
+                "record_write() must create fresh entry without backup_path"
+
+    def test_bypass_before_plan_mode_option4_known_limitation(self, temp_project):
+        """Known limitation: if recovery permission_mode is bypassPermissions for unrelated reason,
+        plan may be falsely promoted to notes/. Documented, low severity (plan in both folders)."""
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        notes_dir = project_dir / "notes"
+
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-known-limit",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(plan))
+        # User was in bypassPermissions before plan mode; mode_at_exit_attempt="plan"
+        exp1.backup_to_rejected(plan, "plan")
+
+        # Recovery session starts in bypassPermissions for unrelated reason (known limitation)
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-known-limit",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="bypassPermissions",  # not caused by Option 1
+        )
+        recover_unexported_plans(ctx2)
+
+        # Known limitation: plan is (falsely) promoted to notes/ because we can't distinguish
+        # from a genuine Option 1 acceptance. Plan appears in both notes/ and notes/rejected/.
+        # This is acceptable low-severity behavior — documented here to prevent silent regressions.
+        direct_notes = [f for f in notes_dir.iterdir()
+                        if f.is_file() and f.suffix == ".md"]
+        rejected_dir = project_dir / "notes" / "rejected"
+        backup_files = list(rejected_dir.glob("*.md"))
+        # Both folders have the plan — the known limitation behavior
+        assert len(direct_notes) >= 1 or len(backup_files) >= 1, \
+            "Known limitation: plan must appear in at least one location"

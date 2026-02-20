@@ -206,6 +206,12 @@ CONFIG_PATH = Path.home() / ".claude" / "plan-export.config.json"
 PLANS_DIR = Path.home() / ".claude" / "plans"
 DEBUG_LOG_PATH = Path.home() / ".claude" / "plan-export-debug.log"
 
+# Permission modes that indicate the user accepted the plan in the ExitPlanMode dialog.
+# Options 1 (bypassPermissions) and 3 (acceptEdits) count as acceptance.
+# Used in recover_unexported_plans() to route exit_attempted plans to notes/ vs notes/rejected/.
+# "default" and "plan" are NOT plan acceptance modes — they fall through to finalize_backup().
+PLAN_ACCEPTED_PERMISSION_MODES = frozenset({"bypassPermissions", "acceptEdits"})
+
 
 # === Module-level helper functions (DRY - single source of truth) ===
 
@@ -668,6 +674,41 @@ class PlanExport:
 
     # --- Export Logic ---
 
+    def _copy_plan_to_dir(self, plan_path: Path, rejected: bool = False) -> Path:
+        """Copy plan file to configured output directory with collision handling.
+
+        Must be called INSIDE an active session_state lock (preserves atomicity with
+        state updates in the caller). Raises on any file I/O error; caller handles.
+        Returns the destination Path after copy + metadata embedding.
+
+        File I/O inside the lock is consistent with export() line comment:
+        "inside lock — plan files are small, <1MB".
+        """
+        dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
+        output_dir = getattr(self.config, dir_key)
+        useful_name = self.extract_useful_name(plan_path)
+
+        expanded_dir = self.expand_template(output_dir, plan_path, useful_name)
+        notes_dir = self.project_dir / expanded_dir
+        notes_dir.mkdir(parents=True, exist_ok=True)
+
+        base_filename = self.expand_template(
+            self.config.filename_pattern, plan_path, useful_name
+        )
+        base_filename = self._sanitize_filename(base_filename)
+        dest_filename = f"{base_filename}{self.config.extension}"
+        dest_path = notes_dir / dest_filename
+
+        counter = 1
+        while dest_path.exists():
+            dest_filename = f"{base_filename}_{counter}{self.config.extension}"
+            dest_path = notes_dir / dest_filename
+            counter += 1
+
+        shutil.copy2(plan_path, dest_path)
+        embed_plan_metadata(plan_path, self.ctx.session_id, dest_path)
+        return dest_path
+
     def export(self, plan_path: Path, rejected: bool = False, force: bool = False) -> Dict:
         """Export plan to project notes directory.
 
@@ -693,33 +734,8 @@ class PlanExport:
                         "skipped": True,
                     }
 
-                dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
-                output_dir = getattr(self.config, dir_key)
-                useful_name = self.extract_useful_name(plan_path)
-
-                # Expand templates in directory path
-                expanded_dir = self.expand_template(output_dir, plan_path, useful_name)
-                notes_dir = self.project_dir / expanded_dir
-                notes_dir.mkdir(parents=True, exist_ok=True)
-
-                # Expand template in filename
-                base_filename = self.expand_template(
-                    self.config.filename_pattern, plan_path, useful_name
-                )
-                base_filename = self._sanitize_filename(base_filename)
-                dest_filename = f"{base_filename}{self.config.extension}"
-                dest_path = notes_dir / dest_filename
-
-                # Handle collision
-                counter = 1
-                while dest_path.exists():
-                    dest_filename = f"{base_filename}_{counter}{self.config.extension}"
-                    dest_path = notes_dir / dest_filename
-                    counter += 1
-
-                # Copy file and embed metadata (inside lock — plan files are small, <1MB)
-                shutil.copy2(plan_path, dest_path)
-                embed_plan_metadata(plan_path, self.ctx.session_id, dest_path)
+                # _copy_plan_to_dir called inside lock — same atomicity contract as before
+                dest_path = self._copy_plan_to_dir(plan_path, rejected)
 
                 # Atomic update: tracking + active_plans in one write
                 dest_str = str(dest_path)
@@ -739,6 +755,85 @@ class PlanExport:
             return {"success": True, "message": f"Plan exported to {rel_path}", "destination": str(dest_path)}
         except Exception as e:
             log_warning(f"Export error: {e}", self.config)
+            return {"success": False, "error": str(e)}
+
+    def backup_to_rejected(self, plan_path: Path, permission_mode: str) -> Optional[str]:
+        """Back up plan to notes/rejected/ before ExitPlanMode dialog is shown.
+
+        Called at PreToolUse(ExitPlanMode) BEFORE the user sees the acceptance dialog.
+        Does NOT update tracking (so get_unexported() still finds this plan at recovery).
+        Does NOT remove from active_plans (plan is still pending a decision).
+
+        Records exit_attempted, mode_at_exit_attempt, and backup_path in active_plans so
+        recover_unexported_plans() can route correctly:
+          - permission_mode changed to accepted mode → promote backup to notes/
+          - permission_mode unchanged/unaccepted → finalize_backup() records in tracking
+
+        Skips if config.export_rejected=False (user opted out of notes/rejected/ entirely).
+        Returns the backup file path string, or None on failure/skip.
+        """
+        if not self.config.export_rejected:
+            return None
+        try:
+            with session_state(GLOBAL_SESSION_ID) as state:
+                # _copy_plan_to_dir called inside lock — same atomicity contract as export()
+                dest_path = self._copy_plan_to_dir(plan_path, rejected=True)
+                backup_path_str = str(dest_path)
+
+                # Update active_plans only. Do NOT touch tracking — preserves get_unexported().
+                plans = state.get("active_plans", {})
+                entry = plans.get(str(plan_path))
+                if entry:
+                    entry["exit_attempted"] = True
+                    entry["mode_at_exit_attempt"] = permission_mode
+                    entry["backup_path"] = backup_path_str
+                state["active_plans"] = plans
+
+            rel = dest_path.relative_to(self.project_dir)
+            log_warning(f"Backed up plan to {rel} (pending acceptance decision)", self.config)
+            return backup_path_str
+
+        except Exception as e:
+            log_warning(f"backup_to_rejected error: {e}", self.config)
+            return None
+
+    def finalize_backup(self, plan_path: Path) -> Dict:
+        """Finalize a plan that was backed up but not accepted (Option 4 / Escape).
+
+        The file already exists in notes/rejected/ (written by backup_to_rejected).
+        Records the content hash → backup_path in tracking (prevents future re-recovery),
+        then removes from active_plans. No second file is written.
+        """
+        try:
+            content_hash = get_content_hash(plan_path)
+            plan_key = str(plan_path)
+
+            with session_state(GLOBAL_SESSION_ID) as state:
+                plans = state.get("active_plans", {})
+                info = plans.get(plan_key, {})
+                backup_path = info.get("backup_path", "")
+
+                tracking = state.get("tracking", {})
+                new_tracking = dict(tracking)
+                new_tracking[content_hash] = {
+                    "exported_to": backup_path,
+                    "exported_at": datetime.now().isoformat(),
+                }
+                state["tracking"] = new_tracking
+
+                new_plans = dict(plans)
+                new_plans.pop(plan_key, None)
+                state["active_plans"] = new_plans
+
+            log_warning(f"Finalized rejected plan (already in notes/rejected/): {plan_key}", self.config)
+            return {
+                "success": True,
+                "message": "Plan retained in notes/rejected/ (not accepted)",
+                "destination": backup_path,
+                "skipped": True,
+            }
+        except Exception as e:
+            log_warning(f"finalize_backup error: {e}", self.config)
             return {"success": False, "error": str(e)}
 
 
@@ -952,11 +1047,18 @@ export_destination: {export_destination}
 
 @app.on("PreToolUse")
 def track_and_export_plans_early(ctx: EventContext) -> Optional[Dict]:
-    """Track plan writes and export on ExitPlanMode via PreToolUse.
+    """Track plan writes; at ExitPlanMode, back up to notes/rejected/ before dialog is shown.
 
-    PostToolUse hooks don't fire in some Claude Code sessions. This PreToolUse
-    handler provides the same tracking + export as the PostToolUse handlers below.
-    Content-hash dedup in export() prevents double-export if both fire.
+    Design (backup-then-route):
+      PreToolUse(ExitPlanMode) fires BEFORE the user sees the dialog.
+      backup_to_rejected() copies the plan to notes/rejected/ without touching
+      tracking, so get_unexported() still finds it at SessionStart recovery.
+      recover_unexported_plans() then routes:
+        - exit_attempted + accepted mode → promote to notes/ (Option 1)
+        - exit_attempted + not accepted  → finalize_backup() (Option 4 / Escape)
+        - not exit_attempted             → export(rejected=True) (abandoned)
+
+    PostToolUse (Options 2/3) still routes to notes/ via export_on_exit_plan_mode().
     Always returns None — never blocks tool execution.
     """
     try:
@@ -969,18 +1071,16 @@ def track_and_export_plans_early(ctx: EventContext) -> Optional[Dict]:
             file_path = ctx.tool_input.get("file_path", "")
             PlanExport(ctx, config).record_write(file_path)
 
-        # Export on ExitPlanMode
+        # Back up to notes/rejected/ BEFORE dialog is shown.
+        # backup_to_rejected() skips tracking so get_unexported() can still find this plan
+        # at SessionStart recovery for proper accepted/rejected routing.
+        # Never send a notification here — the user has not yet made a choice.
         elif ctx.tool_name in PLAN_TOOLS:
             exporter = PlanExport(ctx, config)
             plan = exporter.get_current_plan()
             if plan:
-                result = exporter.export(plan)
-                if result["success"] and config.notify_claude and not result.get("skipped"):
-                    logger.info(f"PreToolUse export: {result['message']}")
-                    # No to_human needed: PATHWAY 1 allow → systemMessage = msg_reason (core.py:843)
-                    return ctx.respond("allow", f"📋 {result['message']}")
-                elif result["success"]:
-                    logger.info(f"PreToolUse export (dedup/no-notify): {result['message']}")
+                exporter.backup_to_rejected(plan, ctx.permission_mode)
+            # Always return None — never block ExitPlanMode.
     except Exception as e:
         logger.debug(f"PreToolUse plan_export: {e}")
     return None
@@ -1040,6 +1140,23 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
     CRITICAL: Runs in NEW session after Option 1 clears context.
     Uses GLOBAL_SESSION_ID to read active_plans from OLD session.
     Daemon integration: Shares ThreadSafeDB cache across sessions.
+
+    Three-branch routing based on exit_attempted flag and permission_mode:
+
+    | exit_attempted | permission_mode at recovery | Action |
+    |---|---|---|
+    | True  | bypassPermissions / acceptEdits | promote backup to notes/ (Option 1) |
+    | True  | plan / default / other          | finalize_backup() → stays in notes/rejected/ (Option 4/Escape) |
+    | False | any                             | export(rejected=True) → notes/rejected/ (abandoned) |
+
+    Shift+Tab cases:
+    - No prior ExitPlanMode: exit_attempted=False → abandoned branch (notes/rejected/)
+    - After ExitPlanMode backup, Shift+Tab to default: finalize_backup() (notes/rejected/)
+    - After ExitPlanMode backup, Shift+Tab to bypassPermissions: known limitation (false positive
+      promotes to notes/; plan appears in both folders — low-severity, documented)
+
+    mode_at_exit_attempt guard: if ctx.permission_mode == mode_at_exit_attempt, the mode
+    did NOT change between backup and recovery → not an Option 1 acceptance.
     """
     # Note: ctx.payload doesn't exist - EventContext uses individual properties (core.py:397-419)
     logger.info(f"SessionStart handler called (event: {ctx.event})")
@@ -1053,13 +1170,42 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
         recovered_count = 0
         last_msg = ""
 
+        # Snapshot active_plans before get_unexported() may clean stale entries.
+        # Plans cleaned (file no longer exists) won't appear in the loop anyway.
+        active_plans_snapshot = exporter.active_plans
+
         for plan in exporter.get_unexported():
-            # Plans recovered at SessionStart were never accepted (Option 1 or abandoned).
-            # Export them as rejected so they go to notes/rejected/ not notes/.
-            result = exporter.export(plan, rejected=config.export_rejected)
+            info = active_plans_snapshot.get(str(plan), {})
+            exit_was_attempted = info.get("exit_attempted", False)
+            mode_at_exit = info.get("mode_at_exit_attempt", "")
+            # mode_at_exit is always "plan" for genuine ExitPlanMode attempts.
+            # If recovery permission_mode matches stored mode, mode did not change
+            # (e.g. user opened dialog, dismissed, then same mode at new session)
+            # → not an Option 1 acceptance.
+            mode_changed = ctx.permission_mode != mode_at_exit
+            plan_was_accepted = (exit_was_attempted and mode_changed
+                            and ctx.permission_mode in PLAN_ACCEPTED_PERMISSION_MODES)
+
+            if plan_was_accepted:
+                # Option 1: new session with bypassPermissions/acceptEdits.
+                # Backup exists in notes/rejected/ (written by backup_to_rejected).
+                # Promote to notes/. force=True bypasses dedup — hash not in tracking yet
+                # because backup_to_rejected() skips tracking intentionally.
+                result = exporter.export(plan, rejected=False, force=True)
+
+            elif exit_was_attempted:
+                # Option 4 or Escape: dialog was shown, plan was not accepted.
+                # Backup already exists in notes/rejected/. Record in tracking, clean active_plans.
+                result = exporter.finalize_backup(plan)
+
+            else:
+                # Abandoned: ExitPlanMode was never called before this recovery.
+                # Standard export to notes/rejected/ (or notes/ if export_rejected=False).
+                result = exporter.export(plan, rejected=config.export_rejected)
+
             if result["success"]:
                 recovered_count += 1
-                last_msg = result['message']
+                last_msg = result.get("message", "")
 
         if recovered_count > 0:
             msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context or abandoned): {last_msg}"
@@ -1088,6 +1234,7 @@ __all__ = [
     "PlanExportConfig",
     # Constants
     "GLOBAL_SESSION_ID",
+    "PLAN_ACCEPTED_PERMISSION_MODES",
     "DEFAULT_CONFIG",
     "CONFIG_PATH",
     "PLANS_DIR",
