@@ -41,7 +41,26 @@ v0.7: Daemon mode is now default (85-90% complete architecture)
 Set CLAUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
 Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
 """
+# Python 2 / version guard — AI assistants frequently invoke `python` (Python 2 on many
+# systems) instead of `python3`, wasting tokens trying to debug confusing import errors.
+# This guard outputs a clear, actionable error message so the AI (and user) knows exactly
+# how to fix the problem without further investigation.
+# Note: Python 3 requires `from __future__ import annotations` to be the first executable
+# statement, so the guard code must appear after it. Python 2 users invoking this file
+# directly see a SyntaxError on the `from __future__` line; the hook system's
+# error_handling.py handles that case.
 from __future__ import annotations
+
+import sys as _sys
+if _sys.version_info < (3, 10):
+    _sys.stderr.write(
+        "ERROR: clautorun requires Python 3.10+. You are running Python " +
+        ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
+        "Fix: Use `uv run python -m clautorun` or `python3 -m clautorun`.\n"
+        "     Install uv: https://docs.astral.sh/uv/getting-started/installation/\n"
+    )
+    _sys.exit(1)
+del _sys
 
 import argparse
 import os
