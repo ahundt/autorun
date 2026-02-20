@@ -541,6 +541,13 @@ class TmuxUtilities:
         Returns:
             True if user is typing, False otherwise
         """
+        target = session or self.session_name
+        # Return False immediately if session doesn't exist; don't rely on auto-creation
+        # since a freshly created session produces spurious content changes.
+        exists = self.execute_tmux_command(['has-session', '-t', target], target)
+        if not exists or exists.get('returncode') != 0:
+            return False
+
         initial_input = self.capture_current_input(session, window, pane)
 
         for _ in range(max_checks - 1):
