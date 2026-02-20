@@ -825,10 +825,20 @@ class PlanExport:
                 new_plans.pop(plan_key, None)
                 state["active_plans"] = new_plans
 
+            # Compute relative path for human-readable message (same pattern as export() lines 753-755)
+            if backup_path:
+                try:
+                    rel = Path(backup_path).relative_to(self.project_dir)
+                    msg = f"Plan retained in {rel} (not accepted)"
+                except ValueError:
+                    msg = "Plan retained in notes/rejected/ (not accepted)"
+            else:
+                msg = "Plan retained in notes/rejected/ (not accepted)"
+
             log_warning(f"Finalized rejected plan (already in notes/rejected/): {plan_key}", self.config)
             return {
                 "success": True,
-                "message": "Plan retained in notes/rejected/ (not accepted)",
+                "message": msg,
                 "destination": backup_path,
                 "skipped": True,
             }

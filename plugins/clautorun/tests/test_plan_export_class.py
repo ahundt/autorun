@@ -2701,6 +2701,13 @@ class TestAcceptedRejectedRouting:
             plans = state.get("active_plans", {})
             assert str(plan) not in plans, "finalize_backup must remove plan from active_plans"
 
+        # Message must include specific filename, not just directory
+        assert "notes/rejected/" in result["message"]
+        assert result["message"] != "Plan retained in notes/rejected/ (not accepted)", \
+            "message must include specific filename, not just directory"
+        assert any(c.isdigit() for c in result["message"]), \
+            "specific filename (with date/counter) must appear in message"
+
     def test_option1_bypassperms_promotes_to_notes(self, temp_project):
         """Recovery: exit_attempted + permission_mode changed to bypassPermissions → notes/."""
         plan = temp_project['plan_file']
@@ -2793,7 +2800,9 @@ class TestAcceptedRejectedRouting:
         )
         exp1 = PlanExport(ctx1, PlanExportConfig())
         exp1.record_write(str(plan))
-        exp1.backup_to_rejected(plan, "plan")
+        backup_path_option4 = exp1.backup_to_rejected(plan, "plan")
+        assert backup_path_option4 is not None, "backup must succeed"
+        backup_filename_option4 = Path(backup_path_option4).name
 
         from clautorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
@@ -2804,7 +2813,7 @@ class TestAcceptedRejectedRouting:
             store=store2,
             permission_mode="plan",  # mode unchanged → Option 4
         )
-        recover_unexported_plans(ctx2)
+        recovery_result = recover_unexported_plans(ctx2)
 
         direct_notes = [f for f in notes_dir.iterdir()
                         if f.is_file() and f.suffix == ".md"]
@@ -2816,6 +2825,21 @@ class TestAcceptedRejectedRouting:
         with session_state(GLOBAL_SESSION_ID) as state:
             plans = state.get("active_plans", {})
             assert str(plan) not in plans, "finalize_backup must remove plan from active_plans"
+
+        # Recovery systemMessage must include the specific backup filename, not just the directory.
+        # Fix: the message must contain e.g. 'notes/rejected/2026_02_20_1714_test_plan.md'
+        # not just 'notes/rejected/' (which was the bug — directory only, no filename).
+        assert recovery_result is not None, (
+            "recovery must return a response for Option 4; "
+            "check that recover_unexported_plans() finds the plan via get_unexported()"
+        )
+        msg = recovery_result["systemMessage"]
+        assert backup_filename_option4 in msg, (
+            f"systemMessage must include backup filename '{backup_filename_option4}' "
+            f"(notes/rejected/<filename>), not just the directory. Got: '{msg}'. "
+            "Fix: finalize_backup() must compute rel = Path(backup_path).relative_to(project_dir) "
+            "and return f'Plan retained in {rel} (not accepted)'."
+        )
 
     def test_escape_stays_in_rejected_only(self, temp_project):
         """Recovery: exit_attempted + default mode → finalize_backup → notes/rejected/ only."""
@@ -2834,7 +2858,9 @@ class TestAcceptedRejectedRouting:
         )
         exp1 = PlanExport(ctx1, PlanExportConfig())
         exp1.record_write(str(plan))
-        exp1.backup_to_rejected(plan, "plan")
+        backup_path_escape = exp1.backup_to_rejected(plan, "plan")
+        assert backup_path_escape is not None, "backup must succeed"
+        backup_filename_escape = Path(backup_path_escape).name
 
         from clautorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
@@ -2845,13 +2871,28 @@ class TestAcceptedRejectedRouting:
             store=store2,
             permission_mode="default",  # Escape: mode reverted to default
         )
-        recover_unexported_plans(ctx2)
+        escape_result = recover_unexported_plans(ctx2)
 
         direct_notes = [f for f in notes_dir.iterdir()
                         if f.is_file() and f.suffix == ".md"]
         assert len(direct_notes) == 0, "Escaped plan must NOT be promoted to notes/"
         backup_files = list(rejected_dir.glob("*.md"))
         assert len(backup_files) >= 1, "Plan must stay in notes/rejected/ after Escape"
+
+        # Recovery systemMessage must include the specific backup filename, not just the directory.
+        # Fix: the message must contain e.g. 'notes/rejected/2026_02_20_1714_test_plan.md'
+        # not just 'notes/rejected/' (directory only — the original bug).
+        assert escape_result is not None, (
+            "recovery must return a response for Escape; "
+            "check that recover_unexported_plans() finds the plan via get_unexported()"
+        )
+        msg = escape_result["systemMessage"]
+        assert backup_filename_escape in msg, (
+            f"systemMessage must include backup filename '{backup_filename_escape}' "
+            f"(notes/rejected/<filename>), not just the directory. Got: '{msg}'. "
+            "Fix: finalize_backup() must compute rel = Path(backup_path).relative_to(project_dir) "
+            "and return f'Plan retained in {rel} (not accepted)'."
+        )
 
     def test_abandoned_exports_to_rejected(self, temp_project):
         """Recovery: exit_attempted=False (abandoned) → export(rejected=True) → notes/rejected/."""
@@ -3035,3 +3076,45 @@ class TestAcceptedRejectedRouting:
         # Both folders have the plan — the known limitation behavior
         assert len(direct_notes) >= 1 or len(backup_files) >= 1, \
             "Known limitation: plan must appear in at least one location"
+
+    def test_finalize_backup_message_includes_specific_filename(self, temp_project):
+        """Regression: systemMessage must contain specific filename, not just directory.
+
+        Bug: finalize_backup returned 'Plan retained in notes/rejected/ (not accepted)'
+        Fix: 'Plan retained in notes/rejected/2026_02_20_HHMM_plan.md (not accepted)'
+        """
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+
+        store1 = ThreadSafeDB()
+        ctx1 = EventContext(
+            session_id="s1-msg-test",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx1, PlanExportConfig())
+        exp1.record_write(str(plan))
+        backup_path = exp1.backup_to_rejected(plan, "plan")
+        assert backup_path is not None, "backup must succeed"
+        backup_filename = Path(backup_path).name  # e.g. "2026_02_20_1714_plan.md"
+
+        from clautorun.plan_export import recover_unexported_plans
+        store2 = ThreadSafeDB()
+        ctx2 = EventContext(
+            session_id="s2-msg-test",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store2,
+            permission_mode="plan",  # Option 4: not accepted
+        )
+        result = recover_unexported_plans(ctx2)
+
+        assert result is not None, "recovery must return a response"
+        msg = result["systemMessage"]
+        assert backup_filename in msg, (
+            f"systemMessage must include backup filename '{backup_filename}'. Got: '{msg}'"
+        )
+        assert "notes/rejected/" in msg
+        assert "(not accepted)" in msg
