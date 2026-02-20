@@ -5,6 +5,7 @@ import sys
 import os
 import threading
 import time
+import pytest
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -151,6 +152,7 @@ def test_session_termination_edge_cases():
     except Exception as e:
         print(f"⚠️ Nested session contexts: {e}")
 
+@pytest.mark.timeout(120)
 def test_memory_leak_edge_cases():
     """Test for memory leaks in session management"""
     print("\n🔍 Testing Memory Leak Edge Cases...")
