@@ -56,7 +56,6 @@ from clautorun import (
 
     # Hook integration
     hook_handlers,
-    create_mcp_server
 )
 
 def demo_simplified_imports():

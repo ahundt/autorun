@@ -5,7 +5,7 @@
 
 ![clautorun Architecture](clautorun-architecture.png)
 
-**clautorun** - Reduce interruptions while Claude completes tasks autonomously.
+**clautorun** - Reduce interruptions while Claude completes tasks more safely and autonomously.
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@
 - **Autonomous Execution**: Claude continues working without constant "continue" prompts
 - **Three-Stage Verification**: Ensures tasks are actually complete before stopping
 - **File Policy Control**: Prevent AI from creating unnecessary files
-- **Command Blocking**: Block dangerous commands with safer alternatives (v0.6.0)
+- **Command Blocking**: Block dangerous commands with safer alternatives
 - **Plan Management**: Create, refine, update, and execute structured plans
 - **Session Management**: Work with tmux/byobu for crash-safe sessions
 
@@ -1458,7 +1458,6 @@ clautorun/
 │       ├── task_lifecycle.py    # Task lifecycle tracking and stop-hook enforcement
 │       ├── tmux_utils.py        # Tmux session utilities
 │       ├── restart_daemon.py    # Daemon restart logic
-│       ├── mcp_server.py        # MCP server for external apps
 │       ├── install.py           # Plugin installation management
 ├── tests/
 │   ├── test_interactive.py           # Interactive mode tests
@@ -1480,7 +1479,6 @@ clautorun/
 - **Agents** (`agents/` directory): Specialized automation agents for tmux and CLI workflows
 - **Commands** (`commands/` directory): Claude Code slash commands using markdown files and executable scripts
 - **Hooks** (`hooks/hook_entry.py`): Event handlers for UserPromptSubmit, PreToolUse, Stop, and SubagentStop events — configured via `hooks/claude-hooks.json`. Note: `main.py` is a deprecated v0.6.1 backward-compatibility shim.
-- **MCP Servers** (`mcp_server.py`): Model Context Protocol integration for external applications
 
 **Plugin Manifest** (`.claude-plugin/plugin.json`):
 - Required: `name`, `description`, `commands` path

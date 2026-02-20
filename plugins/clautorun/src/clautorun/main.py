@@ -15,43 +15,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-⚠️ DEPRECATED: Legacy Hook Handler (v0.6.1) ⚠️
+No-Daemon Hook Handler (Direct Mode)
 
-This file is preserved for backward compatibility only.
+This module is a standalone hook handler used when CLAUTORUN_USE_DAEMON=0.
+It processes hook events directly in-process without a Unix socket daemon.
+
+Primary (daemon) path:  clautorun → __main__.py → client.py → daemon.sock → core.py
+Direct (no-daemon) path: CLAUTORUN_USE_DAEMON=0 clautorun → __main__.py → main.py (this file)
+
+When to use direct mode (CLAUTORUN_USE_DAEMON=0):
+- Daemon not running and startup overhead is undesirable
+- Testing hook handler logic in isolation
+- Systems where Unix sockets are not available
+
+Performance: 50-150ms per hook event (vs 1-5ms for daemon mode).
+Acceptable for debugging; not recommended for production (daemon mode is faster).
+
 The canonical v0.7 implementation is in:
-- core.py:220-958 (EventContext magic state, ClautorunApp dispatcher, ClautorunDaemon server)
-- plugins.py:1-772 (All 5 plugins with DRY factories - 78% code reduction)
-- session_manager.py:54-421 (RAII SessionLock - reused from v0.6.1)
-
-v0.7 provides:
-- 10-30x faster hook response (1-5ms vs 50-150ms via Unix socket daemon)
-- 78% code reduction via factory patterns (_make_policy_handler, _make_block_op, _make_plan_handler)
-- Magic state persistence (ctx.file_policy = "SEARCH" auto-persists)
-- Better maintainability (771 LOC vs 2,188 LOC)
-
-To use this legacy mode: export CLAUTORUN_USE_DAEMON=0
-Default (after v0.7): export CLAUTORUN_USE_DAEMON=1 (v0.7 daemon mode)
-
-This file will be removed in v0.8.0 after daemon mode stability is confirmed.
-
----
-
-ORIGINAL DOCSTRING (v0.6.1):
-
-Clautorun Hook Handler - Source of Truth
-
-PRIMARY HOOK HANDLER for Claude Code plugin system.
-- Called directly by hooks.json via: python3 ${CLAUDE_PLUGIN_ROOT}/src/clautorun/main.py
-- Contains complete three-stage verification logic with verification_engine and ai_monitor
-- Handles all hook events: UserPromptSubmit, PreToolUse, Stop, SubagentStop
-- Entry points: clautorun and clautorun-interactive (UV commands)
-- Modes: HOOK_INTEGRATION (default) and INTERACTIVE (Agent SDK client)
-
-Features:
-- RequirementVerificationEngine for evidence-based task completion verification
-- AI Monitor for session lifecycle management and crash detection
-- Agent SDK Client (ClaudeSDKClient) for bidirectional communication
-- Enhanced transcript analysis with requirement extraction
+- core.py (EventContext magic state, ClautorunApp dispatcher, ClautorunDaemon server)
+- plugins.py (All 5 plugins with DRY factories - 78% code reduction)
+- session_manager.py (filelock+JSON session state backend)
 """
 
 # Standard library imports for path configuration
@@ -2386,131 +2369,6 @@ def main(_exit=True):
             if _exit:
                 sys.exit(1)
             return 1
-
-    else:
-        # Run as standalone Agent SDK - Interactive mode
-        run_interactive_sdk(operation_mode)
-
-def run_interactive_sdk(operation_mode: str):
-    """Run interactive Agent SDK with clean async/sync separation"""
-    print("🚀 Agent SDK Command Interceptor - Interactive Mode")
-    print("=" * 55)
-    print("Commands handled locally (no AI tokens):")
-
-    for cmd, action in CONFIG["command_mappings"].items():
-        policy_info = ""
-        if action in CONFIG["policies"]:
-            policy_name, policy_desc = CONFIG["policies"][action]
-            policy_info = f" - {policy_desc}"
-        print(f"  {cmd} → {action}{policy_info}")
-
-    print(f"\nEnvironment: AGENT_MODE={operation_mode}")
-    print("Type commands (e.g., '/afs', '/afa', '/afj', '/afst') or 'quit' to exit")
-    print("Non-commands will be processed by Claude Code via Agent SDK\n")
-
-    # Initialize session state for interactive mode
-    session_id = "interactive_session"
-    with session_state(session_id) as state:
-        state["file_policy"] = "ALLOW"
-
-    print("✅ Ready for commands...")
-    print("💡 One Ctrl+C = interrupt, two Ctrl+C = goodbye\n")
-
-    # Track Ctrl+C count for double-press detection
-    ctrl_c_count = 0
-    last_ctrl_c_time = 0
-
-    # Main interactive loop - sync input, async processing
-    while True:
-        try:
-            # Get user input synchronously
-            user_input = input("❓ ").strip()
-
-            # Reset Ctrl+C count on successful input
-            ctrl_c_count = 0
-
-            # Exit conditions
-            if user_input.lower() in ('quit', 'exit', 'q'):
-                print("👋 Goodbye!")
-                break
-
-            if not user_input:
-                continue
-
-            # Efficient command detection - O(1) lookup via command_mappings
-            command = next((v for k, v in CONFIG["command_mappings"].items() if k == user_input), None)
-            if not command:
-                # Check for commands that support arguments (autorun)
-                command = next((v for k, v in CONFIG["command_mappings"].items() if user_input.startswith(k)), None)
-
-            if command and command in COMMAND_HANDLERS:
-                # Handle locally using dispatch table lookup
-                with session_state(session_id) as state:
-                    if command == "activate":
-                        # Pass the full prompt for activation
-                        response = COMMAND_HANDLERS[command](state, user_input)
-                    else:
-                        response = COMMAND_HANDLERS[command](state)
-                    print(f"✅ {response}")
-
-            else:
-                # Send to Claude Code via Agent SDK - async operation
-                print("🤖 Processing with Claude Code...")
-                try:
-                    # Run async operation in sync context
-                    asyncio.run(process_with_claude_sdk(user_input, session_id))
-                except Exception as e:
-                    print(f"❌ Claude Code error: {e}")
-                    print("💡 Make sure Claude Code is running and accessible")
-
-        except KeyboardInterrupt:
-            import time
-            current_time = time.time()
-
-            # Check if this is a rapid second Ctrl+C (within 1 second)
-            if current_time - last_ctrl_c_time < 1.0:
-                ctrl_c_count += 1
-            else:
-                ctrl_c_count = 1
-
-            last_ctrl_c_time = current_time
-
-            if ctrl_c_count >= 2:
-                print("\n👋 Goodbye!")
-                break
-            else:
-                print("\n⚠️ Interrupted. One more Ctrl+C to exit, or continue with a command.")
-
-        except EOFError:
-            print("\n👋 Goodbye!")
-            break
-        except Exception as e:
-            print(f"❌ Error: {e}")
-
-async def process_with_claude_sdk(prompt: str, session_id: str):
-    """Process non-command prompts with Claude Code via Agent SDK"""
-    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-
-    try:
-        # Use ClaudeSDKClient for better control
-        options = ClaudeAgentOptions()
-        async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt, session_id=session_id)
-
-            async for message in client.receive_response():
-                if hasattr(message, 'content'):
-                    for block in message.content:
-                        if hasattr(block, 'text'):
-                            print(block.text, end='', flush=True)
-                elif hasattr(message, 'total_cost_usd'):
-                    print(f"\n💰 Cost: ${message.total_cost_usd:.4f}")
-                    break  # End of response
-            print()  # New line at end
-
-    except Exception as e:
-        print(f"❌ Agent SDK error: {e}")
-        # Fallback - suggest using Claude Code directly
-        print("💡 You can ask this question directly in Claude Code")
 
 if __name__ == "__main__":
     main()

@@ -1,188 +1,122 @@
 # Claude Code Integration Guide
 
-The Agent SDK can be integrated with Claude Code in multiple ways, each offering different levels of integration and efficiency.
+This guide describes how to integrate with clautorun (v0.7+). The v0.6.1-era Agent SDK
+and MCP Server integration modes have been superseded by the daemon-based v0.7 architecture.
+
+## Current Integration Architecture (v0.7+)
+
+clautorun operates as a Unix socket daemon that processes Claude Code hook events efficiently.
+The integration path is:
+
+```
+Claude Code hook event
+  → hooks/hook_entry.py       (bootstrap; detects Claude vs Gemini CLI)
+  → src/clautorun/client.py   (Unix socket client; auto-starts daemon)
+  → src/clautorun/core.py     (ClautorunDaemon; async dispatch)
+  → src/clautorun/plugins.py  (hook handlers: file policy, blocking, plan export)
+```
+
+**Performance**: 1–5ms per hook event (daemon mode) vs 50–150ms (legacy direct mode).
 
 ## Integration Options
 
-### 1. Standalone Agent SDK Application
+### 1. Daemon Mode (Default — Recommended)
 
-**Use Case**: Maximum efficiency, independent operation
-**Setup**:
-```bash
-cd clautorun
-uv pip install claude-agent-sdk
-
-# Run in SDK-Only mode (most efficient)
-AGENT_MODE=SDK_ONLY python -m clautorun
-```
-
-**Pros**:
-- Zero AI token consumption
-- Instant responses
-- Full independence from Claude Code
-- Can run anywhere
-
-**Cons**:
-- Separate from Claude Code workflow
-- Requires separate setup
-
-### 2. Claude Code Slash Commands
-
-**Use Case**: Add new slash commands to Claude Code
-**Setup**:
-```bash
-# Create symlink to commands directory
-ln -sf /path/to/clautorun/main.py ~/.claude/hooks/
-
-# Use as slash command
-/agent-sdk-interceptor sdk-only
-```
-
-**Pros**:
-- Integrated with Claude Code workflow
-- Familiar command interface
-- Can use existing Claude Code features
-
-**Cons**:
-- Still goes through Claude Code's hook system
-- Some token consumption for routing
-
-### 3. MCP Server Integration
-
-**Use Case**: External applications and cross-platform compatibility
-**Setup**:
-```bash
-# Install MCP server
-uv pip install mcp
-
-# Run MCP server
-python mcp_server.py --server
-```
-
-**Configuration**:
-```json
-{
-  "mcpServers": {
-    "agent-sdk": {
-      "command": "python",
-      "args": ["/path/to/clautorun/mcp_server.py", "--server"],
-      "env": {
-        "AGENT_MODE": "SDK_ONLY"
-      }
-    }
-  }
-}
-```
-
-**Pros**:
-- Cross-platform compatibility
-- Can be used by external applications
-- Standard MCP protocol
-
-**Cons**:
-- Requires MCP client
-- Additional setup complexity
-
-### 4. Hook Integration (main.py)
-
-**Use Case**: Direct hook integration with Claude Code
-**Setup**:
-```bash
-# hooks.json already configured to call main.py directly
-# See hooks.json for configuration
-```
-
-**Pros**:
-- Drop-in compatibility
-- Maintains all existing behavior
-- No breaking changes
-- Better efficiency
-
-**Cons**:
-- Still uses hook infrastructure
-- Some token consumption for non-commands
-
-### 5. Hybrid Mode (Best of Both Worlds)
-
-**Use Case**: Maximum efficiency with backward compatibility
-**Setup**:
-```bash
-# Run in hybrid mode (if implemented)
-AGENT_MODE=HYBRID python -m clautorun
-```
-
-**Pros**:
-- SDK handles command responses (no tokens)
-- Existing hooks handle enforcement
-- Maximum compatibility
-- Gradual migration path
-
-**Cons**:
-- Slightly more complex setup
-- Two systems to maintain
-
-## Recommendation
-
-### For Maximum Efficiency:
-Use **Option 1: Standalone Agent SDK Application** with:
-```bash
-AGENT_MODE=SDK_ONLY python -m clautorun
-```
-
-### For Seamless Integration:
-Use **Option 4: Hook Replacement** or **Option 2: Slash Commands**
-
-### For External Applications:
-Use **Option 3: MCP Server Integration**
-
-## Migration Path
-
-1. **Current State**: `/afs` → Claude Code → AI → Hook (wastes tokens)
-2. **Phase 1**: Run standalone Agent SDK alongside (dual operation)
-3. **Phase 2**: Test slash command integration
-4. **Phase 3**: Replace hooks with Agent SDK version
-5. **Phase 4**: Run entirely in SDK mode
-
-## Configuration
-
-Set these environment variables to customize behavior:
+The daemon starts automatically on first hook event. No manual setup required.
 
 ```bash
-# Mode selection
-AGENT_MODE=SDK_ONLY          # Maximum efficiency
-AGENT_MODE=HYBRID           # SDK + hooks
+# Verify daemon is running:
+clautorun --status
 
-# Hook integration
-USE_EXISTING_HOOKS=true     # Use main.py for all hooks
-USE_EXISTING_HOOKS=false    # Pure SDK operation
-
-# Debugging
-DEBUG=true                  # Enable debug logging
+# Restart if needed:
+clautorun --restart-daemon
 ```
 
-## Testing Each Integration
+The daemon handles all hook events (UserPromptSubmit, PreToolUse, PostToolUse, SessionStart,
+Stop, SubagentStop) through `hooks/claude-hooks.json` for Claude Code and `hooks/hooks.json`
+for Gemini CLI.
 
-1. **Standalone**:
+**When to use**: All production usage. Fastest, most reliable.
+
+### 2. Direct Mode (No Daemon — Debugging)
+
+Run the hook handler in-process without the daemon. Useful when debugging hook logic or
+when Unix sockets are not available.
+
 ```bash
-cd clautorun
-AGENT_MODE=SDK_ONLY python -m clautorun
+# Set environment variable to bypass daemon:
+export CLAUTORUN_USE_DAEMON=0
+
+# Then run clautorun normally — it goes through main.py directly:
+echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/cr:st", "session_id": "test"}' \
+  | clautorun
+
+# Or inline:
+CLAUTORUN_USE_DAEMON=0 clautorun
 ```
 
-2. **Slash Command**:
+**When to use**: Debugging hook logic, systems without Unix socket support.
+**Performance**: 50–150ms per event (acceptable for debugging; use daemon in production).
+
+### 3. Hook Integration (Slash Commands via .md Files)
+
+Add new slash commands by placing markdown files in `commands/`:
+
 ```bash
-/agent-sdk-interceptor sdk-only
+# commands/mycommand.md — automatically available as /cr:mycommand
+# Contents describe what Claude should do when the command is invoked
 ```
 
-3. **MCP Server**:
+See `commands/` for 76 existing command examples. Commands are loaded by Claude Code at
+session start and do not require hook handler changes.
+
+**When to use**: Adding new slash commands without Python code.
+
+### 4. Python Hook Handler Extension
+
+Add new hook handlers in `src/clautorun/plugins.py` using the factory patterns:
+
+```python
+# In plugins.py — add a new PreToolUse handler:
+@app.on("PreToolUse")
+def my_handler(ctx: EventContext) -> None:
+    if ctx.tool_name == "Bash":
+        # ctx.deny("reason") to block, return None to allow
+        pass
+```
+
+See `src/clautorun/plugins.py` for existing handler examples using `_make_policy_handler()`
+and `_make_block_op()` factory patterns.
+
+**When to use**: Adding new enforcement logic that requires Python.
+
+## Hook File Naming (Important)
+
+| Filename | CLI | Notes |
+|----------|-----|-------|
+| `hooks/claude-hooks.json` | Claude Code | Referenced by `plugin.json` |
+| `hooks/hooks.json` | Gemini CLI | **Filename required by Gemini — cannot rename** |
+
+## Testing
+
 ```bash
-python mcp_server.py
+# Run full test suite:
+uv run pytest plugins/clautorun/tests/ -v --tb=short
+
+# Test specific hook behavior:
+uv run pytest plugins/clautorun/tests/test_core.py -v
+uv run pytest plugins/clautorun/tests/test_integrations.py -v
 ```
 
-4. **Hook Replacement**:
-```bash
-# Test with existing commands
-/afs
-/afa
+## Bug #4669 Workaround (Claude Code v1.0.62+)
+
+Claude Code ignores `permissionDecision:"deny"` at exit 0. The workaround:
+
+```python
+# client.py handles this automatically:
+# Claude Code: exit 2 + stderr reason (only way blocking works)
+# Gemini CLI: exit 0 + JSON decision field (works correctly per spec)
 ```
 
-All integrations provide the same command interface and behavior, just with different integration depths.
+See `src/clautorun/client.py:output_hook_response()` for implementation.
+See `src/clautorun/config.py:should_use_exit2_workaround()` for CLI detection.

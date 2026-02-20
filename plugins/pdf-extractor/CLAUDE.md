@@ -19,34 +19,40 @@ extract-pdfs --list-backends
 
 ## Installation
 
-### Using uv (Recommended)
+### Using uv tool install (Recommended — makes extract-pdfs globally available)
 
 ```bash
-cd ~/.claude/clautorun/plugins/pdf-extractor
+# From repository root:
+cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
 
-# Create virtual environment and install
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-
-# Verify installation
+# Verify:
 extract-pdfs --list-backends
 ```
 
 ### Optional GPU Backends
 
-For GPU-accelerated extraction (recommended for scanned documents):
+For GPU-accelerated extraction (recommended for scanned/image-only PDFs):
 
 ```bash
-uv pip install -e ".[gpu]"  # Installs docling + marker-pdf
+cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
+# Requires PyTorch + CUDA or MPS (Apple Silicon)
+# Note: docling downloads ~500MB models on first use; marker downloads ~1GB
+extract-pdfs --list-backends  # Verify gpu backends appear
+```
+
+### Venv Install (alternative — installs into current venv only)
+
+```bash
+cd plugins/pdf-extractor && uv pip install -e . && cd ../..
 ```
 
 ### Development Setup
 
 ```bash
+cd plugins/pdf-extractor
 uv pip install -e ".[dev]"  # Adds pytest, pytest-cov, ruff
-python -m pytest tests/ -v  # Run tests
-ruff check src/ tests/      # Run linter
+uv run pytest tests/ -v     # Run tests
+uv run ruff check src/ tests/  # Run linter
 ```
 
 ## Usage
@@ -117,7 +123,7 @@ pdf-extractor/
 ├── pyproject.toml               # Package config with uv/pip support
 ├── uv.lock                      # Locked dependencies
 ├── commands/extract.md          # Slash command definition
-├── skills/pdf-extraction/       # Skill files for Claude
+├── skills/pdf-extractor/        # Skill files for Claude
 ├── src/pdf_extraction/          # Main package
 │   ├── __init__.py              # Public API exports
 │   ├── backends.py              # 9 backend extractors
@@ -138,20 +144,61 @@ The plugin skill activates when you ask to:
 
 ## Troubleshooting
 
-### Backend not found
+### `extract-pdfs: command not found`
 ```bash
-# Check which backends are available
+# Install as global UV tool from repo root:
+cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+# Verify:
 extract-pdfs --list-backends
+```
 
-# Install missing optional backends
-uv pip install docling marker-pdf pymupdf4llm
+### `ModuleNotFoundError: No module named 'pdf_extraction'` (or 'markitdown', 'pdfplumber')
+```bash
+# Re-install with all base dependencies:
+cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+# If that fails, install explicitly:
+uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
+```
+
+### GPU backends (docling, marker) not available
+```bash
+# These require PyTorch; install optional GPU extras:
+cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
+# Verify GPU backends appear:
+extract-pdfs --list-backends
+# Note: docling downloads ~500MB models on first use; marker downloads ~1GB
+```
+
+### Empty output from scanned PDF (image-only document)
+```bash
+# Scanned PDFs require OCR (GPU backends):
+extract-pdfs scanned.pdf --backends marker docling
+# If GPU unavailable, try pdftotext (system tool):
+brew install poppler        # macOS
+# apt install poppler-utils  # Ubuntu/Debian
+extract-pdfs scanned.pdf --backends pdftotext
+```
+
+### pdfminer import error (package name confusion)
+```bash
+# Install correct package (name has .six suffix):
+uv pip install "pdfminer.six>=20221105"
+# Imports correctly as: from pdfminer.high_level import extract_text  (no .six)
+```
+
+### markitdown version conflict
+```bash
+# markitdown API changed significantly in 0.1.0; ensure correct version:
+uv pip install "markitdown>=0.1.0"
 ```
 
 ### Encrypted PDF
 The extractor will warn about encrypted PDFs. Some backends can handle password-free encryption, others will fail. Try different backends with `--backends`.
 
-### Empty output
-Some PDFs contain only images (scanned). Use GPU backends (docling, marker) for OCR:
+### Backend not found
 ```bash
-extract-pdfs scanned.pdf --backends marker docling
+# Check which backends are available:
+extract-pdfs --list-backends
+# Install missing optional backends:
+uv pip install docling marker-pdf pymupdf4llm
 ```

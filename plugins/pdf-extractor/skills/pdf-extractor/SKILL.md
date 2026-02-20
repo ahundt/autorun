@@ -1,5 +1,5 @@
 ---
-name: pdf-extraction
+name: pdf-extractor
 description: This skill should be used when the user asks to "extract text from PDF", "convert PDF to text", "parse PDF", "read PDF contents", "extract data from documents", "batch PDF extraction", "PDF to markdown", "OCR PDF", "get text from PDF files", "I have a PDF", "can you read this PDF", "what's in this PDF", "summarize this PDF", "open PDF file", "extract from [filename].pdf", or needs to process PDF documents for data extraction. Handles single-file extraction, batch processing, and OCR for scanned documents with automatic backend selection.
 version: 0.1.0
 example-prompt: "Extract text from document.pdf"
@@ -47,11 +47,19 @@ To extract text from PDFs:
 
 ### Alternative Execution Methods
 
-If the `extract-pdfs` CLI isn't installed, use these alternatives:
+If the `extract-pdfs` CLI isn't installed, install it first (recommended):
 
 ```bash
-# Module execution (requires package in path)
-python -m pdf_extraction document.pdf
+# Install as global UV tool (from repo root):
+cd "${CLAUDE_PLUGIN_ROOT}/../.." && uv tool install --force --editable plugins/pdf-extractor
+extract-pdfs --list-backends  # verify
+```
+
+Or use these fallback methods without installing:
+
+```bash
+# uv run (recommended fallback — no install required):
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m pdf_extraction document.pdf
 
 # Standalone script execution
 python "${CLAUDE_PLUGIN_ROOT}/src/pdf_extraction/cli.py" document.pdf
@@ -297,10 +305,58 @@ Optional dependencies:
 
 Install all dependencies:
 ```bash
-pip install markitdown pdfplumber pdfminer.six PyPDF2 tqdm
+uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
 ```
 
 For GPU backends:
 ```bash
-pip install docling marker-pdf
+uv pip install docling marker-pdf
+```
+
+## Troubleshooting
+
+### `extract-pdfs: command not found`
+```bash
+# Install as global UV tool from repo root:
+cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+extract-pdfs --list-backends  # verify
+```
+
+### `ModuleNotFoundError: No module named 'pdf_extraction'` (or 'markitdown', 'pdfplumber')
+```bash
+# Re-install with all base dependencies:
+cd plugins/pdf-extractor && uv tool install --force --editable . && cd ../..
+# Or install explicitly:
+uv pip install "markitdown>=0.1.0" "pdfplumber>=0.10.0" "pdfminer.six>=20221105" "PyPDF2>=3.0.0" tqdm
+```
+
+### GPU backends (docling, marker) not available
+```bash
+# Requires PyTorch; install GPU extras:
+cd plugins/pdf-extractor && uv tool install --force --editable ".[gpu]" && cd ../..
+extract-pdfs --list-backends  # verify gpu backends appear
+# Note: docling downloads ~500MB models on first use; marker downloads ~1GB
+```
+
+### Empty output from scanned PDF (image-only document)
+```bash
+# Scanned PDFs require OCR (GPU backends):
+extract-pdfs scanned.pdf --backends marker docling
+# If GPU unavailable, try pdftotext (system tool):
+brew install poppler        # macOS
+# apt install poppler-utils  # Ubuntu/Debian
+extract-pdfs scanned.pdf --backends pdftotext
+```
+
+### pdfminer import error (package name confusion)
+```bash
+# Install correct package (name has .six suffix):
+uv pip install "pdfminer.six>=20221105"
+# Import is still: from pdfminer.high_level import extract_text  (no .six)
+```
+
+### markitdown version conflict
+```bash
+# API changed significantly in 0.1.0; ensure correct version:
+uv pip install "markitdown>=0.1.0"
 ```
