@@ -1,7 +1,7 @@
 # Hooks API Reference: Claude Code & Gemini CLI
 
-**Version:** 2.2
-**Generated:** 2026-02-12
+**Version:** 2.3
+**Generated:** 2026-02-12 / **Updated:** 2026-02-20
 **Purpose:** Comprehensive comparison of hook APIs across Claude Code and Gemini CLI, with emphasis on JSON I/O, tool blocking, directory layouts, and variable systems.
 
 **Key Enhancement (v2.2):** Detailed bug #4669 documentation with expected vs actual behavior, affected versions (v1.0.62+), and complete I/O pathway specifications for all tables.
@@ -26,7 +26,8 @@
 14. [Implementation Patterns](#implementation-patterns)
 15. [Per-Event Decision Control](#per-event-decision-control)
 16. [LLM Request/Response (Gemini Only)](#llm-requestresponse-gemini-only)
-17. [References](#references)
+17. [SessionStart: `source` Field and `permission_mode` Timing Race](#sessionstart-source-field-and-permission_mode-timing-race)
+18. [References](#references)
 
 ---
 
@@ -1420,6 +1421,180 @@ Filter which tools are available to the AI before it selects one:
 
 ---
 
+## SessionStart: `source` Field and `permission_mode` Timing Race
+
+**Version:** Added v2.3 — 2026-02-20
+**Source:** Confirmed by debug log analysis (`~/.claude/debug/<session-uuid>.txt`), clautorun
+commit `e38e24f` (Part A), commit `c69c7df` (Part B), and commit implementing Part C.
+
+---
+
+### `source` Field in SessionStart Payload
+
+Claude Code sends a top-level `source` field in `SessionStart` hook payloads that identifies how
+the new session was initiated. This field is the hook-matching "query" (Claude Code logs:
+`Getting matching hook commands for SessionStart with query: clear`).
+
+**Input payload example (Option 1 — clear context and bypass):**
+
+```json
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "source": "clear",
+  "permission_mode": "default"
+}
+```
+
+**`source` field values:**
+
+| Value | When Sent | Trigger |
+|-------|-----------|---------|
+| `"startup"` | Default new session | Running `claude` with no special flags |
+| `"resume"` | Session resumed | `claude --resume` or `--continue` |
+| `"clear"` | Context cleared | ExitPlanMode Option 1 ("clear context + bypass permissions") **OR** user runs `/clear` command |
+| `"compact"` | After compaction | Automatic or manual context compaction |
+
+**Important:** `"clear"` fires for **both** ExitPlanMode Option 1 and a manual `/clear` command.
+These are indistinguishable in the hook payload alone. See [Known Limitation](#known-limitation) below.
+
+---
+
+### `permission_mode` Timing Race Bug (Option 1 Detection)
+
+**Status:** Open bug — confirmed in clautorun live E2E testing 2026-02-20.
+
+When the user selects **Option 1** ("Yes, clear context and bypass permissions") in the ExitPlanMode
+dialog, Claude Code:
+1. Fires `SessionStart:clear` hook
+2. **Then** applies `bypassPermissions` mode
+
+The gap is ~2ms, but the hook completes entirely before the mode is applied. As a result,
+`permission_mode` in the hook payload is always `"default"` for Option 1 sessions — **never**
+`"bypassPermissions"` as one might expect.
+
+**Confirmed by debug log** (`~/.claude/debug/f5c11f3e-1034-4a81-9d69-391dcecc1f95.txt`):
+
+```
+23:09:52.827Z  Hook SessionStart:clear success: {..., "systemMessage": "...Plan retained in notes/rejected/..."}
+23:09:52.829Z  Applying permission update: Setting mode to 'bypassPermissions'
+```
+
+Hook completes at `.827Z`; `bypassPermissions` applied at `.829Z` — 2ms after hook finishes.
+
+**All SessionStart payload `permission_mode` values observed for ExitPlanMode options:**
+
+| ExitPlanMode Option | `source` | `permission_mode` at hook time | PostToolUse fires? |
+|--------------------|----------|-------------------------------|-------------------|
+| Option 1: clear context + bypass | `"clear"` | `"default"` ← **NOT** `"bypassPermissions"` | No (new session) |
+| Option 2: bypass permissions | `"startup"` | `"bypassPermissions"` (or `"default"`) | Yes |
+| Option 3: manually approve edits | `"startup"` | `"acceptEdits"` (or `"default"`) | Yes |
+| Option 4: provide feedback (no accept) | `"startup"` | `"plan"` (unchanged) | No |
+| Escape: dismiss dialog | `"startup"` | `"plan"` (unchanged) | No |
+| Shift+Tab: cycle mode (no dialog) | varies | next mode in cycle | No |
+
+For Options 2 and 3, `PostToolUse` fires in the **same session** — these do not reach `SessionStart`
+recovery routing. The `permission_mode` value at `SessionStart` matters only for Option 1 (which
+always reads `"default"` due to the timing race).
+
+---
+
+### Correct Option 1 Detection Strategy
+
+**Primary signal:** `source == "clear"` — set before the hook fires, reliable.
+**Fallback signal:** `permission_mode in {"bypassPermissions", "acceptEdits"}` — retained in case
+Anthropic fixes the timing bug so the correct value arrives in the payload before hook execution.
+
+```python
+# Detect Option 1 (clear context + bypass) at SessionStart recovery time:
+session_is_clear = ctx.source == "clear"            # Primary: set before hook fires
+mode_changed     = ctx.permission_mode != mode_at_exit
+mode_accepted    = ctx.permission_mode in {"bypassPermissions", "acceptEdits"}
+plan_was_accepted = (exit_was_attempted
+                     and (session_is_clear
+                          or (mode_changed and mode_accepted)))
+# OR: session_is_clear covers Option 1 (2ms race)
+#     mode_changed + mode_accepted covers Options 2/3 (same session, PostToolUse routes these)
+#     Fallback path: future-proof if Anthropic fixes timing bug
+```
+
+**Source:** `plugins/clautorun/src/clautorun/plan_export.py` — `recover_unexported_plans()`.
+`ctx.source` is extracted in `core.py:normalize_hook_payload()`:
+```python
+"source": payload.get("source", "startup"),
+```
+
+---
+
+### ExitPlanMode Dialog: Full Hook Behavior Table
+
+The dialog text shown to the user (confirmed from live session):
+
+```
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Claude has written up a plan and is ready to execute.
+ Would you like to proceed?
+
+ ❯ 1. Yes, clear context and bypass permissions
+   2. Yes, and bypass permissions
+   3. Yes, manually approve edits
+   4. Type here to tell Claude what to change
+
+ ctrl-g to edit in VS Code · ~/.claude/plans/<name>.md
+```
+Pressing **Escape** dismisses the dialog and returns to plan mode.
+Pressing **Shift+Tab** at any time cycles permission mode directly (no dialog, no hook fires).
+
+**Complete mapping of all 6 exit paths:**
+
+| User action | `PreToolUse`(ExitPlanMode) fires? | `PostToolUse` fires? | `SessionStart` source | `permission_mode` at `SessionStart` |
+|-------------|----------------------------------|---------------------|----------------------|-------------------------------------|
+| Option 1: clear context + bypass | **YES** (before dialog) | **NO** (context cleared) | `"clear"` | `"default"` (timing race) |
+| Option 2: bypass permissions | **YES** | **YES** (same session) | — (PostToolUse handles) | — |
+| Option 3: manually approve edits | **YES** | **YES** (same session) | — (PostToolUse handles) | — |
+| Option 4: provide feedback | **YES** | **NO** (stays in plan mode) | `"startup"` | `"plan"` |
+| Escape: dismiss dialog | **YES** | **NO** (stays in plan mode) | `"startup"` | `"plan"` |
+| Shift+Tab: cycle mode | **NO** (ExitPlanMode not called) | **NO** | varies | new mode in cycle |
+
+**`PreToolUse(ExitPlanMode)` always fires *before* the dialog is shown** — before any user decision
+is made. Any state recorded at `PreToolUse` time is "pre-decision."
+
+---
+
+### Known Limitation
+
+**False positive:** Option 4/Escape + later manual `/clear` command (unrelated to plan acceptance):
+
+If the user:
+1. Opens ExitPlanMode dialog (→ `PreToolUse` fires, backup created, `exit_attempted=True`)
+2. Selects Option 4 (stays in plan mode)
+3. Later runs `/clear` manually (for unrelated reasons)
+
+Then at `SessionStart:clear`, `exit_attempted=True` + `source=="clear"` → `plan_was_accepted=True`
+→ plan falsely promoted to `notes/`.
+
+**Severity:** Low. Plan appears in both `notes/` and `notes/rejected/` (harmless duplicate).
+Documented in `test_plan_export_class.py::TestAcceptedRejectedRouting::test_option4_then_clear_known_limitation`.
+
+---
+
+### `permission_mode` Field Values (All Contexts)
+
+The `permission_mode` field appears in all hook event payloads (not just `SessionStart`):
+
+| Value | Mode Name | When Active |
+|-------|-----------|-------------|
+| `"default"` | Default mode | Normal operation; `SessionStart` Option 1 (timing race) |
+| `"plan"` | Plan mode | Inside plan mode (`ExitPlanMode` not yet called) |
+| `"bypassPermissions"` | Bypass permissions | Options 1/2 after apply (not at `SessionStart` hook time for Option 1) |
+| `"acceptEdits"` | Accept edits | Option 3 after apply |
+
+`"plan"` and `"default"` are **not** acceptance modes. Only `"bypassPermissions"` and
+`"acceptEdits"` indicate a plan was accepted — but only when `permission_mode` arrives correctly
+(Options 2/3 via PostToolUse, not Option 1 via SessionStart due to timing race).
+
+---
+
 ## References
 
 ### Source Attribution by Section
@@ -1543,8 +1718,18 @@ Filter which tools are available to the AI before it selects one:
 
 ---
 
-**Document Version:** 2.2
+**Document Version:** 2.3
 **Status:** Complete
+**Changes in v2.3:**
+- **SessionStart `source` field documentation:** Added comprehensive section covering:
+  - `source` values (`startup`, `resume`, `clear`, `compact`) and triggers
+  - `permission_mode` timing race bug: hook fires 2ms before `bypassPermissions` is applied (Option 1)
+  - Debug log evidence: `23:09:52.827Z` hook completes vs `23:09:52.829Z` mode applied
+  - Correct Option 1 detection strategy: `source=="clear"` as primary signal, `permission_mode` fallback
+  - ExitPlanMode full dialog text and complete 6-path hook behavior table
+  - `permission_mode` field values reference for all modes
+  - Known limitation: Option 4 + `/clear` → false positive (low severity)
+
 **Changes in v2.2:**
 - **Bug #4669 Documentation:** Added comprehensive bug documentation with:
   - Expected behavior (what SHOULD happen: tool blocked)
