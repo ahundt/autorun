@@ -388,13 +388,13 @@ UV is a modern, extremely fast Python package manager and virtual environment ma
 **Quick Core Tests:**
 ```bash
 # With UV (Recommended)
-uv run pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+uv run pytest plugins/clautorun/tests/test_unit_simple.py -v
 
 # With Traditional pip
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v
+pytest plugins/clautorun/tests/test_unit_simple.py -v
 
 # Using Makefile
 make test-quick
@@ -403,45 +403,35 @@ make test-quick
 **Expected output:**
 ```
 ============================= test session starts ==============================
-collected 29 items
 
-tests/test_unit_simple.py::TestConfiguration::test_completion_marker PASSED [ 3%]
-tests/test_unit_simple.py::TestConfiguration::test_emergency_stop_phrase PASSED [ 6%]
+tests/test_unit_simple.py::TestConfiguration::test_completion_marker PASSED
+tests/test_unit_simple.py::TestConfiguration::test_emergency_stop_phrase PASSED
 ...
-tests/test_autorun_compatibility.py::test_completion_marker PASSED [ 84%]
-tests/test_autorun_compatibility.py::test_emergency_stop_phrase PASSED [ 87%]
-...
-============================== 29 passed in 0.15s ==============================
 ```
 
 **Full Test Suite with Coverage:**
 ```bash
 # With UV
-uv run pytest --cov=src/clautorun --cov-report=term-missing
+uv run pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing
 
 # With make
 make test-all
 
 # With traditional pip
-pytest --cov=src/clautorun --cov-report=term-missing
+pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing
 ```
 
 **Test Categories:**
 - **Unit Tests** (`test_unit_simple.py`): Configuration constants, command handlers, command detection logic
-- **Compatibility Tests** (`test_autorun_compatibility.py`): String compatibility, policy descriptions, configuration verification
 - **Integration Tests** (`test_interceptor.py`, `test_interactive.py`): Command processing, interactive mode functionality
 
 **Specific Test Categories:**
 ```bash
 # Unit tests only
-uv run pytest tests/test_unit_simple.py -v
-
-# Compatibility tests only
-uv run pytest tests/test_autorun_compatibility.py -v
+uv run pytest plugins/clautorun/tests/test_unit_simple.py -v
 
 # With markers
 uv run pytest -m unit -v
-uv run pytest -m compatibility -v
 ```
 
 **Test Coverage Report:**
@@ -814,13 +804,19 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 **Session Commands:**
 - **/cr:no \<pattern> [description]** - Block pattern in this session
 - **/cr:ok \<pattern>** - Allow pattern in this session
-- **/cr:clear [pattern]** - Clear blocks (or specific pattern)
+- **/cr:clear [pattern]** - Clear session blocks (or specific pattern)
+- **/cr:blocks** - Show active session-level pattern blocks and allows
 - **/cr:status** - Show blocked patterns
 
 **Global Commands:**
 - **/cr:globalno \<pattern> [description]** - Block pattern globally (all sessions)
 - **/cr:globalok \<pattern>** - Allow pattern globally
 - **/cr:globalstatus** - Show global blocks
+- **/cr:globalclear** - Clear all global pattern blocks and allows
+
+**Developer/Admin Commands:**
+- **/cr:reload** - Force-reload all integration rules from config files
+- **/cr:restart-daemon** - Restart daemon to reload Python code changes
 
 **Pattern Type Prefixes (NEW):**
 - **regex:\<pattern>** - Use regular expression matching
@@ -861,13 +857,28 @@ Add custom descriptions when blocking patterns to provide specific guidance to u
 | Glob | `glob:` | Glob pattern matching | `glob:*.tmp` | `file.tmp` |
 | Auto | `/.../` | Auto-detects regex | `/eval\(./` | `eval(...` |
 
-**Default Integrations:**
+**Default Integrations (21 entries):**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
 - `rm -rf` → Dangerous, suggests trash CLI alternatives
 - `git reset --hard` → CRITICAL: Permanently discards uncommitted changes, suggests safer git alternatives
+- `git checkout .` → DANGEROUS: Discards ALL uncommitted changes, suggests git stash
+- `git checkout --` → CAUTION: Discards unstaged changes to specific file, suggests git stash push
+- `git checkout` → CAUTION: Discards unstaged changes (modern syntax without --), suggests git restore
+- `git stash drop` → CAUTION: Permanently deletes stashed changes, suggests git stash pop
+- `git clean -f` → DANGEROUS: Permanently deletes untracked files, suggests git clean -n dry-run first
+- `git reset HEAD~` → CAUTION: Undoes commits, suggests backup branch or git revert
 - `dd if=` → Disk write warning, suggests backup tools
 - `mkfs` → Filesystem warning, suggests backup first
 - `fdisk` → Partition warning, suggests GUI alternatives
+- `sed` → Suggests {edit} AI tool instead of bash sed for file modifications
+- `awk` → Suggests Python or {read} AI tool instead of awk for text processing
+- `grep` → Suggests {grep} AI tool instead (blocked when not in a pipe)
+- `find` → Suggests {glob} AI tool instead (blocked when not in a pipe)
+- `cat` → Suggests {read} AI tool instead (blocked when not in a pipe)
+- `head` → Suggests {read} AI tool with limit parameter (blocked when not in a pipe)
+- `tail` → Suggests {read} AI tool with offset parameter (blocked when not in a pipe)
+- `echo >` → Suggests {write} AI tool instead of echo redirection
+- `git` → Warning only (action: warn): reminds to check CLAUDE.md git commit requirements
 
 **Installing trash CLI:**
 - macOS: `brew install trash`
@@ -968,7 +979,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --disable
 **Architecture:**
 - **Dict-based storage**: {task_id: TaskState} prevents duplicates
 - **Per-session isolation**: Each AI session tracks own tasks independently
-- **Thread-safe**: fcntl locks via session_state(), atomic operations
+- **Thread-safe**: `filelock.FileLock` (cross-process) + `threading.RLock` (same-process) via session_state(), atomic writes
 - **DRY patterns**: Reuses session_state(), simple logging, @property + atomic_update_*()
 
 **Configuration:**
@@ -989,7 +1000,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --configure
 - `debug_logging`: Enable audit logging (default: false)
 
 **Storage:**
-- **State**: `~/.claude/sessions/plugin___task_lifecycle__.db` (global shelve)
+- **State**: `~/.claude/sessions/daemon_state.json` (single JSON file via filelock+JSON backend)
 - **Logs**: `~/.clautorun/task-tracking/{session_id}/audit.log` (per-session)
 - **Config**: `~/.clautorun/task-lifecycle.config.json`
 
@@ -1104,6 +1115,7 @@ uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12
 - **/cr:tm** or **/cr:tmux** - Session lifecycle management (create, list, cleanup)
 - **/cr:tt** or **/cr:ttest** - Comprehensive CLI and plugin testing in isolated sessions
 - **/cr:tabs** - Discover and manage Claude sessions running across tmux windows
+- **/cr:tabw** - Execute actions on Claude sessions across tmux windows (DANGEROUS: sends keystrokes to other sessions)
   - Scans all tmux panes for Claude Code sessions using pattern matching
   - Displays organized table with session letter (A, B, C), directory, purpose, and status
   - Supports batch actions: `all:continue`, `awaiting:continue`, `A:git status, B:pwd`
@@ -1289,8 +1301,9 @@ JSON (JavaScript Object Notation) is a lightweight data format that's easy for h
 
 **Setup:**
 ```bash
-# Copy to hooks directory
-cp src/clautorun/main.py ~/.claude/hooks/clautorun_hook.py
+# The hooks entry point is hooks/hook_entry.py, configured via hooks/claude-hooks.json
+# Install the plugin to register hooks automatically:
+uv run --project plugins/clautorun python -m clautorun --install --force
 ```
 
 **Update settings.json:**
@@ -1299,7 +1312,7 @@ cp src/clautorun/main.py ~/.claude/hooks/clautorun_hook.py
   "hooks": {
     "hooks": [
       {
-        "command": "~/.claude/hooks/clautorun_hook.py"
+        "command": "clautorun"
       }
     ]
   }
@@ -1434,14 +1447,20 @@ clautorun/
 ├── src/
 │   └── clautorun/
 │       ├── __init__.py          # Package exports
-│       ├── main.py              # Hook handler and interactive CLI (source of truth)
+│       ├── main.py              # Deprecated v0.6.1 backward-compatibility shim (hooks entry: hooks/hook_entry.py)
+│       ├── core.py              # Core hook processing logic
+│       ├── client.py            # Hook response output and CLI detection
 │       ├── plugins.py           # Command handlers and dispatch logic
 │       ├── integrations.py      # Unified command integrations (superset of hookify)
 │       ├── config.py            # CONFIG constants and DEFAULT_INTEGRATIONS
+│       ├── plan_export.py       # Plan export logic, PlanExport class, daemon handlers
+│       ├── session_manager.py   # filelock+JSON session state backend
+│       ├── task_lifecycle.py    # Task lifecycle tracking and stop-hook enforcement
+│       ├── tmux_utils.py        # Tmux session utilities
+│       ├── restart_daemon.py    # Daemon restart logic
 │       ├── mcp_server.py        # MCP server for external apps
 │       ├── install.py           # Plugin installation management
 ├── tests/
-│   ├── test_autorun_compatibility.py  # Command compatibility tests
 │   ├── test_interactive.py           # Interactive mode tests
 │   ├── test_integrations.py          # Integration system tests (101 tests)
 │   ├── simple_test.py                # Basic functionality tests
@@ -1460,7 +1479,7 @@ clautorun/
 **Plugin Components:**
 - **Agents** (`agents/` directory): Specialized automation agents for tmux and CLI workflows
 - **Commands** (`commands/` directory): Claude Code slash commands using markdown files and executable scripts
-- **Hooks** (`main.py`): Event handlers for UserPromptSubmit, PreToolUse, Stop, and SubagentStop events
+- **Hooks** (`hooks/hook_entry.py`): Event handlers for UserPromptSubmit, PreToolUse, Stop, and SubagentStop events — configured via `hooks/claude-hooks.json`. Note: `main.py` is a deprecated v0.6.1 backward-compatibility shim.
 - **MCP Servers** (`mcp_server.py`): Model Context Protocol integration for external applications
 
 **Plugin Manifest** (`.claude-plugin/plugin.json`):
@@ -1490,10 +1509,12 @@ clautorun uses Resource Acquisition Is Initialization (RAII) patterns for robust
 
 ```python
 # RAII Session Lock - Automatic acquisition and guaranteed release
+# NOTE: SessionLock is now a no-op shim. The actual locking happens inside
+# _JSONStore.session() (the filelock+JSON session store). The context manager
+# interface is preserved for backward compatibility.
 with SessionLock(session_id, timeout, state_dir) as lock_fd:
-    # Lock is acquired automatically when entering context
-    # All resources are cleaned up automatically when exiting context
-    pass  # Exception safety guaranteed
+    # SessionLock is a no-op shim — real locking is inside _JSONStore.session()
+    pass  # Use session_state() context manager for actual locked access
 ```
 
 **Key RAII Benefits:**
@@ -1505,22 +1526,23 @@ with SessionLock(session_id, timeout, state_dir) as lock_fd:
 #### **Thread & Process Safety Architecture**
 
 **Concurrency Model:**
-- **Thread Safety**: File-based locking using `fcntl.flock` for cross-thread synchronization
-- **Process Safety**: POSIX file locks work across process boundaries
-- **Deadlock Prevention**: Configurable timeouts with exponential backoff
+- **Cross-process safety**: `filelock.FileLock` (from the `filelock` package) for mutual exclusion across processes
+- **Same-process thread safety**: `threading.RLock` for concurrent thread serialization within one process
+- **Deadlock Prevention**: Configurable timeouts with `FileLockTimeout` handling
+- **Note**: `fcntl.flock` is still used specifically for the daemon process lock, not session state
 
 **Safety Mechanisms:**
 ```python
-# Session lock with automatic timeout handling
-with SessionLock(session_id, timeout=30.0, state_dir) as lock_fd:
-    # Exclusive access guaranteed during context
-    pass  # Lock automatically released after context exits
+# Session state with automatic timeout handling (real locking via _JSONStore.session())
+with session_manager.session_state(session_id, timeout=30.0) as state:
+    # Exclusive access guaranteed: filelock (cross-process) + threading.RLock (same-process)
+    pass  # Lock automatically released after context exits, with atomic tempfile+rename write
 ```
 
 **Testing Validation:**
 - **6/6 RAII tests passed** - Resource management and cleanup
 - **4/4 safety tests passed** - Concurrent access patterns validated
-- **27/29 unit tests passed** - Core functionality verified
+- **Unit tests** - Core functionality verified
 
 #### **Dispatch Pattern**
 
@@ -1563,9 +1585,8 @@ uv sync --extra claude-code  # Install dependencies
 
 #### **Python Version Support**
 
-- **Minimum**: Python 3.0+ (basic functionality)
-- **Preferred**: Python 3.10+ (full compatibility)
-- **Testing**: Python 2.7 compatibility in error handling
+- **Minimum**: Python 3.10+ (required, matches `requires-python = ">=3.10"` in pyproject.toml)
+- **Tested**: Python 3.10, 3.11, 3.12, 3.13, 3.14
 
 #### **Centralized Error Handling (DRY)**
 
@@ -1670,16 +1691,16 @@ clautorun
 # Installation management utility
 clautorun-install
 
-# Interactive standalone mode
-clautorun-interactive
+# Session tools CLI (daemon management, session state inspection)
+claude-session-tools
 ```
 
 **Entry Points** (from `pyproject.toml`):
 ```toml
 [project.scripts]
-clautorun = "clautorun.main:main"
-clautorun-interactive = "clautorun.main:main"
-clautorun-install = "clautorun.install:main"
+clautorun = "clautorun.__main__:main"
+clautorun-install = "clautorun.install:install_main"
+claude-session-tools = "clautorun.claude_session_tools:main"
 ```
 
 #### Plugin Development Workflow
@@ -1828,12 +1849,17 @@ This means Python code CAN communicate with Claude Code directly, but the docume
 
 - `claude-agent-sdk>=0.1.4` - For Claude Code communication
 - `ruff>=0.14.1` - Code formatting and linting
-- Python 3.8+ - Required for type hints and async support
+- `bashlex>=0.18` - Bash command parsing for pipe-context detection
+- `psutil` - Process and system utilities
+- `filelock>=3.12.0` - Cross-process file locking for session state
+- Python 3.10+ - Required (matches `requires-python = ">=3.10"` in pyproject.toml)
 
 ## Configuration Notes
 
 **Session Storage:**
-- Uses shelve database for session persistence
+- Uses filelock+JSON backend for session persistence (`~/.claude/sessions/daemon_state.json`)
+- Single JSON file with `filelock.FileLock` for cross-process locking and `threading.RLock` for same-process thread safety
+- Atomic tempfile+rename writes for crash safety
 - Located in `~/.claude/sessions/`
 - State includes file policies and session status
 
@@ -2037,8 +2063,8 @@ clautorun includes comprehensive Python version validation:
 - Re-sync dependencies: `uv sync --extra claude-code`
 
 **Testing Issues:**
-- Run tests with UV: `uv run pytest tests/`
-- Check test coverage: `uv run pytest --cov=src/clautorun --cov-report=term-missing`
+- Run tests with UV: `uv run pytest plugins/clautorun/tests/`
+- Check test coverage: `uv run pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing`
 
 **Common Solutions:**
 - Force reinstall: `uv run clautorun install --force`
