@@ -318,6 +318,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "tool_input": payload.get("tool_input") or payload.get("toolInput", {}),
         "tool_result": payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
+        "permission_mode": payload.get("permission_mode", "default"),
     }
 
 
@@ -598,7 +599,7 @@ class EventContext:
     # Reserved attributes (not persisted)
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
                  '_tool_result', '_session_transcript', '_state', '_transcript',
-                 '_store', '_cli_type', '_cwd')
+                 '_store', '_cli_type', '_cwd', '_permission_mode')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -628,7 +629,8 @@ class EventContext:
     def __init__(self, session_id: str, event: str, prompt: str = "",
                  tool_name: str = None, tool_input: Dict = None,
                  tool_result: str = None, session_transcript: List = None,
-                 store: 'ThreadSafeDB' = None, cli_type: str = None, cwd: str = None):
+                 store: 'ThreadSafeDB' = None, cli_type: str = None, cwd: str = None,
+                 permission_mode: str = "default"):
         object.__setattr__(self, '_session_id', session_id)
         object.__setattr__(self, '_event', event)
         object.__setattr__(self, '_prompt', prompt)
@@ -643,6 +645,8 @@ class EventContext:
         object.__setattr__(self, '_cli_type', cli_type)
         # Working directory injected by client.py (_cwd field) for plan tracking
         object.__setattr__(self, '_cwd', cwd)
+        # Permission mode from hook payload (plan/bypassPermissions/acceptEdits/default)
+        object.__setattr__(self, '_permission_mode', permission_mode)
 
     # === Read-only accessors for payload data ===
     @property
@@ -685,6 +689,15 @@ class EventContext:
         project. Returns None if not available (hooks fired without client injection).
         """
         return self._cwd
+
+    @property
+    def permission_mode(self) -> str:
+        """Permission mode from hook payload (e.g. 'plan', 'bypassPermissions', 'acceptEdits', 'default').
+
+        Used by plan_export.py:recover_unexported_plans to route plans to notes/ vs
+        notes/rejected/ at SessionStart recovery time.
+        """
+        return self._permission_mode
 
     # === MAGIC STATE: __getattr__ / __setattr__ ===
     def __getattr__(self, name: str):
@@ -1221,7 +1234,8 @@ class ClautorunDaemon:
                 session_transcript=normalized["session_transcript"],
                 store=self.store,
                 cli_type=cli_type,
-                cwd=payload.get("_cwd")
+                cwd=payload.get("_cwd"),
+                permission_mode=normalized["permission_mode"],
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
