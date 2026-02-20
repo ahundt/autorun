@@ -804,14 +804,14 @@ class EventContext:
         - CLAUDE.md: Hook Error Prevention section
         """
         cli_type = self.cli_type
-        logger.debug(f"respond: event={self._event} cli_type={cli_type} decision={decision}")
+        logger.debug(f"respond: event={self._event} decision={decision} to_human={to_human!r} cli_type={cli_type}")
         # This keeps both CLIs as first-class citizens by using the best available
         # blocking mechanism for each.
         if decision == "ask" and cli_type == "gemini":
             decision = "deny"
 
         # Use the raw reason - final json.dumps() in the daemon/client will handle escaping.
-        msg_reason = reason if reason else ""
+        msg_reason = reason or ""
 
         # =====================================================================
         # PATHWAY 1: PreToolUse (Permission Decisions)
@@ -831,8 +831,6 @@ class EventContext:
                 # Map any blocking decision (deny, block, ask) to "deny".
                 top_decision = "allow" if decision == "allow" else "deny"
                 logger.debug(f"respond: gemini PreToolUse decision={decision} -> top_decision={top_decision}")
-
-            logger.info(f"respond(event={self._event}, decision={decision}, cli_type={cli_type}) -> top_decision={top_decision}")
 
             # To avoid triple-printing in the UI, we only provide the reason 
             # in hookSpecificOutput. Claude will also show stderr for exit 2.
@@ -866,24 +864,24 @@ class EventContext:
         # PATHWAY 2: UserPromptSubmit & PostToolUse (Context Injection)
         # =====================================================================
         if self._event in ("UserPromptSubmit", "PostToolUse"):
-            # Resolve human_msg from to_human parameter:
-            # - to_human is True   → human sees reason; hookSpecificOutput omitted
-            # - to_human is a str  → human sees that string; hookSpecificOutput omitted
-            # - "" or non-True int → treated as False (AI injection)
+            # Resolve human_msg: None = AI injection path; str (incl. "") = human-visible path.
+            # - to_human is True         → human sees reason (may be empty; user sees nothing if "")
+            # - to_human is non-empty str → human sees that string
+            # - anything else (False, "", truthy int) → AI injection (human_msg = None)
             if to_human is True:
                 if not msg_reason:
-                    logger.debug("respond: to_human=True but reason is empty — systemMessage will be empty (user sees nothing)")
-                human_msg = msg_reason
-            elif to_human and isinstance(to_human, str):
+                    logger.debug("respond: to_human=True with empty reason — systemMessage empty, user sees nothing")
+                human_msg: Optional[str] = msg_reason
+            elif isinstance(to_human, str) and to_human:
                 human_msg = to_human
             else:
-                if to_human and to_human is not False:
-                    logger.debug(f"respond: to_human={to_human!r} is not True or str; treating as False")
-                human_msg = ""
+                if to_human:  # truthy non-True non-str (e.g. 1) — unsupported, fall back to AI path
+                    logger.debug(f"respond: to_human={to_human!r} is not True or non-empty str — using AI injection")
+                human_msg = None
 
-            if human_msg or to_human is True:
+            if human_msg is not None:
                 # Human-visible path: hookSpecificOutput absent → outcome matrix row 3 (shown to user).
-                # reason="" prevents double-print (canonical example: claude-code-hooks-api.md:202-210).
+                # reason="" prevents double-print (claude-code-hooks-api.md:202-210).
                 resp = {
                     "decision": "approve",
                     "reason": "",
