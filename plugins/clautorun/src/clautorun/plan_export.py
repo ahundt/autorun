@@ -1192,9 +1192,17 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
             # If recovery permission_mode matches stored mode, mode did not change
             # (e.g. user opened dialog, dismissed, then same mode at new session)
             # → not an Option 1 acceptance.
+            # source="clear" is the primary Option 1 detection signal. Claude Code applies
+            # bypassPermissions 2ms AFTER the SessionStart hook completes, so permission_mode
+            # is always "default" at hook time for Option 1 sessions (confirmed by debug log).
+            # The permission_mode path is retained as a fallback for when Anthropic fixes the
+            # timing bug so the correct value arrives in the hook payload.
+            session_is_clear = ctx.source == "clear"
             mode_changed = ctx.permission_mode != mode_at_exit
-            plan_was_accepted = (exit_was_attempted and mode_changed
-                            and ctx.permission_mode in PLAN_ACCEPTED_PERMISSION_MODES)
+            plan_was_accepted = (exit_was_attempted
+                                 and (session_is_clear
+                                      or (mode_changed
+                                          and ctx.permission_mode in PLAN_ACCEPTED_PERMISSION_MODES)))
 
             if plan_was_accepted:
                 # Option 1: new session with bypassPermissions/acceptEdits.

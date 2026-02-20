@@ -319,6 +319,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "tool_result": payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
+        "source": payload.get("source", "startup"),
     }
 
 
@@ -599,7 +600,7 @@ class EventContext:
     # Reserved attributes (not persisted)
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
                  '_tool_result', '_session_transcript', '_state', '_transcript',
-                 '_store', '_cli_type', '_cwd', '_permission_mode')
+                 '_store', '_cli_type', '_cwd', '_permission_mode', '_source')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -630,7 +631,7 @@ class EventContext:
                  tool_name: str = None, tool_input: Dict = None,
                  tool_result: str = None, session_transcript: List = None,
                  store: 'ThreadSafeDB' = None, cli_type: str = None, cwd: str = None,
-                 permission_mode: str = "default"):
+                 permission_mode: str = "default", source: str = "startup"):
         object.__setattr__(self, '_session_id', session_id)
         object.__setattr__(self, '_event', event)
         object.__setattr__(self, '_prompt', prompt)
@@ -647,6 +648,8 @@ class EventContext:
         object.__setattr__(self, '_cwd', cwd)
         # Permission mode from hook payload (plan/bypassPermissions/acceptEdits/default)
         object.__setattr__(self, '_permission_mode', permission_mode)
+        # Session start source from hook payload (startup/resume/clear/compact)
+        object.__setattr__(self, '_source', source)
 
     # === Read-only accessors for payload data ===
     @property
@@ -698,6 +701,17 @@ class EventContext:
         notes/rejected/ at SessionStart recovery time.
         """
         return self._permission_mode
+
+    @property
+    def source(self) -> str:
+        """Session start source from hook payload: 'startup', 'resume', 'clear', or 'compact'.
+
+        Claude Code sends this in SessionStart payloads to identify how the session was initiated.
+        'clear' indicates Option 1 (clear context + bypass permissions) or /clear command.
+        Used by plan_export.py:recover_unexported_plans as the primary Option 1 detection signal
+        (permission_mode is 'default' at hook time due to a 2ms timing race — applied after hook).
+        """
+        return self._source
 
     # === MAGIC STATE: __getattr__ / __setattr__ ===
     def __getattr__(self, name: str):
@@ -1236,6 +1250,7 @@ class ClautorunDaemon:
                 cli_type=cli_type,
                 cwd=payload.get("_cwd"),
                 permission_mode=normalized["permission_mode"],
+                source=normalized["source"],
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
