@@ -645,6 +645,8 @@ def handle_directory_renames(root: Path, dry_run: bool = True) -> Tuple[bool, Li
     dirs_to_rename = [
         ("plugins/clautorun", "plugins/autorun"),
         ("src/clautorun_workspace", "src/autorun_workspace"),
+        ("plugins/autorun/src/clautorun", "plugins/autorun/src/autorun"),
+        ("src/clautorun", "src/autorun"),
     ]
 
     for old_dir, new_dir in dirs_to_rename:
@@ -693,12 +695,12 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
     setup_logging(verbose)
 
     # Bug #6 fix: Validate root directory and permissions
-    plugins_dir = root / "plugins" / "clautorun"
+    plugins_dir = root / "plugins" / "autorun"
     if not plugins_dir.exists():
-        logger.error(f"plugins/clautorun not found at {plugins_dir}")
+        logger.error(f"plugins/autorun not found at {plugins_dir}")
         return False
     if not plugins_dir.is_dir():
-        logger.error(f"plugins/clautorun is not a directory")
+        logger.error(f"plugins/autorun is not a directory")
         return False
     if not os.access(plugins_dir, os.R_OK):
         logger.error(f"No read permission for {plugins_dir}")
@@ -733,9 +735,9 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
     logger.info("")
 
     # Find files
-    py_files = get_files_to_process(root / "plugins" / "clautorun", [".py"])
+    py_files = get_files_to_process(root / "plugins" / "autorun", [".py"])
     py_files += get_files_to_process(root / "src", [".py"])
-    json_files = get_files_to_process(root / "plugins" / "clautorun", [".json"])
+    json_files = get_files_to_process(root / "plugins" / "autorun", [".json"])
     md_files = get_files_to_process(root, [".md"])
     toml_files = [root / "pyproject.toml"] if (root / "pyproject.toml").exists() else []
 
