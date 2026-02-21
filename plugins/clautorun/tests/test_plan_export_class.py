@@ -2436,8 +2436,9 @@ class TestHumanVisibleNotifications:
         the PostToolUse dedup hit previously returned None — silently suppressing notification.
         This left users unaware of where the plan was saved.
 
-        Fix: skipped=True now returns "📋 Plan already exported to notes/SPECIFIC_FILE.md"
-        so users know where to find the plan without searching.
+        Fix: skipped=True now returns "📋 Plan exported to notes/SPECIFIC_FILE.md"
+        so users know where to find the plan without searching. Message matches fresh
+        export format (no "already" prefix) for consistent UX.
         """
         from clautorun.plan_export import export_on_exit_plan_mode
 
@@ -2462,11 +2463,15 @@ class TestHumanVisibleNotifications:
         response2 = export_on_exit_plan_mode(make_ctx())
         assert response2 is not None, "dedup must return a notification (not None)"
         assert "systemMessage" in response2
-        assert "already exported" in response2["systemMessage"].lower(), (
-            f"dedup message must say 'already exported'. Got: {response2['systemMessage']!r}"
+        assert "exported" in response2["systemMessage"].lower(), (
+            f"dedup message must say 'exported'. Got: {response2['systemMessage']!r}"
         )
         assert "notes/" in response2["systemMessage"], (
             f"dedup message must include specific path. Got: {response2['systemMessage']!r}"
+        )
+        assert "already" not in response2["systemMessage"].lower(), (
+            f"dedup message must say 'Plan exported to' not 'Plan already exported to'. "
+            f"Got: {response2['systemMessage']!r}"
         )
 
     def test_export_on_exit_plan_mode_timeout_is_human_visible(self, temp_project):
@@ -3405,8 +3410,9 @@ class TestAcceptedRejectedRouting:
         Bug: dedup returned skipped=True → old guard 'not result.get("skipped")' → None
         returned → systemMessage: "" → user sees blank notification, doesn't know where plan is.
 
-        Fix: skipped=True now returns "📋 Plan already exported to notes/SPECIFIC_FILE.md"
-        so users know where the plan is without searching.
+        Fix: skipped=True now returns "📋 Plan exported to notes/SPECIFIC_FILE.md"
+        so users know where the plan is without searching. Message matches fresh
+        export format (no "already" prefix) for consistent UX.
         """
         plan = temp_project['plan_file']
         project_dir = temp_project['project_dir']
@@ -3468,9 +3474,159 @@ class TestAcceptedRejectedRouting:
         )
         assert "systemMessage" in opt2_result
         msg = opt2_result["systemMessage"]
-        assert "already exported" in msg.lower(), (
-            f"systemMessage must say 'already exported'. Got: {msg!r}"
+        assert "exported" in msg.lower(), (
+            f"systemMessage must say 'exported'. Got: {msg!r}"
         )
         assert "notes/" in msg, (
             f"systemMessage must include specific notes/ path. Got: {msg!r}"
         )
+        assert "already" not in msg.lower(), (
+            f"message must say 'Plan exported to' not 'Plan already exported to'. Got: {msg!r}"
+        )
+
+    def test_option2_after_option1_recovery_dedup_notifies(self, temp_project):
+        """Regression: Option 2 PostToolUse must notify even when plan not in active_plans.
+
+        Bug: backup_to_rejected() had 'if entry:' guard that prevented creating a new
+        active_plans entry when Option 1 recovery had previously removed the plan via
+        export(). export_on_exit_plan_mode() then saw plan=None (no active_plans entry,
+        no filePath in tool_result) and returned None — user received no notification.
+
+        Fix: backup_to_rejected() always upserts the active_plans entry with cwd set,
+        so get_current_plan()'s active_plans fallback can find the plan for PostToolUse.
+
+        Daemon log that confirmed the bug:
+          20:30:40 export_on_exit_plan_mode: plan=None permission_mode=bypassPermissions
+          (after Option 1 recovery removed plan from active_plans)
+        """
+        from clautorun.plan_export import export_on_exit_plan_mode
+
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+
+        # Step 1: Option 1 recovery — export to notes/, removes plan from active_plans
+        store1 = ThreadSafeDB()
+        ctx_write = EventContext(
+            session_id="s1-opt1-e2", event="PostToolUse", tool_name="Write",
+            tool_input={"cwd": str(project_dir), "file_path": str(plan)},
+            store=store1,
+        )
+        exp1 = PlanExport(ctx_write, PlanExportConfig())
+        exp1.record_write(str(plan))
+        export_result = exp1.export(plan, rejected=False, force=True)
+        assert export_result["success"]
+        # Plan is now removed from active_plans, hash in tracking
+        assert str(plan) not in exp1.active_plans, "export(force=True) must remove from active_plans"
+
+        # Step 2: PreToolUse(ExitPlanMode) — backup_to_rejected must upsert active_plans
+        ctx_pre = EventContext(
+            session_id="s1-opt1-e2", event="PreToolUse", tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1, permission_mode="bypassPermissions",
+        )
+        exp2 = PlanExport(ctx_pre, PlanExportConfig())
+        backup_path = exp2.backup_to_rejected(plan, "plan")
+        assert backup_path is not None, "backup must succeed even when plan not in active_plans"
+        assert str(plan) in exp2.active_plans, \
+            "backup_to_rejected must upsert active_plans entry so PostToolUse can find the plan"
+        assert exp2.active_plans[str(plan)].get("cwd") is not None, \
+            "active_plans entry must have cwd set for get_current_plan() fallback"
+
+        # Step 3: PostToolUse(ExitPlanMode) Option 2 — no filePath in tool_result,
+        # must find plan via active_plans fallback
+        ctx_post = EventContext(
+            session_id="s1-opt1-e2", event="PostToolUse", tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            tool_result=None,  # no filePath — forces active_plans fallback
+            store=store1, permission_mode="bypassPermissions",
+        )
+        result = export_on_exit_plan_mode(ctx_post)
+
+        assert result is not None, (
+            "Option 2 PostToolUse must return a notification even when plan was not in "
+            "active_plans (removed by Option 1 recovery). Got None — user has no path info."
+        )
+        assert "systemMessage" in result
+        msg = result["systemMessage"]
+        assert "notes/" in msg, f"notification must include notes/ path. Got: {msg!r}"
+        assert "exported" in msg.lower(), f"notification must say 'exported'. Got: {msg!r}"
+        assert "already" not in msg.lower(), (
+            f"notification must say 'Plan exported to' not 'Plan already exported to'. "
+            f"Got: {msg!r}"
+        )
+
+    def test_multi_plan_recovery_skips_already_tracked(self, temp_project):
+        """Plan already in tracking must be skipped by get_unexported() in multi-plan recovery.
+
+        Verifies:
+        - Plan A (hash in tracking from prior export) → filtered by get_unexported(), not
+          processed, not double-exported, count not incremented
+        - Plan B (hash not in tracking) → processed normally, appears in message
+        - Recovery message count is 1, not 2
+        - Plan A's notes/ file is NOT written a second time
+
+        Without get_unexported()'s tracking filter, Plan A would enter the routing loop,
+        export() would hit dedup (skipped=True), and either the count would be wrong or
+        a duplicate file would be written.
+        """
+        from clautorun.plan_export import recover_unexported_plans
+
+        plan_a = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+        plans_dir = plan_a.parent
+        notes_dir = project_dir / "notes"
+
+        plan_b = plans_dir / "test-plan-b-tracked-multi.md"
+        plan_b.write_text("# Plan B\n\nThis is the second untracked plan for multi-recovery.")
+
+        try:
+            store1 = ThreadSafeDB()
+
+            # Export Plan A (hash now in tracking, removed from active_plans)
+            ctx_write_a = EventContext(
+                session_id="s1-tracked-multi", event="PostToolUse", tool_name="Write",
+                tool_input={"cwd": str(project_dir), "file_path": str(plan_a)},
+                store=store1,
+            )
+            exp_a = PlanExport(ctx_write_a, PlanExportConfig())
+            exp_a.record_write(str(plan_a))
+            export_result = exp_a.export(plan_a, rejected=False)
+            assert export_result["success"]
+            notes_files_before = list(notes_dir.glob("*.md"))
+
+            # Record Plan B only (not exported — hash NOT in tracking)
+            ctx_write_b = EventContext(
+                session_id="s1-tracked-multi", event="PostToolUse", tool_name="Write",
+                tool_input={"cwd": str(project_dir), "file_path": str(plan_b)},
+                store=store1,
+            )
+            PlanExport(ctx_write_b, PlanExportConfig()).record_write(str(plan_b))
+
+            # Recovery: both plan files exist on disk, Plan A hash in tracking, Plan B not
+            store2 = ThreadSafeDB()
+            ctx2 = EventContext(
+                session_id="s2-tracked-multi", event="SessionStart",
+                tool_input={"cwd": str(project_dir)},
+                store=store2, permission_mode="default", source="startup",
+            )
+            result = recover_unexported_plans(ctx2)
+
+            assert result is not None, "recovery must return response (Plan B is untracked)"
+            msg = result["systemMessage"]
+
+            # Only Plan B must be recovered (count=1)
+            assert "Recovered 1 plan(s)" in msg, (
+                f"Only Plan B must appear (Plan A hash already in tracking → filtered). "
+                f"Got: {msg!r}"
+            )
+
+            # Plan A must NOT be double-exported to notes/
+            notes_files_after = list(notes_dir.glob("*.md"))
+            assert len(notes_files_after) == len(notes_files_before), (
+                f"Plan A must not be written again (hash in tracking). "
+                f"Before: {[f.name for f in notes_files_before]}, "
+                f"After: {[f.name for f in notes_files_after]}"
+            )
+        finally:
+            if plan_b.exists():
+                plan_b.unlink()

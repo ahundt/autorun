@@ -781,12 +781,17 @@ class PlanExport:
                 backup_path_str = str(dest_path)
 
                 # Update active_plans only. Do NOT touch tracking — preserves get_unexported().
+                # Upsert: create entry if absent (e.g. after Option 1 recovery removed it)
+                # so get_current_plan() can find the plan via active_plans fallback in PostToolUse.
                 plans = state.get("active_plans", {})
-                entry = plans.get(str(plan_path))
-                if entry:
-                    entry["exit_attempted"] = True
-                    entry["mode_at_exit_attempt"] = permission_mode
-                    entry["backup_path"] = backup_path_str
+                plan_key = str(plan_path)
+                entry = plans.get(plan_key, {})
+                if "cwd" not in entry:
+                    entry["cwd"] = str(self.ctx.cwd) if self.ctx.cwd else str(self.project_dir)
+                entry["exit_attempted"] = True
+                entry["mode_at_exit_attempt"] = permission_mode
+                entry["backup_path"] = backup_path_str
+                plans[plan_key] = entry
                 state["active_plans"] = plans
 
             rel = dest_path.relative_to(self.project_dir)
@@ -1146,9 +1151,9 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
                     if dest:
                         try:
                             rel = Path(dest).relative_to(exporter.project_dir)
-                            return ctx.respond("allow", f"📋 Plan already exported to {rel}", to_human=True)
+                            return ctx.respond("allow", f"📋 Plan exported to {rel}", to_human=True)
                         except ValueError:
-                            return ctx.respond("allow", f"📋 Plan already exported to {dest}", to_human=True)
+                            return ctx.respond("allow", f"📋 Plan exported to {dest}", to_human=True)
                 else:
                     return ctx.respond("allow", f"📋 {result['message']}", to_human=True)
     except SessionTimeoutError:
