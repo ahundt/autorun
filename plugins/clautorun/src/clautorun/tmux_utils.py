@@ -2271,3 +2271,126 @@ def tmux_dangerous_batch_execute(
         'failure_count': failure_count,
         'results': results
     }
+
+
+# ---------------------------------------------------------------------------
+# Claude/AI session tab discovery and batch command execution
+# ---------------------------------------------------------------------------
+
+def discover_claude_sessions(tmux: 'TmuxUtilities') -> 'list[dict]':
+    """Discover all Claude sessions across tmux windows.
+
+    Uses tmux_list_windows() for a single-query window scan, then filters to
+    windows running a Claude/AI process via is_claude_session(). Populates
+    the 'tmux_target' key (format: 'session:window') used by
+    execute_session_selections() and send_to_session().
+
+    Returns list of session dicts containing all tmux_list_windows() fields
+    plus: tmux_target, session_name, window_id, content_preview, branch.
+    """
+    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES, include_git=True)
+    sessions = []
+    for win in all_windows:
+        if tmux.is_claude_session(win['session'], str(win['w'])):
+            content = win.get('content', '')
+            sessions.append({
+                'session_name': win['session'],
+                'window_id': str(win['w']),
+                'tmux_target': f"{win['session']}:{win['w']}",
+                'content': content,
+                'content_preview': content[:CONTENT_PREVIEW_LENGTH],
+                'title': win.get('title', ''),
+                'cmd': win.get('cmd', ''),
+                'path': win.get('path', ''),
+                'pid': win.get('pid', 0),
+                'active': win.get('active', False),
+                'activity': win.get('activity', 0),
+                'flags': win.get('flags', ''),
+                'branch': win.get('branch'),
+            })
+    return sessions
+
+
+def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
+    """Send a command to a tmux session, appending Enter to execute it.
+
+    Wraps TmuxUtilities.send_keys() with tmux_target string parsing and a
+    structured result dict. Two send_keys calls: the command, then 'C-m'
+    (Enter) to execute it — matching the interactive user workflow.
+
+    Args:
+        tmux:    TmuxUtilities instance
+        session: Session dict with 'tmux_target' key ('session:window' format)
+        cmd:     Command string to send
+
+    Returns:
+        {'target': str, 'command': str, 'success': bool, 'error': str|None}
+    """
+    target = session['tmux_target']
+    session_name, window_id = target.split(':', 1)
+    try:
+        success = tmux.send_keys(cmd, session_name, window_id)
+        if success:
+            tmux.send_keys('C-m', session_name, window_id)
+        return {
+            'target': target,
+            'command': cmd,
+            'success': success,
+            'error': None if success else 'send_keys failed',
+        }
+    except Exception as e:
+        return {'target': target, 'command': cmd, 'success': False, 'error': str(e)}
+
+
+def execute_session_selections(selection_str: str, sessions: list,
+                               tmux: 'TmuxUtilities | None' = None) -> 'list[dict]':
+    """Execute commands on selected Claude sessions using the /cr:tabs selection syntax.
+
+    Selection syntax (same as /cr:tabs command interface):
+      'A,C' or 'AC'          Execute each session's default action (sessions[i]['actions'][0])
+      'A:git status, B:pwd'  Execute custom commands per session
+      'all:continue'         Execute on every session in the list
+      'awaiting:continue'    Execute only on sessions where awaiting=True
+
+    Args:
+        selection_str: Selection string using the syntax above
+        sessions:      List of session dicts from discover_claude_sessions()
+        tmux:          TmuxUtilities instance; creates one if None
+
+    Returns:
+        List of result dicts: [{'target', 'command', 'success', 'error'}, ...]
+        Caller is responsible for formatting (see tmux_tab_ai_session_status.format_execution_results).
+    """
+    if tmux is None:
+        tmux = get_tmux_utilities()
+    results = []
+
+    if selection_str.lower().startswith('all:'):
+        cmd = selection_str[4:].strip()
+        return [send_to_session(tmux, s, cmd) for s in sessions]
+
+    if selection_str.lower().startswith('awaiting:'):
+        cmd = selection_str[9:].strip()
+        return [send_to_session(tmux, s, cmd) for s in sessions if s.get('awaiting')]
+
+    for part in selection_str.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if ':' in part:
+            letter, cmd = part.split(':', 1)
+            letter = letter.strip().upper()
+            cmd = cmd.strip()
+            if len(letter) == 1 and letter.isalpha():
+                idx = ord(letter) - 65
+                if 0 <= idx < len(sessions):
+                    results.append(send_to_session(tmux, sessions[idx], cmd))
+        else:
+            for letter in part.replace(' ', '').upper():
+                if letter.isalpha():
+                    idx = ord(letter) - 65
+                    if 0 <= idx < len(sessions):
+                        default_cmd = sessions[idx].get('actions', ['continue'])[0]
+                        results.append(send_to_session(tmux, sessions[idx], default_cmd))
+
+    return results
