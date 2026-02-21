@@ -5,12 +5,61 @@
 
 ![autorun Architecture](autorun-architecture.svg)
 
-**autorun** - Reduce interruptions while Claude completes tasks more safely and autonomously.
+**autorun** - Reduce interruptions while Claude Code and Gemini CLI complete tasks more safely and autonomously.
+
+## Quick Start
+
+```bash
+# Install (requires UV - see UV Installation below)
+uv pip install git+https://github.com/ahundt/autorun.git
+autorun --install
+
+# Verify installation
+/ar:st
+# Expected: "AutoFile policy: allow-all"
+```
+
+**Plan & Execute** (most common workflow):
+
+```bash
+/ar:plannew Design a REST API with authentication and tests
+/ar:planrefine                          # Critique and improve the plan
+/ar:planupdate Add rate limiting        # Update with new requirements
+/ar:planprocess                         # Execute the plan
+
+/ar:go Build a login form with tests    # Or run a task directly
+```
+
+**File Policy** (prevent file clutter):
+
+```bash
+/ar:f                    # Strict: only modify existing files
+/ar:j                    # Justify: require justification for new files
+/ar:a                    # Allow: create files freely (default)
+```
+
+**Safety**:
+
+```bash
+/ar:sos                  # Emergency stop
+```
+
+> Works with both **Claude Code** and **Gemini CLI** — see [Dual CLI Support](#dual-cli-support-claude-code--gemini-cli).
+
+## Key Features
+
+1. **Autonomous Execution**: Claude/Gemini continues working without constant "continue" prompts
+2. **Three-Stage Verification**: Ensures tasks are actually complete before stopping
+3. **Plan Management**: Create, refine, update, and execute structured plans
+4. **File Policy Control**: Prevent AI from creating unnecessary files
+5. **Command Redirecting**: Block dangerous commands and suggest safer alternatives (e.g., `rm` → `trash`)
+6. **Session Management**: Work with tmux/byobu for crash-safe sessions
+7. **Dual CLI Support**: Same commands and safety features in both Claude Code and Gemini CLI
 
 ## Table of Contents
 
-- [Key Features](#key-features)
 - [Quick Start](#quick-start)
+- [Key Features](#key-features)
 - [UV Installation](#uv-installation-recommended)
   - [Dual CLI Support (Claude Code + Gemini CLI)](#dual-cli-support-claude-code--gemini-cli)
 - [What autorun Does For You](#what-autorun-does-for-you)
@@ -20,6 +69,7 @@
   - [Three-Stage Autorun System](#three-stage-autorun-system)
 - [Tmux Integration](#tmux-integration)
 - [Development](#development)
+- [CLI Reference](#cli-reference)
 - [Available Commands](#available-commands)
   - [AutoFile (File Creation Control)](#autofile-file-creation-control)
   - [Command Redirecting](#command-redirecting)
@@ -39,37 +89,6 @@
 - [Contributing and Sharing](#contributing-and-sharing)
 - [References](#references)
 - [License](#license)
-
-## Key Features
-
-1. **Autonomous Execution**: Claude continues working without constant "continue" prompts
-2. **Three-Stage Verification**: Ensures tasks are actually complete before stopping
-3. **File Policy Control**: Prevent AI from creating unnecessary files
-4. **Command Redirecting**: Block dangerous commands and suggest safer alternatives (e.g., `rm` → `trash`)
-5. **Plan Management**: Create, refine, update, and execute structured plans
-6. **Session Management**: Work with tmux/byobu for crash-safe sessions
-
-## Quick Start
-
-```bash
-# Install from GitHub
-/plugin install https://github.com/ahundt/autorun.git
-
-# Verify installation
-/ar:st
-# Expected: "AutoFile policy: allow-all"
-
-# Start autonomous task
-/ar:go Build a REST API with authentication and tests
-
-# Set file policy (prevent file clutter)
-/ar:f                    # Strict: only modify existing files
-/ar:j                    # Justify: require justification for new files
-/ar:a                    # Allow: create files freely (default)
-
-# Emergency stop
-/ar:sos
-```
 
 ## UV Installation (Recommended)
 
@@ -455,6 +474,33 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 python -m plugins.autorun.src.autorun.install --install --force
+```
+
+## CLI Reference
+
+The `autorun` CLI command is available after installation for managing plugins, file policies, and task lifecycle outside of Claude Code/Gemini sessions.
+
+```
+autorun --help
+
+autorun --install                    # Register plugins with Claude Code/Gemini
+autorun --install --gemini           # Register for Gemini CLI only
+autorun --install --claude           # Register for Claude Code only
+autorun --status                     # Show installation status
+autorun --version                    # Show version
+autorun --restart-daemon             # Restart the autorun daemon
+autorun --update                     # Check for and install updates
+autorun --uninstall                  # Uninstall plugins
+
+autorun file status                  # Show current file policy
+autorun file allow                   # Allow all file creation
+autorun file justify                 # Require justification for new files
+autorun file search                  # Only modify existing files
+
+autorun task status                  # Show current task status
+autorun task status --verbose        # Detailed task information
+autorun task export tasks.json       # Export task history
+autorun task gc --dry-run            # Preview cleanup of old data
 ```
 
 ## Available Commands
