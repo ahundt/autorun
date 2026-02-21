@@ -1,11 +1,9 @@
 # autorun
 
+**autorun** - Reduce interruptions while Claude Code and Gemini CLI complete tasks more safely and autonomously.
+
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
-
-![autorun Architecture](autorun-architecture.svg)
-
-**autorun** - Reduce interruptions while Claude Code and Gemini CLI complete tasks more safely and autonomously.
 
 ## Quick Start
 
@@ -48,13 +46,16 @@ autorun --install
 
 ## Key Features
 
-1. **Autonomous Execution**: Claude/Gemini continues working without constant "continue" prompts
-2. **Implement, Evaluate, Verify**: AI must complete all three stages before a session ends. Reduces premature "done"
-3. **Plan Management**: Create, refine, update, and execute structured plans
-4. **File Policy Control**: Prevent AI from creating unnecessary files
-5. **Command Redirecting**: Block dangerous commands and suggest safer alternatives (e.g., `rm` → `trash`)
-6. **Session Management**: Work with tmux/byobu for crash-safe sessions
-7. **Dual CLI Support**: Same commands and safety features in both Claude Code and Gemini CLI
+1. **Fewer Interruptions**: Autorun keeps Claude/Gemini working without constant "continue" prompts so you can step away
+2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written, so you spend less time fixing avoidable mistakes
+3. **Implement, Evaluate, Verify**: AI must pass all three stages before stopping. Prevents AI from claiming half-done work is complete
+4. **Control AI File Creation**: Choose whether AI can create new files freely, must justify them, or can only edit existing ones
+5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`. You choose what's blocked
+6. **Crash-Safe Sessions**: tmux/byobu integration so network drops, terminal crashes, and reboots don't lose progress
+7. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
+8. **80+ Slash Commands**: Plan auto-export, task tracking, tmux session management, git commit guidelines, and more
+
+![autorun Architecture](autorun-architecture.svg)
 
 ## Table of Contents
 
