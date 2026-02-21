@@ -68,7 +68,6 @@ autorun --install
   - [Three-Stage Autorun System](#three-stage-autorun-system)
 - [Tmux Integration](#tmux-integration)
 - [Development](#development)
-- [CLI Reference](#cli-reference)
 - [Available Commands](#available-commands)
   - [AutoFile (File Creation Control)](#autofile-file-creation-control)
   - [Command Redirecting](#command-redirecting)
@@ -78,6 +77,7 @@ autorun --install
   - [Documentation Commands](#documentation-commands)
   - [Tmux Automation Commands](#tmux-automation-commands)
   - [Usage Examples](#usage-examples)
+- [CLI Reference](#cli-reference)
 - [Plugin Architecture and Integration Guide](#plugin-architecture-and-integration-guide)
 - [Tmux Automation Agents](#tmux-automation-agents)
 - [Project Structure](#project-structure)
@@ -475,73 +475,6 @@ pip install -e ".[dev]"
 python -m plugins.autorun.src.autorun.install --install --force
 ```
 
-## CLI Reference
-
-The `autorun` CLI command is available after installation for managing plugins, file policies, and task lifecycle outside of Claude Code/Gemini sessions.
-
-**Installation:**
-
-```bash
-autorun --install                    # Register all plugins with Claude Code + Gemini
-autorun --install autorun            # Register only autorun plugin
-autorun --install --claude           # Register for Claude Code only
-autorun --install --gemini           # Register for Gemini CLI only
-autorun --install --force            # Force reinstall (development)
-autorun --install --tool             # Also run uv tool install for global CLI
-autorun --uninstall                  # Uninstall plugins and UV tools
-```
-
-**Information:**
-
-```bash
-autorun --status                     # Show installation status for all CLIs
-autorun --version                    # Show version
-autorun --help                       # Full help with all options
-```
-
-**Maintenance:**
-
-```bash
-autorun --restart-daemon             # Restart the autorun daemon
-autorun --update                     # Check for and install updates
-autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip|aix)
-autorun --no-bootstrap               # Disable automatic bootstrap in hooks
-autorun --enable-bootstrap           # Re-enable automatic bootstrap
-```
-
-**AutoFile subcommand** (control file creation policy):
-
-```bash
-autorun file status                  # Show current policy (aliases: st, s)
-autorun file allow                   # Allow all file creation (alias: a)
-autorun file justify                 # Require justification for new files (alias: j)
-autorun file search                  # Only modify existing files (aliases: find, f)
-```
-
-**Task subcommand** (task lifecycle management):
-
-```bash
-autorun task status                  # Show task status for session
-autorun task status --verbose        # Detailed task information
-autorun task export tasks.json       # Export task history to JSON
-autorun task clear                   # Clear task data
-autorun task gc --dry-run            # Preview cleanup of old data
-autorun task gc --no-confirm         # Clean up old task data without prompt
-```
-
-**Advanced installation options:**
-
-```bash
-autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|always|never
-autorun --conductor                  # Install Conductor extension for Gemini (default)
-autorun --no-conductor               # Skip Conductor extension
-autorun --aix                        # Force AIX installation (local only)
-autorun --no-aix                     # Skip AIX even if installed
-autorun --cli claude                 # Set CLI type (used internally by hooks)
-```
-
-> `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).
-
 ## Available Commands
 
 - **Project/Repo name**: `autorun`
@@ -723,14 +656,25 @@ Structured planning for complex development tasks — reduces mistakes and ensur
 
 ### Task Lifecycle Tracking
 
-Ensures AI continues working while tasks are outstanding — the stop hook blocks session exit until tasks are complete (with escape hatch after 3 attempts).
+Ensures AI continues working while tasks are outstanding. The stop hook blocks session exit until tasks are complete (with escape hatch after 3 attempts).
 
-- `/task-status` (or `/ts`) — Show current tasks
-- `/task-ignore <id>` (or `/ti`) — Mark task as ignored (user override to unblock stop)
+**Slash commands:**
+
+- **/ar:task-status** — Show current tasks and incomplete work
+- **/ar:task-ignore** \<id> — Mark task as ignored (user override to unblock stop)
+
+**CLI:**
+
+```bash
+autorun task status                  # Show task status for session
+autorun task status --verbose        # Detailed task information
+autorun task export tasks.json       # Export task history to JSON
+autorun task clear                   # Clear task data
+autorun task gc --dry-run            # Preview cleanup of old data
+autorun task gc --no-confirm         # Clean up old task data without prompt
+```
 
 **Key features:** Stop hook enforcement, SessionStart resume detection, plan context injection, blockedBy/blocks dependency ordering, escape hatch, full audit trail.
-
-**CLI:** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --status|--export|--clear|--configure|--enable|--disable`
 
 **Settings:**
 - `enabled`: Enable/disable task lifecycle tracking (default: true)
@@ -854,6 +798,73 @@ When `/ar:tabs` discovers sessions, it displays these status indicators:
 ### Legacy Commands (Backward Compatible)
 
 All legacy commands continue to work: `/afa`, `/afj`, `/afs`, `/afst`, `/autorun`, `/autoproc`, `/autostop`, `/estop`
+
+## CLI Reference
+
+The `autorun` CLI command is available after installation for managing plugins, file policies, and task lifecycle outside of Claude Code/Gemini sessions.
+
+**Installation:**
+
+```bash
+autorun --install                    # Register all plugins with Claude Code + Gemini
+autorun --install autorun            # Register only autorun plugin
+autorun --install --claude           # Register for Claude Code only
+autorun --install --gemini           # Register for Gemini CLI only
+autorun --install --force            # Force reinstall (development)
+autorun --install --tool             # Also run uv tool install for global CLI
+autorun --uninstall                  # Uninstall plugins and UV tools
+```
+
+**Information:**
+
+```bash
+autorun --status                     # Show installation status for all CLIs
+autorun --version                    # Show version
+autorun --help                       # Full help with all options
+```
+
+**Maintenance:**
+
+```bash
+autorun --restart-daemon             # Restart the autorun daemon
+autorun --update                     # Check for and install updates
+autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip|aix)
+autorun --no-bootstrap               # Disable automatic bootstrap in hooks
+autorun --enable-bootstrap           # Re-enable automatic bootstrap
+```
+
+**AutoFile subcommand** (control file creation policy):
+
+```bash
+autorun file status                  # Show current policy (aliases: st, s)
+autorun file allow                   # Allow all file creation (alias: a)
+autorun file justify                 # Require justification for new files (alias: j)
+autorun file search                  # Only modify existing files (aliases: find, f)
+```
+
+**Task subcommand** (task lifecycle management):
+
+```bash
+autorun task status                  # Show task status for session
+autorun task status --verbose        # Detailed task information
+autorun task export tasks.json       # Export task history to JSON
+autorun task clear                   # Clear task data
+autorun task gc --dry-run            # Preview cleanup of old data
+autorun task gc --no-confirm         # Clean up old task data without prompt
+```
+
+**Advanced options:**
+
+```bash
+autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|always|never
+autorun --conductor                  # Install Conductor extension for Gemini (default)
+autorun --no-conductor               # Skip Conductor extension
+autorun --aix                        # Force AIX installation (local only)
+autorun --no-aix                     # Skip AIX even if installed
+autorun --cli claude                 # Set CLI type (used internally by hooks)
+```
+
+> `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).
 
 ## Plugin Architecture and Integration Guide
 
