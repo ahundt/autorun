@@ -494,37 +494,18 @@ def detect_issues(file_path: Path, original: str, modified: str) -> List[str]:
 
     return issues
 
-def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool = False, real_run: bool = False):
-    """Generate migration preview (dry-run) or apply changes (real_run)"""
+def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool = False):
+    """Generate dry-run with statistical sampling and context"""
     setup_logging(verbose)
 
     if not (root / "plugins" / "clautorun").exists():
         logger.error("plugins/clautorun not found")
         return False
 
-    # HUMAN CONFIRMATION GATE - ONLY for real-run mode
-    if real_run:
-        print("\n" + "=" * 100)
-        print("⚠️  REAL-RUN MODE: This will modify files in your repository")
-        print("=" * 100)
-        print("\nThis operation will permanently modify files in your codebase.")
-        print("All changes are reversible via git (commit will be created).\n")
-        print("Type 'i am human' (exactly as shown) to confirm you understand and authorize this action:")
-        print("=" * 100 + "\n")
-
-        confirmation = input("Confirmation: ").strip()
-        if confirmation != "i am human":
-            print("\n❌ Confirmation failed. Exiting without changes.\n")
-            return False
-
-        print("\n✓ Confirmed by human. Proceeding with file modifications...\n")
-
     # SAFETY CHECK: Ensure migration script is not in any file list
     script_path = Path(__file__).resolve()
     logger.info(f"Migration script path: {script_path}")
     logger.info(f"This script WILL NOT be modified (explicit protection)")
-    mode_label = "REAL-RUN" if real_run else "DRY-RUN"
-    logger.info(f"Mode: {mode_label}")
     logger.info("")
 
     # Find files
@@ -543,14 +524,10 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
         return False
 
     logger.info("=" * 100)
-    if real_run:
-        logger.info("REAL-RUN: Scanning and applying changes")
-    else:
-        logger.info("DRY-RUN PREVIEW: Statistical Sampling with Context")
+    logger.info("DRY-RUN PREVIEW: Statistical Sampling with Context")
     logger.info("=" * 100)
     logger.info(f"Scanning {len(all_files)} files...")
-    if not real_run:
-        logger.info(f"Sampling: {sample_percent}% of changed lines (with ±3 lines context)")
+    logger.info(f"Sampling: {sample_percent}% of changed lines (with ±3 lines context)")
     logger.info(f"Excluded patterns: {', '.join(EXCLUDE_PATTERNS)}")
     logger.info("")
 
@@ -579,18 +556,6 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
                 issues = detect_issues(file_path, original_content, modified_content)
                 if issues:
                     all_issues.extend([(file_path.relative_to(root), issue) for issue in issues])
-
-                # REAL-RUN: Write modified content to file if no issues detected
-                if real_run and not issues:
-                    try:
-                        file_path.write_text(modified_content, encoding='utf-8')
-                        logger.debug(f"✓ Modified: {file_path.relative_to(root)}")
-                    except Exception as e:
-                        all_issues.append((file_path.relative_to(root), f"WRITE ERROR: {e}"))
-                elif real_run and issues:
-                    logger.warning(f"⚠️  Skipped (issues found): {file_path.relative_to(root)}")
-                    for file_path_rel, issue in all_issues[-len(issues):]:
-                        logger.warning(f"    - {issue}")
 
         except Exception as e:
             all_issues.append((file_path.relative_to(root), f"ERROR: {e}"))
@@ -633,8 +598,6 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
     logger.info(f"\n{'=' * 100}")
     logger.info("SUMMARY")
     logger.info(f"{'=' * 100}")
-    mode_display = "REAL-RUN (Files Modified)" if real_run else "DRY-RUN (Preview Only)"
-    logger.info(f"Mode: {mode_display}")
     logger.info(f"Files affected: {len(files_changed)}")
     logger.info(f"Total changes detected: {len(all_changes)}")
     logger.info(f"Sample size shown: {len(sampled_changes)} ({sample_percent}%)")
@@ -664,23 +627,15 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
         logger.info(f"\n✓ No issues detected")
 
     logger.info(f"\n{'=' * 100}")
-    if real_run:
-        logger.info(f"✓ REAL-RUN COMPLETE - {len(files_changed)} files modified")
-        logger.info("Next steps:")
-        logger.info("  1. Review changes: git diff")
-        logger.info("  2. Test changes: uv run pytest plugins/autorun/tests/ -v")
-        logger.info("  3. Verify no stray references: grep -r 'clautorun' plugins/autorun/ src/")
-        logger.info("  4. Commit: git add -A && git commit -m 'refactor: rename clautorun → autorun'")
-    else:
-        logger.info("DRY-RUN COMPLETE - NO FILES MODIFIED")
-        logger.info("Review samples above to verify replacements are correct")
+    logger.info("DRY-RUN COMPLETE - NO FILES MODIFIED")
+    logger.info("Review samples above to verify replacements are correct")
     logger.info("=" * 100)
 
     return len(all_issues) == 0
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Migration tool: clautorun → autorun (DRY-RUN default, use --real-run to modify files)"
+        description="Migration dry-run: clautorun → autorun with statistical sampling and context"
     )
     parser.add_argument(
         "-s", "--sample",
@@ -698,11 +653,6 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Output file path for samples (default: stdout)"
-    )
-    parser.add_argument(
-        "--real-run",
-        action="store_true",
-        help="REAL-RUN MODE: Actually modify files (requires human confirmation)"
     )
 
     args = parser.parse_args()
@@ -726,7 +676,7 @@ if __name__ == "__main__":
         # Also print to stdout that we're saving to file
         print(f"Saving samples to: {output_file.absolute()}")
 
-    success = migrate(sample_percent=args.sample, verbose=args.verbose, real_run=args.real_run)
+    success = migrate(sample_percent=args.sample, verbose=args.verbose)
 
     if args.output:
         print(f"✓ Samples saved to: {Path(args.output).absolute()}")
