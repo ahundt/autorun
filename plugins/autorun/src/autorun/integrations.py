@@ -657,6 +657,55 @@ def _not_in_pipe(ctx: any) -> bool:
         return False
 
 
+def _restore_is_destructive(ctx: any) -> bool:
+    """
+    Check if 'git restore' is destructive (discards working tree changes).
+
+    Safe (unstage only):
+        git restore --staged <file>
+        git restore -S <file>
+
+    Destructive (discards working tree changes permanently):
+        git restore <file>              (default is --worktree)
+        git restore --worktree <file>
+        git restore -W <file>
+        git restore -SW <file>          (both staged + worktree)
+        git restore --staged --worktree <file>
+
+    Returns:
+        True if destructive (should block), False if safe (staged-only)
+    """
+    try:
+        cmd = ctx.tool_input.get("command", "") if hasattr(ctx, "tool_input") else ""
+        if not cmd:
+            return False
+
+        parts = cmd.split()
+
+        # Check for --worktree or -W (explicitly destructive even with --staged)
+        has_worktree = "--worktree" in parts or "-W" in parts
+        for p in parts:
+            if p.startswith("-") and not p.startswith("--") and "W" in p:
+                has_worktree = True  # catches -SW, -WS, etc.
+
+        # Check for --staged or -S (safe if alone, destructive if combined with -W)
+        has_staged = "--staged" in parts or "-S" in parts
+        for p in parts:
+            if p.startswith("-") and not p.startswith("--") and "S" in p:
+                has_staged = True  # catches -SW, -WS, etc.
+
+        if has_worktree:
+            # --worktree is always destructive, even with --staged
+            return _file_has_unstaged_changes(ctx)
+        if has_staged:
+            return False  # staged-only is safe (just unstages)
+
+        # Default (no flags) is --worktree, which is destructive
+        return _file_has_unstaged_changes(ctx)
+    except Exception:
+        return False
+
+
 # Predicate functions (O(1) lookups) - FIX Bug 1
 _WHEN_PREDICATES: Final[dict] = {
     "has_uncommitted_changes": _has_uncommitted_changes,
@@ -666,6 +715,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
     "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,  # v0.8.0: Catch git checkout <file>
     "_not_in_pipe": _not_in_pipe,  # v0.8.0: Context-aware blocking for head/tail/grep/cat
+    "_restore_is_destructive": _restore_is_destructive,  # v0.8.0: Allow git restore --staged, block git restore <file>
     # Add more as needed
 }
 

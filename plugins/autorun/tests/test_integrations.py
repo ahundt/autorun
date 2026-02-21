@@ -909,6 +909,190 @@ class TestWhenPredicateEdgeCases:
 
         assert result is False
 
+    # ---- _restore_is_destructive predicate tests ----
+
+    @patch("subprocess.run")
+    def test_restore_plain_is_destructive(self, mock_run):
+        """'git restore file.txt' is destructive (default is --worktree)."""
+        mock_run.return_value = MagicMock(returncode=1)  # Has changes
+        ctx = MagicMock(tool_input={"command": "git restore file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is True
+
+    @patch("subprocess.run")
+    def test_restore_staged_is_safe(self, mock_run):
+        """'git restore --staged file.txt' is safe (just unstages)."""
+        ctx = MagicMock(tool_input={"command": "git restore --staged file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is False
+        mock_run.assert_not_called()  # Should short-circuit before git diff
+
+    @patch("subprocess.run")
+    def test_restore_short_staged_is_safe(self, mock_run):
+        """'git restore -S file.txt' is safe (short form of --staged)."""
+        ctx = MagicMock(tool_input={"command": "git restore -S file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is False
+        mock_run.assert_not_called()
+
+    @patch("subprocess.run")
+    def test_restore_worktree_is_destructive(self, mock_run):
+        """'git restore --worktree file.txt' is destructive."""
+        mock_run.return_value = MagicMock(returncode=1)
+        ctx = MagicMock(tool_input={"command": "git restore --worktree file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is True
+
+    @patch("subprocess.run")
+    def test_restore_short_worktree_is_destructive(self, mock_run):
+        """'git restore -W file.txt' is destructive."""
+        mock_run.return_value = MagicMock(returncode=1)
+        ctx = MagicMock(tool_input={"command": "git restore -W file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is True
+
+    @patch("subprocess.run")
+    def test_restore_staged_worktree_is_destructive(self, mock_run):
+        """'git restore --staged --worktree file.txt' is destructive (worktree wins)."""
+        mock_run.return_value = MagicMock(returncode=1)
+        ctx = MagicMock(tool_input={"command": "git restore --staged --worktree file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is True
+
+    @patch("subprocess.run")
+    def test_restore_combined_SW_is_destructive(self, mock_run):
+        """'git restore -SW file.txt' is destructive (W present in combined flag)."""
+        mock_run.return_value = MagicMock(returncode=1)
+        ctx = MagicMock(tool_input={"command": "git restore -SW file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is True
+
+    @patch("subprocess.run")
+    def test_restore_no_unstaged_changes_allowed(self, mock_run):
+        """'git restore file.txt' allowed if file has no unstaged changes."""
+        mock_run.return_value = MagicMock(returncode=0)  # No changes
+        ctx = MagicMock(tool_input={"command": "git restore file.txt"})
+
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is False
+
+    def test_restore_empty_command(self):
+        """'git restore' with empty command returns False."""
+        ctx = MagicMock(tool_input={"command": ""})
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is False
+
+    def test_restore_no_tool_input(self):
+        """_restore_is_destructive with missing tool_input."""
+        ctx = MagicMock(spec=[])
+        result = check_when_predicate("_restore_is_destructive", ctx)
+        assert result is False
+
+
+# =============================================================================
+# DEEP TDD: git restore config.py integration tests
+# =============================================================================
+
+class TestGitRestoreConfig:
+    """Test git restore entry in DEFAULT_INTEGRATIONS."""
+
+    def test_git_restore_exists_in_config(self):
+        """git restore has an entry in DEFAULT_INTEGRATIONS."""
+        assert "git restore" in DEFAULT_INTEGRATIONS
+
+    def test_git_restore_uses_correct_predicate(self):
+        """git restore uses _restore_is_destructive predicate."""
+        config = DEFAULT_INTEGRATIONS["git restore"]
+        assert config["when"] == "_restore_is_destructive"
+
+    def test_git_restore_redirects_to_stash(self):
+        """git restore redirects to git stash push."""
+        config = DEFAULT_INTEGRATIONS["git restore"]
+        assert "git stash push" in config["redirect"]
+        assert "{file}" in config["redirect"]
+
+    def test_git_restore_suggestion_mentions_staged_safe(self):
+        """Suggestion tells users --staged is safe."""
+        config = DEFAULT_INTEGRATIONS["git restore"]
+        assert "--staged" in config["suggestion"]
+
+    def test_no_git_restore_in_other_suggestions(self):
+        """No other integration suggests 'git restore' as alternative."""
+        for pattern, config in DEFAULT_INTEGRATIONS.items():
+            if pattern == "git restore":
+                continue
+            suggestion = config.get("suggestion", "")
+            assert "git restore" not in suggestion, \
+                f"'{pattern}' suggestion still mentions 'git restore'"
+
+    def test_git_checkout_no_longer_redirects_to_restore(self):
+        """git checkout redirect should NOT use git restore."""
+        for pattern in ["git checkout", "git checkout --", "git checkout ."]:
+            if pattern in DEFAULT_INTEGRATIONS:
+                redirect = DEFAULT_INTEGRATIONS[pattern].get("redirect", "")
+                assert "git restore" not in redirect, \
+                    f"'{pattern}' redirect still uses 'git restore'"
+
+
+# =============================================================================
+# DEEP TDD: {file} substitution in redirect templates
+# =============================================================================
+
+class TestFileSubstitution:
+    """Test {file} placeholder substitution in redirect commands."""
+
+    def test_file_extracted_from_git_restore(self):
+        """Extract file from 'git restore myfile.txt'."""
+        cmd = "git restore myfile.txt"
+        parts = cmd.split()
+        file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+        assert file_args[-1] == "myfile.txt"
+
+    def test_file_extracted_with_flags(self):
+        """Extract file from 'git restore --worktree myfile.txt'."""
+        cmd = "git restore --worktree myfile.txt"
+        parts = cmd.split()
+        file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+        assert file_args[-1] == "myfile.txt"
+
+    def test_file_extracted_with_double_dash(self):
+        """Extract file from 'git checkout -- myfile.txt'."""
+        cmd = "git checkout -- myfile.txt"
+        parts = cmd.split()
+        file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+        assert file_args[-1] == "myfile.txt"
+
+    def test_file_extracted_with_combined_flags(self):
+        """Extract file from 'git restore -SW myfile.txt'."""
+        cmd = "git restore -SW myfile.txt"
+        parts = cmd.split()
+        file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+        assert file_args[-1] == "myfile.txt"
+
+    def test_file_extracted_with_path(self):
+        """Extract file from 'git restore src/main.py'."""
+        cmd = "git restore src/main.py"
+        parts = cmd.split()
+        file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+        assert file_args[-1] == "src/main.py"
+
+    def test_redirect_template_substitution(self):
+        """Full redirect template substitution with {file}."""
+        template = "git stash push {file} -m 'WIP: {file}'"
+        cmd = "git restore src/config.py"
+        parts = cmd.split()
+        file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+        file_val = file_args[-1] if file_args else ""
+        result = template.replace("{file}", file_val)
+        assert result == "git stash push src/config.py -m 'WIP: src/config.py'"
+
 
 # =============================================================================
 # DEEP TDD: Conditions Edge Cases
