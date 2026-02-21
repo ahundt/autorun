@@ -15,6 +15,82 @@ SAFETY NOTES:
    - If .gitignore specifies additional exclusions, verify they're in EXCLUDE_PATTERNS
 6. ENCODING: All files are read/written as UTF-8. Non-UTF-8 files will trigger encoding errors (safe fail).
    - Original file encodings are NOT preserved (Bug #8 - future enhancement)
+
+KNOWN LIMITATIONS - Manual Updates Still Required:
+================================================================================
+The script handles Python source files (.py), JSON config (.json), and Markdown (.md).
+However, some files require MANUAL updates and are intentionally NOT processed by script:
+
+1. aix.toml (AIX Marketplace Configuration)
+   - Paths like: path = "plugins/clautorun/commands/go.md"
+   - Project references: name = "clautorun", repository URLs
+   - Installation commands with old package name
+   - MANUAL FIX: Use find-replace to update:
+     * "plugins/clautorun/" → "plugins/autorun/"
+     * "clautorun" → "autorun" (in name and paths)
+     * "github.com/ahundt/clautorun" → "github.com/ahundt/autorun"
+
+2. .dmux/dmux.config.json (Tmux/Byobu Project Config)
+   - projectName: "clautorun"
+   - projectRoot: "/Users/athundt/.claude/clautorun"
+   - MANUAL FIX: Update paths to use ~/.claude/autorun
+
+3. .claude/settings.local.json (Claude Code Bash Integration)
+   - PYTHONPATH and python module paths with old package names
+   - References to "src/clautorun/main.py" in Bash configuration
+   - MANUAL FIX: Update all clautorun references to autorun
+
+4. plugins/known_marketplaces.json (Marketplace Registry)
+   - name: "clautorun", source: "plugins/clautorun"
+   - MANUAL FIX: Update to plugins/autorun
+
+5. .claude-plugin/marketplace.json (Plugin Manifest)
+   - Plugin name, description, source paths
+   - MANUAL FIX: Update all references
+
+6. Test Function Names (NOT Renamed by Script)
+   - Script does NOT rename test functions like:
+     * test_commands_clautorun_fallback_config → test_commands_autorun_fallback_config
+     * test_clautorun_import_error → test_autorun_import_error
+     * test_has_install_clautorun_function → test_has_install_autorun_function
+   - REASON: Regex patterns can't safely rename function definitions without AST parsing
+   - MANUAL FIX: Rename test functions and update assertions in test files
+
+7. Internal Function Names in Source Code (NOW FIXED in Commit)
+   - setup_clautorun_logging() → setup_autorun_logging()
+   - _install_clautorun() → _install_autorun()
+   - check_clautorun_processes() → check_autorun_processes()
+   - Script couldn't catch these safely, but now included in commit 6f5c4e3
+
+8. Generated/Cache Files (Intentionally Excluded)
+   - htmlcov/status.json (coverage report - regenerates automatically)
+   - .pytest_cache/ (pytest cache - regenerates automatically)
+   - __pycache__/ (Python cache - regenerates automatically)
+   - *.egg-info/ (package metadata - regenerates on install)
+
+POST-MIGRATION CHECKLIST:
+================================================================================
+After running this script:
+1. [DONE] git mv plugins/clautorun/ → plugins/autorun/
+2. [DONE] Python source file edits (handled by script)
+3. [TODO] Manual: Update aix.toml paths and project name
+4. [TODO] Manual: Update .dmux/dmux.config.json paths
+5. [TODO] Manual: Update .claude/settings.local.json
+6. [TODO] Manual: Update plugins/known_marketplaces.json
+7. [TODO] Manual: Update .claude-plugin/marketplace.json
+8. [TODO] Test: Rename test functions and update assertions
+9. [DONE] Function names: Updated in daemon.py, ai_monitor.py, diagnostics.py
+10. [DONE] Create symlink: ~/.claude/clautorun → ~/.claude/autorun (for backwards compat)
+11. [DONE] git commit with all changes
+
+SCRIPT DESIGN RATIONALE:
+================================================================================
+This script intentionally:
+- Only processes tracked Python/JSON/Markdown files (not config or cache)
+- Uses regex patterns (not AST parsing) to avoid dependencies
+- Excludes test function renames (would need semantic understanding)
+- Provides dry-run preview so humans can verify before applying
+- Skips non-standard config files that may have custom format expectations
 """
 
 import os
