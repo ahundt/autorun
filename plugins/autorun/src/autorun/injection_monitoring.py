@@ -14,7 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Injection effectiveness monitoring system for clautorun"""
+"""Injection effectiveness monitoring system for autorun"""
 
 import time
 import json
@@ -121,7 +121,7 @@ class InjectionEffectivenessMonitor:
             storage_dir: Directory to store monitoring data
             max_records: Maximum number of injection records to keep in memory
         """
-        self.storage_dir = storage_dir or Path.home() / ".claude" / "clautorun" / "injection_monitoring"
+        self.storage_dir = storage_dir or Path.home() / ".claude" / "autorun" / "injection_monitoring"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
         self.max_records = max_records

@@ -11,7 +11,7 @@ import os
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.command_discovery import (
+from autorun.command_discovery import (
     discover_existing_commands,
     load_command_content,
     parse_command_args,

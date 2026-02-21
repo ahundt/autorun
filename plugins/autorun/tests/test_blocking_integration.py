@@ -19,7 +19,7 @@
 Integration tests for command blocking functionality.
 
 Tests the end-to-end integration of command blocking with:
-- Command handlers (/cr:no, /cr:ok, /cr:clear, /cr:status, etc.)
+- Command handlers (/ar:no, /ar:ok, /ar:clear, /ar:status, etc.)
 - PreToolUse hook blocking
 - UserPromptSubmit command handling
 """
@@ -31,7 +31,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from clautorun.main import (
+from autorun.main import (
     handle_block_pattern,
     handle_allow_pattern,
     handle_clear_pattern,
@@ -44,7 +44,7 @@ from clautorun.main import (
     COMMAND_HANDLERS,
     GLOBAL_CONFIG_FILE
 )
-from clautorun.config import DEFAULT_INTEGRATIONS
+from autorun.config import DEFAULT_INTEGRATIONS
 
 
 class MockContext:
@@ -76,7 +76,7 @@ class TestCommandBlockingHandlers:
         """Test that handle_block_pattern adds a session block."""
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:no rm"
+            "activation_prompt": "/ar:no rm"
         }
 
         response = handle_block_pattern(state)
@@ -93,7 +93,7 @@ class TestCommandBlockingHandlers:
         """
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": '/cr:no "dd if="'
+            "activation_prompt": '/ar:no "dd if="'
         }
 
         response = handle_block_pattern(state)
@@ -104,7 +104,7 @@ class TestCommandBlockingHandlers:
         """Test handling duplicate block attempts."""
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:no rm"
+            "activation_prompt": "/ar:no rm"
         }
 
         # First block
@@ -119,7 +119,7 @@ class TestCommandBlockingHandlers:
         """Test handling missing pattern argument."""
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:no"
+            "activation_prompt": "/ar:no"
         }
 
         response = handle_block_pattern(state)
@@ -131,12 +131,12 @@ class TestCommandBlockingHandlers:
         # First block it
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:no rm"
+            "activation_prompt": "/ar:no rm"
         }
         handle_block_pattern(state)
 
         # Then allow it
-        state["activation_prompt"] = "/cr:ok rm"
+        state["activation_prompt"] = "/ar:ok rm"
         response = handle_allow_pattern(state)
 
         assert "Allowed: rm" in response
@@ -145,7 +145,7 @@ class TestCommandBlockingHandlers:
         """Test allowing a pattern that wasn't blocked."""
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:ok rm"
+            "activation_prompt": "/ar:ok rm"
         }
 
         response = handle_allow_pattern(state)
@@ -155,14 +155,14 @@ class TestCommandBlockingHandlers:
     def test_handle_clear_pattern_all(self):
         """Test clearing all session blocks."""
         # Add multiple blocks
-        state1 = {"session_id": self.test_session_id, "activation_prompt": "/cr:no rm"}
-        state2 = {"session_id": self.test_session_id, "activation_prompt": "/cr:no dd"}
+        state1 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no rm"}
+        state2 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no dd"}
 
         handle_block_pattern(state1)
         handle_block_pattern(state2)
 
         # Clear all
-        state3 = {"session_id": self.test_session_id, "activation_prompt": "/cr:clear"}
+        state3 = {"session_id": self.test_session_id, "activation_prompt": "/ar:clear"}
         response = handle_clear_pattern(state3)
 
         assert "Cleared all session blocks" in response
@@ -170,14 +170,14 @@ class TestCommandBlockingHandlers:
     def test_handle_clear_pattern_specific(self):
         """Test clearing a specific pattern."""
         # Add multiple blocks
-        state1 = {"session_id": self.test_session_id, "activation_prompt": "/cr:no rm"}
-        state2 = {"session_id": self.test_session_id, "activation_prompt": "/cr:no dd"}
+        state1 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no rm"}
+        state2 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no dd"}
 
         handle_block_pattern(state1)
         handle_block_pattern(state2)
 
         # Clear specific pattern
-        state3 = {"session_id": self.test_session_id, "activation_prompt": "/cr:clear rm"}
+        state3 = {"session_id": self.test_session_id, "activation_prompt": "/ar:clear rm"}
         response = handle_clear_pattern(state3)
 
         assert "Cleared: rm" in response
@@ -187,12 +187,12 @@ class TestCommandBlockingHandlers:
         # Add a block
         state = {
             "session_id": self.test_session_id,
-            "activation_prompt": "/cr:no rm"
+            "activation_prompt": "/ar:no rm"
         }
         handle_block_pattern(state)
 
         # Get status
-        state["activation_prompt"] = "/cr:status"
+        state["activation_prompt"] = "/ar:status"
         response = handle_block_status(state)
 
         assert "Command Blocking Status" in response
@@ -209,7 +209,7 @@ class TestGlobalCommandHandlers:
         self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
 
         # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
+        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
     def teardown_method(self):
@@ -221,7 +221,7 @@ class TestGlobalCommandHandlers:
     def test_handle_global_block_pattern(self):
         """Test adding a global block."""
         state = {
-            "activation_prompt": "/cr:globalno rm"
+            "activation_prompt": "/ar:globalno rm"
         }
 
         response = handle_global_block_pattern(state)
@@ -231,11 +231,11 @@ class TestGlobalCommandHandlers:
     def test_handle_global_allow_pattern(self):
         """Test removing a global block."""
         # First add it
-        state = {"activation_prompt": "/cr:globalno rm"}
+        state = {"activation_prompt": "/ar:globalno rm"}
         handle_global_block_pattern(state)
 
         # Then remove it
-        state["activation_prompt"] = "/cr:globalok rm"
+        state["activation_prompt"] = "/ar:globalok rm"
         response = handle_global_allow_pattern(state)
 
         assert "Global allow: rm" in response
@@ -243,11 +243,11 @@ class TestGlobalCommandHandlers:
     def test_handle_global_block_status(self):
         """Test global status display."""
         # Add a global block
-        state = {"activation_prompt": "/cr:globalno rm"}
+        state = {"activation_prompt": "/ar:globalno rm"}
         handle_global_block_pattern(state)
 
         # Get status
-        state["activation_prompt"] = "/cr:globalstatus"
+        state["activation_prompt"] = "/ar:globalstatus"
         response = handle_global_block_status(state)
 
         assert "Global Command Blocks" in response
@@ -269,7 +269,7 @@ class TestPreToolUseBlocking:
     def test_bash_command_blocked(self):
         """Test that Bash commands can be blocked."""
         # Add block
-        from clautorun.main import add_session_block
+        from autorun.main import add_session_block
         add_session_block(self.test_session_id, "rm")
 
         # Create mock context
@@ -305,7 +305,7 @@ class TestPreToolUseBlocking:
     def test_non_bash_tools_not_affected(self):
         """Test that non-Bash tools are not affected by blocking."""
         # Add block
-        from clautorun.main import add_session_block
+        from autorun.main import add_session_block
         add_session_block(self.test_session_id, "rm")
 
         # Create mock context for Write tool
@@ -324,7 +324,7 @@ class TestPreToolUseBlocking:
     def test_pattern_matching_in_pretooluse(self):
         """Test pattern matching in PreToolUse blocking."""
         # Block "dd if=" pattern
-        from clautorun.main import add_session_block
+        from autorun.main import add_session_block
         add_session_block(self.test_session_id, "dd if=")
 
         # Create mock context
@@ -373,7 +373,7 @@ class TestEndToEndWorkflows:
         clear_session_blocks(self.test_session_id)
 
         # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
+        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
     def teardown_method(self):
@@ -386,7 +386,7 @@ class TestEndToEndWorkflows:
     def test_block_then_unblock_workflow(self):
         """Test the complete block and unblock workflow.
 
-        Note: /cr:ok removes the session block, but DEFAULT_INTEGRATIONS
+        Note: /ar:ok removes the session block, but DEFAULT_INTEGRATIONS
         still blocks "rm" as a built-in safety rule. After removing the
         session block, should_block_command still returns a block from
         the default integrations layer.
@@ -394,17 +394,17 @@ class TestEndToEndWorkflows:
         state = {"session_id": self.test_session_id}
 
         # Block rm
-        state["activation_prompt"] = "/cr:no rm"
+        state["activation_prompt"] = "/ar:no rm"
         response = handle_block_pattern(state)
         assert "Blocked: rm" in response
 
         # Verify it's blocked
-        from clautorun.main import should_block_command, get_session_blocks
+        from autorun.main import should_block_command, get_session_blocks
         block_info = should_block_command(self.test_session_id, "rm file.txt")
         assert block_info is not None
 
         # Unblock rm (removes session block)
-        state["activation_prompt"] = "/cr:ok rm"
+        state["activation_prompt"] = "/ar:ok rm"
         response = handle_allow_pattern(state)
         assert "Allowed: rm" in response
 
@@ -422,22 +422,22 @@ class TestEndToEndWorkflows:
         state = {"session_id": self.test_session_id}
 
         # Set global block
-        state["activation_prompt"] = "/cr:globalno rm"
+        state["activation_prompt"] = "/ar:globalno rm"
         response = handle_global_block_pattern(state)
         assert "Global block: rm" in response
 
         # Verify it's blocked (via global)
-        from clautorun.main import should_block_command
+        from autorun.main import should_block_command
         block_info = should_block_command(self.test_session_id, "rm file.txt")
         assert block_info is not None
 
         # Add session block to override
-        state["activation_prompt"] = "/cr:no rm"
+        state["activation_prompt"] = "/ar:no rm"
         response = handle_block_pattern(state)
         assert "Blocked: rm" in response
 
         # Remove session block - should fall back to global
-        state["activation_prompt"] = "/cr:ok rm"
+        state["activation_prompt"] = "/ar:ok rm"
         response = handle_allow_pattern(state)
         assert "Allowed: rm" in response
 
@@ -450,20 +450,20 @@ class TestEndToEndWorkflows:
         state = {"session_id": self.test_session_id}
 
         # Add multiple blocks
-        state["activation_prompt"] = "/cr:no rm"
+        state["activation_prompt"] = "/ar:no rm"
         handle_block_pattern(state)
 
-        state["activation_prompt"] = "/cr:no dd"
+        state["activation_prompt"] = "/ar:no dd"
         handle_block_pattern(state)
 
         # Clear all
-        state["activation_prompt"] = "/cr:clear"
+        state["activation_prompt"] = "/ar:clear"
         response = handle_clear_pattern(state)
 
         assert "Cleared all session blocks" in response
 
         # Verify all cleared
-        from clautorun.main import get_session_blocks
+        from autorun.main import get_session_blocks
         blocks = get_session_blocks(self.test_session_id)
         assert len(blocks) == 0
 

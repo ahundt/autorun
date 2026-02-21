@@ -1,19 +1,19 @@
 # Claude Code Integration Guide
 
-This guide describes how to integrate with clautorun (v0.7+). The v0.6.1-era Agent SDK
+This guide describes how to integrate with autorun (v0.7+). The v0.6.1-era Agent SDK
 and MCP Server integration modes have been superseded by the daemon-based v0.7 architecture.
 
 ## Current Integration Architecture (v0.7+)
 
-clautorun operates as a Unix socket daemon that processes Claude Code hook events efficiently.
+autorun operates as a Unix socket daemon that processes Claude Code hook events efficiently.
 The integration path is:
 
 ```
 Claude Code hook event
   → hooks/hook_entry.py       (bootstrap; detects Claude vs Gemini CLI)
-  → src/clautorun/client.py   (Unix socket client; auto-starts daemon)
-  → src/clautorun/core.py     (ClautorunDaemon; async dispatch)
-  → src/clautorun/plugins.py  (hook handlers: file policy, blocking, plan export)
+  → src/autorun/client.py   (Unix socket client; auto-starts daemon)
+  → src/autorun/core.py     (AutorunDaemon; async dispatch)
+  → src/autorun/plugins.py  (hook handlers: file policy, blocking, plan export)
 ```
 
 **Performance**: 1–5ms per hook event (daemon mode) vs 50–150ms (legacy direct mode).
@@ -26,10 +26,10 @@ The daemon starts automatically on first hook event. No manual setup required.
 
 ```bash
 # Verify daemon is running:
-clautorun --status
+autorun --status
 
 # Restart if needed:
-clautorun --restart-daemon
+autorun --restart-daemon
 ```
 
 The daemon handles all hook events (UserPromptSubmit, PreToolUse, PostToolUse, SessionStart,
@@ -45,14 +45,14 @@ when Unix sockets are not available.
 
 ```bash
 # Set environment variable to bypass daemon:
-export CLAUTORUN_USE_DAEMON=0
+export AUTORUN_USE_DAEMON=0
 
-# Then run clautorun normally — it goes through main.py directly:
-echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/cr:st", "session_id": "test"}' \
-  | clautorun
+# Then run autorun normally — it goes through main.py directly:
+echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/ar:st", "session_id": "test"}' \
+  | autorun
 
 # Or inline:
-CLAUTORUN_USE_DAEMON=0 clautorun
+AUTORUN_USE_DAEMON=0 autorun
 ```
 
 **When to use**: Debugging hook logic, systems without Unix socket support.
@@ -63,7 +63,7 @@ CLAUTORUN_USE_DAEMON=0 clautorun
 Add new slash commands by placing markdown files in `commands/`:
 
 ```bash
-# commands/mycommand.md — automatically available as /cr:mycommand
+# commands/mycommand.md — automatically available as /ar:mycommand
 # Contents describe what Claude should do when the command is invoked
 ```
 
@@ -74,7 +74,7 @@ session start and do not require hook handler changes.
 
 ### 4. Python Hook Handler Extension
 
-Add new hook handlers in `src/clautorun/plugins.py` using the factory patterns:
+Add new hook handlers in `src/autorun/plugins.py` using the factory patterns:
 
 ```python
 # In plugins.py — add a new PreToolUse handler:
@@ -85,7 +85,7 @@ def my_handler(ctx: EventContext) -> None:
         pass
 ```
 
-See `src/clautorun/plugins.py` for existing handler examples using `_make_policy_handler()`
+See `src/autorun/plugins.py` for existing handler examples using `_make_policy_handler()`
 and `_make_block_op()` factory patterns.
 
 **When to use**: Adding new enforcement logic that requires Python.
@@ -101,11 +101,11 @@ and `_make_block_op()` factory patterns.
 
 ```bash
 # Run full test suite:
-uv run pytest plugins/clautorun/tests/ -v --tb=short
+uv run pytest plugins/autorun/tests/ -v --tb=short
 
 # Test specific hook behavior:
-uv run pytest plugins/clautorun/tests/test_core.py -v
-uv run pytest plugins/clautorun/tests/test_integrations.py -v
+uv run pytest plugins/autorun/tests/test_core.py -v
+uv run pytest plugins/autorun/tests/test_integrations.py -v
 ```
 
 ## Bug #4669 Workaround (Claude Code v1.0.62+)
@@ -118,5 +118,5 @@ Claude Code ignores `permissionDecision:"deny"` at exit 0. The workaround:
 # Gemini CLI: exit 0 + JSON decision field (works correctly per spec)
 ```
 
-See `src/clautorun/client.py:output_hook_response()` for implementation.
-See `src/clautorun/config.py:should_use_exit2_workaround()` for CLI detection.
+See `src/autorun/client.py:output_hook_response()` for implementation.
+See `src/autorun/config.py:should_use_exit2_workaround()` for CLI detection.

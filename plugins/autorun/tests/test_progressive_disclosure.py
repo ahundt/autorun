@@ -13,9 +13,9 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG
-from clautorun.plugins import _build_progressive_stage_section, build_injection_prompt
-from clautorun.core import EventContext
+from autorun import CONFIG
+from autorun.plugins import _build_progressive_stage_section, build_injection_prompt
+from autorun.core import EventContext
 
 
 class TestProgressiveDisclosure:

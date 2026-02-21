@@ -16,8 +16,8 @@ from unittest.mock import MagicMock
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.integrations import _not_in_pipe
-from clautorun.command_detection import BASHLEX_AVAILABLE
+from autorun.integrations import _not_in_pipe
+from autorun.command_detection import BASHLEX_AVAILABLE
 
 
 def create_mock_context(command: str):
@@ -134,7 +134,7 @@ class TestPipeBlockingFix:
         """Test pipe detection with || and && operators (REGRESSION TEST)."""
         commands_with_logical_ops = [
             # Pipe with || (logical OR) - SHOULD BE ALLOWED
-            "gemini extensions list | grep clautorun || echo 'Not found'",
+            "gemini extensions list | grep autorun || echo 'Not found'",
             "git log | grep fix || exit 1",
             "ps aux | grep python || echo 'No python processes'",
 
@@ -146,7 +146,7 @@ class TestPipeBlockingFix:
             "cat file.txt | grep error && echo 'Errors found' || echo 'No errors'",
 
             # Pipe with grep -A/-B flags (context lines) - SHOULD BE ALLOWED
-            "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'",
+            "gemini extensions list | grep -A 2 -B 2 autorun || echo 'No autorun found'",
         ]
 
         for cmd in commands_with_logical_ops:
@@ -174,7 +174,7 @@ class TestPipeBlockingFix:
             "git log | grep -A 5 commit",
             "cat error.log | grep -B 10 ERROR",
             "ps aux | grep -C 3 python",
-            "gemini extensions list | grep -A 2 -B 2 clautorun",
+            "gemini extensions list | grep -A 2 -B 2 autorun",
 
             # Multiple pipes with grep
             "cat file.txt | grep error | grep -v warning",
@@ -268,7 +268,7 @@ class TestPipeBlockingFix:
         This tests the command_detection.py module directly to ensure it uses
         bashlex AST parsing and doesn't do naive substring matching.
         """
-        from clautorun.command_detection import command_matches_pattern
+        from autorun.command_detection import command_matches_pattern
 
         # Should MATCH (actual grep commands)
         actual_grep_commands = [

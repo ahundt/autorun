@@ -12,7 +12,7 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig, is_enabled
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig, is_enabled
 
 
 def test_config_load_save():

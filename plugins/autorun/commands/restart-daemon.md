@@ -1,12 +1,12 @@
 ---
 name: restart-daemon
-description: Restart clautorun daemon to reload Python code changes
+description: Restart autorun daemon to reload Python code changes
 aliases: [rd, daemon-restart]
 ---
 
 # Restart Daemon
 
-Restarts the clautorun daemon to load updated Python code.
+Restarts the autorun daemon to load updated Python code.
 
 **When to use:** After modifying Python files in the plugin (integrations.py, config.py, etc.)
 

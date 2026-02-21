@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "clautorun",
+  "name": "autorun",
   "description": "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally. Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
   "owner": {
     "name": "Andrew Hundt",
@@ -8,8 +8,8 @@
   },
   "plugins": [
     {
-      "name": "cr",
-      "description": "clautorun plugin - uses 'cr' as command prefix for easy typing (/cr:st, /cr:a, etc.). Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
+      "name": "ar",
+      "description": "autorun plugin - uses 'ar' as command prefix for easy typing (/ar:st, /ar:a, etc.). Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
       "version": "0.8.0",
       "author": {
         "name": "Andrew Hundt",
@@ -17,12 +17,12 @@
       },
       "source": {
         "source": "github",
-        "repo": "ahundt/clautorun",
-        "subdirectory": "plugins/clautorun"
+        "repo": "ahundt/autorun",
+        "subdirectory": "plugins/autorun"
       },
       "category": "productivity",
-      "homepage": "https://github.com/ahundt/clautorun",
-      "repository": "https://github.com/ahundt/clautorun.git"
+      "homepage": "https://github.com/ahundt/autorun",
+      "repository": "https://github.com/ahundt/autorun.git"
     }
   ]
 }

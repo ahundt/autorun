@@ -3,7 +3,7 @@ description: Create new plan from scratch
 argument-hint: <feature/project description>
 ---
 
-# Create New Plan (/cr:plannew)
+# Create New Plan (/ar:plannew)
 
 $ARGUMENTS
 

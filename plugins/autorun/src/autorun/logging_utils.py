@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Clautorun File-Only Logging Utility.
+"""Autorun File-Only Logging Utility.
 
 CRITICAL: Never writes to stdout/stderr to avoid breaking Claude Code hooks.
 Any stderr output causes "hook error" and silently disables all protections.
 
 Debug Mode:
-    Set CLAUTORUN_DEBUG=1 environment variable to enable debug logging.
+    Set AUTORUN_DEBUG=1 environment variable to enable debug logging.
     Without this flag, logging is disabled (no overhead, no file writes).
 
 Usage:
-    from clautorun.logging_utils import get_logger
+    from autorun.logging_utils import get_logger
     logger = get_logger(__name__)
-    logger.info("Message goes to ~/.clautorun/daemon.log only when debug enabled")
+    logger.info("Message goes to ~/.autorun/daemon.log only when debug enabled")
 """
 import logging
 import os
 from pathlib import Path
 
-LOG_FILE = Path.home() / ".clautorun" / "daemon.log"
-DEBUG_ENABLED = os.environ.get('CLAUTORUN_DEBUG') == '1'
+LOG_FILE = Path.home() / ".autorun" / "daemon.log"
+DEBUG_ENABLED = os.environ.get('AUTORUN_DEBUG') == '1'
 
 
 def get_logger(name: str) -> logging.Logger:
     """Get file-only logger (never writes to stdout/stderr).
 
-    Logging is ONLY enabled when CLAUTORUN_DEBUG=1 environment variable is set.
+    Logging is ONLY enabled when AUTORUN_DEBUG=1 environment variable is set.
     When debug is disabled, logger is configured but set to CRITICAL level (effectively disabled).
 
     Args:
@@ -36,8 +36,8 @@ def get_logger(name: str) -> logging.Logger:
 
     Example:
         logger = get_logger(__name__)
-        logger.info("Hook executed")  # Only logged when CLAUTORUN_DEBUG=1
-        logger.debug("Detailed diagnostic")  # Only when CLAUTORUN_DEBUG=1
+        logger.info("Hook executed")  # Only logged when AUTORUN_DEBUG=1
+        logger.debug("Detailed diagnostic")  # Only when AUTORUN_DEBUG=1
     """
     logger = logging.getLogger(name)
 

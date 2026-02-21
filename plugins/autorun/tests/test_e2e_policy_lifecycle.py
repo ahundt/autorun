@@ -15,7 +15,7 @@ from unittest.mock import Mock
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import (
+from autorun.main import (
     claude_code_handler,  # UserPromptSubmit handler
     pretooluse_handler,
     session_state,
@@ -54,7 +54,7 @@ class TestE2EPolicyLifecycle:
     def test_justify_policy_lifecycle_no_justification(self):
         """E2E: Set JUSTIFY policy, try Write without justification → BLOCKED"""
         # Step 1: Simulate UserPromptSubmit hook setting JUSTIFY policy
-        ctx = self.create_userpromptsubmit_context("/cr:j")
+        ctx = self.create_userpromptsubmit_context("/ar:j")
         result = claude_code_handler(ctx)
 
         # Verify policy was set
@@ -72,7 +72,7 @@ class TestE2EPolicyLifecycle:
     def test_justify_policy_lifecycle_with_justification(self):
         """E2E: Set JUSTIFY policy, try Write with justification → ALLOWED"""
         # Step 1: Simulate UserPromptSubmit hook setting JUSTIFY policy
-        ctx = self.create_userpromptsubmit_context("/cr:j")
+        ctx = self.create_userpromptsubmit_context("/ar:j")
         claude_code_handler(ctx)
 
         # Step 2: Simulate PreToolUse hook for Write tool (WITH justification)
@@ -89,7 +89,7 @@ class TestE2EPolicyLifecycle:
     def test_search_policy_lifecycle_new_file(self):
         """E2E: Set SEARCH policy, try Write new file → BLOCKED"""
         # Step 1: Set SEARCH policy
-        ctx = self.create_userpromptsubmit_context("/cr:f")
+        ctx = self.create_userpromptsubmit_context("/ar:f")
         claude_code_handler(ctx)
 
         # Verify policy was set
@@ -107,7 +107,7 @@ class TestE2EPolicyLifecycle:
     def test_search_policy_lifecycle_existing_file(self):
         """E2E: Set SEARCH policy, try Write existing file → ALLOWED"""
         # Step 1: Set SEARCH policy
-        ctx = self.create_userpromptsubmit_context("/cr:f")
+        ctx = self.create_userpromptsubmit_context("/ar:f")
         claude_code_handler(ctx)
 
         # Step 2: Try to write existing file (this test file exists)
@@ -122,7 +122,7 @@ class TestE2EPolicyLifecycle:
     def test_allow_policy_lifecycle(self):
         """E2E: Set ALLOW policy, Write any file → ALLOWED"""
         # Step 1: Set ALLOW policy
-        ctx = self.create_userpromptsubmit_context("/cr:a")
+        ctx = self.create_userpromptsubmit_context("/ar:a")
         claude_code_handler(ctx)
 
         # Verify policy was set
@@ -140,7 +140,7 @@ class TestE2EPolicyLifecycle:
     def test_policy_switch_lifecycle(self):
         """E2E: Switch policies and verify enforcement changes"""
         # Start with ALLOW
-        ctx = self.create_userpromptsubmit_context("/cr:a")
+        ctx = self.create_userpromptsubmit_context("/ar:a")
         claude_code_handler(ctx)
 
         # Write should be allowed
@@ -149,7 +149,7 @@ class TestE2EPolicyLifecycle:
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
 
         # Switch to SEARCH
-        ctx = self.create_userpromptsubmit_context("/cr:f")
+        ctx = self.create_userpromptsubmit_context("/ar:f")
         claude_code_handler(ctx)
 
         # Same write should now be blocked
@@ -158,7 +158,7 @@ class TestE2EPolicyLifecycle:
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
         # Switch to JUSTIFY
-        ctx = self.create_userpromptsubmit_context("/cr:j")
+        ctx = self.create_userpromptsubmit_context("/ar:j")
         claude_code_handler(ctx)
 
         # Still blocked without justification
@@ -193,10 +193,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{src_path}').resolve()))
 from unittest.mock import Mock
-from clautorun.main import claude_code_handler
+from autorun.main import claude_code_handler
 
 ctx = Mock()
-ctx.prompt = "/cr:j"
+ctx.prompt = "/ar:j"
 ctx.session_id = "{self.session_id}"
 ctx.session_transcript = []
 claude_code_handler(ctx)
@@ -215,7 +215,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{src_path}').resolve()))
 from unittest.mock import Mock
-from clautorun.main import pretooluse_handler
+from autorun.main import pretooluse_handler
 
 ctx = Mock()
 ctx.tool_name = "Write"

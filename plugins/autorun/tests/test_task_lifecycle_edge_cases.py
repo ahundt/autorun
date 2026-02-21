@@ -24,8 +24,8 @@ import shutil
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
-from clautorun.session_manager import session_state
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from autorun.session_manager import session_state
 
 
 class TestEdgeCases:

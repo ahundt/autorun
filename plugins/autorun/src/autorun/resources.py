@@ -1,10 +1,10 @@
-"""Resource access for installed vs source clautorun.
+"""Resource access for installed vs source autorun.
 
 Provides path accessors for plugin resources (commands, skills, agents, hooks)
 that work for both source repository development and installed package locations.
 
 The plugin root is the directory containing .claude-plugin/, commands/, etc.
-For source development, this is plugins/clautorun/ in the git repo.
+For source development, this is plugins/autorun/ in the git repo.
 For installed packages, this falls back to the package installation directory.
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ def get_plugin_root() -> Path:
         if (parent / ".claude-plugin" / "marketplace.json").exists():
             return parent
 
-    # Fallback: assume standard layout src/clautorun/resources.py -> ../../
+    # Fallback: assume standard layout src/autorun/resources.py -> ../../
     fallback = Path(__file__).resolve().parent.parent.parent
     if (fallback / ".claude-plugin" / "marketplace.json").exists():
         return fallback

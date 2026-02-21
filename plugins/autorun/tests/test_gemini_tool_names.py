@@ -7,7 +7,7 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.config import (
+from autorun.config import (
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS,
     TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_LIST_TOOLS, TASK_GET_TOOLS
 )

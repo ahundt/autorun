@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simplified final integration tests for the complete clautorun system"""
+"""Simplified final integration tests for the complete autorun system"""
 
 import sys
 import os
@@ -17,44 +17,44 @@ from conftest import should_keep_test_artifacts
 
 # Check availability of components
 try:
-    from clautorun.main import CONFIG, session_state
+    from autorun.main import CONFIG, session_state
     MAIN_AVAILABLE = True
 except ImportError:
     MAIN_AVAILABLE = False
 
 try:
-    from clautorun.verification_engine import RequirementVerificationEngine, VerificationStatus
+    from autorun.verification_engine import RequirementVerificationEngine, VerificationStatus
     VERIFICATION_AVAILABLE = True
 except ImportError:
     VERIFICATION_AVAILABLE = False
 
 try:
-    from clautorun.transcript_analyzer import TranscriptAnalyzer
+    from autorun.transcript_analyzer import TranscriptAnalyzer
     TRANSCRIPT_AVAILABLE = True
 except ImportError:
     TRANSCRIPT_AVAILABLE = False
 
 try:
-    from clautorun.testing_framework import TestRunner, TestSuite, TestEnvironment, TestType
+    from autorun.testing_framework import TestRunner, TestSuite, TestEnvironment, TestType
     TESTING_AVAILABLE = True
 except ImportError:
     TESTING_AVAILABLE = False
 
 try:
-    from clautorun.diagnostics import DiagnosticManager
+    from autorun.diagnostics import DiagnosticManager
     DIAGNOSTICS_AVAILABLE = True
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
 
 try:
-    from clautorun.injection_monitoring import get_injection_monitor, InjectionMethod, InjectionOutcome
+    from autorun.injection_monitoring import get_injection_monitor, InjectionMethod, InjectionOutcome
     INJECTION_AVAILABLE = True
 except ImportError:
     INJECTION_AVAILABLE = False
 
 
 class SimplifiedIntegrationTest:
-    """Simplified integration tests for clautorun with graceful degradation"""
+    """Simplified integration tests for autorun with graceful degradation"""
 
     def __init__(self):
         self.test_results = []
@@ -255,7 +255,7 @@ class SimplifiedIntegrationTest:
             print("✅ Test suite registered successfully")
 
             # Test result creation and report
-            from clautorun.testing_framework import TestResult, TestStatus
+            from autorun.testing_framework import TestResult, TestStatus
             mock_result = TestResult(
                 test_id="test1",
                 test_name="Test 1",

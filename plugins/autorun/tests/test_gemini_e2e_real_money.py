@@ -11,11 +11,11 @@ DO NOT RUN unless you understand the costs:
 - Total estimated cost: < $0.005
 
 To run these tests:
-    export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/clautorun/tests/test_gemini_e2e_real_money.py -v
+    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py -v
 
 To skip these tests (default):
-    uv run pytest plugins/clautorun/tests/ -v
+    uv run pytest plugins/autorun/tests/ -v
     # These tests will be SKIPPED automatically
 
 Mock tests (no cost) are in test_gemini_loading.py
@@ -29,16 +29,16 @@ from pathlib import Path
 
 import pytest
 
-# Check for CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
-ENABLE_REAL_MONEY_TESTS = os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
+# Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
+ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
 # Skip entire module if flag not set
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
         not ENABLE_REAL_MONEY_TESTS,
-        reason="CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
-               "Set CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
+        reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
+               "Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
     )
 ]
 
@@ -65,7 +65,7 @@ def gemini_cli_check():
 
 @pytest.fixture(scope="module")
 def gemini_extension_check():
-    """Verify clautorun extension is loaded in Gemini.
+    """Verify autorun extension is loaded in Gemini.
 
     Note: `gemini extensions list` sends the extension list to stderr,
     not stdout. We check both streams to handle this correctly.
@@ -82,8 +82,8 @@ def gemini_extension_check():
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
-        if "clautorun" not in combined_output:
-            pytest.skip("clautorun extension not installed in Gemini CLI")
+        if "autorun" not in combined_output:
+            pytest.skip("autorun extension not installed in Gemini CLI")
     except subprocess.TimeoutExpired:
         pytest.skip("gemini extensions list timed out (>30s)")
     except Exception as e:
@@ -119,7 +119,7 @@ class TestGeminiE2ERealMoney:
             f"Unexpected response: {result.stdout}"
 
     def test_gemini_extension_loaded(self, gemini_cli_check, gemini_extension_check):
-        """Test that clautorun extension is loaded in Gemini.
+        """Test that autorun extension is loaded in Gemini.
 
         No API cost - just checks extension list.
         Note: `gemini extensions list` outputs to stderr, not stdout.
@@ -134,15 +134,15 @@ class TestGeminiE2ERealMoney:
         assert result.returncode == 0, f"Extension list failed: {result.stderr}"
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
-        assert "clautorun" in combined_output, \
-            f"clautorun extension not found. Output:\n{combined_output[:500]}"
+        assert "autorun" in combined_output, \
+            f"autorun extension not found. Output:\n{combined_output[:500]}"
 
     @pytest.mark.skipif(
         True,  # Always skip until user confirms they want to test
         reason="Interactive test requires manual confirmation - costs real money"
     )
     def test_gemini_slash_command_recognition(self, gemini_cli_check, gemini_extension_check):
-        """Test /cr:st command in Gemini (COSTS REAL MONEY).
+        """Test /ar:st command in Gemini (COSTS REAL MONEY).
 
         ⚠️ This test is ALWAYS SKIPPED by default.
 
@@ -153,7 +153,7 @@ class TestGeminiE2ERealMoney:
         """
         result = subprocess.run(
             ["gemini", "-m", "gemini-2.5-flash-lite"],
-            input="/cr:st\n",
+            input="/ar:st\n",
             capture_output=True,
             text=True,
             timeout=30
@@ -173,11 +173,11 @@ class TestGeminiHookEntryPoint:
         # Set up Gemini environment
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-e2e-session"
-        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-test"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-test"
 
         # Get hook script path (installed extension or source fallback)
         candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         hook_script = None
@@ -190,7 +190,7 @@ class TestGeminiHookEntryPoint:
 
         # Set plugin root for source fallback
         plugin_root = str(Path(__file__).parent.parent)
-        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
+        env["AUTORUN_PLUGIN_ROOT"] = plugin_root
 
         # Run hook with uv run (matches production hook commands)
         result = subprocess.run(
@@ -215,11 +215,11 @@ class TestGeminiHookEntryPoint:
         """Test BeforeAgent hook event (NO COST - direct Python call)."""
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-e2e-session"
-        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-test"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-test"
 
         # Get hook script path (installed extension or source fallback)
         candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         hook_script = None
@@ -232,12 +232,12 @@ class TestGeminiHookEntryPoint:
 
         # Set plugin root for source fallback
         plugin_root = str(Path(__file__).parent.parent)
-        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
+        env["AUTORUN_PLUGIN_ROOT"] = plugin_root
 
-        # Simulate BeforeAgent event with /cr:st command
+        # Simulate BeforeAgent event with /ar:st command
         stdin_data = json.dumps({
             "type": "BeforeAgent",
-            "command": "/cr:st",
+            "command": "/ar:st",
             "sessionId": "test-e2e-session"
         })
 
@@ -278,20 +278,20 @@ __doc__ += """
 
 ### Skip real money tests (default):
 ```bash
-uv run pytest plugins/clautorun/tests/test_gemini_e2e_real_money.py -v
+uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py -v
 # All real money tests SKIPPED
 ```
 
 ### Run real money tests:
 ```bash
-export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-uv run pytest plugins/clautorun/tests/test_gemini_e2e_real_money.py -v
+export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py -v
 # Real money tests RUN (estimated cost: < $0.005)
 ```
 
 ### Run only free tests:
 ```bash
-uv run pytest plugins/clautorun/tests/test_gemini_e2e_real_money.py::TestGeminiHookEntryPoint -v
+uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py::TestGeminiHookEntryPoint -v
 # No costs - direct Python calls only
 ```
 

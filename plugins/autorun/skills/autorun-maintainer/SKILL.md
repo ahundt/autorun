@@ -1,11 +1,11 @@
 ---
-name: clautorun-maintainer
-description: Expertise in maintaining, debugging, and deploying the clautorun hook system for Claude Code and Gemini CLI. Use when the user asks to "fix hooks", "deploy clautorun", "debug hook errors", "update clautorun version", or when troubleshooting "invisible failures" where safety guards appear inactive, piped commands are blocked, or work appears to have "reverted" after a session.
+name: autorun-maintainer
+description: Expertise in maintaining, debugging, and deploying the autorun hook system for Claude Code and Gemini CLI. Use when the user asks to "fix hooks", "deploy autorun", "debug hook errors", "update autorun version", or when troubleshooting "invisible failures" where safety guards appear inactive, piped commands are blocked, or work appears to have "reverted" after a session.
 ---
 
-# Clautorun Maintainer Skill: The Definitive Guide
+# Autorun Maintainer Skill: The Definitive Guide
 
-You are a Senior QA and Release Engineer specialized in the clautorun hook ecosystem. Your mission is to eliminate the "Zombie State" (code edited but hooks stale) and resolve "Invisible Failures" (UI masking the true cause).
+You are a Senior QA and Release Engineer specialized in the autorun hook ecosystem. Your mission is to eliminate the "Zombie State" (code edited but hooks stale) and resolve "Invisible Failures" (UI masking the true cause).
 
 ---
 
@@ -13,19 +13,19 @@ You are a Senior QA and Release Engineer specialized in the clautorun hook ecosy
 
 Claude Code's "hook error" is a generic mask. **Never trust the UI.** You MUST follow the **Diagnostic Hierarchy** to find the root cause:
 
-### Step 1: Plumbing Check (`~/.clautorun/hook_entry_debug.log`)
-*   **Binary Selection**: Verify `get_clautorun_bin()` found the correct venv.
+### Step 1: Plumbing Check (`~/.autorun/hook_entry_debug.log`)
+*   **Binary Selection**: Verify `get_autorun_bin()` found the correct venv.
 *   **Exit Codes**: Did the CLI exit with `0` (Allow/Ask) or `2` (Blocking Workaround)?
 *   **Raw Output**: Check for non-JSON noise (UV warnings, logs) before or after the JSON block.
 *   **Validation**: Did `extract_json()` isolate exactly one valid block via `json.loads`?
 
-### Step 2: Logic Check (`~/.clautorun/daemon.log`)
+### Step 2: Logic Check (`~/.autorun/daemon.log`)
 *   **FullPayload**: Check `FullPayload`. Are expected keys present (e.g., `_pid`, `_cwd`)?
 *   **Timing**: Check `DAEMON PROCESSING END`. If duration > 9000ms, it will trigger a Claude timeout.
 *   **Piped Commands**: If a command like `git log | grep fix` is blocked, verify the `_not_in_pipe` predicate is registered in `main.py:_PREDICATES`.
 
-### Step 3: Source Check (`~/.clautorun/daemon_startup.log`)
-*   **Stale Code**: Is the daemon loading from `.../cache/...` (STALE) or `.../plugins/clautorun/src/...` (FRESH)?
+### Step 3: Source Check (`~/.autorun/daemon_startup.log`)
+*   **Stale Code**: Is the daemon loading from `.../cache/...` (STALE) or `.../plugins/autorun/src/...` (FRESH)?
 *   **Identity**: Confirm the **Commit Hash** and **PID** change on every restart.
 
 ---
@@ -60,18 +60,18 @@ Historically, fixes failed because the code was copied into 9 separate locations
 *   **Result**: Edits in `src/` reflect immediately in those binaries.
 
 ### The "Stale Code Trap"
-Source edits in `src/` are **IGNORED** by the persistent daemon until `clautorun --restart-daemon` is run. **NEVER** assume code is active just because you saved the file.
+Source edits in `src/` are **IGNORED** by the persistent daemon until `autorun --restart-daemon` is run. **NEVER** assume code is active just because you saved the file.
 
 ### The "One-Liner of Truth" (Mandatory)
 ```bash
-uv run --project plugins/clautorun python -m clautorun --install --force && \
-cd plugins/clautorun && uv tool install --force --editable . && cd ../.. && \
-clautorun --restart-daemon
+uv run --project plugins/autorun python -m autorun --install --force && \
+cd plugins/autorun && uv tool install --force --editable . && cd ../.. && \
+autorun --restart-daemon
 ```
 
 ### Critical Installer Fixes:
 1.  **Invisible Variable**: For local marketplaces, Claude **fails** to substitute `${CLAUDE_PLUGIN_ROOT}`. `install.py` MUST manually substitute this in the `~/.claude/plugins/cache/` directory.
-2.  **Path Doubling**: `clautorun --status` previously failed because it unconditionally appended `/plugins/clautorun` to the marketplace root. Discovery must be **idempotent**.
+2.  **Path Doubling**: `autorun --status` previously failed because it unconditionally appended `/plugins/autorun` to the marketplace root. Discovery must be **idempotent**.
 
 ---
 
@@ -97,7 +97,7 @@ clautorun --restart-daemon
 *   **Claude Schema Output**: [https://code.claude.com/docs/en/hooks#json-output](https://code.claude.com/docs/en/hooks#json-output)
 *   **Gemini Hooks Reference**: [https://geminicli.com/docs/hooks/reference/](https://geminicli.com/docs/hooks/reference/)
 *   **Claude Bug #4669 (Exit 2)**: [https://claude.com/blog/how-to-configure-hooks](https://claude.com/blog/how-to-configure-hooks)
-*   **Internal Path Ref**: `notes/clautorun_install_paths_reference.md`
+*   **Internal Path Ref**: `notes/autorun_install_paths_reference.md`
 *   **Lessons Learned**: `notes/2026_02_11_lessons_learned_hook_failure_loop_prevention.md`
 
 ---
@@ -105,27 +105,27 @@ clautorun --restart-daemon
 ## 7. Mandatory Verification Checklist
 
 Before declaring a task "Complete," you MUST:
-1.  [ ] **Schema Test**: `echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"rm test"}}' | clautorun`
-2.  [ ] **Metadata Test**: `clautorun --version` (Verify commit matches current git).
-3.  [ ] **Restart Test**: Confirm PID in `~/.clautorun/daemon.lock` has changed.
-4.  [ ] **Path Test**: Verify `~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hooks.json` does NOT contain `${CLAUDE_PLUGIN_ROOT}`.
+1.  [ ] **Schema Test**: `echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"rm test"}}' | autorun`
+2.  [ ] **Metadata Test**: `autorun --version` (Verify commit matches current git).
+3.  [ ] **Restart Test**: Confirm PID in `~/.autorun/daemon.lock` has changed.
+4.  [ ] **Path Test**: Verify `~/.claude/plugins/cache/autorun/autorun/0.8.0/hooks/hooks.json` does NOT contain `${CLAUDE_PLUGIN_ROOT}`.
 5.  [ ] **Pipes Test**: `cargo build 2>&1 | head -50` (Should be ALLOWED).
-6. [ ] **Status Test**: `clautorun --status` (Ensure paths aren't doubled).
+6. [ ] **Status Test**: `autorun --status` (Ensure paths aren't doubled).
 
 ---
 
 ## 8. Detailed Architectural Inventory (The 9 Locations)
 
 If synchronization fails, verify these locations for stale code:
-1.  **Git Source**: `plugins/clautorun/src/clautorun/`
-2.  **Dev Venv**: `plugins/clautorun/.venv/lib/python*/site-packages/clautorun/`
-3.  **Build Artifacts**: `plugins/clautorun/build/` (DELETE THIS)
-4.  **Claude Cache**: `~/.claude/plugins/cache/clautorun/clautorun/0.8.0/`
-5.  **UV Tool**: `~/.local/share/uv/tools/clautorun/` (Must be editable)
-6.  **Gemini Extension**: `~/.gemini/extensions/cr/` (Must be symlink)
-7.  **Gemini Venv**: `~/.gemini/extensions/cr/.venv/`
+1.  **Git Source**: `plugins/autorun/src/autorun/`
+2.  **Dev Venv**: `plugins/autorun/.venv/lib/python*/site-packages/autorun/`
+3.  **Build Artifacts**: `plugins/autorun/build/` (DELETE THIS)
+4.  **Claude Cache**: `~/.claude/plugins/cache/autorun/autorun/0.8.0/`
+5.  **UV Tool**: `~/.local/share/uv/tools/autorun/` (Must be editable)
+6.  **Gemini Extension**: `~/.gemini/extensions/ar/` (Must be symlink)
+7.  **Gemini Venv**: `~/.gemini/extensions/ar/.venv/`
 8.  **Gemini Workspace**: `~/.gemini/extensions/pdf-extractor/`
-9.  **Gemini Build**: `~/.gemini/extensions/cr/build/` (DELETE THIS)
+9.  **Gemini Build**: `~/.gemini/extensions/ar/build/` (DELETE THIS)
 
 ---
 
@@ -134,7 +134,7 @@ If synchronization fails, verify these locations for stale code:
 You are in a "Failure Loop" if:
 *   [ ] **Tests Pass, Hooks Fail**: Unit tests use source directly; hooks use stale binaries.
 *   [ ] **"Fixed" Code Reappears**: Alternating additions/removals of the same lines in git history.
-*   [ ] **Multiple Daemons**: `pgrep -f "clautorun.daemon" | wc -l` > 1.
+*   [ ] **Multiple Daemons**: `pgrep -f "autorun.daemon" | wc -l` > 1.
 *   [ ] **User Reports Broken rm**: Safety guards appear inactive despite "Fix" commits.
 
 ---
@@ -143,7 +143,7 @@ You are in a "Failure Loop" if:
 
 *   **Stdin Consumption**: Never read `sys.stdin` inside `try_cli()`. Read it once at the entry point and pass it down, otherwise fallbacks will receive empty input.
 *   **UV Warnings**: Using deprecated fields like `tool.uv.default-extras` in `pyproject.toml` causes warnings on `stderr`. Claude Code treats this as a hook error.
-*   **PID Management**: Always use `pkill -f "clautorun.daemon"` after changes. Stale processes bind the socket and prevent new code from running.
+*   **PID Management**: Always use `pkill -f "autorun.daemon"` after changes. Stale processes bind the socket and prevent new code from running.
 *   **Bytecode Cache**: `__pycache__` can persist stale logic. The restart script must purge these explicitly.
 
 ---
@@ -157,23 +157,23 @@ You are in a "Failure Loop" if:
 ### Synthetic Verification Examples:
 ```bash
 # SessionStart
-echo '{"hook_event_name":"SessionStart"}' | clautorun
+echo '{"hook_event_name":"SessionStart"}' | autorun
 
 # PreToolUse (rm block)
-echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"rm test"}}' | clautorun
+echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"rm test"}}' | autorun
 
 # Piped Command (Allow check)
-echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"git log | grep fix"}}' | clautorun
+echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"git log | grep fix"}}' | autorun
 ```
 
 ---
 
 ## 12. Daemon Architecture & Lifecycle
 
-The daemon is the high-performance "Brain" of clautorun. It minimizes hook latency to **1-5ms**.
+The daemon is the high-performance "Brain" of autorun. It minimizes hook latency to **1-5ms**.
 
 ### Core Components:
-1.  **Unix Domain Socket (`~/.clautorun/daemon.sock`)**: High-speed communication path. Bypasses the overhead of TCP/IP.
+1.  **Unix Domain Socket (`~/.autorun/daemon.sock`)**: High-speed communication path. Bypasses the overhead of TCP/IP.
 2.  **Shared Magic State (`shelve`)**: Persistent key-value store. Allows hooks to share state (e.g., `autorun_stage`) across multiple independent subprocess invocations.
 3.  **Watchdog Mechanism**: The daemon monitors parent PIDs. If the spawning CLI (Claude/Gemini) dies, the daemon self-terminates after an idle timeout (30min) to prevent resource leakage.
 4.  **Tri-Layer Session Identity**:
@@ -196,11 +196,11 @@ If hooks fail to connect or present errors, follow this repair guide.
 
 | Symptom | Probable Cause | Diagnostic Command | Repair Action |
 | :--- | :--- | :--- | :--- |
-| **"Connection Refused"** | Daemon not running or socket stale. | `ls -l ~/.clautorun/daemon.*` | Run `clautorun --restart-daemon`. |
-| **"No such file" (Hook CLI)**| `${CLAUDE_PLUGIN_ROOT}` missing. | `cat hooks/hook_entry_debug.log` | Run `clautorun --install --force`. |
-| **"ImportError"** | Python deps missing in venv. | `uv pip list --project plugins/clautorun` | Run `uv sync --project plugins/clautorun`. |
-| **"Hang" (Claude wait)** | Daemon frozen or buffer full. | `ps aux | grep clautorun.daemon` | `pkill -f daemon` + `clautorun --restart-daemon`. |
-| **"Hook Error" (UI)** | Stderr noise or bad JSON. | `tail -n 20 ~/.clautorun/hook_entry_debug.log`| Check for double-printing or UV warnings. |
+| **"Connection Refused"** | Daemon not running or socket stale. | `ls -l ~/.autorun/daemon.*` | Run `autorun --restart-daemon`. |
+| **"No such file" (Hook CLI)**| `${CLAUDE_PLUGIN_ROOT}` missing. | `cat hooks/hook_entry_debug.log` | Run `autorun --install --force`. |
+| **"ImportError"** | Python deps missing in venv. | `uv pip list --project plugins/autorun` | Run `uv sync --project plugins/autorun`. |
+| **"Hang" (Claude wait)** | Daemon frozen or buffer full. | `ps aux | grep autorun.daemon` | `pkill -f daemon` + `autorun --restart-daemon`. |
+| **"Hook Error" (UI)** | Stderr noise or bad JSON. | `tail -n 20 ~/.autorun/hook_entry_debug.log`| Check for double-printing or UV warnings. |
 
 ### The "Silent Fail-Open" Trap
 Claude Code fails **OPEN**. If a hook script crashes, the tool (e.g., `rm`) will execute **without** warning.
@@ -256,7 +256,7 @@ The hook script is registered but cannot be found or executed.
     2.  **Partial Install**: `hooks/` directory skipped during `shutil.copytree` due to path logic.
 *   **Solution**:
     1.  `install.py` must manually `sed`-replace the variables in `~/.claude/plugins/cache/`.
-    2.  Verify existence with: `ls -l ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hook_entry.py`.
+    2.  Verify existence with: `ls -l ~/.claude/plugins/cache/autorun/autorun/0.8.0/hooks/hook_entry.py`.
 
 ### Layer 4: The Silent Ignore (Bug #4669)
 The hook "succeeds" (exit 0) but the safety guard is ignored.

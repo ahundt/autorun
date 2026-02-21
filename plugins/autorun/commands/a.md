@@ -1,5 +1,5 @@
 ---
-description: Allow all file creation (short for /cr:allow)
+description: Allow all file creation (short for /ar:allow)
 ---
 
 # AutoFile Allow Mode

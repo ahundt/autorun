@@ -34,12 +34,12 @@ def generate_manifests(plugin_dir: Path):
     
     # 1. Base Manifest Data
     manifest = {
-        "name": "cr",
+        "name": "ar",
         "version": pkg.get("version", "0.8.0"),
         "description": pkg.get("description", ""),
         "author": {
-            "name": pkg.get("authors", ["clautorun contributors"])[0],
-            "url": pkg.get("repository", "https://github.com/ahundt/clautorun")
+            "name": pkg.get("authors", ["autorun contributors"])[0],
+            "url": pkg.get("repository", "https://github.com/ahundt/autorun")
         },
         "homepage": f"{pkg.get('repository', '')}#readme",
         "repository": pkg.get("repository", ""),
@@ -73,7 +73,7 @@ def generate_manifests(plugin_dir: Path):
     if skills_dir.is_dir():
         for skill in aix_data.get("skills", []):
             skill_path = Path(skill.get("path", ""))
-            # We expect path like: plugins/clautorun/skills/name/SKILL.md
+            # We expect path like: plugins/autorun/skills/name/SKILL.md
             if "SKILL.md" in skill_path.name:
                 skill_subdir = plugin_dir / "skills" / skill_path.parent.name
                 skill_subdir.mkdir(exist_ok=True)
@@ -98,6 +98,5 @@ def generate_manifests(plugin_dir: Path):
                         print(f"   ✓ Ensured proxy: {skill_subdir.name}/SKILL.md -> {target_file.name}")
 
 if __name__ == "__main__":
-    # If run directly, assume we are in src/clautorun
-    plugin_root = Path(__file__).resolve().parent.parent.parent
+    # If run directly, assume we are in src/autorun plugin_root = Path(__file__).resolve().parent.parent.parent
     generate_manifests(plugin_root)

@@ -6,7 +6,7 @@ description: Force-reload all integration rules from config files
 
 Force-reload all safety guard integrations from `config.py` and any custom integration files. Reports the count of loaded integrations.
 
-**Usage**: `/cr:reload`
+**Usage**: `/ar:reload`
 
 **When to use**:
 - After editing `config.py` DEFAULT_INTEGRATIONS

@@ -8,7 +8,7 @@ argument-hint: [basic|help|"<shell command>"]
 
 Active test sessions:
 
-! tmux list-sessions -F "  #{session_name}" 2>/dev/null | grep -E "^  clautorun-test" || echo "  (no active test sessions)"
+! tmux list-sessions -F "  #{session_name}" 2>/dev/null | grep -E "^  autorun-test" || echo "  (no active test sessions)"
 
 ## Your Task
 
@@ -25,11 +25,11 @@ Replace `COMMAND_HERE` with the actual command from arguments, then execute:
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 import time, sys
 
 tmux = get_tmux_utilities()
-session = 'clautorun-test'
+session = 'autorun-test'
 cmd = 'COMMAND_HERE'  # replace with actual command from arguments
 
 try:
@@ -62,11 +62,11 @@ finally:
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 import time
 
 tmux = get_tmux_utilities()
-session = 'clautorun-test'
+session = 'autorun-test'
 results = []
 
 for cmd in ['echo hello', 'pwd', 'which python3']:
@@ -96,14 +96,14 @@ for cmd, out, ok in results:
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 import time
 
 tmux = get_tmux_utilities()
-session = 'clautorun-test'
+session = 'autorun-test'
 try:
     tmux.ensure_session_exists(session)
-    tmux.send_keys('clautorun --help', session)
+    tmux.send_keys('autorun --help', session)
     tmux.send_keys('C-m', session)
     time.sleep(2)
     r = tmux.execute_tmux_command(['capture-pane', '-p'], session)
@@ -117,10 +117,10 @@ finally:
 
 ## Safety
 
-- All tests run in a dedicated `clautorun-test` session, **never** your current session.
+- All tests run in a dedicated `autorun-test` session, **never** your current session.
 - Session is always killed after each test (try/finally ensures cleanup even on errors).
 - No file changes are made unless the command itself writes files.
 - Note: long-running commands are not automatically killed — avoid `sleep` or hanging processes.
 
-**Advanced patterns**: See agent `cr:cli-test-automation`.
-**Full tmux/byobu syntax**: See skill `cr:tmux-automation`.
+**Advanced patterns**: See agent `ar:cli-test-automation`.
+**Full tmux/byobu syntax**: See skill `ar:tmux-automation`.

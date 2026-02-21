@@ -33,7 +33,7 @@ class TestSessionPersistenceAcrossHooks:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
     state['file_policy'] = 'JUSTIFY'
@@ -52,7 +52,7 @@ print('WRITE_OK')
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
     policy = state.get('file_policy', 'NOT_FOUND')
@@ -76,7 +76,7 @@ print(policy)
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
     state['file_policy'] = '{policy}'
@@ -90,7 +90,7 @@ with session_state('{self.session_id}') as state:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{self.session_id}') as state:
     print(state.get('file_policy', 'NOT_FOUND'))
@@ -115,7 +115,7 @@ with session_state('{self.session_id}') as state:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{session_a}') as state:
     state['file_policy'] = 'JUSTIFY'
@@ -129,7 +129,7 @@ with session_state('{session_a}') as state:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{session_b}') as state:
     state['file_policy'] = 'SEARCH'
@@ -143,7 +143,7 @@ with session_state('{session_b}') as state:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{session_a}') as state:
     print(state.get('file_policy', 'NOT_FOUND'))
@@ -157,7 +157,7 @@ with session_state('{session_a}') as state:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{Path(__file__).parent.parent / "src"}').resolve()))
-from clautorun.main import session_state
+from autorun.main import session_state
 
 with session_state('{session_b}') as state:
     print(state.get('file_policy', 'NOT_FOUND'))

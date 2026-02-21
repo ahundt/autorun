@@ -6,7 +6,7 @@ model: sonnet
 
 # Tmux Session Management
 
-**Canonical command**: `/cr:tmux` (short: `/cr:tm`)
+**Canonical command**: `/ar:tmux` (short: `/ar:tm`)
 
 **Simple, safe tmux session management** that creates isolated environments without affecting your current Claude Code session.
 
@@ -14,13 +14,13 @@ model: sonnet
 
 ```bash
 # Create session (most common use)
-/cr:tmux create my-project
+/ar:tmux create my-project
 
 # List sessions
-/cr:tmux list
+/ar:tmux list
 
 # Clean up when done
-/cr:tmux cleanup
+/ar:tmux cleanup
 ```
 
 ## Available Actions
@@ -30,12 +30,12 @@ Creates isolated tmux session for development or testing.
 
 **Examples**:
 ```bash
-/cr:tmux create my-project
-/cr:tmux create test-env
+/ar:tmux create my-project
+/ar:tmux create test-env
 ```
 
 ### `list` - Show Sessions
-Shows all active clautorun sessions with status and health information.
+Shows all active autorun sessions with status and health information.
 
 ### `cleanup` - Remove Old Sessions
 Removes sessions older than 1 hour automatically.
@@ -49,6 +49,6 @@ Removes sessions older than 1 hour automatically.
 
 ## Safety Guarantee
 
-Commands will **NEVER** interfere with your current Claude Code session. All commands target isolated "clautorun" sessions by default.
+Commands will **NEVER** interfere with your current Claude Code session. All commands target isolated "autorun" sessions by default.
 
 This provides **safe, reliable** session management that's **easy to use correctly and hard to use incorrectly**.

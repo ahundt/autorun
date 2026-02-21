@@ -18,15 +18,15 @@
 
 **PRIMARY GOAL**: Ensure AI continues working while tasks are outstanding.
 
-REUSES from clautorun:
+REUSES from autorun:
 - session_state() for thread-safe persistence (plan_export.py pattern)
 - logger for warnings (core.py)
 - @dataclass config pattern (plan_export.py:348-385)
 
 ISOLATED from other plugins:
 - Uses own global key: "__task_lifecycle__{session_id}"
-- Own config file: ~/.clautorun/task-lifecycle.config.json
-- Own audit logs: ~/.clautorun/task-tracking/{session_id}/audit.log
+- Own config file: ~/.autorun/task-lifecycle.config.json
+- Own audit logs: ~/.autorun/task-tracking/{session_id}/audit.log
 
 Architecture:
 - Dict-based storage: {task_id: TaskState} prevents duplicates
@@ -55,14 +55,14 @@ from .config import (
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
 
-CONFIG_PATH = Path.home() / ".clautorun" / "task-lifecycle.config.json"
+CONFIG_PATH = Path.home() / ".autorun" / "task-lifecycle.config.json"
 
 
 @dataclass
 class TaskLifecycleConfig:
     """Task lifecycle configuration (follows PlanExportConfig pattern)."""
     enabled: bool = True
-    storage_dir: Path = Path.home() / ".clautorun" / "task-tracking"
+    storage_dir: Path = Path.home() / ".autorun" / "task-tracking"
     max_resume_tasks: int = 20
     stop_block_max_count: int = 3
     task_ttl_days: int = 30
@@ -645,7 +645,7 @@ class TaskLifecycle:
         violates this expectation and loses valuable context.
 
         Pruning is manual-only:
-        - Via CLI: clautorun --task-clear
+        - Via CLI: autorun --task-clear
         - Via GC: TaskLifecycle.cli_gc()
         - User controls when to delete history
 
@@ -740,8 +740,8 @@ Use /task-status to see full task list and plan linkage.
         This is the core mechanism that ensures AI continues while tasks are outstanding.
 
         Escape hatches (user-driven only, never automatic):
-        - User runs /cr:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
-        - User runs /cr:task-ignore <id> to mark specific tasks as ignored
+        - User runs /ar:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
+        - User runs /ar:task-ignore <id> to mark specific tasks as ignored
         - User marks tasks as completed/deleted/paused via TaskUpdate
 
         No automatic override after N attempts - that caused premature stoppage.
@@ -804,8 +804,8 @@ You have {total} incomplete task(s):
 Use TaskList or /task-status to see current state of all tasks.
 
 **User escape hatches** (only the user can trigger these):
-- /cr:sos - Emergency stop (outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
-- /cr:task-ignore <id> - Mark a specific task as ignored to unblock stopping
+- /ar:sos - Emergency stop (outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
+- /ar:task-ignore <id> - Mark a specific task as ignored to unblock stopping
 """
 
         # Log warning
@@ -1142,7 +1142,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             dry_run: Report what would be cleaned without modifying (default: False)
             pattern: Glob pattern for session IDs (default: "*" = all sessions)
             ttl_days: Only GC sessions older than this (default: config.task_ttl_days)
-            config: Config override for testing (default: load from ~/.clautorun/)
+            config: Config override for testing (default: load from ~/.autorun/)
             confirm: Require confirmation before deletion (default: True for safety)
 
         Returns:
@@ -1369,7 +1369,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 print("     → Fix: sudo chown -R $USER ~/.claude/sessions/")
                 print("  2. Lock timeout:")
                 print("     → Daemon actively using session (wait or refine pattern)")
-                print("     → Check: ps aux | grep clautorun")
+                print("     → Check: ps aux | grep autorun")
                 print("  3. db type errors:")
                 print("     → Backend detection failed (corrupted shelve)")
                 print("     → Try: pattern='*' to see all, or delete manually")
@@ -1392,7 +1392,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
             print(f"TTL: {ttl_days}d")
             if 'sessions_dir' in locals():
                 print(f"Sessions dir: {sessions_dir}")
-            print("\nPlease report at: https://github.com/ahundt/clautorun/issues")
+            print("\nPlease report at: https://github.com/ahundt/autorun/issues")
             import traceback
             traceback.print_exc()  # CLI only - defaults to stderr but not in hook path
             return 1

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Centralized error handling utilities for clautorun
+Centralized error handling utilities for autorun
 Follows DRY principles - use this for all import/module structure errors
 Compatible with Python 2.7+ and Python 3.x
 """
@@ -54,7 +54,7 @@ def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module
     Display comprehensive UV-first error message for module import/structure issues.
 
     This function follows DRY principles by providing a single, reusable
-    error message that can be used across all clautorun components.
+    error message that can be used across all autorun components.
 
     Args:
         error_type (str): Type of error (e.g., "IMPORT ERROR", "MODULE ERROR")
@@ -64,7 +64,7 @@ def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module
     print(f"❌ {error_type}: {error_message}")
     print("=" * 70)
     print()
-    print("The clautorun module structure is not properly configured.")
+    print("The autorun module structure is not properly configured.")
     print("This usually happens when the UV environment is not activated.")
     print()
     print("🔧 COMPREHENSIVE SOLUTIONS (UV First):")
@@ -87,23 +87,23 @@ def show_comprehensive_uv_error(error_type="IMPORT ERROR", error_message="Module
     print()
     print("3. INSTALL PLUGIN USING UV:")
     print("   # Method A: Install via UV (recommended)")
-    print("   uv run clautorun install")
+    print("   uv run autorun install")
     print("   # Method B: Manual installation with activated environment")
     print("   source .venv/bin/activate")
-    print("   python src/clautorun/install.py install")
+    print("   python src/autorun/install.py install")
     print()
     print("4. CHECK INSTALLATION:")
     print("   # Verify plugin is working:")
-    print("   uv run clautorun check")
+    print("   uv run autorun check")
     print("   # Test plugin functionality:")
-    print("   echo '{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"/afst\", \"session_id\": \"test\"}' | uv run python src/clautorun/main.py")
+    print("   echo '{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"/afst\", \"session_id\": \"test\"}' | uv run python src/autorun/main.py")
     print()
     print("🔧 ALTERNATIVE SOLUTIONS:")
     print("5. INSTALL FROM GITHUB (production):")
-    print("   /plugin install https://github.com/ahundt/clautorun.git")
+    print("   /plugin install https://github.com/ahundt/autorun.git")
     print()
     print("6. USE EXPLICIT PYTHON PATH (development):")
-    print("   PYTHONPATH=/path/to/clautorun/src python3 plugin.py")
+    print("   PYTHONPATH=/path/to/autorun/src python3 plugin.py")
     print()
     print("=" * 70)
 
@@ -120,7 +120,7 @@ def check_uv_environment():
         'uv_version': None,
         'venv_exists': False,
         'dependencies_synced': False,
-        'clautorun_available': False
+        'autorun_available': False
     }
 
     try:
@@ -164,24 +164,24 @@ def check_uv_environment():
                 if venv_dir.exists():
                     details['venv_exists'] = True
 
-                    # Check if clautorun commands are available - Python 2/3 compatible
+                    # Check if autorun commands are available - Python 2/3 compatible
                     try:
                         if hasattr(subprocess, 'run'):  # Python 3.5+
-                            clautorun_result = subprocess.run(
-                                ["uv", "run", "which", "clautorun"],
+                            autorun_result = subprocess.run(
+                                ["uv", "run", "which", "autorun"],
                                 capture_output=True,
                                 text=True,
                                 timeout=5
                             )
-                            if clautorun_result.returncode == 0:
-                                details['clautorun_available'] = True
+                            if autorun_result.returncode == 0:
+                                details['autorun_available'] = True
                         else:  # Python 2.7 fallback
                             import subprocess as sp
-                            clautorun_result = sp.Popen(["uv", "run", "which", "clautorun"],
+                            autorun_result = sp.Popen(["uv", "run", "which", "autorun"],
                                                        stdout=sp.PIPE, stderr=sp.PIPE)
-                            output, error = clautorun_result.communicate()
-                            if clautorun_result.returncode == 0:
-                                details['clautorun_available'] = True
+                            output, error = autorun_result.communicate()
+                            if autorun_result.returncode == 0:
+                                details['autorun_available'] = True
                     except (OSError, FileNotFoundError):
                         pass
                 break
@@ -201,7 +201,7 @@ def handle_import_error(import_error, exit_on_error=True):
     """
     Handle import errors with comprehensive UV solutions.
 
-    This function should be used consistently across all clautorun modules
+    This function should be used consistently across all autorun modules
     when handling import-related errors.
 
     Args:
@@ -214,8 +214,8 @@ def handle_import_error(import_error, exit_on_error=True):
     error_str = str(import_error)
 
     # Check for module structure issues
-    if "clautorun.python_check" in error_str or "is not a package" in error_str:
-        show_comprehensive_uv_error("IMPORT ERROR", "clautorun module structure issue detected")
+    if "autorun.python_check" in error_str or "is not a package" in error_str:
+        show_comprehensive_uv_error("IMPORT ERROR", "autorun module structure issue detected")
         if exit_on_error:
             sys.exit(1)
         return True
@@ -227,14 +227,14 @@ def handle_import_error(import_error, exit_on_error=True):
             sys.exit(1)
         return True
 
-    # Check for general clautorun import issues
-    elif "clautorun" in error_str and "No module named" in error_str:
-        show_comprehensive_uv_error("MODULE ERROR", f"clautorun module not found: {error_str}")
+    # Check for general autorun import issues
+    elif "autorun" in error_str and "No module named" in error_str:
+        show_comprehensive_uv_error("MODULE ERROR", f"autorun module not found: {error_str}")
         if exit_on_error:
             sys.exit(1)
         return True
 
-    # Not a recognized clautorun import error
+    # Not a recognized autorun import error
     return False
 
 
@@ -254,7 +254,7 @@ def show_uv_environment_status():
 
     print(f"   Virtual Environment: {'✅' if details['venv_exists'] else '❌'}")
     print(f"   Dependencies Synced: {'✅' if details['dependencies_synced'] else '❌'}")
-    print(f"   clautorun Available: {'✅' if details['clautorun_available'] else '❌'}")
+    print(f"   autorun Available: {'✅' if details['autorun_available'] else '❌'}")
 
     if not is_configured:
         print()

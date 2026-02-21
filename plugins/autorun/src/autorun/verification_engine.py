@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Enhanced Verification Engine for clautorun - Two-stage verification with forced compliance"""
+"""Enhanced Verification Engine for autorun - Two-stage verification with forced compliance"""
 
 import re
 import time
@@ -36,7 +36,7 @@ except ImportError:
                 pass
         return DummyState()
     def log_info(message):
-        """Fallback logging - file-only when CLAUTORUN_DEBUG=1"""
+        """Fallback logging - file-only when AUTORUN_DEBUG=1"""
         try:
             from .logging_utils import get_logger
             logger = get_logger(__name__)

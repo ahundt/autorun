@@ -2,7 +2,7 @@
 """
 Tests for the new PlanExport class API.
 
-This tests the refactored plan export implementation that uses clautorun's
+This tests the refactored plan export implementation that uses autorun's
 daemon infrastructure for cross-session state persistence.
 
 Key features tested:
@@ -25,17 +25,17 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-# Add clautorun to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clautorun" / "src"))
+# Add autorun to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "autorun" / "src"))
 
-from clautorun.plan_export import (
+from autorun.plan_export import (
     PlanExport,
     PlanExportConfig,
     GLOBAL_SESSION_ID,
     get_content_hash,
 )
-from clautorun.core import EventContext, ThreadSafeDB
-from clautorun.session_manager import session_state
+from autorun.core import EventContext, ThreadSafeDB
+from autorun.session_manager import session_state
 
 
 # =============================================================================
@@ -525,7 +525,7 @@ class TestRecordWrite:
         plan_path = str(temp_project["plan_file"])
 
         # Write twice with mocked timestamps for determinism
-        with patch("clautorun.plan_export.datetime") as mock_dt:
+        with patch("autorun.plan_export.datetime") as mock_dt:
             mock_dt.now.return_value.isoformat.return_value = "2026-01-01T12:00:00"
             exporter.record_write(plan_path)
             old_time = exporter.active_plans[plan_path]["recorded_at"]
@@ -825,7 +825,7 @@ class TestHookDispatchIntegration:
 
     def test_track_plan_writes_handler(self, temp_project):
         """track_plan_writes handler records Write/Edit events."""
-        from clautorun.plan_export import track_plan_writes
+        from autorun.plan_export import track_plan_writes
 
         store = ThreadSafeDB()
         ctx = EventContext(
@@ -849,7 +849,7 @@ class TestHookDispatchIntegration:
 
     def test_track_plan_writes_ignores_non_plan_files(self, temp_project):
         """track_plan_writes ignores non-plan files."""
-        from clautorun.plan_export import track_plan_writes
+        from autorun.plan_export import track_plan_writes
 
         store = ThreadSafeDB()
         ctx = EventContext(
@@ -871,7 +871,7 @@ class TestHookDispatchIntegration:
 
     def test_export_on_exit_plan_mode_handler(self, temp_project):
         """export_on_exit_plan_mode handler exports on ExitPlanMode."""
-        from clautorun.plan_export import export_on_exit_plan_mode
+        from autorun.plan_export import export_on_exit_plan_mode
 
         store = ThreadSafeDB()
         ctx = EventContext(
@@ -891,7 +891,7 @@ class TestHookDispatchIntegration:
 
     def test_recover_unexported_plans_handler(self, temp_project):
         """recover_unexported_plans handler exports on SessionStart."""
-        from clautorun.plan_export import recover_unexported_plans, track_plan_writes
+        from autorun.plan_export import recover_unexported_plans, track_plan_writes
 
         store = ThreadSafeDB()
 
@@ -933,7 +933,7 @@ class TestBootstrapFallback:
 
     def test_handle_session_start_empty_input(self, capsys):
         """handle_session_start handles empty dict gracefully."""
-        from clautorun.plan_export import handle_session_start, PlanExportConfig
+        from autorun.plan_export import handle_session_start, PlanExportConfig
         from unittest.mock import patch
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
@@ -946,7 +946,7 @@ class TestBootstrapFallback:
 
     def test_handle_session_start_no_transcript(self, capsys):
         """handle_session_start handles missing transcript gracefully."""
-        from clautorun.plan_export import handle_session_start, PlanExportConfig
+        from autorun.plan_export import handle_session_start, PlanExportConfig
         from unittest.mock import patch
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()):
@@ -1257,7 +1257,7 @@ class TestSessionStartResponseSchema:
 
     def test_recovery_response_schema_from_production_code(self, temp_project):
         """recover_unexported_plans() returns correct lifecycle event schema."""
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
 
         # Session 1: Record a plan
         store1 = ThreadSafeDB()
@@ -1297,7 +1297,7 @@ class TestSessionStartResponseSchema:
 
     def test_recovery_returns_none_when_no_plans(self, temp_project):
         """recover_unexported_plans() returns None when nothing to recover."""
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
 
         store = ThreadSafeDB()
         ctx = EventContext(
@@ -1311,7 +1311,7 @@ class TestSessionStartResponseSchema:
 
     def test_recovery_response_contains_plan_count(self, temp_project):
         """Recovery systemMessage includes the number of recovered plans."""
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
 
         # Record a plan
         store1 = ThreadSafeDB()
@@ -1650,7 +1650,7 @@ class TestOption1RecoveryFlow:
 
     def test_recovery_response_uses_minimal_schema(self, temp_project):
         """recover_unexported_plans() returns lifecycle schema, not tool schema."""
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
 
         # Session 1: Record a plan
         store1 = ThreadSafeDB()
@@ -1775,7 +1775,7 @@ class TestPreToolUseBackup:
 
     def test_pretooluse_tracking_populates_active_plans(self, temp_project):
         """track_and_export_plans_early() records Write to plan file in active_plans."""
-        from clautorun.plan_export import track_and_export_plans_early
+        from autorun.plan_export import track_and_export_plans_early
 
         plan = temp_project['plan_file']
         project_dir = temp_project['project_dir']
@@ -1797,7 +1797,7 @@ class TestPreToolUseBackup:
 
     def test_pretooluse_export_on_exit_plan_mode(self, temp_project):
         """track_and_export_plans_early() exports when active_plans has entry."""
-        from clautorun.plan_export import track_and_export_plans_early
+        from autorun.plan_export import track_and_export_plans_early
 
         plan = temp_project['plan_file']
         project_dir = temp_project['project_dir']
@@ -1840,7 +1840,7 @@ class TestPreToolUseBackup:
 
     def test_dedup_prevents_double_export_pre_and_post(self, temp_project):
         """Content hash prevents double-export when both Pre and Post fire."""
-        from clautorun.plan_export import (
+        from autorun.plan_export import (
             track_and_export_plans_early,
             track_plan_writes, export_on_exit_plan_mode
         )
@@ -1894,7 +1894,7 @@ class TestPreToolUseBackup:
 
     def test_pretooluse_handler_never_blocks(self, temp_project):
         """PreToolUse handler always returns None, even on errors."""
-        from clautorun.plan_export import track_and_export_plans_early
+        from autorun.plan_export import track_and_export_plans_early
 
         store = ThreadSafeDB()
 
@@ -1940,7 +1940,7 @@ class TestPreToolUseBackup:
         Gemini's BeforeTool(write_file) normalizes to PreToolUse.
         track_and_export_plans_early() must handle write_file tool name.
         """
-        from clautorun.plan_export import track_and_export_plans_early
+        from autorun.plan_export import track_and_export_plans_early
 
         plan = temp_project['plan_file']
         project_dir = temp_project['project_dir']
@@ -1968,7 +1968,7 @@ class TestPreToolUseBackup:
         exit_plan_mode so track_and_export_plans_early fires before AfterTool.
         Provides redundancy if AfterTool times out or fails.
         """
-        from clautorun.plan_export import track_and_export_plans_early
+        from autorun.plan_export import track_and_export_plans_early
 
         plan = temp_project['plan_file']
         project_dir = temp_project['project_dir']
@@ -2407,7 +2407,7 @@ class TestHumanVisibleNotifications:
         Correct: systemMessage present (user terminal), hookSpecificOutput present (AI context),
         reason empty (prevents double-print).
         """
-        from clautorun.plan_export import export_on_exit_plan_mode
+        from autorun.plan_export import export_on_exit_plan_mode
 
         store = ThreadSafeDB()
         ctx = EventContext(
@@ -2441,7 +2441,7 @@ class TestHumanVisibleNotifications:
         so users know where to find the plan without searching. Message matches fresh
         export format (no "already" prefix) for consistent UX.
         """
-        from clautorun.plan_export import export_on_exit_plan_mode
+        from autorun.plan_export import export_on_exit_plan_mode
 
         store = ThreadSafeDB()
 
@@ -2487,8 +2487,8 @@ class TestHumanVisibleNotifications:
         Silent timeout would leave user unaware their plan wasn't saved.
         Change 4: timeout uses to_human=True so warning reaches the human.
         """
-        from clautorun.plan_export import export_on_exit_plan_mode
-        from clautorun.session_manager import SessionTimeoutError
+        from autorun.plan_export import export_on_exit_plan_mode
+        from autorun.session_manager import SessionTimeoutError
 
         store = ThreadSafeDB()
         ctx = EventContext(
@@ -2499,7 +2499,7 @@ class TestHumanVisibleNotifications:
             tool_result=json.dumps({"filePath": str(temp_project["plan_file"])}),
             store=store,
         )
-        with patch("clautorun.plan_export.PlanExport.export", side_effect=SessionTimeoutError("lock timeout")):
+        with patch("autorun.plan_export.PlanExport.export", side_effect=SessionTimeoutError("lock timeout")):
             response = export_on_exit_plan_mode(ctx)
 
         assert response is not None
@@ -2520,7 +2520,7 @@ class TestHumanVisibleNotifications:
 
         If PostToolUse doesn't fire, recovery at SessionStart handles notification.
         """
-        from clautorun.plan_export import track_and_export_plans_early, export_on_exit_plan_mode
+        from autorun.plan_export import track_and_export_plans_early, export_on_exit_plan_mode
 
         plan = temp_project["plan_file"]
         project_dir = temp_project["project_dir"]
@@ -2583,7 +2583,7 @@ class TestHumanVisibleNotifications:
         hookSpecificOutput impossible for SessionStart (HOOK_SCHEMAS["SessionStart"]["hso"]={}).
         validate_hook_response strips decision/reason/hookSpecificOutput from SessionStart output.
         """
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
 
         # Session 1: Record a plan (simulate user writing plan file)
         store1 = ThreadSafeDB()
@@ -2753,7 +2753,7 @@ class TestAcceptedRejectedRouting:
         exp1.backup_to_rejected(plan, "plan")
 
         # Session 2: recover_unexported_plans with bypassPermissions (Option 1)
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-option1-recover",
@@ -2792,7 +2792,7 @@ class TestAcceptedRejectedRouting:
         exp1.record_write(str(plan))
         exp1.backup_to_rejected(plan, "plan")
 
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-option3-recover",
@@ -2828,7 +2828,7 @@ class TestAcceptedRejectedRouting:
         assert backup_path_option4 is not None, "backup must succeed"
         backup_filename_option4 = Path(backup_path_option4).name
 
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-option4-recover",
@@ -2886,7 +2886,7 @@ class TestAcceptedRejectedRouting:
         assert backup_path_escape is not None, "backup must succeed"
         backup_filename_escape = Path(backup_path_escape).name
 
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-escape-recover",
@@ -2936,7 +2936,7 @@ class TestAcceptedRejectedRouting:
         )
         PlanExport(ctx1, PlanExportConfig()).record_write(str(plan))
 
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-abandoned-recover",
@@ -2959,7 +2959,7 @@ class TestAcceptedRejectedRouting:
         project_dir = temp_project['project_dir']
         notes_dir = project_dir / "notes"
         rejected_dir = project_dir / "notes" / "rejected"
-        from clautorun.plan_export import (
+        from autorun.plan_export import (
             track_and_export_plans_early, export_on_exit_plan_mode
         )
         store = ThreadSafeDB()
@@ -3079,7 +3079,7 @@ class TestAcceptedRejectedRouting:
         exp1.backup_to_rejected(plan, "plan")
 
         # Recovery session starts in bypassPermissions for unrelated reason (known limitation)
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-known-limit",
@@ -3124,7 +3124,7 @@ class TestAcceptedRejectedRouting:
         assert backup_path is not None, "backup must succeed"
         backup_filename = Path(backup_path).name  # e.g. "2026_02_20_1714_plan.md"
 
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-msg-test",
@@ -3175,7 +3175,7 @@ class TestAcceptedRejectedRouting:
         # Session 2: SessionStart:clear — this is how Option 1 actually arrives
         # permission_mode is "default" (not "bypassPermissions") because Claude Code applies
         # bypassPermissions 2ms AFTER the hook completes. source="clear" is the reliable signal.
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-opt1-clear",
@@ -3232,7 +3232,7 @@ class TestAcceptedRejectedRouting:
         assert backup_path is not None
 
         # Recovery: source="startup" (normal new session after Option 4)
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-opt4-startup",
@@ -3284,7 +3284,7 @@ class TestAcceptedRejectedRouting:
         exp1.backup_to_rejected(plan, "plan")
 
         # User later runs /clear independently (source="clear"), NOT from Option 1
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
         store2 = ThreadSafeDB()
         ctx2 = EventContext(
             session_id="s2-opt4-clear",
@@ -3354,7 +3354,7 @@ class TestAcceptedRejectedRouting:
             # Plan B: never presented → exit_attempted absent → abandoned
 
             # Session 2: SessionStart:clear (Option 1 → source="clear")
-            from clautorun.plan_export import recover_unexported_plans
+            from autorun.plan_export import recover_unexported_plans
             store2 = ThreadSafeDB()
             ctx2 = EventContext(
                 session_id="s2-multi",
@@ -3454,7 +3454,7 @@ class TestAcceptedRejectedRouting:
         )
         PlanExport(ctx_exit, PlanExportConfig()).backup_to_rejected(plan, "plan")
 
-        from clautorun.plan_export import recover_unexported_plans, export_on_exit_plan_mode
+        from autorun.plan_export import recover_unexported_plans, export_on_exit_plan_mode
         recovery_result = recover_unexported_plans(ctx_recovery)
         assert recovery_result is not None, "Option 1 recovery must succeed"
         assert "Accepted:" in recovery_result["systemMessage"], (
@@ -3513,7 +3513,7 @@ class TestAcceptedRejectedRouting:
           20:30:40 export_on_exit_plan_mode: plan=None permission_mode=bypassPermissions
           (after Option 1 recovery removed plan from active_plans)
         """
-        from clautorun.plan_export import export_on_exit_plan_mode
+        from autorun.plan_export import export_on_exit_plan_mode
 
         plan = temp_project['plan_file']
         project_dir = temp_project['project_dir']
@@ -3589,7 +3589,7 @@ class TestAcceptedRejectedRouting:
         export() would hit dedup (skipped=True), and either the count would be wrong or
         a duplicate file would be written.
         """
-        from clautorun.plan_export import recover_unexported_plans
+        from autorun.plan_export import recover_unexported_plans
 
         plan_a = temp_project['plan_file']
         project_dir = temp_project['project_dir']

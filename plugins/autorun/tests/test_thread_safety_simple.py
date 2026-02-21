@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Realistic thread safety and multiprocessing tests for clautorun session state
+Realistic thread safety and multiprocessing tests for autorun session state
 """
 import pytest
 import threading
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import session_state, CONFIG, COMMAND_HANDLERS
+from autorun.main import session_state, CONFIG, COMMAND_HANDLERS
 
 
 # Global functions for multiprocessing (must be at module level)

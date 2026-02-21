@@ -6,10 +6,10 @@ description: Clear all global pattern blocks and allows
 
 Remove all global command blocks and allows. Default safety guards remain active.
 
-**Usage**: `/cr:globalclear`
+**Usage**: `/ar:globalclear`
 
 After clearing, only default safety guards and session-level blocks apply.
 
-See also: `/cr:globalstatus` to view global blocks before clearing.
+See also: `/ar:globalstatus` to view global blocks before clearing.
 
 UserPromptSubmit hook processes this command and clears global state (shelve DB).

@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clautorun-workspace"
+name = "autorun-workspace"
 version = "0.8.0"
-description = "UV workspace for clautorun plugins: clautorun, pdf-extractor"
+description = "UV workspace for autorun plugins: autorun, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Andrew Hundt", email = "ATHundt@gmail.com"},
 ]
-keywords = ["claude", "claude-code", "marketplace", "plugin-workspace", "clautorun", "pdf-extractor"]
+keywords = ["claude", "claude-code", "marketplace", "plugin-workspace", "autorun", "pdf-extractor"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -25,7 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 # No dependencies - this is a workspace definition, not a real package
-# CLI entry points come from plugins/clautorun/pyproject.toml
+# CLI entry points come from plugins/autorun/pyproject.toml
 dependencies = []
 
 [project.optional-dependencies]
@@ -39,30 +39,30 @@ dev = [
     "ruff>=0.14.1",
 ]
 all = [
-    "clautorun>=0.8.0",
+    "autorun>=0.8.0",
     "pdf-extractor>=0.8.0",
 ]
 
-# NO [project.scripts] - scripts come from plugins/clautorun/pyproject.toml
+# NO [project.scripts] - scripts come from plugins/autorun/pyproject.toml
 
 [project.urls]
-Homepage = "https://github.com/ahundt/clautorun"
-Repository = "https://github.com/ahundt/clautorun.git"
-Issues = "https://github.com/ahundt/clautorun/issues"
+Homepage = "https://github.com/ahundt/autorun"
+Repository = "https://github.com/ahundt/autorun.git"
+Issues = "https://github.com/ahundt/autorun/issues"
 
 [tool.uv.workspace]
 members = [
-    "plugins/clautorun",
+    "plugins/autorun",
     "plugins/pdf-extractor",
 ]
 
 [tool.uv.sources]
-clautorun = { workspace = true }
+autorun = { workspace = true }
 pdf-extractor = { workspace = true }
 
 # Minimal stub package for UV workspace
 [tool.hatch.build.targets.wheel]
-packages = ["src/clautorun_workspace"]
+packages = ["src/autorun_workspace"]
 
 [tool.hatch.build.targets.sdist]
 include = [

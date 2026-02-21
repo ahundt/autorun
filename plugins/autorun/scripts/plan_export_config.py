@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration script for plan export (part of clautorun plugin).
+Configuration script for plan export (part of autorun plugin).
 
 Usage (invoked via uv from slash commands):
     uv run python plan_export_config.py enable            - Enable plan export
@@ -52,7 +52,7 @@ def load_config() -> dict:
         try:
             with open(config_path) as f:
                 user_config = json.load(f)
-            # Migrate legacy key name (was "output_dir" before merge into clautorun)
+            # Migrate legacy key name (was "output_dir" before merge into autorun)
             if "output_dir" in user_config and "output_plan_dir" not in user_config:
                 user_config["output_plan_dir"] = user_config.pop("output_dir")
             config.update(user_config)

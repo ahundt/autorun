@@ -11,15 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Clautorun Workspace - UV workspace for clautorun plugins.
+"""Autorun Workspace - UV workspace for autorun plugins.
 
 This is a minimal stub package for the UV workspace. The actual functionality
 is provided by the plugins:
-- clautorun: Main plugin with autonomous task automation
-- Plan export: Built into clautorun (auto-export plans to notes/)
+- autorun: Main plugin with autonomous task automation
+- Plan export: Built into autorun (auto-export plans to notes/)
 - pdf-extractor: PDF to markdown extraction
 
-For CLI usage, run: clautorun --help
+For CLI usage, run: autorun --help
 """
 
 __version__ = "0.8.0"

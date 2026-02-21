@@ -26,8 +26,8 @@ from pathlib import Path
 import pytest
 import tempfile
 
-from clautorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
-from clautorun.session_manager import session_state, SessionStateManager
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from autorun.session_manager import session_state, SessionStateManager
 
 
 @pytest.fixture
@@ -44,8 +44,8 @@ def isolated_config(tmp_path):
 @pytest.fixture
 def isolated_session_manager(tmp_path):
     """Isolated session manager using temp directory."""
-    from clautorun import session_manager
-    from clautorun.session_manager import _reset_for_testing
+    from autorun import session_manager
+    from autorun.session_manager import _reset_for_testing
 
     # Create fresh SessionStateManager with temp state_dir
     temp_state_dir = tmp_path / "sessions"

@@ -28,13 +28,13 @@ from typing import Dict, List
 
 import pytest
 
-from clautorun.plan_export import (
+from autorun.plan_export import (
     PlanExportConfig,
     export_plan,
     get_plan_from_metadata,
     embed_plan_metadata,
 )
-from clautorun.session_manager import (
+from autorun.session_manager import (
     SessionLock,
     SessionTimeoutError,
     session_state,
@@ -49,7 +49,7 @@ from clautorun.session_manager import (
 def _worker_process_for_lock_test(session_id: str, state_dir: Path,
                                   lock_file, lock_acquired, lock_released):
     """Worker process for testing cross-process lock coordination via session_state()."""
-    from clautorun.session_manager import session_state
+    from autorun.session_manager import session_state
     with session_state(session_id, state_dir=str(state_dir), timeout=5.0):
         lock_acquired.value = True
         time.sleep(0.2)

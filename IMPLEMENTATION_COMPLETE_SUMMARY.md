@@ -10,7 +10,7 @@ Successfully implemented all critical fixes from the comprehensive plan to resto
 
 ### 1. config.py - RESTORE DESCRIPTIVE STRINGS (CRITICAL)
 
-**File:** `plugins/clautorun/src/clautorun/config.py`
+**File:** `plugins/autorun/src/autorun/config.py`
 **Lines:** 110-153
 
 **Key Changes:**
@@ -63,15 +63,15 @@ All now document the three-stage system with ALL-CAPS descriptive output strings
 
 ## Testing Recommendations
 
-1. Test plan approval flow with `/cr:go test plan`
-2. Test legacy flow with `/cr:plannew` (regression check)
+1. Test plan approval flow with `/ar:go test plan`
+2. Test legacy flow with `/ar:plannew` (regression check)
 3. Monitor stage transitions and output strings
 
 ## Files Modified
 
-1. `plugins/clautorun/src/clautorun/config.py`
-2. `plugins/clautorun/src/clautorun/plugins.py`
-3. `plugins/clautorun/hooks/hooks.json`
-4. `plugins/clautorun/commands/plannew.md`
-5. `plugins/clautorun/commands/planrefine.md`
-6. `plugins/clautorun/commands/autoproc.md`
+1. `plugins/autorun/src/autorun/config.py`
+2. `plugins/autorun/src/autorun/plugins.py`
+3. `plugins/autorun/hooks/hooks.json`
+4. `plugins/autorun/commands/plannew.md`
+5. `plugins/autorun/commands/planrefine.md`
+6. `plugins/autorun/commands/autoproc.md`

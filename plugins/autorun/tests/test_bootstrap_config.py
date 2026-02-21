@@ -7,7 +7,7 @@ and the is_bootstrap_disabled() function in hook_entry.py.
 
 v0.8.0: Bootstrap is controlled via:
 1. --no-bootstrap flag in hooks.json commands (persistent)
-2. CLAUTORUN_NO_BOOTSTRAP=1 environment variable (runtime)
+2. AUTORUN_NO_BOOTSTRAP=1 environment variable (runtime)
 """
 
 import importlib.util
@@ -42,11 +42,11 @@ def get_hook_entry_module():
 def sample_hooks_json():
     """Sample hooks.json content without --no-bootstrap flag."""
     return {
-        "description": "clautorun v0.7 - unified daemon-based hook handler",
+        "description": "autorun v0.7 - unified daemon-based hook handler",
         "hooks": {
             "UserPromptSubmit": [
                 {
-                    "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+                    "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
                     "hooks": [
                         {
                             "type": "command",
@@ -87,11 +87,11 @@ def sample_hooks_json():
 def sample_hooks_json_disabled():
     """Sample hooks.json content WITH --no-bootstrap flag."""
     return {
-        "description": "clautorun v0.7 - unified daemon-based hook handler",
+        "description": "autorun v0.7 - unified daemon-based hook handler",
         "hooks": {
             "UserPromptSubmit": [
                 {
-                    "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+                    "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
                     "hooks": [
                         {
                             "type": "command",
@@ -160,7 +160,7 @@ class TestSetBootstrapConfig:
 
     def test_disable_bootstrap_adds_flag(self, temp_hooks_dir):
         """Test that --no-bootstrap disables bootstrap by adding flag to hooks.json."""
-        from clautorun.__main__ import set_bootstrap_config
+        from autorun.__main__ import set_bootstrap_config
 
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir}):
             result = set_bootstrap_config(enabled=False)
@@ -177,7 +177,7 @@ class TestSetBootstrapConfig:
 
     def test_enable_bootstrap_removes_flag(self, temp_hooks_dir_disabled):
         """Test that --enable-bootstrap removes flag from hooks.json."""
-        from clautorun.__main__ import set_bootstrap_config
+        from autorun.__main__ import set_bootstrap_config
 
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir_disabled}):
             result = set_bootstrap_config(enabled=True)
@@ -193,7 +193,7 @@ class TestSetBootstrapConfig:
 
     def test_disable_bootstrap_idempotent(self, temp_hooks_dir_disabled, capsys):
         """Test that disabling already-disabled bootstrap is idempotent."""
-        from clautorun.__main__ import set_bootstrap_config
+        from autorun.__main__ import set_bootstrap_config
 
         with mock.patch.dict(
             os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir_disabled}
@@ -206,7 +206,7 @@ class TestSetBootstrapConfig:
 
     def test_enable_bootstrap_idempotent(self, temp_hooks_dir, capsys):
         """Test that enabling already-enabled bootstrap is idempotent."""
-        from clautorun.__main__ import set_bootstrap_config
+        from autorun.__main__ import set_bootstrap_config
 
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir}):
             result = set_bootstrap_config(enabled=True)
@@ -217,7 +217,7 @@ class TestSetBootstrapConfig:
 
     def test_missing_hooks_json_returns_error(self, capsys):
         """Test that missing hooks.json returns error code 1."""
-        from clautorun.__main__ import set_bootstrap_config
+        from autorun.__main__ import set_bootstrap_config
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": tmpdir}):
@@ -229,7 +229,7 @@ class TestSetBootstrapConfig:
 
     def test_disable_preserves_json_structure(self, temp_hooks_dir):
         """Test that disabling bootstrap preserves overall JSON structure."""
-        from clautorun.__main__ import set_bootstrap_config
+        from autorun.__main__ import set_bootstrap_config
 
         hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
         original_data = json.loads(hooks_file.read_text())
@@ -266,11 +266,11 @@ class TestIsBootstrapDisabled:
         assert result is True
 
     def test_disabled_by_env_var(self):
-        """Test that CLAUTORUN_NO_BOOTSTRAP=1 disables bootstrap."""
+        """Test that AUTORUN_NO_BOOTSTRAP=1 disables bootstrap."""
         hook_entry = get_hook_entry_module()
 
         with mock.patch.object(sys, "argv", ["hook_entry.py"]):
-            with mock.patch.dict(os.environ, {"CLAUTORUN_NO_BOOTSTRAP": "1"}):
+            with mock.patch.dict(os.environ, {"AUTORUN_NO_BOOTSTRAP": "1"}):
                 result = hook_entry.is_bootstrap_disabled()
 
         assert result is True
@@ -281,22 +281,22 @@ class TestIsBootstrapDisabled:
 
         with mock.patch.object(sys, "argv", ["hook_entry.py"]):
             with mock.patch.dict(
-                os.environ, {"CLAUTORUN_NO_BOOTSTRAP": "0"}, clear=False
+                os.environ, {"AUTORUN_NO_BOOTSTRAP": "0"}, clear=False
             ):
                 # Remove the env var if it exists
                 env_copy = os.environ.copy()
-                env_copy.pop("CLAUTORUN_NO_BOOTSTRAP", None)
+                env_copy.pop("AUTORUN_NO_BOOTSTRAP", None)
                 with mock.patch.dict(os.environ, env_copy, clear=True):
                     result = hook_entry.is_bootstrap_disabled()
 
         assert result is False
 
     def test_env_var_zero_means_enabled(self):
-        """Test that CLAUTORUN_NO_BOOTSTRAP=0 means bootstrap is enabled."""
+        """Test that AUTORUN_NO_BOOTSTRAP=0 means bootstrap is enabled."""
         hook_entry = get_hook_entry_module()
 
         with mock.patch.object(sys, "argv", ["hook_entry.py"]):
-            with mock.patch.dict(os.environ, {"CLAUTORUN_NO_BOOTSTRAP": "0"}):
+            with mock.patch.dict(os.environ, {"AUTORUN_NO_BOOTSTRAP": "0"}):
                 result = hook_entry.is_bootstrap_disabled()
 
         assert result is False
@@ -306,7 +306,7 @@ class TestIsBootstrapDisabled:
         hook_entry = get_hook_entry_module()
 
         with mock.patch.object(sys, "argv", ["hook_entry.py", "--no-bootstrap"]):
-            with mock.patch.dict(os.environ, {"CLAUTORUN_NO_BOOTSTRAP": "0"}):
+            with mock.patch.dict(os.environ, {"AUTORUN_NO_BOOTSTRAP": "0"}):
                 result = hook_entry.is_bootstrap_disabled()
 
         assert result is True
@@ -322,7 +322,7 @@ class TestCLIArgumentParsing:
 
     def test_force_install_flag_parsed(self):
         """Test that --force flag is parsed correctly."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--install", "--force"])
@@ -332,7 +332,7 @@ class TestCLIArgumentParsing:
 
     def test_force_install_short_flag_parsed(self):
         """Test that -f short flag works for --force."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--install", "-f"])
@@ -341,7 +341,7 @@ class TestCLIArgumentParsing:
 
     def test_no_bootstrap_flag_parsed(self):
         """Test that --no-bootstrap flag is parsed correctly."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--no-bootstrap"])
@@ -351,7 +351,7 @@ class TestCLIArgumentParsing:
 
     def test_enable_bootstrap_flag_parsed(self):
         """Test that --enable-bootstrap flag is parsed correctly."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--enable-bootstrap"])
@@ -361,16 +361,16 @@ class TestCLIArgumentParsing:
 
     def test_install_with_plugins(self):
         """Test that --install accepts plugin names."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
-        args = parser.parse_args(["--install", "clautorun,plan-export"])
+        args = parser.parse_args(["--install", "autorun,plan-export"])
 
-        assert args.install == "clautorun,plan-export"
+        assert args.install == "autorun,plan-export"
 
     def test_install_without_plugins_defaults_to_all(self):
         """Test that --install without plugins defaults to 'all'."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--install"])
@@ -379,7 +379,7 @@ class TestCLIArgumentParsing:
 
     def test_status_flag_parsed(self):
         """Test that --status flag is parsed correctly."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--status"])
@@ -388,7 +388,7 @@ class TestCLIArgumentParsing:
 
     def test_version_flag_parsed(self):
         """Test that --version flag is parsed correctly."""
-        from clautorun.__main__ import create_parser
+        from autorun.__main__ import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["--version"])
@@ -406,7 +406,7 @@ class TestMainFunctionRouting:
 
     def test_no_bootstrap_calls_set_bootstrap_config_false(self, temp_hooks_dir):
         """Test that --no-bootstrap calls set_bootstrap_config(enabled=False)."""
-        from clautorun.__main__ import main
+        from autorun.__main__ import main
 
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir}):
             result = main(["--no-bootstrap"])
@@ -421,7 +421,7 @@ class TestMainFunctionRouting:
         self, temp_hooks_dir_disabled
     ):
         """Test that --enable-bootstrap calls set_bootstrap_config(enabled=True)."""
-        from clautorun.__main__ import main
+        from autorun.__main__ import main
 
         with mock.patch.dict(
             os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir_disabled}
@@ -436,21 +436,21 @@ class TestMainFunctionRouting:
 
     def test_version_returns_zero(self, capsys):
         """Test that --version returns exit code 0."""
-        from clautorun.__main__ import main
+        from autorun.__main__ import main
 
         result = main(["--version"])
 
         assert result == 0
         captured = capsys.readouterr()
-        assert "clautorun" in captured.out
+        assert "autorun" in captured.out
         assert "0.8.0" in captured.out
 
     def test_install_calls_install_plugins(self):
         """Test that --install calls install_plugins function."""
-        from clautorun.__main__ import main
+        from autorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install.install_plugins", return_value=0
+            "autorun.install.install_plugins", return_value=0
         ) as mock_install:
             result = main(["--install"])
 
@@ -462,10 +462,10 @@ class TestMainFunctionRouting:
 
     def test_install_with_force_passes_force_flag(self):
         """Test that --install --force passes force=True."""
-        from clautorun.__main__ import main
+        from autorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install.install_plugins", return_value=0
+            "autorun.install.install_plugins", return_value=0
         ) as mock_install:
             result = main(["--install", "--force"])
 
@@ -476,26 +476,26 @@ class TestMainFunctionRouting:
         assert result == 0
 
     def test_install_with_plugins_passes_selection(self):
-        """Test that --install clautorun,plan-export passes selection."""
-        from clautorun.__main__ import main
+        """Test that --install autorun,plan-export passes selection."""
+        from autorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install.install_plugins", return_value=0
+            "autorun.install.install_plugins", return_value=0
         ) as mock_install:
-            result = main(["--install", "clautorun,plan-export"])
+            result = main(["--install", "autorun,plan-export"])
 
         mock_install.assert_called_once_with(
-            "clautorun,plan-export", tool=False, force=False,
+            "autorun,plan-export", tool=False, force=False,
             claude_only=False, gemini_only=False, conductor=True, use_aix=None,
         )
         assert result == 0
 
     def test_status_calls_show_status(self):
         """Test that --status calls show_status function."""
-        from clautorun.__main__ import main
+        from autorun.__main__ import main
 
         with mock.patch(
-            "clautorun.install.show_status", return_value=0
+            "autorun.install.show_status", return_value=0
         ) as mock_status:
             result = main(["--status"])
 

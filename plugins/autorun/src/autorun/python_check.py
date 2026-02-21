@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Python version checking utilities for clautorun
+Python version checking utilities for autorun
 """
 
 import sys
@@ -42,7 +42,7 @@ def check_python_version():
     # Check for Python 2.x - critical error
     if sys.version_info[0] < 3:
         print("=" * 70)
-        print("❌ PYTHON VERSION ERROR: clautorun requires Python 3.0 or higher (3.10+ preferred)")
+        print("❌ PYTHON VERSION ERROR: autorun requires Python 3.0 or higher (3.10+ preferred)")
         print("=" * 70)
         print()
         print("You are using Python {}.{} which is incompatible.".format(
@@ -50,11 +50,11 @@ def check_python_version():
         print()
         print("🔧 SOLUTIONS:")
         print("1. Use python3 explicitly:")
-        print("   python3 -m clautorun install")
+        print("   python3 -m autorun install")
         print()
         print("2. Activate your UV virtual environment:")
         print("   source .venv/bin/activate")
-        print("   python -m clautorun install")
+        print("   python -m autorun install")
         print()
         print("3. Update your system default (if you have admin rights):")
         print("   ln -sf /usr/bin/python3 /usr/local/bin/python")
@@ -68,7 +68,7 @@ def check_python_version():
         print()
         print("=" * 70)
         print("For comprehensive troubleshooting, run:")
-        print("   python3 -c \"from clautorun.error_handling import show_uv_environment_status; show_uv_environment_status()\"")
+        print("   python3 -c \"from autorun.error_handling import show_uv_environment_status; show_uv_environment_status()\"")
         print("=" * 70)
         return False
 
@@ -80,7 +80,7 @@ def check_python_version():
         print()
         print("You are using Python {}.{}.{}.".format(
             sys.version_info[0], sys.version_info[1], sys.version_info[2]))
-        print("clautorun requires Python 3.10+ for full compatibility.")
+        print("autorun requires Python 3.10+ for full compatibility.")
         print()
         print("🔧 RECOMMENDED SOLUTIONS:")
         print("1. Use UV with Python 3.10+:")

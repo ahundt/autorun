@@ -12,11 +12,11 @@ from unittest.mock import Mock, patch, MagicMock
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.config import CONFIG
+from autorun.config import CONFIG
 
 def test_main_py_ai_monitor_workflow():
     """Test that main.py implements complete AI monitor workflow"""
-    from clautorun import (
+    from autorun import (
         stop_handler, pretooluse_handler, claude_code_handler,
         CONFIG
     )
@@ -53,12 +53,12 @@ def test_main_py_ai_monitor_workflow():
         "verification_attempts": 0
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
         # Debug the is_premature_stop logic
-        from clautorun import is_premature_stop
+        from autorun import is_premature_stop
         is_premature = is_premature_stop(ctx, mock_state)
         print(f"Debug - is_premature_stop: {is_premature}")
         print(f"Debug - session_transcript: {ctx.session_transcript}")
@@ -80,7 +80,7 @@ def test_main_py_ai_monitor_workflow():
     ctx.session_transcript = ["More work", "Still no completion marker"]
     mock_state["verification_attempts"] = CONFIG["max_recheck_count"]
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -107,7 +107,7 @@ def test_main_py_ai_monitor_workflow():
     }
     ctx.session_transcript = ["Verification work", CONFIG["stage3_message"]]
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state_final
         mock_session.return_value.__exit__.return_value = None
 
@@ -132,8 +132,8 @@ def test_main_py_ai_monitor_workflow():
     mock_session_manager.__enter__ = MagicMock(return_value=mock_state)
     mock_session_manager.__exit__ = MagicMock(return_value=None)
 
-    with patch('clautorun.main.session_state', return_value=mock_session_manager), \
-         patch('clautorun.main.Path') as mock_path:
+    with patch('autorun.main.session_state', return_value=mock_session_manager), \
+         patch('autorun.main.Path') as mock_path:
         # Mock Path chain: Path(file_path).resolve().exists()
         mock_resolved = MagicMock()
         mock_resolved.exists.return_value = False
@@ -155,8 +155,8 @@ def test_main_py_ai_monitor_workflow():
 def test_agent_sdk_hook_ai_monitor_workflow():
     """Test that main.py handlers implement AI monitor workflow"""
     try:
-        from clautorun.main import claude_code_handler, stop_handler, pretooluse_handler
-        from clautorun import CONFIG
+        from autorun.main import claude_code_handler, stop_handler, pretooluse_handler
+        from autorun import CONFIG
     except ImportError as e:
         print(f"❌ Could not import main.py handlers: {e}")
         return False
@@ -187,7 +187,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
         "verification_attempts": 0
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -212,7 +212,7 @@ def test_agent_sdk_hook_ai_monitor_workflow():
     mock_session_manager.__enter__ = MagicMock(return_value=mock_policy_state)
     mock_session_manager.__exit__ = MagicMock(return_value=None)
 
-    with patch('clautorun.main.session_state', return_value=mock_session_manager):
+    with patch('autorun.main.session_state', return_value=mock_session_manager):
         response = pretooluse_handler(ctx)
 
         assert response["continue"] is True, "continue=True (AI keeps running); tool blocked by permissionDecision=deny"
@@ -228,8 +228,8 @@ def test_hook_integration_completeness():
     print("Testing hook integration completeness...")
 
     try:
-        from clautorun.main import HANDLERS as HOOK_HANDLERS
-        from clautorun import CONFIG
+        from autorun.main import HANDLERS as HOOK_HANDLERS
+        from autorun import CONFIG
     except ImportError as e:
         print(f"❌ Could not import required modules: {e}")
         return False
@@ -241,7 +241,7 @@ def test_hook_integration_completeness():
     print("✅ All required hook events are handled")
 
     # Verify that the hook handlers are not just placeholders
-    from clautorun.main import stop_handler, pretooluse_handler
+    from autorun.main import stop_handler, pretooluse_handler
 
     # Mock context
     ctx = Mock()
@@ -267,7 +267,7 @@ def test_readme_workflow_compliance():
     """Test that implementation matches README.md documented workflow"""
     print("Testing README.md workflow compliance...")
 
-    from clautorun import CONFIG
+    from autorun import CONFIG
 
     # Verify documented completion marker exists
     # Three-stage system uses stage messages instead of single completion marker
@@ -290,7 +290,7 @@ def test_readme_workflow_compliance():
     print("✅ Max recheck count matches README")
 
     # Verify documented command mappings (including /autoproc which is an alias for /autorun)
-    # Check that legacy commands are included (new /cr: commands also exist for short/long forms)
+    # Check that legacy commands are included (new /ar: commands also exist for short/long forms)
     required_legacy_mappings = {
         "/autorun": "activate",
         "/autoproc": "activate",  # Alias for /autorun

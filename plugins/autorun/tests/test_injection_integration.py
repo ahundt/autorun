@@ -9,8 +9,8 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 try:
-    from clautorun.main import get_injection_monitor, inject_continue_prompt, inject_verification_prompt
-    from clautorun.injection_monitoring import InjectionMethod, InjectionOutcome
+    from autorun.main import get_injection_monitor, inject_continue_prompt, inject_verification_prompt
+    from autorun.injection_monitoring import InjectionMethod, InjectionOutcome
     INTEGRATION_TEST_AVAILABLE = True
 except ImportError as e:
     print(f"Import error: {e}")
@@ -115,7 +115,7 @@ def test_injection_outcome_update():
         }
 
         # Manually add an attempt to be updated
-        from clautorun.injection_monitoring import InjectionAttempt
+        from autorun.injection_monitoring import InjectionAttempt
         attempt = InjectionAttempt(
             attempt_id=test_state["last_injection_attempt_id"],
             timestamp=test_state["last_injection_start_time"],
@@ -130,7 +130,7 @@ def test_injection_outcome_update():
         monitor.injection_attempts.append(attempt)
 
         # Import and test the update function
-        from clautorun.main import update_injection_outcome
+        from autorun.main import update_injection_outcome
 
         # Wait a bit to have a measurable response time
         time.sleep(0.1)

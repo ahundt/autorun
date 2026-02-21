@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Clautorun v0.7 Client - Thin Forwarder to Daemon
+Autorun v0.7 Client - Thin Forwarder to Daemon
 
 Forwards hook payloads to daemon via Unix socket.
 Auto-starts daemon if not running.
@@ -50,12 +50,12 @@ except ImportError:
     logger = logging.getLogger(__name__)
     DEBUG_ENABLED = False
 
-SOCKET_PATH = Path.home() / ".clautorun" / "daemon.sock"
-DEBUG_LOG = Path.home() / ".clautorun" / "daemon.log"
+SOCKET_PATH = Path.home() / ".autorun" / "daemon.sock"
+DEBUG_LOG = Path.home() / ".autorun" / "daemon.log"
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:
-    """DRY helper for hook lifecycle logging. Only active when CLAUTORUN_DEBUG=1."""
+    """DRY helper for hook lifecycle logging. Only active when AUTORUN_DEBUG=1."""
     if not DEBUG_ENABLED:
         return
     try:
@@ -252,7 +252,7 @@ def run_client() -> int:
                 raise  # Can't recover from permission errors
             # Check if daemon is already running via PID file
             # (pattern from install.py:140-149, PID written by core.py:987-990)
-            lock_path = Path.home() / ".clautorun" / "daemon.lock"
+            lock_path = Path.home() / ".autorun" / "daemon.lock"
             daemon_alive = False
             if lock_path.exists():
                 try:
@@ -267,7 +267,7 @@ def run_client() -> int:
                 # Auto-start daemon - use -c to run directly (works with editable installs)
                 logger.info("Daemon not running, auto-starting...")
                 src_dir = Path(__file__).parent.parent
-                daemon_code = "import sys; sys.path.insert(0, '{0}'); from clautorun.daemon import main; main()".format(
+                daemon_code = "import sys; sys.path.insert(0, '{0}'); from autorun.daemon import main; main()".format(
                     str(src_dir)
                 )
                 subprocess.Popen(

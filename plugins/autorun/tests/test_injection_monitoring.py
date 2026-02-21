@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from conftest import should_keep_test_artifacts
 
 try:
-    from clautorun.injection_monitoring import (
+    from autorun.injection_monitoring import (
         InjectionEffectivenessMonitor,
         InjectionAttempt,
         InjectionEffectivenessMetrics,
@@ -542,8 +542,8 @@ class TestGlobalFunctions:
             pytest.skip("Injection monitoring not available")
 
         # Clear global instance
-        import clautorun.injection_monitoring
-        clautorun.injection_monitoring._global_monitor = None
+        import autorun.injection_monitoring
+        autorun.injection_monitoring._global_monitor = None
 
         monitor1 = get_injection_monitor()
         monitor2 = get_injection_monitor()
@@ -558,8 +558,8 @@ class TestGlobalFunctions:
             pytest.skip("Injection monitoring not available")
 
         # Clear global instance
-        import clautorun.injection_monitoring
-        clautorun.injection_monitoring._global_monitor = None
+        import autorun.injection_monitoring
+        autorun.injection_monitoring._global_monitor = None
 
         attempt_id = record_injection(
             method=InjectionMethod.API_DIRECT,

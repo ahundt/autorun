@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 try:
-    from clautorun.diagnostics import (
+    from autorun.diagnostics import (
         DiagnosticLogger,
         SystemMonitor,
         HealthChecker,

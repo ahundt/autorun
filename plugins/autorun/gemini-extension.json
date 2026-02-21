@@ -1,13 +1,13 @@
 {
-  "name": "cr",
+  "name": "ar",
   "version": "0.8.0",
   "description": "Autonomous execution, file policies, safety guards for AI coding assistants",
   "author": {
     "name": "Andrew Hundt <athundt@gmail.com>",
-    "url": "https://github.com/ahundt/clautorun"
+    "url": "https://github.com/ahundt/autorun"
   },
-  "homepage": "https://github.com/ahundt/clautorun#readme",
-  "repository": "https://github.com/ahundt/clautorun",
+  "homepage": "https://github.com/ahundt/autorun#readme",
+  "repository": "https://github.com/ahundt/autorun",
   "license": "Apache-2.0",
   "keywords": [
     "claude-code",

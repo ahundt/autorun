@@ -27,7 +27,7 @@ import fcntl
 import errno
 from pathlib import Path
 
-HOME_DIR = Path.home() / ".clautorun"
+HOME_DIR = Path.home() / ".autorun"
 SOCKET_PATH = HOME_DIR / "daemon.sock"
 LOCK_PATH = HOME_DIR / "daemon.lock"
 RESTART_LOCK_PATH = HOME_DIR / "daemon-restart.lock"
@@ -103,7 +103,7 @@ def cleanup_stale_files() -> None:
 def verify_bashlex() -> bool:
     """Check if bashlex available in daemon."""
     try:
-        from clautorun.command_detection import BASHLEX_AVAILABLE
+        from autorun.command_detection import BASHLEX_AVAILABLE
         return BASHLEX_AVAILABLE
     except Exception:
         return False
@@ -151,8 +151,8 @@ def _resolve_src_dir() -> Path | None:
     Returns:
         Path to src/ directory, or None with error printed if not found.
     """
-    # Now that restart_daemon.py is in src/clautorun/, go up two levels to src/
-    # src/clautorun/restart_daemon.py -> parent -> clautorun -> parent -> src
+    # Now that restart_daemon.py is in src/autorun/, go up two levels to src/
+    # src/autorun/restart_daemon.py -> parent -> autorun -> parent -> src
     src_dir = Path(__file__).resolve().parent.parent
 
     if not src_dir.exists():
@@ -209,11 +209,11 @@ def _check_conflicting_packages() -> None:
     try:
         site_packages_list = site.getsitepackages()
         for site_pkg_dir in site_packages_list:
-            site_packages = Path(site_pkg_dir) / "clautorun"
+            site_packages = Path(site_pkg_dir) / "autorun"
             if site_packages.exists():
                 print(f"  ⚠️  WARNING: Installed package found at {site_packages}")
                 print(f"      This may interfere with source directory loading")
-                print(f"      Consider: uv pip uninstall clautorun")
+                print(f"      Consider: uv pip uninstall autorun")
                 break
     except Exception as e:
         # Non-fatal: just log
@@ -237,19 +237,19 @@ def _start_daemon(src_dir: Path) -> bool:
     daemon_code = (
         f"import sys; "
         f"sys.path.insert(0, r'{src_dir}'); "
-        f"import clautorun; "
+        f"import autorun; "
         f"print(f'=== Daemon Startup Diagnostics ===', flush=True); "
-        f"print(f'clautorun loaded from: {{clautorun.__file__}}', flush=True); "
+        f"print(f'autorun loaded from: {{autorun.__file__}}', flush=True); "
         f"print(f'sys.path[0]: {{sys.path[0]}}', flush=True); "
         f"print(f'Expected source: {src_dir}', flush=True); "
         # Verify bashlex availability
-        f"from clautorun.command_detection import BASHLEX_AVAILABLE; "
+        f"from autorun.command_detection import BASHLEX_AVAILABLE; "
         f"print(f'bashlex available: {{BASHLEX_AVAILABLE}}', flush=True); "
         # Verify tool name sets loaded
-        f"from clautorun.config import BASH_TOOLS; "
+        f"from autorun.config import BASH_TOOLS; "
         f"print(f'BASH_TOOLS = {{BASH_TOOLS}}', flush=True); "
         f"print(f'=== Starting Daemon ===', flush=True); "
-        f"from clautorun.daemon import main; main()"
+        f"from autorun.daemon import main; main()"
     )
 
     # Redirect stdout/stderr to a log file for debug visibility
@@ -276,10 +276,10 @@ def _start_daemon(src_dir: Path) -> bool:
 
         # Verify module source matches expected
         log_content = ''.join(lines)
-        # Check if clautorun loaded from our source directory
-        # (path will contain /src/clautorun/__init__.py)
+        # Check if autorun loaded from our source directory
+        # (path will contain /src/autorun/__init__.py)
         src_parent = str(src_dir.parent.parent)  # Go up to repo root
-        if src_parent in log_content and '/src/clautorun/__init__.py' in log_content:
+        if src_parent in log_content and '/src/autorun/__init__.py' in log_content:
             print("  ✓ Daemon loaded from source directory")
         elif '.local/lib' in log_content or 'site-packages' in log_content:
             print("  ✗ WARNING: Daemon loaded from installed package!")
@@ -329,7 +329,7 @@ def _stop_daemon(pid: int) -> None:
 
 
 def restart_daemon() -> int:
-    """Restart the clautorun daemon.
+    """Restart the autorun daemon.
 
     Performs a full stop-cleanup-start cycle with locking, verification,
     and diagnostics. Safe to call from any context (script, import, install).
@@ -369,13 +369,13 @@ def restart_daemon() -> int:
         # This handles daemons spawned from different code locations that don't
         # own the daemon.lock file
         remaining = subprocess.run(
-            ["pgrep", "-f", "from clautorun.daemon import main"],
+            ["pgrep", "-f", "from autorun.daemon import main"],
             capture_output=True,
             text=True
         )
         if remaining.stdout.strip():
             print(f"  Killing {len(remaining.stdout.strip().splitlines())} remaining daemon(s)")
-            subprocess.run(["pkill", "-9", "-f", "from clautorun.daemon import main"])
+            subprocess.run(["pkill", "-9", "-f", "from autorun.daemon import main"])
             time.sleep(0.5)
 
         # Cleanup any stale files

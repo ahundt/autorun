@@ -11,7 +11,7 @@ async def test_command_logic():
     """Test the core command logic without database dependencies"""
 
     # Import the command handling logic directly
-    from clautorun import CONFIG, COMMAND_HANDLERS
+    from autorun import CONFIG, COMMAND_HANDLERS
 
     print("🧪 Testing Agent SDK Command Logic")
     print("=" * 50)

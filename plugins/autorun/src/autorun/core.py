@@ -15,14 +15,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Clautorun v0.7 Core - Click/Typer-style Decorator Framework
+Autorun v0.7 Core - Click/Typer-style Decorator Framework
 
 Provides:
 - LazyTranscript: Deferred string conversion for performance
 - ThreadSafeDB: In-memory cache layer for daemon performance
 - EventContext: Rich context with magic __getattr__/__setattr__ state access
-- ClautorunApp: Click-style decorator registration
-- ClautorunDaemon: AsyncIO Unix socket server
+- AutorunApp: Click-style decorator registration
+- AutorunDaemon: AsyncIO Unix socket server
 
 Reuses session_manager.py entirely (421 lines of battle-tested RAII code).
 """
@@ -45,7 +45,7 @@ from .session_manager import session_state
 from .config import CONFIG
 
 # === CONFIGURATION ===
-HOME_DIR = Path.home() / ".clautorun"
+HOME_DIR = Path.home() / ".autorun"
 HOME_DIR.mkdir(mode=0o700, exist_ok=True)
 SOCKET_PATH = HOME_DIR / "daemon.sock"
 LOCK_PATH = HOME_DIR / "daemon.lock"
@@ -57,10 +57,10 @@ IDLE_TIMEOUT = 1800  # 30 minutes
 # Client sends full transcript (can be 200MB+), server truncates to 64KB after reading
 _DEFAULT_LIMIT = asyncio.streams._DEFAULT_LIMIT  # 64KB (2^16 = 65536)
 
-# Allow override via CLAUTORUN_BUFFER_LIMIT env var (in bytes)
+# Allow override via AUTORUN_BUFFER_LIMIT env var (in bytes)
 # Default: 1GB (2^30) handles sessions up to 1GB
 # Found actual sessions: 511MB, so need more than 512MB headroom
-_env_limit = os.environ.get("CLAUTORUN_BUFFER_LIMIT")
+_env_limit = os.environ.get("AUTORUN_BUFFER_LIMIT")
 if _env_limit:
     try:
         READ_BUFFER_LIMIT = int(_env_limit)
@@ -78,7 +78,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
-logger = logging.getLogger("clautorun")
+logger = logging.getLogger("autorun")
 
 
 # === GEMINI CLI PAYLOAD NORMALIZATION ===
@@ -242,7 +242,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     - session_transcript can be 200MB+ in long sessions
     - Hooks only search recent patterns (stage markers, justification tags)
     - Truncate to last ~64KB by default (saves memory, speeds pattern search)
-    - Can disable via truncate_transcript=False or CLAUTORUN_NO_TRUNCATE=1 env var
+    - Can disable via truncate_transcript=False or AUTORUN_NO_TRUNCATE=1 env var
 
     When to disable truncation:
     - CLI commands needing full session history (export, analysis, debugging)
@@ -269,7 +269,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     transcript = payload.get("session_transcript", [])
 
     # Check if truncation disabled globally via env var
-    if os.environ.get("CLAUTORUN_NO_TRUNCATE") == "1":
+    if os.environ.get("AUTORUN_NO_TRUNCATE") == "1":
         truncate_transcript = False
 
     # Truncate to recent messages if enabled (memory optimization)
@@ -398,20 +398,20 @@ def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
     Resolve stable session key for resume robustness.
 
     Priority:
-    1. CLAUTORUN_SESSION_ID env var (explicit override)
+    1. AUTORUN_SESSION_ID env var (explicit override)
     2. JSONL history file scan (survives claude --resume)
     3. session_id from payload (fallback)
 
-    Usage: Enable with CLAUTORUN_USE_IDENTITY=1
+    Usage: Enable with AUTORUN_USE_IDENTITY=1
     """
     import platform
 
     # Layer 1: Explicit env var
-    if env_id := os.environ.get("CLAUTORUN_SESSION_ID"):
+    if env_id := os.environ.get("AUTORUN_SESSION_ID"):
         return f"explicit:{env_id}"
 
     # Layer 2: JSONL file (for resume robustness)
-    if os.environ.get("CLAUTORUN_USE_IDENTITY") == "1":
+    if os.environ.get("AUTORUN_USE_IDENTITY") == "1":
         if platform.system() == "Linux":
             try:
                 fd_dir = Path(f"/proc/{pid}/fd")
@@ -1034,8 +1034,8 @@ class EventContext:
         return self.respond("block", reason)
 
 
-# === CLAUTORUN APP (Click-style Registration + Unified Dispatch) ===
-class ClautorunApp:
+# === AUTORUN APP (Click-style Registration + Unified Dispatch) ===
+class AutorunApp:
     """
     Click/Typer-style decorator framework with unified dispatch.
 
@@ -1046,7 +1046,7 @@ class ClautorunApp:
     - Automatic command matching via CONFIG + aliases
 
     Usage:
-        @app.command("/cr:a", "/cr:allow", "/afa", "ALLOW")
+        @app.command("/ar:a", "/ar:allow", "/afa", "ALLOW")
         def handle_allow(ctx): ctx.file_policy = "ALLOW"; return "Done"
 
         @app.on("PreToolUse")
@@ -1146,7 +1146,7 @@ class ClautorunApp:
 
 
 # === DAEMON ===
-class ClautorunDaemon:
+class AutorunDaemon:
     """
     AsyncIO Unix socket daemon for fast hook handling.
 
@@ -1165,12 +1165,12 @@ class ClautorunDaemon:
     - atexit: Fallback cleanup for unexpected termination
     """
 
-    def __init__(self, app: ClautorunApp):
+    def __init__(self, app: AutorunApp):
         """
         Initialize daemon with app and shared state.
 
         Args:
-            app: ClautorunApp instance with registered handlers
+            app: AutorunApp instance with registered handlers
         """
         self.app = app
         self.running = False
@@ -1275,8 +1275,8 @@ class ClautorunDaemon:
             response["systemMessage"] = (
                 f"Daemon buffer overflow (fail-open): Session transcript exceeded {current_mb}MB.\n\n"
                 f"SOLUTION: Increase buffer size with environment variable:\n"
-                f"  export CLAUTORUN_BUFFER_LIMIT={READ_BUFFER_LIMIT * 2}  # {current_mb * 2}MB\n"
-                f"  # Then restart daemon: uv run python plugins/clautorun/scripts/restart_daemon.py\n\n"
+                f"  export AUTORUN_BUFFER_LIMIT={READ_BUFFER_LIMIT * 2}  # {current_mb * 2}MB\n"
+                f"  # Then restart daemon: uv run python plugins/autorun/scripts/restart_daemon.py\n\n"
                 f"Current limit: {current_mb}MB (READ_BUFFER_LIMIT={READ_BUFFER_LIMIT:,} bytes)\n"
                 f"Details: {e}"
             )
@@ -1587,4 +1587,4 @@ class ClautorunDaemon:
 
 
 # Global app instance
-app = ClautorunApp()
+app = AutorunApp()

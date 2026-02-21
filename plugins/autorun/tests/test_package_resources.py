@@ -1,4 +1,4 @@
-"""Test package resource access for installed vs source clautorun.
+"""Test package resource access for installed vs source autorun.
 
 Test Coverage:
 - get_plugin_root() returns valid directory with .claude-plugin/
@@ -20,14 +20,14 @@ class TestGetPluginRoot:
 
     def test_get_plugin_root_returns_path(self):
         """Test: get_plugin_root() returns a Path object."""
-        from clautorun.resources import get_plugin_root
+        from autorun.resources import get_plugin_root
 
         root = get_plugin_root()
         assert isinstance(root, Path)
 
     def test_get_plugin_root_directory_exists(self):
         """Test: get_plugin_root() returns an existing directory."""
-        from clautorun.resources import get_plugin_root
+        from autorun.resources import get_plugin_root
 
         root = get_plugin_root()
         assert root.exists(), f"Plugin root does not exist: {root}"
@@ -35,7 +35,7 @@ class TestGetPluginRoot:
 
     def test_get_plugin_root_has_claude_plugin(self):
         """Test: get_plugin_root() returns directory containing .claude-plugin/."""
-        from clautorun.resources import get_plugin_root
+        from autorun.resources import get_plugin_root
 
         root = get_plugin_root()
         claude_plugin = root / ".claude-plugin"
@@ -43,7 +43,7 @@ class TestGetPluginRoot:
 
     def test_get_plugin_root_has_marketplace_json(self):
         """Test: get_plugin_root() returns directory with marketplace.json."""
-        from clautorun.resources import get_plugin_root
+        from autorun.resources import get_plugin_root
 
         root = get_plugin_root()
         marketplace = root / ".claude-plugin" / "marketplace.json"
@@ -55,21 +55,21 @@ class TestGetCommandsDir:
 
     def test_get_commands_dir_returns_path(self):
         """Test: get_commands_dir() returns a Path object."""
-        from clautorun.resources import get_commands_dir
+        from autorun.resources import get_commands_dir
 
         commands_dir = get_commands_dir()
         assert isinstance(commands_dir, Path)
 
     def test_get_commands_dir_exists(self):
         """Test: get_commands_dir() returns existing directory."""
-        from clautorun.resources import get_commands_dir
+        from autorun.resources import get_commands_dir
 
         commands_dir = get_commands_dir()
         assert commands_dir.exists(), f"Commands directory not found: {commands_dir}"
 
     def test_get_commands_dir_has_known_commands(self):
         """Test: commands/ contains known command files."""
-        from clautorun.resources import get_commands_dir
+        from autorun.resources import get_commands_dir
 
         commands_dir = get_commands_dir()
         # These are core commands that should always exist
@@ -83,14 +83,14 @@ class TestGetSkillsDir:
 
     def test_get_skills_dir_returns_path(self):
         """Test: get_skills_dir() returns a Path object."""
-        from clautorun.resources import get_skills_dir
+        from autorun.resources import get_skills_dir
 
         skills_dir = get_skills_dir()
         assert isinstance(skills_dir, Path)
 
     def test_get_skills_dir_exists(self):
         """Test: get_skills_dir() returns existing directory."""
-        from clautorun.resources import get_skills_dir
+        from autorun.resources import get_skills_dir
 
         skills_dir = get_skills_dir()
         assert skills_dir.exists(), f"Skills directory not found: {skills_dir}"
@@ -101,14 +101,14 @@ class TestGetAgentsDir:
 
     def test_get_agents_dir_returns_path(self):
         """Test: get_agents_dir() returns a Path object."""
-        from clautorun.resources import get_agents_dir
+        from autorun.resources import get_agents_dir
 
         agents_dir = get_agents_dir()
         assert isinstance(agents_dir, Path)
 
     def test_get_agents_dir_exists(self):
         """Test: get_agents_dir() returns existing directory."""
-        from clautorun.resources import get_agents_dir
+        from autorun.resources import get_agents_dir
 
         agents_dir = get_agents_dir()
         assert agents_dir.exists(), f"Agents directory not found: {agents_dir}"
@@ -119,21 +119,21 @@ class TestGetHooksDir:
 
     def test_get_hooks_dir_returns_path(self):
         """Test: get_hooks_dir() returns a Path object."""
-        from clautorun.resources import get_hooks_dir
+        from autorun.resources import get_hooks_dir
 
         hooks_dir = get_hooks_dir()
         assert isinstance(hooks_dir, Path)
 
     def test_get_hooks_dir_exists(self):
         """Test: get_hooks_dir() returns existing directory."""
-        from clautorun.resources import get_hooks_dir
+        from autorun.resources import get_hooks_dir
 
         hooks_dir = get_hooks_dir()
         assert hooks_dir.exists(), f"Hooks directory not found: {hooks_dir}"
 
     def test_get_hooks_dir_has_hook_files(self):
         """Test: hooks/ contains hook configuration files."""
-        from clautorun.resources import get_hooks_dir
+        from autorun.resources import get_hooks_dir
 
         hooks_dir = get_hooks_dir()
         # hooks.json is the primary hook configuration for Claude Code
@@ -146,7 +146,7 @@ class TestAllResourcesAccessible:
 
     def test_all_resource_dirs_under_same_root(self):
         """Test: All resource directories share the same parent plugin root."""
-        from clautorun.resources import (
+        from autorun.resources import (
             get_plugin_root,
             get_commands_dir,
             get_skills_dir,

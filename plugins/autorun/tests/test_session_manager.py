@@ -12,8 +12,8 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import session_manager as sm
-from clautorun.session_manager import (
+from autorun import session_manager as sm
+from autorun.session_manager import (
     SessionStateError,
     SessionTimeoutError,
     SessionBackendError,

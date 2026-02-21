@@ -18,7 +18,7 @@ def test_raii_resource_management():
     """Test RAII automatic resource acquisition and release"""
     print("🔍 Testing RAII Resource Management...")
 
-    from clautorun.session_manager import SessionLock
+    from autorun.session_manager import SessionLock
 
     session_id = "raii_test_session"
     lock_file = Path.home() / ".claude" / "sessions" / f".{session_id}.lock"
@@ -66,7 +66,7 @@ def test_concurrent_raii_safety():
     """Test concurrent RAII operations for race conditions"""
     print("\n🔍 Testing Concurrent RAII Safety...")
 
-    from clautorun.session_manager import session_state
+    from autorun.session_manager import session_state
 
     session_id = "concurrent_raii_test"
     results = []
@@ -120,7 +120,7 @@ def test_timeout_behavior():
     """Test timeout behavior with concrete error details"""
     print("\n🔍 Testing Timeout Behavior...")
 
-    from clautorun.session_manager import SessionTimeoutError
+    from autorun.session_manager import SessionTimeoutError
 
     session_id = "timeout_test"
     results = []
@@ -128,7 +128,7 @@ def test_timeout_behavior():
     def blocking_worker():
         """Worker that holds lock for specific duration"""
         try:
-            from clautorun.session_manager import SessionLock
+            from autorun.session_manager import SessionLock
             state_dir = Path.home() / ".claude" / "sessions"
             with SessionLock(session_id, 10.0, state_dir):
                 time.sleep(0.3)  # Hold lock for 300ms
@@ -139,7 +139,7 @@ def test_timeout_behavior():
     def timeout_worker():
         """Worker that should timeout"""
         try:
-            from clautorun.session_manager import SessionLock
+            from autorun.session_manager import SessionLock
             time.sleep(0.05)  # Start after blocking worker
             state_dir = Path.home() / ".claude" / "sessions"
             with SessionLock(session_id, 0.1, state_dir):
@@ -152,7 +152,7 @@ def test_timeout_behavior():
     def quick_worker():
         """Worker that should succeed after lock is released"""
         try:
-            from clautorun.session_manager import SessionLock
+            from autorun.session_manager import SessionLock
             time.sleep(0.4)  # Start after blocking worker finishes
             state_dir = Path.home() / ".claude" / "sessions"
             with SessionLock(session_id, 5.0, state_dir):
@@ -186,7 +186,7 @@ def test_shared_access_isolation():
     """Test shared access scenarios with proper isolation"""
     print("\n🔍 Testing Shared Access Isolation...")
 
-    from clautorun.session_manager import session_state, shared_session_state
+    from autorun.session_manager import session_state, shared_session_state
 
     session_id = "shared_access_test"
     results = []
@@ -260,7 +260,7 @@ def test_error_handling_robustness():
     """Test robust error handling with concrete error details"""
     print("\n🔍 Testing Error Handling Robustness...")
 
-    from clautorun.session_manager import session_state, SessionStateError, SessionTimeoutError
+    from autorun.session_manager import session_state, SessionStateError, SessionTimeoutError
 
     results = []
 
@@ -296,7 +296,7 @@ def test_dry_principles():
     """Test DRY principles and avoid code duplication"""
     print("\n🔍 Testing DRY Principles...")
 
-    from clautorun.session_manager import session_state, shared_session_state, get_session_manager
+    from autorun.session_manager import session_state, shared_session_state, get_session_manager
 
     # Test singleton pattern
     manager1 = get_session_manager()

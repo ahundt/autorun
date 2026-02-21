@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import pretooluse_handler
+from autorun import pretooluse_handler
 
 
 class TestPreToolUseBlockingFix:
@@ -23,7 +23,7 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_id = "test_session"
 
         # Mock session state to avoid database issues
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "ALLOW"}  # Default policy
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -42,7 +42,7 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_id = "test_session"
 
         # Mock session state to avoid database issues and set default ALLOW policy
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "ALLOW"}  # Default policy
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -61,7 +61,7 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_id = "test_session"
 
         # Mock session state to avoid database issues and set default ALLOW policy
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "ALLOW"}  # Default policy
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -80,8 +80,8 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_id = "test_session"
 
         # Mock that file exists and set SEARCH policy
-        with patch('clautorun.main.Path') as mock_path, \
-             patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.Path') as mock_path, \
+             patch('autorun.main.session_state') as mock_session:
             mock_path.return_value.exists.return_value = True
 
             # Set SEARCH policy - should allow editing existing files per user requirements
@@ -104,8 +104,8 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_transcript = []
 
         # Mock that file doesn't exist and policy is ALLOW
-        with patch('clautorun.main.Path') as mock_path, \
-             patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.Path') as mock_path, \
+             patch('autorun.main.session_state') as mock_session:
             mock_path.return_value.exists.return_value = False
 
             # Setup mock session state
@@ -127,8 +127,8 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_id = "test_session"
 
         # Mock that file doesn't exist and policy is SEARCH
-        with patch('clautorun.main.Path') as mock_path, \
-             patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.Path') as mock_path, \
+             patch('autorun.main.session_state') as mock_session:
             # Mock Path chain: Path(file_path).resolve().exists()
             mock_resolved = MagicMock()
             mock_resolved.exists.return_value = False
@@ -156,8 +156,8 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_transcript = []  # No justification in transcript
 
         # Mock that file doesn't exist and policy is JUSTIFY
-        with patch('clautorun.main.Path') as mock_path, \
-             patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.Path') as mock_path, \
+             patch('autorun.main.session_state') as mock_session:
             # Mock Path chain: Path(file_path).resolve().exists()
             mock_resolved = MagicMock()
             mock_resolved.exists.return_value = False
@@ -185,8 +185,8 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_transcript = ["This file is needed because <AUTOFILE_JUSTIFICATION>existing files don't support this feature</AUTOFILE_JUSTIFICATION>"]
 
         # Mock that file doesn't exist and policy is JUSTIFY
-        with patch('clautorun.main.Path') as mock_path, \
-             patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.Path') as mock_path, \
+             patch('autorun.main.session_state') as mock_session:
             mock_path.return_value.exists.return_value = False
 
             # Setup mock session state
@@ -211,8 +211,8 @@ class TestPreToolUseBlockingFix:
         mock_ctx.session_id = "test_session"
 
         # Test with default policy (ALLOW)
-        with patch('clautorun.main.Path') as mock_path, \
-             patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.Path') as mock_path, \
+             patch('autorun.main.session_state') as mock_session:
             mock_path.return_value.exists.return_value = False
 
             # Setup mock session state with default policy

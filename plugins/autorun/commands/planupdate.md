@@ -3,7 +3,7 @@ description: Quick sync plan with codebase state
 argument-hint: [plan file]
 ---
 
-# Quick Plan Update (/cr:planupdate)
+# Quick Plan Update (/ar:planupdate)
 
 $ARGUMENTS
 

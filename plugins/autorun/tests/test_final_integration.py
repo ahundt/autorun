@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Final integration tests for the complete clautorun system"""
+"""Final integration tests for the complete autorun system"""
 
 import sys
 import os
@@ -16,12 +16,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from conftest import should_keep_test_artifacts
 
 try:
-    from clautorun.main import CONFIG, session_state
-    from clautorun.verification_engine import RequirementVerificationEngine, VerificationStatus
-    from clautorun.transcript_analyzer import TranscriptAnalyzer
-    from clautorun.testing_framework import TestRunner, TestSuite, TestEnvironment, TestType
-    from clautorun.diagnostics import DiagnosticManager
-    from clautorun.injection_monitoring import get_injection_monitor, InjectionMethod, InjectionOutcome
+    from autorun.main import CONFIG, session_state
+    from autorun.verification_engine import RequirementVerificationEngine, VerificationStatus
+    from autorun.transcript_analyzer import TranscriptAnalyzer
+    from autorun.testing_framework import TestRunner, TestSuite, TestEnvironment, TestType
+    from autorun.diagnostics import DiagnosticManager
+    from autorun.injection_monitoring import get_injection_monitor, InjectionMethod, InjectionOutcome
     INTEGRATION_AVAILABLE = True
 except ImportError as e:
     print(f"Import error: {e}")
@@ -29,7 +29,7 @@ except ImportError as e:
 
 
 class FinalIntegrationTest:
-    """Comprehensive integration tests for clautorun"""
+    """Comprehensive integration tests for autorun"""
 
     def __init__(self):
         self.test_results = []
@@ -295,7 +295,7 @@ class FinalIntegrationTest:
             print("✅ Test suite registered successfully")
 
             # Test environment controller
-            from clautorun.testing_framework import EnvironmentController
+            from autorun.testing_framework import EnvironmentController
             controller = EnvironmentController()
 
             # Test environment configurations
@@ -320,7 +320,7 @@ class FinalIntegrationTest:
             print("✅ Environment creation simulation successful")
 
             # Test report generation
-            from clautorun.testing_framework import TestResult, TestStatus
+            from autorun.testing_framework import TestResult, TestStatus
             mock_results = [
                 TestResult(
                     test_id="test1",
@@ -438,8 +438,8 @@ class FinalIntegrationTest:
             print("✅ Session initialized")
 
             # Step 2: Process initial command
-            from clautorun.main import handle_activate
-            activation_response = handle_activate(state, "/clautorun /autorun Create a simple web API with user authentication")
+            from autorun.main import handle_activate
+            activation_response = handle_activate(state, "/autorun /autorun Create a simple web API with user authentication")
             if not activation_response:
                 print("❌ Activation failed")
                 return False

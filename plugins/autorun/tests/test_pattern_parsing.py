@@ -13,7 +13,7 @@ Tests the new functionality for:
 """
 
 import pytest
-from clautorun.main import parse_pattern_and_description, command_matches_pattern
+from autorun.main import parse_pattern_and_description, command_matches_pattern
 
 
 class TestParsePatternAndDescription:

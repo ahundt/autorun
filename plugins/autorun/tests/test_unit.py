@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Unit tests for clautorun core functionality
+Unit tests for autorun core functionality
 """
 import pytest
 from unittest.mock import patch
-from clautorun import CONFIG, COMMAND_HANDLERS
+from autorun import CONFIG, COMMAND_HANDLERS
 
 
 class TestConfiguration:
@@ -191,7 +191,7 @@ class TestSessionState:
     def test_session_state_basic_functionality(self):
         """Test basic session state functionality using mock"""
         # Mock the session_state to avoid database creation
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -213,7 +213,7 @@ class TestSessionState:
     def test_multiple_sessions_basic(self):
         """Test basic multiple session functionality"""
         # Mock the session_state to avoid database creation
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             # Test that different session IDs don't interfere
             mock_state_1 = {}
             mock_session.return_value.__enter__.return_value = mock_state_1

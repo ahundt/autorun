@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG
+from autorun import CONFIG
 
 
 class TestPlanCommandHandlers:
@@ -22,32 +22,32 @@ class TestPlanCommandHandlers:
         mappings = CONFIG["command_mappings"]
 
         # Check short forms
-        assert "/cr:pn" in mappings, "Missing /cr:pn mapping"
-        assert "/cr:pr" in mappings, "Missing /cr:pr mapping"
-        assert "/cr:pu" in mappings, "Missing /cr:pu mapping"
-        assert "/cr:pp" in mappings, "Missing /cr:pp mapping"
+        assert "/ar:pn" in mappings, "Missing /ar:pn mapping"
+        assert "/ar:pr" in mappings, "Missing /ar:pr mapping"
+        assert "/ar:pu" in mappings, "Missing /ar:pu mapping"
+        assert "/ar:pp" in mappings, "Missing /ar:pp mapping"
 
         # Check long forms
-        assert "/cr:plannew" in mappings, "Missing /cr:plannew mapping"
-        assert "/cr:planrefine" in mappings, "Missing /cr:planrefine mapping"
-        assert "/cr:planupdate" in mappings, "Missing /cr:planupdate mapping"
-        assert "/cr:planprocess" in mappings, "Missing /cr:planprocess mapping"
+        assert "/ar:plannew" in mappings, "Missing /ar:plannew mapping"
+        assert "/ar:planrefine" in mappings, "Missing /ar:planrefine mapping"
+        assert "/ar:planupdate" in mappings, "Missing /ar:planupdate mapping"
+        assert "/ar:planprocess" in mappings, "Missing /ar:planprocess mapping"
 
     @pytest.mark.unit
     def test_plan_command_handler_names(self):
         """Test plan commands map to correct handler names"""
         mappings = CONFIG["command_mappings"]
 
-        assert mappings["/cr:pn"] == "NEW_PLAN"
-        assert mappings["/cr:pr"] == "REFINE_PLAN"
-        assert mappings["/cr:pu"] == "UPDATE_PLAN"
-        assert mappings["/cr:pp"] == "PROCESS_PLAN"
+        assert mappings["/ar:pn"] == "NEW_PLAN"
+        assert mappings["/ar:pr"] == "REFINE_PLAN"
+        assert mappings["/ar:pu"] == "UPDATE_PLAN"
+        assert mappings["/ar:pp"] == "PROCESS_PLAN"
 
         # Long forms should map to same handlers
-        assert mappings["/cr:plannew"] == "NEW_PLAN"
-        assert mappings["/cr:planrefine"] == "REFINE_PLAN"
-        assert mappings["/cr:planupdate"] == "UPDATE_PLAN"
-        assert mappings["/cr:planprocess"] == "PROCESS_PLAN"
+        assert mappings["/ar:plannew"] == "NEW_PLAN"
+        assert mappings["/ar:planrefine"] == "REFINE_PLAN"
+        assert mappings["/ar:planupdate"] == "UPDATE_PLAN"
+        assert mappings["/ar:planprocess"] == "PROCESS_PLAN"
 
     @pytest.mark.unit
     def test_plan_markdown_files_exist(self):
@@ -80,7 +80,7 @@ class TestPlanCommandHandlers:
     @pytest.mark.unit
     def test_plan_handler_factory(self):
         """Test _make_plan_handler factory function works"""
-        from clautorun.plugins import _make_plan_handler
+        from autorun.plugins import _make_plan_handler
 
         # Create a test handler
         handler = _make_plan_handler("plannew.md")
@@ -103,7 +103,7 @@ class TestPlanCommandHandlers:
     def test_plan_handlers_registered(self):
         """Test plan handlers are registered with app.command()"""
         # Import the app to check registrations
-        from clautorun.plugins import app
+        from autorun.plugins import app
 
         # Get all registered commands
         # Note: We can't easily test app.command() registrations without
@@ -113,7 +113,7 @@ class TestPlanCommandHandlers:
     @pytest.mark.unit
     def test_nonexistent_plan_file_handling(self):
         """Test handler gracefully handles missing files"""
-        from clautorun.plugins import _make_plan_handler
+        from autorun.plugins import _make_plan_handler
 
         # Create handler for nonexistent file
         handler = _make_plan_handler("nonexistent.md")

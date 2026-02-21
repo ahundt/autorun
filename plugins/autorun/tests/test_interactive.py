@@ -7,17 +7,17 @@ from unittest.mock import patch
 # Add the current directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from clautorun import CONFIG, COMMAND_HANDLERS
+from autorun import CONFIG, COMMAND_HANDLERS
 
 def test_command_processing():
     """Test the command processing logic with efficient dispatch"""
-    print("🧪 Testing clautorun command processing")
+    print("🧪 Testing autorun command processing")
     print("=" * 45)
 
     # Mock session state to avoid database creation
     mock_state = {"file_policy": "ALLOW"}
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -90,5 +90,5 @@ def test_command_detection():
 if __name__ == "__main__":
     test_command_processing()
     test_command_detection()
-    print("\n🚀 clautorun is ready for interactive use!")
-    print("💡 Run: AGENT_MODE=SDK_ONLY python -m clautorun")
+    print("\n🚀 autorun is ready for interactive use!")
+    print("💡 Run: AGENT_MODE=SDK_ONLY python -m autorun")

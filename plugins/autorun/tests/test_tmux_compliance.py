@@ -15,10 +15,10 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 try:
-    from clautorun.tmux_utils import get_tmux_utilities, TmuxUtilities, TmuxControlState
-    from clautorun.ai_monitor import get_tmux as get_ai_monitor_tmux
-    from clautorun.tmux_injector import TmuxInjector, DualChannelInjector
-    from clautorun.main import get_global_tmux_utils
+    from autorun.tmux_utils import get_tmux_utilities, TmuxUtilities, TmuxControlState
+    from autorun.ai_monitor import get_tmux as get_ai_monitor_tmux
+    from autorun.tmux_injector import TmuxInjector, DualChannelInjector
+    from autorun.main import get_global_tmux_utils
     COMPLIANCE_TEST_AVAILABLE = True
 except ImportError:
     COMPLIANCE_TEST_AVAILABLE = False
@@ -30,22 +30,22 @@ def _skip_if_unavailable():
 
 
 def test_default_session_naming():
-    """Test requirement: Default session name should be 'clautorun'"""
+    """Test requirement: Default session name should be 'autorun'"""
     _skip_if_unavailable()
 
     # Test centralized utilities
     tmux_utils = get_tmux_utilities()
-    assert tmux_utils.DEFAULT_SESSION_NAME == "clautorun", \
+    assert tmux_utils.DEFAULT_SESSION_NAME == "autorun", \
         f"Default session name incorrect: {tmux_utils.DEFAULT_SESSION_NAME}"
 
     # Test injector default naming
     injector = TmuxInjector()
-    assert injector.session_id == "clautorun", \
+    assert injector.session_id == "autorun", \
         f"TmuxInjector default session incorrect: {injector.session_id}"
 
     # Test dual channel injector default naming
     dual_injector = DualChannelInjector()
-    assert dual_injector.session_id == "clautorun", \
+    assert dual_injector.session_id == "autorun", \
         f"DualChannelInjector default session incorrect: {dual_injector.session_id}"
 
 
@@ -204,7 +204,7 @@ def test_tmux_injector_integration():
 
     # Test default session naming
     default_injector = TmuxInjector()
-    assert default_injector.session_id == "clautorun", \
+    assert default_injector.session_id == "autorun", \
         f"TmuxInjector default session: {default_injector.session_id}"
 
     # Test dual channel injector
@@ -214,7 +214,7 @@ def test_tmux_injector_integration():
 
     # Test default dual channel session naming
     default_dual = DualChannelInjector()
-    assert default_dual.session_id == "clautorun", \
+    assert default_dual.session_id == "autorun", \
         f"DualChannelInjector default session: {default_dual.session_id}"
 
 
@@ -227,7 +227,7 @@ def test_main_py_integration():
     # global_tmux may be None if not initialized yet, that's ok
 
     # Verify the imports work
-    from clautorun.main import TMUX_UTILS_AVAILABLE
+    from autorun.main import TMUX_UTILS_AVAILABLE
     assert TMUX_UTILS_AVAILABLE, "main.py tmux utilities not available"
 
 
@@ -240,8 +240,8 @@ def test_error_handling_and_fallbacks():
     # Test command execution with invalid session - should not crash
     # The key requirement is graceful handling (no exception), not a specific return code
     result = tmux_utils.execute_tmux_command(
-        ['list-windows', '-t', 'clautorun_nonexistent_session_xyz_99'],
-        'clautorun_nonexistent_session_xyz_99'
+        ['list-windows', '-t', 'autorun_nonexistent_session_xyz_99'],
+        'autorun_nonexistent_session_xyz_99'
     )
     assert result is None or isinstance(result, dict), \
         f"execute_tmux_command should return None or dict, got {type(result)}"

@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-TDD tests for clautorun v0.7 plugins.py components.
+TDD tests for autorun v0.7 plugins.py components.
 
 Tests for:
 - File Policy Plugin: ALLOW/JUSTIFY/SEARCH handlers and enforcement
@@ -27,9 +27,9 @@ Tests for:
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from clautorun.core import app, EventContext, ClautorunApp, ThreadSafeDB
-from clautorun.config import CONFIG
-from clautorun import plugins
+from autorun.core import app, EventContext, AutorunApp, ThreadSafeDB
+from autorun.config import CONFIG
+from autorun import plugins
 
 
 # ============================================================================
@@ -41,8 +41,8 @@ class TestFilePolicyPlugin:
 
     def test_allow_policy_handler_sets_state(self):
         """ALLOW handler should set file_policy to ALLOW."""
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:a")
-        ctx.activation_prompt = "/cr:a"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:a")
+        ctx.activation_prompt = "/ar:a"
 
         # Find and call the handler
         handler = app.command_handlers.get("ALLOW")
@@ -53,8 +53,8 @@ class TestFilePolicyPlugin:
 
     def test_justify_policy_handler_sets_state(self):
         """JUSTIFY handler should set file_policy to JUSTIFY."""
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:j")
-        ctx.activation_prompt = "/cr:j"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:j")
+        ctx.activation_prompt = "/ar:j"
 
         handler = app.command_handlers.get("JUSTIFY")
         assert handler is not None
@@ -64,8 +64,8 @@ class TestFilePolicyPlugin:
 
     def test_search_policy_handler_sets_state(self):
         """SEARCH handler should set file_policy to SEARCH."""
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:f")
-        ctx.activation_prompt = "/cr:f"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:f")
+        ctx.activation_prompt = "/ar:f"
 
         handler = app.command_handlers.get("SEARCH")
         assert handler is not None
@@ -76,8 +76,8 @@ class TestFilePolicyPlugin:
     def test_status_handler_shows_policy(self):
         """STATUS handler should show current policy."""
         store = ThreadSafeDB()
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:st", store=store)
-        ctx.activation_prompt = "/cr:st"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:st", store=store)
+        ctx.activation_prompt = "/ar:st"
         ctx.file_policy = "SEARCH"
 
         handler = app.command_handlers.get("STATUS")
@@ -274,9 +274,9 @@ class TestAutorunPlugin:
         store = ThreadSafeDB()
         ctx = EventContext(
             session_id="test", event="UserPromptSubmit",
-            prompt="/cr:go build something", store=store
+            prompt="/ar:go build something", store=store
         )
-        ctx.activation_prompt = "/cr:go build something"
+        ctx.activation_prompt = "/ar:go build something"
 
         handler = app.command_handlers.get("activate")
         assert handler is not None
@@ -290,9 +290,9 @@ class TestAutorunPlugin:
         store = ThreadSafeDB()
         ctx = EventContext(
             session_id="test", event="UserPromptSubmit",
-            prompt="/cr:gp build something", store=store
+            prompt="/ar:gp build something", store=store
         )
-        ctx.activation_prompt = "/cr:gp build something"
+        ctx.activation_prompt = "/ar:gp build something"
 
         handler = app.command_handlers.get("activate")
         result = handler(ctx)
@@ -302,8 +302,8 @@ class TestAutorunPlugin:
     def test_stop_deactivates(self):
         """handle_stop should deactivate autorun."""
         store = ThreadSafeDB()
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:x", store=store)
-        ctx.activation_prompt = "/cr:x"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:x", store=store)
+        ctx.activation_prompt = "/ar:x"
         ctx.autorun_active = True
 
         handler = app.command_handlers.get("stop")
@@ -314,8 +314,8 @@ class TestAutorunPlugin:
     def test_emergency_stop_deactivates(self):
         """handle_sos should deactivate with emergency message."""
         store = ThreadSafeDB()
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:sos", store=store)
-        ctx.activation_prompt = "/cr:sos"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:sos", store=store)
+        ctx.activation_prompt = "/ar:sos"
         ctx.autorun_active = True
 
         handler = app.command_handlers.get("emergency_stop")
@@ -397,27 +397,27 @@ class TestPlanManagementPlugin:
     """Tests for plan management handlers."""
 
     def test_plannew_sets_plan_active(self):
-        """/cr:pn should set plan_active and return template."""
+        """/ar:pn should set plan_active and return template."""
         store = ThreadSafeDB()
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:pn", store=store)
-        ctx.activation_prompt = "/cr:pn"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:pn", store=store)
+        ctx.activation_prompt = "/ar:pn"
 
         # Find handler by iterating command_handlers
         for cmd, handler in app.command_handlers.items():
-            if cmd == "/cr:pn":
+            if cmd == "/ar:pn":
                 result = handler(ctx)
                 assert ctx.plan_active is True
                 assert "Create New Plan" in result
                 break
 
     def test_planrefine_returns_template(self):
-        """/cr:pr should return refine template."""
+        """/ar:pr should return refine template."""
         store = ThreadSafeDB()
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:pr", store=store)
-        ctx.activation_prompt = "/cr:pr"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:pr", store=store)
+        ctx.activation_prompt = "/ar:pr"
 
         for cmd, handler in app.command_handlers.items():
-            if cmd == "/cr:pr":
+            if cmd == "/ar:pr":
                 result = handler(ctx)
                 assert "Refine" in result or "Refinement" in result
                 break
@@ -460,12 +460,12 @@ class TestHandlerRegistration:
 
     def test_block_handlers_registered(self):
         """Block handlers should be registered in app."""
-        assert "/cr:no" in app.command_handlers
-        assert "/cr:ok" in app.command_handlers
-        assert "/cr:clear" in app.command_handlers
-        assert "/cr:globalno" in app.command_handlers
-        assert "/cr:globalok" in app.command_handlers
-        assert "/cr:globalstatus" in app.command_handlers
+        assert "/ar:no" in app.command_handlers
+        assert "/ar:ok" in app.command_handlers
+        assert "/ar:clear" in app.command_handlers
+        assert "/ar:globalno" in app.command_handlers
+        assert "/ar:globalok" in app.command_handlers
+        assert "/ar:globalstatus" in app.command_handlers
 
     def test_autorun_handlers_registered(self):
         """Autorun handlers should be registered in app."""
@@ -475,10 +475,10 @@ class TestHandlerRegistration:
 
     def test_plan_handlers_registered(self):
         """Plan handlers should be registered in app."""
-        assert "/cr:pn" in app.command_handlers
-        assert "/cr:pr" in app.command_handlers
-        assert "/cr:pu" in app.command_handlers
-        assert "/cr:pp" in app.command_handlers
+        assert "/ar:pn" in app.command_handlers
+        assert "/ar:pr" in app.command_handlers
+        assert "/ar:pu" in app.command_handlers
+        assert "/ar:pp" in app.command_handlers
 
     def test_pretooluse_chain_has_handlers(self):
         """PreToolUse chain should have handlers."""
@@ -520,22 +520,22 @@ class TestScopeAccessor:
 
 
 # ============================================================================
-# /cr:reload Command Tests
+# /ar:reload Command Tests
 # ============================================================================
 
 class TestReloadCommand:
-    """Tests for /cr:reload command."""
+    """Tests for /ar:reload command."""
 
     def test_reload_handler_registered(self):
         """Reload handler should be registered."""
-        assert "/cr:reload" in app.command_handlers
+        assert "/ar:reload" in app.command_handlers
 
     def test_reload_returns_count(self):
         """Reload should return integration count."""
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:reload")
-        ctx.activation_prompt = "/cr:reload"
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:reload")
+        ctx.activation_prompt = "/ar:reload"
 
-        handler = app.command_handlers.get("/cr:reload")
+        handler = app.command_handlers.get("/ar:reload")
         result = handler(ctx)
 
         assert "Reloaded" in result
@@ -543,15 +543,15 @@ class TestReloadCommand:
 
     def test_reload_clears_cache(self):
         """Reload should clear integration cache."""
-        from clautorun.integrations import load_all_integrations, invalidate_caches
+        from autorun.integrations import load_all_integrations, invalidate_caches
 
         # Load once
         integrations1 = load_all_integrations()
 
         # Reload via handler
-        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/cr:reload")
-        ctx.activation_prompt = "/cr:reload"
-        handler = app.command_handlers.get("/cr:reload")
+        ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="/ar:reload")
+        ctx.activation_prompt = "/ar:reload"
+        handler = app.command_handlers.get("/ar:reload")
         handler(ctx)
 
         # Load again - should be different object (cache was cleared)
@@ -747,7 +747,7 @@ class TestEventTypeFiltering:
 class TestWhenPredicateIntegration:
     """Tests for when predicate integration in check_blocked_commands."""
 
-    @patch("clautorun.integrations.subprocess.run")
+    @patch("autorun.integrations.subprocess.run")
     def test_when_predicate_evaluated(self, mock_run):
         """When predicate should be evaluated before blocking."""
         # git reset --hard has when: has_uncommitted_changes
@@ -767,7 +767,7 @@ class TestWhenPredicateIntegration:
         # Should be blocked because has_uncommitted_changes=True
         assert result is not None
 
-    @patch("clautorun.integrations.subprocess.run")
+    @patch("autorun.integrations.subprocess.run")
     def test_when_predicate_false_skips_integration(self, mock_run):
         """When predicate returning False should skip that integration."""
         # git reset --hard has when: has_uncommitted_changes

@@ -6,7 +6,7 @@ TDD: Test three-stage completion workflow
 This test suite follows TDD principles: Write FAILING tests first, then fix to make them PASS.
 
 Bug #1: STAGE 2 handler must reject stage 3 confirmation marker
-Location: plugins/clautorun/src/clautorun/main.py:880-897
+Location: plugins/autorun/src/autorun/main.py:880-897
 """
 import pytest
 import sys
@@ -16,8 +16,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
-    from clautorun.main import stop_handler, build_hook_response, session_state
-    from clautorun.config import CONFIG
+    from autorun.main import stop_handler, build_hook_response, session_state
+    from autorun.config import CONFIG
     MAIN_AVAILABLE = True
 except ImportError as e:
     MAIN_AVAILABLE = False
@@ -48,7 +48,7 @@ def test_stage2_blocks_premature_stage3_marker():
     Root Cause: is_premature_stop() returns False for ANY stage confirmation,
     but stage-specific validation should happen in handlers themselves.
 
-    File: plugins/clautorun/src/clautorun/main.py:880-897
+    File: plugins/autorun/src/autorun/main.py:880-897
     Expected: FAIL initially (Bug exists), then PASS after fix
     """
     session_id = "test_stage2_block"
@@ -89,7 +89,7 @@ def test_stage1_blocks_premature_stage3_marker():
     """
     Verify STAGE 1 already has stage 3 guard (no regression)
 
-    File: plugins/clautorun/src/clautorun/main.py:856-877
+    File: plugins/autorun/src/autorun/main.py:856-877
     Expected: PASS (STAGE 1 already has the guard)
     """
     session_id = "test_stage1_block"
@@ -123,7 +123,7 @@ def test_countdown_provides_recovery_mechanism():
     The alternating behavior (status on even calls, full injection on odd calls)
     provides recovery mechanism if AI genuinely stops during countdown.
 
-    File: plugins/clautorun/src/clautorun/main.py:922-927
+    File: plugins/autorun/src/autorun/main.py:922-927
     Expected: PASS (countdown works as intended)
     """
     session_id = "test_countdown_recovery"
@@ -153,7 +153,7 @@ def test_countdown_status_on_even_calls():
     """
     Even countdown calls should show simple status
 
-    File: plugins/clautorun/src/clautorun/main.py:922-927
+    File: plugins/autorun/src/autorun/main.py:922-927
     Expected: PASS (countdown works as intended)
     """
     session_id = "test_countdown_status"
@@ -187,7 +187,7 @@ def test_hook_count_accepts_current_behavior():
 
     Decision: DON'T FIX (YAGNI principle)
 
-    File: plugins/clautorun/src/clautorun/main.py:843-844
+    File: plugins/autorun/src/autorun/main.py:843-844
     Expected: PASS (documents we accept current behavior)
     """
     # This test documents that we accept current behavior per YAGNI principle
@@ -199,7 +199,7 @@ def test_stage2_normal_completion_still_works():
     """
     Regression test: STAGE 2 normal completion should still work
 
-    File: plugins/clautorun/src/clautorun/main.py:882-891
+    File: plugins/autorun/src/autorun/main.py:882-891
     Expected: PASS (existing functionality not broken)
     """
     session_id = "test_stage2_normal"
@@ -226,4 +226,4 @@ def test_stage2_normal_completion_still_works():
             f"Should provide countdown message, got: {response}"
 
 
-# Run tests with: uv run pytest plugins/clautorun/tests/test_three_stage_completion.py -v
+# Run tests with: uv run pytest plugins/autorun/tests/test_three_stage_completion.py -v

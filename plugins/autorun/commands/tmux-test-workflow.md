@@ -6,7 +6,7 @@ model: sonnet
 
 # CLI Testing Workflow
 
-**Canonical command**: `/cr:ttest` (short: `/cr:tt`)
+**Canonical command**: `/ar:ttest` (short: `/ar:tt`)
 
 **Simple, safe CLI testing** that runs tests in isolated tmux sessions without affecting your current Claude Code session.
 
@@ -14,13 +14,13 @@ model: sonnet
 
 ```bash
 # Test basic commands
-/cr:ttest basic
+/ar:ttest basic
 
 # Test specific command
-/cr:ttest "npm test"
+/ar:ttest "npm test"
 
 # Test help system
-/cr:ttest help
+/ar:ttest help
 ```
 
 ## Available Test Types
@@ -42,9 +42,9 @@ Tests help commands:
 Test any CLI command safely:
 
 **Examples**:
-- `/cr:ttest "git status"`
-- `/cr:ttest "python --version"`
-- `/cr:ttest "mytool --help"`
+- `/ar:ttest "git status"`
+- `/ar:ttest "python --version"`
+- `/ar:ttest "mytool --help"`
 
 ## Safety Features
 
@@ -71,7 +71,7 @@ FAIL: mytool --broken
 
 ## Why This Is Safe
 
-- **Session Isolation**: Tests run in dedicated "clautorun-test" sessions
+- **Session Isolation**: Tests run in dedicated "autorun-test" sessions
 - **Explicit Targeting**: Commands never go to your current session
 - **Guaranteed Cleanup**: try/finally ensures session is always killed
 - **No File Changes**: Read-only testing unless explicitly specified

@@ -10,7 +10,7 @@
 
 **Always read from this location (relative to git root):**
 ```
-plugins/clautorun/
+plugins/autorun/
 ```
 
 **Why:**
@@ -25,11 +25,11 @@ plugins/clautorun/
 
 **Primary installation command** (run from repository root):
 ```bash
-(uv run --project plugins/clautorun python -m clautorun --install --force && \
-  cd plugins/clautorun && \
+(uv run --project plugins/autorun python -m autorun --install --force && \
+  cd plugins/autorun && \
   uv tool install --force --editable . && \
   cd ../.. && \
-  clautorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
+  autorun --restart-daemon) 2>&1 | tee "install-$(date +%Y%m%d-%H%M%S).log"
 ```
 
 **IMPORTANT:** Use a **3-minute timeout** when running via Bash tool - the UV tool
@@ -37,12 +37,12 @@ install step can take 1-2 minutes on first run or when dependencies change.
 
 **What this does:**
 1. Syncs plugin to cache (both Claude Code and Gemini CLI)
-2. Installs UV tool globally (`clautorun`, `claude-session-tools` commands)
+2. Installs UV tool globally (`autorun`, `claude-session-tools` commands)
 3. Restarts daemon to pick up code changes
 4. Logs output to timestamped file: `install-YYYYMMDD-HHMMSS.log`
 
 **When to run:**
-- After editing Python source files in `src/clautorun/`
+- After editing Python source files in `src/autorun/`
 - After modifying hook files in `hooks/`
 - After changing plugin configuration
 - When testing fixes or new features
@@ -53,7 +53,7 @@ install step can take 1-2 minutes on first run or when dependencies change.
 
 **DO NOT read from:**
 ```
-~/.claude/plugins/cache/clautorun/clautorun/0.5.0/
+~/.claude/plugins/cache/autorun/autorun/0.5.0/
 ```
 
 **Why NOT:**
@@ -67,8 +67,8 @@ install step can take 1-2 minutes on first run or when dependencies change.
 ## How This Happens
 
 Claude Code plugin installation process:
-1. `/plugin install https://github.com/ahundt/clautorun.git`
-2. Claude copies repository to: `~/.claude/plugins/cache/clautorun/clautorun/0.5.0/`
+1. `/plugin install https://github.com/ahundt/autorun.git`
+2. Claude copies repository to: `~/.claude/plugins/cache/autorun/autorun/0.5.0/`
 3. Plugin loads from cache location
 4. **Problem**: AI may read cached code instead of git repository
 5. **Issue**: Changes in dev repo may not be reflected in cache until reinstalled
@@ -76,9 +76,9 @@ Claude Code plugin installation process:
 ## Directory Structure
 
 ```
-clautorun/                             # Git repository root
-├── plugins/clautorun/                 # <-- DEVELOPMENT LOCATION (READ THIS)
-│   ├── src/clautorun/                 # Source code to edit
+autorun/                             # Git repository root
+├── plugins/autorun/                 # <-- DEVELOPMENT LOCATION (READ THIS)
+│   ├── src/autorun/                 # Source code to edit
 │   ├── tests/                         # Tests to run
 │   ├── commands/                      # Plugin commands
 │   ├── agents/                        # Agent definitions
@@ -86,10 +86,10 @@ clautorun/                             # Git repository root
 │   └── .claude-plugin/                # Plugin manifest
 └── ... (other files)
 
-~/.claude/plugins/cache/clautorun/     # Plugin cache (DO NOT EDIT)
-└── clautorun/
+~/.claude/plugins/cache/autorun/     # Plugin cache (DO NOT EDIT)
+└── autorun/
     └── 0.5.0/                         # Cached copy (READ-ONLY)
-        ├── src/clautorun/             # May be outdated!
+        ├── src/autorun/             # May be outdated!
         ├── tests/
         └── ...
 ```
@@ -106,7 +106,7 @@ git status
 
 # Check current working directory
 pwd
-# Should end with: plugins/clautorun/
+# Should end with: plugins/autorun/
 ```
 
 ## Hook Error Prevention (CRITICAL)
@@ -123,7 +123,7 @@ Claude Code treats ANY stderr output from hooks as "hook error" and ignores the 
 
 4. **Cache sync**: After fixing pyproject.toml or hooks.json in the source, run the installer to sync to cache:
    ```bash
-   uv run --project plugins/clautorun python -m clautorun --install --force
+   uv run --project plugins/autorun python -m autorun --install --force
    ```
    Manual file copies to `~/.claude/plugins/cache/` are fragile and will be overwritten on next install. Always use the installer.
 
@@ -149,25 +149,25 @@ Claude Code treats ANY stderr output from hooks as "hook error" and ignores the 
 Environment variable (set before running Claude Code/Gemini):
 ```bash
 # Auto-detect (default - recommended)
-export CLAUTORUN_EXIT2_WORKAROUND=auto
+export AUTORUN_EXIT2_WORKAROUND=auto
 
 # Force enable for testing
-export CLAUTORUN_EXIT2_WORKAROUND=always
+export AUTORUN_EXIT2_WORKAROUND=always
 
 # Disable for testing/future
-export CLAUTORUN_EXIT2_WORKAROUND=never
+export AUTORUN_EXIT2_WORKAROUND=never
 ```
 
 CLI argument (applies to current execution):
 ```bash
-clautorun --exit2-mode auto    # Default - auto-detect CLI
-clautorun --exit2-mode always  # Force exit-2 for all CLIs
-clautorun --exit2-mode never   # Disable workaround for all CLIs
+autorun --exit2-mode auto    # Default - auto-detect CLI
+autorun --exit2-mode always  # Force exit-2 for all CLIs
+autorun --exit2-mode never   # Disable workaround for all CLIs
 ```
 
 **Technical Details**:
-- Detection: `plugins/clautorun/src/clautorun/config.py:detect_cli_type()`
-- Unified output: `plugins/clautorun/src/clautorun/client.py:output_hook_response()`
+- Detection: `plugins/autorun/src/autorun/config.py:detect_cli_type()`
+- Unified output: `plugins/autorun/src/autorun/client.py:output_hook_response()`
 - Response format: Both `decision` (Gemini) and `hookSpecificOutput.permissionDecision` (Claude) fields included
 - Exit codes: 0 for allow/Gemini-deny, 2 for Claude-deny (stderr contains reason)
 
@@ -178,23 +178,23 @@ clautorun --exit2-mode never   # Disable workaround for all CLIs
 Markdown commands can include dynamic bash output using `!` prefix ([docs](https://docs.anthropic.com/en/docs/claude-code/slash-commands)). To access CONFIG:
 
 ```bash
-!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "from clautorun.config import CONFIG; print(CONFIG['key'])"`
+!`uv run --project ${CLAUDE_PLUGIN_ROOT} python -c "from autorun.config import CONFIG; print(CONFIG['key'])"`
 ```
 
 ## If You See This File in Cache Location
 
-1. Navigate to git repository: `cd <git-root>/plugins/clautorun/`
+1. Navigate to git repository: `cd <git-root>/plugins/autorun/`
 2. Read CLAUDE.md from that location
 3. Edit source files in that location
 4. Run tests from that location
 5. Commit changes to git repository
-6. Reinstall plugin: `/plugin update clautorun`
+6. Reinstall plugin: `/plugin update autorun`
 
 ## Summary
 
-- **READ**: `<git-root>/plugins/clautorun/`
-- **EDIT**: `<git-root>/plugins/clautorun/`
-- **TEST**: `<git-root>/plugins/clautorun/`
+- **READ**: `<git-root>/plugins/autorun/`
+- **EDIT**: `<git-root>/plugins/autorun/`
+- **TEST**: `<git-root>/plugins/autorun/`
 - **COMMIT**: `<git-root>/` (git root)
 
 **NEVER**: `~/.claude/plugins/cache/...` (wrong location, may be outdated)

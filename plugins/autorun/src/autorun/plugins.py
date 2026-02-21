@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Clautorun v0.7 Plugins - Magic State + DRY Factories
+Autorun v0.7 Plugins - Magic State + DRY Factories
 
 ZERO boilerplate per state field thanks to magic __getattr__/__setattr__.
 Just write ctx.file_policy = "SEARCH" and it persists automatically!
@@ -74,16 +74,16 @@ def _make_policy_handler(policy_name: str):
 
 # Data-driven registration: easy to add new policies
 _POLICY_ALIASES = {
-    "ALLOW":   ("/cr:a", "/cr:allow", "/afa"),
-    "JUSTIFY": ("/cr:j", "/cr:justify", "/afj"),
-    "SEARCH":  ("/cr:f", "/cr:find", "/afs"),
+    "ALLOW":   ("/ar:a", "/ar:allow", "/afa"),
+    "JUSTIFY": ("/ar:j", "/ar:justify", "/afj"),
+    "SEARCH":  ("/ar:f", "/ar:find", "/afs"),
 }
 
 for policy, aliases in _POLICY_ALIASES.items():
     app.command(*aliases, policy)(_make_policy_handler(policy))
 
 
-@app.command("/cr:st", "/cr:status", "/afst", "STATUS")
+@app.command("/ar:st", "/ar:status", "/afst", "STATUS")
 def handle_status(ctx: EventContext) -> str:
     """
     Unified status: Shows file policy + session/global blocks.
@@ -146,7 +146,7 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
         return None
 
     # REGRESSION PROTECTION: Only gate when autorun is active
-    # If autorun NOT active (normal /cr:plannew without /cr:go), allow ExitPlanMode as before
+    # If autorun NOT active (normal /ar:plannew without /ar:go), allow ExitPlanMode as before
     if not ctx.autorun_active:
         return None  # No gating - existing behavior preserved
 
@@ -327,7 +327,7 @@ def _get_suggestion(pattern: str) -> str:
     for k, v in DEFAULT_INTEGRATIONS.items():
         if k in pattern:
             return v["suggestion"]
-    return f"Blocked: {pattern}\n\nTo allow: /cr:ok {pattern}"
+    return f"Blocked: {pattern}\n\nTo allow: /ar:ok {pattern}"
 
 
 # === DRY SCOPE ACCESSOR (eliminates session vs global duplication) ===
@@ -378,7 +378,7 @@ def _make_block_op(scope: str, op: str):
         if op == "block":
             if not args:
                 prefix = "global" if scope == "global" else ""
-                return f"❌ Usage: /cr:{prefix}no <pattern> [description]"
+                return f"❌ Usage: /ar:{prefix}no <pattern> [description]"
             try:
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:
@@ -395,7 +395,7 @@ def _make_block_op(scope: str, op: str):
         if op == "allow":
             if not args:
                 prefix = "global" if scope == "global" else ""
-                return f"❌ Usage: /cr:{prefix}ok <pattern>"
+                return f"❌ Usage: /ar:{prefix}ok <pattern>"
             before = len(blocks)
             blocks = [b for b in blocks if b["pattern"] != args.strip()]
             accessor.set(blocks)
@@ -421,21 +421,21 @@ def _make_block_op(scope: str, op: str):
 
 # DRY: Data-driven registration
 _BLOCK_COMMANDS = [
-    ("session", "/cr:no", "block"),
-    ("session", "/cr:ok", "allow"),
-    ("session", "/cr:clear", "clear"),
-    ("session", "/cr:blocks", "status"),
-    ("global", "/cr:globalno", "block"),
-    ("global", "/cr:globalok", "allow"),
-    ("global", "/cr:globalclear", "clear"),
-    ("global", "/cr:globalstatus", "status"),
+    ("session", "/ar:no", "block"),
+    ("session", "/ar:ok", "allow"),
+    ("session", "/ar:clear", "clear"),
+    ("session", "/ar:blocks", "status"),
+    ("global", "/ar:globalno", "block"),
+    ("global", "/ar:globalok", "allow"),
+    ("global", "/ar:globalclear", "clear"),
+    ("global", "/ar:globalstatus", "status"),
 ]
 
 for scope, cmd, op in _BLOCK_COMMANDS:
     app.command(cmd)(_make_block_op(scope, op))
 
 
-@app.command("/cr:reload")
+@app.command("/ar:reload")
 def handle_reload(ctx: EventContext) -> str:
     """Force reload of integration files."""
     invalidate_caches()
@@ -465,19 +465,19 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if not cmd:
         return None
 
-    # Centralized prefix check (DRY): Internal clautorun commands are always allowed
-    if cmd.strip().startswith("/cr:"):
+    # Centralized prefix check (DRY): Internal autorun commands are always allowed
+    if cmd.strip().startswith("/ar:"):
         return ctx.allow()
 
     # Check session blocks first (highest priority)
     for b in ScopeAccessor(ctx, "session").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:ok {b['pattern']}")
+            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /ar:ok {b['pattern']}")
 
     # Then global blocks
     for b in ScopeAccessor(ctx, "global").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /cr:globalok {b['pattern']}")
+            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /ar:globalok {b['pattern']}")
 
     # User files + Python defaults (sorted by specificity) - FIX Bug 2
     try:
@@ -556,10 +556,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 
 def _is_procedural_mode(prompt: str) -> bool:
     """Check if command indicates procedural mode."""
-    return any(x in prompt for x in ["/cr:gp", "/cr:proc", "/autoproc"])
+    return any(x in prompt for x in ["/ar:gp", "/ar:proc", "/autoproc"])
 
 
-@app.command("/cr:go", "/cr:run", "/cr:gp", "/cr:proc", "/autorun", "/autoproc", "activate")
+@app.command("/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc", "activate")
 def handle_activate(ctx: EventContext) -> str:
     """Activate autorun with task description."""
     # Bug #10 Fix: Ensure prompt is string to avoid TypeError on None
@@ -589,14 +589,14 @@ def _deactivate(ctx: EventContext, msg: str) -> str:
     return msg
 
 
-@app.command("/cr:x", "/cr:stop", "/autostop", "stop")
+@app.command("/ar:x", "/ar:stop", "/autostop", "stop")
 def handle_stop(ctx: EventContext) -> str:
     """Graceful stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, "✅ Stopped")
 
 
-@app.command("/cr:sos", "/cr:estop", "/estop", "emergency_stop")
+@app.command("/ar:sos", "/ar:estop", "/estop", "emergency_stop")
 def handle_sos(ctx: EventContext) -> str:
     """Emergency stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
@@ -934,10 +934,10 @@ def _make_plan_handler(md_filename: str):
 
 # Data-driven registration: symlink aliases for plan commands
 _PLAN_ALIASES = {
-    "NEW_PLAN":     ("/cr:pn", "/cr:plannew", "plannew.md"),
-    "REFINE_PLAN":  ("/cr:pr", "/cr:planrefine", "planrefine.md"),
-    "UPDATE_PLAN":  ("/cr:pu", "/cr:planupdate", "planupdate.md"),
-    "PROCESS_PLAN": ("/cr:pp", "/cr:planprocess", "planprocess.md"),
+    "NEW_PLAN":     ("/ar:pn", "/ar:plannew", "plannew.md"),
+    "REFINE_PLAN":  ("/ar:pr", "/ar:planrefine", "planrefine.md"),
+    "UPDATE_PLAN":  ("/ar:pu", "/ar:planupdate", "planupdate.md"),
+    "PROCESS_PLAN": ("/ar:pp", "/ar:planprocess", "planprocess.md"),
 }
 
 for plan_type, (short_cmd, long_cmd, md_file) in _PLAN_ALIASES.items():

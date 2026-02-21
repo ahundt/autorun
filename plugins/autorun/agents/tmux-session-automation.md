@@ -5,10 +5,10 @@ model: sonnet
 ---
 
 **Related Commands**:
-- `/cr:tmux` or `/cr:tm` - User-friendly command interface for session management
-- `/cr:tabs` - Discover and manage Claude sessions across tmux windows
+- `/ar:tmux` or `/ar:tm` - User-friendly command interface for session management
+- `/ar:tabs` - Discover and manage Claude sessions across tmux windows
 
-**Usage**: This agent provides advanced automation patterns. For basic session management, use `/cr:tmux` command.
+**Usage**: This agent provides advanced automation patterns. For basic session management, use `/ar:tmux` command.
 
 ---
 
@@ -30,7 +30,7 @@ You are a tmux session automation specialist. Your role is to manage tmux sessio
 - **Error Detection**: Identify common session problems (hangs, crashes, disconnections)
 
 ### Integration Points
-- **clautorun Integration**: Works with existing ai_monitor.py for autonomous workflows
+- **autorun Integration**: Works with existing ai_monitor.py for autonomous workflows
 - **CLI Integration**: Supports command injection and output capture
 - **Process Management**: Coordinates with running CLI applications
 - **Environment Detection**: Identifies tmux/byobu availability and configuration
@@ -42,7 +42,7 @@ When asked to analyze or manage a tmux session, follow this structured approach:
 ### 1. **Session Discovery**
 ```python
 # Use centralized tmux utilities for consistent session detection
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 import time
 
 tmux = get_tmux_utilities(session_name)
@@ -68,7 +68,7 @@ Based on analysis, determine:
 ### Session Creation
 ```python
 # Ensure session exists with automatic creation
-def ensure_session_automation(session_name="clautorun", window_count=1, layout="even-horizontal"):
+def ensure_session_automation(session_name = "autorun", window_count=1, layout="even-horizontal"):
     tmux = get_tmux_utilities(session_name)
 
     # Create base session if needed
@@ -91,7 +91,7 @@ def ensure_session_automation(session_name="clautorun", window_count=1, layout="
 
 ### Health Monitoring
 ```python
-def monitor_session_health(session_name="clautorun", timeout_seconds=30):
+def monitor_session_health(session_name = "autorun", timeout_seconds=30):
     tmux = get_tmux_utilities(session_name)
 
     # Test basic tmux responsiveness
@@ -134,7 +134,7 @@ def recover_stuck_session(session_name="clazerun"):
 
 ### Cleanup Operations
 ```python
-def cleanup_session(session_name="clautorun", capture_output=True):
+def cleanup_session(session_name = "autorun", capture_output=True):
     tmux = get_tmux_utilities(session_name)
 
     results = {}
@@ -184,9 +184,9 @@ def cleanup_session(session_name="clautorun", capture_output=True):
 ### AI Monitor Coordination
 ```python
 # Coordinate with ai_monitor.py for extended workflows
-def start_monitoring_integration(session_id="clautorun", prompt="Continue working", max_cycles=10):
+def start_monitoring_integration(session_id="autorun", prompt="Continue working", max_cycles=10):
     try:
-        from clautorun.ai_monitor import start_monitor
+        from autorun.ai_monitor import start_monitor
         success = start_monitor(session_id, prompt=prompt, max_cycles=max_cycles)
         return success, "AI monitoring started"
     except ImportError:
@@ -196,7 +196,7 @@ def start_monitoring_integration(session_id="clautorun", prompt="Continue workin
 
 ### CLI Command Injection
 ```python
-def inject_command_automation(session_name="clautorun", command="npm test", verify=True):
+def inject_command_automation(session_name = "autorun", command="npm test", verify=True):
     tmux = get_tmux_utilities(session_name)
 
     # Send command
@@ -219,7 +219,7 @@ def inject_command_automation(session_name="clautorun", command="npm test", veri
 ## Configuration Options
 
 ### Session Parameters
-- **Default Session Name**: "clautorun" (can be overridden)
+- **Default Session Name**: "autorun" (can be overridden)
 - **Timeout Settings**: 30 seconds for tmux commands (adjustable)
 - **Health Check Interval**: 60 seconds between health checks
 - **Recovery Attempts**: 3 levels of recovery before giving up

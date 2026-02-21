@@ -3,26 +3,26 @@
 """
 Tests for command_detection module.
 
-Run: uv run pytest plugins/clautorun/tests/test_command_detection.py -v
+Run: uv run pytest plugins/autorun/tests/test_command_detection.py -v
 """
 from __future__ import annotations
 
 import pytest
 
-from clautorun.command_detection import (
+from autorun.command_detection import (
     BASHLEX_AVAILABLE,
     ExtractedCommands,
     ParsedPattern,
     command_matches_pattern,
     extract_commands,
 )
-from clautorun.config import CONFIG
+from autorun.config import CONFIG
 
 
 # ─── Bug 1: Plan Commands ─────────────────────────────────────────────────────
 
-PLAN_COMMANDS = ["/cr:pn", "/cr:pr", "/cr:pu", "/cr:pp",
-                 "/cr:plannew", "/cr:planrefine", "/cr:planupdate", "/cr:planprocess"]
+PLAN_COMMANDS = ["/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp",
+                 "/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"]
 
 @pytest.mark.parametrize("cmd", PLAN_COMMANDS)
 def test_plan_commands_in_mappings(cmd: str) -> None:
@@ -122,7 +122,7 @@ def test_extract_caching():
 # ─── command_matches_pattern Tests ────────────────────────────────────────────
 
 BLOCK_CASES = ["rm file", "sudo rm file", "/bin/rm file", "cat && rm file"]
-ALLOW_CASES = ["/cr:planrefine", "echo rm", "rmediation", "warm-up.sh"]
+ALLOW_CASES = ["/ar:planrefine", "echo rm", "rmediation", "warm-up.sh"]
 
 @pytest.mark.parametrize("cmd", BLOCK_CASES)
 def test_blocks_rm(cmd: str) -> None:
@@ -196,7 +196,7 @@ class TestMultiPassDetection:
         Trade-off: We also include arguments like "file.txt" but that's
         acceptable because they won't match any dangerous pattern.
         """
-        from clautorun.command_detection import _extract_impl
+        from autorun.command_detection import _extract_impl
         result = _extract_impl("sudo -u root rm file.txt")
         # Must include rm (the actual dangerous command)
         assert "rm" in result.all_potential
@@ -247,7 +247,7 @@ class TestV8EdgeCases:
         names, _ = extract_commands("rm -- -rf")
         assert "rm" in names
         # rm is the command, and after --, -rf is treated as a potential command/file
-        from clautorun.command_detection import _extract_cached
+        from autorun.command_detection import _extract_cached
         result = _extract_cached("rm -- -rf")
         # The primary command (rm) should be in potential
         assert "rm" in result.all_potential
@@ -269,19 +269,19 @@ class TestV8EdgeCases:
 
     def test_exec_not_a_prefix(self):
         """v8: exec is not in COMMAND_PREFIXES (replaces shell)."""
-        from clautorun.command_detection import COMMAND_PREFIXES
+        from autorun.command_detection import COMMAND_PREFIXES
         assert "exec" not in COMMAND_PREFIXES
         assert "xargs" not in COMMAND_PREFIXES
 
     def test_sandboxing_prefixes(self):
         """v8: Sandboxing tools are prefixes."""
-        from clautorun.command_detection import COMMAND_PREFIXES
+        from autorun.command_detection import COMMAND_PREFIXES
         assert "fakeroot" in COMMAND_PREFIXES
         assert "firejail" in COMMAND_PREFIXES
 
     def test_caching_efficiency(self):
         """v8: Same command should hit cache."""
-        from clautorun.command_detection import _extract_cached
+        from autorun.command_detection import _extract_cached
         cmd = "sudo rm -rf /"
         r1 = _extract_cached(cmd)
         r2 = _extract_cached(cmd)
@@ -315,8 +315,8 @@ class TestBug2SubstringFix:
     """Verify Bug 2 is fixed: rm doesn't match substrings."""
 
     @pytest.mark.parametrize("safe_cmd", [
-        "/cr:planrefine",
-        "/cr:pr",
+        "/ar:planrefine",
+        "/ar:pr",
         "rmediation",
         "warm-up.sh",
         "perform",

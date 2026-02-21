@@ -1,10 +1,10 @@
 {
-  "description": "clautorun v0.8 - Gemini CLI native compatibility hooks",
+  "description": "autorun v0.8 - Gemini CLI native compatibility hooks",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [{
-          "name": "clautorun-init",
+          "name": "autorun-init",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -13,9 +13,9 @@
     ],
     "BeforeAgent": [
       {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
         "hooks": [{
-          "name": "clautorun-command",
+          "name": "autorun-command",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -26,7 +26,7 @@
       {
         "matcher": "write_file|run_shell_command|replace|read_file|glob|grep_search|exit_plan_mode",
         "hooks": [{
-          "name": "clautorun-pretool",
+          "name": "autorun-pretool",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -35,9 +35,9 @@
     ],
     "AfterAgent": [
       {
-        "matcher": "AUTORUN|/cr:",
+        "matcher": "AUTORUN|/ar:",
         "hooks": [{
-          "name": "clautorun-afteragent",
+          "name": "autorun-afteragent",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -47,7 +47,7 @@
     "AfterModel": [
       {
         "hooks": [{
-          "name": "clautorun-aftermodel",
+          "name": "autorun-aftermodel",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -58,7 +58,7 @@
       {
         "matcher": "write_file|replace|read_file|exit_plan_mode",
         "hooks": [{
-          "name": "clautorun-posttool-plan",
+          "name": "autorun-posttool-plan",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -67,7 +67,7 @@
       {
         "matcher": "write_todos",
         "hooks": [{
-          "name": "clautorun-posttool-task",
+          "name": "autorun-posttool-task",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000
@@ -77,7 +77,7 @@
     "SessionEnd": [
       {
         "hooks": [{
-          "name": "clautorun-cleanup",
+          "name": "autorun-cleanup",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000

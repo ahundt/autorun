@@ -17,7 +17,7 @@ pytestmark = pytest.mark.tmux
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
 
 class TestSessionAutomationWorkflows:

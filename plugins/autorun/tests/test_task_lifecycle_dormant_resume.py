@@ -12,8 +12,8 @@ import time
 from pathlib import Path
 import pytest
 
-from clautorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
-from clautorun.session_manager import session_state
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from autorun.session_manager import session_state
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ class TestDormantSessionResume:
         assert all(t['status'] == 'completed' for t in tasks_before.values())
 
         # CRITICAL TEST: Simulate session resume (SessionStart)
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
         ctx = EventContext(
             session_id=session_id,
             event="SessionStart",
@@ -107,7 +107,7 @@ class TestDormantSessionResume:
         manager.atomic_update_tasks(age_all)
 
         # Resume session
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
         ctx = EventContext(session_id=session_id, event="SessionStart", prompt="", store=None)
         manager_resumed = TaskLifecycle(session_id=session_id, config=isolated_config, ctx=ctx)
         manager_resumed.handle_session_start(ctx)
@@ -143,7 +143,7 @@ class TestDormantSessionResume:
         manager.atomic_update_tasks(age)
 
         # Resume
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
         ctx = EventContext(session_id=session_id, event="SessionStart", prompt="", store=None)
         manager_resumed = TaskLifecycle(session_id=session_id, config=isolated_config, ctx=ctx)
         manager_resumed.handle_session_start(ctx)

@@ -13,7 +13,7 @@ class TestTranscriptTruncation:
 
     def test_truncates_transcript_over_64kb(self):
         """TEST: Large transcripts truncated to ~64KB of recent messages."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
 
         # Create large transcript (simulate 200MB session)
         large_msg = {"role": "assistant", "content": "x" * 50000}  # 50KB message
@@ -48,7 +48,7 @@ class TestTranscriptTruncation:
 
     def test_keeps_small_transcripts_intact(self):
         """TEST: Small transcripts (<64KB) not truncated."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
 
         # Small transcript (15 messages, <10KB total)
         transcript = [{"role": "user", "content": f"Message {i}"} for i in range(15)]
@@ -66,7 +66,7 @@ class TestTranscriptTruncation:
 
     def test_truncated_transcript_preserves_recent_messages(self):
         """TEST: Truncation keeps RECENT messages (where patterns appear)."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
 
         # Create transcript with marker in last message
         old_messages = [{"role": "user", "content": "x" * 40000}] * 50  # Old messages (2MB)
@@ -91,7 +91,7 @@ class TestTranscriptTruncation:
 
     def test_empty_transcript_handled(self):
         """TEST: Empty transcript doesn't crash."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
 
         payload = {
             "hook_event_name": "SessionStart",
@@ -104,7 +104,7 @@ class TestTranscriptTruncation:
 
     def test_none_transcript_handled(self):
         """TEST: Missing transcript field doesn't crash."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
 
         payload = {
             "hook_event_name": "SessionStart",

@@ -15,7 +15,7 @@ def test_thread_safety():
     """Test thread safety with multiple concurrent threads"""
     print("🔍 Testing Thread Safety...")
 
-    from clautorun import session_state
+    from autorun import session_state
 
     session_id = "thread_test_session"
     results = []
@@ -69,7 +69,7 @@ def test_shared_access_safety():
     """Test shared access scenarios (AI monitor use case)"""
     print("\n🔍 Testing Shared Access Safety...")
 
-    from clautorun import session_state, shared_session_state
+    from autorun import session_state, shared_session_state
 
     session_id = "shared_access_test"
     results = []
@@ -145,7 +145,7 @@ def test_lock_timeout_behavior():
     """Test lock timeout behavior"""
     print("\n🔍 Testing Lock Timeout Behavior...")
 
-    from clautorun import session_state
+    from autorun import session_state
     import time
 
     session_id = "timeout_test"
@@ -212,7 +212,7 @@ def process_worker(worker_id, session_id, result_queue):
     try:
         # Import inside function to avoid issues with multiprocessing
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-        from clautorun import session_state
+        from autorun import session_state
 
         with session_state(session_id) as state:
             # Each process should work independently

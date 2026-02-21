@@ -1,6 +1,6 @@
-# clautorun Marketplace - Claude Code
+# autorun Marketplace - Claude Code
 
-UV workspace containing 2 Claude Code plugins: **clautorun**, **pdf-extractor**.
+UV workspace containing 2 Claude Code plugins: **autorun**, **pdf-extractor**.
 
 **For Gemini CLI:** See [GEMINI.md](GEMINI.md) for Gemini-specific installation and configuration.
 
@@ -10,7 +10,7 @@ UV workspace containing 2 Claude Code plugins: **clautorun**, **pdf-extractor**.
 
 ```bash
 # Install directly via Claude Code plugin system
-claude plugin install https://github.com/ahundt/clautorun.git
+claude plugin install https://github.com/ahundt/autorun.git
 
 # Verify
 claude plugin list  # Should show: cr, pdf-extractor
@@ -19,22 +19,22 @@ claude plugin list  # Should show: cr, pdf-extractor
 ### From Local Clone (Development)
 
 ```bash
-git clone https://github.com/ahundt/clautorun.git && cd clautorun
+git clone https://github.com/ahundt/autorun.git && cd autorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force
+uv run python -m plugins.autorun.src.autorun.install --install --force
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability
-# This makes 'clautorun' and 'claude-session-tools' commands globally available
+# This makes 'autorun' and 'claude-session-tools' commands globally available
 # which are needed for proper daemon operation and session management
-cd plugins/clautorun && uv tool install --force --editable .
+cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
 claude plugin list  # Should show: cr, pdf-extractor
-clautorun --status  # Verifies UV tool installation works
+autorun --status  # Verifies UV tool installation works
 ```
 
 **Install UV (if needed):**
@@ -53,27 +53,27 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ```bash
 # In Claude Code session:
-/cr:st  # Expected: "AutoFile policy: allow-all"
+/ar:st  # Expected: "AutoFile policy: allow-all"
 ```
 
 ## Quick Start
 
 ```bash
-/cr:go <task>     # Start autonomous execution with three-stage verification
-/cr:sos           # Emergency stop
-/cr:st            # Show current status
+/ar:go <task>     # Start autonomous execution with three-stage verification
+/ar:sos           # Emergency stop
+/ar:st            # Show current status
 ```
 
 ## Plugins Overview
 
 | Plugin | Prefix | Purpose |
 |--------|--------|---------|
-| **clautorun** | `/cr:` | Autonomous execution, file policies, safety guards, plan export |
+| **autorun** | `/ar:` | Autonomous execution, file policies, safety guards, plan export |
 | **pdf-extractor** | `/pdf-extractor:` | Extract text from PDFs (9 backends, GPU support) |
 
 ---
 
-## clautorun Plugin (v0.8.0)
+## autorun Plugin (v0.8.0)
 
 ### Three-Stage Verification System
 
@@ -87,7 +87,7 @@ Ensures thorough task completion through mandatory stages:
 
 **Concrete Example:**
 ```
-User: /cr:go Add login form with validation and tests
+User: /ar:go Add login form with validation and tests
 
 Stage 1: Implements login form → outputs AUTORUN_INITIAL_TASKS_COMPLETED
 Stage 2: Reviews work, finds missing error handling, adds it → CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED
@@ -102,35 +102,35 @@ Without three-stage: Claude might stop after Stage 1 with incomplete work.
 
 | Short | Long | Legacy | Description |
 |-------|------|--------|-------------|
-| `/cr:a` | `/cr:allow` | `/afa` | Allow all file creation |
-| `/cr:j` | `/cr:justify` | `/afj` | Require `<AUTOFILE_JUSTIFICATION>` for new files |
-| `/cr:f` | `/cr:find` | `/afs` | Modify existing files only (strictest) |
-| `/cr:st` | `/cr:status` | `/afst` | Show current policy |
+| `/ar:a` | `/ar:allow` | `/afa` | Allow all file creation |
+| `/ar:j` | `/ar:justify` | `/afj` | Require `<AUTOFILE_JUSTIFICATION>` for new files |
+| `/ar:f` | `/ar:find` | `/afs` | Modify existing files only (strictest) |
+| `/ar:st` | `/ar:status` | `/afst` | Show current policy |
 
 **Autorun Control**:
 
 | Short | Long | Legacy | Description |
 |-------|------|--------|-------------|
-| `/cr:go <task>` | `/cr:run` | `/autorun` | Start autonomous execution |
-| `/cr:gp <task>` | `/cr:proc` | `/autoproc` | Procedural mode with Wait Process |
-| `/cr:x` | `/cr:stop` | `/autostop` | Graceful stop |
-| `/cr:sos` | `/cr:estop` | `/estop` | Emergency stop |
+| `/ar:go <task>` | `/ar:run` | `/autorun` | Start autonomous execution |
+| `/ar:gp <task>` | `/ar:proc` | `/autoproc` | Procedural mode with Wait Process |
+| `/ar:x` | `/ar:stop` | `/autostop` | Graceful stop |
+| `/ar:sos` | `/ar:estop` | `/estop` | Emergency stop |
 
 **Plan Management**:
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `/cr:pn` | `/cr:plannew` | Create structured plan |
-| `/cr:pr` | `/cr:planrefine` | Critique and improve plan |
-| `/cr:pu` | `/cr:planupdate` | Update plan with new info |
-| `/cr:pp` | `/cr:planprocess` | Execute plan with methodology |
+| `/ar:pn` | `/ar:plannew` | Create structured plan |
+| `/ar:pr` | `/ar:planrefine` | Critique and improve plan |
+| `/ar:pu` | `/ar:planupdate` | Update plan with new info |
+| `/ar:pp` | `/ar:planprocess` | Execute plan with methodology |
 
 **Documentation**:
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `/cr:gc` | `/cr:commit` | Git commit requirements (17 steps) |
-| `/cr:ph` | `/cr:philosophy` | System design philosophy (17 principles) |
+| `/ar:gc` | `/ar:commit` | Git commit requirements (17 steps) |
+| `/ar:ph` | `/ar:philosophy` | System design philosophy (17 principles) |
 
 **Safety Guards** (v0.6.0+) - Blocks dangerous commands and suggests safe alternatives:
 
@@ -138,49 +138,49 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 
 | Command | Description |
 |---------|-------------|
-| `/cr:no <pattern>` | Add custom block (shows safer alternative) |
-| `/cr:ok <pattern>` | Allow blocked command in session |
-| `/cr:clear` | Clear session overrides |
-| `/cr:globalno <pattern>` | Block pattern globally |
-| `/cr:globalok <pattern>` | Allow pattern globally |
+| `/ar:no <pattern>` | Add custom block (shows safer alternative) |
+| `/ar:ok <pattern>` | Allow blocked command in session |
+| `/ar:clear` | Clear session overrides |
+| `/ar:globalno <pattern>` | Block pattern globally |
+| `/ar:globalok <pattern>` | Allow pattern globally |
 
-See `plugins/clautorun/src/clautorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
+See `plugins/autorun/src/autorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
 
-**Hook Error Prevention**: See `plugins/clautorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
+**Hook Error Prevention**: See `plugins/autorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
 
 **Tmux/Session Tools**:
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `/cr:tm` | `/cr:tmux` | Tmux session management |
-| `/cr:tt` | `/cr:ttest` | CLI testing in isolated sessions |
-| `/cr:tabs` | - | Discover Claude sessions across tmux windows |
+| `/ar:tm` | `/ar:tmux` | Tmux session management |
+| `/ar:tt` | `/ar:ttest` | CLI testing in isolated sessions |
+| `/ar:tabs` | - | Discover Claude sessions across tmux windows |
 
 **Plan Export** — Auto-exports plans to `notes/` on ExitPlanMode, recovers unexported plans on SessionStart:
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `/cr:pe` | `/cr:planexport` | Show plan export status |
-| `/cr:pe-on` | `/cr:planexport-enable` | Enable auto-export |
-| `/cr:pe-off` | `/cr:planexport-disable` | Disable auto-export |
-| `/cr:pe-cfg` | `/cr:planexport-configure` | Interactive configuration |
-| `/cr:pe-dir` | `/cr:planexport-dir` | Set output directory |
-| `/cr:pe-fmt` | `/cr:planexport-pattern` | Set filename pattern |
-| `/cr:pe-reset` | `/cr:planexport-reset` | Reset to defaults |
-| `/cr:pe-rej` | `/cr:planexport-rejected` | Toggle rejected plan export |
-| `/cr:pe-rdir` | `/cr:planexport-rejected-dir` | Set rejected plan output directory |
+| `/ar:pe` | `/ar:planexport` | Show plan export status |
+| `/ar:pe-on` | `/ar:planexport-enable` | Enable auto-export |
+| `/ar:pe-off` | `/ar:planexport-disable` | Disable auto-export |
+| `/ar:pe-cfg` | `/ar:planexport-configure` | Interactive configuration |
+| `/ar:pe-dir` | `/ar:planexport-dir` | Set output directory |
+| `/ar:pe-fmt` | `/ar:planexport-pattern` | Set filename pattern |
+| `/ar:pe-reset` | `/ar:planexport-reset` | Reset to defaults |
+| `/ar:pe-rej` | `/ar:planexport-rejected` | Toggle rejected plan export |
+| `/ar:pe-rdir` | `/ar:planexport-rejected-dir` | Set rejected plan output directory |
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `plugins/clautorun/src/clautorun/config.py` | Single source of truth for CONFIG (stages, policies, templates) |
-| `plugins/clautorun/src/clautorun/main.py` | Hook handler and CLI entry point |
-| `plugins/clautorun/src/clautorun/plugins.py` | Command handlers and dispatch logic |
-| `plugins/clautorun/src/clautorun/plan_export.py` | Plan export logic, PlanExport class, daemon handlers |
-| `plugins/clautorun/src/clautorun/integrations.py` | Unified command integrations (superset of hookify) |
-| `plugins/clautorun/scripts/plan_export_config.py` | Plan export configuration CLI |
-| `plugins/clautorun/.claude-plugin/plugin.json` | Plugin manifest |
+| `plugins/autorun/src/autorun/config.py` | Single source of truth for CONFIG (stages, policies, templates) |
+| `plugins/autorun/src/autorun/main.py` | Hook handler and CLI entry point |
+| `plugins/autorun/src/autorun/plugins.py` | Command handlers and dispatch logic |
+| `plugins/autorun/src/autorun/plan_export.py` | Plan export logic, PlanExport class, daemon handlers |
+| `plugins/autorun/src/autorun/integrations.py` | Unified command integrations (superset of hookify) |
+| `plugins/autorun/scripts/plan_export_config.py` | Plan export configuration CLI |
+| `plugins/autorun/.claude-plugin/plugin.json` | Plugin manifest |
 
 ---
 
@@ -216,16 +216,16 @@ extract-pdfs doc.pdf --backends marker # Use specific backend (GPU OCR)
 ## Architecture
 
 ```
-clautorun/                          # Git repository root
+autorun/                          # Git repository root
 ├── plugins/
-│   ├── clautorun/                  # Main plugin
-│   │   ├── src/clautorun/          # Python source
+│   ├── autorun/                  # Main plugin
+│   │   ├── src/autorun/          # Python source
 │   │   ├── commands/               # Slash commands (50+ files)
 │   │   ├── agents/                 # Tmux automation agents
 │   │   ├── skills/                 # Claude Code skills
 │   │   └── hooks/                  # Event hooks
 │   └── pdf-extractor/              # PDF extraction plugin
-├── src/clautorun_marketplace/      # Marketplace registration
+├── src/autorun_marketplace/      # Marketplace registration
 ├── pyproject.toml                  # UV workspace config
 └── README.md                       # Full documentation (1800+ lines)
 ```
@@ -234,10 +234,10 @@ clautorun/                          # Git repository root
 
 ```bash
 # Quick tests (from repo root)
-uv run pytest plugins/clautorun/tests/test_unit_simple.py -v
+uv run pytest plugins/autorun/tests/test_unit_simple.py -v
 
 # Full suite with coverage
-uv run pytest plugins/clautorun/tests/ --cov=plugins/clautorun/src/clautorun --cov-report=term-missing
+uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-report=term-missing
 ```
 
 ## Integration References

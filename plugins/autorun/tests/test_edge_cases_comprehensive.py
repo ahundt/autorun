@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive edge case testing suite for clautorun"""
+"""Comprehensive edge case testing suite for autorun"""
 
 import sys
 import os
@@ -21,7 +21,7 @@ def test_plugin_edge_cases():
     """Test edge cases for claude_code_plugin.py"""
     print("🔍 Testing Plugin Edge Cases...")
 
-    from clautorun.main import main
+    from autorun.main import main
 
     test_cases = [
         # Empty input
@@ -50,13 +50,13 @@ def test_plugin_edge_cases():
         {"input": '{"prompt": "/", "session_id": "test"}', "description": "Single slash"},
         {"input": '{"prompt": "/unknown_command", "session_id": "test"}', "description": "Unknown command"},
         {"input": '{"prompt": "/autorun", "session_id": "test"}', "description": "Autorun without args"},
-        {"input": '{"prompt": "/clautorun", "session_id": "test"}', "description": "Clautorun without args"},
+        {"input": '{"prompt": "/autorun", "session_id": "test"}', "description": "Autorun without args"},
 
         # Command variations
-        {"input": '{"prompt": "/CLAUTORUN /afs", "session_id": "test"}', "description": "Uppercase command"},
-        {"input": '{"prompt": "/clautorun /afs", "session_id": "test"}', "description": "Mixed case command"},
-        {"input": '{"prompt": "/clautorun    /afs", "session_id": "test"}', "description": "Extra spaces"},
-        {"input": '{"prompt": "/clautorun/afs", "session_id": "test"}', "description": "No space separator"},
+        {"input": '{"prompt": "/AUTORUN /afs", "session_id": "test"}', "description": "Uppercase command"},
+        {"input": '{"prompt": "/autorun /afs", "session_id": "test"}', "description": "Mixed case command"},
+        {"input": '{"prompt": "/autorun    /afs", "session_id": "test"}', "description": "Extra spaces"},
+        {"input": '{"prompt": "/autorun/afs", "session_id": "test"}', "description": "No space separator"},
     ]
 
     for i, test_case in enumerate(test_cases, 1):
@@ -94,7 +94,7 @@ def test_injection_monitoring_edge_cases():
     """Test edge cases for injection_monitoring.py"""
     print("\n🔍 Testing Injection Monitoring Edge Cases...")
 
-    from clautorun.injection_monitoring import InjectionEffectivenessMonitor, InjectionMethod, InjectionOutcome
+    from autorun.injection_monitoring import InjectionEffectivenessMonitor, InjectionMethod, InjectionOutcome
 
     monitor = InjectionEffectivenessMonitor()
 
@@ -188,7 +188,7 @@ def test_tmux_utils_edge_cases():
     print("\n🔍 Testing Tmux Utils Edge Cases...")
 
     try:
-        from clautorun.tmux_utils import get_tmux_utilities
+        from autorun.tmux_utils import get_tmux_utilities
         tmux = get_tmux_utilities()
 
         # Test edge cases
@@ -242,7 +242,7 @@ def test_concurrent_operations():
     print("\n🔍 Testing Concurrent Operations...")
 
     # Test injection monitoring thread safety
-    from clautorun.injection_monitoring import get_injection_monitor, InjectionMethod, InjectionOutcome
+    from autorun.injection_monitoring import get_injection_monitor, InjectionMethod, InjectionOutcome
 
     monitor = get_injection_monitor()
     results = []
@@ -291,7 +291,7 @@ def test_data_persistence_edge_cases():
     temp_dir = tempfile.mkdtemp()
 
     try:
-        from clautorun.injection_monitoring import InjectionEffectivenessMonitor, InjectionMethod, InjectionOutcome
+        from autorun.injection_monitoring import InjectionEffectivenessMonitor, InjectionMethod, InjectionOutcome
 
         # Test with invalid storage directory
         try:
@@ -367,7 +367,7 @@ def test_boundary_conditions():
     """Test boundary conditions and input validation"""
     print("\n🔍 Testing Boundary Conditions...")
 
-    from clautorun.injection_monitoring import InjectionEffectivenessMonitor, InjectionMethod, InjectionOutcome
+    from autorun.injection_monitoring import InjectionEffectivenessMonitor, InjectionMethod, InjectionOutcome
 
     monitor = InjectionEffectivenessMonitor()
 
@@ -425,9 +425,9 @@ def test_error_handling_modes():
 
     # Test import error handling
     try:
-        with patch.dict('sys.modules', {'clautorun.diagnostics': None}):
+        with patch.dict('sys.modules', {'autorun.diagnostics': None}):
             # This should gracefully handle missing diagnostics
-            from clautorun.injection_monitoring import InjectionEffectivenessMonitor
+            from autorun.injection_monitoring import InjectionEffectivenessMonitor
             monitor = InjectionEffectivenessMonitor()
             print("✅ Missing diagnostics handled gracefully")
     except Exception as e:
@@ -435,8 +435,8 @@ def test_error_handling_modes():
 
     # Test transcript analyzer unavailability
     try:
-        with patch.dict('sys.modules', {'clautorun.transcript_analyzer': None}):
-            from clautorun.injection_monitoring import InjectionEffectivenessMonitor
+        with patch.dict('sys.modules', {'autorun.transcript_analyzer': None}):
+            from autorun.injection_monitoring import InjectionEffectivenessMonitor
             monitor = InjectionEffectivenessMonitor()
             print("✅ Missing transcript analyzer handled gracefully")
     except Exception as e:
@@ -447,7 +447,7 @@ def test_error_handling_modes():
     temp_dir = tempfile.mkdtemp()
 
     try:
-        from clautorun.injection_monitoring import InjectionEffectivenessMonitor
+        from autorun.injection_monitoring import InjectionEffectivenessMonitor
         monitor = InjectionEffectivenessMonitor(storage_dir=Path(temp_dir))
 
         # Remove directory permissions during operation

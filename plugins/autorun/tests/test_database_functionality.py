@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Real database functionality tests for clautorun session state
+Real database functionality tests for autorun session state
 Tests actual shelve database operations without mocks
 """
 import time
@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import session_state, COMMAND_HANDLERS
+from autorun import session_state, COMMAND_HANDLERS
 
 
 class TestRealDatabaseOperations:

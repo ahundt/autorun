@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Plan export integration for clautorun - fixes fresh context bug.
+Plan export integration for autorun - fixes fresh context bug.
 
 PURPOSE:
     Export Claude Code plan files to project notes/ directory on plan acceptance.
@@ -85,9 +85,9 @@ TEMPLATE VARIABLES:
     {original} - Original plan filename (without .md)
 
 GOALS:
-    - DRY: Reuse clautorun's session_state() for thread-safe persistence
+    - DRY: Reuse autorun's session_state() for thread-safe persistence
     - Clean API: PlanExport class encapsulates all state and logic
-    - No redundant locking: clautorun's SessionLock is sufficient
+    - No redundant locking: autorun's SessionLock is sufficient
 
 GOTCHAS:
     1. EventContext state is scoped to session_id. On Option 1, NEW session has
@@ -122,7 +122,7 @@ THREAD SAFETY & MULTIPROCESS CONCURRENCY:
     - SessionLock supports reentrant locking (same thread can acquire multiple times)
     - atomic_update_*() methods ensure read-modify-write is atomic
     - shelve.sync() is called on context exit for durability
-    - No additional FileLock needed - clautorun's SessionLock is sufficient
+    - No additional FileLock needed - autorun's SessionLock is sufficient
 
 STATE PERSISTENCE:
     State is stored in ~/.claude/sessions/plugin___plan_export__.db (shelve format):
@@ -397,8 +397,8 @@ class PlanExport:
     """Manages plan export state with cross-session persistence.
 
     Uses GLOBAL_SESSION_ID for state that must survive Option 1 (fresh context).
-    Reuses clautorun's session_state() for thread-safe, file-locked access.
-    No redundant FileLock - clautorun's SessionLock handles concurrency.
+    Reuses autorun's session_state() for thread-safe, file-locked access.
+    No redundant FileLock - autorun's SessionLock handles concurrency.
     """
     ctx: EventContext
     config: PlanExportConfig = field(default_factory=PlanExportConfig.load)

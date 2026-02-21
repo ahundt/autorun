@@ -16,7 +16,7 @@
 
 """CLI for task lifecycle management.
 
-Called from slash commands in plugins/clautorun/commands/*.md.
+Called from slash commands in plugins/autorun/commands/*.md.
 Delegates to TaskLifecycle class methods.
 
 Usage (invoked via uv from slash commands):
@@ -36,7 +36,7 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.task_lifecycle import TaskLifecycle
+from autorun.task_lifecycle import TaskLifecycle
 
 
 def main():

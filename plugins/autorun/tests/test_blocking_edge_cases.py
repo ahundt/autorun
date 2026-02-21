@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch, mock_open, MagicMock
 
-from clautorun.main import (
+from autorun.main import (
     command_matches_pattern,
     should_block_command,
     get_session_blocks,
@@ -147,7 +147,7 @@ class TestGlobalStateEdgeCases:
         self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
 
         # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
+        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
     def teardown_method(self):
@@ -156,7 +156,7 @@ class TestGlobalStateEdgeCases:
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir)
 
-    @patch('clautorun.main.initialize_default_blocks')
+    @patch('autorun.main.initialize_default_blocks')
     def test_corrupted_json_file(self, mock_init):
         """Test handling of corrupted JSON config file."""
         # Create corrupted JSON file
@@ -169,7 +169,7 @@ class TestGlobalStateEdgeCases:
         blocks = get_global_blocks()
         assert blocks == []
 
-    @patch('clautorun.main.initialize_default_blocks')
+    @patch('autorun.main.initialize_default_blocks')
     def test_missing_global_blocks_key(self, mock_init):
         """Test config file without global_blocked_patterns key."""
         with open(self.temp_config_file, 'w') as f:
@@ -179,7 +179,7 @@ class TestGlobalStateEdgeCases:
         blocks = get_global_blocks()
         assert blocks == []
 
-    @patch('clautorun.main.initialize_default_blocks')
+    @patch('autorun.main.initialize_default_blocks')
     def test_invalid_version_format(self, mock_init):
         """Test config with invalid or missing version."""
         with open(self.temp_config_file, 'w') as f:
@@ -189,7 +189,7 @@ class TestGlobalStateEdgeCases:
         blocks = get_global_blocks()
         assert blocks == []
 
-    @patch('clautorun.main.initialize_default_blocks')
+    @patch('autorun.main.initialize_default_blocks')
     def test_block_with_missing_fields(self, mock_init):
         """Test blocks with missing optional fields."""
         with open(self.temp_config_file, 'w') as f:
@@ -217,7 +217,7 @@ class TestConcurrentAccess:
         clear_session_blocks(self.test_session_id)
 
         # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
+        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
     def teardown_method(self):

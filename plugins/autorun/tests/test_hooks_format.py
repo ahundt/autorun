@@ -260,7 +260,7 @@ def test_no_environment_variable_assignment_in_gemini_hooks():
 
     # Check for env var assignment pattern (should NOT exist)
     patterns_to_avoid = [
-        "CLAUTORUN_PLUGIN_ROOT=",
+        "AUTORUN_PLUGIN_ROOT=",
         "CLAUDE_PLUGIN_ROOT=",
         "PLUGIN_ROOT="
     ]

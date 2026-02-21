@@ -16,7 +16,7 @@
 # limitations under the License.
 
 """
-clautorun - Claude Agent SDK Command Interceptor
+autorun - Claude Agent SDK Command Interceptor
 
 A lightweight, efficient command interceptor for Claude Code that saves tokens by processing
 autorun commands locally before they reach the AI.
@@ -131,7 +131,7 @@ except ImportError:
 
     def handle_import_error(import_error, exit_on_error=True):
         """Fallback import error handler"""
-        if "clautorun" in str(import_error):
+        if "autorun" in str(import_error):
             show_comprehensive_uv_error()
             if exit_on_error:
                 import sys

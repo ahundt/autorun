@@ -10,7 +10,7 @@ aliases: [ts, task-state, tasks]
 import sys
 import os
 
-from clautorun.task_lifecycle import TaskLifecycle, is_enabled
+from autorun.task_lifecycle import TaskLifecycle, is_enabled
 
 # Check if enabled
 if not is_enabled():
@@ -28,7 +28,7 @@ try:
 
     if not tasks:
         print('No tasks tracked in this session.')
-        print(f'Storage: ~/.clautorun/task-tracking/{session_id}/')
+        print(f'Storage: ~/.autorun/task-tracking/{session_id}/')
         sys.exit(0)
 
     # Count by status
