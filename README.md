@@ -1,9 +1,10 @@
 # autorun
 
-**autorun** - Reduce interruptions while Claude Code and Gemini CLI complete tasks more safely and autonomously.
-
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
+
+<img width="2816" height="1536" alt="Gemini_Generated_Image_x0gcohx0gcohx0gc" src="https://github.com/user-attachments/assets/85788232-fef5-48fc-9d7b-59b41b12f590" />
+
 
 ## Key Features
 
