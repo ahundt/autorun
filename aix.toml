@@ -1,10 +1,10 @@
 [package]
-name = "clautorun"
+name = "autorun"
 version = "0.8.0"
 description = "Autonomous execution, file policies, safety guards for AI coding assistants"
 authors = ["Andrew Hundt <athundt@gmail.com>"]
 license = "Apache-2.0"
-repository = "https://github.com/ahundt/clautorun"
+repository = "https://github.com/ahundt/autorun"
 
 # Platform support
 [platforms]
@@ -22,110 +22,110 @@ bashlex = ">=0.18"
 [[skills]]
 name = "CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS"
 description = "Simple and safe tmux session management. Creates isolated sessions that won't interfere with your current Claude Code session."
-path = "plugins/clautorun/skills/tmux-automation/SKILL.md"
+path = "plugins/autorun/skills/tmux-automation/SKILL.md"
 
 [[skills]]
 name = "parallel_process_subagent_execution"
 description = "Parallel Merge and Commit Workflow. Execute multiple subagents in parallel for faster development."
-path = "plugins/clautorun/skills/parallel-subagent/SKILL.md"
+path = "plugins/autorun/skills/parallel-subagent/SKILL.md"
 
 [[skills]]
 name = "claude_session_tools"
 description = "Explore, search, analyze, and export Claude Code session histories."
-path = "plugins/clautorun/skills/claude-session-tools/SKILL.md"
+path = "plugins/autorun/skills/claude-session-tools/SKILL.md"
 
 # Command definitions (showing 10 most important of 73 total)
 [[commands]]
 name = "go"
 aliases = ["run"]
 description = "Start autorun - autonomous task execution"
-path = "plugins/clautorun/commands/go.md"
+path = "plugins/autorun/commands/go.md"
 
 [[commands]]
 name = "gp"
 aliases = ["proc"]
 description = "Start autoproc - procedural autonomous workflow"
-path = "plugins/clautorun/commands/gp.md"
+path = "plugins/autorun/commands/gp.md"
 
 [[commands]]
 name = "a"
 aliases = ["allow", "afa"]
 description = "Allow all file creation - full permission to create and modify files"
-path = "plugins/clautorun/commands/a.md"
+path = "plugins/autorun/commands/a.md"
 
 [[commands]]
 name = "j"
 aliases = ["justify", "afj"]
 description = "Require justification before creating new files"
-path = "plugins/clautorun/commands/j.md"
+path = "plugins/autorun/commands/j.md"
 
 [[commands]]
 name = "f"
 aliases = ["find", "afs"]
 description = "Find existing files only - prevents new file creation (strictest mode)"
-path = "plugins/clautorun/commands/f.md"
+path = "plugins/autorun/commands/f.md"
 
 [[commands]]
 name = "st"
 aliases = ["status", "afst"]
 description = "Show current AutoFile policy and settings"
-path = "plugins/clautorun/commands/st.md"
+path = "plugins/autorun/commands/st.md"
 
 [[commands]]
 name = "sos"
 aliases = ["estop"]
 description = "Emergency stop - immediately halt all autonomous operations"
-path = "plugins/clautorun/commands/sos.md"
+path = "plugins/autorun/commands/sos.md"
 
 [[commands]]
 name = "plannew"
 aliases = ["pn"]
 description = "Create new plan from scratch with Wait Process methodology"
-path = "plugins/clautorun/commands/plannew.md"
+path = "plugins/autorun/commands/plannew.md"
 
 [[commands]]
 name = "planrefine"
 aliases = ["pr"]
 description = "Deep critique existing plan with code verification"
-path = "plugins/clautorun/commands/planrefine.md"
+path = "plugins/autorun/commands/planrefine.md"
 
 [[commands]]
 name = "commit"
 aliases = ["gc"]
 description = "Display Git Commit Requirements - comprehensive guidelines for high-quality commit messages"
-path = "plugins/clautorun/commands/commit.md"
+path = "plugins/autorun/commands/commit.md"
 
 # Platform-specific hooks (not translated - kept native)
-# CRITICAL: Hooks are essential for clautorun functionality
+# CRITICAL: Hooks are essential for autorun functionality
 # AIX may not fully understand hook registration, so post_install ensures proper setup
 [hooks.claude_code]
-path = "plugins/clautorun/hooks/hooks.json"
+path = "plugins/autorun/hooks/hooks.json"
 
 [hooks.gemini_cli]
-path = "plugins/clautorun/hooks/gemini-hooks.json"
+path = "plugins/autorun/hooks/gemini-hooks.json"
 
 # Installation hooks (custom AIX extension)
 # CRITICAL: Only performs LOCAL installation (aix skills install .)
 # Does NOT publish to public AIX registry
 #
-# HOOK REGISTRATION: post_install runs "clautorun --install" to ensure hooks
+# HOOK REGISTRATION: post_install runs "autorun --install" to ensure hooks
 # are properly registered even if AIX doesn't support hook registration natively.
-# This is essential for clautorun's PreToolUse/PostToolUse functionality.
+# This is essential for autorun's PreToolUse/PostToolUse functionality.
 #
-# BOOTSTRAP FALLBACK: If hook registration fails, clautorun's bootstrap mechanism
+# BOOTSTRAP FALLBACK: If hook registration fails, autorun's bootstrap mechanism
 # (hook_entry.py) will auto-detect on first use and register hooks in background.
 [install.claude_code]
-command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
-post_install = ["clautorun", "--install"]  # Ensures hooks registered
+command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]
+post_install = ["autorun", "--install"]  # Ensures hooks registered
 
 [install.gemini_cli]
-command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
-post_install = ["clautorun", "--install", "--gemini", "--conductor"]  # Ensures hooks + Conductor
+command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]
+post_install = ["autorun", "--install", "--gemini", "--conductor"]  # Ensures hooks + Conductor
 
 [install.opencode]
-command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
-post_install = ["clautorun", "--install", "--opencode"]
+command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]
+post_install = ["autorun", "--install", "--opencode"]
 
 [install.codex_cli]
-command = ["uv", "pip", "install", "git+https://github.com/ahundt/clautorun.git"]
-post_install = ["clautorun", "--install", "--codex"]
+command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]
+post_install = ["autorun", "--install", "--codex"]

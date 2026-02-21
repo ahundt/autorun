@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.error_handling import (
+from autorun.error_handling import (
     show_comprehensive_uv_error,
     handle_import_error,
     check_uv_environment,
@@ -44,11 +44,11 @@ class TestShowComprehensiveUvError:
 class TestHandleImportError:
     """Test handle_import_error function"""
 
-    def test_clautorun_import_error(self, capsys):
-        """Test handling of clautorun-related import error"""
-        error = ImportError("No module named 'clautorun'")
+    def test_autorun_import_error(self, capsys):
+        """Test handling of autorun-related import error"""
+        error = ImportError("No module named 'autorun'")
         result = handle_import_error(error, exit_on_error=False)
-        # Should return True for clautorun-related errors
+        # Should return True for autorun-related errors
         assert result
 
     def test_unrelated_import_error(self):

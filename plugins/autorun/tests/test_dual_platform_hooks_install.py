@@ -31,9 +31,9 @@ import pytest
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from clautorun.core import EventContext
-from clautorun.main import pretooluse_handler
-from clautorun.session_manager import session_state, clear_test_session_state
+from autorun.core import EventContext
+from autorun.main import pretooluse_handler
+from autorun.session_manager import session_state, clear_test_session_state
 
 # =============================================================================
 # Utilities
@@ -70,9 +70,9 @@ GEMINI_HOOKS_JSON = HOOKS_DIR / "hooks.json"
 HOOK_ENTRY_PY = HOOKS_DIR / "hook_entry.py"
 PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 GEMINI_EXT_JSON = PLUGIN_ROOT / "gemini-extension.json"
-INSTALL_PY = PLUGIN_ROOT / "src" / "clautorun" / "install.py"
-CORE_PY = PLUGIN_ROOT / "src" / "clautorun" / "core.py"
-MAIN_PY = PLUGIN_ROOT / "src" / "clautorun" / "main.py"
+INSTALL_PY = PLUGIN_ROOT / "src" / "autorun" / "install.py"
+CORE_PY = PLUGIN_ROOT / "src" / "autorun" / "core.py"
+MAIN_PY = PLUGIN_ROOT / "src" / "autorun" / "main.py"
 
 # Expected hook events per platform
 CLAUDE_HOOK_EVENTS = {
@@ -251,7 +251,7 @@ class TestGeminiHooksJson:
     def test_no_env_var_assignment(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         raw = json.dumps(data)
-        for pattern in ["CLAUTORUN_PLUGIN_ROOT=", "CLAUDE_PLUGIN_ROOT=", "PLUGIN_ROOT="]:
+        for pattern in ["AUTORUN_PLUGIN_ROOT=", "CLAUDE_PLUGIN_ROOT=", "PLUGIN_ROOT="]:
             assert pattern not in raw, \
                 f"Gemini CLI doesn't support env var assignment: {pattern}"
 
@@ -414,7 +414,7 @@ class TestHookEntryDualPlatform:
     def test_get_plugin_root_with_claude_env(self):
         env = os.environ.copy()
         env["CLAUDE_PLUGIN_ROOT"] = "/test/claude/path"
-        env.pop("CLAUTORUN_PLUGIN_ROOT", None)
+        env.pop("AUTORUN_PLUGIN_ROOT", None)
         script = (
             "import sys; import os; "
             f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
@@ -427,9 +427,9 @@ class TestHookEntryDualPlatform:
         )
         assert "/test/claude/path" in result.stdout.strip()
 
-    def test_get_plugin_root_with_clautorun_env(self):
+    def test_get_plugin_root_with_autorun_env(self):
         env = os.environ.copy()
-        env["CLAUTORUN_PLUGIN_ROOT"] = "/test/clautorun/path"
+        env["AUTORUN_PLUGIN_ROOT"] = "/test/autorun/path"
         env["CLAUDE_PLUGIN_ROOT"] = "/test/claude/path"
         script = (
             "import sys; import os; "
@@ -441,13 +441,13 @@ class TestHookEntryDualPlatform:
             [sys.executable, "-c", script],
             capture_output=True, text=True, env=env, timeout=5
         )
-        assert "/test/clautorun/path" in result.stdout.strip()
+        assert "/test/autorun/path" in result.stdout.strip()
 
     def test_get_plugin_root_file_inference(self):
         """get_plugin_root() infers from __file__ when no env vars (Gemini path)."""
         env = os.environ.copy()
         env.pop("CLAUDE_PLUGIN_ROOT", None)
-        env.pop("CLAUTORUN_PLUGIN_ROOT", None)
+        env.pop("AUTORUN_PLUGIN_ROOT", None)
         script = (
             "import sys; import os; "
             f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
@@ -499,7 +499,7 @@ class TestHookEntryDualPlatform:
     def test_fail_open_returns_valid_json(self):
         env = os.environ.copy()
         env.pop("CLAUDE_PLUGIN_ROOT", None)
-        env.pop("CLAUTORUN_PLUGIN_ROOT", None)
+        env.pop("AUTORUN_PLUGIN_ROOT", None)
         env["PATH"] = "/nonexistent"
         result = subprocess.run(
             [sys.executable, str(HOOK_ENTRY_PY)],
@@ -512,7 +512,7 @@ class TestHookEntryDualPlatform:
 
     def test_hook_entry_no_debug_logging(self):
         content = HOOK_ENTRY_PY.read_text()
-        assert "/tmp/clautorun_hook_debug" not in content
+        assert "/tmp/autorun_hook_debug" not in content
 
 
 # =============================================================================

@@ -5,9 +5,9 @@ model: sonnet
 ---
 
 **Related Command**:
-- `/cr:ttest` or `/cr:tt` - Quick CLI testing in isolated sessions
+- `/ar:ttest` or `/ar:tt` - Quick CLI testing in isolated sessions
 
-**Usage**: This agent provides comprehensive testing automation. For quick tests, use `/cr:tt` command.
+**Usage**: This agent provides comprehensive testing automation. For quick tests, use `/ar:tt` command.
 
 ---
 
@@ -43,11 +43,11 @@ When asked to analyze or test a CLI application, follow this structured approach
 ### 1. **CLI Discovery and Analysis**
 ```python
 # Analyze CLI capabilities and create test matrix
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 import time
 import re
 
-def analyze_cli_capabilities(cli_path="claude", session_name="clautorun"):
+def analyze_cli_capabilities(cli_path="claude", session_name = "autorun"):
     tmux = get_tmux_utilities(session_name)
 
     # Ensure test session exists
@@ -78,7 +78,7 @@ Based on CLI analysis, determine:
 ### 3. **Automated Test Execution**
 ```python
 def execute_test_automation(cli_path="claude", test_categories=None):
-    tmux = get_tmux_utilities("clautorun")
+    tmux = get_tmux_utilities("autorun")
     test_results = {}
 
     # Default test categories if none specified
@@ -114,7 +114,7 @@ def run_test_category(tmux, cli_path, category):
 ### 4. **Comprehensive Error Testing**
 ```python
 def test_error_conditions(cli_path="claude"):
-    tmux = get_tmux_utilities("clautorun")
+    tmux = get_tmux_utilities("autorun")
     error_tests = [
         # Invalid command testing
         {'cmd': [cli_path, 'invalid-command'], 'expected': 'error'},
@@ -142,7 +142,7 @@ def test_error_conditions(cli_path="claude"):
 ### 5. **Performance and Resource Testing**
 ```python
 def test_performance_metrics(cli_path="claude"):
-    tmux = get_tmux_utilities("clautorun")
+    tmux = get_tmux_utilities("autorun")
 
     performance_tests = [
         {'name': 'startup_time', 'cmd': [cli_path, '--version']},
@@ -173,7 +173,7 @@ def test_performance_metrics(cli_path="claude"):
 def start_extended_test_monitoring(test_session_id="cli-testing", duration_minutes=30):
     """Start AI monitoring for extended test sessions"""
     try:
-        from clautorun.ai_monitor import start_monitor
+        from autorun.ai_monitor import start_monitor
 
         prompt = f"""
         Continue comprehensive CLI testing for {duration_minutes} minutes:
@@ -199,7 +199,7 @@ def start_extended_test_monitoring(test_session_id="cli-testing", duration_minut
 
 ### Real-time Test Result Analysis
 ```python
-def analyze_test_results_in_session(session_name="clautorun"):
+def analyze_test_results_in_session(session_name = "autorun"):
     """Analyze test results in real-time during execution"""
     tmux = get_tmux_utilities(session_name)
 
@@ -227,9 +227,9 @@ def analyze_test_results_in_session(session_name="clautorun"):
 
 ### Claude Code Plugin Testing
 ```python
-def test_clautorun_main(plugin_name="clautorun"):
+def test_autorun_main(plugin_name = "autorun"):
     """Test Claude Code plugin installation and functionality"""
-    tmux = get_tmux_utilities("clautorun")
+    tmux = get_tmux_utilities("autorun")
     test_results = {}
 
     # Test plugin installation
@@ -265,7 +265,7 @@ def test_clautorun_main(plugin_name="clautorun"):
 ```python
 def test_plugin_integrations():
     """Test plugin integrations with external systems"""
-    tmux = get_tmux_utilities("clautorun")
+    tmux = get_tmux_utilities("autorun")
 
     integration_tests = [
         # Test marketplace integration
@@ -371,7 +371,7 @@ def handle_test_failure(test_info, failure_details):
 
 ### Session Recovery for Testing
 ```python
-def recover_test_session(session_name="clautorun"):
+def recover_test_session(session_name = "autorun"):
     """Reover test session from failures"""
     tmux = get_tmux_utilities(session_name)
 
@@ -394,7 +394,7 @@ def recover_test_session(session_name="clautorun"):
 ## Configuration Options
 
 ### Test Parameters
-- **Default Session Name**: "clautorun" for consistent test environments
+- **Default Session Name**: "autorun" for consistent test environments
 - **Test Timeout**: 30 seconds per individual test (adjustable)
 - **Retry Attempts**: 3 attempts for failed tests with exponential backoff
 - **Parallel Testing**: Disabled by default for CLI safety (can be enabled)
@@ -421,7 +421,7 @@ Test the claude CLI application comprehensively:
 
 ### Plugin Testing Workflow
 ```
-Test clautorun plugin installation and functionality:
+Test autorun plugin installation and functionality:
 1. Verify plugin is properly installed
 2. Test all plugin commands (/afs, /afa, /afj, /afst)
 3. Test plugin marketplace integration

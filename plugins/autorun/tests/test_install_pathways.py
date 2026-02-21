@@ -3,8 +3,8 @@
 Integration tests for all installer pathways.
 
 Tests verify:
-1. clautorun --install (consolidated installer)
-2. clautorun-install (legacy compatibility)
+1. autorun --install (consolidated installer)
+2. autorun-install (legacy compatibility)
 3. hook_entry.py bootstrap pathway
 4. All combinations of flags (--tool, --force-install, selective install)
 
@@ -23,7 +23,7 @@ import pytest
 
 
 def get_plugin_root() -> Path:
-    """Get the clautorun plugin root directory."""
+    """Get the autorun plugin root directory."""
     return Path(__file__).parent.parent
 
 
@@ -31,7 +31,7 @@ def get_install_module():
     """Import install.py module."""
     plugin_root = get_plugin_root()
     sys.path.insert(0, str(plugin_root / "src"))
-    from clautorun import install
+    from autorun import install
     return install
 
 
@@ -41,7 +41,7 @@ class TestInstallModule:
     def test_install_module_exists(self):
         """Verify install.py exists at expected location."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         assert install_file.exists(), f"install.py not found at {install_file}"
 
     def test_install_module_imports(self):
@@ -75,7 +75,7 @@ class TestPluginNameEnum:
         """Verify PluginName enum has correct plugins."""
         install = get_install_module()
 
-        expected = ["clautorun", "pdf-extractor"]
+        expected = ["autorun", "pdf-extractor"]
         actual = install.PluginName.all()
 
         assert actual == expected, f"Expected {expected}, got {actual}"
@@ -84,7 +84,7 @@ class TestPluginNameEnum:
         """Verify PluginName.validate() works correctly."""
         install = get_install_module()
 
-        assert install.PluginName.validate("clautorun") is True
+        assert install.PluginName.validate("autorun") is True
         assert install.PluginName.validate("pdf-extractor") is True
         assert install.PluginName.validate("plan-export") is False
         assert install.PluginName.validate("invalid") is False
@@ -95,7 +95,7 @@ class TestPluginNameEnum:
 
         # Check enum doesn't have PLAN_EXPORT attribute
         assert not hasattr(install.PluginName, "PLAN_EXPORT"), (
-            "PluginName.PLAN_EXPORT should not exist (merged into clautorun)"
+            "PluginName.PLAN_EXPORT should not exist (merged into autorun)"
         )
 
 
@@ -106,47 +106,47 @@ class TestParseSelection:
         """Verify 'all' returns all plugins."""
         install = get_install_module()
         result = install._parse_selection("all")
-        assert result == ["clautorun", "pdf-extractor"]
+        assert result == ["autorun", "pdf-extractor"]
 
     def test_parse_empty(self):
         """Verify empty string treated as 'all'."""
         install = get_install_module()
         result = install._parse_selection("")
-        assert result == ["clautorun", "pdf-extractor"]
+        assert result == ["autorun", "pdf-extractor"]
 
     def test_parse_single(self):
         """Verify single plugin selection."""
         install = get_install_module()
-        result = install._parse_selection("clautorun")
-        assert result == ["clautorun"]
+        result = install._parse_selection("autorun")
+        assert result == ["autorun"]
 
     def test_parse_multiple(self):
         """Verify comma-separated selection."""
         install = get_install_module()
-        result = install._parse_selection("clautorun,pdf-extractor")
-        assert result == ["clautorun", "pdf-extractor"]
+        result = install._parse_selection("autorun,pdf-extractor")
+        assert result == ["autorun", "pdf-extractor"]
 
     def test_parse_with_spaces(self):
         """Verify spaces are stripped."""
         install = get_install_module()
-        result = install._parse_selection("clautorun , pdf-extractor")
-        assert result == ["clautorun", "pdf-extractor"]
+        result = install._parse_selection("autorun , pdf-extractor")
+        assert result == ["autorun", "pdf-extractor"]
 
     def test_parse_deduplicates(self):
         """Verify duplicate plugins are removed."""
         install = get_install_module()
-        result = install._parse_selection("clautorun,clautorun,pdf-extractor")
-        assert result == ["clautorun", "pdf-extractor"]
+        result = install._parse_selection("autorun,autorun,pdf-extractor")
+        assert result == ["autorun", "pdf-extractor"]
 
     def test_parse_invalid_plugins_skipped(self):
         """Verify invalid plugin names are skipped."""
         install = get_install_module()
-        result = install._parse_selection("clautorun,invalid,pdf-extractor")
-        assert result == ["clautorun", "pdf-extractor"]
+        result = install._parse_selection("autorun,invalid,pdf-extractor")
+        assert result == ["autorun", "pdf-extractor"]
 
 
 class TestMapLegacyFlags:
-    """Test _map_legacy_flags() function for clautorun-install compatibility."""
+    """Test _map_legacy_flags() function for autorun-install compatibility."""
 
     def test_map_install_default(self):
         """Verify 'install' maps to '--install'."""
@@ -230,7 +230,7 @@ class TestFindMarketplaceRoot:
         marker = root / ".claude-plugin" / "marketplace.json"
 
         assert marker.exists(), f"marketplace.json not found at {marker}"
-        assert root.name == "clautorun", f"Expected root to be 'clautorun', got {root.name}"
+        assert root.name == "autorun", f"Expected root to be 'autorun', got {root.name}"
 
     def test_find_marketplace_root_cached(self):
         """Verify find_marketplace_root() result is cached."""
@@ -246,25 +246,25 @@ class TestFindMarketplaceRoot:
 class TestInstallToCachePathResolution:
     """Test _install_to_cache() resolves plugin paths correctly.
 
-    find_marketplace_root() returns the workspace root (e.g., clautorun/)
+    find_marketplace_root() returns the workspace root (e.g., autorun/)
     which contains plugins/ subdirectory with individual plugin directories.
     """
 
     def test_install_to_cache_finds_own_plugin(self):
-        """Verify _install_to_cache resolves clautorun plugin directory correctly."""
+        """Verify _install_to_cache resolves autorun plugin directory correctly."""
         install = get_install_module()
         root = install.find_marketplace_root()
 
-        # root is the workspace root (named "clautorun")
-        assert root.name == "clautorun"
+        # root is the workspace root (named "autorun")
+        assert root.name == "autorun"
         assert (root / ".claude-plugin").exists()
 
         # The workspace root contains plugins/ with individual plugin dirs
-        plugin_dir = root / "plugins" / "clautorun"
+        plugin_dir = root / "plugins" / "autorun"
         assert plugin_dir.exists(), \
-            f"Workspace should contain plugins/clautorun: {plugin_dir}"
-        assert (plugin_dir / "src" / "clautorun").exists(), \
-            f"Plugin dir should contain src/clautorun: {plugin_dir}"
+            f"Workspace should contain plugins/autorun: {plugin_dir}"
+        assert (plugin_dir / "src" / "autorun").exists(), \
+            f"Plugin dir should contain src/autorun: {plugin_dir}"
 
     def test_install_to_cache_finds_sibling_plugin(self):
         """Verify _install_to_cache resolves sibling plugins."""
@@ -281,8 +281,8 @@ class TestInstallToCachePathResolution:
 class TestReadPluginVersion:
     """Test _read_plugin_version() function."""
 
-    def test_read_plugin_version_clautorun(self):
-        """Verify version read from clautorun plugin.json."""
+    def test_read_plugin_version_autorun(self):
+        """Verify version read from autorun plugin.json."""
         install = get_install_module()
         plugin_root = get_plugin_root()
 
@@ -327,35 +327,35 @@ class TestInstallPathwayRouting:
         """Verify __main__.py --install flag routes to install.install_plugins()."""
         # This is verified by imports in __main__.py
         plugin_root = get_plugin_root()
-        main_file = plugin_root / "src" / "clautorun" / "__main__.py"
+        main_file = plugin_root / "src" / "autorun" / "__main__.py"
         content = main_file.read_text()
 
-        assert "from clautorun.install import install_plugins" in content
+        assert "from autorun.install import install_plugins" in content
         assert "install_plugins(" in content
         assert "args.install" in content
 
     def test_main_uninstall_flag_routes_to_uninstall_plugins(self):
         """Verify __main__.py --uninstall flag routes to install.uninstall_plugins()."""
         plugin_root = get_plugin_root()
-        main_file = plugin_root / "src" / "clautorun" / "__main__.py"
+        main_file = plugin_root / "src" / "autorun" / "__main__.py"
         content = main_file.read_text()
 
-        assert "from clautorun.install import uninstall_plugins" in content
+        assert "from autorun.install import uninstall_plugins" in content
         assert "return uninstall_plugins()" in content
 
     def test_main_status_flag_routes_to_show_status(self):
         """Verify __main__.py --status flag routes to install.show_status()."""
         plugin_root = get_plugin_root()
-        main_file = plugin_root / "src" / "clautorun" / "__main__.py"
+        main_file = plugin_root / "src" / "autorun" / "__main__.py"
         content = main_file.read_text()
 
-        assert "from clautorun.install import show_status" in content
+        assert "from autorun.install import show_status" in content
         assert "return show_status()" in content
 
     def test_sync_removed(self):
         """Verify --sync flag has been removed (was broken, replaced by --install --force)."""
         plugin_root = get_plugin_root()
-        main_file = plugin_root / "src" / "clautorun" / "__main__.py"
+        main_file = plugin_root / "src" / "autorun" / "__main__.py"
         content = main_file.read_text()
 
         assert "sync_to_cache" not in content, \
@@ -364,12 +364,12 @@ class TestInstallPathwayRouting:
             "--sync argument should be removed from argparse"
 
     def test_pyproject_entry_point_correct(self):
-        """Verify pyproject.toml clautorun-install entry point."""
+        """Verify pyproject.toml autorun-install entry point."""
         plugin_root = get_plugin_root()
         pyproject = plugin_root / "pyproject.toml"
         content = pyproject.read_text()
 
-        assert 'clautorun-install = "clautorun.install:install_main"' in content
+        assert 'autorun-install = "autorun.install:install_main"' in content
 
 
 class TestInstallMainAdapter:
@@ -393,7 +393,7 @@ class TestClaudeCommandIntegration:
     def test_install_uses_claude_plugin_marketplace_add(self):
         """Verify install_plugins() calls 'claude plugin marketplace add'."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert 'claude", "plugin", "marketplace", "add"' in content
@@ -401,7 +401,7 @@ class TestClaudeCommandIntegration:
     def test_install_uses_claude_plugin_install(self):
         """Verify install_plugins() calls 'claude plugin install'."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert 'claude", "plugin", "install"' in content
@@ -409,7 +409,7 @@ class TestClaudeCommandIntegration:
     def test_install_uses_claude_plugin_enable(self):
         """Verify install_plugins() calls 'claude plugin enable'."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert 'claude", "plugin", "enable"' in content
@@ -417,7 +417,7 @@ class TestClaudeCommandIntegration:
     def test_install_uses_claude_plugin_update(self):
         """Verify install_plugins() tries 'claude plugin update' first."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert 'claude", "plugin", "update"' in content
@@ -429,7 +429,7 @@ class TestClaudeCommandIntegration:
     def test_uninstall_uses_claude_plugin_uninstall(self):
         """Verify uninstall_plugins() calls 'claude plugin uninstall'."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert 'claude", "plugin", "uninstall"' in content
@@ -437,7 +437,7 @@ class TestClaudeCommandIntegration:
     def test_status_uses_claude_plugin_list(self):
         """Verify show_status() calls 'claude plugin list'."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert 'claude", "plugin", "list"' in content
@@ -446,18 +446,18 @@ class TestClaudeCommandIntegration:
 class TestBootstrapIntegration:
     """Test bootstrap pathway integration."""
 
-    def test_hook_entry_calls_clautorun_install(self):
-        """Verify hook_entry.py bootstrap calls 'clautorun --install'."""
+    def test_hook_entry_calls_autorun_install(self):
+        """Verify hook_entry.py bootstrap calls 'autorun --install'."""
         plugin_root = get_plugin_root()
         hook_entry = plugin_root / "hooks" / "hook_entry.py"
         content = hook_entry.read_text()
 
-        assert "clautorun --install" in content
+        assert "autorun --install" in content
 
     def test_daemon_calls_install_pdf_deps(self):
         """Verify daemon.py bootstrap includes _install_pdf_deps()."""
         plugin_root = get_plugin_root()
-        daemon_file = plugin_root / "src" / "clautorun" / "daemon.py"
+        daemon_file = plugin_root / "src" / "autorun" / "daemon.py"
         content = daemon_file.read_text()
 
         assert "_install_pdf_deps()" in content
@@ -465,7 +465,7 @@ class TestBootstrapIntegration:
     def test_daemon_uses_python_sys_executable(self):
         """Verify daemon bootstrap uses --python sys.executable."""
         plugin_root = get_plugin_root()
-        daemon_file = plugin_root / "src" / "clautorun" / "daemon.py"
+        daemon_file = plugin_root / "src" / "autorun" / "daemon.py"
         content = daemon_file.read_text()
 
         assert "--python" in content and "sys.executable" in content
@@ -474,10 +474,10 @@ class TestBootstrapIntegration:
 class TestDependencyInstallation:
     """Test that dependency installation is integrated."""
 
-    def test_install_syncs_clautorun_deps(self):
+    def test_install_syncs_autorun_deps(self):
         """Verify install_plugins() calls _sync_dependencies()."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert "_sync_dependencies()" in content
@@ -488,7 +488,7 @@ class TestDependencyInstallation:
     def test_install_syncs_pdf_deps_when_selected(self):
         """Verify install_plugins() calls _install_pdf_deps() when pdf-extractor selected."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         assert "_install_pdf_deps()" in content
@@ -497,7 +497,7 @@ class TestDependencyInstallation:
     def test_pdf_deps_use_correct_packages(self):
         """Verify _install_pdf_deps() installs correct packages."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         # Should install all 5 core pdf deps
@@ -517,7 +517,7 @@ class TestCacheFallback:
     def test_cache_fallback_integrated_in_install_loop(self):
         """Verify cache fallback is called when marketplace install fails."""
         plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "clautorun" / "install.py"
+        install_file = plugin_root / "src" / "autorun" / "install.py"
         content = install_file.read_text()
 
         # Should call _install_to_cache when marketplace fails
@@ -541,11 +541,11 @@ class TestEntryPointCompatibility:
     def test_legacy_subcommands_documented(self):
         """Verify legacy subcommands are documented in __main__.py."""
         plugin_root = get_plugin_root()
-        main_file = plugin_root / "src" / "clautorun" / "__main__.py"
+        main_file = plugin_root / "src" / "autorun" / "__main__.py"
         content = main_file.read_text()
 
         # Legacy commands should still be mentioned in help
-        assert "clautorun install" in content.lower() or "legacy" in content.lower()
+        assert "autorun install" in content.lower() or "legacy" in content.lower()
 
 
 if __name__ == "__main__":

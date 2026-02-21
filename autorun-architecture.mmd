@@ -15,8 +15,8 @@ flowchart TD
     %% ========================================
     %%  STEP 1: INSTALL
     %% ========================================
-    INSTALL["💿 STEP 1<br/><br/>INSTALL CLAUTORUN"]:::stepBox
-    INSTALL_CMD["/plugin install clautorun"]:::choiceBox
+    INSTALL["💿 STEP 1<br/><br/>INSTALL AUTORUN"]:::stepBox
+    INSTALL_CMD["/plugin install autorun"]:::choiceBox
 
     %% ========================================
     %%  SETTINGS PANEL (Always available)
@@ -25,14 +25,14 @@ flowchart TD
         direction TB
 
         subgraph FILE_SET["Prevent or Allow AI from Creating Files"]
-            F1["<b>File Controls:</b><br/><br/>/cr:a - Allow all file creation<br/>/cr:j - Require justification before creating files<br/>/cr:f - Find existing only (block all new files)<br/>/cr:st - Show current policy"]:::settingBox
+            F1["<b>File Controls:</b><br/><br/>/ar:a - Allow all file creation<br/>/ar:j - Require justification before creating files<br/>/ar:f - Find existing only (block all new files)<br/>/ar:st - Show current policy"]:::settingBox
         end
 
         FILE_SET --> BLOCK_SET
 
         subgraph BLOCK_SET["Block AI's Destructive Commands"]
             direction LR
-            B1["<b>Command Blocking:</b><br/><br/>/cr:no <pattern> 'why blocked'<br/>Block in this session<br/><br/>/cr:ok <pattern><br/>Allow in this session<br/><br/>/cr:clear [pattern]<br/>Clear session blocks<br/><br/>/cr:globalno <pattern> 'why blocked'<br/>Block in ALL sessions<br/><br/>/cr:globalok <pattern><br/>Allow in ALL sessions<br/><br/>/cr:globalstatus<br/>Show global blocks"]:::settingBox
+            B1["<b>Command Blocking:</b><br/><br/>/ar:no <pattern> 'why blocked'<br/>Block in this session<br/><br/>/ar:ok <pattern><br/>Allow in this session<br/><br/>/ar:clear [pattern]<br/>Clear session blocks<br/><br/>/ar:globalno <pattern> 'why blocked'<br/>Block in ALL sessions<br/><br/>/ar:globalok <pattern><br/>Allow in ALL sessions<br/><br/>/ar:globalstatus<br/>Show global blocks"]:::settingBox
         end
     end
 
@@ -43,11 +43,11 @@ flowchart TD
 
     subgraph WORKFLOW_OPTIONS[" "]
         direction LR
-        W1["/cr:go <task><br/>AI works independently<br/>Best for clear tasks"]:::choiceBox
+        W1["/ar:go <task><br/>AI works independently<br/>Best for clear tasks"]:::choiceBox
 
-        W2["/cr:gp <task><br/>Structured with checks<br/>Best for complex tasks"]:::choiceBox
+        W2["/ar:gp <task><br/>Structured with checks<br/>Best for complex tasks"]:::choiceBox
 
-        W3["Plan commands:<br/><br/>/cr:pn - Create new plan<br/>/cr:pr - Refine plan<br/>/cr:pu - Update plan<br/>/cr:pp - Execute plan<br/><br/>Best for multi-step projects"]:::choiceBox
+        W3["Plan commands:<br/><br/>/ar:pn - Create new plan<br/>/ar:pr - Refine plan<br/>/ar:pu - Update plan<br/>/ar:pp - Execute plan<br/><br/>Best for multi-step projects"]:::choiceBox
 
         W1 --- W2 --- W3
     end
@@ -62,7 +62,7 @@ flowchart TD
     %% ========================================
     subgraph CONTROL_OPTIONS[" "]
         direction LR
-        C1["<b>tmux/byobu:</b><br/><br/>/cr:tabs - List all sessions<br/>/cr:tm [list|create|cleanup] - Manage sessions"]:::choiceBox
+        C1["<b>tmux/byobu:</b><br/><br/>/ar:tabs - List all sessions<br/>/ar:tm [list|create|cleanup] - Manage sessions"]:::choiceBox
     end
 
     %% ========================================

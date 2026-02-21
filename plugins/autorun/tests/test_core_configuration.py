@@ -9,7 +9,7 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG, COMMAND_HANDLERS, log_info
+from autorun import CONFIG, COMMAND_HANDLERS, log_info
 
 def test_three_stage_confirmations():
     """Test three-stage confirmation markers are properly configured with DESCRIPTIVE strings"""
@@ -174,30 +174,30 @@ def test_command_mappings():
     print("✅ All command mappings correctly configured")
 
 
-def test_new_cr_command_mappings():
-    """Test new /cr: prefix commands with short and long forms"""
+def test_new_ar_command_mappings():
+    """Test new /ar: prefix commands with short and long forms"""
     # Short forms
     short_mappings = {
-        "/cr:a": "ALLOW",
-        "/cr:j": "JUSTIFY",
-        "/cr:f": "SEARCH",
-        "/cr:st": "STATUS",
-        "/cr:go": "activate",
-        "/cr:gp": "activate",
-        "/cr:x": "stop",
-        "/cr:sos": "emergency_stop",
+        "/ar:a": "ALLOW",
+        "/ar:j": "JUSTIFY",
+        "/ar:f": "SEARCH",
+        "/ar:st": "STATUS",
+        "/ar:go": "activate",
+        "/ar:gp": "activate",
+        "/ar:x": "stop",
+        "/ar:sos": "emergency_stop",
     }
 
     # Long forms
     long_mappings = {
-        "/cr:allow": "ALLOW",
-        "/cr:justify": "JUSTIFY",
-        "/cr:find": "SEARCH",
-        "/cr:status": "STATUS",
-        "/cr:run": "activate",
-        "/cr:proc": "activate",
-        "/cr:stop": "stop",
-        "/cr:estop": "emergency_stop",
+        "/ar:allow": "ALLOW",
+        "/ar:justify": "JUSTIFY",
+        "/ar:find": "SEARCH",
+        "/ar:status": "STATUS",
+        "/ar:run": "activate",
+        "/ar:proc": "activate",
+        "/ar:stop": "stop",
+        "/ar:estop": "emergency_stop",
     }
 
     # Test short forms
@@ -212,7 +212,7 @@ def test_new_cr_command_mappings():
         actual_action = CONFIG["command_mappings"][cmd]
         assert actual_action == expected_action, f"Long command {cmd} mismatch: expected {expected_action}, got {actual_action}"
 
-    print("✅ All /cr: prefix commands correctly configured (short + long forms)")
+    print("✅ All /ar: prefix commands correctly configured (short + long forms)")
 
 def test_config_values():
     """Test configuration values are correct"""
@@ -313,11 +313,11 @@ def test_log_function():
         print(f"❌ Log info function error: {e}")
         raise
 
-def test_commands_clautorun_fallback_config():
-    """Test that commands/clautorun fallback CONFIG matches main CONFIG.
+def test_commands_autorun_fallback_config():
+    """Test that commands/autorun fallback CONFIG matches main CONFIG.
 
-    The commands/clautorun script has a fallback CONFIG in the except ImportError
-    block that is used when the clautorun package cannot be imported. This test
+    The commands/autorun script has a fallback CONFIG in the except ImportError
+    block that is used when the autorun package cannot be imported. This test
     verifies that the fallback values match the main CONFIG to ensure consistency.
 
     DRY principle: Both should derive from the same source of truth.
@@ -325,15 +325,15 @@ def test_commands_clautorun_fallback_config():
     import ast
     import re
 
-    # Read the commands/clautorun file
-    commands_path = Path(__file__).parent.parent / "commands" / "clautorun"
+    # Read the commands/autorun file
+    commands_path = Path(__file__).parent.parent / "commands" / "autorun"
     with open(commands_path, 'r') as f:
         content = f.read()
 
     # Find the fallback CONFIG in the except ImportError block
     # Pattern: "except ImportError:" followed by CONFIG = { ... }
     except_match = re.search(r'except\s+ImportError\s*:', content)
-    assert except_match, "Could not find except ImportError block in commands/clautorun"
+    assert except_match, "Could not find except ImportError block in commands/autorun"
 
     # Find CONFIG = { after the except block
     content_after_except = content[except_match.end():]
@@ -376,11 +376,11 @@ def test_commands_clautorun_fallback_config():
         assert fallback_desc == config_desc, \
             f"Policy {policy_key} description mismatch: fallback={fallback_desc}, CONFIG={config_desc}"
 
-    print("✅ commands/clautorun fallback CONFIG matches main CONFIG")
+    print("✅ commands/autorun fallback CONFIG matches main CONFIG")
 
 def main():
     """Run all compatibility tests"""
-    print("🧪 Testing clautorun three-stage system compatibility")
+    print("🧪 Testing autorun three-stage system compatibility")
     print("=" * 60)
 
     test_three_stage_confirmations()
@@ -391,14 +391,14 @@ def main():
     test_injection_template()
     test_recheck_template()
     test_command_mappings()
-    test_new_cr_command_mappings()
+    test_new_ar_command_mappings()
     test_config_values()
     test_command_handlers()
     test_handler_variations_available()
     test_log_function()
-    test_commands_clautorun_fallback_config()
+    test_commands_autorun_fallback_config()
 
-    print("\n🎯 All tests passed! clautorun three-stage system verified")
+    print("\n🎯 All tests passed! autorun three-stage system verified")
     print("📋 Verification complete:")
     print("   ✅ Three-stage confirmation markers configured")
     print("   ✅ Descriptive emergency stop string configured")
@@ -407,7 +407,7 @@ def main():
     print("   ✅ All command responses match")
     print("   ✅ All state management works correctly")
     print("   ✅ Both uppercase and lowercase handlers available")
-    print("   ✅ New /cr: short and long form commands configured")
+    print("   ✅ New /ar: short and long form commands configured")
     print("   ✅ No regressions detected")
 
 if __name__ == "__main__":

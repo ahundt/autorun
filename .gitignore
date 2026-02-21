@@ -198,7 +198,7 @@ settings.local.json
 .stashed/
 
 # Symlink artifacts (root level only)
-/clautorun
+/autorun
 /debug/latest
 metadata.json
 

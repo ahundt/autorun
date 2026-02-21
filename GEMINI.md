@@ -1,6 +1,6 @@
-# Clautorun Workspace - Gemini CLI
+# Autorun Workspace - Gemini CLI
 
-**clautorun works identically in both Claude Code and Gemini CLI**, providing unified safety features, commands, and autonomous execution capabilities across both platforms.
+**autorun works identically in both Claude Code and Gemini CLI**, providing unified safety features, commands, and autonomous execution capabilities across both platforms.
 
 **For Claude Code:** See [CLAUDE.md](CLAUDE.md) for Claude Code-specific installation (uses `claude plugin install`).
 
@@ -10,32 +10,32 @@
 
 ```bash
 # Install directly via Gemini extension system
-gemini extensions install https://github.com/ahundt/clautorun.git
+gemini extensions install https://github.com/ahundt/autorun.git
 
 # Verify
-gemini extensions list  # Should show: cr@0.8.0, pdf-extractor@0.8.0
+gemini extensions list  # Should show: ar@0.8.0, pdf-extractor@0.8.0
 ```
 
 ### From Local Clone (Development)
 
 ```bash
-git clone https://github.com/ahundt/clautorun.git && cd clautorun
+git clone https://github.com/ahundt/autorun.git && cd autorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force
+uv run python -m plugins.autorun.src.autorun.install --install --force
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability (works with both Gemini and Claude)
-# This makes 'clautorun' and 'claude-session-tools' commands globally available
+# This makes 'autorun' and 'claude-session-tools' commands globally available
 # which are needed for proper daemon operation and session management
-# Useful for: clautorun --restart-daemon, clautorun --install, clautorun --status, etc.
-cd plugins/clautorun && uv tool install --force --editable .
+# Useful for: autorun --restart-daemon, autorun --install, autorun --status, etc.
+cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
-gemini extensions list    # Should show: cr@0.8.0, pdf-extractor@0.8.0
-clautorun --status        # Verifies UV tool installation works
+gemini extensions list    # Should show: ar@0.8.0, pdf-extractor@0.8.0
+autorun --status        # Verifies UV tool installation works
 ```
 
 **Install UV (if needed):**
@@ -57,7 +57,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 gemini
 
 # Test
-/cr:st  # Expected: "AutoFile policy: allow-all"
+/ar:st  # Expected: "AutoFile policy: allow-all"
 ```
 
 ### Gemini-Specific Configuration
@@ -75,7 +75,7 @@ Edit `~/.gemini/settings.json` and add:
 }
 ```
 
-**Why Required**: Without these settings, clautorun hooks will not execute in Gemini CLI. The safety features (command blocking, file policies) depend on hooks.
+**Why Required**: Without these settings, autorun hooks will not execute in Gemini CLI. The safety features (command blocking, file policies) depend on hooks.
 
 **Version Requirement**: Gemini CLI v0.28.0 or later recommended.
 
@@ -93,11 +93,11 @@ Verify version:
 gemini --version  # Should show 0.28.0 or later
 ```
 
-## Clautorun Integration Benefits
+## Autorun Integration Benefits
 
 ### Safety Features (Works in Both CLIs)
 
-- **File Policies**: Control file creation (`/cr:a`, `/cr:j`, `/cr:f`)
+- **File Policies**: Control file creation (`/ar:a`, `/ar:j`, `/ar:f`)
 - **Command Blocking**: Prevent dangerous operations (rm, git reset --hard, etc.)
 - **Plan Export**: Auto-save plans to notes/ directory
 - **Three-Stage Verification**: Ensures thorough task completion
@@ -106,30 +106,30 @@ gemini --version  # Should show 0.28.0 or later
 **Commands work identically in both CLIs:**
 
 ```bash
-/cr:st              # Show current AutoFile policy
-/cr:a               # Allow all file creation
-/cr:j               # Justify new files
-/cr:f               # Find and modify existing files only (strictest)
-/cr:go <task>       # Start autonomous execution
-/cr:sos             # Emergency stop
+/ar:st              # Show current AutoFile policy
+/ar:a               # Allow all file creation
+/ar:j               # Justify new files
+/ar:f               # Find and modify existing files only (strictest)
+/ar:go <task>       # Start autonomous execution
+/ar:sos             # Emergency stop
 ```
 
-See `/cr:help` or [README.md](README.md) for complete command reference.
+See `/ar:help` or [README.md](README.md) for complete command reference.
 
-### Gemini Vision + Clautorun Safety
+### Gemini Vision + Autorun Safety
 
-**Use Gemini's superior vision capabilities with clautorun's safety guards active:**
+**Use Gemini's superior vision capabilities with autorun's safety guards active:**
 
 #### Image Analysis with File Policy Control
 
 ```bash
 # Set strict policy: only modify existing files
-/cr:f
+/ar:f
 
 # Analyze UI mockup and generate code (respects policy)
 gemini -i notes/ui_mockup.png -c "Convert this mockup to React components"
 
-# Clautorun ensures:
+# Autorun ensures:
 # - No new files created (policy: SEARCH mode)
 # - Suggests modifying existing components
 # - Blocks dangerous bash commands
@@ -141,15 +141,15 @@ gemini -i notes/ui_mockup.png -c "Convert this mockup to React components"
 # Analyze architecture diagram and implement
 gemini -i notes/architecture.png -c "Implement the service layer shown in this diagram"
 
-# Clautorun provides:
-# - File creation control via /cr:j (requires justification)
+# Autorun provides:
+# - File creation control via /ar:j (requires justification)
 # - Command blocking (prevents accidental destructive operations)
 # - Plan export (auto-saves implementation plan)
 ```
 
 #### Video & Audio Analysis
 
-Gemini supports video (1 FPS sampling) and audio (transcription + diarization) with clautorun safety:
+Gemini supports video (1 FPS sampling) and audio (transcription + diarization) with autorun safety:
 
 ```bash
 # Video UX analysis with safety
@@ -170,14 +170,14 @@ gemini -m gemini-3-pro-preview "Transcribe notes/meeting.wav and extract action 
 ```bash
 # Step 1: Claude implements feature
 claude
-/cr:go "Implement user authentication system with tests"
+/ar:go "Implement user authentication system with tests"
 
 # Step 2: Gemini reviews with vision (analyze docs + code)
 gemini
 "Review the authentication code in src/auth.py for security issues.
 Also analyze docs/auth_flow.png to verify implementation matches design."
 
-# Both sessions use clautorun safety:
+# Both sessions use autorun safety:
 # - Same file policies
 # - Same command blocking rules
 # - Isolated session state (no interference)
@@ -192,7 +192,7 @@ gemini
 
 # Step 2: Claude implements with research context
 claude
-/cr:go "Implement OAuth 2.0 flow following the patterns from Gemini's research"
+/ar:go "Implement OAuth 2.0 flow following the patterns from Gemini's research"
 
 # Safety: Both CLIs enforce same policies throughout workflow
 ```
@@ -202,7 +202,7 @@ claude
 ```bash
 # Round 1: Claude creates implementation
 claude
-/cr:go "Build REST API with authentication"
+/ar:go "Build REST API with authentication"
 
 # Round 2: Gemini reviews
 gemini
@@ -223,7 +223,7 @@ gemini -r "$SESSION_ID"  # Resume session for context
 **Claude and Gemini sessions don't interfere with each other:**
 
 - Separate session IDs and state
-- Independent policy settings (can run `/cr:f` in one, `/cr:a` in other)
+- Independent policy settings (can run `/ar:f` in one, `/ar:a` in other)
 - Shared hook daemon (efficient, same enforcement logic)
 - No state leakage between CLIs
 
@@ -244,7 +244,7 @@ gemini -i notes/scanned_doc.png "Extract text from this image"
 
 ### Hook System
 
-Clautorun uses the same hook scripts for both CLIs:
+Autorun uses the same hook scripts for both CLIs:
 
 - **Claude Code**: Uses `hooks.json` with PreToolUse, PostToolUse, SessionStart, Stop events
 - **Gemini CLI**: Uses `gemini-hooks.json` with BeforeTool, AfterTool, SessionStart, SessionEnd events
@@ -262,11 +262,11 @@ The hook system works because Gemini CLI provides:
 ### File Structure
 
 ```
-clautorun/
+autorun/
 ├── gemini-extension.json          # Workspace-level Gemini manifest
 ├── GEMINI.md                       # This file
 └── plugins/
-    ├── clautorun/
+    ├── autorun/
     │   ├── gemini-extension.json          # Plugin manifest for Gemini
     │   ├── .claude-plugin/plugin.json     # Plugin manifest for Claude
     │   ├── hooks/
@@ -285,10 +285,10 @@ clautorun/
 For comprehensive Gemini CLI usage (models, session management, output formats, etc.), see:
 
 ```bash
-/cr:gemini  # Display full Gemini CLI reference guide
+/ar:gemini  # Display full Gemini CLI reference guide
 ```
 
-Key Gemini capabilities that complement clautorun:
+Key Gemini capabilities that complement autorun:
 
 - **Vision**: Superior image/diagram/screenshot analysis
 - **Video**: 1 FPS sampling for UX analysis (use slow-motion for high-speed bugs)
@@ -303,7 +303,7 @@ Key Gemini capabilities that complement clautorun:
 
 ```bash
 # Automatic detection and installation
-clautorun --install
+autorun --install
 
 # Detects both CLIs and installs for whichever are present:
 # ✅ Claude Code: Installs via `claude plugin install`
@@ -314,16 +314,16 @@ clautorun --install
 
 **Claude Code:**
 ```bash
-cd /path/to/clautorun
+cd /path/to/autorun
 claude plugin install .
-claude plugin list  # Verify: cr@0.8.0, pdf-extractor@0.8.0
+claude plugin list  # Verify: ar@0.8.0, pdf-extractor@0.8.0
 ```
 
 **Gemini CLI:**
 ```bash
-cd /path/to/clautorun
+cd /path/to/autorun
 gemini extensions install .
-gemini extensions list # Verify: cr@0.8.0, pdf-extractor@0.8.0
+gemini extensions list # Verify: ar@0.8.0, pdf-extractor@0.8.0
 
 ```
 
@@ -334,14 +334,14 @@ Test in both CLIs:
 ```bash
 # Claude Code
 claude
-/cr:st  # Expected: "AutoFile policy: allow-all"
-/cr:f   # Set strict policy
+/ar:st  # Expected: "AutoFile policy: allow-all"
+/ar:f   # Set strict policy
 "Create test.txt"  # Expected: Blocked
 
 # Gemini CLI
 gemini
-/cr:st  # Expected: Same policy display
-/cr:a   # Allow files (independent of Claude session)
+/ar:st  # Expected: Same policy display
+/ar:a   # Allow files (independent of Claude session)
 "Create test2.txt"  # Expected: Created
 ```
 
@@ -352,7 +352,7 @@ gemini
 ```bash
 # Check extension enabled
 cat ~/.gemini/settings.json
-# Should include: {"extensions": {"cr": {"enabled": true}}}
+# Should include: {"extensions": {"ar": {"enabled": true}}}
 
 # Check hook registration
 gemini --verbose  # Shows hook execution in logs
@@ -366,7 +366,7 @@ If hooks don't fire on specific tools, tool names may differ:
 # List actual Gemini tool names
 gemini --list-tools
 
-# Update matchers in: plugins/clautorun/hooks/gemini-hooks.json
+# Update matchers in: plugins/autorun/hooks/gemini-hooks.json
 # Example: "write_file" vs "Write" in Claude Code
 ```
 
@@ -376,17 +376,17 @@ If sessions interfere unexpectedly:
 
 ```bash
 # Check daemon logs
-cat ~/.clautorun/daemon.log | tail -50
+cat ~/.autorun/daemon.log | tail -50
 
 # Verify CLI detection
-grep "detect_cli_type" ~/.clautorun/daemon.log
+grep "detect_cli_type" ~/.autorun/daemon.log
 
 # Should show correct CLI type for each session
 ```
 
 ## See Also
 
-- [README.md](README.md) - Full clautorun documentation
-- [plugins/clautorun/commands/gemini.md](plugins/clautorun/commands/gemini.md) - Comprehensive Gemini CLI reference
+- [README.md](README.md) - Full autorun documentation
+- [plugins/autorun/commands/gemini.md](plugins/autorun/commands/gemini.md) - Comprehensive Gemini CLI reference
 - [Gemini CLI Docs](https://geminicli.com/docs/) - Official documentation
 - [Gemini Hooks Reference](https://geminicli.com/docs/hooks/reference/) - Hook system technical details
