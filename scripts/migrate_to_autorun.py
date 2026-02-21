@@ -3,13 +3,15 @@
 """
 Migration script: clautorun → autorun with statistical sampling and context
 
-Collects all changes, samples N%, shows before/after with 3 lines of context.
+DRY-RUN MODE (default): Collects all changes, samples N%, shows before/after with 3 lines of context.
+REAL-RUN MODE (--real-run): Modifies files after human confirmation.
 
 SAFETY NOTES:
-1. DRY-RUN ONLY: This script NEVER modifies files (preview mode only)
-2. Self-protection: Script is located in scripts/ directory (explicitly excluded from processing)
-3. Script filename: migrate_to_autorun.py is explicitly protected from modification
-4. .gitignore handling: Uses hardcoded EXCLUDE_PATTERNS (respects common patterns but not full .gitignore)
+1. DRY-RUN (default): Preview-only, NEVER modifies files
+2. REAL-RUN (--real-run): Actually modifies files after human confirmation ("i am human")
+3. Self-protection: Script is located in scripts/ directory (explicitly excluded from processing)
+4. Script filename: migrate_to_autorun.py is explicitly protected from modification
+5. .gitignore handling: Uses hardcoded EXCLUDE_PATTERNS (respects common patterns but not full .gitignore)
    - If .gitignore specifies additional exclusions, verify they're in EXCLUDE_PATTERNS
 """
 
@@ -570,26 +572,29 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
             if file_changes:
                 files_changed.add(file_path)
 
-                # Apply all changes to get final version for issue detection
-                modified_content = original_content
-                for replacement in REPLACEMENTS:
-                    pattern = replacement.compile()
-                    modified_content = pattern.sub(replacement.replacement, modified_content)
+                # SHARED: Apply all changes using existing function (no code duplication)
+                modified_content = apply_all_replacements(original_content, REPLACEMENTS)
 
+                # SHARED: Detect issues
                 issues = detect_issues(file_path, original_content, modified_content)
                 if issues:
                     all_issues.extend([(file_path.relative_to(root), issue) for issue in issues])
 
-                # REAL-RUN: Write modified content to file if no issues detected
+                # REAL-RUN ONLY: Modify file if no issues detected
                 if real_run and not issues:
                     try:
                         file_path.write_text(modified_content, encoding='utf-8')
-                        logger.debug(f"✓ Modified: {file_path.relative_to(root)}")
+                        # Verify write succeeded by reading back
+                        verify_content = file_path.read_text(encoding='utf-8')
+                        if verify_content != modified_content:
+                            all_issues.append((file_path.relative_to(root), "WRITE VERIFICATION FAILED: content mismatch"))
+                        else:
+                            logger.info(f"✓ Modified: {file_path.relative_to(root)}")
                     except Exception as e:
                         all_issues.append((file_path.relative_to(root), f"WRITE ERROR: {e}"))
                 elif real_run and issues:
                     logger.warning(f"⚠️  Skipped (issues found): {file_path.relative_to(root)}")
-                    for file_path_rel, issue in all_issues[-len(issues):]:
+                    for issue in issues:
                         logger.warning(f"    - {issue}")
 
         except Exception as e:
