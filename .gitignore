@@ -197,6 +197,9 @@ settings.local.json
 # Stashed files (originals before symlinking)
 .stashed/
 
+# Rendered diagram images (regenerate from .mmd source files)
+*.png
+
 # Symlink artifacts (root level only)
 /autorun
 /debug/latest

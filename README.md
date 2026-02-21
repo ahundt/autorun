@@ -3,7 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-![autorun Architecture](autorun-architecture.png)
+![autorun Architecture](autorun-architecture.svg)
 
 **autorun** - Reduce interruptions while Claude completes tasks more safely and autonomously.
 
@@ -298,6 +298,8 @@ uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-rep
 
 ## AUTOFILE LIFECYCLE FLOW
 
+![AutoFile Policy Flow](docs/diagrams/autofile-policy.svg)
+
 ```mermaid
 graph TD
     A[User sets AutoFile policy] --> B{Policy Level}
@@ -342,6 +344,8 @@ graph TD
 ## How It Works
 
 ### Three-Stage Autorun System
+
+![Three-Stage Autorun](docs/diagrams/three-stage-autorun.svg)
 
 ```mermaid
 graph TD
