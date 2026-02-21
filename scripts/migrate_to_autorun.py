@@ -23,6 +23,7 @@ import argparse
 import logging
 import random
 import fnmatch
+import subprocess
 from pathlib import Path
 from typing import List, Tuple, Dict
 from dataclasses import dataclass
@@ -307,6 +308,53 @@ REPLACEMENTS = [
         "Config ID: clautorun-workspace"
     ),
 
+    # TIER 9B: Plugin name references in arrays and configs (CRITICAL)
+    # The plugin name itself changes from "cr" to "ar"
+    # Must use lookahead/lookbehind to avoid false matches like "create", "creative", "critical"
+    Replacement(
+        r'\["cr"',
+        '["ar"',
+        'Array element: ["cr" → ["ar" (plugin name in lists)'
+    ),
+    Replacement(
+        r'\[\'cr\'',
+        "['ar'",
+        "Array element: ['cr' → ['ar' (plugin name in lists)"
+    ),
+    # JSON object keys: {"cr": → {"ar":
+    Replacement(
+        r'\{"cr":',
+        '{"ar":',
+        'JSON key: {"cr": → {"ar": (plugin name in object)'
+    ),
+    Replacement(
+        r'\{\'cr\':',
+        "{'ar':",
+        "JSON key: {'cr': → {'ar': (plugin name in object)"
+    ),
+    # Comparisons and assertions: == "cr" or == 'cr' (must have trailing context: space, comma, paren, bracket, or end)
+    Replacement(
+        r'==\s*"cr"(?=[\s,\)\]$]|$)',
+        '== "ar"',
+        'Comparison: == "cr" → == "ar" (plugin name equality check)'
+    ),
+    Replacement(
+        r"==\s*'cr'(?=[\s,\)\]$]|$)",
+        "== 'ar'",
+        "Comparison: == 'cr' → == 'ar' (plugin name equality check)"
+    ),
+    # Gemini extension path references: ~/.gemini/extensions/cr/ → ~/.gemini/extensions/ar/
+    Replacement(
+        r'\.gemini/extensions/cr(?=/)',
+        ".gemini/extensions/ar",
+        "Gemini extension path: .gemini/extensions/cr/ → .gemini/extensions/ar/"
+    ),
+    Replacement(
+        r'extensions/cr(?=")',
+        'extensions/ar',
+        'Gemini extension config: extensions/cr" → extensions/ar"'
+    ),
+
     # TIER 10: Entry points and scripts
     Replacement(
         r"scripts\.clautorun",
@@ -586,6 +634,60 @@ def detect_issues(file_path: Path, original: str, modified: str) -> List[str]:
 
     return issues
 
+def handle_directory_renames(root: Path, dry_run: bool = True) -> Tuple[bool, List[str]]:
+    """Handle git mv for directory renames.
+
+    Returns: (success, messages)
+    - dry_run=True: Preview what would be renamed (NO actual changes)
+    - dry_run=False: Actually execute git mv commands
+    """
+    messages = []
+    dirs_to_rename = [
+        ("plugins/clautorun", "plugins/autorun"),
+        ("src/clautorun_workspace", "src/autorun_workspace"),
+    ]
+
+    for old_dir, new_dir in dirs_to_rename:
+        old_path = root / old_dir
+        new_path = root / new_dir
+
+        if not old_path.exists():
+            messages.append(f"⚠ SKIP: {old_dir} not found (already renamed?)")
+            continue
+
+        if new_path.exists():
+            messages.append(f"⚠ SKIP: {new_dir} already exists")
+            continue
+
+        if dry_run:
+            # DRY-RUN: Just show what would be renamed
+            messages.append(f"[DRY-RUN] Would rename: {old_dir} → {new_dir}")
+        else:
+            # REAL-RUN: Actually execute git mv
+            try:
+                result = subprocess.run(
+                    ["git", "mv", old_dir, new_dir],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    messages.append(f"✓ Renamed: {old_dir} → {new_dir}")
+                else:
+                    messages.append(f"✗ FAILED: {old_dir} → {new_dir}")
+                    if result.stderr:
+                        messages.append(f"  Error: {result.stderr.strip()}")
+                    return False, messages
+            except subprocess.TimeoutExpired:
+                messages.append(f"✗ TIMEOUT: git mv {old_dir} {new_dir}")
+                return False, messages
+            except Exception as e:
+                messages.append(f"✗ ERROR: git mv {old_dir} {new_dir}: {e}")
+                return False, messages
+
+    return True, messages
+
 def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool = False, dangerously_do_real_file_edits: bool = False):
     """Generate migration preview (dry-run) or apply changes (dangerously_do_real_file_edits)"""
     setup_logging(verbose)
@@ -783,17 +885,38 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
         logger.info(f"\n✓ No issues detected")
 
     logger.info(f"\n{'=' * 100}")
+
+    # Handle directory renames with git mv
+    logger.info("Directory renames (git mv):")
+    rename_success, rename_messages = handle_directory_renames(root, dry_run=not dangerously_do_real_file_edits)
+    for msg in rename_messages:
+        logger.info(f"  {msg}")
+
+    if not rename_success:
+        logger.info("⚠ Directory rename failed! Manual intervention may be needed.")
+
+    logger.info(f"\n{'=' * 100}")
     if dangerously_do_real_file_edits:
         # Bug #10 fix: Show modified + skipped counts separately
         logger.info(f"✓ REAL-RUN COMPLETE - {len(files_modified)} files modified, {len(files_skipped)} files skipped")
+        if rename_success:
+            logger.info("✓ Directories renamed successfully")
         logger.info("Next steps:")
-        logger.info("  1. Review changes: git diff")
+        logger.info("  1. Review changes: git diff | head -100")
         logger.info("  2. Test changes: uv run pytest plugins/autorun/tests/ -v")
-        logger.info("  3. Verify no stray references: grep -r 'clautorun' plugins/autorun/ src/")
-        logger.info("  4. Commit: git add -A && git commit -m 'refactor: rename clautorun → autorun'")
+        logger.info("  3. Verify no stray references: grep -r 'clautorun' plugins/autorun/ src/ || echo '✓ Clean'")
+        logger.info("  4. Commit: git add -A && git commit -m 'refactor: rename clautorun → autorun (command prefix /cr: → /ar:)'")
     else:
-        logger.info("DRY-RUN COMPLETE - NO FILES MODIFIED")
+        logger.info("DRY-RUN COMPLETE - NO FILES MODIFIED (including git mv)")
+        logger.info("")
         logger.info("Review samples above to verify replacements are correct")
+        logger.info("Git mv operations shown above (will be executed in REAL-RUN)")
+        logger.info("")
+        logger.info("To save full output to file:")
+        logger.info("  python3 scripts/migrate_to_autorun.py --output migration_review.txt")
+        logger.info("")
+        logger.info("To apply changes (requires 'i am human' confirmation):")
+        logger.info("  python3 scripts/migrate_to_autorun.py --dangerously-do-real-file-edits")
     logger.info("=" * 100)
 
     # Bug #7 fix: Return False only if there are actual issues, not if only some files were skipped
