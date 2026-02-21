@@ -1,4 +1,4 @@
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '18px', 'fontFamily': 'Arial', 'maxTextWidth': 300, 'subgraphBkg': '#f7fafc', 'lineColor': '#a0aec0'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '18px', 'fontFamily': 'Arial', 'maxTextWidth': 300, 'subgraphBkg': '#f7fafc', 'lineColor': '#4a5568', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart TD
     %% ========================================
     %%  STYLING
@@ -16,7 +16,7 @@ flowchart TD
     %%  STEP 1: INSTALL
     %% ========================================
     INSTALL["💿 STEP 1<br/><br/>INSTALL AUTORUN"]:::stepBox
-    INSTALL_CMD["/plugin install autorun"]:::choiceBox
+    INSTALL_CMD["uv pip install git+https://github.com/ahundt/autorun.git"]:::choiceBox
 
     %% ========================================
     %%  SETTINGS PANEL (Always available)
@@ -24,33 +24,31 @@ flowchart TD
     subgraph SETTINGS["⚙️ SETTINGS"]
         direction TB
 
-        subgraph FILE_SET["Prevent or Allow AI from Creating Files"]
+        subgraph FILE_SET["File Creation Policy"]
             F1["<b>File Controls:</b><br/><br/>/ar:a - Allow all file creation<br/>/ar:j - Require justification before creating files<br/>/ar:f - Find existing only (block all new files)<br/>/ar:st - Show current policy"]:::settingBox
         end
 
         FILE_SET --> BLOCK_SET
 
-        subgraph BLOCK_SET["Block AI's Destructive Commands"]
+        subgraph BLOCK_SET["Command Redirecting"]
             direction LR
-            B1["<b>Command Blocking:</b><br/><br/>/ar:no <pattern> 'why blocked'<br/>Block in this session<br/><br/>/ar:ok <pattern><br/>Allow in this session<br/><br/>/ar:clear [pattern]<br/>Clear session blocks<br/><br/>/ar:globalno <pattern> 'why blocked'<br/>Block in ALL sessions<br/><br/>/ar:globalok <pattern><br/>Allow in ALL sessions<br/><br/>/ar:globalstatus<br/>Show global blocks"]:::settingBox
+            B1["<b>Redirect dangerous commands to safer alternatives:</b><br/><br/>/ar:no &lt;pattern&gt; 'why blocked'<br/>Block in this session<br/><br/>/ar:ok &lt;pattern&gt;<br/>Allow in this session<br/><br/>/ar:clear [pattern]<br/>Clear session blocks<br/><br/>/ar:globalno &lt;pattern&gt; 'why blocked'<br/>Block in ALL sessions<br/><br/>/ar:globalok &lt;pattern&gt;<br/>Allow in ALL sessions<br/><br/>/ar:globalstatus<br/>Show global blocks"]:::settingBox
         end
     end
 
     %% ========================================
-    %%  STEP 2: START AUTONOMOUS WORK
+    %%  STEP 2: CHOOSE HOW AI WORKS
     %% ========================================
-    WORKFLOW["🚀 STEP 2<br/><br/>START AUTONOMOUS WORK"]:::stepBox
-
     subgraph WORKFLOW_OPTIONS[" "]
         direction LR
-        W1["/ar:go <task><br/>AI works independently<br/>Best for clear tasks"]:::choiceBox
+        W1["AI works independently<br/>Best for clear tasks<br/>──────────<br/>/ar:go &lt;instructions&gt;"]:::choiceBox
 
-        W2["/ar:gp <task><br/>Structured with checks<br/>Best for complex tasks"]:::choiceBox
+        W2["Best for multi-step projects<br/>──────────<br/>Create new plan<br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/>Refine plan<br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/>Update plan<br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/>Execute plan<br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
 
-        W3["Plan commands:<br/><br/>/ar:pn - Create new plan<br/>/ar:pr - Refine plan<br/>/ar:pu - Update plan<br/>/ar:pp - Execute plan<br/><br/>Best for multi-step projects"]:::choiceBox
-
-        W1 --- W2 --- W3
+        W1 --- W2
     end
+
+    WORKFLOW["🚀 STEP 2<br/><br/>START AUTONOMOUS WORK"]:::stepBox
 
     %% ========================================
     %%  STEP 3: AI WORKS
@@ -74,12 +72,14 @@ flowchart TD
     %%  FLOW
     %% ========================================
     INSTALL --> INSTALL_CMD
-    INSTALL_CMD --> WORKFLOW
+    INSTALL_CMD --> WORKFLOW_OPTIONS
 
-    SETTINGS -.->|"adjust anytime"| AI_ENGINE
-
-    WORKFLOW --> WORKFLOW_OPTIONS
-    WORKFLOW_OPTIONS --> AI_ENGINE
+    WORKFLOW_OPTIONS --> WORKFLOW
+    WORKFLOW --> AI_ENGINE
+    WORKFLOW -.->|"adjust anytime"| SETTINGS
 
     AI_ENGINE --> CONTROL_OPTIONS
     AI_ENGINE -->|"done"| COMPLETE
+
+    %% Make all connector lines thicker
+    linkStyle default stroke-width:6px
