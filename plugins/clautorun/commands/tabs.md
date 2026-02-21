@@ -49,7 +49,9 @@ After user confirms, execute via:
 
 ```bash
 # Using tabs-exec
-echo '{"selections": "B,C", "command": "continue"}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
+# NOTE: --execute requires the full session JSON from discovery phase, not a minimal stub.
+# Claude should pass the full session data obtained from the discovery run above.
+echo '{"selections": "B,C", "command": "continue", "sessions": [...session_data_from_discovery...]}' | "${CLAUDE_PLUGIN_ROOT}/commands/tabs-exec" --execute
 
 # Direct tmux (for simple commands)
 tmux send-keys -t "session:window" "command" C-m
