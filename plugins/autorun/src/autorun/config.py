@@ -47,7 +47,7 @@ ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_
 # Fields:
 #   action: "block" (deny) or "warn" (allow + message) - defaults to "block"
 #   suggestion: Message shown to AI when command matches
-#   redirect: Alternative command template (use {args} placeholder for args)
+#   redirect: Alternative command template ({args} = all args, {file} = last non-flag arg)
 #   when: Predicate name or bash command (defaults to "always")
 #   patterns: List of patterns (OR-ed) - alternative to using dict key
 #   event: Event type - "bash", "file", "stop", "all" (defaults to "bash")
@@ -69,13 +69,13 @@ DEFAULT_INTEGRATIONS = {
     },
     "git reset --hard": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective restore** (to discard specific files only):\n   git restore <file>           # discard working tree changes\n   git restore --staged <file>  # unstage but keep changes\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow in this session: /ar:ok 'git reset --hard'",
+        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective stash** (to save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow in this session: /ar:ok 'git reset --hard'",
         "redirect": "git stash push -m 'WIP: {args}'",
         "when": "_has_unstaged_changes",
     },
     "git checkout .": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective restore** (discard specific files only):\n   git restore <file>\n\n**View what would be lost:**\n   git diff\n\nTo allow in this session: /ar:ok 'git checkout .'",
+        "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective stash** (save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff\n\nTo allow in this session: /ar:ok 'git checkout .'",
         "redirect": "git stash push -m 'WIP: {args}'",
         "when": "_has_unstaged_changes",
     },
@@ -87,9 +87,15 @@ DEFAULT_INTEGRATIONS = {
     },
     "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
         "action": "block",
-        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Use modern Git syntax**:\n   git restore <file>  # discard changes (Git 2.23+)\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow in this session: /ar:ok 'git checkout'",
-        "redirect": "git restore {args}",
+        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow in this session: /ar:ok 'git checkout'",
+        "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_file_has_unstaged_changes",
+    },
+    "git restore": {
+        "action": "block",
+        "suggestion": "CAUTION: 'git restore <file>' permanently discards unstaged changes with no recovery.\n\n**SAFER ALTERNATIVE (RECOMMENDED):**\n   git stash push <file> -m 'WIP: <file>'\n\nNote: 'git restore --staged <file>' (unstage only) is safe and allowed.\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow in this session: /ar:ok 'git restore'",
+        "redirect": "git stash push {file} -m 'WIP: {file}'",
+        "when": "_restore_is_destructive",
     },
     "git stash drop": {
         "action": "block",

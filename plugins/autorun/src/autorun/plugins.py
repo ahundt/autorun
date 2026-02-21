@@ -527,9 +527,15 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                         # Build message (add redirect if present)
                         msg = format_suggestion(intg.message, ctx.cli_type)
                         if intg.redirect:
-                            # Substitute {args} with actual args
+                            # Substitute {args} with actual args, {file} with target file
                             args = cmd.split(maxsplit=1)[1] if " " in cmd else ""
                             redirect_cmd = intg.redirect.replace("{args}", args)
+                            if "{file}" in redirect_cmd:
+                                # Extract file: last arg that isn't a flag or "--"
+                                parts = cmd.split()
+                                file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+                                file_val = file_args[-1] if file_args else args
+                                redirect_cmd = redirect_cmd.replace("{file}", file_val)
                             msg += f"\n\nUse instead: `{redirect_cmd}`"
 
                         # Apply action (warn = allow + message, block = deny)
