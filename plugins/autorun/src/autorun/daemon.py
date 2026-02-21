@@ -15,13 +15,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Clautorun v0.7 Daemon Entry Point
+Autorun v0.7 Daemon Entry Point
 
-Run with: python -m clautorun.daemon
+Run with: python -m autorun.daemon
 
 Bootstrap Order (background thread, non-blocking):
 1. Install UV via pip (if missing) - UV is 10-100x faster than pip
-2. Install clautorun CLI via UV (if missing) - enables fast hook path
+2. Install autorun CLI via UV (if missing) - enables fast hook path
 3. Install bashlex via UV/pip (if missing) - better command parsing
 
 Shutdown Mechanisms:
@@ -29,7 +29,7 @@ Shutdown Mechanisms:
 - Idle timeout: Watchdog shuts down after 30min of inactivity
 - atexit: Fallback cleanup for unexpected termination
 
-The daemon sets up signal handlers internally via ClautorunDaemon._setup_signal_handlers(),
+The daemon sets up signal handlers internally via AutorunDaemon._setup_signal_handlers(),
 so no external signal handling is needed here.
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ import sys
 import threading
 from pathlib import Path
 
-from .core import app, ClautorunDaemon, SOCKET_PATH, LOCK_PATH, logger
+from .core import app, AutorunDaemon, SOCKET_PATH, LOCK_PATH, logger
 
 
 # =============================================================================
@@ -77,10 +77,10 @@ def _get_plugin_root() -> Path | None:
         if (root / 'pyproject.toml').exists():
             return root
 
-    # Calculate from file location: daemon.py -> clautorun -> src -> plugin_root
+    # Calculate from file location: daemon.py -> autorun -> src -> plugin_root
     try:
         current = Path(__file__).resolve()
-        # daemon.py is in src/clautorun/, go up to plugin root
+        # daemon.py is in src/autorun/, go up to plugin root
         plugin_root = current.parent.parent.parent
         if (plugin_root / 'pyproject.toml').exists():
             return plugin_root
@@ -117,36 +117,36 @@ def _ensure_uv() -> bool:
     return False
 
 
-def _install_clautorun() -> bool:
+def _install_autorun() -> bool:
     """
-    Install clautorun CLI via UV tool install from local plugin directory.
+    Install autorun CLI via UV tool install from local plugin directory.
 
     This enables the fast path in hook_entry.py (try_cli).
-    Skips if clautorun is already available in PATH.
-    Returns True if clautorun is available after this call.
+    Skips if autorun is already available in PATH.
+    Returns True if autorun is available after this call.
     """
-    if shutil.which('clautorun'):
+    if shutil.which('autorun'):
         return True  # Already installed
 
     if not shutil.which('uv'):
-        logger.debug("UV not available, cannot install clautorun CLI")
+        logger.debug("UV not available, cannot install autorun CLI")
         return False
 
     plugin_root = _get_plugin_root()
     if not plugin_root:
-        logger.debug("Cannot find plugin root, skipping clautorun CLI install")
+        logger.debug("Cannot find plugin root, skipping autorun CLI install")
         return False
 
     try:
         # Use 'uv tool install' for global CLI availability
         cmd = ['uv', 'tool', 'install', '--force', str(plugin_root)]
         subprocess.run(cmd, capture_output=True, timeout=120)
-        logger.info(f"Installed clautorun CLI from {plugin_root}")
+        logger.info(f"Installed autorun CLI from {plugin_root}")
         return True
     except subprocess.TimeoutExpired:
-        logger.debug("clautorun install timed out")
+        logger.debug("autorun install timed out")
     except Exception as e:
-        logger.debug(f"clautorun install failed: {e}")
+        logger.debug(f"autorun install failed: {e}")
     return False
 
 
@@ -243,7 +243,7 @@ def _bootstrap_optional_deps() -> None:
 
     Bootstrap order:
     1. Install UV via pip (if missing) - 10-100x faster package manager
-    2. Install clautorun CLI (if missing) - enables fast hook path
+    2. Install autorun CLI (if missing) - enables fast hook path
     3. Install bashlex (if missing) - better command parsing
     4. Install pdf-extractor deps (if plugin present and deps missing)
 
@@ -252,7 +252,7 @@ def _bootstrap_optional_deps() -> None:
     def _install():
         """Bootstrap all optional dependencies in order."""
         _ensure_uv()           # Step 1: UV first (makes subsequent installs faster)
-        _install_clautorun()   # Step 2: clautorun CLI (enables fast hook path)
+        _install_autorun()   # Step 2: autorun CLI (enables fast hook path)
         _install_bashlex()     # Step 3: bashlex (better command parsing)
         _install_pdf_deps()    # Step 4: pdf-extractor deps (if plugin present)
 
@@ -270,7 +270,7 @@ def main():
     """
     Daemon entry point.
 
-    Signal handling is done internally by ClautorunDaemon via:
+    Signal handling is done internally by AutorunDaemon via:
     - loop.add_signal_handler() for SIGTERM, SIGINT, SIGHUP
     - atexit registration for cleanup on unexpected exit
     - Shutdown event for coordinated async termination
@@ -283,8 +283,8 @@ def main():
     # Bootstrap optional dependencies in background (non-blocking)
     _bootstrap_optional_deps()
 
-    from clautorun import __version__, __commit__, __build_time__
-    logger.info(f"=== clautorun Daemon v{__version__} starting ===")
+    from autorun import __version__, __commit__, __build_time__
+    logger.info(f"=== autorun Daemon v{__version__} starting ===")
     logger.info(f"Commit: {__commit__}")
     logger.info(f"Build Time: {__build_time__}")
 
@@ -301,11 +301,11 @@ def main():
                 logger.warning(f"Plugin import failed: {e} — waiting for bootstrap to complete")
             if attempt == 5:
                 logger.error(f"Bootstrap timeout after {MAX_BOOTSTRAP_WAIT_SECONDS}s — claude-agent-sdk still missing")
-                logger.error("Run 'clautorun --install' to install dependencies before first daemon use")
+                logger.error("Run 'autorun --install' to install dependencies before first daemon use")
                 sys.exit(1)
             time.sleep(5)
 
-    daemon = ClautorunDaemon(app)
+    daemon = AutorunDaemon(app)
 
     try:
         asyncio.run(daemon.start())

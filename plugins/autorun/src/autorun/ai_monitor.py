@@ -29,15 +29,15 @@ from .tmux_utils import get_tmux_utilities
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-def setup_clautorun_logging():
-    """Setup clautorun logging with cross-user compatible location"""
+def setup_autorun_logging():
+    """Setup autorun logging with cross-user compatible location"""
     # Use cross-user compatible log directory - works regardless of installation location
     log_dir = Path.home() / ".claude" / "sessions"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Setup logging to file with clautorun prefix
+    # Setup logging to file with autorun prefix
     # CRITICAL: No stderr handler - breaks Claude Code hooks (any stderr = "hook error")
-    log_file = log_dir / "clautorun_ai_monitor.log"
+    log_file = log_dir / "autorun_ai_monitor.log"
     logging.basicConfig(
         level=logging.INFO,
         format='[%(asctime)s] %(process)d: %(message)s',
@@ -63,7 +63,7 @@ def get_tmux():
     """Get tmux utilities instance with proper session naming"""
     global _tmux_utils
     if _tmux_utils is None:
-        _tmux_utils = get_tmux_utilities()  # Uses default "clautorun" session
+        _tmux_utils = get_tmux_utilities()  # Uses default "autorun" session
     return _tmux_utils
 
 # Window operations dispatch using centralized tmux utilities
@@ -161,13 +161,13 @@ def run_monitor(session_id, config):
             # Discover windows (exclude monitor's own) with graceful tmux handling
             own_sess, own_win = WIN_OPS['own']()
 
-            # Setup logging for clautorun AI monitor
-            setup_clautorun_logging()
+            # Setup logging for autorun AI monitor
+            setup_autorun_logging()
 
             # Check if tmux is available and has windows
             if not own_sess or not WIN_OPS['list'](session_id):
                 # No tmux session or no windows - run in degraded mode
-                logging.info(f"clautorun AI monitor: tmux not available (session={own_sess}) - running in degraded mode")
+                logging.info(f"autorun AI monitor: tmux not available (session={own_sess}) - running in degraded mode")
                 windows = {}
                 state["windows"] = windows
             else:
@@ -177,7 +177,7 @@ def run_monitor(session_id, config):
                 windows = {w: out for w, out in windows.items() if out and '🤖[AI-MONITOR]🤖' not in out}
 
                 if not windows:
-                    logging.info("clautorun AI monitor: No tmux windows found - running in degraded mode")
+                    logging.info("autorun AI monitor: No tmux windows found - running in degraded mode")
                     windows = {}
 
                 state["windows"] = windows
@@ -279,7 +279,7 @@ def parse_cli():
 
     if not session_id:
         own_sess, _ = WIN_OPS['own']()
-        # Default to "clautorun" session as required by standards
+        # Default to "autorun" session as required by standards
         session_id = own_sess or get_tmux().DEFAULT_SESSION_NAME
         # Ensure session exists
         get_tmux().ensure_session_exists(session_id)

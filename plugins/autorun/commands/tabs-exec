@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Entry point for /ar:tabs slash command — Claude/AI session discovery and management."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from autorun.tmux_tab_ai_session_status import main
+
+main()

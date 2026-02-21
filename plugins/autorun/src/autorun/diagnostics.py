@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Comprehensive Diagnostic and Logging Tools for clautorun - System health monitoring"""
+"""Comprehensive Diagnostic and Logging Tools for autorun - System health monitoring"""
 
 import os
 import json
@@ -48,7 +48,7 @@ except ImportError:
                 pass
         return DummyState()
     def log_info(message):
-        """Fallback logging - file-only when CLAUTORUN_DEBUG=1"""
+        """Fallback logging - file-only when AUTORUN_DEBUG=1"""
         try:
             from .logging_utils import get_logger
             logger = get_logger(__name__)
@@ -144,12 +144,12 @@ class DiagnosticLogger:
                 # Default path
                 log_dir = Path.home() / ".claude" / "logs"
                 log_dir.mkdir(parents=True, exist_ok=True)
-                log_file = log_dir / f"clautorun_diagnostic_{int(time.time())}.log"
+                log_file = log_dir / f"autorun_diagnostic_{int(time.time())}.log"
 
             self.log_file = open(log_file, 'a', encoding='utf-8')
 
             # Write header
-            self.log_file.write(f"# clautorun Diagnostic Log Started at {time.ctime()}\n")
+            self.log_file.write(f"# autorun Diagnostic Log Started at {time.ctime()}\n")
             self.log_file.flush()
 
         except Exception as e:
@@ -187,8 +187,8 @@ class DiagnosticLogger:
 
         # Console output for critical errors - DISABLED to prevent stderr contamination
         # CRITICAL errors are already logged to file above
-        # If needed for visibility, enable via CLAUTORUN_DEBUG=1
-        if level == LogLevel.CRITICAL and os.environ.get('CLAUTORUN_DEBUG') == '1':
+        # If needed for visibility, enable via AUTORUN_DEBUG=1
+        if level == LogLevel.CRITICAL and os.environ.get('AUTORUN_DEBUG') == '1':
             # Only print when debug enabled (otherwise breaks hooks)
             try:
                 from .logging_utils import get_logger
@@ -270,7 +270,7 @@ class DiagnosticLogger:
             current_time = time.time()
             max_age_seconds = max_age_hours * 3600
 
-            for log_file in log_dir.glob("clautorun_diagnostic_*.log"):
+            for log_file in log_dir.glob("autorun_diagnostic_*.log"):
                 if log_file.stat().st_mtime < current_time - max_age_seconds:
                     log_file.unlink()
                     log_info(f"Cleaned up old log file: {log_file}")
@@ -375,7 +375,7 @@ class SystemMonitor:
                 category="storage"
             ))
 
-            # Process metrics for clautorun
+            # Process metrics for autorun
             for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
                 try:
                     if 'python' in proc.info['name'].lower():
@@ -613,31 +613,31 @@ class DiagnosticManager:
                     duration=0
                 )
 
-        @self.health_checker.register_check("clautorun_processes", interval=120)
-        def check_clautorun_processes() -> HealthCheck:
+        @self.health_checker.register_check("autorun_processes", interval=120)
+        def check_autorun_processes() -> HealthCheck:
             try:
                 python_processes = []
                 for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                     try:
                         if 'python' in proc.info['name'].lower():
                             cmdline = ' '.join(proc.info['cmdline'] or [])
-                            if 'clautorun' in cmdline:
+                            if 'autorun' in cmdline:
                                 python_processes.append(proc.info['pid'])
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
 
                 if len(python_processes) > 10:
                     status = HealthStatus.WARNING
-                    message = f"High number of clautorun processes: {len(python_processes)}"
+                    message = f"High number of autorun processes: {len(python_processes)}"
                 elif len(python_processes) > 0:
                     status = HealthStatus.HEALTHY
-                    message = f"clautorun processes running: {len(python_processes)}"
+                    message = f"autorun processes running: {len(python_processes)}"
                 else:
                     status = HealthStatus.HEALTHY
-                    message = "No clautorun processes running (normal)"
+                    message = "No autorun processes running (normal)"
 
                 return HealthCheck(
-                    name="clautorun_processes",
+                    name="autorun_processes",
                     status=status,
                     message=message,
                     timestamp=time.time(),
@@ -650,7 +650,7 @@ class DiagnosticManager:
 
             except Exception as e:
                 return HealthCheck(
-                    name="clautorun_processes",
+                    name="autorun_processes",
                     status=HealthStatus.CRITICAL,
                     message=f"Process check failed: {e}",
                     timestamp=time.time(),
@@ -701,7 +701,7 @@ class DiagnosticManager:
     def export_diagnostics(self, output_file: str = None) -> str:
         """Export comprehensive diagnostic report"""
         if output_file is None:
-            output_file = f"clautorun_diagnostics_{int(time.time())}.json"
+            output_file = f"autorun_diagnostics_{int(time.time())}.json"
 
         status = self.get_status()
 

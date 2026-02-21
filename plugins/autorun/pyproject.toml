@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# Project name is "clautorun" - the plugin uses "cr" as command prefix for easy typing
-name = "clautorun"
+# Project name is "autorun" - the plugin uses "ar" as command prefix for ergonomic typing
+name = "autorun"
 version = "0.8.0"
 description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
 readme = "README.md"
@@ -59,14 +59,14 @@ all = ["bashlex>=0.18"]
 # Regression test: test_hook_entry.py::TestUVCompatibility
 
 [project.scripts]
-clautorun = "clautorun.__main__:main"
-clautorun-install = "clautorun.install:install_main"
-claude-session-tools = "clautorun.claude_session_tools:main"
+autorun = "autorun.__main__:main"
+autorun-install = "autorun.install:install_main"
+claude-session-tools = "autorun.claude_session_tools:main"
 
 [project.urls]
-Homepage = "https://github.com/ahundt/clautorun"
-Repository = "https://github.com/ahundt/clautorun.git"
-Issues = "https://github.com/ahundt/clautorun/issues"
+Homepage = "https://github.com/ahundt/autorun"
+Repository = "https://github.com/ahundt/autorun.git"
+Issues = "https://github.com/ahundt/autorun/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -75,7 +75,7 @@ where = ["src"]
 "" = "src"
 
 [tool.setuptools.package-data]
-clautorun = [
+autorun = [
     "../../.claude-plugin/**/*",
     "../../commands/**/*",
     "../../agents/**/*",
