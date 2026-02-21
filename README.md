@@ -5,6 +5,18 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
+## Key Features
+
+1. **Fewer Interruptions**: Claude/Gemini keeps working without "continue" prompts so you can step away
+2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written
+3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
+4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
+5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
+6. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
+7. **80+ Slash Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
+
+![autorun Architecture](autorun-architecture.svg)
+
 ## Quick Start
 
 ```bash
@@ -22,7 +34,6 @@ autorun --install
 ```bash
 /ar:plannew Design a REST API with authentication and tests
 /ar:planrefine                          # Critique and improve the plan
-/ar:planupdate Add rate limiting        # Update with new requirements
 /ar:planprocess                         # Execute the plan
 
 /ar:go Build a login form with tests    # Or run a task directly
@@ -44,22 +55,10 @@ autorun --install
 
 > Works with both **Claude Code** and **Gemini CLI** — see [Dual CLI Support](#dual-cli-support-claude-code--gemini-cli).
 
-## Key Features
-
-1. **Fewer Interruptions**: Claude/Gemini keeps working without "continue" prompts so you can step away
-2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written
-3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
-4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
-5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-6. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
-7. **80+ Slash Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
-
-![autorun Architecture](autorun-architecture.svg)
-
 ## Table of Contents
 
-- [Quick Start](#quick-start)
 - [Key Features](#key-features)
+- [Quick Start](#quick-start)
 - [UV Installation](#uv-installation-recommended)
   - [Dual CLI Support (Claude Code + Gemini CLI)](#dual-cli-support-claude-code--gemini-cli)
 - [What autorun Does For You](#what-autorun-does-for-you)
