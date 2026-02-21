@@ -25,14 +25,14 @@ flowchart TD
         direction TB
 
         subgraph FILE_SET["File Creation Policy"]
-            F1["<b>File Controls:</b><br/><br/>/ar:a - Allow all file creation<br/>/ar:j - Require justification before creating files<br/>/ar:f - Find existing only (block all new files)<br/>/ar:st - Show current policy"]:::settingBox
+            F1["<b>File Controls:</b><br/>──────────<br/>Allow all file creation<br/>/ar:allow<br/>──────────<br/>Require justification before creating files<br/>/ar:justify<br/>──────────<br/>Find existing only, block all new files<br/>/ar:find<br/>──────────<br/>Show current policy<br/>/ar:status"]:::settingBox
         end
 
         FILE_SET --> BLOCK_SET
 
         subgraph BLOCK_SET["Command Redirecting"]
             direction LR
-            B1["<b>Redirect dangerous commands to safer alternatives:</b><br/><br/>/ar:no &lt;pattern&gt; 'why blocked'<br/>Block in this session<br/><br/>/ar:ok &lt;pattern&gt;<br/>Allow in this session<br/><br/>/ar:clear [pattern]<br/>Clear session blocks<br/><br/>/ar:globalno &lt;pattern&gt; 'why blocked'<br/>Block in ALL sessions<br/><br/>/ar:globalok &lt;pattern&gt;<br/>Allow in ALL sessions<br/><br/>/ar:globalstatus<br/>Show global blocks"]:::settingBox
+            B1["<b>Redirect dangerous commands to safer alternatives</b><br/>──────────<br/>Block in this session<br/>/ar:no &lt;pattern&gt; 'reason'<br/>──────────<br/>Allow in this session<br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/>Clear session blocks<br/>/ar:clear [pattern]<br/>──────────<br/>Block in ALL sessions<br/>/ar:globalno &lt;pattern&gt; 'reason'<br/>──────────<br/>Allow in ALL sessions<br/>/ar:globalok &lt;pattern&gt;<br/>──────────<br/>Show global blocks<br/>/ar:globalstatus"]:::settingBox
         end
     end
 
@@ -40,15 +40,20 @@ flowchart TD
     %%  STEP 2: CHOOSE HOW AI WORKS
     %% ========================================
     subgraph WORKFLOW_OPTIONS[" "]
-        direction LR
-        W1["AI works independently<br/>Best for clear tasks<br/>──────────<br/>/ar:go &lt;instructions&gt;"]:::choiceBox
+        direction TB
+        PROVIDE["📋 PROVIDE TASK INSTRUCTIONS"]:::stepBox
+        subgraph WORKFLOW_CMDS[" "]
+            direction LR
+            W1["Run task directly<br/>──────────<br/>/ar:go &lt;instructions&gt;"]:::choiceBox
 
-        W2["Best for multi-step projects<br/>──────────<br/>Create new plan<br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/>Refine plan<br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/>Update plan<br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/>Execute plan<br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
+            W2["Multi-step projects<br/>──────────<br/>Create new plan<br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/>Refine plan<br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/>Update plan<br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/>Execute plan<br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
 
-        W1 --- W2
+            W1 --- W2
+        end
+        PROVIDE --> WORKFLOW_CMDS
     end
 
-    WORKFLOW["🚀 STEP 2<br/><br/>START AUTONOMOUS WORK"]:::stepBox
+    WORKFLOW["🚀 START AUTONOMOUS WORK"]:::stepBox
 
     %% ========================================
     %%  STEP 3: AI WORKS
@@ -60,7 +65,7 @@ flowchart TD
     %% ========================================
     subgraph CONTROL_OPTIONS[" "]
         direction LR
-        C1["<b>tmux/byobu:</b><br/><br/>/ar:tabs - List all sessions<br/>/ar:tm [list|create|cleanup] - Manage sessions"]:::choiceBox
+        C1["<b>tmux/byobu</b><br/>──────────<br/>List all sessions<br/>/ar:tabs<br/>──────────<br/>Manage sessions<br/>/ar:tmux [list|create|cleanup]"]:::choiceBox
     end
 
     %% ========================================
@@ -78,7 +83,7 @@ flowchart TD
     WORKFLOW --> AI_ENGINE
     WORKFLOW -.->|"adjust anytime"| SETTINGS
 
-    AI_ENGINE --> CONTROL_OPTIONS
+    WORKFLOW -.-> CONTROL_OPTIONS
     AI_ENGINE -->|"done"| COMPLETE
 
     %% Make all connector lines thicker
