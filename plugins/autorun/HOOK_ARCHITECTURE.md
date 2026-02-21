@@ -1,6 +1,6 @@
 # Hook Architecture Documentation
 
-**Version**: 0.8.0
+**Version**: 0.9.0
 **Last Updated**: 2026-02-10
 **Status**: Complete for Claude Code and Gemini CLI
 
@@ -809,6 +809,6 @@ tmux.send_keys('gemini', session_name)
 
 ---
 
-**Version**: 0.8.0
+**Version**: 0.9.0
 **Maintainer**: autorun project
 **Last Verified**: 2026-02-10 with Gemini CLI v0.28.0 and Claude Code
