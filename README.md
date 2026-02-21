@@ -46,14 +46,13 @@ autorun --install
 
 ## Key Features
 
-1. **Fewer Interruptions**: Autorun keeps Claude/Gemini working without constant "continue" prompts so you can step away
-2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written, so you spend less time fixing avoidable mistakes
-3. **Implement, Evaluate, Verify**: AI must pass all three stages before stopping. Prevents AI from claiming half-done work is complete
-4. **Control AI File Creation**: Choose whether AI can create new files freely, must justify them, or can only edit existing ones
-5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`. You choose what's blocked
-6. **Crash-Safe Sessions**: tmux/byobu integration so network drops, terminal crashes, and reboots don't lose progress
-7. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
-8. **80+ Slash Commands**: Plan auto-export, task tracking, tmux session management, git commit guidelines, and more
+1. **Fewer Interruptions**: Claude/Gemini keeps working without "continue" prompts so you can step away
+2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written
+3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
+4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
+5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
+6. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
+7. **80+ Slash Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 
 ![autorun Architecture](autorun-architecture.svg)
 
