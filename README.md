@@ -228,7 +228,7 @@ python plugins/autorun/scripts/restart_daemon.py
 
 # Verify installation
 gemini extensions list
-# Should show: autorun-workspace@0.8.0
+# Should show: autorun-workspace@0.9.0
 
 # Test in Gemini CLI
 gemini

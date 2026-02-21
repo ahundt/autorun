@@ -972,7 +972,7 @@ class TestAllLocationsSync:
     1. Source: plugins/autorun/src/autorun/
     2. Dev venv: plugins/autorun/.venv/.../autorun/
     3. Build: plugins/autorun/build/lib/autorun/
-    4. Claude cache: ~/.claude/plugins/cache/autorun/autorun/0.8.0/
+    4. Claude cache: ~/.claude/plugins/cache/autorun/autorun/0.9.0/
     5. UV tool: ~/.local/share/uv/tools/autorun/.../autorun/
     6. Gemini source: ~/.gemini/extensions/autorun-workspace/plugins/autorun/src/
     7. Gemini plugin venv: ~/.gemini/extensions/autorun-workspace/plugins/autorun/.venv/
@@ -993,7 +993,7 @@ class TestAllLocationsSync:
 
         assert "unified daemon-based hook handler" in content, \
             "Source claude-hooks.json has wrong format. Should be Claude Code, not Gemini. " \
-            "Restore from: ~/.claude/plugins/cache/autorun/autorun/0.8.0/hooks/claude-hooks.json"
+            "Restore from: ~/.claude/plugins/cache/autorun/autorun/0.9.0/hooks/claude-hooks.json"
 
         assert "PreToolUse" in content, \
             "Must have Claude Code event names (not Gemini's BeforeTool)"

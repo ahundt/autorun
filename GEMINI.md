@@ -13,7 +13,7 @@
 gemini extensions install https://github.com/ahundt/autorun.git
 
 # Verify
-gemini extensions list  # Should show: ar@0.8.0, pdf-extractor@0.8.0
+gemini extensions list  # Should show: ar@0.9.0, pdf-extractor@0.9.0
 ```
 
 ### From Local Clone (Development)
@@ -34,7 +34,7 @@ pip install -e . && python -m plugins.autorun.src.autorun.install --install --fo
 cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
-gemini extensions list    # Should show: ar@0.8.0, pdf-extractor@0.8.0
+gemini extensions list    # Should show: ar@0.9.0, pdf-extractor@0.9.0
 autorun --status        # Verifies UV tool installation works
 ```
 
@@ -322,14 +322,14 @@ autorun --install
 ```bash
 cd /path/to/autorun
 claude plugin install .
-claude plugin list  # Verify: ar@0.8.0, pdf-extractor@0.8.0
+claude plugin list  # Verify: ar@0.9.0, pdf-extractor@0.9.0
 ```
 
 **Gemini CLI:**
 ```bash
 cd /path/to/autorun
 gemini extensions install .
-gemini extensions list # Verify: ar@0.8.0, pdf-extractor@0.8.0
+gemini extensions list # Verify: ar@0.9.0, pdf-extractor@0.9.0
 
 ```
 

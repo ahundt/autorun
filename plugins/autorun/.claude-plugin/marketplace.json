@@ -10,7 +10,7 @@
     {
       "name": "ar",
       "description": "autorun plugin - uses 'ar' as command prefix for easy typing (/ar:st, /ar:a, etc.). Provides AutoFile policies, autonomous operation via hooks, and session exploration tools.",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"

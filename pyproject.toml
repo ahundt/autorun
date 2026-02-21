@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autorun-workspace"
-version = "0.8.0"
+version = "0.9.0"
 description = "UV workspace for autorun plugins: autorun, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,8 +39,8 @@ dev = [
     "ruff>=0.14.1",
 ]
 all = [
-    "autorun>=0.8.0",
-    "pdf-extractor>=0.8.0",
+    "autorun>=0.9.0",
+    "pdf-extractor>=0.9.0",
 ]
 
 # NO [project.scripts] - scripts come from plugins/autorun/pyproject.toml
