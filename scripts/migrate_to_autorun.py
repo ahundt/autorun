@@ -104,16 +104,8 @@ REPLACEMENTS = [
     ),
 
     # TIER 4: Python imports (context-aware)
-    Replacement(
-        r"from\s+plugins\.clautorun",
-        "from plugins.autorun",
-        "Python import: from plugins.clautorun"
-    ),
-    Replacement(
-        r"import\s+plugins\.clautorun",
-        "import plugins.autorun",
-        "Python import: import plugins.clautorun"
-    ),
+    # BUG #3 FIX: Removed redundant patterns (lines 108-110 were redundant with TIER 3 pattern 100-103)
+    # TIER 3 pattern already matches "plugins.clautorun", so these are not needed
     Replacement(
         r"from\s+clautorun\b",
         "from autorun",
@@ -151,17 +143,45 @@ REPLACEMENTS = [
 
     # TIER 6B: Test identifiers and labels (CRITICAL - specific patterns to avoid false matches)
     # These are test case names that reference the old command prefix
+    # BUG #4 FIX: Add test patterns for all command variants, keep patterns specific to avoid false matches
+    # Original patterns for status command
     Replacement(
         r'"cr_st_',
         '"ar_st_',
-        'Test label: "cr_st_ → "ar_st_ (e.g., "cr_st_policy")'
+        'Test label: "cr_st_ → "ar_st_'
     ),
     Replacement(
         r"'cr_st_",
         "'ar_st_",
         "Test label: 'cr_st_ → 'ar_st_"
     ),
-    # Test function names that reference command names
+    # Additional command variants (go, find, justify, proc, stop, estop, etc.)
+    Replacement(
+        r'"cr_go_',
+        '"ar_go_',
+        'Test label: "cr_go_ → "ar_go_'
+    ),
+    Replacement(
+        r'"cr_find_',
+        '"ar_find_',
+        'Test label: "cr_find_ → "ar_find_'
+    ),
+    Replacement(
+        r'"cr_justify_',
+        '"ar_justify_',
+        'Test label: "cr_justify_ → "ar_justify_'
+    ),
+    Replacement(
+        r'"cr_proc_',
+        '"ar_proc_',
+        'Test label: "cr_proc_ → "ar_proc_'
+    ),
+    Replacement(
+        r'"cr_stop_',
+        '"ar_stop_',
+        'Test label: "cr_stop_ → "ar_stop_'
+    ),
+    # Test function names that reference command names (keep specific patterns)
     Replacement(
         r'def\s+test_new_cr_',
         'def test_new_ar_',
@@ -185,6 +205,7 @@ REPLACEMENTS = [
         "/ar:|",
         "JSON matcher: /cr:| → /ar:| (alternation pattern in hooks)"
     ),
+    # BUG #2 NOTE: Additional standalone pattern not needed - TIER 6 /cr: pattern handles all remaining cases
 
     # TIER 7B: Command prefix descriptors with word boundaries (CRITICAL)
     # These describe the prefix itself, not command invocations
@@ -223,27 +244,28 @@ REPLACEMENTS = [
 
     # TIER 7C: JSON name fields with word boundaries (CRITICAL)
     # Matches "name": "cr" but not "name": "crisis" or other cr* words
+    # BUG #8 FIX: Preserve original spacing around colons using capture groups
     # Lowercase
     Replacement(
-        r'"name"\s*:\s*"cr"(?=[,\s\n}])',
-        '"name": "ar"',
-        'JSON: "name": "cr" → "name": "ar"'
+        r'"name"(\s*:\s*)"cr"(?=[,\s\n}])',
+        r'"name"\1"ar"',
+        'JSON: "name": "cr" → "name": "ar" (preserves spacing)'
     ),
     Replacement(
-        r"'name'\s*:\s*'cr'(?=[,\s\n}])",
-        "'name': 'ar'",
-        "JSON: 'name': 'cr' → 'name': 'ar'"
+        r"'name'(\s*:\s*)'cr'(?=[,\s\n}])",
+        r"'name'\1'ar'",
+        "JSON: 'name': 'cr' → 'name': 'ar' (preserves spacing)"
     ),
     # Uppercase/mixed case (if they exist)
     Replacement(
-        r'"name"\s*:\s*"CR"(?=[,\s\n}])',
-        '"name": "AR"',
-        'JSON: "name": "CR" → "name": "AR"'
+        r'"name"(\s*:\s*)"CR"(?=[,\s\n}])',
+        r'"name"\1"AR"',
+        'JSON: "name": "CR" → "name": "AR" (preserves spacing)'
     ),
     Replacement(
-        r"'name'\s*:\s*'CR'(?=[,\s\n}])",
-        "'name': 'AR'",
-        "JSON: 'name': 'CR' → 'name': 'AR'"
+        r"'name'(\s*:\s*)'CR'(?=[,\s\n}])",
+        r"'name'\1'AR'",
+        "JSON: 'name': 'CR' → 'name': 'AR' (preserves spacing)"
     ),
 
     # TIER 8: Code format variations
@@ -291,10 +313,11 @@ REPLACEMENTS = [
         "scripts.autorun",
         "Entry point: scripts.clautorun"
     ),
+    # BUG #1 FIX: Preserve original spacing around assignment operator
     Replacement(
-        r"clautorun\s*=\s*",
-        "autorun = ",
-        "Entry point assignment: clautorun ="
+        r"clautorun(\s*=\s*)",
+        r"autorun\1",
+        "Entry point assignment: clautorun = (preserves spacing)"
     ),
 
     # TIER 11: Documentation and generic text (least specific, catch-all)
@@ -357,8 +380,8 @@ EXCLUDE_PATTERNS = [
     ".venv/", ".env/", "*.pyc", "*.pyo", "*.lock",
     "*.bak", "*.tmp", ".DS_Store", "egg-info/",
     "build/", "dist/",
-    # CRITICAL: Exclude scripts directory to prevent script from modifying itself
-    "scripts/",
+    # BUG #7 FIX: Only exclude the migration script itself, not all scripts
+    # Using filename exclusion in should_exclude_file() instead
 ]
 
 def setup_logging(verbose: bool = False):
@@ -373,16 +396,22 @@ def should_exclude_file(file_path: Path) -> bool:
     """Check if file should be excluded from processing.
 
     CRITICAL: This function ensures the migration script never modifies itself.
-    The script is located in scripts/ which is explicitly excluded.
     Uses fnmatch for proper glob pattern matching (not naive substring matching).
     """
     path_str = str(file_path)
 
-    # SAFETY: Absolute protection - never modify the migration script itself
-    if "migrate_to_autorun.py" in path_str:
-        return True
+    # BUG #6 FIX: Robust script self-protection (filename + path resolution)
+    # Check both the filename and the resolved path to prevent self-modification
+    if file_path.name == "migrate_to_autorun.py":
+        try:
+            # Verify it's the actual migration script by comparing resolved paths
+            if file_path.resolve() == Path(__file__).resolve():
+                return True
+        except (OSError, RuntimeError):
+            # If resolution fails, exclude as a safety measure
+            return True
 
-    # Use fnmatch for proper glob pattern matching (Bug #1 fix)
+    # Use fnmatch for proper glob pattern matching
     for pattern in EXCLUDE_PATTERNS:
         if fnmatch.fnmatch(path_str, f"*{pattern}*") or fnmatch.fnmatch(path_str, pattern):
             return True
@@ -403,6 +432,28 @@ def apply_all_replacements(content: str, replacements: List[Replacement]) -> str
         pattern = replacement.compile()
         result = pattern.sub(replacement.replacement, result)
     return result
+
+def apply_all_replacements_with_tracking(content: str, replacements: List[Replacement]) -> Tuple[str, Dict[str, int]]:
+    """Apply ALL patterns to content and track which patterns matched (CUMULATIVE).
+
+    BUG #9 FIX: Tracks which patterns ACTUALLY matched during cumulative application,
+    not re-applying them individually which could give different results.
+
+    Returns: (modified_content, dict of pattern_description -> match_count)
+    """
+    result = content
+    pattern_matches = {}
+
+    for replacement in replacements:
+        pattern = replacement.compile()
+        # Count matches before replacement
+        matches = pattern.findall(result)
+        if matches:
+            pattern_matches[replacement.description] = len(matches)
+        # Apply replacement
+        result = pattern.sub(replacement.replacement, result)
+
+    return result, pattern_matches
 
 def collect_all_changes(content: str, file_path: Path, replacements: List[Replacement], context_lines: int = 3) -> List[Change]:
     """Collect ALL changes with context lines (CUMULATIVE - all patterns applied per line)"""
@@ -441,16 +492,17 @@ def collect_all_changes(content: str, file_path: Path, replacements: List[Replac
                 for i in range(len(after_lines), len(before_lines)):
                     after_lines.append((i + 1, ''))
 
-            # Bug #3 fix: Detect which patterns ACTUALLY caused the change
-            # Apply each pattern individually to see which one changed this line
+            # BUG #9 FIX: Detect which patterns ACTUALLY matched by applying cumulatively
+            # This mirrors the actual replacement process (cumulative application)
             pattern_descs = []
             current_line = lines[line_num]
             for replacement in replacements:
                 pattern = replacement.compile()
-                modified_line = pattern.sub(replacement.replacement, current_line)
-                if modified_line != current_line:
+                # Check if this pattern matches in the current state (cumulative)
+                if pattern.search(current_line):
                     pattern_descs.append(replacement.description)
-                    current_line = modified_line  # Track cumulative changes
+                    # Apply the replacement to match cumulative behavior
+                    current_line = pattern.sub(replacement.replacement, current_line)
 
             combined_desc = " + ".join(pattern_descs) if pattern_descs else "Unknown pattern"
 
@@ -497,9 +549,12 @@ def detect_issues(file_path: Path, original: str, modified: str) -> List[str]:
         issues.append(f"UNRESOLVED REFERENCES: {', '.join(unresolved)}")
 
     # 4. Mixed prefix consistency
+    # BUG #10 NOTE: Simplified - only warn if BOTH prefixes exist AND not in obvious doc/example files
+    # This is just an informational warning, not a blocker
     if file_path.suffix in ['.py', '.md'] and '/cr:' in modified and '/ar:' in modified:
-        if not any(x in str(file_path) for x in ['example', 'doc', 'README', 'CLAUDE']):
-            issues.append("MIXED PREFIXES: Both /cr: and /ar: found (should have one or the other)")
+        # Skip warning for obvious documentation and example files
+        if not any(x in str(file_path) for x in ['test', 'example', 'doc', 'README', 'CLAUDE', 'GEMINI']):
+            issues.append("MIXED PREFIXES: Both /cr: and /ar: found (informational warning only)")
 
     # 5. Plugin manifest changes
     if 'plugin.json' in str(file_path):
