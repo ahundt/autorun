@@ -242,6 +242,12 @@ gemini -i notes/scanned_doc.png "Extract text from this image"
 
 ## Technical Details
 
+### Entry Points
+
+- **Hooks**: `hooks/hook_entry.py` — shared handler for both CLIs (configured via `hooks/gemini-hooks.json` for Gemini)
+- **CLI**: `autorun` command — UV tool entry point at `src/autorun/__main__.py:main`
+- **Config**: `src/autorun/config.py` — single source of truth for all CONFIG values
+
 ### Hook System
 
 Autorun uses the same hook scripts for both CLIs:

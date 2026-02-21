@@ -94,6 +94,13 @@ autorun/                             # Git repository root
         └── ...
 ```
 
+## Entry Points
+
+- **Commands**: `commands/autorun` — executable called by Claude Code plugin system (JSON stdin/stdout)
+- **Hooks**: `hooks/hook_entry.py` — event handler for UserPromptSubmit, PreToolUse, Stop, SubagentStop (configured via `hooks/claude-hooks.json`)
+- **CLI**: `autorun` command → `src/autorun/__main__.py:main` (installed globally via `uv tool install --editable .`)
+- **Config**: `src/autorun/config.py` — single source of truth for all CONFIG values
+
 ## Verification Commands
 
 **Check if you're in the right location:**
