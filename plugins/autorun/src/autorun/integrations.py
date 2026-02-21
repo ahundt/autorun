@@ -567,13 +567,14 @@ def _not_in_pipe(ctx: any) -> bool:
     Uses bashlex for robust pipe detection when available, with simple fallback.
 
     Returns True when command should be blocked (NOT in pipe).
-    Returns False when command should be allowed (in pipe or reading stdin).
+    Returns False when command should be allowed (in pipe, heredoc, or reading stdin).
 
     Examples:
         - `head file.txt` → NOT in pipe → return True (block)
         - `git diff | head -50` → in pipe → return False (allow)
         - `head -50` (no file) → NOT in pipe but stdin → return False (allow)
         - `ps aux | grep foo && echo done` → has pipe → return False (allow)
+        - `git commit -m "$(cat <<'EOF' ... EOF)"` → heredoc → return False (allow)
 
     Args:
         ctx: EventContext with tool_input["command"]
@@ -627,6 +628,14 @@ def _not_in_pipe(ctx: any) -> bool:
             tokens = shlex.split(cmd)
         except ValueError:
             tokens = cmd.split()
+
+        # Check for heredoc: if any token contains << then the command
+        # is reading from a heredoc (multi-line string), not a file.
+        # e.g., cat <<'EOF', cat << EOF, cat <<-EOF,
+        # or $(cat <<'EOF'...) inside a larger command.
+        for t in tokens:
+            if "<<" in t:
+                return False  # Heredoc - allow
 
         # Skip command name and flags
         # Any non-flag argument is potentially a file argument
