@@ -25,14 +25,14 @@ flowchart TD
         direction TB
 
         subgraph FILE_SET["File Creation Policy"]
-            F1["<b>File Controls:</b><br/>──────────<br/>Allow all file creation<br/>/ar:allow<br/>──────────<br/>Require justification before creating files<br/>/ar:justify<br/>──────────<br/>Find existing only, block all new files<br/>/ar:find<br/>──────────<br/>Show current policy<br/>/ar:status"]:::settingBox
+            F1["<b>File Controls:</b><br/>──────────<br/><b>Allow all file creation</b><br/>/ar:allow<br/>──────────<br/><b>Require justification before creating files</b><br/>/ar:justify<br/>──────────<br/><b>Find existing only, block all new files</b><br/>/ar:find<br/>──────────<br/><b>Show current policy</b><br/>/ar:status"]:::settingBox
         end
 
         FILE_SET --> BLOCK_SET
 
         subgraph BLOCK_SET["Command Redirecting"]
             direction LR
-            B1["<b>Redirect dangerous commands to safer alternatives</b><br/>──────────<br/>Block in this session<br/>/ar:no &lt;pattern&gt; 'reason'<br/>──────────<br/>Allow in this session<br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/>Clear session blocks<br/>/ar:clear [pattern]<br/>──────────<br/>Block in ALL sessions<br/>/ar:globalno &lt;pattern&gt; 'reason'<br/>──────────<br/>Allow in ALL sessions<br/>/ar:globalok &lt;pattern&gt;<br/>──────────<br/>Show global blocks<br/>/ar:globalstatus"]:::settingBox
+            B1["<b>Redirect dangerous commands to safer alternatives</b><br/>──────────<br/><b>Block in this session</b><br/>/ar:no &lt;pattern&gt; 'reason'<br/>──────────<br/><b>Allow in this session</b><br/>/ar:ok &lt;pattern&gt;<br/>──────────<br/><b>Clear session blocks</b><br/>/ar:clear [pattern]<br/>──────────<br/><b>Block in ALL sessions</b><br/>/ar:globalno &lt;pattern&gt; 'reason'<br/>──────────<br/><b>Allow in ALL sessions</b><br/>/ar:globalok &lt;pattern&gt;<br/>──────────<br/><b>Show global blocks</b><br/>/ar:globalstatus"]:::settingBox
         end
     end
 
@@ -44,9 +44,9 @@ flowchart TD
         PROVIDE["📋 PROVIDE TASK INSTRUCTIONS"]:::stepBox
         subgraph WORKFLOW_CMDS[" "]
             direction LR
-            W1["Run task directly<br/>──────────<br/>/ar:go &lt;instructions&gt;"]:::choiceBox
+            W1["<b>Run task directly</b><br/>──────────<br/>/ar:go &lt;instructions&gt;"]:::choiceBox
 
-            W2["Multi-step projects<br/>──────────<br/>Create new plan<br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/>Refine plan<br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/>Update plan<br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/>Execute plan<br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
+            W2["<b>Multi-step projects</b><br/>──────────<br/><b>Create new plan</b><br/>/ar:plannew &lt;instructions&gt;<br/>──────────<br/><b>Refine plan</b><br/>/ar:planrefine &lt;instructions&gt;<br/>──────────<br/><b>Update plan</b><br/>/ar:planupdate &lt;instructions&gt;<br/>──────────<br/><b>Execute plan</b><br/>/ar:planprocess &lt;instructions&gt;"]:::choiceBox
 
             W1 --- W2
         end
@@ -65,7 +65,7 @@ flowchart TD
     %% ========================================
     subgraph CONTROL_OPTIONS[" "]
         direction LR
-        C1["<b>tmux/byobu</b><br/>──────────<br/>List all sessions<br/>/ar:tabs<br/>──────────<br/>Manage sessions<br/>/ar:tmux [list|create|cleanup]"]:::choiceBox
+        C1["<b>tmux/byobu</b><br/>──────────<br/><b>List all sessions</b><br/>/ar:tabs<br/>──────────<br/><b>Manage sessions</b><br/>/ar:tmux [list|create|cleanup]"]:::choiceBox
     end
 
     %% ========================================
