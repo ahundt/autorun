@@ -298,8 +298,6 @@ uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-rep
 
 ## AUTOFILE LIFECYCLE FLOW
 
-![AutoFile Policy Flow](docs/diagrams/autofile-policy.svg)
-
 ```mermaid
 graph TD
     A[User sets AutoFile policy] --> B{Policy Level}
@@ -344,8 +342,6 @@ graph TD
 ## How It Works
 
 ### Three-Stage Autorun System
-
-![Three-Stage Autorun](docs/diagrams/three-stage-autorun.svg)
 
 ```mermaid
 graph TD
