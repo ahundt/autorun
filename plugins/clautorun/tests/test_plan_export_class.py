@@ -2429,11 +2429,15 @@ class TestHumanVisibleNotifications:
         # reason must be empty to prevent double-print (canonical pattern)
         assert response.get("reason", "") == ""
 
-    def test_export_on_exit_plan_mode_dedup_no_notification(self, temp_project):
-        """Dedup (already exported): no user notification on second export.
+    def test_export_on_exit_plan_mode_dedup_notifies_with_path(self, temp_project):
+        """Dedup (already exported): second export notifies user with specific file path.
 
-        Prevents vague 'Already exported (dedup)' from reaching user.
-        Change 4: not result.get('skipped') guard silences second notification.
+        When a plan was already exported (e.g. via Option 1 recovery before Option 2 fires),
+        the PostToolUse dedup hit previously returned None — silently suppressing notification.
+        This left users unaware of where the plan was saved.
+
+        Fix: skipped=True now returns "📋 Plan already exported to notes/SPECIFIC_FILE.md"
+        so users know where to find the plan without searching.
         """
         from clautorun.plan_export import export_on_exit_plan_mode
 
@@ -2449,14 +2453,21 @@ class TestHumanVisibleNotifications:
                 store=store,
             )
 
-        # First export: should notify user
+        # First export: should notify user with export path
         response1 = export_on_exit_plan_mode(make_ctx())
         assert response1 is not None and "systemMessage" in response1
+        assert "notes/" in response1["systemMessage"]
 
-        # Second export (dedup): must be silent — no user notification
-        # Silent = None (no response) or AI-only (hookSpecificOutput present)
+        # Second export (dedup): must notify with specific path so user knows where plan is.
         response2 = export_on_exit_plan_mode(make_ctx())
-        assert response2 is None or "hookSpecificOutput" in response2
+        assert response2 is not None, "dedup must return a notification (not None)"
+        assert "systemMessage" in response2
+        assert "already exported" in response2["systemMessage"].lower(), (
+            f"dedup message must say 'already exported'. Got: {response2['systemMessage']!r}"
+        )
+        assert "notes/" in response2["systemMessage"], (
+            f"dedup message must include specific path. Got: {response2['systemMessage']!r}"
+        )
 
     def test_export_on_exit_plan_mode_timeout_is_human_visible(self, temp_project):
         """Timeout: user MUST see warning — plan was NOT exported.
@@ -3282,3 +3293,184 @@ class TestAcceptedRejectedRouting:
             "Known limitation: plan must appear in at least one location"
         # Document that the false positive (notes/ promotion) occurs for this edge case
         # This is intentional: we prioritize Option 1 correctness over rare edge case precision.
+
+    def test_multi_plan_recovery_message_shows_all_paths(self, temp_project):
+        """Regression for Bug 1: all plan paths must appear in recovery message for 2+ plans.
+
+        Bug: last_msg was overwritten each loop iteration in recover_unexported_plans().
+        Only the LAST plan's path appeared, silently dropping earlier plans' paths.
+        This caused accepted plans to look misrouted when a second (rejected) plan existed.
+
+        Real failure seen: "Recovered 2 plan(s)...Plan exported to notes/rejected/..."
+        even when Plan A had been correctly promoted to notes/. Plan B (abandoned) was
+        processed second and overwrote last_msg, making the routing look wrong.
+
+        Fix: accumulate accepted_msgs and rejected_msgs separately; join into one message.
+        """
+        plan_a = temp_project['plan_file']  # will be accepted via source="clear"
+        project_dir = temp_project['project_dir']
+        plans_dir = plan_a.parent
+
+        # Create a second distinct plan file (abandoned — no exit_attempted)
+        plan_b = plans_dir / "test-plan-b-multi.md"
+        plan_b.write_text("# Plan B\n\nThis is the second abandoned plan.")
+
+        try:
+            store1 = ThreadSafeDB()
+
+            # Record both plans in Session 1 (same store = shared state)
+            for plan_path in (plan_a, plan_b):
+                ctx_write = EventContext(
+                    session_id="s1-multi",
+                    event="PostToolUse",
+                    tool_name="Write",
+                    tool_input={"cwd": str(project_dir), "file_path": str(plan_path)},
+                    store=store1,
+                )
+                PlanExport(ctx_write, PlanExportConfig()).record_write(str(plan_path))
+
+            # Plan A: presented to user (backup_to_rejected) → exit_attempted=True
+            ctx_exit = EventContext(
+                session_id="s1-multi",
+                event="PreToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(project_dir)},
+                store=store1,
+            )
+            PlanExport(ctx_exit, PlanExportConfig()).backup_to_rejected(plan_a, "plan")
+            # Plan B: never presented → exit_attempted absent → abandoned
+
+            # Session 2: SessionStart:clear (Option 1 → source="clear")
+            from clautorun.plan_export import recover_unexported_plans
+            store2 = ThreadSafeDB()
+            ctx2 = EventContext(
+                session_id="s2-multi",
+                event="SessionStart",
+                tool_input={"cwd": str(project_dir)},
+                store=store2,
+                permission_mode="default",  # as Claude Code sends it at hook time
+                source="clear",            # primary Option 1 detection signal
+            )
+            result = recover_unexported_plans(ctx2)
+
+            assert result is not None, "recovery must return a response for 2 plans"
+            msg = result["systemMessage"]
+
+            notes_dir = project_dir / "notes"
+            rejected_dir = notes_dir / "rejected"
+            notes_files = [f for f in notes_dir.iterdir()
+                           if f.is_file() and f.suffix == ".md"]
+            rejected_files = list(rejected_dir.glob("*.md"))
+
+            # Both plans must be physically routed correctly
+            assert len(notes_files) >= 1, (
+                f"Plan A (accepted via source='clear') must be in notes/. "
+                f"Got notes/: {notes_files}, rejected/: {rejected_files}"
+            )
+            assert len(rejected_files) >= 1, (
+                f"Plan B (abandoned) must be in notes/rejected/. "
+                f"Got rejected/: {rejected_files}"
+            )
+
+            # CRITICAL: both paths must appear in the message.
+            # With old (buggy) code, only the last plan's path was shown.
+            assert "Accepted:" in msg, (
+                f"Message must have 'Accepted:' section for Plan A. Got: {msg!r}"
+            )
+            assert "Not accepted:" in msg, (
+                f"Message must have 'Not accepted:' section for Plan B. Got: {msg!r}"
+            )
+            # Specific filenames must be present, not just directory names
+            assert any(f.name in msg for f in notes_files), (
+                f"Plan A filename must appear in message. "
+                f"notes/ files: {[f.name for f in notes_files]}. Message: {msg!r}"
+            )
+            assert any(f.name in msg for f in rejected_files), (
+                f"Plan B filename must appear in message. "
+                f"rejected/ files: {[f.name for f in rejected_files]}. Message: {msg!r}"
+            )
+        finally:
+            if plan_b.exists():
+                plan_b.unlink()
+
+    def test_option1_then_option2_dedup_notifies_destination(self, temp_project):
+        """Regression for Bug 2b: Option 1 recovery then Option 2 PostToolUse must notify.
+
+        Scenario that triggered the bug:
+        1. User accepts via Option 1 (clear context + bypass permissions).
+        2. Recovery runs at SessionStart:clear → plan exported to notes/ → hash in tracking.
+        3. In the new bypassPermissions session, user calls ExitPlanMode again (Option 2).
+        4. PostToolUse fires → export_on_exit_plan_mode() → dedup hits (hash in tracking).
+
+        Bug: dedup returned skipped=True → old guard 'not result.get("skipped")' → None
+        returned → systemMessage: "" → user sees blank notification, doesn't know where plan is.
+
+        Fix: skipped=True now returns "📋 Plan already exported to notes/SPECIFIC_FILE.md"
+        so users know where the plan is without searching.
+        """
+        plan = temp_project['plan_file']
+        project_dir = temp_project['project_dir']
+
+        # === Simulate Option 1 recovery: export plan to notes/, record hash in tracking ===
+        store1 = ThreadSafeDB()
+        ctx_recovery = EventContext(
+            session_id="s1-opt1-recovery",
+            event="SessionStart",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+            permission_mode="default",
+            source="clear",
+        )
+        # Record the plan as active so recovery can find it
+        ctx_write = EventContext(
+            session_id="s0-pre-opt1",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"cwd": str(project_dir), "file_path": str(plan)},
+            store=store1,
+        )
+        PlanExport(ctx_write, PlanExportConfig()).record_write(str(plan))
+        # Set exit_attempted so it routes as accepted
+        ctx_exit = EventContext(
+            session_id="s0-pre-opt1",
+            event="PreToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            store=store1,
+        )
+        PlanExport(ctx_exit, PlanExportConfig()).backup_to_rejected(plan, "plan")
+
+        from clautorun.plan_export import recover_unexported_plans, export_on_exit_plan_mode
+        recovery_result = recover_unexported_plans(ctx_recovery)
+        assert recovery_result is not None, "Option 1 recovery must succeed"
+        assert "Accepted:" in recovery_result["systemMessage"], (
+            f"Recovery must route to notes/. Got: {recovery_result['systemMessage']!r}"
+        )
+
+        # === Simulate Option 2: PostToolUse fires in the new session ===
+        # The plan hash is now in tracking (from recovery). export() will hit dedup.
+        store2 = ThreadSafeDB()
+        ctx_post = EventContext(
+            session_id="s2-opt2-post",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            tool_result=json.dumps({"filePath": str(plan)}),
+            store=store2,
+            permission_mode="bypassPermissions",
+        )
+        opt2_result = export_on_exit_plan_mode(ctx_post)
+
+        # Must NOT return None — user needs to know where the plan is
+        assert opt2_result is not None, (
+            "Bug 2b regression: Option 2 PostToolUse must notify even on dedup hit. "
+            "Got None — user left with no information about where plan was exported."
+        )
+        assert "systemMessage" in opt2_result
+        msg = opt2_result["systemMessage"]
+        assert "already exported" in msg.lower(), (
+            f"systemMessage must say 'already exported'. Got: {msg!r}"
+        )
+        assert "notes/" in msg, (
+            f"systemMessage must include specific notes/ path. Got: {msg!r}"
+        )

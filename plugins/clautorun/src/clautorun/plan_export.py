@@ -1130,12 +1130,27 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
         if not plan:
             plan = exporter.get_plan_from_exit_message()
 
+        logger.info(
+            f"export_on_exit_plan_mode: tool={ctx.tool_name} "
+            f"plan={plan} permission_mode={ctx.permission_mode}"
+        )
+
         if plan:
             result = exporter.export(plan)
-            # Skip dedup notifications ("Already exported (dedup)") — vague and unhelpful.
-            # Timeout is human-visible: user must know plan was NOT exported (to_human=True).
-            if result["success"] and config.notify_claude and not result.get("skipped"):
-                return ctx.respond("allow", f"📋 {result['message']}", to_human=True)
+            logger.info(f"export_on_exit_plan_mode: export result={result}")
+            if result["success"] and config.notify_claude:
+                if result.get("skipped"):
+                    # Plan already exported (dedup). Notify with where it was sent rather
+                    # than silently returning nothing — the user needs to know where to find it.
+                    dest = result.get("destination", "")
+                    if dest:
+                        try:
+                            rel = Path(dest).relative_to(exporter.project_dir)
+                            return ctx.respond("allow", f"📋 Plan already exported to {rel}", to_human=True)
+                        except ValueError:
+                            return ctx.respond("allow", f"📋 Plan already exported to {dest}", to_human=True)
+                else:
+                    return ctx.respond("allow", f"📋 {result['message']}", to_human=True)
     except SessionTimeoutError:
         return ctx.respond("allow", "⚠️ Plan export skipped: lock timeout. Re-trigger ExitPlanMode to retry.", to_human=True)
     except Exception as e:
@@ -1178,7 +1193,8 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
 
         exporter = PlanExport(ctx, config)
         recovered_count = 0
-        last_msg = ""
+        accepted_msgs: list = []
+        rejected_msgs: list = []
 
         # Snapshot active_plans before get_unexported() may clean stale entries.
         # Plans cleaned (file no longer exists) won't appear in the loop anyway.
@@ -1204,29 +1220,53 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
                                       or (mode_changed
                                           and ctx.permission_mode in PLAN_ACCEPTED_PERMISSION_MODES)))
 
+            logger.info(
+                f"recover_unexported_plans: plan={plan.name} "
+                f"exit_was_attempted={exit_was_attempted} "
+                f"session_is_clear={session_is_clear} "
+                f"permission_mode={ctx.permission_mode} "
+                f"mode_at_exit={mode_at_exit!r} "
+                f"plan_was_accepted={plan_was_accepted}"
+            )
+
             if plan_was_accepted:
                 # Option 1: new session with bypassPermissions/acceptEdits.
                 # Backup exists in notes/rejected/ (written by backup_to_rejected).
                 # Promote to notes/. force=True bypasses dedup — hash not in tracking yet
                 # because backup_to_rejected() skips tracking intentionally.
                 result = exporter.export(plan, rejected=False, force=True)
+                if result["success"]:
+                    recovered_count += 1
+                    if result.get("message"):
+                        accepted_msgs.append(result["message"])
 
             elif exit_was_attempted:
                 # Option 4 or Escape: dialog was shown, plan was not accepted.
                 # Backup already exists in notes/rejected/. Record in tracking, clean active_plans.
                 result = exporter.finalize_backup(plan)
+                if result["success"]:
+                    recovered_count += 1
+                    if result.get("message"):
+                        rejected_msgs.append(result["message"])
 
             else:
                 # Abandoned: ExitPlanMode was never called before this recovery.
                 # Standard export to notes/rejected/ (or notes/ if export_rejected=False).
                 result = exporter.export(plan, rejected=config.export_rejected)
+                if result["success"]:
+                    recovered_count += 1
+                    if result.get("message"):
+                        rejected_msgs.append(result["message"])
 
-            if result["success"]:
-                recovered_count += 1
-                last_msg = result.get("message", "")
+            logger.info(f"recover_unexported_plans: result={result}")
 
         if recovered_count > 0:
-            msg = f"📋 Recovered {recovered_count} plan(s) (from fresh context or abandoned): {last_msg}"
+            parts = []
+            if accepted_msgs:
+                parts.append("Accepted: " + "; ".join(accepted_msgs))
+            if rejected_msgs:
+                parts.append("Not accepted: " + "; ".join(rejected_msgs))
+            msg = f"📋 Recovered {recovered_count} plan(s): " + "; ".join(parts)
             # PATHWAY 4 (SessionStart): ctx.respond() adds required schema fields
             # (stopReason, suppressOutput) and applies schema validation via
             # validate_hook_response(). systemMessage is always human-visible for SessionStart.
