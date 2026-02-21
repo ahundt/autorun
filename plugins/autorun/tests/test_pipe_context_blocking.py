@@ -174,6 +174,139 @@ class TestNotInPipePredicate:
         assert result is False, "Empty command should be allowed (return False)"
         print("✅ Test 12 passed: Empty command handled")
 
+    # === Heredoc tests (cat << is string construction, not file read) ===
+
+    def test_13_cat_heredoc_in_commit(self):
+        """Allow: cat <<'EOF' in git commit -m (HEREDOC string constructor)."""
+        cmd = """git commit -m "$(cat <<'EOF'\nfeat: add feature\nEOF\n)\" """
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat <<'EOF' in commit should be allowed (heredoc)"
+
+    def test_14_cat_heredoc_standalone(self):
+        """Allow: standalone cat << EOF (heredoc, reading from inline text)."""
+        cmd = "cat << EOF\nhello world\nEOF"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat << EOF should be allowed (heredoc)"
+
+    def test_15_cat_heredoc_quoted_double(self):
+        """Allow: cat <<"EOF" (double-quoted heredoc delimiter)."""
+        cmd = 'cat <<"EOF"\nsome content\nEOF'
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, 'cat <<"EOF" should be allowed (heredoc)'
+
+    def test_16_cat_heredoc_dash(self):
+        """Allow: cat <<-EOF (heredoc with indentation stripping)."""
+        cmd = "cat <<-EOF\n\tindented content\n\tEOF"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat <<-EOF should be allowed (heredoc)"
+
+    def test_17_cat_heredoc_chained_commands(self):
+        """Allow: cat heredoc chained with && (full commit workflow)."""
+        cmd = (
+            'git add file.py && git commit -m "$(cat <<\'EOF\'\n'
+            'feat: add new feature\nEOF\n)" && git status'
+        )
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat heredoc in chained commit should be allowed"
+
+    def test_18_cat_file_still_blocked(self):
+        """Block: cat on file is still blocked (not a heredoc)."""
+        cmd = "cat /etc/passwd"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is True, "cat /etc/passwd should be blocked (direct file read)"
+
+    def test_19_cat_multiple_files_still_blocked(self):
+        """Block: cat on multiple files is still blocked."""
+        cmd = "cat file1.txt file2.txt"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is True, "cat file1.txt file2.txt should be blocked"
+
+    def test_20_head_heredoc_allowed(self):
+        """Allow: head with heredoc (unlikely but valid)."""
+        cmd = "head -5 << EOF\nline1\nline2\nline3\nEOF"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "head << EOF should be allowed (heredoc)"
+
+    def test_21_cat_no_args_still_allowed(self):
+        """Allow: bare cat with no args (reads stdin)."""
+        cmd = "cat"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "bare cat should be allowed (stdin)"
+
+    def test_22_cat_heredoc_no_space(self):
+        """Allow: cat <<EOF with no space before delimiter."""
+        cmd = "cat <<EOF\ncontent\nEOF"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat <<EOF (no space) should be allowed (heredoc)"
+
+    def test_23_cat_flags_only_no_file(self):
+        """Allow: cat -n with no file (reads stdin)."""
+        cmd = "cat -n"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat -n (stdin with flags) should be allowed"
+
+    def test_24_heredoc_piped_to_grep(self):
+        """Allow: cat <<EOF | grep pattern (heredoc piped)."""
+        cmd = "cat <<EOF | grep hello\nhello world\ngoodbye\nEOF"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat <<EOF | grep should be allowed (pipe + heredoc)"
+
+    def test_25_command_substitution_cat_file(self):
+        """Block: echo $(cat file.txt) — cat reads a file, not heredoc."""
+        cmd = "echo $(cat file.txt)"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is True, "echo $(cat file.txt) should be blocked (file read)"
+
+    def test_26_no_tool_input_attribute(self):
+        """Edge case: context object without tool_input."""
+        import types
+        ctx = types.SimpleNamespace()  # No tool_input attribute
+        result = _not_in_pipe(ctx)
+        assert result is False, "Missing tool_input should be allowed (fail open)"
+
+    def test_27_none_command(self):
+        """Edge case: command is None."""
+        ctx = MockCtx(None)
+        # tool_input.get("command", "") returns None, which is falsy
+        result = _not_in_pipe(ctx)
+        assert result is False, "None command should be allowed (fail open)"
+
+    def test_28_malformed_quotes_fallback(self):
+        """Edge case: malformed quotes trigger shlex fallback to str.split."""
+        cmd = "cat 'unclosed quote file.txt"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        # shlex.split will fail, falls back to cmd.split()
+        # Has non-flag args so should block
+        assert result is True, "Malformed quotes with file arg should still block"
+
+    def test_29_cat_heredoc_in_subshell(self):
+        """Allow: cat heredoc inside $() subshell."""
+        cmd = 'VAR="$(cat <<EOF\nvalue\nEOF\n)"'
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "cat heredoc in $() subshell should be allowed"
+
+    def test_30_git_diff_pipe_tail_still_works(self):
+        """Regression: pipe detection still works after heredoc changes."""
+        cmd = "cargo test 2>&1 | tail -100"
+        ctx = MockCtx(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, "pipe with tail should still be allowed"
+
 
 def run_all_tests():
     """Run all tests."""
@@ -194,6 +327,24 @@ def run_all_tests():
         test_suite.test_10_tail_on_file_blocked,
         test_suite.test_11_complex_multi_pipe,
         test_suite.test_12_empty_command,
+        test_suite.test_13_cat_heredoc_in_commit,
+        test_suite.test_14_cat_heredoc_standalone,
+        test_suite.test_15_cat_heredoc_quoted_double,
+        test_suite.test_16_cat_heredoc_dash,
+        test_suite.test_17_cat_heredoc_chained_commands,
+        test_suite.test_18_cat_file_still_blocked,
+        test_suite.test_19_cat_multiple_files_still_blocked,
+        test_suite.test_20_head_heredoc_allowed,
+        test_suite.test_21_cat_no_args_still_allowed,
+        test_suite.test_22_cat_heredoc_no_space,
+        test_suite.test_23_cat_flags_only_no_file,
+        test_suite.test_24_heredoc_piped_to_grep,
+        test_suite.test_25_command_substitution_cat_file,
+        test_suite.test_26_no_tool_input_attribute,
+        test_suite.test_27_none_command,
+        test_suite.test_28_malformed_quotes_fallback,
+        test_suite.test_29_cat_heredoc_in_subshell,
+        test_suite.test_30_git_diff_pipe_tail_still_works,
     ]
 
     passed = 0
