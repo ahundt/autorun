@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Test ai_monitor integration functionality in clautorun"""
+"""Test ai_monitor integration functionality in autorun"""
 
 import sys
 from pathlib import Path
@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 def test_premature_stop_detection():
     """Test that premature stops are correctly detected"""
-    from clautorun import is_premature_stop, CONFIG
+    from autorun import is_premature_stop, CONFIG
 
     # Mock context with no completion marker
     ctx = Mock()
@@ -45,7 +45,7 @@ def test_premature_stop_detection():
 
 def test_verification_trigger_logic():
     """Test verification stage triggering logic"""
-    from clautorun import should_trigger_verification, CONFIG
+    from autorun import should_trigger_verification, CONFIG
 
     # Test initial stage with attempts below max
     state = {
@@ -69,7 +69,7 @@ def test_verification_trigger_logic():
 
 def test_continue_prompt_injection():
     """Test continue prompt injection functionality with three-stage system"""
-    from clautorun.main import inject_continue_prompt, CONFIG
+    from autorun.main import inject_continue_prompt, CONFIG
 
     state = {"session_status": "active", "file_policy": "ALLOW"}
 
@@ -91,7 +91,7 @@ def test_continue_prompt_injection():
 
 def test_verification_prompt_injection():
     """Test verification prompt injection functionality"""
-    from clautorun import inject_verification_prompt
+    from autorun import inject_verification_prompt
 
     state = {
         "activation_prompt": "/autorun build a website",
@@ -110,7 +110,7 @@ def test_verification_prompt_injection():
 
 def test_stop_handler_with_premature_stop():
     """Test stop handler behavior with premature stops in three-stage system"""
-    from clautorun import stop_handler
+    from autorun import stop_handler
     from unittest.mock import patch
 
     # Mock context with premature stop
@@ -126,7 +126,7 @@ def test_stop_handler_with_premature_stop():
         "verification_attempts": 0
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -141,7 +141,7 @@ def test_stop_handler_with_premature_stop():
 
 def test_stop_handler_with_continue_prompt():
     """Test stop handler injects continue prompt when premature stop detected in INITIAL stage"""
-    from clautorun import stop_handler, CONFIG
+    from autorun import stop_handler, CONFIG
 
     # Mock context with premature stop (no completion markers)
     ctx = Mock()
@@ -156,7 +156,7 @@ def test_stop_handler_with_continue_prompt():
         "verification_attempts": 0
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -171,7 +171,7 @@ def test_stop_handler_with_continue_prompt():
 
 def test_stop_handler_with_successful_completion():
     """Test stop handler allows proper three-stage completion"""
-    from clautorun.main import stop_handler, CONFIG
+    from autorun.main import stop_handler, CONFIG
 
     # Mock context with successful stage 3 completion
     ctx = Mock()
@@ -186,7 +186,7 @@ def test_stop_handler_with_successful_completion():
         "hook_call_count": CONFIG["stage3_countdown_calls"]  # Countdown completed
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -200,7 +200,7 @@ def test_stop_handler_with_successful_completion():
 
 def test_stop_handler_with_emergency_stop():
     """Test stop handler respects emergency stop"""
-    from clautorun.main import stop_handler, CONFIG
+    from autorun.main import stop_handler, CONFIG
 
     # Mock context with emergency stop
     ctx = Mock()
@@ -215,7 +215,7 @@ def test_stop_handler_with_emergency_stop():
         "verification_attempts": 0
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -233,7 +233,7 @@ def test_stop_handler_with_emergency_stop():
 
 def test_stop_handler_with_non_autorun_session():
     """Test stop handler with non-autorun session"""
-    from clautorun.main import stop_handler
+    from autorun.main import stop_handler
 
     # Mock context for non-autorun session
     ctx = Mock()
@@ -243,7 +243,7 @@ def test_stop_handler_with_non_autorun_session():
     # Mock inactive session state
     mock_state = {}
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -260,7 +260,7 @@ def test_stop_handler_with_non_autorun_session():
 
 def test_template_content_completeness():
     """Test that templates contain all required critical components"""
-    from clautorun import CONFIG
+    from autorun import CONFIG
 
     # Test injection template has all critical components
     injection_template = CONFIG["injection_template"]
@@ -292,7 +292,7 @@ def test_template_content_completeness():
 
 def test_template_parameter_substitution():
     """Test that template parameter substitution works correctly with three-stage system"""
-    from clautorun.main import CONFIG, inject_continue_prompt, inject_verification_prompt
+    from autorun.main import CONFIG, inject_continue_prompt, inject_verification_prompt
 
     # Test continue prompt injection
     state = {
@@ -331,7 +331,7 @@ def test_template_parameter_substitution():
 
 def test_session_state_isolation():
     """Test that different sessions are properly isolated in three-stage system"""
-    from clautorun import stop_handler, CONFIG
+    from autorun import stop_handler, CONFIG
     from unittest.mock import patch
 
     # Mock context for session 1 - no completion marker
@@ -358,7 +358,7 @@ def test_session_state_isolation():
         "activation_prompt": "/autorun task 2"
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state_1
         mock_session.return_value.__exit__.return_value = None
 
@@ -381,7 +381,7 @@ def test_session_state_isolation():
 
 def test_max_verification_attempts_boundary():
     """Test behavior when premature stop detected in INITIAL stage (boundary test)"""
-    from clautorun import stop_handler, CONFIG
+    from autorun import stop_handler, CONFIG
     from unittest.mock import patch
 
     # Test premature stop with no completion markers
@@ -396,7 +396,7 @@ def test_max_verification_attempts_boundary():
         "verification_attempts": 0
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -410,7 +410,7 @@ def test_max_verification_attempts_boundary():
 
 def test_edge_case_transcript_scenarios():
     """Test edge cases in transcript analysis"""
-    from clautorun.main import is_premature_stop, CONFIG
+    from autorun.main import is_premature_stop, CONFIG
 
     # Test with empty transcript
     ctx = Mock()
@@ -447,7 +447,7 @@ def test_edge_case_transcript_scenarios():
 
 def test_file_policy_integration():
     """Test that file policy is correctly integrated into templates"""
-    from clautorun import inject_continue_prompt, CONFIG
+    from autorun import inject_continue_prompt, CONFIG
 
     # Test each file policy type
     policies = ["ALLOW", "JUSTIFY", "SEARCH"]
@@ -473,7 +473,7 @@ def test_file_policy_integration():
 
 def test_concurrent_session_handling():
     """Test behavior with multiple concurrent sessions in three-stage system"""
-    from clautorun.main import stop_handler
+    from autorun.main import stop_handler
     from unittest.mock import patch
     import threading
     import time
@@ -495,7 +495,7 @@ def test_concurrent_session_handling():
             "verification_attempts": 0
         }
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
@@ -527,7 +527,7 @@ def test_concurrent_session_handling():
 
 def test_error_recovery_scenarios():
     """Test error recovery and resilience scenarios in three-stage system"""
-    from clautorun.main import stop_handler
+    from autorun.main import stop_handler
     from unittest.mock import patch
 
     # Test with missing session state fields
@@ -541,7 +541,7 @@ def test_error_recovery_scenarios():
         "autorun_stage": "INITIAL"
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = minimal_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -556,7 +556,7 @@ def test_error_recovery_scenarios():
     # Test with malformed transcript
     ctx.session_transcript = None  # None transcript
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = minimal_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -568,7 +568,7 @@ def test_error_recovery_scenarios():
     # Test with empty state dict
     empty_state = {}
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = empty_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -581,7 +581,7 @@ def test_error_recovery_scenarios():
 
 def test_three_stage_completion_flow():
     """Test complete three-stage completion flow"""
-    from clautorun.main import stop_handler, CONFIG
+    from autorun.main import stop_handler, CONFIG
     from unittest.mock import patch
 
     # Test Stage 1 completion
@@ -594,7 +594,7 @@ def test_three_stage_completion_flow():
         "session_id": "test_session"
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -617,7 +617,7 @@ def test_stage_2_countdown_mechanism():
     - Even counts: "Stage 3 countdown: X calls remaining"
     - Odd counts: inject_continue_prompt with "After X more hook calls"
     """
-    from clautorun.main import stop_handler, CONFIG
+    from autorun.main import stop_handler, CONFIG
     from unittest.mock import patch
 
     ctx = Mock()
@@ -630,7 +630,7 @@ def test_stage_2_countdown_mechanism():
         "session_id": "test_session"
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -664,7 +664,7 @@ def test_stage_2_countdown_mechanism():
 
 def test_premature_stage_3_attempt_handling():
     """Test handling of premature stage 3 attempts"""
-    from clautorun.main import stop_handler, CONFIG
+    from autorun.main import stop_handler, CONFIG
     from unittest.mock import patch
 
     ctx = Mock()
@@ -677,7 +677,7 @@ def test_premature_stage_3_attempt_handling():
         "session_id": "test_session"
     }
 
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 
@@ -691,7 +691,7 @@ def test_premature_stage_3_attempt_handling():
 
 def test_three_stage_ai_monitor_coordination():
     """Test AI monitor coordination with session IDs in three-stage system"""
-    from clautorun.main import _manage_monitor, CONFIG
+    from autorun.main import _manage_monitor, CONFIG
     from unittest.mock import patch
 
     mock_state = {
@@ -699,7 +699,7 @@ def test_three_stage_ai_monitor_coordination():
         "ai_monitor_pid": None
     }
 
-    with patch('clautorun.main.ai_monitor') as mock_ai_monitor:
+    with patch('autorun.main.ai_monitor') as mock_ai_monitor:
         mock_ai_monitor.start_monitor.return_value = 12345
         mock_ai_monitor.stop_monitor.return_value = None
 

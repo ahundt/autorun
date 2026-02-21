@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Basic usage example for clautorun
+Basic usage example for autorun
 
-This example demonstrates how to use the simplified imports from the clautorun package.
+This example demonstrates how to use the simplified imports from the autorun package.
 Instead of importing from specific modules, you can now import everything directly
-from the clautorun package.
+from the autorun package.
 
 Instead of:
-  from clautorun.main import CONFIG, stop_handler
-  from clautorun.main import HANDLERS as HOOK_HANDLERS
+  from autorun.main import CONFIG, stop_handler
+  from autorun.main import HANDLERS as HOOK_HANDLERS
 
 You can now simply use:
-  from clautorun import CONFIG, stop_handler, hook_handlers
+  from autorun import CONFIG, stop_handler, hook_handlers
 """
 
 import sys
@@ -21,8 +21,8 @@ from pathlib import Path
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-# Test all the important imports that now work directly from clautorun
-from clautorun import (
+# Test all the important imports that now work directly from autorun
+from autorun import (
     # Core configuration and functions
     CONFIG,
     main,
@@ -60,7 +60,7 @@ from clautorun import (
 
 def demo_simplified_imports():
     """Demonstrate that simplified imports work"""
-    print("🎉 Simplified imports from clautorun package!")
+    print("🎉 Simplified imports from autorun package!")
     print("=" * 50)
 
     # Show key configuration
@@ -89,8 +89,8 @@ def demo_simplified_imports():
     print(f"   build_hook_response: {callable(build_hook_response)}")
     print()
 
-    print("🚀 All imports work directly from 'import clautorun'!")
-    print("   No more 'from clautorun.main import ...' needed!")
+    print("🚀 All imports work directly from 'import autorun'!")
+    print("   No more 'from autorun.main import ...' needed!")
 
 if __name__ == "__main__":
     demo_simplified_imports()

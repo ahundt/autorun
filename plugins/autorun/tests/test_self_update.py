@@ -36,7 +36,7 @@ class TestCheckForUpdates:
         with patch("importlib.metadata.version", return_value="0.7.0"):
             with patch("urllib.request.urlopen", return_value=mock_urlopen):
                 # Act
-                from clautorun.install import check_for_updates
+                from autorun.install import check_for_updates
                 update_available, current, latest = check_for_updates()
 
                 # Assert
@@ -55,7 +55,7 @@ class TestCheckForUpdates:
         with patch("importlib.metadata.version", return_value="0.8.0"):
             with patch("urllib.request.urlopen", return_value=mock_urlopen):
                 # Act
-                from clautorun.install import check_for_updates
+                from autorun.install import check_for_updates
                 update_available, current, latest = check_for_updates()
 
                 # Assert
@@ -71,7 +71,7 @@ class TestCheckForUpdates:
         with patch("importlib.metadata.version", return_value="0.8.0"):
             with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Network error")):
                 # Act
-                from clautorun.install import check_for_updates
+                from autorun.install import check_for_updates
                 update_available, current, latest = check_for_updates()
 
                 # Assert
@@ -86,7 +86,7 @@ class TestCheckForUpdates:
 
         with patch("importlib.metadata.version", side_effect=PackageNotFoundError()):
             # Act
-            from clautorun.install import check_for_updates
+            from autorun.install import check_for_updates
             update_available, current, latest = check_for_updates()
 
             # Assert
@@ -104,9 +104,9 @@ class TestUpdateStrategyDetection:
         AIX has highest priority for updates.
         """
         # Arrange
-        with patch("clautorun.install.detect_aix_installed", return_value=True):
+        with patch("autorun.install.detect_aix_installed", return_value=True):
             # Act
-            from clautorun.install import UpdateStrategy
+            from autorun.install import UpdateStrategy
             strategy = UpdateStrategy.detect()
 
             # Assert
@@ -118,13 +118,13 @@ class TestUpdateStrategyDetection:
         # Arrange
         mock_result = MagicMock()
         mock_result.ok = True
-        mock_result.output = "clautorun (installed)"
+        mock_result.output = "autorun (installed)"
 
-        with patch("clautorun.install.detect_aix_installed", return_value=False):
+        with patch("autorun.install.detect_aix_installed", return_value=False):
             with patch("shutil.which", side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None):
-                with patch("clautorun.install.run_cmd", return_value=mock_result):
+                with patch("autorun.install.run_cmd", return_value=mock_result):
                     # Act
-                    from clautorun.install import UpdateStrategy
+                    from autorun.install import UpdateStrategy
                     strategy = UpdateStrategy.detect()
 
                     # Assert
@@ -136,13 +136,13 @@ class TestUpdateStrategyDetection:
         # Arrange
         mock_result = MagicMock()
         mock_result.ok = True
-        mock_result.output = "clautorun-workspace@0.8.0"
+        mock_result.output = "autorun-workspace@0.8.0"
 
-        with patch("clautorun.install.detect_aix_installed", return_value=False):
+        with patch("autorun.install.detect_aix_installed", return_value=False):
             with patch("shutil.which", side_effect=lambda x: "/usr/bin/gemini" if x == "gemini" else None):
-                with patch("clautorun.install.run_cmd", return_value=mock_result):
+                with patch("autorun.install.run_cmd", return_value=mock_result):
                     # Act
-                    from clautorun.install import UpdateStrategy
+                    from autorun.install import UpdateStrategy
                     strategy = UpdateStrategy.detect()
 
                     # Assert
@@ -152,11 +152,11 @@ class TestUpdateStrategyDetection:
     def test_update_strategy_falls_back_to_uv(self):
         """Test: UpdateStrategy.detect() falls back to UV when plugins not found."""
         # Arrange
-        with patch("clautorun.install.detect_aix_installed", return_value=False):
+        with patch("autorun.install.detect_aix_installed", return_value=False):
             with patch("shutil.which", return_value=None):  # No CLIs
-                with patch("clautorun.install.has_uv", return_value=True):
+                with patch("autorun.install.has_uv", return_value=True):
                     # Act
-                    from clautorun.install import UpdateStrategy
+                    from autorun.install import UpdateStrategy
                     strategy = UpdateStrategy.detect()
 
                     # Assert
@@ -166,11 +166,11 @@ class TestUpdateStrategyDetection:
     def test_update_strategy_falls_back_to_pip(self):
         """Test: UpdateStrategy.detect() falls back to pip when UV unavailable."""
         # Arrange
-        with patch("clautorun.install.detect_aix_installed", return_value=False):
+        with patch("autorun.install.detect_aix_installed", return_value=False):
             with patch("shutil.which", return_value=None):
-                with patch("clautorun.install.has_uv", return_value=False):
+                with patch("autorun.install.has_uv", return_value=False):
                     # Act
-                    from clautorun.install import UpdateStrategy
+                    from autorun.install import UpdateStrategy
                     strategy = UpdateStrategy.detect()
 
                     # Assert
@@ -184,9 +184,9 @@ class TestPerformSelfUpdate:
     def test_perform_self_update_skips_when_already_latest(self):
         """Test: perform_self_update() returns early when already on latest version."""
         # Arrange
-        with patch("clautorun.install.check_for_updates", return_value=(False, "0.8.0", "0.8.0")):
+        with patch("autorun.install.check_for_updates", return_value=(False, "0.8.0", "0.8.0")):
             # Act
-            from clautorun.install import perform_self_update
+            from autorun.install import perform_self_update
             result = perform_self_update(method="auto")
 
             # Assert
@@ -199,18 +199,18 @@ class TestPerformSelfUpdate:
         # Arrange
         mock_result = MagicMock()
         mock_result.ok = True
-        mock_result.output = "Updated clautorun to 0.9.0"
+        mock_result.output = "Updated autorun to 0.9.0"
 
-        with patch("clautorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
-            with patch("clautorun.install.run_cmd", return_value=mock_result) as mock_run:
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
+            with patch("autorun.install.run_cmd", return_value=mock_result) as mock_run:
                 # Act
-                from clautorun.install import perform_self_update
+                from autorun.install import perform_self_update
                 result = perform_self_update(method="aix")
 
                 # Assert
                 assert result.ok is True
                 mock_run.assert_called_once_with(
-                    ["aix", "skills", "update", "clautorun"],
+                    ["aix", "skills", "update", "autorun"],
                     timeout=120
                 )
 
@@ -219,17 +219,17 @@ class TestPerformSelfUpdate:
         # Arrange
         mock_install_result = MagicMock()
         mock_install_result.ok = True
-        mock_install_result.output = "Installed clautorun 0.9.0"
+        mock_install_result.output = "Installed autorun 0.9.0"
 
         mock_register_result = MagicMock()
         mock_register_result.ok = True
         mock_register_result.output = "Registered plugins"
 
-        with patch("clautorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
-            with patch("clautorun.install.run_cmd", side_effect=[mock_install_result, mock_register_result]) as mock_run:
-                with patch("clautorun.install.get_python_runner", return_value=["uv", "run", "python"]):
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
+            with patch("autorun.install.run_cmd", side_effect=[mock_install_result, mock_register_result]) as mock_run:
+                with patch("autorun.install.get_python_runner", return_value=["uv", "run", "python"]):
                     # Act
-                    from clautorun.install import perform_self_update
+                    from autorun.install import perform_self_update
                     result = perform_self_update(method="uv")
 
                     # Assert
@@ -246,10 +246,10 @@ class TestPerformSelfUpdate:
         mock_register_result = MagicMock()
         mock_register_result.ok = True
 
-        with patch("clautorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
-            with patch("clautorun.install.run_cmd", side_effect=[mock_install_result, mock_register_result]) as mock_run:
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
+            with patch("autorun.install.run_cmd", side_effect=[mock_install_result, mock_register_result]) as mock_run:
                 # Act
-                from clautorun.install import perform_self_update
+                from autorun.install import perform_self_update
                 result = perform_self_update(method="pip")
 
                 # Assert
@@ -267,11 +267,11 @@ class TestPerformSelfUpdate:
         mock_result = MagicMock()
         mock_result.ok = True
 
-        with patch("clautorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
-            with patch("clautorun.install.UpdateStrategy.detect", return_value=mock_strategy):
-                with patch("clautorun.install.run_cmd", return_value=mock_result):
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.8.0", "0.9.0")):
+            with patch("autorun.install.UpdateStrategy.detect", return_value=mock_strategy):
+                with patch("autorun.install.run_cmd", return_value=mock_result):
                     # Act
-                    from clautorun.install import perform_self_update
+                    from autorun.install import perform_self_update
                     result = perform_self_update(method="auto")
 
                     # Assert
@@ -283,7 +283,7 @@ class TestUpdateStrategyDataclass:
 
     def test_update_strategy_is_frozen(self):
         """Test: UpdateStrategy is immutable (frozen dataclass)."""
-        from clautorun.install import UpdateStrategy
+        from autorun.install import UpdateStrategy
 
         strategy = UpdateStrategy(method="uv", cli=None)
         with pytest.raises((AttributeError, Exception)):
@@ -291,7 +291,7 @@ class TestUpdateStrategyDataclass:
 
     def test_update_strategy_has_required_fields(self):
         """Test: UpdateStrategy has method and cli fields."""
-        from clautorun.install import UpdateStrategy
+        from autorun.install import UpdateStrategy
 
         strategy = UpdateStrategy(method="plugin", cli="claude")
         assert strategy.method == "plugin"

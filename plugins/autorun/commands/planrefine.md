@@ -3,7 +3,7 @@ description: Deep critique existing plan with code verification
 argument-hint: [plan file or content]
 ---
 
-# Refine Existing Plan (/cr:planrefine)
+# Refine Existing Plan (/ar:planrefine)
 
 $ARGUMENTS
 

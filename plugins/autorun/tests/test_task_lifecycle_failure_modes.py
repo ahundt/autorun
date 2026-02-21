@@ -22,8 +22,8 @@ import shutil
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
-from clautorun.session_manager import session_state
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from autorun.session_manager import session_state
 
 
 class TestFailureModes:
@@ -78,7 +78,7 @@ class TestFailureModes:
     def test_02_stuck_task_always_blocks_without_user_action(self):
         """Problem 2: Stuck task - stop always blocked until user acts.
 
-        The escape hatch requires USER action (/cr:sos or /cr:task-ignore),
+        The escape hatch requires USER action (/ar:sos or /ar:task-ignore),
         not automatic override after N attempts. Automatic override caused
         premature stoppage.
         """
@@ -118,15 +118,15 @@ class TestFailureModes:
             assert 'INCOMPLETE TASKS' in result['systemMessage']
 
         # Verify the message includes user escape hatch instructions
-        assert '/cr:sos' in result['systemMessage'], "Should mention /cr:sos as user escape hatch"
-        assert '/cr:task-ignore' in result['systemMessage'], "Should mention /cr:task-ignore"
+        assert '/ar:sos' in result['systemMessage'], "Should mention /ar:sos as user escape hatch"
+        assert '/ar:task-ignore' in result['systemMessage'], "Should mention /ar:task-ignore"
 
         # Cleanup
         shutil.rmtree(manager.config.storage_dir / session_id, ignore_errors=True)
         with session_state(manager.global_key) as state:
             state.clear()
 
-        print("✅ Problem 2 handled: Stop always blocked - user must use /cr:sos or /cr:task-ignore")
+        print("✅ Problem 2 handled: Stop always blocked - user must use /ar:sos or /ar:task-ignore")
 
     def test_03_format_change_multiple_regex_patterns(self):
         """Problem 3: Format change - multiple regex patterns handle it."""

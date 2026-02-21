@@ -1,5 +1,5 @@
 ---
-description: Require justification for new files (short for /cr:justify)
+description: Require justification for new files (short for /ar:justify)
 ---
 
 # AutoFile Justify Mode

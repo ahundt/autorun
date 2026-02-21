@@ -26,7 +26,7 @@ pytestmark = pytest.mark.e2e
 
 # Add src to path for tmux_utils import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
 
 def get_plugin_root():
@@ -83,11 +83,11 @@ def gemini_settings_enabled():
 
 @pytest.fixture
 def gemini_extension_installed():
-    """Check if clautorun extension is installed in Gemini."""
+    """Check if autorun extension is installed in Gemini."""
     ext_dir = Path.home() / ".gemini" / "extensions" / "cr"
 
     if not ext_dir.exists():
-        pytest.skip("Clautorun extension not installed in Gemini")
+        pytest.skip("Autorun extension not installed in Gemini")
 
     hooks_file = ext_dir / "hooks" / "hooks.json"
     if not hooks_file.exists():
@@ -153,8 +153,8 @@ if __name__ == "__main__":
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    not os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
-    reason="CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
+    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
+    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
            "this test runs Gemini CLI which costs real money"
 )
 def test_gemini_before_tool_hook_fires_on_write_file(
@@ -175,7 +175,7 @@ def test_gemini_before_tool_hook_fires_on_write_file(
     This is an integration test that requires:
     1. Gemini CLI v0.28.0+
     2. Settings with enableHooks: true
-    3. Clautorun extension installed
+    3. Autorun extension installed
     4. Temporary debug hook to verify execution
 
     Uses tmux session automation for isolated testing.

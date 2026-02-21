@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 try:
-    from clautorun.transcript_analyzer import (
+    from autorun.transcript_analyzer import (
         TranscriptAnalyzer,
         Evidence,
         AnalysisResult,

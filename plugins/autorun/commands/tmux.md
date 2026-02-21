@@ -22,7 +22,7 @@ If no arguments provided, show the session list above and ask the user what to d
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 tmux = get_tmux_utilities()
 name = 'SESSION_NAME'  # replace with actual name from arguments
 
@@ -46,7 +46,7 @@ print(sessions_out)
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 tmux = get_tmux_utilities()
 # NOTE: #{session_created_string} is NOT a standard tmux format; #{session_created} returns unix timestamp
 # Use #{session_created} and format it in Python, or omit timestamp to avoid format errors
@@ -59,7 +59,7 @@ print(r['stdout'].strip() if r and r['returncode'] == 0 else 'No active sessions
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 import time
 tmux = get_tmux_utilities()
 r = tmux.execute_tmux_command(['list-sessions', '-F', '#{session_name} #{session_created}'])
@@ -83,13 +83,13 @@ else:
 "
 ```
 
-### `cleanup --all` — Remove All clautorun-test Sessions
+### `cleanup --all` — Remove All autorun-test Sessions
 
-> **Safety**: Only removes sessions matching `clautorun-test*` prefix. Never removes user work sessions.
+> **Safety**: Only removes sessions matching `autorun-test*` prefix. Never removes user work sessions.
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 tmux = get_tmux_utilities()
 r = tmux.execute_tmux_command(['list-sessions', '-F', '#{session_name}'])
 if not r or r['returncode'] != 0:
@@ -98,11 +98,11 @@ else:
     killed = []
     for sname in r['stdout'].strip().splitlines():
         sname = sname.strip()
-        if sname.startswith('clautorun-test'):  # SAFE: only test sessions, not work sessions
+        if sname.startswith('autorun-test'):  # SAFE: only test sessions, not work sessions
             # CORRECT: session= param, not inline -t (avoids duplicate -t in execute_tmux_command)
             tmux.execute_tmux_command(['kill-session'], session=sname)
             killed.append(sname)
-    print('Removed: ' + ', '.join(killed) if killed else 'No clautorun-test sessions found.')
+    print('Removed: ' + ', '.join(killed) if killed else 'No autorun-test sessions found.')
 "
 ```
 
@@ -110,5 +110,5 @@ else:
 
 Commands always target isolated sessions and **never** affect your current Claude Code session.
 
-**Advanced automation**: See agent `cr:tmux-session-automation` for health monitoring and lifecycle management.
-**Full tmux/byobu syntax reference**: See skill `cr:tmux-automation`.
+**Advanced automation**: See agent `ar:tmux-session-automation` for health monitoring and lifecycle management.
+**Full tmux/byobu syntax reference**: See skill `ar:tmux-automation`.

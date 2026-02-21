@@ -1,15 +1,15 @@
-# Gemini Image Generation Prompt for clautorun
+# Gemini Image Generation Prompt for autorun
 
 Copy the prompt below into Gemini and ask it to generate an image.
 
 ---
 
-Create a clean, professional flowchart diagram for the "clautorun" project — a Claude Code plugin that enables autonomous AI task execution with built-in safety guards.
+Create a clean, professional flowchart diagram for the "autorun" project — a Claude Code plugin that enables autonomous AI task execution with built-in safety guards.
 
 The diagram should show the user's journey from intent to outcome:
 
 1. USER INTENT: Developer has a task (bug fix, feature, refactor)
-2. COMMAND: Types "/cr:go <task>" in Claude Code CLI
+2. COMMAND: Types "/ar:go <task>" in Claude Code CLI
 3. SAFETY LAYER: AutoFile policy controls what files AI can create/modify
    - allow-all: full freedom
    - justify-create: requires reasoning

@@ -9,7 +9,7 @@ from unittest.mock import Mock
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import pretooluse_handler, session_state, CONFIG, has_valid_justification
+from autorun.main import pretooluse_handler, session_state, CONFIG, has_valid_justification
 
 # Import conftest utilities for cleanup - cleanup happens via pytest_sessionfinish
 from conftest import register_test_session

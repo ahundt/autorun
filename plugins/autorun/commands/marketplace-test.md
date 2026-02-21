@@ -9,7 +9,7 @@ You are running tests for all installed Claude Code marketplace plugins to ensur
 
 ## Your Task
 
-Run the test suite for all plugins in the clautorun marketplace that have tests, and provide a comprehensive report of the results.
+Run the test suite for all plugins in the autorun marketplace that have tests, and provide a comprehensive report of the results.
 
 ## Steps
 
@@ -88,7 +88,7 @@ Plugins passed: 2
 Plugins failed: 1
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ clautorun: PASSED (15/15 tests)
+✅ autorun: PASSED (15/15 tests)
 ✅ plan-export: PASSED (13/13 tests)
 ❌ pdf-extractor: FAILED (3/10 tests failed)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

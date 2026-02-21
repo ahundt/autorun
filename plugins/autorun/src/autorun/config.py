@@ -15,15 +15,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Centralized configuration for clautorun plugin.
+Centralized configuration for autorun plugin.
 
 This module provides the single source of truth for all configuration
 constants, following DRY (Don't Repeat Yourself) principles.
 
 Usage:
-    from clautorun.config import CONFIG
+    from autorun.config import CONFIG
     # or
-    from clautorun import CONFIG
+    from autorun import CONFIG
 """
 
 # Tool name sets for different CLIs (Claude Code vs Gemini CLI) - v0.8.0
@@ -59,64 +59,64 @@ ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /cr:ok rm",
+        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /ar:ok rm",
         "redirect": "trash {args}",
     },
     "rm -rf": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /cr:ok rm -rf",
+        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /ar:ok rm -rf",
         "redirect": "trash {args}",
     },
     "git reset --hard": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective restore** (to discard specific files only):\n   git restore <file>           # discard working tree changes\n   git restore --staged <file>  # unstage but keep changes\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow in this session: /cr:ok 'git reset --hard'",
+        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective restore** (to discard specific files only):\n   git restore <file>           # discard working tree changes\n   git restore --staged <file>  # unstage but keep changes\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow in this session: /ar:ok 'git reset --hard'",
         "redirect": "git stash push -m 'WIP: {args}'",
         "when": "_has_unstaged_changes",
     },
     "git checkout .": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective restore** (discard specific files only):\n   git restore <file>\n\n**View what would be lost:**\n   git diff\n\nTo allow in this session: /cr:ok 'git checkout .'",
+        "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective restore** (discard specific files only):\n   git restore <file>\n\n**View what would be lost:**\n   git diff\n\nTo allow in this session: /ar:ok 'git checkout .'",
         "redirect": "git stash push -m 'WIP: {args}'",
         "when": "_has_unstaged_changes",
     },
     "git checkout --": {
         "action": "block",
-        "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow in this session: /cr:ok 'git checkout --'",
+        "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow in this session: /ar:ok 'git checkout --'",
         "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_file_has_unstaged_changes",
     },
     "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
         "action": "block",
-        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Use modern Git syntax**:\n   git restore <file>  # discard changes (Git 2.23+)\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow in this session: /cr:ok 'git checkout'",
+        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Use modern Git syntax**:\n   git restore <file>  # discard changes (Git 2.23+)\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow in this session: /ar:ok 'git checkout'",
         "redirect": "git restore {args}",
         "when": "_file_has_unstaged_changes",
     },
     "git stash drop": {
         "action": "block",
-        "suggestion": "CAUTION: 'git stash drop' permanently deletes stashed changes.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply stash instead** (keeps changes):\n   git stash pop    # apply and remove from stash\n   git stash apply  # apply and keep in stash\n\n2. **View stash contents first**:\n   git stash show -p  # see what's in the stash\n\nTo allow in this session: /cr:ok 'git stash drop'",
+        "suggestion": "CAUTION: 'git stash drop' permanently deletes stashed changes.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply stash instead** (keeps changes):\n   git stash pop    # apply and remove from stash\n   git stash apply  # apply and keep in stash\n\n2. **View stash contents first**:\n   git stash show -p  # see what's in the stash\n\nTo allow in this session: /ar:ok 'git stash drop'",
         "redirect": "git stash pop",
         "when": "_stash_exists",
     },
     "git clean -f": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow in this session: /cr:ok 'git clean -f'",
+        "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow in this session: /ar:ok 'git clean -f'",
         "redirect": "git clean -n",
     },
     "git reset HEAD~": {
         "action": "block",
-        "suggestion": "CAUTION: 'git reset HEAD~' undoes commits (mixed reset by default).\n\n**SAFER ALTERNATIVES:**\n\n1. **Soft reset** (keeps all changes staged):\n   git reset --soft HEAD~1\n\n2. **Create backup branch first**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-before-reset\n   git checkout -\n   git reset HEAD~1\n\n3. **Revert instead** (creates new commit, preserves history):\n   git revert HEAD\n\n**Recovery if you already reset:**\n   git reflog  # find the commit hash\n   git reset --hard <hash>  # restore to that point\n\nTo allow in this session: /cr:ok 'git reset HEAD~'",
+        "suggestion": "CAUTION: 'git reset HEAD~' undoes commits (mixed reset by default).\n\n**SAFER ALTERNATIVES:**\n\n1. **Soft reset** (keeps all changes staged):\n   git reset --soft HEAD~1\n\n2. **Create backup branch first**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-before-reset\n   git checkout -\n   git reset HEAD~1\n\n3. **Revert instead** (creates new commit, preserves history):\n   git revert HEAD\n\n**Recovery if you already reset:**\n   git reflog  # find the commit hash\n   git reset --hard <hash>  # restore to that point\n\nTo allow in this session: /ar:ok 'git reset HEAD~'",
     },
     "dd if=": {
         "action": "block",
-        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow in this session: /cr:ok dd if=",
+        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow in this session: /ar:ok dd if=",
     },
     "mkfs": {
         "action": "block",
-        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted.\n\nTo allow in this session: /cr:ok mkfs",
+        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted.\n\nTo allow in this session: /ar:ok mkfs",
     },
     "fdisk": {
         "action": "block",
-        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /cr:ok fdisk",
+        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow in this session: /ar:ok fdisk",
     },
     # Command-line tools that should use dedicated AI tools instead (v0.8.0)
     # These block the BASH COMMAND (e.g. "grep") and suggest the AI TOOL (e.g. {grep}).
@@ -132,40 +132,40 @@ DEFAULT_INTEGRATIONS = {
     #                               "write_file|run_shell_command|replace|read_file|glob|grep_search"
     "sed": {
         "action": "block",
-        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /cr:ok sed\n- Block globally: /cr:globalno sed",
+        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow in this session: /ar:ok sed\n- Block globally: /ar:globalno sed",
     },
     "awk": {
         "action": "block",
-        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow in this session: /cr:ok awk\n- Block globally: /cr:globalno awk",
+        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow in this session: /ar:ok awk\n- Block globally: /ar:globalno awk",
     },
     "grep": {
         "action": "block",
-        "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow in this session: /cr:ok grep\n- Block globally: /cr:globalno grep",
+        "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow in this session: /ar:ok grep\n- Block globally: /ar:globalno grep",
         "when": "_not_in_pipe",
     },
     "find": {
         "action": "block",
-        "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow in this session: /cr:ok find\n- Block globally: /cr:globalno find",
+        "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow in this session: /ar:ok find\n- Block globally: /ar:globalno find",
         "when": "_not_in_pipe",
     },
     "cat": {
         "action": "block",
-        "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /cr:ok cat\n- Block globally: /cr:globalno cat",
+        "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow in this session: /ar:ok cat\n- Block globally: /ar:globalno cat",
         "when": "_not_in_pipe",
     },
     "head": {
         "action": "block",
-        "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow in this session: /cr:ok head\n- Block globally: /cr:globalno head",
+        "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow in this session: /ar:ok head\n- Block globally: /ar:globalno head",
         "when": "_not_in_pipe",
     },
     "tail": {
         "action": "block",
-        "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow in this session: /cr:ok tail\n- Block globally: /cr:globalno tail",
+        "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow in this session: /ar:ok tail\n- Block globally: /ar:globalno tail",
         "when": "_not_in_pipe",
     },
     "echo >": {
         "action": "block",
-        "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /cr:ok 'echo >'\n- Block globally: /cr:globalno 'echo >'",
+        "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /ar:ok 'echo >'\n- Block globally: /ar:globalno 'echo >'",
     },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
@@ -359,41 +359,41 @@ After every step and substep you must say "Wait," and execute this sequential th
 
     # ─── Command Mappings ─────────────────────────────────────────────────────
     # Values must match keys in COMMAND_HANDLERS (case-sensitive)
-    # Commands support /cr: prefix with short and long forms
+    # Commands support /ar: prefix with short and long forms
     "command_mappings": {
-        # ─── New Short Forms (/cr: prefix) ────────────────────────────────────
-        "/cr:a": "ALLOW",           # Allow all file creation
-        "/cr:j": "JUSTIFY",         # Justify new files
-        "/cr:f": "SEARCH",          # Find existing files only
-        "/cr:st": "STATUS",         # Show status
-        "/cr:go": "activate",       # Start autorun
-        "/cr:gp": "activate",       # Start autoproc (procedural)
-        "/cr:x": "stop",            # Graceful stop
-        "/cr:sos": "emergency_stop", # Emergency stop
-        "/cr:tm": "tmux_session",   # Tmux session management
-        "/cr:tt": "tmux_test",      # Tmux test workflow
+        # ─── New Short Forms (/ar: prefix) ────────────────────────────────────
+        "/ar:a": "ALLOW",           # Allow all file creation
+        "/ar:j": "JUSTIFY",         # Justify new files
+        "/ar:f": "SEARCH",          # Find existing files only
+        "/ar:st": "STATUS",         # Show status
+        "/ar:go": "activate",       # Start autorun
+        "/ar:gp": "activate",       # Start autoproc (procedural)
+        "/ar:x": "stop",            # Graceful stop
+        "/ar:sos": "emergency_stop", # Emergency stop
+        "/ar:tm": "tmux_session",   # Tmux session management
+        "/ar:tt": "tmux_test",      # Tmux test workflow
 
-        # ─── New Long Forms (/cr: prefix) ─────────────────────────────────────
-        "/cr:allow": "ALLOW",       # Allow all file creation
-        "/cr:justify": "JUSTIFY",   # Justify new files
-        "/cr:find": "SEARCH",       # Find existing files only
-        "/cr:status": "STATUS",     # Show status
-        "/cr:run": "activate",      # Start autorun
-        "/cr:proc": "activate",     # Start autoproc (procedural)
-        "/cr:stop": "stop",         # Graceful stop
-        "/cr:estop": "emergency_stop", # Emergency stop
-        "/cr:tmux": "tmux_session", # Tmux session management
-        "/cr:ttest": "tmux_test",   # Tmux test workflow (ttest to avoid collision with test.md)
+        # ─── New Long Forms (/ar: prefix) ─────────────────────────────────────
+        "/ar:allow": "ALLOW",       # Allow all file creation
+        "/ar:justify": "JUSTIFY",   # Justify new files
+        "/ar:find": "SEARCH",       # Find existing files only
+        "/ar:status": "STATUS",     # Show status
+        "/ar:run": "activate",      # Start autorun
+        "/ar:proc": "activate",     # Start autoproc (procedural)
+        "/ar:stop": "stop",         # Graceful stop
+        "/ar:estop": "emergency_stop", # Emergency stop
+        "/ar:tmux": "tmux_session", # Tmux session management
+        "/ar:ttest": "tmux_test",   # Tmux test workflow (ttest to avoid collision with test.md)
 
         # ─── Plan Commands ─────────────────────────────────────────────────────
-        "/cr:pn": "NEW_PLAN",
-        "/cr:pr": "REFINE_PLAN",
-        "/cr:pu": "UPDATE_PLAN",
-        "/cr:pp": "PROCESS_PLAN",
-        "/cr:plannew": "NEW_PLAN",
-        "/cr:planrefine": "REFINE_PLAN",
-        "/cr:planupdate": "UPDATE_PLAN",
-        "/cr:planprocess": "PROCESS_PLAN",
+        "/ar:pn": "NEW_PLAN",
+        "/ar:pr": "REFINE_PLAN",
+        "/ar:pu": "UPDATE_PLAN",
+        "/ar:pp": "PROCESS_PLAN",
+        "/ar:plannew": "NEW_PLAN",
+        "/ar:planrefine": "REFINE_PLAN",
+        "/ar:planupdate": "UPDATE_PLAN",
+        "/ar:planprocess": "PROCESS_PLAN",
 
         # ─── Legacy Commands (backward compatibility) ─────────────────────────
         "/autorun": "activate",
@@ -406,12 +406,12 @@ After every step and substep you must say "Wait," and execute this sequential th
         "/afst": "STATUS",
 
         # ─── Command Blocking (NEW in v0.6.0) ───────────────────────────────────────
-        "/cr:no": "BLOCK_PATTERN",
-        "/cr:ok": "ALLOW_PATTERN",
-        "/cr:clear": "CLEAR_PATTERN",
-        "/cr:globalno": "GLOBAL_BLOCK_PATTERN",
-        "/cr:globalok": "GLOBAL_ALLOW_PATTERN",
-        "/cr:globalstatus": "GLOBAL_BLOCK_STATUS"
+        "/ar:no": "BLOCK_PATTERN",
+        "/ar:ok": "ALLOW_PATTERN",
+        "/ar:clear": "CLEAR_PATTERN",
+        "/ar:globalno": "GLOBAL_BLOCK_PATTERN",
+        "/ar:globalok": "GLOBAL_ALLOW_PATTERN",
+        "/ar:globalstatus": "GLOBAL_BLOCK_STATUS"
     },
 
     # Built-in command integrations (suggestions for dangerous commands)
@@ -419,9 +419,9 @@ After every step and substep you must say "Wait," and execute this sequential th
 
     # ─── Integration Search Paths (File-based Extensions) ─────────────────────
     # User can create .md files matching these patterns to add custom integrations
-    # Format: .claude/clautorun.{name}.local.md (same pattern as hookify)
+    # Format: .claude/autorun.{name}.local.md (same pattern as hookify)
     "integration_search_paths": [
-        ".claude/clautorun.*.local.md",   # Default pattern (like hookify)
+        ".claude/autorun.*.local.md",   # Default pattern (like hookify)
     ],
 }
 
@@ -482,7 +482,7 @@ def should_use_exit2_workaround(payload: dict = None) -> bool:
 
     SINGLE FLAG CHECK for pathway selection.
 
-    Modes (CLAUTORUN_EXIT2_WORKAROUND env var):
+    Modes (AUTORUN_EXIT2_WORKAROUND env var):
     - "auto" (default): Use workaround ONLY for Claude Code
     - "always": Force workaround for all CLIs (testing)
     - "never": Disable workaround for all CLIs (testing/future)
@@ -494,7 +494,7 @@ def should_use_exit2_workaround(payload: dict = None) -> bool:
     Reference: notes/hooks_api_reference.md lines 326-440
     """
     import os
-    mode = os.environ.get('CLAUTORUN_EXIT2_WORKAROUND', 'auto').lower()
+    mode = os.environ.get('AUTORUN_EXIT2_WORKAROUND', 'auto').lower()
     if mode == "always":
         return True
     if mode == "never":

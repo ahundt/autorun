@@ -58,7 +58,7 @@ def test_heredoc_quoted_delimiter():
         pytest.skip("bashlex not available")
 
     # This used to fail in bashlex - verify our normalization works
-    from clautorun.command_detection import _normalize_heredoc_delimiters
+    from autorun.command_detection import _normalize_heredoc_delimiters
 
     heredoc_cmd = """python3 << 'EOF'
 pattern = "grep"
@@ -92,7 +92,7 @@ result = command_matches_pattern(test_cmd, pattern)
 EOF"""
 
     # Normalize and parse
-    from clautorun.command_detection import _normalize_heredoc_delimiters
+    from autorun.command_detection import _normalize_heredoc_delimiters
     normalized = _normalize_heredoc_delimiters(heredoc_cmd)
     parts = bashlex.parse(normalized)
 
@@ -125,15 +125,15 @@ def test_heredoc_with_actual_user_command():
     # This is the actual command that revealed the bug
     heredoc_cmd = """python3 << 'EOF'
 import sys
-sys.path.insert(0, "plugins/clautorun/src")
-from clautorun.command_detection import command_matches_pattern
-test_cmd = "gemini extensions list | grep -A 2 -B 2 clautorun"
+sys.path.insert(0, "plugins/autorun/src")
+from autorun.command_detection import command_matches_pattern
+test_cmd = "gemini extensions list | grep -A 2 -B 2 autorun"
 pattern = "grep"
 result = command_matches_pattern(test_cmd, pattern)
 print(f"Result: {result}")
 EOF"""
 
-    from clautorun.command_detection import _normalize_heredoc_delimiters
+    from autorun.command_detection import _normalize_heredoc_delimiters
     normalized = _normalize_heredoc_delimiters(heredoc_cmd)
     parts = bashlex.parse(normalized)
 

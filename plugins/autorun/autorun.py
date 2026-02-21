@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-clautorun - Claude Agent SDK Command Interceptor
+autorun - Claude Agent SDK Command Interceptor
 
 Intercepts autorun commands before they reach Claude Code, saving tokens and providing instant responses.
 """
@@ -29,21 +29,21 @@ if sys.version_info[0] >= 3:
         from pathlib import Path
         # Add src directory to path
         sys.path.insert(0, str(Path(__file__).parent / "src"))
-        from clautorun.python_check import check_python_version
+        from autorun.python_check import check_python_version
         if not check_python_version():
             sys.exit(1)
-        from clautorun.main import main
+        from autorun.main import main
     except ImportError as e:
         # Use centralized error handling - follows DRY principles
         try:
             # Add src to path for error handling import
             sys.path.insert(0, str(Path(__file__).parent / "src"))
-            from clautorun.error_handling import handle_import_error
+            from autorun.error_handling import handle_import_error
 
             if handle_import_error(e):
                 sys.exit(1)
             else:
-                # Fallback to basic error message for non-clautorun import errors
+                # Fallback to basic error message for non-autorun import errors
                 print("=" * 70)
                 print("❌ IMPORT ERROR: {}".format(str(e)))
                 print("=" * 70)
@@ -53,11 +53,11 @@ if sys.version_info[0] >= 3:
                 print()
                 print("🔧 SOLUTIONS:")
                 print("1. Use python3 explicitly:")
-                print("   python3 -m clautorun install")
+                print("   python3 -m autorun install")
                 print()
                 print("2. Activate your UV virtual environment:")
                 print("   source .venv/bin/activate")
-                print("   python -m clautorun install")
+                print("   python -m autorun install")
                 print()
                 print("=" * 70)
                 sys.exit(1)
@@ -71,7 +71,7 @@ if sys.version_info[0] >= 3:
 else:
     # Python 2.x - provide helpful error message
     print("=" * 70)
-    print("❌ PYTHON VERSION ERROR: clautorun requires Python 3.0 or higher (3.10+ preferred)")
+    print("❌ PYTHON VERSION ERROR: autorun requires Python 3.0 or higher (3.10+ preferred)")
     print("=" * 70)
     print()
     print("You are using Python {}.{} which is incompatible.".format(
@@ -79,11 +79,11 @@ else:
     print()
     print("🔧 SOLUTIONS:")
     print("1. Use python3 explicitly:")
-    print("   python3 -m clautorun install")
+    print("   python3 -m autorun install")
     print()
     print("2. Activate your UV virtual environment:")
     print("   source .venv/bin/activate")
-    print("   python -m clautorun install")
+    print("   python -m autorun install")
     print()
     print("3. Install UV package manager for proper Python management:")
     print("   curl -LsSf https://astral.sh/uv/install.sh | sh")

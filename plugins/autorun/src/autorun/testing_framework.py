@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Environment-Controlled Testing Framework for clautorun - Comprehensive testing with environment isolation"""
+"""Environment-Controlled Testing Framework for autorun - Comprehensive testing with environment isolation"""
 
 import os
 import sys
@@ -44,7 +44,7 @@ except ImportError:
                 pass
         return DummyState()
     def log_info(message):
-        """Fallback logging - file-only when CLAUTORUN_DEBUG=1"""
+        """Fallback logging - file-only when AUTORUN_DEBUG=1"""
         try:
             from .logging_utils import get_logger
             logger = get_logger(__name__)
@@ -174,7 +174,7 @@ class EnvironmentController:
                 "isolated": True,
                 "cleanup_after": True,
                 "backup_state": False,
-                "allowed_commands": ["clautorun_commands_only"],
+                "allowed_commands": ["autorun_commands_only"],
                 "resource_limits": {"memory": "256M", "cpu": "1"}
             }
         }
@@ -214,7 +214,7 @@ class EnvironmentController:
 
         if config["isolated"]:
             # Create temporary directory for isolation
-            temp_dir = tempfile.mkdtemp(prefix=f"clautorun_test_{env_id}_")
+            temp_dir = tempfile.mkdtemp(prefix=f"autorun_test_{env_id}_")
             temp_path = Path(temp_dir)
             env_info["temp_dir"] = temp_dir
 
@@ -223,11 +223,11 @@ class EnvironmentController:
 
             # Set isolated environment variables
             env_info["env_vars"] = {
-                "CLAUTORUN_TEST_MODE": "true",
-                "CLAUTORUN_TEST_ID": env_id,
-                "CLAUTORUN_ISOLATED": "true",
+                "AUTORUN_TEST_MODE": "true",
+                "AUTORUN_TEST_ID": env_id,
+                "AUTORUN_ISOLATED": "true",
                 "PYTHONPATH": str(temp_path / "src"),
-                "CLAUTORUN_TEMP_DIR": temp_dir
+                "AUTORUN_TEMP_DIR": temp_dir
             }
 
         if config["backup_state"]:
@@ -279,7 +279,7 @@ class EnvironmentController:
             json.dump(test_settings, f, indent=2)
 
     def _backup_current_state(self) -> Dict:
-        """Backup current clautorun state"""
+        """Backup current autorun state"""
         backup = {
             "timestamp": time.time(),
             "sessions_dir": None,
@@ -401,9 +401,9 @@ class TestRunner:
         start_time = time.time()
 
         try:
-            # Execute command through clautorun
+            # Execute command through autorun
             result = subprocess.run(
-                ["python3", "commands/clautorun"],
+                ["python3", "commands/autorun"],
                 input=json.dumps({"prompt": command, "session_id": f"test_{uuid.uuid4().hex[:8]}"}),
                 text=True,
                 capture_output=True,
@@ -464,7 +464,7 @@ class TestRunner:
                 capture_output=True,
                 text=True,
                 timeout=suite.timeout,
-                env={**os.environ, "CLAUTORUN_TEST_ENV": environment.value}
+                env={**os.environ, "AUTORUN_TEST_ENV": environment.value}
             )
 
             end_time = time.time()
@@ -506,7 +506,7 @@ class TestRunner:
         try:
             # Import verification components
             sys.path.insert(0, 'src')
-            from clautorun.verification_engine import RequirementVerificationEngine
+            from autorun.verification_engine import RequirementVerificationEngine
 
             # Create test scenario
             if test_name == "basic_verification":

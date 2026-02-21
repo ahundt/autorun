@@ -1,8 +1,8 @@
 ---
-description: Start autorun - autonomous task execution (short for /cr:run)
+description: Start autorun - autonomous task execution (short for /ar:run)
 ---
 
-# Resume Claude automatically when it stops - Autorun Workflow (short: /cr:go)
+# Resume Claude automatically when it stops - Autorun Workflow (short: /ar:go)
 
 $ARGUMENTS
 

@@ -27,7 +27,7 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.integrations import _not_in_pipe
+from autorun.integrations import _not_in_pipe
 
 
 # Mock context class for testing

@@ -3,12 +3,12 @@
 Provides heuristic and SDK-based analysis of captured terminal content to
 determine what each Claude/Gemini session is doing, its current status, and
 whether it is waiting for user input. Also provides the human-readable table
-formatter and the /cr:tabs command entrypoint.
+formatter and the /ar:tabs command entrypoint.
 
 Architecture (three layers):
   tmux_utils.py                  — low-level: list windows, send keys, discover sessions
   tmux_tab_ai_session_status.py  — this file: status analysis, formatting, entrypoint
-  commands/tabs-exec             — thin wrapper: `from clautorun.tmux_tab_ai_session_status import main; main()`
+  commands/tabs-exec             — thin wrapper: `from autorun.tmux_tab_ai_session_status import main; main()`
 
 The Anthropic SDK is an OPTIONAL dependency (graceful fallback to heuristics when
 unavailable or when ANTHROPIC_API_KEY is not set).
@@ -260,7 +260,7 @@ def execute_selections(selection_str: str, sessions: List[Dict]) -> str:
     """Execute selections and return formatted result string.
 
     Convenience wrapper combining execute_session_selections() (tmux_utils) and
-    format_execution_results() for the /cr:tabs command interface.
+    format_execution_results() for the /ar:tabs command interface.
     """
     results = execute_session_selections(selection_str, sessions)
     return format_execution_results(results)
@@ -305,7 +305,7 @@ def handle_execute_mode() -> None:
 
 
 def main() -> None:
-    """Entry point for /cr:tabs — discover, analyze, and display Claude tmux sessions."""
+    """Entry point for /ar:tabs — discover, analyze, and display Claude tmux sessions."""
     import argparse
 
     parser = argparse.ArgumentParser(description='Claude tmux session manager')

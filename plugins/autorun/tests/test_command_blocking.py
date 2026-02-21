@@ -31,7 +31,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from clautorun.main import (
+from autorun.main import (
     command_matches_pattern,
     should_block_command,
     get_command_warning,
@@ -44,7 +44,7 @@ from clautorun.main import (
     remove_global_block,
     GLOBAL_CONFIG_FILE
 )
-from clautorun.config import DEFAULT_INTEGRATIONS
+from autorun.config import DEFAULT_INTEGRATIONS
 
 
 class TestPatternMatching:
@@ -199,11 +199,11 @@ class TestGlobalBlockManagement:
         self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
 
         # Patch GLOBAL_CONFIG_FILE to use temp directory
-        self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
+        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
         # Also patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
         self.init_patcher.start()
 
     def teardown_method(self):
@@ -273,11 +273,11 @@ class TestBlockPrecedence:
         self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
 
         # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('clautorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
+        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
         self.patcher.start()
 
         # Also patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
         self.init_patcher.start()
 
         # Clear session blocks
@@ -350,7 +350,7 @@ class TestShouldBlockCommand:
         self.test_session_id = "test-should-block"
 
         # Patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
         self.init_patcher.start()
 
         clear_session_blocks(self.test_session_id)
@@ -489,16 +489,16 @@ class TestGitCommandIntegrations:
     def test_all_git_suggestions_have_allow_instruction(self):
         """Test that all git block-action suggestions include allow instruction.
 
-        Entries with action: 'warn' are informational and don't need /cr:ok
+        Entries with action: 'warn' are informational and don't need /ar:ok
         because they don't block the command.
         """
         git_patterns = [p for p in DEFAULT_INTEGRATIONS.keys() if p.startswith("git")]
         for pattern in git_patterns:
             config = DEFAULT_INTEGRATIONS[pattern]
             if config.get("action") == "warn":
-                continue  # warn actions allow the command, no /cr:ok needed
+                continue  # warn actions allow the command, no /ar:ok needed
             suggestion = config["suggestion"]
-            assert "/cr:ok" in suggestion, f"Missing /cr:ok instruction in {pattern}"
+            assert "/ar:ok" in suggestion, f"Missing /ar:ok instruction in {pattern}"
 
 
 class TestGitBlockingTargeting:
@@ -579,7 +579,7 @@ class TestPredicateFunctions:
         self.test_session_id = "test-predicates"
 
         # Patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('clautorun.main.initialize_default_blocks', return_value=False)
+        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
         self.init_patcher.start()
 
         clear_session_blocks(self.test_session_id)
@@ -591,7 +591,7 @@ class TestPredicateFunctions:
 
     def test_predicate_returns_true_blocks(self):
         """Test that when predicate returns True, command is blocked."""
-        from clautorun.main import _PREDICATES, should_block_command
+        from autorun.main import _PREDICATES, should_block_command
 
         # Mock predicate to return True (block)
         with patch.dict(_PREDICATES, {"_has_unstaged_changes": lambda cmd: True}):
@@ -601,7 +601,7 @@ class TestPredicateFunctions:
 
     def test_predicate_returns_false_allows(self):
         """Test that when predicate returns False, command is allowed."""
-        from clautorun.main import _PREDICATES, should_block_command
+        from autorun.main import _PREDICATES, should_block_command
 
         # Mock ALL predicates that match "git checkout ." to return False (allow)
         # "git checkout ." matches both "git checkout ." (when: _has_unstaged_changes)
@@ -616,7 +616,7 @@ class TestPredicateFunctions:
     def test_no_predicate_always_blocks(self):
         """Test that entries without 'when' field always block."""
         # "rm" has no "when" field, should always block
-        from clautorun.main import should_block_command
+        from autorun.main import should_block_command
 
         block_info = should_block_command(self.test_session_id, "rm file.txt")
         assert block_info is not None
@@ -624,7 +624,7 @@ class TestPredicateFunctions:
 
     def test_stash_drop_blocked_when_stash_exists(self):
         """Test git stash drop is blocked when stash has entries."""
-        from clautorun.main import _PREDICATES, should_block_command
+        from autorun.main import _PREDICATES, should_block_command
 
         # Mock stash exists
         with patch.dict(_PREDICATES, {"_stash_exists": lambda cmd: True}):
@@ -635,7 +635,7 @@ class TestPredicateFunctions:
 
     def test_stash_drop_allowed_when_no_stash(self):
         """Test git stash drop is allowed when stash is empty."""
-        from clautorun.main import _PREDICATES, should_block_command
+        from autorun.main import _PREDICATES, should_block_command
 
         # Mock no stash entries
         with patch.dict(_PREDICATES, {"_stash_exists": lambda cmd: False}):
@@ -644,14 +644,14 @@ class TestPredicateFunctions:
 
     def test_suggestion_included_in_block_info(self):
         """Test that suggestion is included in block info from DEFAULT_INTEGRATIONS."""
-        from clautorun.main import should_block_command, get_global_blocks
+        from autorun.main import should_block_command, get_global_blocks
 
         # Use a unique session to ensure we hit DEFAULT_INTEGRATIONS, not session blocks
         unique_session = "test-suggestion-" + str(id(self))
         clear_session_blocks(unique_session)
 
         # Mock empty global blocks to ensure we hit DEFAULT_INTEGRATIONS
-        with patch('clautorun.main.get_global_blocks', return_value=[]):
+        with patch('autorun.main.get_global_blocks', return_value=[]):
             block_info = should_block_command(unique_session, "rm file.txt")
             assert block_info is not None
             assert "suggestion" in block_info
@@ -667,7 +667,7 @@ class TestWarnAction:
         unique_session = "test-warn-" + str(id(self))
         clear_session_blocks(unique_session)
 
-        with patch('clautorun.main.get_global_blocks', return_value=[]):
+        with patch('autorun.main.get_global_blocks', return_value=[]):
             result = should_block_command(unique_session, "git status")
             assert result is None, "git status should not be blocked (action: warn)"
 
@@ -683,7 +683,7 @@ class TestWarnAction:
         unique_session = "test-block-" + str(id(self))
         clear_session_blocks(unique_session)
 
-        with patch('clautorun.main.get_global_blocks', return_value=[]):
+        with patch('autorun.main.get_global_blocks', return_value=[]):
             result = should_block_command(unique_session, "rm file.txt")
             assert result is not None, "rm should be blocked (action: block)"
             assert result["pattern"] == "rm"
@@ -709,7 +709,7 @@ class TestWarnAction:
             "git pull",
         ]
 
-        with patch('clautorun.main.get_global_blocks', return_value=[]):
+        with patch('autorun.main.get_global_blocks', return_value=[]):
             for cmd in git_commands:
                 result = should_block_command(unique_session, cmd)
                 # Only general git command (action: warn) should match these
@@ -728,7 +728,7 @@ class TestWarnAction:
             ("git clean -f", "git clean -f"),
         ]
 
-        with patch('clautorun.main.get_global_blocks', return_value=[]):
+        with patch('autorun.main.get_global_blocks', return_value=[]):
             for cmd, expected_pattern in dangerous_commands:
                 result = should_block_command(unique_session, cmd)
                 assert result is not None, f"{cmd} should be blocked"

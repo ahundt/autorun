@@ -32,14 +32,14 @@ from typing import Dict, List, Optional, Any
 
 import pytest
 
-from clautorun.plan_export import (
+from autorun.plan_export import (
     PlanExportConfig,
     get_most_recent_plan,
     get_plan_from_transcript,
     export_plan,
     log_warning,
 )
-from clautorun.session_manager import (
+from autorun.session_manager import (
     SessionLock,
     SessionTimeoutError,
     session_state,

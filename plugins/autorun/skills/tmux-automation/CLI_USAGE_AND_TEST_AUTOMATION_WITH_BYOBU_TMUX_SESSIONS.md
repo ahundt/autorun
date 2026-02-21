@@ -76,7 +76,7 @@ This skill provides comprehensive capabilities for automated testing of CLI appl
 
 ## AI-Monitor Integration
 
-The ai_monitor.py in clautorun provides comprehensive tmux monitoring and automation:
+The ai_monitor.py in autorun provides comprehensive tmux monitoring and automation:
 
 ### Core AI-Monitor Functions
 ```python
@@ -99,24 +99,24 @@ check_monitor(session_id)
 - **Cycle Management**: Limits number of re-prompt cycles to prevent infinite loops
 - **Window Management**: Can target specific windows for monitoring and interaction
 
-## clautorun Command Integration
+## autorun Command Integration
 
-clautorun provides convenient commands for tmux session automation:
+autorun provides convenient commands for tmux session automation:
 
 ### Session Discovery
-- `/cr:tabs` - Discover and manage all Claude sessions across tmux windows
+- `/ar:tabs` - Discover and manage all Claude sessions across tmux windows
   - Interactive table showing session status (working, awaiting input, etc.)
   - Batch operations: `all:continue`, `awaiting:status`, `A:pwd, B:ls`
   - AI-powered session analysis (uses Claude SDK when available)
 
 ### Session Management
-- `/cr:tmux` or `/cr:tm` - Create and manage isolated tmux sessions
+- `/ar:tmux` or `/ar:tm` - Create and manage isolated tmux sessions
   - `create <name>` - Create new isolated session
   - `list` - List all sessions with health status
   - `cleanup` - Remove sessions older than 1 hour
 
 ### Testing Automation
-- `/cr:ttest` or `/cr:tt` - Automated CLI testing in isolated sessions
+- `/ar:ttest` or `/ar:tt` - Automated CLI testing in isolated sessions
   - Tests basic functionality, help system, custom commands
   - 30-second timeout protection
   - Clean session isolation
@@ -128,12 +128,12 @@ clautorun provides convenient commands for tmux session automation:
 
 ### Quick Reference: Commands vs Manual tmux
 
-| Task | Manual tmux Command | clautorun Shortcut |
+| Task | Manual tmux Command | autorun Shortcut |
 |------|-------------------|-------------------|
-| List Claude sessions | `tmux list-windows` (manual) | `/cr:tabs` |
-| Create session | `tmux new-session -d -s name` | `/cr:tm create name` |
-| Send to all sessions | `for s in $(tmux list-sessions); do ...` | `/cr:tabs all:continue` |
-| Test CLI | Manual scripting required | `/cr:tt test my-cli` |
+| List Claude sessions | `tmux list-windows` (manual) | `/ar:tabs` |
+| Create session | `tmux new-session -d -s name` | `/ar:tm create name` |
+| Send to all sessions | `for s in $(tmux list-sessions); do ...` | `/ar:tabs all:continue` |
+| Test CLI | Manual scripting required | `/ar:tt test my-cli` |
 
 ### AI-Monitor Configuration Options
 - `--prompt/-p <text>` - Custom prompt to send when idle
@@ -149,61 +149,61 @@ clautorun provides convenient commands for tmux session automation:
 
 ### Create Testing Session with AI-Monitor
 ```bash
-# Create session (default: clautorun)
-byobu new-session -d -s "clautorun"
+# Create session (default: autorun)
+byobu new-session -d -s "autorun"
 
 # Navigate and start process
-byobu send-keys -t "clautorun" "cd /path/to/project" C-m
-byobu send-keys -t "clautorun" "npm test" C-m
+byobu send-keys -t "autorun" "cd /path/to/project" C-m
+byobu send-keys -t "autorun" "npm test" C-m
 
 # Start ai-monitor (from separate terminal)
-python3 ai_monitor.py "clautorun" --prompt "Continue testing" --stop "Tests completed" --max-cycles 3
+python3 ai_monitor.py "autorun" --prompt "Continue testing" --stop "Tests completed" --max-cycles 3
 ```
 
 ### Monitor Claude Code Session
 ```bash
-# Create Claude Code session (default: clautorun unless user specifies otherwise)
-byobu new-session -d -s "clautorun"
-byobu send-keys -t "clautorun" "cd /project" C-m
-byobu send-keys -t "clautorun" "claude" C-m
+# Create Claude Code session (default: autorun unless user specifies otherwise)
+byobu new-session -d -s "autorun"
+byobu send-keys -t "autorun" "cd /project" C-m
+byobu send-keys -t "autorun" "claude" C-m
 
 # Start monitoring for autonomous work
-python3 ai_monitor.py "clautorun" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-cycles 10
+python3 ai_monitor.py "autorun" --prompt "Continue working autonomously" --stop "AUTORUN_ALL_TASKS_COMPLETED" --max-cycles 10
 ```
 
 ### Automated Plugin Testing Workflow
 ```bash
-# Create session for clautorun testing (default: clautorun)
-byobu new-session -d -s "clautorun"
+# Create session for autorun testing (default: autorun)
+byobu new-session -d -s "autorun"
 
-# Navigate to project (replace with your clautorun directory)
-byobu send-keys -t "clautorun" "cd \$HOME/.claude/clautorun" C-m
+# Navigate to project (replace with your autorun directory)
+byobu send-keys -t "autorun" "cd \$HOME/.claude/autorun" C-m
 
 # Start Claude Code
-byobu send-keys -t "clautorun" "claude" C-m
+byobu send-keys -t "autorun" "claude" C-m
 sleep 5
 
 # Set model to haiku for efficiency
-byobu send-keys -t "clautorun" "/model haiku" C-m
+byobu send-keys -t "autorun" "/model haiku" C-m
 sleep 2
 
-# Install plugin locally (replace with your clautorun directory)
-byobu send-keys -t "clautorun" "/plugin marketplace add \$HOME/.claude/clautorun" C-m
+# Install plugin locally (replace with your autorun directory)
+byobu send-keys -t "autorun" "/plugin marketplace add \$HOME/.claude/autorun" C-m
 sleep 3
 
 # Install plugin
-byobu send-keys -t "clautorun" "/plugin install clautorun@clautorun" C-m
+byobu send-keys -t "autorun" "/plugin install autorun@autorun" C-m
 sleep 5
 
 # Test commands
-byobu send-keys -t "clautorun" "/afs" C-m
+byobu send-keys -t "autorun" "/afs" C-m
 sleep 3
 
-byobu send-keys -t "clautorun" "/afst" C-m
+byobu send-keys -t "autorun" "/afst" C-m
 sleep 3
 
 # Capture output for verification
-byobu capture-pane -t "clautorun" -p -S -20
+byobu capture-pane -t "autorun" -p -S -20
 ```
 
 ### Error Handling and Recovery
@@ -291,8 +291,8 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
 
 ## Best Practices
 
-1. **Session Naming**: Always use "clautorun" as the default session name unless user specifies another tmux session name
-2. **Default Session**: Use "clautorun" as the default session name for all clautorun testing workflows
+1. **Session Naming**: Always use "autorun" as the default session name unless user specifies another tmux session name
+2. **Default Session**: Use "autorun" as the default session name for all autorun testing workflows
 3. **Existence Checks**: Always verify session existence before operations using `byobu list-sessions`
 4. **Error Recovery**: Implement Ctrl+C handling for stuck commands and session recreation when needed
 5. **Output Verification**: Use capture-pane for command result verification and testing validation
@@ -346,7 +346,7 @@ byobu send-keys -t "session_name" C-m         # Step 2: Press Enter to confirm (
   - Essential for understanding best practices from official plugins
 
 ### Testing and Automation Resources
-- **AI-Monitor Integration (clautorun)** - `src/clautorun/ai_monitor.py`
+- **AI-Monitor Integration (autorun)** - `src/autorun/ai_monitor.py`
   - Built-in tmux monitoring and automation capabilities
   - Use for autonomous session monitoring and automated re-prompting
   - Essential for long-running automated workflows and testing

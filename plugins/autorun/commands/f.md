@@ -1,5 +1,5 @@
 ---
-description: Find existing files only - no new file creation (short for /cr:find)
+description: Find existing files only - no new file creation (short for /ar:find)
 ---
 
 # AutoFile Strict Search Mode

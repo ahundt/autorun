@@ -17,13 +17,13 @@
 """
 No-Daemon Hook Handler (Direct Mode)
 
-This module is a standalone hook handler used when CLAUTORUN_USE_DAEMON=0.
+This module is a standalone hook handler used when AUTORUN_USE_DAEMON=0.
 It processes hook events directly in-process without a Unix socket daemon.
 
-Primary (daemon) path:  clautorun → __main__.py → client.py → daemon.sock → core.py
-Direct (no-daemon) path: CLAUTORUN_USE_DAEMON=0 clautorun → __main__.py → main.py (this file)
+Primary (daemon) path:  autorun → __main__.py → client.py → daemon.sock → core.py
+Direct (no-daemon) path: AUTORUN_USE_DAEMON=0 autorun → __main__.py → main.py (this file)
 
-When to use direct mode (CLAUTORUN_USE_DAEMON=0):
+When to use direct mode (AUTORUN_USE_DAEMON=0):
 - Daemon not running and startup overhead is undesirable
 - Testing hook handler logic in isolation
 - Systems where Unix sockets are not available
@@ -32,7 +32,7 @@ Performance: 50-150ms per hook event (vs 1-5ms for daemon mode).
 Acceptable for debugging; not recommended for production (daemon mode is faster).
 
 The canonical v0.7 implementation is in:
-- core.py (EventContext magic state, ClautorunApp dispatcher, ClautorunDaemon server)
+- core.py (EventContext magic state, AutorunApp dispatcher, AutorunDaemon server)
 - plugins.py (All 5 plugins with DRY factories - 78% code reduction)
 - session_manager.py (filelock+JSON session state backend)
 """
@@ -42,10 +42,10 @@ import os
 import sys
 from pathlib import Path
 
-# Configure sys.path before importing clautorun packages
+# Configure sys.path before importing autorun packages
 # Enables relative imports across different execution contexts:
 # - Hook execution: Uses CLAUDE_PLUGIN_ROOT environment variable
-# - Module execution: Works with python3 -m clautorun
+# - Module execution: Works with python3 -m autorun
 # - Script execution: Uses __file__ introspection
 
 _plugin_root = os.environ.get('CLAUDE_PLUGIN_ROOT')
@@ -61,7 +61,7 @@ else:
 
 # Enable relative imports when running as main script
 if __name__ == '__main__' and __package__ is None:
-    __package__ = 'clautorun'
+    __package__ = 'autorun'
 
 # Package and external imports (after sys.path is configured)
 import json
@@ -180,7 +180,7 @@ def get_global_tmux_utils():
     """Get global tmux utilities instance with proper session management"""
     global _tmux_utilities
     if _tmux_utilities is None and TMUX_UTILS_AVAILABLE:
-        _tmux_utilities = get_tmux_utilities()  # Uses default "clautorun" session
+        _tmux_utilities = get_tmux_utilities()  # Uses default "autorun" session
         log_info("Centralized tmux utilities initialized with default session")
     return _tmux_utilities
 
@@ -294,11 +294,11 @@ def log_info(message):
 # Import robust session state management from session_manager module
 # This provides RAII-based session state with proper file locking and backend selection
 # Fixes Issue #29 (process-local _session_backends) and Issue #28 (filename extensions)
-from clautorun.session_manager import session_state
+from autorun.session_manager import session_state
 
 # Import _not_in_pipe for pipe detection predicate
 try:
-    from clautorun.integrations import _not_in_pipe
+    from autorun.integrations import _not_in_pipe
 except ImportError as e:
     # Import failed - define fallback and log diagnostic info
     # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
@@ -308,12 +308,12 @@ except ImportError as e:
         logger.error("=" * 70)
         logger.error("IMPORT ERROR: Failed to load command predicate")
         logger.error("=" * 70)
-        logger.error("Module: clautorun.integrations")
+        logger.error("Module: autorun.integrations")
         logger.error("Function: _not_in_pipe")
         logger.error(f"Exception: {type(e).__name__}: {e}")
         logger.error("IMPACT: Pipe detection will not work correctly")
         logger.error("SYMPTOM: Commands like 'git log | grep fix' may be blocked")
-        logger.error("ACTION: Check clautorun installation and module paths")
+        logger.error("ACTION: Check autorun installation and module paths")
         logger.error("=" * 70)
     except ImportError:
         pass  # Silently skip if logging not available (don't break hooks)
@@ -581,15 +581,15 @@ def parse_pattern_and_description(args: str) -> tuple[str, str | None, str]:
     Parse pattern and optional description from command arguments.
 
     Supports multiple formats:
-    1. /cr:no pattern                    # No description, uses DEFAULT_INTEGRATIONS
-    2. /cr:no "pattern with spaces"      # Quoted pattern, no description
-    3. /cr:no "pattern" description      # Quoted pattern with custom description
-    4. /cr:no pattern description text   # Unquoted pattern with description
+    1. /ar:no pattern                    # No description, uses DEFAULT_INTEGRATIONS
+    2. /ar:no "pattern with spaces"      # Quoted pattern, no description
+    3. /ar:no "pattern" description      # Quoted pattern with custom description
+    4. /ar:no pattern description text   # Unquoted pattern with description
 
     Pattern type prefixes (opt-in):
-    5. /cr:no regex:pattern              # Regex pattern matching
-    6. /cr:no glob:pattern               # Glob pattern matching
-    7. /cr:no "/regex.*$/"               # Auto-detect regex using /pattern/ syntax
+    5. /ar:no regex:pattern              # Regex pattern matching
+    6. /ar:no glob:pattern               # Glob pattern matching
+    7. /ar:no "/regex.*$/"               # Auto-detect regex using /pattern/ syntax
 
     Args:
         args: Command arguments after the command name
@@ -752,7 +752,7 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
 
     # Literal matching (default) - use AST-based detection to avoid substring bugs
     # The AST-based function correctly handles:
-    # - "/cr:plannew" does NOT match "rm" (substring in "plannew")
+    # - "/ar:plannew" does NOT match "rm" (substring in "plannew")
     # - "sudo rm file" DOES match "rm" (command position)
     # - "echo rm" does NOT match "rm" (argument position)
     if AST_COMMAND_DETECTION_AVAILABLE:
@@ -1210,7 +1210,7 @@ def handle_activate(state, prompt=""):
         try:
             tmux_utils = get_global_tmux_utils()
             if tmux_utils:
-                # Ensure default "clautorun" session exists and is available
+                # Ensure default "autorun" session exists and is available
                 tmux_utils.ensure_session_exists()
                 session_info = tmux_utils.get_session_info()
                 log_info(f"tmux session ensured: {session_info['session']} (tmux active: {session_info['tmux_active']})")
@@ -1274,24 +1274,24 @@ COMMAND_HANDLERS = {
 
 def handle_block_pattern(state):
     """
-    Handle /cr:no <pattern> [description] command.
+    Handle /ar:no <pattern> [description] command.
 
     Blocks a command pattern in the current session.
 
     Usage:
-        /cr:no rm                                  # Block rm command (uses DEFAULT_INTEGRATIONS)
-        /cr:no dd if=                              # Block dd with input
-        /cr:no "exec(" unsafe function             # Block with custom description
-        /cr:no regex:\\b(eval|assert)\\(            # Block with regex pattern
-        /cr:no glob:*.tmp temporary files           # Block with glob pattern
+        /ar:no rm                                  # Block rm command (uses DEFAULT_INTEGRATIONS)
+        /ar:no dd if=                              # Block dd with input
+        /ar:no "exec(" unsafe function             # Block with custom description
+        /ar:no regex:\\b(eval|assert)\\(            # Block with regex pattern
+        /ar:no glob:*.tmp temporary files           # Block with glob pattern
 
     Examples:
-        /cr:no rm
-        /cr:no "rm -rf"
-        /cr:no dd if=
-        /cr:no "exec(" unsafe eval function - use alternatives
-        /cr:no regex:eval\\( dangerous eval usage
-        /cr:no glob:*.tmp no temporary files allowed
+        /ar:no rm
+        /ar:no "rm -rf"
+        /ar:no dd if=
+        /ar:no "exec(" unsafe eval function - use alternatives
+        /ar:no regex:eval\\( dangerous eval usage
+        /ar:no glob:*.tmp no temporary files allowed
     """
     from .config import DEFAULT_INTEGRATIONS
 
@@ -1299,23 +1299,23 @@ def handle_block_pattern(state):
     session_id = state.get("session_id", "")
 
     # Extract pattern from prompt
-    # Format: "/cr:no <pattern> [description]"
+    # Format: "/ar:no <pattern> [description]"
     parts = prompt.split(None, 1)
     if len(parts) < 2:
-        return f"❌ Usage: /cr:no <pattern> [description]\n" \
+        return f"❌ Usage: /ar:no <pattern> [description]\n" \
                f"\n" \
                f"Examples:\n" \
-               f"  /cr:no rm\n" \
-               f"  /cr:no dd if=\n" \
-               f'  /cr:no "exec(" unsafe function\n' \
-               f"  /cr:no regex:eval\\( dangerous\n" \
-               f"  /cr:no glob:*.tmp temporary files"
+               f"  /ar:no rm\n" \
+               f"  /ar:no dd if=\n" \
+               f'  /ar:no "exec(" unsafe function\n' \
+               f"  /ar:no regex:eval\\( dangerous\n" \
+               f"  /ar:no glob:*.tmp temporary files"
 
     try:
         pattern, description, pattern_type = parse_pattern_and_description(parts[1])
     except ValueError as e:
         return f"❌ Error: {e}\n\n" \
-               f"Usage: /cr:no <pattern> [description]"
+               f"Usage: /ar:no <pattern> [description]"
 
     # Add block to session state
     added = add_session_block(session_id, pattern, description, pattern_type)
@@ -1333,25 +1333,25 @@ def handle_block_pattern(state):
         return f"✅ Blocked: {pattern}{type_indicator}\n" \
                f"💡 {suggestion}\n\n" \
                f"Session blocks: {len(get_session_blocks(session_id))}\n" \
-               f"Commands: /cr:ok {pattern} | /cr:clear | /cr:status"
+               f"Commands: /ar:ok {pattern} | /ar:clear | /ar:status"
     else:
         return f"⚠️ Pattern '{pattern}' is already blocked in this session.\n" \
-               f"Commands: /cr:status | /cr:clear {pattern}"
+               f"Commands: /ar:status | /ar:clear {pattern}"
 
 
 def handle_allow_pattern(state):
     """
-    Handle /cr:ok <pattern> command.
+    Handle /ar:ok <pattern> command.
 
     Allows a previously blocked command pattern in the current session.
 
     Usage:
-        /cr:ok rm              # Allow rm command
-        /cr:ok dd if=          # Allow dd with input
+        /ar:ok rm              # Allow rm command
+        /ar:ok dd if=          # Allow dd with input
 
     Examples:
-        /cr:ok rm
-        /cr:ok "rm -rf"
+        /ar:ok rm
+        /ar:ok "rm -rf"
     """
     prompt = state.get("activation_prompt", "")
     session_id = state.get("session_id", "")
@@ -1360,8 +1360,8 @@ def handle_allow_pattern(state):
     # Use split with maxsplit=1 to preserve patterns with spaces
     parts = prompt.split(None, 1)
     if len(parts) < 2:
-        return f"❌ Usage: /cr:ok <pattern>\n" \
-               f"Example: /cr:ok rm"
+        return f"❌ Usage: /ar:ok <pattern>\n" \
+               f"Example: /ar:ok rm"
 
     pattern = parts[1].strip()
 
@@ -1371,26 +1371,26 @@ def handle_allow_pattern(state):
     if removed:
         return f"✅ Allowed: {pattern}\n\n" \
                f"Session blocks: {len(get_session_blocks(session_id))}\n" \
-               f"Commands: /cr:no {pattern} | /cr:status"
+               f"Commands: /ar:no {pattern} | /ar:status"
     else:
         return f"⚠️ Pattern '{pattern}' was not blocked in this session.\n" \
-               f"Commands: /cr:status | /cr:no {pattern}"
+               f"Commands: /ar:status | /ar:no {pattern}"
 
 
 def handle_clear_pattern(state):
     """
-    Handle /cr:clear [pattern] command.
+    Handle /ar:clear [pattern] command.
 
     Clears session blocks (all or specific pattern).
     Falls back to global defaults.
 
     Usage:
-        /cr:clear             # Clear all session blocks
-        /cr:clear rm          # Clear specific pattern
+        /ar:clear             # Clear all session blocks
+        /ar:clear rm          # Clear specific pattern
 
     Examples:
-        /cr:clear
-        /cr:clear rm
+        /ar:clear
+        /ar:clear rm
     """
     prompt = state.get("activation_prompt", "")
     session_id = state.get("session_id", "")
@@ -1413,17 +1413,17 @@ def handle_clear_pattern(state):
 
         return f"🔄 Cleared all session blocks.\n" \
                f"Using global defaults ({global_count} patterns).\n" \
-               f"Commands: /cr:status | /cr:globalstatus"
+               f"Commands: /ar:status | /ar:globalstatus"
 
 
 def handle_block_status(state):
     """
-    Handle /cr:status command.
+    Handle /ar:status command.
 
     Shows current blocked patterns for session and global.
 
     Usage:
-        /cr:status
+        /ar:status
 
     Example output:
         Session blocks (2):
@@ -1467,7 +1467,7 @@ def handle_block_status(state):
         lines.append("Global blocks: None")
 
     lines.append("")
-    lines.append("Commands: /cr:no <pattern> | /cr:ok <pattern> | /cr:clear | /cr:globalno <pattern>")
+    lines.append("Commands: /ar:no <pattern> | /ar:ok <pattern> | /ar:clear | /ar:globalno <pattern>")
     lines.append("")
     lines.append("Pattern types: literal (default) | regex:<pattern> | glob:<pattern>")
 
@@ -1476,47 +1476,47 @@ def handle_block_status(state):
 
 def handle_global_block_pattern(state):
     """
-    Handle /cr:globalno <pattern> [description] command.
+    Handle /ar:globalno <pattern> [description] command.
 
     Sets a global default to block a pattern.
     Affects all sessions that don't have session-specific overrides.
 
     Usage:
-        /cr:globalno rm                                  # Block rm globally (uses DEFAULT_INTEGRATIONS)
-        /cr:globalno dd if=                              # Block dangerous dd commands
-        /cr:globalno "exec(" unsafe function             # Block with custom description
-        /cr:globalno regex:\\b(eval|assert)\\(            # Block with regex pattern
-        /cr:globalno glob:*.tmp temporary files           # Block with glob pattern
+        /ar:globalno rm                                  # Block rm globally (uses DEFAULT_INTEGRATIONS)
+        /ar:globalno dd if=                              # Block dangerous dd commands
+        /ar:globalno "exec(" unsafe function             # Block with custom description
+        /ar:globalno regex:\\b(eval|assert)\\(            # Block with regex pattern
+        /ar:globalno glob:*.tmp temporary files           # Block with glob pattern
 
     Examples:
-        /cr:globalno rm
-        /cr:globalno --force
-        /cr:globalno "exec(" unsafe exec function blocked
-        /cr:globalno regex:eval\\( dangerous eval usage
-        /cr:globalno glob:*.tmp no temporary files
+        /ar:globalno rm
+        /ar:globalno --force
+        /ar:globalno "exec(" unsafe exec function blocked
+        /ar:globalno regex:eval\\( dangerous eval usage
+        /ar:globalno glob:*.tmp no temporary files
     """
     from .config import DEFAULT_INTEGRATIONS
 
     prompt = state.get("activation_prompt", "")
 
     # Extract pattern from prompt
-    # Format: "/cr:globalno <pattern> [description]"
+    # Format: "/ar:globalno <pattern> [description]"
     parts = prompt.split(None, 1)
     if len(parts) < 2:
-        return f"❌ Usage: /cr:globalno <pattern> [description]\n" \
+        return f"❌ Usage: /ar:globalno <pattern> [description]\n" \
                f"\n" \
                f"Examples:\n" \
-               f"  /cr:globalno rm\n" \
-               f"  /cr:globalno dd if=\n" \
-               f'  /cr:globalno "exec(" unsafe function\n' \
-               f"  /cr:globalno regex:eval\\( dangerous\n" \
-               f"  /cr:globalno glob:*.tmp temporary files"
+               f"  /ar:globalno rm\n" \
+               f"  /ar:globalno dd if=\n" \
+               f'  /ar:globalno "exec(" unsafe function\n' \
+               f"  /ar:globalno regex:eval\\( dangerous\n" \
+               f"  /ar:globalno glob:*.tmp temporary files"
 
     try:
         pattern, description, pattern_type = parse_pattern_and_description(parts[1])
     except ValueError as e:
         return f"❌ Error: {e}\n\n" \
-               f"Usage: /cr:globalno <pattern> [description]"
+               f"Usage: /ar:globalno <pattern> [description]"
 
     # Add global block
     added = add_global_block(pattern, description, pattern_type)
@@ -1534,24 +1534,24 @@ def handle_global_block_pattern(state):
         return f"✅ Global block: {pattern}{type_indicator}\n" \
                f"💡 {suggestion}\n\n" \
                f"Global blocks: {len(get_global_blocks())}\n" \
-               f"Commands: /cr:globalok {pattern} | /cr:globalstatus"
+               f"Commands: /ar:globalok {pattern} | /ar:globalstatus"
     else:
         return f"⚠️ Pattern '{pattern}' is already globally blocked.\n" \
-               f"Commands: /cr:globalstatus"
+               f"Commands: /ar:globalstatus"
 
 
 def handle_global_allow_pattern(state):
     """
-    Handle /cr:globalok <pattern> command.
+    Handle /ar:globalok <pattern> command.
 
     Removes a global block for a pattern.
 
     Usage:
-        /cr:globalok rm        # Allow rm globally
+        /ar:globalok rm        # Allow rm globally
 
     Examples:
-        /cr:globalok rm
-        /cr:globalok --force
+        /ar:globalok rm
+        /ar:globalok --force
     """
     prompt = state.get("activation_prompt", "")
 
@@ -1559,8 +1559,8 @@ def handle_global_allow_pattern(state):
     # Use split with maxsplit=1 to preserve patterns with spaces
     parts = prompt.split(None, 1)
     if len(parts) < 2:
-        return f"❌ Usage: /cr:globalok <pattern>\n" \
-               f"Example: /cr:globalok rm"
+        return f"❌ Usage: /ar:globalok <pattern>\n" \
+               f"Example: /ar:globalok rm"
 
     pattern = parts[1].strip()
 
@@ -1570,20 +1570,20 @@ def handle_global_allow_pattern(state):
     if removed:
         return f"✅ Global allow: {pattern}\n\n" \
                f"Global blocks: {len(get_global_blocks())}\n" \
-               f"Commands: /cr:globalno {pattern} | /cr:globalstatus"
+               f"Commands: /ar:globalno {pattern} | /ar:globalstatus"
     else:
         return f"⚠️ Pattern '{pattern}' was not globally blocked.\n" \
-               f"Commands: /cr:globalstatus"
+               f"Commands: /ar:globalstatus"
 
 
 def handle_global_block_status(state):
     """
-    Handle /cr:globalstatus command.
+    Handle /ar:globalstatus command.
 
     Shows globally blocked patterns.
 
     Usage:
-        /cr:globalstatus
+        /ar:globalstatus
 
     Example output:
         Global blocks (2):
@@ -1605,7 +1605,7 @@ def handle_global_block_status(state):
         lines.append("Global blocks: None")
 
     lines.append("")
-    lines.append("Commands: /cr:globalno <pattern> | /cr:globalok <pattern> | /cr:status")
+    lines.append("Commands: /ar:globalno <pattern> | /ar:globalok <pattern> | /ar:status")
 
     return "\n".join(lines)
 
@@ -1678,8 +1678,8 @@ def pretooluse_handler(ctx):
             return build_pretooluse_response(
                 decision="deny",
                 reason=f"Command blocked: {pattern}\n{suggestion}\n\n"
-                       f"To allow in this session: /cr:ok {pattern}\n"
-                       f"To show status: /cr:status",
+                       f"To allow in this session: /ar:ok {pattern}\n"
+                       f"To show status: /ar:status",
                 ctx=ctx
             )
 
@@ -2254,7 +2254,7 @@ def stop_handler(ctx):
         max_calls = state.get('max_calls', 50)
         if state['hook_call_count'] > max_calls:
             # STOP HOOK SEMANTICS - See documentation at build_hook_response() (~line 546)
-            msg = f"AUTORUN PAUSED: Session reached call limit ({max_calls}). Use /cr:run to resume."
+            msg = f"AUTORUN PAUSED: Session reached call limit ({max_calls}). Use /ar:run to resume."
             log_info(msg)
             return build_hook_response(True, "", msg, decision="block", reason=msg, event_name=hook_event, ctx=ctx)
 
@@ -2282,7 +2282,7 @@ def main(_exit=True):
 
             # Normalize payload from any CLI format (Claude Code or Gemini CLI)
             # Maps Gemini's BeforeTool→PreToolUse, camelCase→snake_case, etc.
-            from clautorun.core import normalize_hook_payload
+            from autorun.core import normalize_hook_payload
             normalized = normalize_hook_payload(payload)
 
             event = normalized.get("hook_event_name", "?")

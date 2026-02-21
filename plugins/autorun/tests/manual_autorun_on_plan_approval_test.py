@@ -22,8 +22,8 @@ Run manually with: python manual_autorun_on_plan_approval_test.py
 Purpose:
     Tests the automatic transition from plan approval to autonomous execution.
     When a user approves a plan and Claude outputs "PLAN ACCEPTED", the
-    clautorun Stop hook should automatically activate autorun mode so Claude
-    continues executing the plan without requiring manual /cr:go command.
+    autorun Stop hook should automatically activate autorun mode so Claude
+    continues executing the plan without requiring manual /ar:go command.
 
 What This Tests:
     - Plan mode entry and plan creation
@@ -34,7 +34,7 @@ What This Tests:
 Test Flow:
     1. Create isolated tmux session
     2. Launch Claude with haiku model
-    3. Send /cr:plannew to create a simple hello.py plan
+    3. Send /ar:plannew to create a simple hello.py plan
     4. Enter plan mode (Shift+Tab fallback if needed)
     5. Wait for plan to be generated
     6. Accept the plan (press Enter)
@@ -58,7 +58,7 @@ from typing import Optional, Tuple
 # Add parent src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.tmux_utils import (
+from autorun.tmux_utils import (
     TmuxUtilities,
     get_tmux_utilities,
     send_text_and_enter,
@@ -74,7 +74,7 @@ from clautorun.tmux_utils import (
     PROMPT_TYPE_PLAN_APPROVAL,
     PROMPT_TYPE_INPUT,
 )
-from clautorun.config import CONFIG
+from autorun.config import CONFIG
 
 
 # Test configuration
@@ -270,16 +270,16 @@ class PlanApprovalAutorunTest:
         return True
 
     def enter_plan_mode(self) -> bool:
-        """Enter plan mode - the /cr:plannew command instructs Claude to use EnterPlanMode tool.
+        """Enter plan mode - the /ar:plannew command instructs Claude to use EnterPlanMode tool.
 
         This method just verifies plan mode is active after sending the command.
         If not active, it falls back to Shift+Tab to manually toggle plan mode.
         """
-        # Plan mode will be entered by Claude when processing /cr:plannew command
+        # Plan mode will be entered by Claude when processing /ar:plannew command
         # This method is called before sending the command, so we just return True
         # and let send_plan_request handle it. If plan mode doesn't activate,
         # we'll use Shift+Tab as fallback.
-        self.log("Plan mode will be requested via /cr:plannew command")
+        self.log("Plan mode will be requested via /ar:plannew command")
         return True
 
     def ensure_plan_mode_with_fallback(self) -> bool:
@@ -315,12 +315,12 @@ class PlanApprovalAutorunTest:
         return False
 
     def send_plan_request(self) -> bool:
-        """Send a simple plan request using /cr:plannew command which includes PLAN ACCEPTED instructions."""
-        self.log("Sending plan request using /cr:plannew command...")
+        """Send a simple plan request using /ar:plannew command which includes PLAN ACCEPTED instructions."""
+        self.log("Sending plan request using /ar:plannew command...")
 
-        # Use the full command path - /cr:plannew (not /cr:pn alias which may not be registered)
+        # Use the full command path - /ar:plannew (not /ar:pn alias which may not be registered)
         # Also explicitly tell Claude to enter plan mode in case the manual Shift+Tab didn't work
-        plan_request = "/cr:plannew Enter plan mode and create a simple 2-step plan to write hello.py that prints Hello World. Do not ask any questions, just create the plan and submit for approval."
+        plan_request = "/ar:plannew Enter plan mode and create a simple 2-step plan to write hello.py that prints Hello World. Do not ask any questions, just create the plan and submit for approval."
 
         if not send_text_and_enter(self.tmux, plan_request, self.session, self.window, self.pane):
             self.log_always("Failed to send plan request")

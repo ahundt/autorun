@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.integrations import _not_in_pipe
-from clautorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
+from autorun.integrations import _not_in_pipe
+from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
 
 
 def create_mock_context(command: str):
@@ -30,7 +30,7 @@ class TestPipeDetectionRealWorld:
     def test_user_reported_command(self):
         """Test the exact command user reported as blocked."""
         # This is the ACTUAL command that revealed the bug
-        user_cmd = "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'"
+        user_cmd = "gemini extensions list | grep -A 2 -B 2 autorun || echo 'No autorun found'"
 
         # Step 1: Pattern should match
         matches = command_matches_pattern(user_cmd, "grep")
@@ -82,7 +82,7 @@ class TestPipeDetectionRealWorld:
     def test_grep_with_context_flags(self):
         """Test grep with -A/-B/-C flags in pipes (user's exact use case)."""
         commands = [
-            "gemini extensions list | grep -A 2 -B 2 clautorun",
+            "gemini extensions list | grep -A 2 -B 2 autorun",
             "git log | grep -A 5 commit",
             "cat error.log | grep -B 10 ERROR",
             "ps aux | grep -C 3 python",

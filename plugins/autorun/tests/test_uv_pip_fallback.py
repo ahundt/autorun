@@ -31,7 +31,7 @@ class TestUVPipFallback:
             mock_which.return_value = "/usr/bin/uv"
 
             # Act
-            from clautorun.install import has_uv
+            from autorun.install import has_uv
             has_uv.cache_clear()  # Clear lru_cache for test isolation
             result = has_uv()
 
@@ -52,7 +52,7 @@ class TestUVPipFallback:
             mock_which.return_value = None  # UV not found
 
             # Act
-            from clautorun.install import has_uv
+            from autorun.install import has_uv
             has_uv.cache_clear()  # Clear lru_cache for test isolation
             result = has_uv()
 
@@ -67,7 +67,7 @@ class TestUVPipFallback:
             mock_which.return_value = "/usr/bin/uv"
 
             # Act
-            from clautorun.install import has_uv
+            from autorun.install import has_uv
             has_uv.cache_clear()
             result1 = has_uv()
             result2 = has_uv()  # Should use cached result
@@ -81,9 +81,9 @@ class TestUVPipFallback:
     def test_get_python_runner_with_uv_available(self):
         """Test: get_python_runner() returns UV command when available."""
         # Arrange
-        with patch("clautorun.install.has_uv", return_value=True):
+        with patch("autorun.install.has_uv", return_value=True):
             # Act
-            from clautorun.install import get_python_runner
+            from autorun.install import get_python_runner
             result = get_python_runner()
 
             # Assert
@@ -92,9 +92,9 @@ class TestUVPipFallback:
     def test_get_python_runner_with_uv_unavailable(self):
         """Test: get_python_runner() falls back to python when UV unavailable."""
         # Arrange
-        with patch("clautorun.install.has_uv", return_value=False):
+        with patch("autorun.install.has_uv", return_value=False):
             # Act
-            from clautorun.install import get_python_runner
+            from autorun.install import get_python_runner
             result = get_python_runner()
 
             # Assert
@@ -103,9 +103,9 @@ class TestUVPipFallback:
     def test_error_formatter_marketplace_not_found_with_uv(self):
         """Test: ErrorFormatter.marketplace_not_found() includes UV commands when UV available."""
         # Arrange
-        with patch("clautorun.install.has_uv", return_value=True):
+        with patch("autorun.install.has_uv", return_value=True):
             # Act
-            from clautorun.install import ErrorFormatter
+            from autorun.install import ErrorFormatter
             error_msg = ErrorFormatter.marketplace_not_found()
 
             # Assert
@@ -119,13 +119,13 @@ class TestUVPipFallback:
     def test_error_formatter_marketplace_not_found_without_uv(self):
         """Test: ErrorFormatter.marketplace_not_found() uses pip command when UV unavailable."""
         # Arrange
-        with patch("clautorun.install.has_uv", return_value=False):
+        with patch("autorun.install.has_uv", return_value=False):
             # Act
-            from clautorun.install import ErrorFormatter
+            from autorun.install import ErrorFormatter
             error_msg = ErrorFormatter.marketplace_not_found()
 
             # Assert
-            assert "python -m plugins.clautorun.src.clautorun.install" in error_msg
+            assert "python -m plugins.autorun.src.autorun.install" in error_msg
             assert "pip install" in error_msg
             # Should NOT contain uv commands when UV not available
             assert error_msg.count("uv run python") == 0 or "If UV not available" in error_msg
@@ -133,10 +133,10 @@ class TestUVPipFallback:
     def test_error_formatter_uv_not_found(self):
         """Test: ErrorFormatter.uv_not_found() provides installation instructions."""
         # Arrange
-        pip_fallback = "pip install -e . && python -m clautorun --install"
+        pip_fallback = "pip install -e . && python -m autorun --install"
 
         # Act
-        from clautorun.install import ErrorFormatter
+        from autorun.install import ErrorFormatter
         error_msg = ErrorFormatter.uv_not_found(pip_fallback)
 
         # Assert
@@ -154,7 +154,7 @@ class TestErrorFormatterStructure:
 
     def test_error_formatter_is_frozen(self):
         """Test: ErrorFormatter is immutable (frozen dataclass)."""
-        from clautorun.install import ErrorFormatter
+        from autorun.install import ErrorFormatter
 
         # Should not be able to set attributes on class instance
         formatter = ErrorFormatter()
@@ -163,7 +163,7 @@ class TestErrorFormatterStructure:
 
     def test_error_formatter_has_required_templates(self):
         """Test: ErrorFormatter has all required error message templates."""
-        from clautorun.install import ErrorFormatter
+        from autorun.install import ErrorFormatter
 
         # Check that templates exist as class attributes
         assert hasattr(ErrorFormatter, "MARKETPLACE_NOT_FOUND")
@@ -173,14 +173,14 @@ class TestErrorFormatterStructure:
 
     def test_error_formatter_marketplace_template_has_placeholders(self):
         """Test: MARKETPLACE_NOT_FOUND template has {install_command} placeholder."""
-        from clautorun.install import ErrorFormatter
+        from autorun.install import ErrorFormatter
 
         # Template should contain placeholder
         assert "{install_command}" in ErrorFormatter.MARKETPLACE_NOT_FOUND
 
     def test_error_formatter_uv_template_has_placeholders(self):
         """Test: UV_NOT_FOUND template has {pip_fallback_command} placeholder."""
-        from clautorun.install import ErrorFormatter
+        from autorun.install import ErrorFormatter
 
         # Template should contain placeholder
         assert "{pip_fallback_command}" in ErrorFormatter.UV_NOT_FOUND

@@ -12,7 +12,7 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.command_detection import _extract_cached, extract_commands, command_matches_pattern, BASHLEX_AVAILABLE
+from autorun.command_detection import _extract_cached, extract_commands, command_matches_pattern, BASHLEX_AVAILABLE
 
 
 def test_heredoc_extraction_no_false_positives():
@@ -21,9 +21,9 @@ def test_heredoc_extraction_no_false_positives():
     # The ACTUAL command that was causing false positives
     heredoc_cmd = """python3 << 'EOF'
 import sys
-sys.path.insert(0, "plugins/clautorun/src")
-from clautorun.command_detection import command_matches_pattern
-test_cmd = "gemini extensions list | grep -A 2 -B 2 clautorun"
+sys.path.insert(0, "plugins/autorun/src")
+from autorun.command_detection import command_matches_pattern
+test_cmd = "gemini extensions list | grep -A 2 -B 2 autorun"
 pattern = "grep"
 result = command_matches_pattern(test_cmd, pattern)
 print(f"Result: {result}")

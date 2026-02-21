@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test clautorun loading in simulated Gemini CLI environment."""
+"""Test autorun loading in simulated Gemini CLI environment."""
 import os
 import sys
 from pathlib import Path
@@ -13,7 +13,7 @@ sys.path.insert(0, str(plugin_root / 'hooks'))  # For hook_entry module
 
 
 class TestGeminiEnvironmentSimulation:
-    """Test clautorun functionality in simulated Gemini CLI environment."""
+    """Test autorun functionality in simulated Gemini CLI environment."""
 
     @pytest.fixture(autouse=True)
     def setup_gemini_env(self):
@@ -58,39 +58,39 @@ class TestGeminiEnvironmentSimulation:
 
     def test_gemini_bash_tool_coverage(self):
         """Test Gemini bash tool names are recognized."""
-        from clautorun.config import BASH_TOOLS
+        from autorun.config import BASH_TOOLS
 
         assert "bash_command" in BASH_TOOLS, "Gemini's bash_command not in BASH_TOOLS"
         assert "run_shell_command" in BASH_TOOLS, "Gemini's run_shell_command not in BASH_TOOLS"
 
     def test_gemini_write_tool_coverage(self):
         """Test Gemini write tool names are recognized."""
-        from clautorun.config import WRITE_TOOLS
+        from autorun.config import WRITE_TOOLS
 
         assert "write_file" in WRITE_TOOLS, "Gemini's write_file not in WRITE_TOOLS"
 
     def test_gemini_edit_tool_coverage(self):
         """Test Gemini edit tool names are recognized."""
-        from clautorun.config import EDIT_TOOLS
+        from autorun.config import EDIT_TOOLS
 
         assert "edit_file" in EDIT_TOOLS, "Gemini's edit_file not in EDIT_TOOLS"
         assert "replace" in EDIT_TOOLS, "Gemini's replace not in EDIT_TOOLS"
 
     def test_gemini_plan_tool_coverage(self):
         """Test Gemini plan tool names are recognized."""
-        from clautorun.config import PLAN_TOOLS
+        from autorun.config import PLAN_TOOLS
 
         assert "exit_plan_mode" in PLAN_TOOLS, "Gemini's exit_plan_mode not in PLAN_TOOLS"
 
     def test_gemini_task_tool_coverage(self):
         """Test Gemini task tool names are recognized."""
-        from clautorun.config import TASK_CREATE_TOOLS
+        from autorun.config import TASK_CREATE_TOOLS
 
         assert "task_create" in TASK_CREATE_TOOLS, "Gemini's task_create not in TASK_CREATE_TOOLS"
 
     def test_hook_accepts_gemini_bash_tool(self):
         """Test pretooluse_handler accepts Gemini's bash_command tool."""
-        from clautorun.main import pretooluse_handler
+        from autorun.main import pretooluse_handler
 
         # Simulate Gemini BeforeTool event with bash_command
         ctx = MagicMock()
@@ -107,7 +107,7 @@ class TestGeminiEnvironmentSimulation:
 
     def test_bashlex_available(self):
         """Test bashlex dependency is available (skip if not installed)."""
-        from clautorun.command_detection import BASHLEX_AVAILABLE
+        from autorun.command_detection import BASHLEX_AVAILABLE
 
         if not BASHLEX_AVAILABLE:
             pytest.skip("bashlex not installed - install with: uv pip install bashlex")
@@ -116,7 +116,7 @@ class TestGeminiEnvironmentSimulation:
 
     def test_pipe_detection_with_head(self):
         """Test command_matches_pattern detects head in piped commands."""
-        from clautorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
+        from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
 
         if not BASHLEX_AVAILABLE:
             pytest.skip("bashlex not available")

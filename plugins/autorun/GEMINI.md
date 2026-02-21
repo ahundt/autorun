@@ -1,23 +1,23 @@
-# Clautorun Plugin - Gemini CLI
+# Autorun Plugin - Gemini CLI
 
-**clautorun plugin** provides safety features, file policies, and autonomous execution capabilities for Gemini CLI.
+**autorun plugin** provides safety features, file policies, and autonomous execution capabilities for Gemini CLI.
 
 ## Commands
 
-All clautorun commands use the `/cr:` prefix:
+All autorun commands use the `/ar:` prefix:
 
 ```bash
-/cr:st              # Show current AutoFile policy
-/cr:a               # Allow all file creation
-/cr:j               # Justify new files
-/cr:f               # Find and modify existing files only (strictest)
-/cr:go <task>       # Start autonomous execution
-/cr:sos             # Emergency stop
+/ar:st              # Show current AutoFile policy
+/ar:a               # Allow all file creation
+/ar:j               # Justify new files
+/ar:f               # Find and modify existing files only (strictest)
+/ar:go <task>       # Start autonomous execution
+/ar:sos             # Emergency stop
 ```
 
 ## Safety Features
 
-- **File Policies**: Control file creation with `/cr:a`, `/cr:j`, `/cr:f`
+- **File Policies**: Control file creation with `/ar:a`, `/ar:j`, `/ar:f`
 - **Command Blocking**: Prevents dangerous operations (rm, git reset --hard, etc.)
 - **Plan Export**: Auto-save plans to notes/ directory
 - **Three-Stage Verification**: Ensures thorough task completion
@@ -38,7 +38,7 @@ Edit `~/.gemini/settings.json` and add:
 }
 ```
 
-**Why Required**: Without these settings, clautorun hooks will not execute even if properly installed. The safety features (command blocking, file policies) depend on hooks.
+**Why Required**: Without these settings, autorun hooks will not execute even if properly installed. The safety features (command blocking, file policies) depend on hooks.
 
 **Version Requirement**: Gemini CLI v0.28.0 or later recommended.
 
@@ -58,6 +58,6 @@ gemini --version  # Should show 0.28.0 or later
 
 ## Installation
 
-This plugin is installed as part of the clautorun marketplace.
+This plugin is installed as part of the autorun marketplace.
 
-For full documentation, see: https://github.com/ahundt/clautorun
+For full documentation, see: https://github.com/ahundt/autorun

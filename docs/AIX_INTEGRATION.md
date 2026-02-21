@@ -12,7 +12,7 @@
 
 ## Critical: Hook Registration
 
-**Hooks are essential for clautorun functionality.** They power:
+**Hooks are essential for autorun functionality.** They power:
 - File policy enforcement (allow/justify/find modes)
 - Command blocking (dangerous command prevention)
 - Plan export automation
@@ -20,11 +20,11 @@
 
 ### AIX + Hooks: How It Works
 
-AIX may not fully understand Claude Code/Gemini CLI hook systems. **Clautorun handles this automatically:**
+AIX may not fully understand Claude Code/Gemini CLI hook systems. **Autorun handles this automatically:**
 
-1. **AIX Installation**: Runs `clautorun --install` in post_install hooks
-2. **Hook Registration**: `clautorun --install` registers hooks with each CLI
-3. **Bootstrap Fallback**: If hooks fail to register, clautorun auto-detects on first use
+1. **AIX Installation**: Runs `autorun --install` in post_install hooks
+2. **Hook Registration**: `autorun --install` registers hooks with each CLI
+3. **Bootstrap Fallback**: If hooks fail to register, autorun auto-detects on first use
 4. **Background Fix**: Bootstrap mechanism runs in background, registers hooks automatically
 
 **You don't need to do anything** - hooks will work correctly either way.
@@ -35,10 +35,10 @@ After AIX installation, verify hooks are registered:
 
 ```bash
 # Claude Code
-cat ~/.claude/hooks.json | grep clautorun
+cat ~/.claude/hooks.json | grep autorun
 
 # Gemini CLI
-cat ~/.config/gemini-cli/config.json | grep clautorun
+cat ~/.config/gemini-cli/config.json | grep autorun
 ```
 
 If hooks aren't registered, they'll auto-register on first use via bootstrap mechanism.
@@ -55,11 +55,11 @@ brew install thoreinstein/tap/aix
 aix --version
 ```
 
-### Install clautorun via AIX
+### Install autorun via AIX
 
 ```bash
 # Install from GitHub
-aix skills install ahundt/clautorun
+aix skills install ahundt/autorun
 
 # AIX auto-detects and installs for ALL available platforms
 # Example output:
@@ -77,11 +77,11 @@ aix skills install ahundt/clautorun
 ```bash
 # List installed skills
 aix skills list
-# Should show: clautorun (v0.8.0)
+# Should show: autorun (v0.8.0)
 
 # Check platform-specific installations
-claude plugin list | grep clautorun
-gemini extensions list | grep clautorun
+claude plugin list | grep autorun
+gemini extensions list | grep autorun
 ```
 
 ## Direct Installation (Alternative)
@@ -90,25 +90,25 @@ If AIX is not available or you prefer manual control:
 
 ```bash
 # Clone repository
-git clone https://github.com/ahundt/clautorun.git
-cd clautorun
+git clone https://github.com/ahundt/autorun.git
+cd autorun
 
 # Install Python package
 uv pip install .
 
 # Register with platforms
-clautorun --install                # All detected platforms
-clautorun --install --claude-only  # Claude Code only
-clautorun --install --gemini-only  # Gemini CLI only
+autorun --install                # All detected platforms
+autorun --install --claude-only  # Claude Code only
+autorun --install --gemini-only  # Gemini CLI only
 ```
 
-## Managing clautorun via AIX
+## Managing autorun via AIX
 
 ### Update
 
 ```bash
-# Update clautorun across ALL platforms
-aix skills update clautorun
+# Update autorun across ALL platforms
+aix skills update autorun
 
 # Update all skills
 aix skills update
@@ -118,20 +118,20 @@ aix skills update
 
 ```bash
 # Remove from ALL platforms
-aix skills remove clautorun
+aix skills remove autorun
 
 # Platform-specific removal
-aix skills remove clautorun --platform claude_code
+aix skills remove autorun --platform claude_code
 ```
 
 ### Configuration
 
 ```bash
-# Show clautorun info
-aix skills info clautorun
+# Show autorun info
+aix skills info autorun
 
 # View available commands
-aix skills info clautorun --commands
+aix skills info autorun --commands
 ```
 
 ## AIX vs Direct Installation
@@ -154,31 +154,31 @@ aix skills info clautorun --commands
    ```toml
    # aix.toml defines post_install
    [install.claude_code]
-   post_install = ["clautorun", "--install"]
+   post_install = ["autorun", "--install"]
    ```
-   - AIX runs `clautorun --install` after package installation
+   - AIX runs `autorun --install` after package installation
    - This registers hooks in `~/.claude/hooks.json`
 
 2. **Via Bootstrap** (automatic fallback):
    - If hooks aren't registered, first hook invocation detects this
-   - Background bootstrap process runs: `clautorun --install`
+   - Background bootstrap process runs: `autorun --install`
    - Next hook invocation finds hooks registered
    - User sees no interruption (fail-open design)
 
 3. **Manual** (if needed):
    ```bash
-   clautorun --install
+   autorun --install
    ```
 
 ### Bootstrap Mechanism
 
-Located in `plugins/clautorun/hooks/hook_entry.py`:
+Located in `plugins/autorun/hooks/hook_entry.py`:
 
 ```python
 def spawn_background_bootstrap() -> bool:
     """Spawn bootstrap in background using nohup.
 
-    Runs: uv pip install clautorun && clautorun --install
+    Runs: uv pip install autorun && autorun --install
     Returns immediately; next invocation finds deps/hooks installed.
     """
 ```
@@ -210,25 +210,25 @@ AIX may not fully support:
 
 ```bash
 # Clone for development
-git clone https://github.com/ahundt/clautorun.git
-cd clautorun
+git clone https://github.com/ahundt/autorun.git
+cd autorun
 
 # Install in dev mode
 aix skills install . --dev-mode
 
 # Make changes to code
-# Edit plugins/clautorun/src/clautorun/main.py
+# Edit plugins/autorun/src/autorun/main.py
 
 # Reload changes across platforms
-aix skills reload clautorun
+aix skills reload autorun
 
 # Test on specific platform
-aix test clautorun --platform gemini_cli
+aix test autorun --platform gemini_cli
 
 # Publish updates (MANUAL - not automatic)
 git push
 # Then manually publish to AIX registry:
-# aix publish clautorun
+# aix publish autorun
 ```
 
 **Note**: Publishing to AIX registry is MANUAL. The code never calls `aix publish`.
@@ -239,14 +239,14 @@ When installing via AIX for Gemini CLI, Conductor extension is automatically ins
 
 ```bash
 # AIX automatically runs in post_install:
-# clautorun --install --gemini --conductor
+# autorun --install --gemini --conductor
 
 # Verify Conductor
 gemini extensions list | grep conductor
 
-# Use Conductor with clautorun
+# Use Conductor with autorun
 /conductor:setup           # Initialize context
-/cr:plannew <task>         # Create plan (clautorun)
+/ar:plannew <task>         # Create plan (autorun)
 /conductor:newTrack <task> # Create track (Conductor)
 ```
 
@@ -262,20 +262,20 @@ which opencode # OpenCode
 which codex    # Codex CLI
 ```
 
-### clautorun commands not working after AIX install
+### autorun commands not working after AIX install
 
 First, check if hooks are registered:
 ```bash
 # Claude Code
-cat ~/.claude/hooks.json | grep clautorun
+cat ~/.claude/hooks.json | grep autorun
 
 # Gemini CLI
-cat ~/.config/gemini-cli/config.json | grep clautorun
+cat ~/.config/gemini-cli/config.json | grep autorun
 ```
 
 If missing, the bootstrap mechanism will auto-register on first use. Or run manually:
 ```bash
-clautorun --install
+autorun --install
 ```
 
 ### Hooks not triggering
@@ -284,14 +284,14 @@ clautorun --install
 2. **Check bootstrap status**:
    ```bash
    # Check if bootstrap is running
-   ps aux | grep clautorun
+   ps aux | grep autorun
 
    # Check bootstrap lockfile
-   ls -la /tmp/clautorun_bootstrap.lock
+   ls -la /tmp/autorun_bootstrap.lock
    ```
 3. **Manual registration**:
    ```bash
-   clautorun --install --force
+   autorun --install --force
    ```
 
 ### Updates via AIX not taking effect
@@ -311,13 +311,13 @@ If you need to disable automatic bootstrap:
 
 ```bash
 # Disable via environment variable
-export CLAUTORUN_NO_BOOTSTRAP=1
+export AUTORUN_NO_BOOTSTRAP=1
 
 # Or via flag
-clautorun --no-bootstrap
+autorun --no-bootstrap
 
 # Re-enable
-clautorun --enable-bootstrap
+autorun --enable-bootstrap
 ```
 
 **Warning**: Only disable if you know what you're doing. Bootstrap ensures hooks are registered.
@@ -327,5 +327,5 @@ clautorun --enable-bootstrap
 - [AIX GitHub Repository](https://github.com/thoreinstein/aix)
 - [AIX Homebrew Tap](https://github.com/thoreinstein/homebrew-tap)
 - [Conductor Extension](https://github.com/gemini-cli-extensions/conductor)
-- [clautorun Repository](https://github.com/ahundt/clautorun)
+- [autorun Repository](https://github.com/ahundt/autorun)
 - [Claude Code Hooks Documentation](https://docs.claude.com/en/docs/claude-code/hooks)

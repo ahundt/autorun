@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test suite for clautorun command fixes (tmux.md, ttest.md, tm.md, tt.md)
+Test suite for autorun command fixes (tmux.md, ttest.md, tm.md, tt.md)
 
 These tests verify the bug fixes applied in the commit:
   fix(commands): rewrite no-op tmux commands and fix stale syntax
@@ -8,7 +8,7 @@ These tests verify the bug fixes applied in the commit:
 Key bugs fixed:
 1. Duplicate `-t` flag in kill-session calls (session param instead of inline -t)
 2. Boolean inversion in session existence checking (pre-check with has-session)
-3. Unsafe cleanup scope (restrict to clautorun-test* pattern)
+3. Unsafe cleanup scope (restrict to autorun-test* pattern)
 4. Session cleanup via try/finally (guaranteed cleanup on all exit paths)
 5. Correct capture output (full pane, not capture_current_input last-line-only)
 6. F-string syntax errors (use local variables, not backslash in f-strings)
@@ -25,7 +25,7 @@ pytestmark = pytest.mark.tmux
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
 
 class TestDuplicateTargetFlagBugFix:
@@ -50,9 +50,9 @@ class TestDuplicateTargetFlagBugFix:
         Bug: execute_tmux_command(['kill-session', '-t', 'target'])
         creates duplicate -t flags:
           - User provides: ['kill-session', '-t', 'target']
-          - Function auto-appends: -t clautorun (default session)
-          - Result: tmux kill-session -t clautorun -t target
-          - tmux uses LAST -t, killing 'target' instead of 'clautorun'
+          - Function auto-appends: -t autorun (default session)
+          - Result: tmux kill-session -t autorun -t target
+          - tmux uses LAST -t, killing 'target' instead of 'autorun'
 
         Fix: execute_tmux_command(['kill-session'], session='target')
         - User provides: ['kill-session']
@@ -214,12 +214,12 @@ class TestSessionExistenceCheckingBugFix:
 
 
 class TestCleanupScopingBugFix:
-    """Test fix for unsafe cleanup scope (should only target clautorun-test*)"""
+    """Test fix for unsafe cleanup scope (should only target autorun-test*)"""
 
     def setup_method(self):
         """Create test sessions"""
-        self.work_session = "clautorun-work"
-        self.test_session = "clautorun-test-1"
+        self.work_session = "autorun-work"
+        self.test_session = "autorun-test-1"
 
         subprocess.run(['tmux', 'new-session', '-d', '-s', self.work_session],
                       capture_output=True, timeout=5)
@@ -236,12 +236,12 @@ class TestCleanupScopingBugFix:
 
     def test_cleanup_all_only_targets_test_sessions(self):
         """
-        Test that 'cleanup --all' only removes clautorun-test* sessions.
+        Test that 'cleanup --all' only removes autorun-test* sessions.
 
-        Bug: Original scope was name.startswith('clautorun')
-        This would kill work sessions like 'clautorun-work', 'clautorun-dev', etc.
+        Bug: Original scope was name.startswith('autorun')
+        This would kill work sessions like 'autorun-work', 'autorun-dev', etc.
 
-        Fix: Restrict to sname.startswith('clautorun-test')
+        Fix: Restrict to sname.startswith('autorun-test')
         Only test sessions are removed.
         """
         # Both sessions should exist
@@ -252,12 +252,12 @@ class TestCleanupScopingBugFix:
         assert work_check.returncode == 0, "Work session should exist"
         assert test_check.returncode == 0, "Test session should exist"
 
-        # Simulate cleanup --all by killing only clautorun-test* sessions
+        # Simulate cleanup --all by killing only autorun-test* sessions
         list_result = self.tmux.execute_tmux_command(['list-sessions', '-F', '#{session_name}'])
         if list_result and list_result['returncode'] == 0:
             for sname in list_result['stdout'].strip().splitlines():
                 sname = sname.strip()
-                if sname.startswith('clautorun-test'):
+                if sname.startswith('autorun-test'):
                     self.tmux.execute_tmux_command(['kill-session'], session=sname)
 
         # Verify work session still exists

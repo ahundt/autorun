@@ -45,12 +45,12 @@ Options:
 
 **Output defaults:** Without `-o` or `-d`, writes `<name>.svg` next to each input file.
 
-**Shorthand:** Set `MERMAID=plugins/clautorun/skills/mermaid-diagrams/render-mermaid.ts` for shorter commands.
+**Shorthand:** Set `MERMAID=plugins/autorun/skills/mermaid-diagrams/render-mermaid.ts` for shorter commands.
 
 ## Examples
 
 ```bash
-MERMAID=plugins/clautorun/skills/mermaid-diagrams/render-mermaid.ts
+MERMAID=plugins/autorun/skills/mermaid-diagrams/render-mermaid.ts
 
 # Render single file (output next to input)
 bun run $MERMAID diagram.mmd
@@ -79,7 +79,7 @@ Mermaid source files (`.mmd`) and rendered output (`.svg`) in `docs/diagrams/`:
 |--------|-------------|
 | `docs/diagrams/autofile-policy.mmd` | AutoFile policy flowchart |
 | `docs/diagrams/three-stage-autorun.mmd` | Three-stage autorun flowchart |
-| `clautorun-architecture.mmd` | Full architecture (too complex for beautiful-mermaid) |
+| `autorun-architecture.mmd` | Full architecture (too complex for beautiful-mermaid) |
 
 Regenerate:
 

@@ -26,8 +26,8 @@ import time
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
-from clautorun.core import EventContext
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
+from autorun.core import EventContext
 
 
 def create_mock_context(session_id='test-integration', **kwargs):
@@ -70,7 +70,7 @@ class TestTaskLifecycleIntegration:
             shutil.rmtree(storage_dir)
 
         # Clear from session_state
-        from clautorun.session_manager import session_state
+        from autorun.session_manager import session_state
         with session_state(self.manager.global_key) as state:
             state.clear()
 
@@ -389,8 +389,8 @@ class TestTaskLifecycleIntegration:
     def test_10_stop_always_blocked_with_incomplete_tasks(self):
         """Test that stop is always blocked when tasks are incomplete.
 
-        No auto-override after N attempts. User must use /cr:sos or
-        /cr:task-ignore to unblock. Auto-override caused premature stoppage.
+        No auto-override after N attempts. User must use /ar:sos or
+        /ar:task-ignore to unblock. Auto-override caused premature stoppage.
         """
         print("\n=== Test: Stop always blocked with incomplete tasks ===")
 
@@ -405,8 +405,8 @@ class TestTaskLifecycleIntegration:
             assert result['continue'] == False, f"Attempt {i+1} should block - no auto-override"
 
         # Verify message includes user escape hatch instructions
-        assert '/cr:sos' in result['systemMessage']
-        assert '/cr:task-ignore' in result['systemMessage']
+        assert '/ar:sos' in result['systemMessage']
+        assert '/ar:task-ignore' in result['systemMessage']
 
         print("✅ Test passed: Stop always blocked - no auto-override")
 

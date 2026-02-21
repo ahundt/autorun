@@ -27,11 +27,11 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
-from clautorun.main import pretooluse_handler
-from clautorun.core import EventContext
-from clautorun.command_detection import BASHLEX_AVAILABLE
-from clautorun.config import BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
-from clautorun.session_manager import clear_test_session_state, session_state
+from autorun.main import pretooluse_handler
+from autorun.core import EventContext
+from autorun.command_detection import BASHLEX_AVAILABLE
+from autorun.config import BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
+from autorun.session_manager import clear_test_session_state, session_state
 
 
 def create_test_context(

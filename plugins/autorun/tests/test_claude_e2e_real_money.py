@@ -14,34 +14,34 @@ Two test categories in this module:
    Tests: real Claude session with hooks active end-to-end.
    Cost: < $0.005 per run (haiku/sonnet model)
 
-ALL tests require CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for consistency
+ALL tests require AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for consistency
 with test_gemini_e2e_real_money.py. This prevents accidental daemon state
 mutation during regular test runs.
 
 To run ALL tests (including real money):
-    export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/clautorun/tests/test_claude_e2e_real_money.py -v
+    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v
 
 To run only FREE hook-level tests:
-    export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/clautorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
+    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
 
 To skip all (default in full suite):
-    uv run pytest plugins/clautorun/tests/ -v
+    uv run pytest plugins/autorun/tests/ -v
     # These tests are SKIPPED automatically
 
 Full output logging (no truncation):
-    All hook call I/O is written to: /tmp/clautorun-e2e-test-logs/
+    All hook call I/O is written to: /tmp/autorun-e2e-test-logs/
     Real Claude subprocess output is written to pytest's tmp_path per test.
     To inspect after a failure:
-        ls /tmp/clautorun-e2e-test-logs/
-        cat /tmp/clautorun-e2e-test-logs/<test-label>.json
+        ls /tmp/autorun-e2e-test-logs/
+        cat /tmp/autorun-e2e-test-logs/<test-label>.json
 
     For full terminal capture (no pytest truncation of diffs):
-        export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-        uv run pytest plugins/clautorun/tests/test_claude_e2e_real_money.py -v \\
-            --tb=long --log-file=/tmp/clautorun-pytest.log --log-file-level=DEBUG \\
-            2>&1 | tee /tmp/clautorun-pytest-terminal.log
+        export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+        uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v \\
+            --tb=long --log-file=/tmp/autorun-pytest.log --log-file-level=DEBUG \\
+            2>&1 | tee /tmp/autorun-pytest-terminal.log
 
 Equivalent Gemini tests: test_gemini_e2e_real_money.py
 
@@ -65,7 +65,7 @@ import pytest
 # LOG DIRECTORY — full subprocess output persisted here for post-failure debug
 # =============================================================================
 
-_LOG_DIR = Path("/tmp") / "clautorun-e2e-test-logs"
+_LOG_DIR = Path("/tmp") / "autorun-e2e-test-logs"
 
 
 def _log_run(label: str, payload: dict, rc: int, stdout: str, stderr: str) -> Path:
@@ -100,14 +100,14 @@ def _log_run(label: str, payload: dict, rc: int, stdout: str, stderr: str) -> Pa
 # FLAG: Gate tests (same flag as Gemini test file)
 # =============================================================================
 
-ENABLE_REAL_MONEY_TESTS = os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
+ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
         not ENABLE_REAL_MONEY_TESTS,
         reason=(
-            "CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set. "
+            "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set. "
             "Set to 1 to run. Free hook-level tests cost $0.000; "
             "real Claude subprocess tests cost < $0.005 per run."
         ),
@@ -123,12 +123,12 @@ pytestmark = [
 def find_hook_script() -> Path:
     """Find hook_entry.py in installed or development locations."""
     candidates = [
-        # Dev source: test file lives in tests/ → parent is plugins/clautorun/
+        # Dev source: test file lives in tests/ → parent is plugins/autorun/
         Path(__file__).parent.parent / "hooks" / "hook_entry.py",
         # Git repo home location
-        Path.home() / ".claude" / "clautorun" / "plugins" / "clautorun" / "hooks" / "hook_entry.py",
+        Path.home() / ".claude" / "autorun" / "plugins" / "autorun" / "hooks" / "hook_entry.py",
         # Claude plugin cache (installed via plugin system)
-        Path.home() / ".claude" / "plugins" / "cache" / "clautorun" / "clautorun" / "0.8.0" / "hooks" / "hook_entry.py",
+        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.8.0" / "hooks" / "hook_entry.py",
     ]
     for c in candidates:
         if c.exists():
@@ -142,8 +142,8 @@ def find_plugin_root() -> Path:
     """Find plugin root (dir containing pyproject.toml) for uv run --project."""
     candidates = [
         Path(__file__).parent.parent,
-        Path.home() / ".claude" / "clautorun" / "plugins" / "clautorun",
-        Path.home() / ".claude" / "plugins" / "cache" / "clautorun" / "clautorun" / "0.8.0",
+        Path.home() / ".claude" / "autorun" / "plugins" / "autorun",
+        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.8.0",
     ]
     for c in candidates:
         if (c / "pyproject.toml").exists():
@@ -283,7 +283,7 @@ def hook_resources():
 
 @pytest.fixture(scope="module")
 def claude_cli_check():
-    """Verify Claude CLI is installed and clautorun plugin is loaded.
+    """Verify Claude CLI is installed and autorun plugin is loaded.
 
     No API cost — just checks the binary and plugin list.
     """
@@ -302,17 +302,17 @@ def claude_cli_check():
     except Exception as e:
         pytest.skip(f"Claude CLI version check failed: {e}")
 
-    # Check clautorun plugin is loaded
+    # Check autorun plugin is loaded
     try:
         result = subprocess.run(
             ["claude", "plugin", "list"],
             capture_output=True, text=True, timeout=30,
         )
         combined = result.stdout + result.stderr
-        if "clautorun" not in combined.lower() and "cr:" not in combined.lower():
+        if "autorun" not in combined.lower() and "cr:" not in combined.lower():
             pytest.skip(
-                "clautorun plugin not loaded in Claude Code. "
-                "Install with: claude plugin install https://github.com/ahundt/clautorun.git"
+                "autorun plugin not loaded in Claude Code. "
+                "Install with: claude plugin install https://github.com/ahundt/autorun.git"
             )
     except subprocess.TimeoutExpired:
         pytest.skip("claude plugin list timed out (>30s)")
@@ -568,25 +568,25 @@ class TestClaudeHookEntryPoint:
     # ─────────────────────────────────────────────────────────────────────────
 
     def test_userpromptsubmit_cr_st_returns_policy_info(self, hook_resources):
-        """/cr:st UserPromptSubmit returns AutoFile policy info in systemMessage."""
+        """/ar:st UserPromptSubmit returns AutoFile policy info in systemMessage."""
         payload = self._base_payload(
             "UserPromptSubmit", self._sid("cr-st"),
-            prompt="/cr:st",
+            prompt="/ar:st",
             session_transcript=[],
         )
         rc, stdout, stderr, resp = self._run(hook_resources, payload)
 
-        assert rc == 0, f"/cr:st should return 0. rc={rc} stderr={stderr!r}"
+        assert rc == 0, f"/ar:st should return 0. rc={rc} stderr={stderr!r}"
         assert resp is not None
         msg = get_system_message(resp)
         assert any(kw in msg.lower() for kw in ["policy", "autofile", "allow", "strict", "find"]), \
-            f"/cr:st should return policy status. systemMessage/additionalContext={msg!r}"
+            f"/ar:st should return policy status. systemMessage/additionalContext={msg!r}"
 
     def test_strict_search_policy_blocks_write_to_new_file(self, hook_resources):
-        """/cr:f sets strict-search policy; subsequent Write for new file is blocked.
+        """/ar:f sets strict-search policy; subsequent Write for new file is blocked.
 
         Two-step test:
-        1. UserPromptSubmit /cr:f → sets strict-search for session
+        1. UserPromptSubmit /ar:f → sets strict-search for session
         2. PreToolUse Write /tmp/new-file → blocked (new file creation not allowed)
         """
         session_id = self._sid("strict-write")
@@ -594,18 +594,18 @@ class TestClaudeHookEntryPoint:
         # Step 1: Set strict-search policy for this test session
         set_policy_payload = self._base_payload(
             "UserPromptSubmit", session_id,
-            prompt="/cr:f",
+            prompt="/ar:f",
             session_transcript=[],
         )
         rc, _, stderr, resp = self._run(hook_resources, set_policy_payload)
-        assert rc == 0, f"/cr:f should return 0. rc={rc} stderr={stderr!r}"
+        assert rc == 0, f"/ar:f should return 0. rc={rc} stderr={stderr!r}"
 
         # Step 2: Try Write to a new (non-existent) file — should be blocked
         write_payload = self._base_payload(
             "PreToolUse", session_id,
             tool_name="Write",
             tool_input={
-                "file_path": "/tmp/clautorun-e2e-strict-write-test-should-be-blocked.txt",
+                "file_path": "/tmp/autorun-e2e-strict-write-test-should-be-blocked.txt",
                 "content": "this should not be written",
             },
         )
@@ -620,12 +620,12 @@ class TestClaudeHookEntryPoint:
             f"Write should be denied in strict-search mode. response={resp}"
 
     def test_allow_all_policy_permits_write(self, hook_resources):
-        """/cr:allow sets allow-all; Write is permitted regardless of file existence."""
+        """/ar:allow sets allow-all; Write is permitted regardless of file existence."""
         session_id = self._sid("allow-write")
 
         set_payload = self._base_payload(
             "UserPromptSubmit", session_id,
-            prompt="/cr:allow",
+            prompt="/ar:allow",
             session_transcript=[],
         )
         self._run(hook_resources, set_payload)
@@ -634,7 +634,7 @@ class TestClaudeHookEntryPoint:
             "PreToolUse", session_id,
             tool_name="Write",
             tool_input={
-                "file_path": "/tmp/clautorun-e2e-allow-write-test.txt",
+                "file_path": "/tmp/autorun-e2e-allow-write-test.txt",
                 "content": "allowed write",
             },
         )
@@ -665,12 +665,12 @@ class TestClaudeHookEntryPoint:
             plugin_src = str(hook_resources["plugin_root"] / "src")
             if plugin_src not in sys.path:
                 sys.path.insert(0, plugin_src)
-            from clautorun.plan_export import PlanExportConfig
+            from autorun.plan_export import PlanExportConfig
             config = PlanExportConfig.load()
             if not config.enabled:
                 pytest.skip(
                     "Plan export disabled in ~/.claude/plan-export.config.json. "
-                    "Enable with: /cr:pe-on or set enabled=true in the config."
+                    "Enable with: /ar:pe-on or set enabled=true in the config."
                 )
         except ImportError:
             pass  # Proceed with defaults if import fails
@@ -681,7 +681,7 @@ class TestClaudeHookEntryPoint:
         unique_marker = uuid.uuid4().hex
         plan_content = (
             f"# E2E Test Plan {unique_marker}\n\n"
-            f"Create /tmp/clautorun-e2e-hello.txt with 'hello world'.\n\n"
+            f"Create /tmp/autorun-e2e-hello.txt with 'hello world'.\n\n"
             f"Step 1: Write the file.\n"
             f"Step 2: Verify the file exists.\n"
         )
@@ -831,9 +831,9 @@ class TestClaudeE2ERealMoney:
     ⚠️ WARNING: These tests make REAL API calls to the Claude model.
 
     Estimated cost per test run: < $0.005 (using cheapest available model).
-    Set CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to enable.
+    Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to enable.
 
-    These tests verify that clautorun hooks actually influence Claude's behavior
+    These tests verify that autorun hooks actually influence Claude's behavior
     in a live session — something the free hook-level tests cannot do because
     they bypass the Claude AI entirely.
     """
@@ -861,7 +861,7 @@ class TestClaudeE2ERealMoney:
         """Basic `claude -p` interaction completes (COSTS REAL MONEY, < $0.001).
 
         Also verifies that SessionStart and Stop hooks fire without crashing the
-        Claude session. If clautorun hooks had a fatal error, `claude -p` would
+        Claude session. If autorun hooks had a fatal error, `claude -p` would
         return a non-zero exit code.
 
         Estimated cost: < $0.001 (minimal tokens)
@@ -899,7 +899,7 @@ class TestClaudeE2ERealMoney:
         test_file = tmp_path / "do-not-delete.txt"
         test_file.write_text(
             "This file must survive. "
-            "The clautorun safety guard should block rm."
+            "The autorun safety guard should block rm."
         )
 
         result = subprocess.run(
@@ -918,7 +918,7 @@ class TestClaudeE2ERealMoney:
         log_path = self._log_claude_run(tmp_path, "rm_blocked", result)
         assert test_file.exists(), (
             f"CRITICAL: rm was NOT blocked. The file was deleted.\n"
-            f"clautorun safety guard FAILED for Claude Code.\n"
+            f"autorun safety guard FAILED for Claude Code.\n"
             f"Full output in: {log_path}\n"
             f"Exit code: {result.returncode}\n"
             f"stdout:\n{result.stdout}\n"
@@ -961,13 +961,13 @@ class TestClaudeE2ERealMoney:
     def test_claude_cr_st_slash_command_returns_policy(
         self, tmp_path, claude_cli_check
     ):
-        """/cr:st slash command returns AutoFile policy status (COSTS REAL MONEY, < $0.002).
+        """/ar:st slash command returns AutoFile policy status (COSTS REAL MONEY, < $0.002).
 
-        Verifies that the UserPromptSubmit hook fires for /cr: commands
+        Verifies that the UserPromptSubmit hook fires for /ar: commands
         and injects policy info into the Claude session context.
         """
         result = subprocess.run(
-            ["claude", "-p", "/cr:st"],
+            ["claude", "-p", "/ar:st"],
             capture_output=True,
             text=True,
             timeout=90,
@@ -975,9 +975,9 @@ class TestClaudeE2ERealMoney:
             env=self._claude_env(),
         )
 
-        log_path = self._log_claude_run(tmp_path, "cr_st_policy", result)
+        log_path = self._log_claude_run(tmp_path, "ar_st_policy", result)
         assert result.returncode == 0, (
-            f"claude -p /cr:st should not crash. rc={result.returncode}\n"
+            f"claude -p /ar:st should not crash. rc={result.returncode}\n"
             f"Full output in: {log_path}\n"
             f"stderr:\n{result.stderr}"
         )
@@ -988,7 +988,7 @@ class TestClaudeE2ERealMoney:
             kw in combined.lower()
             for kw in ["policy", "autofile", "allow", "strict", "cr:"]
         ), (
-            f"/cr:st should inject policy info into Claude context.\n"
+            f"/ar:st should inject policy info into Claude context.\n"
             f"Full output in: {log_path}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
@@ -1037,15 +1037,15 @@ Spawn actual `claude -p` sessions. 4 tests.
 ## Running Tests
 
 Skip all (default):
-    uv run pytest plugins/clautorun/tests/ -v
+    uv run pytest plugins/autorun/tests/ -v
 
 Run all tests in this file (free + real money):
-    export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/clautorun/tests/test_claude_e2e_real_money.py -v
+    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py -v
 
 Run only free hook tests:
-    export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/clautorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
+    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    uv run pytest plugins/autorun/tests/test_claude_e2e_real_money.py::TestClaudeHookEntryPoint -v
 
 ## Cost Estimates
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Session lifecycle edge case testing for clautorun"""
+"""Session lifecycle edge case testing for autorun"""
 
 import sys
 import os
@@ -14,7 +14,7 @@ def test_session_creation_edge_cases():
     """Test edge cases in session creation"""
     print("🔍 Testing Session Creation Edge Cases...")
 
-    from clautorun import session_state
+    from autorun import session_state
 
     edge_cases = [
         ("", "Empty session ID"),
@@ -52,7 +52,7 @@ def test_session_state_persistence_edge_cases():
     """Test session state persistence edge cases"""
     print("\n🔍 Testing Session State Persistence Edge Cases...")
 
-    from clautorun import session_state
+    from autorun import session_state
 
     # Test session isolation
     session_ids = ["session1", "session2", "", " ", "session\nwith\nnewlines"]
@@ -118,7 +118,7 @@ def test_session_termination_edge_cases():
     """Test session termination edge cases"""
     print("\n🔍 Testing Session Termination Edge Cases...")
 
-    from clautorun import session_state
+    from autorun import session_state
 
     # Test normal session termination
     try:
@@ -157,8 +157,8 @@ def test_memory_leak_edge_cases():
     """Test for memory leaks in session management"""
     print("\n🔍 Testing Memory Leak Edge Cases...")
 
-    from clautorun import session_state, clear_test_session_state
-    from clautorun.session_manager import clear_test_session_states_batch
+    from autorun import session_state, clear_test_session_state
+    from autorun.session_manager import clear_test_session_states_batch
 
     # Test rapid session creation and destruction
     created_sessions = []
@@ -193,7 +193,7 @@ def test_session_security_edge_cases():
     """Test security-related session edge cases"""
     print("\n🔍 Testing Session Security Edge Cases...")
 
-    from clautorun import session_state
+    from autorun import session_state
 
     # Test session ID injection attempts
     malicious_ids = [
@@ -222,7 +222,7 @@ def test_session_recovery_edge_cases():
     """Test session recovery scenarios"""
     print("\n🔍 Testing Session Recovery Edge Cases...")
 
-    from clautorun import session_state
+    from autorun import session_state
 
     # Test session data corruption scenarios
     try:

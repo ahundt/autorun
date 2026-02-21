@@ -19,7 +19,7 @@ Unified command integrations system (superset of hookify).
 
 Features:
 - Non-blocking warnings (action: warn)
-- File-based user extensions (.claude/clautorun.*.local.md)
+- File-based user extensions (.claude/autorun.*.local.md)
 - All hookify features (conditions, event, tool_matcher)
 - Multiple patterns per file
 - Redirect with arg substitution
@@ -36,7 +36,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
-from clautorun.config import CONFIG, DEFAULT_INTEGRATIONS
+from autorun.config import CONFIG, DEFAULT_INTEGRATIONS
 
 __all__ = [
     "Integration",
@@ -133,7 +133,7 @@ def invalidate_caches() -> None:
     Clear integration caches (manual reload or testing).
 
     Call this when:
-    - User runs /cr:reload command
+    - User runs /ar:reload command
     - Test setup needs clean state
     - User files have been modified
     """
@@ -155,7 +155,7 @@ def load_all_integrations() -> list[Integration]:
 
     # Check if cache is stale (file mtimes changed)
     current_mtimes = {}
-    search_paths = CONFIG.get("integration_search_paths", [".claude/clautorun.*.local.md"])
+    search_paths = CONFIG.get("integration_search_paths", [".claude/autorun.*.local.md"])
 
     for glob_pattern in search_paths:
         try:

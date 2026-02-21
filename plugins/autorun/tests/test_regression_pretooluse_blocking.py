@@ -52,7 +52,7 @@ class TestDaemonPreToolUseDenyBlocks:
         Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
         continue=False would stop the entire AI session.
         """
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Blocked command")
@@ -64,7 +64,7 @@ class TestDaemonPreToolUseDenyBlocks:
 
     def test_pretooluse_deny_has_permission_decision(self):
         """When denying, permissionDecision must be 'deny' to block the tool."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Use trash instead")
@@ -76,7 +76,7 @@ class TestDaemonPreToolUseDenyBlocks:
 
     def test_pretooluse_allow_returns_continue_true(self):
         """EventContext.respond('allow') for PreToolUse must return continue=True."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("allow", "Allowed")
@@ -88,7 +88,7 @@ class TestDaemonPreToolUseDenyBlocks:
 
     def test_pretooluse_deny_convenience_method(self):
         """ctx.deny() convenience method must also return continue=True (AI keeps running)."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.deny("Blocked")
@@ -100,7 +100,7 @@ class TestDaemonPreToolUseDenyBlocks:
 
     def test_pretooluse_allow_convenience_method(self):
         """ctx.allow() convenience method must return continue=True."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.allow("OK")
@@ -125,7 +125,7 @@ class TestLegacyPreToolUseDenyBlocks:
         Per official hooks docs: continue controls AI lifecycle, not tool blocking.
         Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
         """
-        from clautorun.main import build_pretooluse_response
+        from autorun.main import build_pretooluse_response
 
         response = build_pretooluse_response("deny", "Use trash instead")
 
@@ -137,7 +137,7 @@ class TestLegacyPreToolUseDenyBlocks:
 
     def test_build_pretooluse_response_allow(self):
         """build_pretooluse_response('allow') must return continue=True."""
-        from clautorun.main import build_pretooluse_response
+        from autorun.main import build_pretooluse_response
 
         response = build_pretooluse_response("allow", "Allowed")
 
@@ -148,7 +148,7 @@ class TestLegacyPreToolUseDenyBlocks:
 
     def test_build_pretooluse_response_deny_has_permission_decision(self):
         """When denying, permissionDecision must be 'deny'."""
-        from clautorun.main import build_pretooluse_response
+        from autorun.main import build_pretooluse_response
 
         response = build_pretooluse_response("deny", "Use trash instead")
 
@@ -158,7 +158,7 @@ class TestLegacyPreToolUseDenyBlocks:
 
     def test_build_pretooluse_response_allow_empty_stop_reason(self):
         """When allowing, stopReason must be empty."""
-        from clautorun.main import build_pretooluse_response
+        from autorun.main import build_pretooluse_response
 
         response = build_pretooluse_response("allow", "OK")
 
@@ -188,8 +188,8 @@ class TestDaemonLegacyConsistency:
         Per official hooks docs: continue=True always for PreToolUse.
         Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669).
         """
-        from clautorun.core import EventContext
-        from clautorun.main import build_pretooluse_response
+        from autorun.core import EventContext
+        from autorun.main import build_pretooluse_response
 
         reason = "test reason"
 
@@ -217,8 +217,8 @@ class TestDaemonLegacyConsistency:
     @pytest.mark.parametrize("decision", ["deny", "allow"])
     def test_decision_field_consistency(self, decision):
         """Both paths must include the same decision field values."""
-        from clautorun.core import EventContext
-        from clautorun.main import build_pretooluse_response
+        from autorun.core import EventContext
+        from autorun.main import build_pretooluse_response
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         daemon_response = ctx.respond(decision, "test")
@@ -322,10 +322,10 @@ class TestHookEntryClean:
     def test_no_debug_log_file_references(self, hook_entry_source):
         """hook_entry.py must not reference debug log files.
 
-        Bug: Debug logging was added that wrote to /tmp/clautorun-hook-debug.log,
+        Bug: Debug logging was added that wrote to /tmp/autorun-hook-debug.log,
         consuming stdin and potentially interfering with hook payload processing.
         """
-        assert "clautorun-hook-debug" not in hook_entry_source, (
+        assert "autorun-hook-debug" not in hook_entry_source, (
             "REGRESSION: hook_entry.py contains debug log file reference. "
             "Remove debug logging before committing."
         )
@@ -399,7 +399,7 @@ class TestContinueDecisionInvariant:
     @pytest.mark.parametrize("decision", ["deny", "allow"])
     def test_daemon_respond_continue_always_true(self, decision):
         """Daemon EventContext.respond() must always return continue=True for PreToolUse."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond(decision, "test reason")
@@ -413,7 +413,7 @@ class TestContinueDecisionInvariant:
     @pytest.mark.parametrize("decision", ["deny", "allow"])
     def test_legacy_response_continue_always_true(self, decision):
         """Legacy build_pretooluse_response() must always return continue=True."""
-        from clautorun.main import build_pretooluse_response
+        from autorun.main import build_pretooluse_response
 
         response = build_pretooluse_response(decision, "test reason")
 
@@ -425,7 +425,7 @@ class TestContinueDecisionInvariant:
 
     def test_stop_deny_keeps_ai_running(self):
         """Stop deny keeps AI running (prevents premature stopping)."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="Stop")
         response = ctx.respond("deny", "Stop denied")
@@ -436,7 +436,7 @@ class TestContinueDecisionInvariant:
 
     def test_stop_block_keeps_ai_running(self):
         """Stop block keeps AI running (prevents premature stopping)."""
-        from clautorun.core import EventContext
+        from autorun.core import EventContext
 
         ctx = EventContext(session_id="test", event="Stop")
         response = ctx.respond("block", "Continue working")
@@ -457,7 +457,7 @@ class TestRmBlockingEndToEnd:
     @pytest.fixture(autouse=True)
     def clean_session(self):
         """Ensure clean session state for each test."""
-        from clautorun.session_manager import session_state
+        from autorun.session_manager import session_state
         with session_state("regression-test") as state:
             state.clear()
         yield
@@ -469,8 +469,8 @@ class TestRmBlockingEndToEnd:
 
         This is the direct function call path used when USE_DAEMON=0.
         """
-        from clautorun.main import pretooluse_handler
-        from clautorun.core import EventContext
+        from autorun.main import pretooluse_handler
+        from autorun.core import EventContext
 
         ctx = EventContext(
             session_id="regression-test",
@@ -492,8 +492,8 @@ class TestRmBlockingEndToEnd:
 
     def test_rm_blocked_mentions_trash(self):
         """rm blocking message must suggest 'trash' as alternative."""
-        from clautorun.main import pretooluse_handler
-        from clautorun.core import EventContext
+        from autorun.main import pretooluse_handler
+        from autorun.core import EventContext
 
         ctx = EventContext(
             session_id="regression-test",
@@ -511,8 +511,8 @@ class TestRmBlockingEndToEnd:
 
     def test_safe_commands_not_blocked(self):
         """Safe commands like ls, echo must NOT be blocked (no false positives)."""
-        from clautorun.main import pretooluse_handler
-        from clautorun.core import EventContext
+        from autorun.main import pretooluse_handler
+        from autorun.core import EventContext
 
         safe_commands = [
             "ls -la",
@@ -539,8 +539,8 @@ class TestRmBlockingEndToEnd:
     @pytest.mark.parametrize("tool_name", ["Bash", "bash_command", "run_shell_command"])
     def test_rm_blocked_all_tool_name_variants(self, tool_name):
         """rm must be blocked for all Bash tool name variants (Claude + Gemini)."""
-        from clautorun.main import pretooluse_handler
-        from clautorun.core import EventContext
+        from autorun.main import pretooluse_handler
+        from autorun.core import EventContext
 
         ctx = EventContext(
             session_id="regression-test",

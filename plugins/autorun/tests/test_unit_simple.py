@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Simplified unit tests for clautorun core functionality
+Simplified unit tests for autorun core functionality
 """
 import pytest
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG, COMMAND_HANDLERS
+from autorun import CONFIG, COMMAND_HANDLERS
 
 
 class TestConfiguration:
@@ -268,8 +268,8 @@ class TestBasicFunctionality:
         mock_session_ctx.__enter__ = MagicMock(return_value={})
         mock_session_ctx.__exit__ = MagicMock(return_value=None)
 
-        with patch('clautorun.main.session_state', return_value=mock_session_ctx), \
-             patch('clautorun.main.initialize_default_blocks', return_value=None):
+        with patch('autorun.main.session_state', return_value=mock_session_ctx), \
+             patch('autorun.main.initialize_default_blocks', return_value=None):
             # Test each handler with appropriate arguments
             for handler_name, handler_func in COMMAND_HANDLERS.items():
                 try:
@@ -296,7 +296,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_sanitize_log_message_newlines(self):
         """Test that newlines are escaped in log messages"""
-        from clautorun.main import sanitize_log_message
+        from autorun.main import sanitize_log_message
 
         # Test newline injection attack
         malicious = "normal\n[FAKE] Injected log entry\nmore"
@@ -307,7 +307,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_sanitize_log_message_carriage_return(self):
         """Test that carriage returns are escaped"""
-        from clautorun.main import sanitize_log_message
+        from autorun.main import sanitize_log_message
 
         malicious = "normal\r\n[FAKE]\rmore"
         result = sanitize_log_message(malicious)
@@ -317,7 +317,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_sanitize_log_message_truncation(self):
         """Test that long messages are truncated"""
-        from clautorun.main import sanitize_log_message
+        from autorun.main import sanitize_log_message
 
         long_message = "a" * 20000
         result = sanitize_log_message(long_message, max_length=100)
@@ -327,7 +327,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_rejects_nested_quantifiers(self):
         """Test ReDoS protection rejects dangerous patterns"""
-        from clautorun.main import is_safe_regex_pattern
+        from autorun.main import is_safe_regex_pattern
 
         # Dangerous patterns with nested quantifiers
         dangerous_patterns = [
@@ -345,7 +345,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_accepts_safe_patterns(self):
         """Test that safe regex patterns are accepted"""
-        from clautorun.main import is_safe_regex_pattern
+        from autorun.main import is_safe_regex_pattern
 
         safe_patterns = [
             r"rm\s+-rf",
@@ -362,7 +362,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_rejects_long_patterns(self):
         """Test that excessively long patterns are rejected"""
-        from clautorun.main import is_safe_regex_pattern
+        from autorun.main import is_safe_regex_pattern
 
         long_pattern = "a" * 300
         assert is_safe_regex_pattern(long_pattern) is False, \
@@ -371,7 +371,7 @@ class TestSecurityFunctions:
     @pytest.mark.unit
     def test_is_safe_regex_rejects_invalid_patterns(self):
         """Test that invalid regex syntax is rejected"""
-        from clautorun.main import is_safe_regex_pattern
+        from autorun.main import is_safe_regex_pattern
 
         invalid_patterns = [
             "[unclosed",
@@ -393,13 +393,13 @@ class TestCodeQuality:
 
         Hook execution path includes:
         - hooks/hook_entry.py
-        - src/clautorun/client.py
-        - src/clautorun/core.py
-        - src/clautorun/plugins.py
-        - src/clautorun/integrations.py
-        - src/clautorun/command_detection.py
-        - src/clautorun/config.py
-        - src/clautorun/session_manager.py
+        - src/autorun/client.py
+        - src/autorun/core.py
+        - src/autorun/plugins.py
+        - src/autorun/integrations.py
+        - src/autorun/command_detection.py
+        - src/autorun/config.py
+        - src/autorun/session_manager.py
 
         Claude Code treats ANY stderr as "hook error" and silently ignores
         hook JSON responses, disabling all safety features.
@@ -407,7 +407,7 @@ class TestCodeQuality:
         import subprocess
         from pathlib import Path
 
-        src_dir = Path(__file__).parent.parent / "src" / "clautorun"
+        src_dir = Path(__file__).parent.parent / "src" / "autorun"
         hook_path_files = [
             "client.py",
             "core.py",
@@ -459,7 +459,7 @@ class TestCodeQuality:
         import subprocess
         from pathlib import Path
 
-        src_dir = Path(__file__).parent.parent / "src" / "clautorun"
+        src_dir = Path(__file__).parent.parent / "src" / "autorun"
         hook_path_files = [
             "client.py",
             "core.py",
@@ -516,7 +516,7 @@ class TestCodeQuality:
         import subprocess
         from pathlib import Path
 
-        src_dir = Path(__file__).parent.parent / "src" / "clautorun"
+        src_dir = Path(__file__).parent.parent / "src" / "autorun"
 
         # Search all Python files recursively
         result = subprocess.run(

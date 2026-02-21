@@ -12,14 +12,14 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG
-from clautorun.plugins import (
+from autorun import CONFIG
+from autorun.plugins import (
     autorun_injection,
     gate_exit_plan_mode,
     handle_activate,
     is_premature_stop
 )
-from clautorun.core import EventContext
+from autorun.core import EventContext
 
 
 class TestEmergencyStop:
@@ -274,8 +274,8 @@ class TestHandleActivateEdgeCases:
     def test_handle_activate_extracts_task_correctly(self):
         """Test handle_activate correctly extracts task from prompt"""
         ctx = EventContext(session_id="test", event="UserPromptSubmit")
-        ctx._prompt = "/cr:go Fix the login bug"
-        ctx.activation_prompt = "/cr:go Fix the login bug"
+        ctx._prompt = "/ar:go Fix the login bug"
+        ctx.activation_prompt = "/ar:go Fix the login bug"
         ctx.file_policy = "ALLOW"
 
         result = handle_activate(ctx)

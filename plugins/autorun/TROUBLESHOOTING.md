@@ -1,6 +1,6 @@
-# Troubleshooting Clautorun Hooks
+# Troubleshooting Autorun Hooks
 
-This guide helps resolve common issues with clautorun hooks in both Claude Code and Gemini CLI.
+This guide helps resolve common issues with autorun hooks in both Claude Code and Gemini CLI.
 
 ---
 
@@ -55,20 +55,20 @@ This guide helps resolve common issues with clautorun hooks in both Claude Code 
 
 3. **Check Extension Installed**
    ```bash
-   ls ~/.gemini/extensions/cr/
+   ls ~/.gemini/extensions/ar/
    ```
 
    **Expected**: Directory exists with `hooks/hooks.json` and other files
 
    **Fix**: Reinstall extension
    ```bash
-   cd /path/to/clautorun
-   uv run python -m plugins.clautorun.src.clautorun.install --install --gemini-only --force
+   cd /path/to/autorun
+   uv run python -m plugins.autorun.src.autorun.install --install --gemini-only --force
    ```
 
 4. **Check hooks.json Exists**
    ```bash
-   cat ~/.gemini/extensions/cr/hooks/hooks.json | head -10
+   cat ~/.gemini/extensions/ar/hooks/hooks.json | head -10
    ```
 
    **Expected**: Valid JSON with Gemini-format hooks
@@ -90,20 +90,20 @@ This guide helps resolve common issues with clautorun hooks in both Claude Code 
 
 1. **Check Plugin Installed**
    ```bash
-   claude plugin list | grep clautorun
+   claude plugin list | grep autorun
    ```
 
-   **Expected**: Shows clautorun plugin
+   **Expected**: Shows autorun plugin
 
    **Fix**: Reinstall plugin
    ```bash
-   cd /path/to/clautorun
-   uv run python -m plugins.clautorun.src.clautorun.install --install --claude-only --force
+   cd /path/to/autorun
+   uv run python -m plugins.autorun.src.autorun.install --install --claude-only --force
    ```
 
 2. **Check Hook File Format**
    ```bash
-   cat ~/.claude/plugins/cache/clautorun/clautorun/*/hooks/hooks.json | grep CLAUDE_PLUGIN_ROOT
+   cat ~/.claude/plugins/cache/autorun/autorun/*/hooks/hooks.json | grep CLAUDE_PLUGIN_ROOT
    ```
 
    **Expected**: Should find `${CLAUDE_PLUGIN_ROOT}` in commands
@@ -112,14 +112,14 @@ This guide helps resolve common issues with clautorun hooks in both Claude Code 
 
 3. **Check Daemon Running**
    ```bash
-   ps aux | grep "clautorun.*daemon"
+   ps aux | grep "autorun.*daemon"
    ```
 
    **Expected**: Daemon process running
 
    **Fix**: Restart daemon
    ```bash
-   uv run python plugins/clautorun/scripts/restart_daemon.py
+   uv run python plugins/autorun/scripts/restart_daemon.py
    ```
 
 ---
@@ -139,14 +139,14 @@ This guide helps resolve common issues with clautorun hooks in both Claude Code 
    For Gemini CLI:
    ```bash
    cd /tmp/test-directory
-   echo '{"hook_event_name":"SessionStart"}' | python3 ~/.gemini/extensions/cr/hooks/hook_entry.py
+   echo '{"hook_event_name":"SessionStart"}' | python3 ~/.gemini/extensions/ar/hooks/hook_entry.py
    ```
 
    For Claude Code:
    ```bash
    cd /tmp/test-directory
-   CLAUDE_PLUGIN_ROOT=~/.claude/plugins/cache/clautorun/clautorun/0.8.0 \
-   echo '{"hook_event_name":"PreToolUse"}' | python3 ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/hook_entry.py
+   CLAUDE_PLUGIN_ROOT=~/.claude/plugins/cache/autorun/autorun/0.8.0 \
+   echo '{"hook_event_name":"PreToolUse"}' | python3 ~/.claude/plugins/cache/autorun/autorun/0.8.0/hooks/hook_entry.py
    ```
 
    **Expected**: JSON output like `{"continue":true}`
@@ -171,9 +171,9 @@ This guide helps resolve common issues with clautorun hooks in both Claude Code 
 
 ### Common Errors
 
-**Error**: `ModuleNotFoundError: No module named 'clautorun'`
+**Error**: `ModuleNotFoundError: No module named 'autorun'`
 
-**Cause**: Hook script can't find clautorun module
+**Cause**: Hook script can't find autorun module
 
 **Fix**: Ensure get_plugin_root() returns correct path, then check sys.path setup in hook_entry.py
 
@@ -185,9 +185,9 @@ This guide helps resolve common issues with clautorun hooks in both Claude Code 
 
 **Fix**:
 ```bash
-chmod +x ~/.gemini/extensions/cr/hooks/hook_entry.py
+chmod +x ~/.gemini/extensions/ar/hooks/hook_entry.py
 # Or for Claude Code:
-chmod +x ~/.claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py
+chmod +x ~/.claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py
 ```
 
 ---
@@ -227,15 +227,15 @@ chmod +x ~/.claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py
 
    Claude Code:
    ```bash
-   claude plugin uninstall clautorun
+   claude plugin uninstall autorun
    ```
 
 2. **Verify Source hooks.json**
 
    Check that source files have correct format:
    ```bash
-   head -5 ~/.claude/clautorun/plugins/clautorun/hooks/claude-hooks.json  # Claude Code
-   head -5 ~/.claude/clautorun/plugins/clautorun/hooks/hooks.json         # Gemini CLI
+   head -5 ~/.claude/autorun/plugins/autorun/hooks/claude-hooks.json  # Claude Code
+   head -5 ~/.claude/autorun/plugins/autorun/hooks/hooks.json         # Gemini CLI
    ```
 
    Claude version (`claude-hooks.json`) uses `${CLAUDE_PLUGIN_ROOT}` and Claude event names.
@@ -245,14 +245,14 @@ chmod +x ~/.claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py
 
    Gemini:
    ```bash
-   cd ~/.claude/clautorun
-   uv run python -m plugins.clautorun.src.clautorun.install --install --gemini-only --force
+   cd ~/.claude/autorun
+   uv run python -m plugins.autorun.src.autorun.install --install --gemini-only --force
    ```
 
    Claude Code:
    ```bash
-   cd ~/.claude/clautorun
-   uv run python -m plugins.clautorun.src.clautorun.install --install --claude-only --force
+   cd ~/.claude/autorun
+   uv run python -m plugins.autorun.src.autorun.install --install --claude-only --force
    ```
 
 ---
@@ -272,11 +272,11 @@ If not appearing, hooks aren't firing → See [Hooks Not Firing](#hooks-not-firi
 
 ### Check Hook Logic
 
-The blocking logic is in `plugins/clautorun/src/clautorun/main.py` in the `handle_hook()` function.
+The blocking logic is in `plugins/autorun/src/autorun/main.py` in the `handle_hook()` function.
 
 To verify it's loaded correctly:
 ```bash
-grep -n "def handle_hook" ~/.claude/clautorun/plugins/clautorun/src/clautorun/main.py
+grep -n "def handle_hook" ~/.claude/autorun/plugins/autorun/src/autorun/main.py
 ```
 
 ### Test with Known Dangerous Command
@@ -311,7 +311,7 @@ Hook registry initialized with 6 hook entries
 Then when hooks fire:
 ```
 Created execution plan for SessionStart: 1 hook(s) to execute in parallel
-Expanding hook command: python3 /Users/.../.gemini/extensions/cr/hooks/hook_entry.py
+Expanding hook command: python3 /Users/.../.gemini/extensions/ar/hooks/hook_entry.py
 Hook execution for SessionStart: 1 hooks executed successfully, total duration: 395ms
 ```
 
@@ -342,10 +342,10 @@ When testing in new directory, Gemini shows trust prompt. This restarts session.
 
 **Fix**: Restart daemon
 ```bash
-uv run python plugins/clautorun/scripts/restart_daemon.py
+uv run python plugins/autorun/scripts/restart_daemon.py
 ```
 
-Or use the `/cr:restart-daemon` command in Claude Code session
+Or use the `/ar:restart-daemon` command in Claude Code session
 
 ### Issue: CLAUDE_PLUGIN_ROOT Not Set
 
@@ -436,7 +436,7 @@ Or to block:
 {
   "continue": false,
   "reason": "Why blocked",
-  "systemMessage": "⚠️ Command blocked by clautorun"
+  "systemMessage": "⚠️ Command blocked by autorun"
 }
 ```
 
@@ -479,7 +479,7 @@ Or to block:
 If none of these solutions work:
 
 1. **Check GitHub Issues**
-   - Clautorun: https://github.com/ahundt/clautorun/issues
+   - Autorun: https://github.com/ahundt/autorun/issues
    - Gemini CLI: https://github.com/google-gemini/gemini-cli/issues
 
 2. **File a Bug Report**
@@ -496,13 +496,13 @@ If none of these solutions work:
    # Gemini CLI
    gemini --version
    cat ~/.gemini/settings.json
-   ls -la ~/.gemini/extensions/cr/hooks/
-   cat ~/.gemini/extensions/cr/hooks/hooks.json
+   ls -la ~/.gemini/extensions/ar/hooks/
+   cat ~/.gemini/extensions/ar/hooks/hooks.json
 
    # Claude Code
    claude --version
-   ls -la ~/.claude/plugins/cache/clautorun/clautorun/*/hooks/
-   ps aux | grep clautorun
+   ls -la ~/.claude/plugins/cache/autorun/autorun/*/hooks/
+   ps aux | grep autorun
    ```
 
 ---
@@ -511,8 +511,8 @@ If none of these solutions work:
 
 - [GEMINI.md](GEMINI.md) - Gemini CLI specific documentation
 - [CLAUDE.md](CLAUDE.md) - Claude Code specific documentation
-- [README.md](../../README.md) - Full clautorun documentation
-- [GitHub Issues](https://github.com/ahundt/clautorun/issues)
+- [README.md](../../README.md) - Full autorun documentation
+- [GitHub Issues](https://github.com/ahundt/autorun/issues)
 
 ---
 

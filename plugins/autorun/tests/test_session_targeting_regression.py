@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 # Import conftest utilities for cleanup
 from conftest import should_keep_test_artifacts
 
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
 
 class TestSessionTargetingRegression:
@@ -123,7 +123,7 @@ class TestSessionTargetingRegression:
 
     def test_tmux_environment_detection(self):
         """Test that we can detect the current tmux environment"""
-        from clautorun.tmux_utils import TmuxUtilities
+        from autorun.tmux_utils import TmuxUtilities
 
         tmux_utils = TmuxUtilities()
         env_info = tmux_utils.detect_tmux_environment()
@@ -246,7 +246,7 @@ class TestSessionTargetingRegression:
 
     def test_command_construction_includes_target(self):
         """Test that tmux commands are constructed with proper targeting"""
-        from clautorun.tmux_utils import TmuxUtilities
+        from autorun.tmux_utils import TmuxUtilities
 
         # Create tmux utilities instance
         tmux_utils = TmuxUtilities("test-construction")

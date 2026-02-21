@@ -1,9 +1,9 @@
 # Test Command
 
-This is a test command to verify the clautorun plugin is loaded.
+This is a test command to verify the autorun plugin is loaded.
 
 ## Usage
 
-/test-clautorun
+/test-autorun
 
-Tests if the clautorun plugin is properly loaded and working.
+Tests if the autorun plugin is properly loaded and working.

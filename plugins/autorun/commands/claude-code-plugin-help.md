@@ -239,7 +239,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     return None
 ```
 
-**Use Case**: clautorun uses this pattern to automatically activate three-stage autorun when users approve plans, eliminating the need for custom "PLAN ACCEPTED" text markers.
+**Use Case**: autorun uses this pattern to automatically activate three-stage autorun when users approve plans, eliminating the need for custom "PLAN ACCEPTED" text markers.
 
 **Sources:**
 - [ExitPlanMode tool description](https://github.com/Piebald-AI/claude-code-system-prompts/blob/main/system-prompts/tool-description-exitplanmode.md)

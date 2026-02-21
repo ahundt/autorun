@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 try:
-    from clautorun.testing_framework import (
+    from autorun.testing_framework import (
         TestRunner,
         TestSuite,
         TestResult,

@@ -11,11 +11,11 @@ DO NOT RUN unless you understand the costs:
 - Total estimated cost: < $0.002
 
 To run these tests:
-    export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/clautorun/tests/test_gemini_e2e_improved.py -v
+    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    uv run pytest plugins/autorun/tests/test_gemini_e2e_improved.py -v
 
 To skip these tests (default):
-    uv run pytest plugins/clautorun/tests/ -v
+    uv run pytest plugins/autorun/tests/ -v
     # These tests will be SKIPPED automatically
 
 Mock tests (no cost) are in test_gemini_loading.py
@@ -31,8 +31,8 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-# Check for CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
-ENABLE_REAL_MONEY_TESTS = os.environ.get("CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
+# Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
+ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 
 
 def find_hook_script() -> Path:
@@ -50,9 +50,9 @@ def find_hook_script() -> Path:
         FileNotFoundError: If hook script not found
     """
     possible_locations = [
-        Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+        Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
         Path(__file__).parent.parent / "hooks/hook_entry.py",
-        Path.home() / ".claude/clautorun/plugins/clautorun/hooks/hook_entry.py",
+        Path.home() / ".claude/autorun/plugins/autorun/hooks/hook_entry.py",
     ]
 
     for location in possible_locations:
@@ -89,7 +89,7 @@ def gemini_cli_available():
 
 @pytest.fixture(scope="module")
 def gemini_extension_check():
-    """Verify clautorun extension is loaded in Gemini.
+    """Verify autorun extension is loaded in Gemini.
 
     Note: `gemini extensions list` sends the extension list to stderr,
     not stdout. We check both streams to handle this correctly.
@@ -106,8 +106,8 @@ def gemini_extension_check():
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
-        if "clautorun" not in combined_output:
-            pytest.skip("clautorun extension not installed in Gemini CLI")
+        if "autorun" not in combined_output:
+            pytest.skip("autorun extension not installed in Gemini CLI")
 
         return True
     except subprocess.TimeoutExpired:
@@ -123,7 +123,7 @@ def clean_environment():
 
     # Set test environment
     os.environ["GEMINI_SESSION_ID"] = "test-e2e-session"
-    os.environ["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+    os.environ["GEMINI_PROJECT_DIR"] = "/tmp/autorun-gemini-test"
 
     yield
 
@@ -177,16 +177,16 @@ class TestGeminiHookEntryPointDirect:
             "Hook should return continue=true for SessionStart"
 
     def test_hook_beforeagent_event_slash_command(self, clean_environment):
-        """Test BeforeAgent hook event with /cr:st command (NO COST)."""
+        """Test BeforeAgent hook event with /ar:st command (NO COST)."""
         try:
             hook_script = find_hook_script()
         except FileNotFoundError as e:
             pytest.skip(str(e))
 
-        # Simulate BeforeAgent event with /cr:st command
+        # Simulate BeforeAgent event with /ar:st command
         stdin_data = json.dumps({
             "type": "BeforeAgent",
-            "command": "/cr:st",
+            "command": "/ar:st",
             "sessionId": "test-e2e-session"
         })
 
@@ -231,7 +231,7 @@ class TestGeminiHookEntryPointDirect:
         })
 
         test_env = os.environ.copy()
-        test_env["CLAUTORUN_USE_DAEMON"] = "0"
+        test_env["AUTORUN_USE_DAEMON"] = "0"
 
         result = subprocess.run(
             ["python3", str(hook_script)],
@@ -287,7 +287,7 @@ class TestGeminiHookEntryPointDirect:
         })
 
         test_env = os.environ.copy()
-        test_env["CLAUTORUN_USE_DAEMON"] = "0"
+        test_env["AUTORUN_USE_DAEMON"] = "0"
 
         result = subprocess.run(
             ["python3", str(hook_script)],
@@ -338,7 +338,7 @@ class TestGeminiHookEntryPointDirect:
         })
 
         test_env = os.environ.copy()
-        test_env["CLAUTORUN_USE_DAEMON"] = "0"
+        test_env["AUTORUN_USE_DAEMON"] = "0"
 
         result = subprocess.run(
             ["python3", str(hook_script)],
@@ -364,14 +364,14 @@ class TestGeminiHookEntryPointDirect:
 # Skip entire class if ENABLE_REAL_MONEY_TESTS not set
 @pytest.mark.skipif(
     not ENABLE_REAL_MONEY_TESTS,
-    reason="CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
-           "Set CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
+    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
+           "Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
 )
 class TestGeminiCLIRealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.
 
     ⚠️ WARNING: These tests cost real money!
-    Requires: export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+    Requires: export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
     """
 
     def test_gemini_basic_response(self, gemini_cli_available):
@@ -398,7 +398,7 @@ class TestGeminiCLIRealMoney:
             f"Unexpected response: {result.stdout}"
 
     def test_gemini_extension_loaded(self, gemini_cli_available, gemini_extension_check):
-        """Test that clautorun extension is loaded in Gemini (NO API COST).
+        """Test that autorun extension is loaded in Gemini (NO API COST).
 
         This verifies the extension is properly installed and registered.
         Note: `gemini extensions list` outputs to stderr, not stdout.
@@ -415,12 +415,12 @@ class TestGeminiCLIRealMoney:
 
         # Gemini CLI sends extension list to stderr (debug output stream)
         combined_output = result.stdout + result.stderr
-        assert "clautorun" in combined_output, \
-            f"clautorun extension not found. Output:\n{combined_output[:500]}"
+        assert "autorun" in combined_output, \
+            f"autorun extension not found. Output:\n{combined_output[:500]}"
 
         # Verify hooks file exists (installed extension or source)
         hooks_candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hooks.json",
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hooks.json",
             Path(__file__).parent.parent / "hooks/hooks.json",
         ]
         hooks_file = None
@@ -452,7 +452,7 @@ class TestGeminiExtensionInstalledHook:
 
     NO API COST - invokes the hook_entry.py directly with subprocess,
     exactly as Gemini CLI would. Uses the extension's installed copy at
-    ~/.gemini/extensions/clautorun-workspace/ to verify that the deployed
+    ~/.gemini/extensions/autorun-workspace/ to verify that the deployed
     code correctly blocks dangerous commands and permits safe ones.
 
     This is the closest E2E validation to real Gemini CLI behavior without
@@ -463,7 +463,7 @@ class TestGeminiExtensionInstalledHook:
     def extension_hook(self):
         """Get path to hook_entry.py (installed extension or source fallback)."""
         candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         for hook_path in candidates:
@@ -482,10 +482,10 @@ class TestGeminiExtensionInstalledHook:
         """
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-installed-hook"
-        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-gemini-test"
         # Set plugin root so hook_entry.py can find the plugin source
         plugin_root = str(Path(__file__).parent.parent)
-        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
+        env["AUTORUN_PLUGIN_ROOT"] = plugin_root
 
         # Use uv run for UV workspace (matches production hook commands)
         cmd = ["uv", "run", "--project", plugin_root, "python", str(hook_path)]
@@ -679,7 +679,7 @@ class TestGeminiWriteFileBlocking:
     def extension_hook(self):
         """Get path to hook_entry.py (installed extension or source fallback)."""
         candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         for hook_path in candidates:
@@ -694,10 +694,10 @@ class TestGeminiWriteFileBlocking:
         """Run hook_entry.py as subprocess with JSON payload."""
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-write-file"
-        env["GEMINI_PROJECT_DIR"] = "/tmp/clautorun-gemini-test"
+        env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-gemini-test"
         # Set plugin root so hook_entry.py can find the plugin source
         plugin_root = str(Path(__file__).parent.parent)
-        env["CLAUTORUN_PLUGIN_ROOT"] = plugin_root
+        env["AUTORUN_PLUGIN_ROOT"] = plugin_root
 
         # Use uv run for UV workspace (matches production hook commands)
         cmd = ["uv", "run", "--project", plugin_root, "python", str(hook_path)]
@@ -832,7 +832,7 @@ class TestGeminiHighQualityMocks:
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
         # Import plugins to register handlers on the app
-        from clautorun import plugins  # noqa: F401
+        from autorun import plugins  # noqa: F401
 
     def _simulate_hook(self, payload: dict) -> dict:
         """Simulate hook processing through the full Python code path.
@@ -841,8 +841,8 @@ class TestGeminiHighQualityMocks:
         normalization + dispatch + response pipeline. Requires handlers
         to be registered via plugins import (done in setup_class).
         """
-        from clautorun.core import EventContext, normalize_hook_payload, app
-        from clautorun.config import detect_cli_type
+        from autorun.core import EventContext, normalize_hook_payload, app
+        from autorun.config import detect_cli_type
 
         normalized = normalize_hook_payload(payload)
         cli_type = detect_cli_type(payload)
@@ -878,7 +878,7 @@ class TestGeminiHighQualityMocks:
         """
         import subprocess
         import tempfile
-        from clautorun.integrations import invalidate_caches
+        from autorun.integrations import invalidate_caches
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a real git repo with a commit and unstaged changes
@@ -997,7 +997,7 @@ class TestGeminiExtensionVerification:
     def _find_plugin_dir(self) -> Path:
         """Find plugin directory (installed extension or source fallback)."""
         candidates = [
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun",
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun",
             Path(__file__).parent.parent,  # Source dir
         ]
         for candidate in candidates:
@@ -1072,7 +1072,7 @@ __doc__ += """
 5. test_extension_directory_structure - File system checks
 6. test_gemini_hooks_config_valid - JSON validation
 
-### Real Money Tests (require CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1):
+### Real Money Tests (require AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1):
 1. test_gemini_basic_response - Simple API call (< $0.001)
 2. test_gemini_extension_loaded - Extension list (NO API cost)
 
@@ -1080,20 +1080,20 @@ __doc__ += """
 
 ### Skip real money tests (default):
 ```bash
-uv run pytest plugins/clautorun/tests/test_gemini_e2e_improved.py -v
+uv run pytest plugins/autorun/tests/test_gemini_e2e_improved.py -v
 # Real money tests SKIPPED, free tests RUN
 ```
 
 ### Run real money tests:
 ```bash
-export CLAUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-uv run pytest plugins/clautorun/tests/test_gemini_e2e_improved.py -v
+export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+uv run pytest plugins/autorun/tests/test_gemini_e2e_improved.py -v
 # All tests RUN (estimated cost: < $0.002)
 ```
 
 ### Run only free tests explicitly:
 ```bash
-uv run pytest plugins/clautorun/tests/test_gemini_e2e_improved.py::TestGeminiHookEntryPointDirect -v
+uv run pytest plugins/autorun/tests/test_gemini_e2e_improved.py::TestGeminiHookEntryPointDirect -v
 # Only free tests RUN (NO COST)
 ```
 

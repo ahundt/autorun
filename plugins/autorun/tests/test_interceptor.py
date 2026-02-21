@@ -7,7 +7,7 @@ from unittest.mock import patch
 # Add src to path for testing
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import claude_code_handler
+from autorun import claude_code_handler
 
 def test_commands():
     """Test the command interception functionality"""
@@ -28,7 +28,7 @@ def test_commands():
 
     # Mock session state to avoid database issues
     mock_state = {}
-    with patch('clautorun.main.session_state') as mock_session:
+    with patch('autorun.main.session_state') as mock_session:
         mock_session.return_value.__enter__.return_value = mock_state
         mock_session.return_value.__exit__.return_value = None
 

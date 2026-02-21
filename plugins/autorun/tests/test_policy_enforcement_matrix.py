@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import pretooluse_handler, session_state, has_valid_justification
+from autorun.main import pretooluse_handler, session_state, has_valid_justification
 from conftest import register_test_session
 
 

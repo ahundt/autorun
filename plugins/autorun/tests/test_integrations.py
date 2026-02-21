@@ -21,7 +21,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from clautorun.integrations import (
+from autorun.integrations import (
     Integration,
     load_all_integrations,
     invalidate_caches,
@@ -31,7 +31,7 @@ from clautorun.integrations import (
     _pattern_specificity,
     _validate_integration,
 )
-from clautorun.config import DEFAULT_INTEGRATIONS
+from autorun.config import DEFAULT_INTEGRATIONS
 
 
 @pytest.fixture(autouse=True)
@@ -216,7 +216,7 @@ class TestLoadIntegrations:
         # Verify it's from Python defaults
         assert any(i.source == "default" for i in integrations)
 
-    @patch("clautorun.integrations.Path.glob")
+    @patch("autorun.integrations.Path.glob")
     def test_cache_hit_on_unchanged_files(self, mock_glob):
         """Second load is O(1) cached if files unchanged."""
         mock_glob.return_value = []
@@ -603,7 +603,7 @@ class TestCacheInvalidation:
         integrations2 = load_all_integrations()
         assert integrations1 is integrations2
 
-    @patch("clautorun.integrations.Path.glob")
+    @patch("autorun.integrations.Path.glob")
     def test_cache_invalidates_on_mtime_change(self, mock_glob):
         """Cache invalidates when file mtime changes."""
         # Setup mock file
@@ -657,7 +657,7 @@ class TestUserFileLoading:
         claude_dir.mkdir()
 
         # Create integration file
-        md_file = claude_dir / "clautorun.test.local.md"
+        md_file = claude_dir / "autorun.test.local.md"
         md_file.write_text("""---
 name: custom-test
 patterns: [custom-cmd, custom-alt]
@@ -672,7 +672,7 @@ enabled: true
 Custom warning message here.""")
 
         # Patch to use tmp_path
-        with patch("clautorun.integrations.Path") as mock_path:
+        with patch("autorun.integrations.Path") as mock_path:
             mock_path.return_value.glob.return_value = [md_file]
             mock_path.return_value.is_file.return_value = True
 

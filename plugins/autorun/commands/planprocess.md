@@ -3,7 +3,7 @@ description: Full planning methodology with Wait Process
 argument-hint: <task description>
 ---
 
-# Development Planning (/cr:planprocess)
+# Development Planning (/ar:planprocess)
 
 $ARGUMENTS
 

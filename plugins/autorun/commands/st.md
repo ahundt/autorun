@@ -1,5 +1,5 @@
 ---
-description: Show current AutoFile policy status (short for /cr:status)
+description: Show current AutoFile policy status (short for /ar:status)
 ---
 
 # AutoFile Status

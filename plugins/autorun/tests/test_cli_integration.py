@@ -23,7 +23,7 @@ from unittest.mock import patch
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.__main__ import create_parser
+from autorun.__main__ import create_parser
 
 
 # ============================================================================
@@ -75,8 +75,8 @@ def test_install_command_parsing():
     assert args.install == 'all', "Default install should be 'all'"
 
     # Install specific plugin
-    args = parse_args(['--install', 'clautorun'])
-    assert args.install == 'clautorun', "Should install specific plugin"
+    args = parse_args(['--install', 'autorun'])
+    assert args.install == 'autorun', "Should install specific plugin"
 
     # Install with force
     args = parse_args(['--install', '--force'])

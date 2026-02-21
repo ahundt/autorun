@@ -28,7 +28,7 @@ Mark a task as ignored - allows AI to stop without completing it.
 import sys
 import os
 
-from clautorun.task_lifecycle import TaskLifecycle, is_enabled
+from autorun.task_lifecycle import TaskLifecycle, is_enabled
 
 # Check if enabled
 if not is_enabled():

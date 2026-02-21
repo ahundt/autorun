@@ -12,7 +12,7 @@ from unittest.mock import patch, Mock
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import (
+from autorun.main import (
     CONFIG, COMMAND_HANDLERS, build_hook_response, build_pretooluse_response,
     handle_search, handle_allow, handle_justify, handle_status,
     handle_stop, handle_emergency_stop, handle_activate,
@@ -236,7 +236,7 @@ class TestPretoolUseHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "SEARCH"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -253,13 +253,13 @@ class TestPretoolUseHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "SEARCH"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
             # Mock Path.exists() instead of os.path.exists
-            with patch('clautorun.main.Path') as mock_path:
+            with patch('autorun.main.Path') as mock_path:
                 mock_path.return_value.exists.return_value = True
                 response = pretooluse_handler(ctx)
 
@@ -273,13 +273,13 @@ class TestPretoolUseHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "SEARCH"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
             # Mock Path chain: Path(file_path).resolve().exists()
-            with patch('clautorun.main.Path') as mock_path:
+            with patch('autorun.main.Path') as mock_path:
                 mock_resolved = Mock()
                 mock_resolved.exists.return_value = False
                 mock_resolved.is_file.return_value = False
@@ -296,13 +296,13 @@ class TestPretoolUseHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "ALLOW"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
             # Mock Path.exists() instead of os.path.exists
-            with patch('clautorun.main.Path') as mock_path:
+            with patch('autorun.main.Path') as mock_path:
                 mock_path.return_value.exists.return_value = False
                 response = pretooluse_handler(ctx)
 
@@ -319,7 +319,7 @@ class TestClaudeCodeHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -336,7 +336,7 @@ class TestClaudeCodeHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -356,7 +356,7 @@ class TestStopHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = []
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"session_status": "inactive"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
@@ -372,7 +372,7 @@ class TestStopHandler:
         ctx.session_id = "test_session"
         ctx.session_transcript = ["working on task"]
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {
                 "session_status": "active",
                 "autorun_stage": "INITIAL",
@@ -582,12 +582,12 @@ class TestPretoolUseEdgeCases:
         ctx.session_id = "test_session"
         ctx.session_transcript = ["<AUTOFILE_JUSTIFICATION>Need new file</AUTOFILE_JUSTIFICATION>"]
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "JUSTIFY"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
-            with patch('clautorun.main.Path') as mock_path:
+            with patch('autorun.main.Path') as mock_path:
                 mock_path.return_value.exists.return_value = False
                 response = pretooluse_handler(ctx)
 
@@ -602,13 +602,13 @@ class TestPretoolUseEdgeCases:
         ctx.session_id = "test_session"
         ctx.session_transcript = ["Just creating a file"]
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_state = {"file_policy": "JUSTIFY"}
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
             # Mock Path chain: Path(file_path).resolve().exists()
-            with patch('clautorun.main.Path') as mock_path:
+            with patch('autorun.main.Path') as mock_path:
                 mock_resolved = Mock()
                 mock_resolved.exists.return_value = False
                 mock_resolved.is_file.return_value = False

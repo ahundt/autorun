@@ -15,14 +15,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-TDD tests for clautorun v0.7 core.py components.
+TDD tests for autorun v0.7 core.py components.
 
 Tests for:
 - LazyTranscript: Deferred string conversion
 - ThreadSafeDB: In-memory cache with shelve persistence
 - EventContext: Magic __getattr__/__setattr__ state access
-- ClautorunApp: Decorator-based command registration
-- ClautorunDaemon: AsyncIO Unix socket server lifecycle
+- AutorunApp: Decorator-based command registration
+- AutorunDaemon: AsyncIO Unix socket server lifecycle
 """
 
 import pytest
@@ -34,12 +34,12 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
 # Import the core module components
-from clautorun.core import (
+from autorun.core import (
     LazyTranscript,
     ThreadSafeDB,
     EventContext,
-    ClautorunApp,
-    ClautorunDaemon,
+    AutorunApp,
+    AutorunDaemon,
     resolve_session_key,
     get_cli_event_name,
     format_suggestion,
@@ -280,7 +280,7 @@ class TestEventContext:
         ctx = EventContext(
             session_id="test-session",
             event="UserPromptSubmit",
-            prompt="/cr:st",
+            prompt="/ar:st",
             tool_name="Write",
             tool_input={"file_path": "/tmp/test.txt"},
             tool_result="success",
@@ -289,7 +289,7 @@ class TestEventContext:
 
         assert ctx.session_id == "test-session"
         assert ctx.event == "UserPromptSubmit"
-        assert ctx.prompt == "/cr:st"
+        assert ctx.prompt == "/ar:st"
         assert ctx.tool_name == "Write"
         assert ctx.tool_input == {"file_path": "/tmp/test.txt"}
         assert ctx.tool_result == "success"
@@ -391,7 +391,7 @@ class TestEventContext:
         ctx = EventContext(session_id="test", event="UserPromptSubmit")
         response = ctx.respond("deny", "Blocked")
 
-        # clautorun mandate: Always keep AI working unless it's a local command
+        # autorun mandate: Always keep AI working unless it's a local command
         assert response["continue"] is True
         assert response["decision"] == "approve"
 
@@ -400,7 +400,7 @@ class TestEventContext:
         ctx = EventContext(session_id="test", event="PreToolUse")
         response = ctx.respond("deny", "Policy blocked")
 
-        # Critical: clautorun uses permissionDecision: deny to block tool,
+        # Critical: autorun uses permissionDecision: deny to block tool,
         # but continue: true to let AI suggest alternatives.
         assert response["continue"] is True, "PreToolUse should keep AI working"
         assert "hookSpecificOutput" in response
@@ -777,27 +777,27 @@ class TestCLIEventNameMapping:
 
 
 # ============================================================================
-# P1.4: ClautorunApp Tests
+# P1.4: AutorunApp Tests
 # ============================================================================
 
-class TestClautorunApp:
-    """Tests for ClautorunApp decorator-based registration."""
+class TestAutorunApp:
+    """Tests for AutorunApp decorator-based registration."""
 
     def test_command_decorator_registers_handler(self):
         """@app.command should register handler with aliases."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
-        @test_app.command("/cr:test", "/test", "TEST")
+        @test_app.command("/ar:test", "/test", "TEST")
         def test_handler(ctx):
             return "test result"
 
-        assert "/cr:test" in test_app.command_handlers
+        assert "/ar:test" in test_app.command_handlers
         assert "/test" in test_app.command_handlers
         assert "TEST" in test_app.command_handlers
 
     def test_on_decorator_registers_chain_handler(self):
         """@app.on should register handler in chain."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.on("PreToolUse")
         def test_pretooluse(ctx):
@@ -807,7 +807,7 @@ class TestClautorunApp:
 
     def test_on_subagent_stop_shares_stop_chain(self):
         """SubagentStop handlers should be added to Stop chain."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.on("SubagentStop")
         def test_subagent(ctx):
@@ -817,7 +817,7 @@ class TestClautorunApp:
 
     def test_run_chain_returns_first_non_none(self):
         """_run_chain should return first non-None result."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.on("PreToolUse")
         def handler1(ctx):
@@ -838,7 +838,7 @@ class TestClautorunApp:
 
     def test_run_chain_returns_none_if_all_none(self):
         """_run_chain should return None if all handlers return None."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.on("PreToolUse")
         def handler1(ctx):
@@ -855,14 +855,14 @@ class TestClautorunApp:
 
     def test_find_command_from_config_mapping(self):
         """_find_command should find commands via CONFIG mappings."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.command("ALLOW")
         def handle_allow(ctx):
             return "allowed"
 
-        # /cr:a maps to "ALLOW" in CONFIG
-        result = test_app._find_command("/cr:a")
+        # /ar:a maps to "ALLOW" in CONFIG
+        result = test_app._find_command("/ar:a")
 
         assert result is not None
         handler, alias = result
@@ -870,7 +870,7 @@ class TestClautorunApp:
 
     def test_find_command_direct_alias(self):
         """_find_command should find commands by direct alias."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.command("/custom:cmd")
         def custom_handler(ctx):
@@ -884,21 +884,21 @@ class TestClautorunApp:
 
     def test_find_command_with_args(self):
         """_find_command should match commands with arguments."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
-        @test_app.command("/cr:go")
+        @test_app.command("/ar:go")
         def handle_go(ctx):
             return "go"
 
-        result = test_app._find_command("/cr:go build something")
+        result = test_app._find_command("/ar:go build something")
 
         assert result is not None
         handler, alias = result
-        assert alias == "/cr:go"
+        assert alias == "/ar:go"
 
     def test_dispatch_user_prompt_submit_command(self):
         """dispatch should handle UserPromptSubmit with command."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.command("/test")
         def test_handler(ctx):
@@ -913,7 +913,7 @@ class TestClautorunApp:
 
     def test_dispatch_user_prompt_submit_no_command(self):
         """dispatch should allow non-command prompts."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
         ctx = EventContext(session_id="test", event="UserPromptSubmit", prompt="regular prompt")
         result = test_app.dispatch(ctx)
 
@@ -921,7 +921,7 @@ class TestClautorunApp:
 
     def test_dispatch_pretooluse_runs_chain(self):
         """dispatch should run PreToolUse chain."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.on("PreToolUse")
         def block_handler(ctx):
@@ -936,7 +936,7 @@ class TestClautorunApp:
 
     def test_dispatch_stop_runs_chain(self):
         """dispatch should run Stop chain."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
 
         @test_app.on("Stop")
         def injection_handler(ctx):
@@ -949,7 +949,7 @@ class TestClautorunApp:
 
     def test_dispatch_default_allow(self):
         """dispatch should return allow for unhandled events."""
-        test_app = ClautorunApp()
+        test_app = AutorunApp()
         ctx = EventContext(session_id="test", event="SomeOtherEvent")
         result = test_app.dispatch(ctx)
 
@@ -957,28 +957,28 @@ class TestClautorunApp:
 
 
 # ============================================================================
-# P1.5: ClautorunDaemon Tests
+# P1.5: AutorunDaemon Tests
 # ============================================================================
 
-class TestClautorunDaemon:
-    """Tests for ClautorunDaemon lifecycle management."""
+class TestAutorunDaemon:
+    """Tests for AutorunDaemon lifecycle management."""
 
     def test_pid_exists_true(self):
         """_pid_exists should return True for running process."""
         import os
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         # Current process should exist
         assert daemon._pid_exists(os.getpid()) is True
 
     def test_pid_exists_false(self):
         """_pid_exists should return False for non-existent process."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         # PID 99999999 should not exist
         assert daemon._pid_exists(99999999) is False
 
     def test_active_pids_tracking(self):
         """Daemon should track active PIDs."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
 
         daemon.active_pids.add(12345)
         daemon.active_pids.add(12346)
@@ -989,12 +989,12 @@ class TestClautorunDaemon:
 
     def test_store_initialization(self):
         """Daemon should initialize ThreadSafeDB store."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         assert isinstance(daemon.store, ThreadSafeDB)
 
     def test_stop_sets_running_false(self):
         """stop() should set running to False."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon.running = True
         daemon.stop()
         assert daemon.running is False
@@ -1002,7 +1002,7 @@ class TestClautorunDaemon:
     @pytest.mark.asyncio
     async def test_watchdog_cleans_dead_pids(self):
         """watchdog should clean dead PIDs from active_pids."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon.running = True
 
         # Add a dead PID (99999999)
@@ -1017,56 +1017,56 @@ class TestClautorunDaemon:
 
     def test_socket_connect_test_no_socket(self):
         """_socket_connect_test should return True if no socket."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         # With no socket file, should return True (can proceed)
         with patch.object(Path, 'exists', return_value=False):
-            from clautorun.core import SOCKET_PATH
+            from autorun.core import SOCKET_PATH
             original_exists = SOCKET_PATH.exists
 
             # Create temp path that doesn't exist
             import tempfile
             with tempfile.TemporaryDirectory() as tmpdir:
                 fake_socket = Path(tmpdir) / "nonexistent.sock"
-                with patch('clautorun.core.SOCKET_PATH', fake_socket):
+                with patch('autorun.core.SOCKET_PATH', fake_socket):
                     result = daemon._socket_connect_test()
                     assert result is True
 
     def test_shutdown_event_initialized_to_none(self):
         """Daemon should initialize with shutdown_event as None."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         assert daemon._shutdown_event is None
 
     def test_watchdog_task_initialized_to_none(self):
         """Daemon should initialize with watchdog_task as None."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         assert daemon._watchdog_task is None
 
     def test_loop_initialized_to_none(self):
         """Daemon should initialize with loop as None."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         assert daemon._loop is None
 
     def test_cleanup_registered_starts_false(self):
         """Daemon should start with cleanup not registered."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         assert daemon._cleanup_registered is False
 
     def test_cleanup_files_handles_missing_socket(self):
         """_cleanup_files should handle missing socket gracefully."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         # Should not raise even if socket doesn't exist
         daemon._cleanup_files()
 
     def test_cleanup_files_handles_missing_lock(self):
         """_cleanup_files should handle missing lock gracefully."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon._lock_fd = None
         # Should not raise
         daemon._cleanup_files()
 
     def test_stop_signals_shutdown_event(self):
         """stop() should set shutdown event if it exists."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon._shutdown_event = asyncio.Event()
         daemon.running = True
 
@@ -1078,7 +1078,7 @@ class TestClautorunDaemon:
     @pytest.mark.asyncio
     async def test_async_stop_sets_running_false(self):
         """async_stop should set running to False."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon.running = True
         daemon._shutdown_event = asyncio.Event()
 
@@ -1089,7 +1089,7 @@ class TestClautorunDaemon:
     @pytest.mark.asyncio
     async def test_async_stop_sets_shutdown_event(self):
         """async_stop should set shutdown event."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon.running = True
         daemon._shutdown_event = asyncio.Event()
 
@@ -1100,7 +1100,7 @@ class TestClautorunDaemon:
     @pytest.mark.asyncio
     async def test_async_stop_cancels_watchdog(self):
         """async_stop should cancel watchdog task."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon.running = True
         daemon._shutdown_event = asyncio.Event()
 
@@ -1117,7 +1117,7 @@ class TestClautorunDaemon:
     @pytest.mark.asyncio
     async def test_async_stop_idempotent(self):
         """async_stop should be safe to call multiple times."""
-        daemon = ClautorunDaemon(ClautorunApp())
+        daemon = AutorunDaemon(AutorunApp())
         daemon.running = True
         daemon._shutdown_event = asyncio.Event()
 
@@ -1136,8 +1136,8 @@ class TestResolveSessionKey:
     """Tests for tri-layer session identity resolution."""
 
     def test_explicit_env_var(self):
-        """Should use CLAUTORUN_SESSION_ID env var when set."""
-        with patch.dict('os.environ', {'CLAUTORUN_SESSION_ID': 'explicit-id'}):
+        """Should use AUTORUN_SESSION_ID env var when set."""
+        with patch.dict('os.environ', {'AUTORUN_SESSION_ID': 'explicit-id'}):
             result = resolve_session_key(12345, "/tmp", "fallback")
             assert result == "explicit:explicit-id"
 
@@ -1148,7 +1148,7 @@ class TestResolveSessionKey:
             assert result == "fallback-session"
 
     def test_identity_layer_disabled_by_default(self):
-        """JSONL scanning should be disabled without CLAUTORUN_USE_IDENTITY."""
+        """JSONL scanning should be disabled without AUTORUN_USE_IDENTITY."""
         with patch.dict('os.environ', {}, clear=True):
             result = resolve_session_key(12345, "/tmp", "fallback")
             # Should go directly to fallback without trying JSONL scan
@@ -1165,7 +1165,7 @@ class TestGlobalApp:
     def test_global_app_exists(self):
         """Global app instance should exist."""
         assert app is not None
-        assert isinstance(app, ClautorunApp)
+        assert isinstance(app, AutorunApp)
 
     def test_global_app_has_chains(self):
         """Global app should have chain structures."""
@@ -1243,7 +1243,7 @@ class TestFormatSuggestion:
     # ─── Regression: actual DEFAULT_INTEGRATIONS strings ────────────────────
 
     def test_real_grep_suggestion_claude(self):
-        from clautorun.config import DEFAULT_INTEGRATIONS
+        from autorun.config import DEFAULT_INTEGRATIONS
         msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
         result = format_suggestion(msg, "claude")
         assert "Grep" in result
@@ -1251,28 +1251,28 @@ class TestFormatSuggestion:
 
     def test_real_grep_suggestion_gemini(self):
         """Regression: grep suggestion must name grep_search for Gemini."""
-        from clautorun.config import DEFAULT_INTEGRATIONS
+        from autorun.config import DEFAULT_INTEGRATIONS
         msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
         result = format_suggestion(msg, "gemini")
         assert "grep_search" in result
         assert "{grep}" not in result
 
     def test_real_find_suggestion_gemini(self):
-        from clautorun.config import DEFAULT_INTEGRATIONS
+        from autorun.config import DEFAULT_INTEGRATIONS
         msg = DEFAULT_INTEGRATIONS["find"]["suggestion"]
         result = format_suggestion(msg, "gemini")
         assert "glob" in result.lower()
         assert "{glob}" not in result
 
     def test_real_cat_suggestion_gemini(self):
-        from clautorun.config import DEFAULT_INTEGRATIONS
+        from autorun.config import DEFAULT_INTEGRATIONS
         msg = DEFAULT_INTEGRATIONS["cat"]["suggestion"]
         result = format_suggestion(msg, "gemini")
         assert "read_file" in result
         assert "{read}" not in result
 
     def test_policy_blocked_search_gemini(self):
-        from clautorun.config import CONFIG
+        from autorun.config import CONFIG
         msg = CONFIG["policy_blocked"]["SEARCH"]
         result = format_suggestion(msg, "gemini")
         assert "grep_search" in result
@@ -1282,7 +1282,7 @@ class TestFormatSuggestion:
     # ─── Canary: API tool name stability ────────────────────────────────────
     # These tests document exact API tool names as of specific CLI versions.
     # A failure means the CLI renamed a tool at the API level.
-    # → Update CLI_TOOL_NAMES and file an issue: https://github.com/ahundt/clautorun/issues
+    # → Update CLI_TOOL_NAMES and file an issue: https://github.com/ahundt/autorun/issues
     # → Note: terminal display names can differ from API names.
     #   e.g. Claude Code CLI v2.1.47 renders Glob→"Search" but API name is still "Glob".
 
@@ -1291,7 +1291,7 @@ class TestFormatSuggestion:
 
         If this fails, Anthropic renamed a tool at the API level.
         Update CLI_TOOL_NAMES["claude"] and file an issue:
-        https://github.com/ahundt/clautorun/issues
+        https://github.com/ahundt/autorun/issues
         """
         claude = CLI_TOOL_NAMES["claude"]
         assert claude["grep"]  == "Grep",   "Grep renamed? Update CLI_TOOL_NAMES['claude']['grep']"
@@ -1307,7 +1307,7 @@ class TestFormatSuggestion:
         "write_file|run_shell_command|replace|read_file|glob|grep_search"
 
         If this fails, Gemini renamed a tool. Update CLI_TOOL_NAMES["gemini"] and file:
-        https://github.com/ahundt/clautorun/issues
+        https://github.com/ahundt/autorun/issues
         """
         gemini = CLI_TOOL_NAMES["gemini"]
         assert gemini["grep"]  == "grep_search",      "grep_search renamed? Update CLI_TOOL_NAMES['gemini']['grep']"
@@ -1342,12 +1342,12 @@ class TestFormatSuggestion:
     #   (a) A new {key} was added to a suggestion string without updating CLI_TOOL_NAMES, OR
     #   (b) A new CLI tool exists that nobody mapped yet.
     # Fix: add the missing key to CLI_TOOL_NAMES for all CLIs, or file an issue:
-    # https://github.com/ahundt/clautorun/issues
+    # https://github.com/ahundt/autorun/issues
 
     def _collect_suggestion_strings(self):
         """Return all (label, msg) pairs from suggestion strings and policy_blocked."""
         import re
-        from clautorun.config import DEFAULT_INTEGRATIONS, CONFIG
+        from autorun.config import DEFAULT_INTEGRATIONS, CONFIG
         items = []
         for cmd, intg in DEFAULT_INTEGRATIONS.items():
             msg = intg.get("suggestion", "")
@@ -1363,7 +1363,7 @@ class TestFormatSuggestion:
         If this fails, either:
         - A new {key} was added to a suggestion string → add to CLI_TOOL_NAMES["claude"]
         - A new Claude tool exists not yet in the table → add it and file an issue
-        https://github.com/ahundt/clautorun/issues
+        https://github.com/ahundt/autorun/issues
         """
         import re
         placeholder_re = re.compile(r'\{[a-z_]+\}')
@@ -1373,7 +1373,7 @@ class TestFormatSuggestion:
             assert not remaining, (
                 f"{label} has unreplaced placeholders for 'claude': {remaining}\n"
                 f"Add to CLI_TOOL_NAMES['claude'] or update the string.\n"
-                f"File an issue: https://github.com/ahundt/clautorun/issues"
+                f"File an issue: https://github.com/ahundt/autorun/issues"
             )
 
     def test_no_unreplaced_placeholders_gemini(self):
@@ -1382,7 +1382,7 @@ class TestFormatSuggestion:
         If this fails, either:
         - A new {key} was added to a suggestion string → add to CLI_TOOL_NAMES["gemini"]
         - A new Gemini tool exists not yet in the table → add it and file an issue
-        https://github.com/ahundt/clautorun/issues
+        https://github.com/ahundt/autorun/issues
         """
         import re
         placeholder_re = re.compile(r'\{[a-z_]+\}')
@@ -1392,7 +1392,7 @@ class TestFormatSuggestion:
             assert not remaining, (
                 f"{label} has unreplaced placeholders for 'gemini': {remaining}\n"
                 f"Add to CLI_TOOL_NAMES['gemini'] or update the string.\n"
-                f"File an issue: https://github.com/ahundt/clautorun/issues"
+                f"File an issue: https://github.com/ahundt/autorun/issues"
             )
 
     def test_format_suggestion_handles_shell_braces(self):
@@ -1403,8 +1403,8 @@ class TestFormatSuggestion:
         `xargs -I{} mv {}` (used in git clean suggestions). The fix in commit c0e4367
         replaced format_map with str.replace() so shell braces are preserved unchanged.
         """
-        from clautorun.config import DEFAULT_INTEGRATIONS
-        from clautorun.core import format_suggestion
+        from autorun.config import DEFAULT_INTEGRATIONS
+        from autorun.core import format_suggestion
 
         # Find any suggestion string that contains shell braces (non-template braces)
         # These are braces that DON'T match {tool_key} pattern (e.g., xargs -I{} mv {})

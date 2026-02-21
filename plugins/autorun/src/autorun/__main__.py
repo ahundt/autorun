@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Clautorun CLI - unified entry point for hooks and installation.
+"""Autorun CLI - unified entry point for hooks and installation.
 
 This module provides:
 1. Hook handler mode (default): Process Claude Code hooks efficiently
@@ -23,22 +23,22 @@ This module provides:
 
 Usage:
     # Installation
-    clautorun --install                    # Install all plugins
-    clautorun --status                     # Show installation status
+    autorun --install                    # Install all plugins
+    autorun --status                     # Show installation status
 
     # Task lifecycle management (modern subcommand structure)
-    clautorun task status                  # Show task status
-    clautorun task status --verbose        # Detailed task info
-    clautorun task export tasks.json       # Export to JSON
-    clautorun task clear --session abc123  # Clear specific session
-    clautorun task gc --dry-run            # Preview garbage collection
-    clautorun task gc --no-confirm         # Run GC without confirmation
+    autorun task status                  # Show task status
+    autorun task status --verbose        # Detailed task info
+    autorun task export tasks.json       # Export to JSON
+    autorun task clear --session abc123  # Clear specific session
+    autorun task gc --dry-run            # Preview garbage collection
+    autorun task gc --no-confirm         # Run GC without confirmation
 
     # Hook handler (default)
-    clautorun                              # Run as hook handler
+    autorun                              # Run as hook handler
 
 v0.7: Daemon mode is now default (85-90% complete architecture)
-Set CLAUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
+Set AUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
 Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
 """
 # Python 2 / version guard — AI assistants frequently invoke `python` (Python 2 on many
@@ -54,9 +54,9 @@ from __future__ import annotations
 import sys as _sys
 if _sys.version_info < (3, 10):
     _sys.stderr.write(
-        "ERROR: clautorun requires Python 3.10+. You are running Python " +
+        "ERROR: autorun requires Python 3.10+. You are running Python " +
         ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
-        "Fix: Use `uv run python -m clautorun` or `python3 -m clautorun`.\n"
+        "Fix: Use `uv run python -m autorun` or `python3 -m autorun`.\n"
         "     Install uv: https://docs.astral.sh/uv/getting-started/installation/\n"
     )
     _sys.exit(1)
@@ -69,25 +69,25 @@ from typing import Sequence
 
 
 # v0.7: Daemon mode is now default (85-90% complete architecture)
-# Set CLAUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
+# Set AUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
 # Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
-USE_DAEMON = os.environ.get("CLAUTORUN_USE_DAEMON", "1") != "0"
+USE_DAEMON = os.environ.get("AUTORUN_USE_DAEMON", "1") != "0"
 
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
     parser = argparse.ArgumentParser(
-        prog="clautorun",
-        description="""Clautorun - Claude Code plugin for autonomous task execution and lifecycle management.
+        prog="autorun",
+        description="""Autorun - Claude Code plugin for autonomous task execution and lifecycle management.
 
 INSTALLATION (Two steps - see below for details):
-  1. Install Python package:  pip install clautorun  (or: uv pip install clautorun)
-  2. Register with CLI:       clautorun --install
+  1. Install Python package:  pip install autorun  (or: uv pip install autorun)
+  2. Register with CLI:       autorun --install
 
 QUICK START (after installation):
-  1. Use /cr:go <task> in Claude Code to start autonomous execution
-  2. Control file creation: clautorun file status (or /cr:st in Claude)
-  3. Manage task history: clautorun task status
+  1. Use /ar:go <task> in Claude Code to start autonomous execution
+  2. Control file creation: autorun file status (or /ar:st in Claude)
+  3. Manage task history: autorun task status
 
 Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
 """,
@@ -98,31 +98,31 @@ INSTALLATION GUIDE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Why two steps?
-  Step 1: Install Python package    → Makes 'clautorun' CLI command available
-  Step 2: Register with Claude CLI  → Adds /cr:* slash commands to Claude Code/Gemini
+  Step 1: Install Python package    → Makes 'autorun' CLI command available
+  Step 2: Register with Claude CLI  → Adds /ar:* slash commands to Claude Code/Gemini
 
 Note: For local development from a git clone, use the full module path in Step 2:
-  uv run python -m plugins.clautorun.src.clautorun.install --install --force
+  uv run python -m plugins.autorun.src.autorun.install --install --force
 This ensures the installer finds the source .claude-plugin/ directory.
 
 Method 1: Via Claude Code plugin system (EASIEST - one command does both):
-  claude plugin install https://github.com/ahundt/clautorun.git
+  claude plugin install https://github.com/ahundt/autorun.git
 
 Method 2: Via pip/uv (two steps):
   # Step 1: Install Python package
-  pip install git+https://github.com/ahundt/clautorun.git
+  pip install git+https://github.com/ahundt/autorun.git
   # OR with UV (faster, recommended):
-  uv pip install git+https://github.com/ahundt/clautorun.git
+  uv pip install git+https://github.com/ahundt/autorun.git
 
   # Step 2: Register with Claude Code/Gemini
-  clautorun --install                    # Register all plugins
-  clautorun --status                     # Verify installation
+  autorun --install                    # Register all plugins
+  autorun --status                     # Verify installation
 
   # Optional: Install as UV tool for global availability
-  uv tool install git+https://github.com/ahundt/clautorun.git
+  uv tool install git+https://github.com/ahundt/autorun.git
 
 Method 3: From local clone (development):
-  git clone https://github.com/ahundt/clautorun.git && cd clautorun
+  git clone https://github.com/ahundt/autorun.git && cd autorun
 
   # Step 1: Install in editable mode
   uv pip install -e .                    # UV (recommended)
@@ -130,10 +130,10 @@ Method 3: From local clone (development):
   pip install -e .                       # Standard pip
 
   # Step 2: Register with Claude Code/Gemini (use full module path for local dev)
-  uv run python -m plugins.clautorun.src.clautorun.install --install --force
+  uv run python -m plugins.autorun.src.autorun.install --install --force
 
   # Optional: Install as UV tool (adds --tool flag to registration)
-  clautorun --install --force --tool     # Only after uv tool install
+  autorun --install --force --tool     # Only after uv tool install
 
 Install UV (if needed):
   # macOS/Linux:
@@ -148,48 +148,48 @@ EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Installation:
-  clautorun --install                    # Register all plugins with Claude/Gemini
-  clautorun --install clautorun          # Register only clautorun plugin
-  clautorun --status                     # Check installation status
+  autorun --install                    # Register all plugins with Claude/Gemini
+  autorun --install autorun          # Register only autorun plugin
+  autorun --status                     # Check installation status
 
-AutoFile - control file creation (slash: /cr:a, /cr:j, /cr:f, /cr:st):
-  clautorun file status                    # Show current file policy
-  clautorun file allow                     # Allow all file creation (slash: /cr:a)
-  clautorun file justify                   # Require justification (slash: /cr:j)
-  clautorun file search                    # Only modify existing (slash: /cr:f)
-  clautorun file allow --global            # Set global default for all sessions
+AutoFile - control file creation (slash: /ar:a, /ar:j, /ar:f, /ar:st):
+  autorun file status                    # Show current file policy
+  autorun file allow                     # Allow all file creation (slash: /ar:a)
+  autorun file justify                   # Require justification (slash: /ar:j)
+  autorun file search                    # Only modify existing (slash: /ar:f)
+  autorun file allow --global            # Set global default for all sessions
 
 Task lifecycle management:
-  clautorun task status                  # Show current task status
-  clautorun task status --verbose        # Show detailed task information
-  clautorun task export tasks.json       # Export task history to JSON
-  clautorun task gc --dry-run            # Preview old data cleanup (safe)
-  clautorun task gc --no-confirm         # Clean up old task data
+  autorun task status                  # Show current task status
+  autorun task status --verbose        # Show detailed task information
+  autorun task export tasks.json       # Export task history to JSON
+  autorun task gc --dry-run            # Preview old data cleanup (safe)
+  autorun task gc --no-confirm         # Clean up old task data
 
 Common workflows:
   # First time setup - production (see INSTALLATION GUIDE above for full details)
-  pip install clautorun                  # Step 1: Install Python package
-  clautorun --install                    # Step 2: Register with Claude/Gemini
+  pip install autorun                  # Step 1: Install Python package
+  autorun --install                    # Step 2: Register with Claude/Gemini
 
   # First time setup - local development from clone
-  cd /path/to/clautorun && uv pip install -e .
-  uv run python -m plugins.clautorun.src.clautorun.install --install --force
+  cd /path/to/autorun && uv pip install -e .
+  uv run python -m plugins.autorun.src.autorun.install --install --force
 
   # Check what's installed
-  clautorun --status                     # See plugin status
+  autorun --status                     # See plugin status
 
   # Control file creation
-  clautorun file status                    # See current policy
-  clautorun file justify                   # Enable strict mode (equivalent to /cr:j)
+  autorun file status                    # See current policy
+  autorun file justify                   # Enable strict mode (equivalent to /ar:j)
 
   # View task progress
-  clautorun task status --verbose        # See all incomplete tasks
+  autorun task status --verbose        # See all incomplete tasks
 
   # Clean up old data
-  clautorun task gc --dry-run            # Preview what will be deleted
-  clautorun task gc                      # Confirm and clean up
+  autorun task gc --dry-run            # Preview what will be deleted
+  autorun task gc                      # Confirm and clean up
 
-For more information: https://github.com/ahundt/clautorun
+For more information: https://github.com/ahundt/autorun
         """,
     )
 
@@ -201,10 +201,10 @@ For more information: https://github.com/ahundt/clautorun
         nargs="?",
         const="all",
         metavar="PLUGINS",
-        help="Install clautorun plugins to Claude Code and/or Gemini CLI. "
+        help="Install autorun plugins to Claude Code and/or Gemini CLI. "
              "This registers the plugins, installs hooks, and makes slash commands available. "
-             "Default: all plugins (clautorun + pdf-extractor). "
-             "Specify plugins: --install clautorun or --install clautorun,pdf-extractor",
+             "Default: all plugins (autorun + pdf-extractor). "
+             "Specify plugins: --install autorun or --install autorun,pdf-extractor",
     )
     install_group.add_argument(
         "--force",
@@ -234,7 +234,7 @@ For more information: https://github.com/ahundt/clautorun
         default=None,
         help="Bug #4669 workaround mode: 'auto' (detect CLI - default), 'always' (force exit-2), 'never' (disable). "
              "Controls whether deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI). "
-             "Can also be set via CLAUTORUN_EXIT2_WORKAROUND environment variable.",
+             "Can also be set via AUTORUN_EXIT2_WORKAROUND environment variable.",
     )
     install_group.add_argument(
         "--claude",
@@ -288,7 +288,7 @@ For more information: https://github.com/ahundt/clautorun
         default=None,
         help="CLI type calling this invocation (claude or gemini). "
              "Passed by hook_entry.py so every pathway receives CLI identity. "
-             "When present, also sets CLAUTORUN_CLI_TYPE env var for downstream use.",
+             "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )
 
     info_group = parser.add_argument_group("Information")
@@ -308,7 +308,7 @@ For more information: https://github.com/ahundt/clautorun
     info_group.add_argument(
         "--restart-daemon",
         action="store_true",
-        help="Restart the clautorun daemon (stops, cleans up, and starts fresh)",
+        help="Restart the autorun daemon (stops, cleans up, and starts fresh)",
     )
 
     # Update group
@@ -316,7 +316,7 @@ For more information: https://github.com/ahundt/clautorun
     update_group.add_argument(
         "--update",
         action="store_true",
-        help="Check for and install clautorun updates",
+        help="Check for and install autorun updates",
     )
     update_group.add_argument(
         "--update-method",
@@ -333,7 +333,7 @@ For more information: https://github.com/ahundt/clautorun
         "file",
         help="AutoFile - control file creation policy",
         description="Control file creation and modification policies (AutoFile system). "
-                    "Equivalent to /cr:a (allow), /cr:j (justify), /cr:f (find), /cr:st (status) slash commands.",
+                    "Equivalent to /ar:a (allow), /ar:j (justify), /ar:f (find), /ar:st (status) slash commands.",
     )
     file_subparsers = file_parser.add_subparsers(dest="file_command", help="AutoFile operations")
 
@@ -341,17 +341,17 @@ For more information: https://github.com/ahundt/clautorun
     allow_parser = file_subparsers.add_parser(
         "allow",
         aliases=["a"],
-        help="Allow creating new files freely (CLI: file a, Slash: /cr:a)",
+        help="Allow creating new files freely (CLI: file a, Slash: /ar:a)",
         description="""Set AutoFile policy to 'allow-all' mode.
 
 Claude can create new files and modify existing files without any restrictions.
 This is the most permissive mode - good for new projects or exploratory work.
 
 Examples:
-  clautorun file allow              # Set for current session
-  clautorun file a --global         # Set as default for all sessions
+  autorun file allow              # Set for current session
+  autorun file a --global         # Set as default for all sessions
 
-Equivalent slash commands: /cr:a, /cr:allow, /afa""",
+Equivalent slash commands: /ar:a, /ar:allow, /afa""",
     )
     allow_parser.add_argument(
         "--global",
@@ -365,7 +365,7 @@ Equivalent slash commands: /cr:a, /cr:allow, /afa""",
     justify_parser = file_subparsers.add_parser(
         "justify",
         aliases=["j"],
-        help="Require written justification to create new files (CLI: file j, Slash: /cr:j)",
+        help="Require written justification to create new files (CLI: file j, Slash: /ar:j)",
         description="""Set AutoFile policy to 'justify-create' mode.
 
 Claude must search for existing files first. If creating a new file, Claude must
@@ -375,10 +375,10 @@ This encourages modifying existing code rather than duplicating functionality.
 Good for established projects where you want to minimize unnecessary new files.
 
 Examples:
-  clautorun file justify            # Set for current session
-  clautorun file j --global         # Set as default for all sessions
+  autorun file justify            # Set for current session
+  autorun file j --global         # Set as default for all sessions
 
-Equivalent slash commands: /cr:j, /cr:justify, /afj""",
+Equivalent slash commands: /ar:j, /ar:justify, /afj""",
     )
     justify_parser.add_argument(
         "--global",
@@ -392,7 +392,7 @@ Equivalent slash commands: /cr:j, /cr:justify, /afj""",
     search_parser = file_subparsers.add_parser(
         "search",
         aliases=["find", "f"],
-        help="Block all new file creation - only modify existing (CLI: file f, Slash: /cr:f)",
+        help="Block all new file creation - only modify existing (CLI: file f, Slash: /ar:f)",
         description="""Set AutoFile policy to 'strict-search' mode (strictest).
 
 Claude CANNOT create any new files. Can only modify existing files.
@@ -402,10 +402,10 @@ This is the most restrictive mode - good when you want to prevent any
 accidental new file creation in a mature codebase.
 
 Examples:
-  clautorun file search             # Set for current session
-  clautorun file f --global         # Set as default for all sessions (short version)
+  autorun file search             # Set for current session
+  autorun file f --global         # Set as default for all sessions (short version)
 
-Equivalent slash commands: /cr:f, /cr:find, /afs
+Equivalent slash commands: /ar:f, /ar:find, /afs
 Aliases: file search, file find, file f (all equivalent)""",
     )
     search_parser.add_argument(
@@ -420,7 +420,7 @@ Aliases: file search, file find, file f (all equivalent)""",
     af_status_parser = file_subparsers.add_parser(
         "status",
         aliases=["st", "s"],
-        help="Show current file creation policy (CLI: file st, Slash: /cr:st)",
+        help="Show current file creation policy (CLI: file st, Slash: /ar:st)",
         description="""Display current AutoFile policy setting.
 
 Shows whether Claude can create new files freely (allow), must justify (justify),
@@ -430,10 +430,10 @@ By default shows policy for current session. Use --global to see the default
 policy that applies to all new sessions.
 
 Examples:
-  clautorun file status             # Show current session policy
-  clautorun file st --global        # Show global default policy (short version)
+  autorun file status             # Show current session policy
+  autorun file st --global        # Show global default policy (short version)
 
-Equivalent slash commands: /cr:st, /cr:status, /afst
+Equivalent slash commands: /ar:st, /ar:status, /afst
 Aliases: file status, file st, file s (all equivalent)""",
     )
     af_status_parser.add_argument(
@@ -622,7 +622,7 @@ def set_bootstrap_config(enabled: bool) -> int:
 
 
 def run_hook_handler() -> int:
-    """Run clautorun as a hook handler (default mode).
+    """Run autorun as a hook handler (default mode).
 
     Returns:
         Exit code: 0 = success
@@ -653,18 +653,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Version check
     if args.version:
-        from clautorun import __version__
+        from autorun import __version__
 
-        print(f"clautorun {__version__}")
+        print(f"autorun {__version__}")
         return 0
 
     # Propagate --cli to env so run_hook_handler() / run_client() can use it
     if getattr(args, 'cli', None):
-        os.environ['CLAUTORUN_CLI_TYPE'] = args.cli
+        os.environ['AUTORUN_CLI_TYPE'] = args.cli
 
     # Bug #4669 workaround configuration (set env var from CLI arg)
     if hasattr(args, 'exit2_mode') and args.exit2_mode is not None:
-        os.environ['CLAUTORUN_EXIT2_WORKAROUND'] = args.exit2_mode
+        os.environ['AUTORUN_EXIT2_WORKAROUND'] = args.exit2_mode
 
     # Bootstrap config
     if args.no_bootstrap:
@@ -674,7 +674,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Install mode (new unified installer)
     if args.install is not None:
-        from clautorun.install import install_plugins
+        from autorun.install import install_plugins
 
         return install_plugins(
             args.install,
@@ -688,25 +688,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Status mode
     if args.status:
-        from clautorun.install import show_status
+        from autorun.install import show_status
 
         return show_status()
 
     # Restart daemon mode
     if args.restart_daemon:
-        from clautorun.restart_daemon import restart_daemon
+        from autorun.restart_daemon import restart_daemon
 
         return restart_daemon()
 
     # Uninstall mode
     if args.uninstall:
-        from clautorun.install import uninstall_plugins
+        from autorun.install import uninstall_plugins
 
         return uninstall_plugins()
 
     # Update mode
     if args.update:
-        from clautorun.install import perform_self_update
+        from autorun.install import perform_self_update
 
         result = perform_self_update(method=args.update_method)
         print(result.output)
@@ -714,8 +714,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # AutoFile (af) subcommand - file creation control
     if args.command == "file":
-        from clautorun.session_manager import get_session_manager
-        from clautorun.config import CONFIG
+        from autorun.session_manager import get_session_manager
+        from autorun.config import CONFIG
 
         if not hasattr(args, 'file_command') or args.file_command is None:
             # No subcommand specified - show help
@@ -756,7 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"{policy_desc}")
                 print()
                 print("This is the default for new sessions.")
-                print("Override per-session with: clautorun file <allow|justify|search>")
+                print("Override per-session with: autorun file <allow|justify|search>")
             else:
                 # Show session-specific policy
                 if not session_id:
@@ -777,7 +777,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"{policy_desc}")
                     print()
                     print(f"Session: {session_id[:12]}...")
-                    print("Slash command equivalent: /cr:st")
+                    print("Slash command equivalent: /ar:st")
                 else:
                     # No session override, show global default
                     with mgr.session_state("__autofile_policy__global") as gstate:
@@ -807,7 +807,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state["policy"] = policy_value
             print(f"Global AutoFile policy set to: {policy_value}")
             print("This will be the default for all new sessions.")
-            print(f"Slash command equivalent: /cr:{file_cmd[0]} (or /cr:{file_cmd})")
+            print(f"Slash command equivalent: /ar:{file_cmd[0]} (or /ar:{file_cmd})")
         else:
             # Set for current session
             if not session_id:
@@ -820,13 +820,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             print(f"Session AutoFile policy set to: {policy_value}")
             print(f"Session: {session_id[:12]}...")
-            print(f"Slash command equivalent: /cr:{file_cmd[0]} (or /cr:{file_cmd})")
+            print(f"Slash command equivalent: /ar:{file_cmd[0]} (or /ar:{file_cmd})")
 
         return 0
 
     # Task subcommand (modern CLI structure)
     if args.command == "task":
-        from clautorun.task_lifecycle import TaskLifecycle
+        from autorun.task_lifecycle import TaskLifecycle
 
         if not hasattr(args, 'task_command') or args.task_command is None:
             # No subcommand specified - show help

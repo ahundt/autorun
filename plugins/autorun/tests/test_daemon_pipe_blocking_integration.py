@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.integrations import _not_in_pipe
-from clautorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
-from clautorun.config import CONFIG
-from clautorun.main import should_block_command
+from autorun.integrations import _not_in_pipe
+from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
+from autorun.config import CONFIG
+from autorun.main import should_block_command
 
 
 class TestDaemonPipeBlockingIntegration:
@@ -73,7 +73,7 @@ class TestDaemonPipeBlockingIntegration:
             "git diff | tail -30",
             "ps aux | grep python",
             "cargo build 2>&1 | head -50",
-            "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'Not found'",
+            "gemini extensions list | grep -A 2 -B 2 autorun || echo 'Not found'",
         ]
 
         for cmd in pipe_commands:
@@ -113,7 +113,7 @@ class TestDaemonPipeBlockingIntegration:
             "git diff | tail -30",
             "ps aux | grep python",
             "cargo build 2>&1 | head -50",
-            "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'Not found'",
+            "gemini extensions list | grep -A 2 -B 2 autorun || echo 'Not found'",
         ]
 
         for cmd in pipe_commands:
@@ -153,7 +153,7 @@ class TestDaemonPipeBlockingIntegration:
         logical_pipe_commands = [
             "git log | grep fix || echo 'not found'",
             "cat file.txt | grep pattern && echo 'found'",
-            "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun'",
+            "gemini extensions list | grep -A 2 -B 2 autorun || echo 'No autorun'",
             "ps aux | grep python && kill -9 $(pidof python) || echo 'not running'",
         ]
 
@@ -185,7 +185,7 @@ EOF"""
     def test_real_world_blocked_command(self):
         """Reproduce the actual user-reported bug."""
         # This is the EXACT command user reported as blocked
-        blocked_cmd = "gemini extensions list | grep -A 2 -B 2 clautorun || echo 'No clautorun found'"
+        blocked_cmd = "gemini extensions list | grep -A 2 -B 2 autorun || echo 'No autorun found'"
 
         def make_ctx(cmd):
             ctx = MagicMock()
@@ -212,7 +212,7 @@ EOF"""
 
     def test_extraction_shows_grep_in_pipe(self):
         """Debug test: Show what command_detection extracts from pipe commands."""
-        from clautorun.command_detection import extract_commands
+        from autorun.command_detection import extract_commands
 
         test_cmd = "git log | grep fix"
         # extract_commands returns (command_names, command_strings)

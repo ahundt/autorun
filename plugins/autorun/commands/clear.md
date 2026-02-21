@@ -6,10 +6,10 @@ description: Clear all session-level pattern blocks and allows
 
 Remove all session-level command blocks and allows. Global blocks remain active.
 
-**Usage**: `/cr:clear`
+**Usage**: `/ar:clear`
 
 After clearing, only the default safety guards and global blocks apply.
 
-See also: `/cr:blocks` to view current session blocks before clearing.
+See also: `/ar:blocks` to view current session blocks before clearing.
 
 UserPromptSubmit hook processes this command and clears session state.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Integration tests for clautorun hook functionality
+Integration tests for autorun hook functionality
 """
 import pytest
 import json
@@ -14,8 +14,8 @@ from io import StringIO
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.main import main
-from clautorun import build_hook_response
+from autorun.main import main
+from autorun import build_hook_response
 
 
 class TestHookIntegration:
@@ -31,7 +31,7 @@ class TestHookIntegration:
 
         # Mock session state and stdin
         mock_state = {}
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
@@ -72,7 +72,7 @@ class TestHookIntegration:
         input_json = json.dumps(hook_input_data)
 
         mock_state = {}
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
@@ -120,7 +120,7 @@ class TestHookIntegration:
 
             # Mock session state for each test case
             mock_state = {}
-            with patch('clautorun.main.session_state') as mock_session:
+            with patch('autorun.main.session_state') as mock_session:
                 mock_session.return_value.__enter__.return_value = mock_state
                 mock_session.return_value.__exit__.return_value = None
 
@@ -143,7 +143,7 @@ class TestHookIntegration:
         # Mock session state that persists across commands
         mock_state = {}
 
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
@@ -186,7 +186,7 @@ class TestHookIntegration:
 
         # Mock session state
         mock_state = {}
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
@@ -271,7 +271,7 @@ class TestHookErrorHandling:
             input_json = json.dumps(input_data)
 
             mock_state = {}
-            with patch('clautorun.main.session_state') as mock_session:
+            with patch('autorun.main.session_state') as mock_session:
                 mock_session.return_value.__enter__.return_value = mock_state
                 mock_session.return_value.__exit__.return_value = None
 
@@ -350,7 +350,7 @@ class TestHookPerformance:
         mock_state = {}
         # Measure response time
         start_time = time.time()
-        with patch('clautorun.main.session_state') as mock_session:
+        with patch('autorun.main.session_state') as mock_session:
             mock_session.return_value.__enter__.return_value = mock_state
             mock_session.return_value.__exit__.return_value = None
 
@@ -389,7 +389,7 @@ class TestHookPerformance:
             input_json = json.dumps(input_data)
 
             mock_state = {}
-            with patch('clautorun.main.session_state') as mock_session:
+            with patch('autorun.main.session_state') as mock_session:
                 mock_session.return_value.__enter__.return_value = mock_state
                 mock_session.return_value.__exit__.return_value = None
 

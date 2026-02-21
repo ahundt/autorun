@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun.tmux_utils import (
+from autorun.tmux_utils import (
     tmux_detect_claude_thinking_mode,
     tmux_detect_claude_mode,
     tmux_detect_claude_active,

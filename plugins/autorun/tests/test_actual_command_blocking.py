@@ -20,11 +20,11 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
-from clautorun.main import pretooluse_handler
-from clautorun.core import EventContext
-from clautorun.command_detection import BASHLEX_AVAILABLE
-from clautorun.config import BASH_TOOLS, WRITE_TOOLS
-from clautorun.session_manager import session_state
+from autorun.main import pretooluse_handler
+from autorun.core import EventContext
+from autorun.command_detection import BASHLEX_AVAILABLE
+from autorun.config import BASH_TOOLS, WRITE_TOOLS
+from autorun.session_manager import session_state
 
 
 @pytest.fixture(autouse=True)
@@ -173,7 +173,7 @@ class TestActualCommandBlocking:
 
     def test_bashlex_availability(self):
         """Verify bashlex is installed and working."""
-        from clautorun.command_detection import BASHLEX_AVAILABLE
+        from autorun.command_detection import BASHLEX_AVAILABLE
 
         assert BASHLEX_AVAILABLE, \
             "bashlex not available! Install with: uv pip install bashlex"
@@ -347,25 +347,25 @@ class TestGeminiPayloadNormalization:
 
     def test_gemini_event_name_mapping(self):
         """Verify BeforeTool maps to PreToolUse."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         result = normalize_hook_payload({"type": "BeforeTool"})
         assert result["hook_event_name"] == "PreToolUse"
 
     def test_gemini_aftertool_mapping(self):
         """Verify AfterTool maps to PostToolUse."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         result = normalize_hook_payload({"type": "AfterTool"})
         assert result["hook_event_name"] == "PostToolUse"
 
     def test_gemini_beforeagent_mapping(self):
         """Verify BeforeAgent maps to UserPromptSubmit."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         result = normalize_hook_payload({"type": "BeforeAgent"})
         assert result["hook_event_name"] == "UserPromptSubmit"
 
     def test_gemini_camelcase_keys(self):
         """Verify Gemini camelCase keys are normalized to snake_case."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
             "toolName": "bash_command",
@@ -380,7 +380,7 @@ class TestGeminiPayloadNormalization:
 
     def test_claude_format_passthrough(self):
         """Verify Claude Code format passes through unchanged."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
@@ -395,7 +395,7 @@ class TestGeminiPayloadNormalization:
 
     def test_gemini_cat_blocked_through_normalization(self):
         """End-to-end: Gemini camelCase format cat command blocked."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
             "toolName": "bash_command",
@@ -423,7 +423,7 @@ class TestGeminiPayloadNormalization:
 
     def test_gemini_head_blocked_through_normalization(self):
         """End-to-end: Gemini camelCase format head command blocked."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
             "toolName": "bash_command",
@@ -450,7 +450,7 @@ class TestGeminiPayloadNormalization:
 
     def test_gemini_safe_command_allowed(self):
         """End-to-end: Gemini camelCase format safe command allowed."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "type": "BeforeTool",
             "toolName": "bash_command",
@@ -493,7 +493,7 @@ class TestGeminiOfficialSnakeCaseFormat:
 
     def test_official_format_cat_blocked(self):
         """Verify cat is blocked with official Gemini CLI snake_case input."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
@@ -521,7 +521,7 @@ class TestGeminiOfficialSnakeCaseFormat:
 
     def test_official_format_run_shell_command_blocked(self):
         """Verify run_shell_command (Gemini's other bash tool) blocks cat."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "hook_event_name": "BeforeTool",
             "tool_name": "run_shell_command",
@@ -544,7 +544,7 @@ class TestGeminiOfficialSnakeCaseFormat:
 
     def test_official_format_safe_command_allowed(self):
         """Verify safe commands produce decision='allow' with official format."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         payload = {
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
@@ -567,7 +567,7 @@ class TestGeminiOfficialSnakeCaseFormat:
 
     def test_official_format_write_file_blocked_justify(self):
         """Verify write_file is blocked in JUSTIFY mode with official format."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         session_id = "gemini-justify-test"
 
         with session_state(session_id) as state:
@@ -595,7 +595,7 @@ class TestGeminiOfficialSnakeCaseFormat:
 
     def test_event_name_preserved_in_normalization(self):
         """Verify BeforeTool maps to PreToolUse even with hook_event_name key."""
-        from clautorun.core import normalize_hook_payload
+        from autorun.core import normalize_hook_payload
         # This is the exact format Gemini CLI sends per official docs
         payload = {"hook_event_name": "BeforeTool"}
         result = normalize_hook_payload(payload)
@@ -628,13 +628,13 @@ __doc__ += """
 
 ```bash
 # Run all blocking tests
-uv run pytest plugins/clautorun/tests/test_actual_command_blocking.py -v
+uv run pytest plugins/autorun/tests/test_actual_command_blocking.py -v
 
 # Run only bashlex-dependent tests
-uv run pytest plugins/clautorun/tests/test_actual_command_blocking.py -k pipe -v
+uv run pytest plugins/autorun/tests/test_actual_command_blocking.py -k pipe -v
 
 # Run without bashlex (some tests will be skipped)
-uv run pytest plugins/clautorun/tests/test_actual_command_blocking.py -v
+uv run pytest plugins/autorun/tests/test_actual_command_blocking.py -v
 ```
 
 ## Hook Response Format

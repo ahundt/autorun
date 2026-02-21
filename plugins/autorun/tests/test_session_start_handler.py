@@ -25,7 +25,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from clautorun.plan_export import (
+from autorun.plan_export import (
     PlanExportConfig,
     handle_session_start,
     get_content_hash,
@@ -95,10 +95,10 @@ def mock_session_start_context(
         config = {"enabled": True, "notify_claude": True, "output_plan_dir": "notes"}
 
     mock_config = PlanExportConfig(enabled=enabled, **{k: v for k, v in config.items() if k != "enabled" and hasattr(PlanExportConfig, k)})
-    with patch("clautorun.plan_export.PlanExportConfig.load", return_value=mock_config):
-        with patch("clautorun.plan_export.get_plan_from_transcript", return_value=plan_path):
-            with patch("clautorun.plan_export.load_tracking", return_value=tracking):
-                with patch("clautorun.plan_export.SessionLock"):
+    with patch("autorun.plan_export.PlanExportConfig.load", return_value=mock_config):
+        with patch("autorun.plan_export.get_plan_from_transcript", return_value=plan_path):
+            with patch("autorun.plan_export.load_tracking", return_value=tracking):
+                with patch("autorun.plan_export.SessionLock"):
                     yield
 
 
@@ -287,7 +287,7 @@ class TestAtomicSaveTracking:
 
     def test_save_and_load_tracking_roundtrip(self):
         """save_tracking stores data that load_tracking retrieves."""
-        from clautorun.plan_export import save_tracking, load_tracking
+        from autorun.plan_export import save_tracking, load_tracking
 
         test_data = {"hash123": {"exported_at": "2024-01-01", "destination": "/tmp"}}
         save_tracking(test_data)
@@ -300,7 +300,7 @@ class TestAtomicSaveTracking:
 
     def test_save_tracking_overwrites(self):
         """save_tracking replaces previous tracking data."""
-        from clautorun.plan_export import save_tracking, load_tracking
+        from autorun.plan_export import save_tracking, load_tracking
 
         save_tracking({"old": "data"})
         save_tracking({"new": "data"})
@@ -353,7 +353,7 @@ class TestPreMortemEdgeCases:
     ):
         """When export_plan raises exception, handler fails gracefully."""
         with mock_session_start_context(plan_path=temp_plan_file):
-            with patch("clautorun.plan_export.export_plan", side_effect=PermissionError("Access denied")):
+            with patch("autorun.plan_export.export_plan", side_effect=PermissionError("Access denied")):
                 handle_session_start(make_hook_input(cwd=str(temp_project["tmpdir"])))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -366,7 +366,7 @@ class TestPreMortemEdgeCases:
         mock_plan.read_text.side_effect = FileNotFoundError("File deleted")
 
         with mock_session_start_context(plan_path=mock_plan):
-            with patch("clautorun.plan_export.get_content_hash", return_value="somehash"):
+            with patch("autorun.plan_export.get_content_hash", return_value="somehash"):
                 handle_session_start(make_hook_input(cwd=str(temp_project["tmpdir"])))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -378,7 +378,7 @@ class TestPreMortemEdgeCases:
         plan_file.write_bytes(b"\xff\xfe invalid utf-8")
 
         with mock_session_start_context(plan_path=plan_file):
-            with patch("clautorun.plan_export.get_content_hash", return_value="somehash"):
+            with patch("autorun.plan_export.get_content_hash", return_value="somehash"):
                 handle_session_start(make_hook_input(cwd=str(temp_project["tmpdir"])))
 
         result = parse_last_json_output(capsys.readouterr().out)
@@ -428,7 +428,7 @@ class TestPreMortemEdgeCases:
     ):
         """Handler gracefully fails if project_dir is not writable."""
         with mock_session_start_context(plan_path=temp_plan_file):
-            with patch("clautorun.plan_export.export_plan", side_effect=OSError("Read-only filesystem")):
+            with patch("autorun.plan_export.export_plan", side_effect=OSError("Read-only filesystem")):
                 handle_session_start(make_hook_input(cwd="/nonexistent"))
 
         result = parse_last_json_output(capsys.readouterr().out)

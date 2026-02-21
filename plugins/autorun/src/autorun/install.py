@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Plugin installation and management for clautorun.
+"""Plugin installation and management for autorun.
 
 Consolidated installer with complete dependency bootstrap and cache fallback.
 Superset of install.py and install_plugins.py capabilities.
 
 Usage:
-    clautorun --install                    # Install all plugins
-    clautorun --install clautorun          # Install specific plugin
-    clautorun --install --force            # Force reinstall
-    clautorun --install --tool             # Also install UV CLI tools
-    clautorun --uninstall                  # Uninstall plugins
-    clautorun --status                     # Show installation status
+    autorun --install                    # Install all plugins
+    autorun --install autorun          # Install specific plugin
+    autorun --install --force            # Force reinstall
+    autorun --install --tool             # Also install UV CLI tools
+    autorun --uninstall                  # Uninstall plugins
+    autorun --status                     # Show installation status
 """
 # Python 2 / version guard — AI assistants frequently invoke `python` (Python 2 on many
 # systems) instead of `python3`, wasting tokens trying to debug confusing import errors.
@@ -26,9 +26,9 @@ from __future__ import annotations
 import sys as _sys
 if _sys.version_info < (3, 10):
     _sys.stderr.write(
-        "ERROR: clautorun requires Python 3.10+. You are running Python " +
+        "ERROR: autorun requires Python 3.10+. You are running Python " +
         ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
-        "Fix: Use `uv run python -m clautorun --install` or `python3 -m clautorun --install`.\n"
+        "Fix: Use `uv run python -m autorun --install` or `python3 -m autorun --install`.\n"
         "     Install uv: https://docs.astral.sh/uv/getting-started/installation/\n"
     )
     _sys.exit(1)
@@ -65,7 +65,7 @@ __all__ = [
 # =============================================================================
 
 # Must match .claude-plugin/marketplace.json "name" field
-MARKETPLACE = "clautorun"
+MARKETPLACE = "autorun"
 
 
 # =============================================================================
@@ -76,7 +76,7 @@ MARKETPLACE = "clautorun"
 class PluginName(str, Enum):
     """Valid plugin names. Prevents typos and enables IDE completion."""
 
-    CLAUTORUN = "clautorun"
+    AUTORUN = "autorun"
     PDF_EXTRACTOR = "pdf-extractor"
 
     @classmethod
@@ -150,13 +150,13 @@ def run_cmd(
 
 
 def _restart_daemon_if_running() -> None:
-    """Restart the clautorun daemon if it's currently running.
+    """Restart the autorun daemon if it's currently running.
 
     Called at the end of install to ensure the daemon picks up new code/config.
-    Imports restart_daemon() from clautorun.restart_daemon.
+    Imports restart_daemon() from autorun.restart_daemon.
     Non-fatal: installation succeeds even if daemon restart fails.
     """
-    lock_path = Path.home() / ".clautorun" / "daemon.lock"
+    lock_path = Path.home() / ".autorun" / "daemon.lock"
 
     # Quick check: skip entirely if no daemon is running
     if not lock_path.exists():
@@ -171,7 +171,7 @@ def _restart_daemon_if_running() -> None:
     print("Restarting daemon to pick up changes...")
 
     try:
-        from clautorun.restart_daemon import restart_daemon
+        from autorun.restart_daemon import restart_daemon
 
         result = restart_daemon()
         if result == 0:
@@ -210,13 +210,13 @@ def get_python_runner() -> list[str]:
     Examples:
         >>> # When UV available:
         >>> runner = get_python_runner()  # ["uv", "run", "python"]
-        >>> cmd = [*runner, "-m", "clautorun", "--install"]
-        >>> # Result: ["uv", "run", "python", "-m", "clautorun", "--install"]
+        >>> cmd = [*runner, "-m", "autorun", "--install"]
+        >>> # Result: ["uv", "run", "python", "-m", "autorun", "--install"]
 
         >>> # When UV unavailable:
         >>> runner = get_python_runner()  # ["python"]
-        >>> cmd = [*runner, "-m", "clautorun", "--install"]
-        >>> # Result: ["python", "-m", "clautorun", "--install"]
+        >>> cmd = [*runner, "-m", "autorun", "--install"]
+        >>> # Result: ["python", "-m", "autorun", "--install"]
     """
     return ["uv", "run", "python"] if has_uv() else ["python"]
 
@@ -243,32 +243,32 @@ class ErrorFormatter:
     MARKETPLACE_NOT_FOUND = """
 Could not find marketplace root (.claude-plugin/marketplace.json).
 
-This usually means clautorun is installed as a package, not from source.
+This usually means autorun is installed as a package, not from source.
 
 ━━━ SOLUTION OPTIONS ━━━
 
 Option 1: Install via Plugin System (Recommended)
   # For Claude Code:
-  claude plugin install https://github.com/ahundt/clautorun.git
+  claude plugin install https://github.com/ahundt/autorun.git
 
   # For Gemini CLI:
-  gemini extensions install https://github.com/ahundt/clautorun.git
+  gemini extensions install https://github.com/ahundt/autorun.git
 
 Option 2: Local Development from Source
-  cd /path/to/clautorun  # Git clone directory
+  cd /path/to/autorun  # Git clone directory
   {install_command}
 
 Option 3: AIX Multi-Platform Install
   # Installs for all detected CLIs (Claude, Gemini, OpenCode, Codex)
-  aix skills install ahundt/clautorun
+  aix skills install ahundt/autorun
 
 ━━━ TROUBLESHOOTING ━━━
 
-If you're seeing this after 'pip install clautorun':
+If you're seeing this after 'pip install autorun':
   The pip package doesn't include plugin files (.claude-plugin/, commands/).
   Use Option 1 (plugin install) or Option 2 (local clone) instead.
 
-Need help? https://github.com/ahundt/clautorun/issues
+Need help? https://github.com/ahundt/autorun/issues
 """
 
     UV_NOT_FOUND = """
@@ -301,7 +301,7 @@ Docs: https://docs.astral.sh/uv/getting-started/installation/
         runner = get_python_runner()
         install_cmd = " ".join([
             *runner,
-            "-m", "plugins.clautorun.src.clautorun.install",
+            "-m", "plugins.autorun.src.autorun.install",
             "--install", "--force"
         ])
         return ErrorFormatter.MARKETPLACE_NOT_FOUND.format(install_command=install_cmd)
@@ -326,7 +326,7 @@ Docs: https://docs.astral.sh/uv/getting-started/installation/
 
 @lru_cache(maxsize=1)
 def find_marketplace_root() -> Path:
-    """Find the clautorun marketplace root directory dynamically.
+    """Find the autorun marketplace root directory dynamically.
 
     Supports all installation pathways:
     1. Source repository (git clone): Walk up from __file__ to find .claude-plugin/
@@ -365,8 +365,8 @@ def find_marketplace_root() -> Path:
     # Strategy 2: Check if this is an editable install - look for direct_url.json
     # Works for: uv pip install -e . (points back to source)
     try:
-        package_dir = Path(__file__).parent  # clautorun package directory
-        dist_info_dirs = list(package_dir.parent.glob("clautorun*.dist-info"))
+        package_dir = Path(__file__).parent  # autorun package directory
+        dist_info_dirs = list(package_dir.parent.glob("autorun*.dist-info"))
         for dist_info in dist_info_dirs:
             direct_url_file = dist_info / "direct_url.json"
             if direct_url_file.exists():
@@ -376,7 +376,7 @@ def find_marketplace_root() -> Path:
                     # This is an editable install - get the source directory
                     source_dir = Path(data["url"].replace("file://", ""))
                     # Source could be workspace root or plugin dir
-                    for candidate in [source_dir, source_dir / "plugins" / "clautorun"]:
+                    for candidate in [source_dir, source_dir / "plugins" / "autorun"]:
                         marker = candidate / ".claude-plugin" / "marketplace.json"
                         if marker.exists():
                             return candidate
@@ -396,9 +396,9 @@ def find_marketplace_root() -> Path:
             Path("/opt"),              # System-wide installs
         ]
 
-        # Check if CLAUTORUN_DEV_PATH env var is set (for custom locations)
-        if "CLAUTORUN_DEV_PATH" in os.environ:
-            dev_path = Path(os.environ["CLAUTORUN_DEV_PATH"])
+        # Check if AUTORUN_DEV_PATH env var is set (for custom locations)
+        if "AUTORUN_DEV_PATH" in os.environ:
+            dev_path = Path(os.environ["AUTORUN_DEV_PATH"])
             if (dev_path / ".claude-plugin" / "marketplace.json").exists():
                 return dev_path
 
@@ -423,9 +423,9 @@ def find_marketplace_root() -> Path:
                             filtered_matches.append(root)
 
                         if filtered_matches:
-                            # Sort to prefer exact "clautorun" name
+                            # Sort to prefer exact "autorun" name
                             filtered_matches.sort(key=lambda p: (
-                                p.name != "clautorun",  # Prefer exact name
+                                p.name != "autorun",  # Prefer exact name
                                 "-" in p.name,  # Deprioritize names with dashes
                                 str(p),  # Alphabetical tiebreaker
                             ))
@@ -435,19 +435,19 @@ def find_marketplace_root() -> Path:
 
     # Strategy 4: Check common development paths (last resort fallback)
     # Works for: any scenario where source repo exists in standard locations
-    # Check CLAUTORUN_DEV_PATH first
-    if "CLAUTORUN_DEV_PATH" in os.environ:
-        dev_path = Path(os.environ["CLAUTORUN_DEV_PATH"])
+    # Check AUTORUN_DEV_PATH first
+    if "AUTORUN_DEV_PATH" in os.environ:
+        dev_path = Path(os.environ["AUTORUN_DEV_PATH"])
         marker = dev_path / ".claude-plugin" / "marketplace.json"
         if marker.exists():
             return dev_path
 
     # Check exact common paths first (most specific)
     exact_paths = [
-        Path.home() / ".claude" / "clautorun" / "plugins" / "clautorun",
-        Path.home() / ".claude" / "clautorun",
-        Path.home() / "clautorun" / "plugins" / "clautorun",
-        Path.home() / "clautorun",
+        Path.home() / ".claude" / "autorun" / "plugins" / "autorun",
+        Path.home() / ".claude" / "autorun",
+        Path.home() / "autorun" / "plugins" / "autorun",
+        Path.home() / "autorun",
     ]
 
     for candidate in exact_paths:
@@ -457,8 +457,8 @@ def find_marketplace_root() -> Path:
 
     # Search common project locations more broadly (only if exact paths failed)
     search_patterns = [
-        Path.home() / ".claude" / "*" / "plugins" / "clautorun",
-        Path.home() / "*" / "plugins" / "clautorun",
+        Path.home() / ".claude" / "*" / "plugins" / "autorun",
+        Path.home() / "*" / "plugins" / "autorun",
     ]
 
     for pattern in search_patterns:
@@ -468,8 +468,8 @@ def find_marketplace_root() -> Path:
             candidates = sorted(
                 pattern.parent.glob(pattern.name),
                 key=lambda p: (
-                    # Prioritize exact "clautorun" name (not "clautorun-*")
-                    p.parent.name != "clautorun" if "clautorun" in str(p.parent) else True,
+                    # Prioritize exact "autorun" name (not "autorun-*")
+                    p.parent.name != "autorun" if "autorun" in str(p.parent) else True,
                     # Deprioritize backup/reference (True sorts after False)
                     "backup" in str(p).lower(),
                     "reference" in str(p).lower(),
@@ -491,21 +491,21 @@ def find_marketplace_root() -> Path:
     # Strategy 5: Check known Gemini extension paths
     # Works for: gemini extensions install or gemini extensions link
     gemini_home = Path.home() / ".gemini" / "extensions"
-    for ext_name in ["clautorun-workspace", "clautorun"]:
+    for ext_name in ["autorun-workspace", "autorun"]:
         ext_dir = gemini_home / ext_name
         if ext_dir.exists():
-            # Could be at workspace root or in plugins/clautorun/
-            for candidate in [ext_dir, ext_dir / "plugins" / "clautorun"]:
+            # Could be at workspace root or in plugins/autorun/
+            for candidate in [ext_dir, ext_dir / "plugins" / "autorun"]:
                 marker = candidate / ".claude-plugin" / "marketplace.json"
                 if marker.exists():
                     return candidate
 
     # Strategy 6: Check Claude plugin cache
     # Works for: claude plugin install (copies to cache)
-    claude_cache = Path.home() / ".claude" / "plugins" / "cache" / "clautorun"
+    claude_cache = Path.home() / ".claude" / "plugins" / "cache" / "autorun"
     if claude_cache.exists():
         # Find the latest version directory
-        version_dirs = sorted(claude_cache.glob("clautorun/*"), reverse=True)
+        version_dirs = sorted(claude_cache.glob("autorun/*"), reverse=True)
         for version_dir in version_dirs:
             marker = version_dir / ".claude-plugin" / "marketplace.json"
             if marker.exists():
@@ -538,7 +538,7 @@ def _check_hook_conflicts() -> None:
     """Check for plugins with conflicting PreToolUse hooks.
 
     Warns if hookify or other plugins have PreToolUse hooks that might
-    override clautorun's command blocking.
+    override autorun's command blocking.
     """
     settings_path = Path.home() / ".claude" / "settings.json"
     if not settings_path.exists():
@@ -551,7 +551,7 @@ def _check_hook_conflicts() -> None:
         # Check hookify specifically (known to conflict)
         if enabled.get("hookify@claude-code-plugins", False):
             print("\n⚠️  WARNING: hookify plugin is enabled")
-            print("   hookify has PreToolUse hooks that may override clautorun's command blocking.")
+            print("   hookify has PreToolUse hooks that may override autorun's command blocking.")
             print("   If rm/git-reset commands are not being blocked, disable hookify:")
             print("   Edit ~/.claude/settings.json and set:")
             print('   "hookify@claude-code-plugins": false')
@@ -568,14 +568,14 @@ def _check_hook_conflicts() -> None:
                     hooks_data = json.loads(hooks_file.read_text())
                     if "PreToolUse" in hooks_data.get("hooks", {}):
                         plugin_name = hooks_file.parts[-4] + "@" + hooks_file.parts[-3]
-                        if plugin_name != "clautorun@clautorun" and enabled.get(plugin_name, False):
+                        if plugin_name != "autorun@autorun" and enabled.get(plugin_name, False):
                             conflicting.append(plugin_name)
                 except:
                     continue
 
             if conflicting:
                 print(f"\n⚠️  Other plugins with PreToolUse hooks detected: {', '.join(conflicting)}")
-                print("   These may interfere with clautorun's command blocking.")
+                print("   These may interfere with autorun's command blocking.")
 
     except Exception as e:
         # Non-fatal - just log
@@ -641,7 +641,7 @@ def _check_uv_env(plugin_dir: Path) -> CmdResult:
     if not shutil.which("uv"):
         return CmdResult(
             False,
-            ErrorFormatter.uv_not_found("pip install -e . && python -m clautorun --install"),
+            ErrorFormatter.uv_not_found("pip install -e . && python -m autorun --install"),
         )
 
     if not (plugin_dir / "pyproject.toml").exists():
@@ -744,10 +744,10 @@ def _sync_dependencies() -> CmdResult:
     # Source/editable install: use uv sync if pyproject.toml exists
     try:
         marketplace_root = find_marketplace_root()
-        # If the root has a plugins/ directory, the plugin is in plugins/clautorun
-        # If the root IS the clautorun directory (e.g. nested), use it directly
-        if (marketplace_root / "plugins" / "clautorun").exists():
-            plugin_dir = marketplace_root / "plugins" / "clautorun"
+        # If the root has a plugins/ directory, the plugin is in plugins/autorun
+        # If the root IS the autorun directory (e.g. nested), use it directly
+        if (marketplace_root / "plugins" / "autorun").exists():
+            plugin_dir = marketplace_root / "plugins" / "autorun"
         else:
             plugin_dir = marketplace_root
 
@@ -977,7 +977,7 @@ def _install_for_gemini(
 
     Args:
         marketplace_root: Path to marketplace root directory (plugin directory)
-        plugins: List of plugin names to install (e.g., ["clautorun", "pdf-extractor"])
+        plugins: List of plugin names to install (e.g., ["autorun", "pdf-extractor"])
         force: Force reinstall even if same version
 
     Returns:
@@ -1127,10 +1127,10 @@ def _verify_gemini_installation() -> bool:
     """Verify Gemini workspace installation.
 
     Returns:
-        True if clautorun-workspace is installed
+        True if autorun-workspace is installed
     """
     result = run_cmd(["gemini", "extensions", "list"])
-    return result.ok and "clautorun-workspace" in result.output
+    return result.ok and "autorun-workspace" in result.output
 
 
 def _verify_conductor_installation() -> bool:
@@ -1160,7 +1160,7 @@ def detect_aix_installed() -> bool:
 
 
 def install_via_aix(force: bool = False) -> tuple[bool, str]:
-    """Install clautorun locally using AIX if available.
+    """Install autorun locally using AIX if available.
 
     AIX provides unified installation across Claude Code, Gemini CLI,
     OpenCode, and Codex CLI platforms.
@@ -1178,7 +1178,7 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
         return (False, "AIX not installed")
 
     print()
-    print("Installing clautorun via AIX...")
+    print("Installing autorun via AIX...")
     print("AIX will auto-detect and install for all available platforms")
 
     # Get repository root (2 levels up from plugin directory)
@@ -1196,7 +1196,7 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
     result = run_cmd(cmd)
 
     if result.ok or result.has_text("already installed"):
-        print("   ✓ clautorun installed via AIX")
+        print("   ✓ autorun installed via AIX")
 
         # Verify which platforms were installed
         verify_result = run_cmd(["aix", "skills", "list"])
@@ -1216,7 +1216,7 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                 print("   • Codex CLI")
                 installed_platforms.append("codex")
 
-        # CRITICAL: Verify hooks are registered (essential for clautorun functionality)
+        # CRITICAL: Verify hooks are registered (essential for autorun functionality)
         # AIX may not fully support hook registration, so we verify and provide guidance
         print("\n   Verifying hook registration...")
         hooks_ok = True
@@ -1230,8 +1230,8 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                     try:
                         with open(hooks_path) as f:
                             hooks_data = json.load(f)
-                        # Check if clautorun hooks are present
-                        has_hooks = any("clautorun" in str(hook) for hook in hooks_data.get("hooks", []))
+                        # Check if autorun hooks are present
+                        has_hooks = any("autorun" in str(hook) for hook in hooks_data.get("hooks", []))
                         if has_hooks:
                             print(f"   ✓ Claude Code hooks registered")
                         else:
@@ -1252,8 +1252,8 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                     try:
                         with open(gemini_config) as f:
                             config_data = json.load(f)
-                        # Check if clautorun hooks are present
-                        has_hooks = any("clautorun" in str(ext) for ext in config_data.get("extensions", []))
+                        # Check if autorun hooks are present
+                        has_hooks = any("autorun" in str(ext) for ext in config_data.get("extensions", []))
                         if has_hooks:
                             print(f"   ✓ Gemini CLI hooks registered")
                         else:
@@ -1268,9 +1268,9 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
 
         if not hooks_ok:
             print("\n   ⚠️  Hook registration incomplete!")
-            print("   SOLUTION: Clautorun has built-in bootstrap that will auto-register")
+            print("   SOLUTION: Autorun has built-in bootstrap that will auto-register")
             print("            hooks on first use. Alternatively, run manually:")
-            print("            $ clautorun --install")
+            print("            $ autorun --install")
             print("\n   Why this matters: Hooks enable PreToolUse/PostToolUse functionality,")
             print("                      which powers file policies, command blocking, etc.")
 
@@ -1309,8 +1309,8 @@ def _update_package_metadata(marketplace_root: Path) -> None:
         build_time = datetime.now(timezone.utc).isoformat()
         
         # 3. Resolve metadata file path
-        # Marketplace root is /plugins/clautorun
-        meta_file = marketplace_root / "src" / "clautorun" / "metadata.json"
+        # Marketplace root is /plugins/autorun
+        meta_file = marketplace_root / "src" / "autorun" / "metadata.json"
         
         # 4. Write metadata with robust error handling
         try:
@@ -1353,7 +1353,7 @@ def install_plugins(
     Does NOT publish to public AIX registry (requires manual user action).
 
     Args:
-        selection: "all" or comma-separated plugin names (e.g., "clautorun,pdf-extractor")
+        selection: "all" or comma-separated plugin names (e.g., "autorun,pdf-extractor")
         tool: Also run `uv tool install` for global CLI availability
         force: Force reinstall even if already installed (for dev with same version)
         claude_only: Install only for Claude Code (default: False)
@@ -1383,9 +1383,9 @@ def install_plugins(
 
     # NEW: Harmonize manifests from aix.toml (Single Source of Truth)
     try:
-        from clautorun.aix_manifest import generate_manifests
+        from autorun.aix_manifest import generate_manifests
         # root could be workspace root or plugin root
-        plugin_root = root if (root / ".claude-plugin").exists() else root / "plugins" / "clautorun"
+        plugin_root = root if (root / ".claude-plugin").exists() else root / "plugins" / "autorun"
         if plugin_root.exists():
             generate_manifests(plugin_root)
     except ImportError:
@@ -1395,18 +1395,18 @@ def install_plugins(
 
     # Re-import to get fresh values if we're in the same process
     import importlib
-    import clautorun
-    importlib.reload(clautorun)
-    from clautorun import __version__, __commit__, __build_time__
+    import autorun
+    importlib.reload(autorun)
+    from autorun import __version__, __commit__, __build_time__
     
-    print(f"clautorun v{__version__}")
+    print(f"autorun v{__version__}")
     print(f"Commit: {__commit__}")
     print(f"Build Time: {__build_time__}")
 
     # Python version check
     if sys.version_info < (3, 10):
         print(f"Python {sys.version_info.major}.{sys.version_info.minor} detected. "
-              f"clautorun requires Python 3.10+.")
+              f"autorun requires Python 3.10+.")
         return 1
 
     # NEW: Auto-detect AIX and use for local installation if available
@@ -1459,18 +1459,18 @@ def install_plugins(
 
     # Import version
     try:
-        from clautorun import __version__
+        from autorun import __version__
     except ImportError:
         __version__ = "0.8.0"
 
-    print(f"clautorun v{__version__}")
+    print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")
     print(f"Target CLIs: {', '.join(target_clis)}")
     print()
 
     # UV environment check (warning only, not blocker)
-    if (marketplace_root / "plugins" / "clautorun").exists():
-        plugin_dir = marketplace_root / "plugins" / "clautorun"
+    if (marketplace_root / "plugins" / "autorun").exists():
+        plugin_dir = marketplace_root / "plugins" / "autorun"
     else:
         plugin_dir = marketplace_root
 
@@ -1481,9 +1481,9 @@ def install_plugins(
     else:
         logger.info("UV environment OK")
 
-    # Sync clautorun Python dependencies (critical for hooks to work)
+    # Sync autorun Python dependencies (critical for hooks to work)
     if shutil.which("uv"):
-        print("Installing clautorun Python dependencies...")
+        print("Installing autorun Python dependencies...")
         dep_result = _sync_dependencies()
         if dep_result.ok:
             print("   Dependencies synced")
@@ -1512,12 +1512,12 @@ def install_plugins(
     # Install for Claude Code
     if "claude" in target_clis:
         print()
-        print(f"Adding clautorun marketplace for Claude Code...")
+        print(f"Adding autorun marketplace for Claude Code...")
         result = run_cmd(["claude", "plugin", "marketplace", "add", str(marketplace_root)])
         if result.ok:
-            print("   Added clautorun marketplace")
+            print("   Added autorun marketplace")
         elif result.has_text("already"):
-            print("   clautorun marketplace already exists")
+            print("   autorun marketplace already exists")
         else:
             print(f"   Marketplace add: {result.output}")
 
@@ -1653,7 +1653,7 @@ def install_plugins(
 
     print()
     print("Available commands:")
-    print("  /cr:*             - clautorun commands (autorun, file policies, plan export, tmux)")
+    print("  /ar:*             - autorun commands (autorun, file policies, plan export, tmux)")
     print("  /pdf-extractor:*  - PDF extraction commands")
     if "gemini" in target_clis and conductor:
         print("  /conductor:*      - Conductor plan mode (Gemini only)")
@@ -1693,7 +1693,7 @@ def uninstall_plugins(selection: str = "all") -> int:
 
     # Uninstall UV tool
     print("   UV tool...", end=" ", flush=True)
-    result = run_cmd(["uv", "tool", "uninstall", "clautorun"])
+    result = run_cmd(["uv", "tool", "uninstall", "autorun"])
     if result.ok or result.has_text("not installed"):
         print("ok")
     else:
@@ -1706,7 +1706,7 @@ def uninstall_plugins(selection: str = "all") -> int:
         print(f"   Removed cache: {cache_base}")
 
     # Remove legacy manual install dir
-    legacy_dir = Path.home() / ".claude" / "plugins" / "clautorun"
+    legacy_dir = Path.home() / ".claude" / "plugins" / "autorun"
     if legacy_dir.exists():
         shutil.rmtree(legacy_dir)
         print(f"   Removed legacy dir: {legacy_dir}")
@@ -1745,11 +1745,11 @@ def show_status() -> int:
     # UV environment check
     try:
         marketplace_root = find_marketplace_root()
-        # Ensure we don't double-append plugins/clautorun
+        # Ensure we don't double-append plugins/autorun
         if (marketplace_root / "pyproject.toml").exists():
             plugin_dir = marketplace_root
         else:
-            plugin_dir = marketplace_root / "plugins" / "clautorun"
+            plugin_dir = marketplace_root / "plugins" / "autorun"
         uv_result = _check_uv_env(plugin_dir)
         print(f"  UV environment: {'OK' if uv_result.ok else uv_result.output}")
     except FileNotFoundError:
@@ -1774,7 +1774,7 @@ def show_status() -> int:
     # Check UV CLI tools in PATH
     print()
     print("UV CLI Tools:")
-    for tool_name in ["clautorun", "claude-session-tools"]:
+    for tool_name in ["autorun", "claude-session-tools"]:
         path = shutil.which(tool_name)
         if path:
             print(f"  {tool_name}: {path}")
@@ -1802,7 +1802,7 @@ def show_status() -> int:
         result = run_cmd(["gemini", "extensions", "list"])
         if result.ok:
             # Check for each plugin separately (new Gemini architecture)
-            for plugin in ["cr", "pdf-extractor"]:
+            for plugin in ["ar", "pdf-extractor"]:
                 is_installed = plugin in result.output
                 print(f"  {plugin}: {'✓ installed' if is_installed else '✗ not installed'}")
 
@@ -1827,7 +1827,7 @@ def show_status() -> int:
 
 
 def check_for_updates() -> tuple[bool, str, str]:
-    """Check if clautorun update is available using stdlib (no dependencies).
+    """Check if autorun update is available using stdlib (no dependencies).
 
     Uses importlib.metadata for current version and GitHub API for latest release.
     Handles network failures and missing package gracefully.
@@ -1845,14 +1845,14 @@ def check_for_updates() -> tuple[bool, str, str]:
     from importlib.metadata import version as get_version, PackageNotFoundError
 
     try:
-        current = get_version("clautorun")
+        current = get_version("autorun")
     except PackageNotFoundError:
         return (False, "unknown", "unknown")
 
     try:
-        url = "https://api.github.com/repos/ahundt/clautorun/releases/latest"
+        url = "https://api.github.com/repos/ahundt/autorun/releases/latest"
         req = urllib.request.Request(url)
-        req.add_header("User-Agent", "clautorun-installer")
+        req.add_header("User-Agent", "autorun-installer")
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read())
             latest = data["tag_name"].lstrip("v")
@@ -1866,7 +1866,7 @@ def check_for_updates() -> tuple[bool, str, str]:
 class UpdateStrategy:
     """Installation method detection for self-updates.
 
-    Detects how clautorun was installed to choose correct update pathway:
+    Detects how autorun was installed to choose correct update pathway:
     - AIX: Highest priority (manages all CLIs)
     - Plugin: Claude Code or Gemini CLI plugin system
     - UV: UV package manager
@@ -1881,9 +1881,9 @@ class UpdateStrategy:
         """Auto-detect installation method for updates.
 
         Priority order:
-        1. AIX (if installed and managing clautorun)
-        2. Claude Code plugin (if claude CLI found + clautorun in list)
-        3. Gemini CLI plugin (if gemini CLI found + clautorun in list)
+        1. AIX (if installed and managing autorun)
+        2. Claude Code plugin (if claude CLI found + autorun in list)
+        3. Gemini CLI plugin (if gemini CLI found + autorun in list)
         4. UV (if UV available)
         5. Pip (fallback)
 
@@ -1897,12 +1897,12 @@ class UpdateStrategy:
         # Try plugin systems
         if shutil.which("claude"):
             result = run_cmd(["claude", "plugin", "list"], timeout=10)
-            if result.ok and "clautorun" in result.output:
+            if result.ok and "autorun" in result.output:
                 return UpdateStrategy("plugin", "claude")
 
         if shutil.which("gemini"):
             result = run_cmd(["gemini", "extensions", "list"], timeout=10)
-            if result.ok and "clautorun-workspace" in result.output:
+            if result.ok and "autorun-workspace" in result.output:
                 return UpdateStrategy("plugin", "gemini")
 
         # Fall back to package manager
@@ -1941,17 +1941,17 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 
     # Strategy pattern - each method is a separate handler
     if method == "aix":
-        return run_cmd(["aix", "skills", "update", "clautorun"], timeout=120)
+        return run_cmd(["aix", "skills", "update", "autorun"], timeout=120)
 
     elif method == "plugin":
         # Try both CLIs (one will succeed)
         if shutil.which("claude"):
-            result = run_cmd(["claude", "plugin", "update", "clautorun"], timeout=60)
+            result = run_cmd(["claude", "plugin", "update", "autorun"], timeout=60)
             if result.ok:
                 return result
 
         if shutil.which("gemini"):
-            result = run_cmd(["gemini", "extensions", "update", "clautorun-workspace"], timeout=60)
+            result = run_cmd(["gemini", "extensions", "update", "autorun-workspace"], timeout=60)
             if result.ok:
                 return result
 
@@ -1961,22 +1961,22 @@ def perform_self_update(method: str = "auto") -> CmdResult:
         # UV pathway: install + register
         result = run_cmd([
             "uv", "pip", "install", "--upgrade",
-            "git+https://github.com/ahundt/clautorun.git"
+            "git+https://github.com/ahundt/autorun.git"
         ], timeout=120)
         if result.ok:
             # Re-register plugins
             runner = get_python_runner()
-            return run_cmd([*runner, "-m", "clautorun", "--install", "--force"], timeout=120)
+            return run_cmd([*runner, "-m", "autorun", "--install", "--force"], timeout=120)
         return result
 
     elif method == "pip":
         # Pip pathway: install + register
         result = run_cmd([
             "pip", "install", "--upgrade",
-            "git+https://github.com/ahundt/clautorun.git"
+            "git+https://github.com/ahundt/autorun.git"
         ], timeout=120)
         if result.ok:
-            return run_cmd(["python", "-m", "clautorun", "--install", "--force"], timeout=120)
+            return run_cmd(["python", "-m", "autorun", "--install", "--force"], timeout=120)
         return result
 
     else:
@@ -1992,15 +1992,15 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 # =============================================================================
 # CLI Entry Points
 # =============================================================================
-# Note: Legacy clautorun-install entry point removed in v0.8.0
-# Use 'clautorun --install' instead
+# Note: Legacy autorun-install entry point removed in v0.8.0
+# Use 'autorun --install' instead
 
 
 def _map_legacy_flags(args: list[str]) -> list[str]:
-    """Map legacy clautorun-install subcommands to __main__.py flags.
+    """Map legacy autorun-install subcommands to __main__.py flags.
 
-    Provides backward compatibility for the old `clautorun-install install`
-    style commands by converting them to `clautorun --install` style flags.
+    Provides backward compatibility for the old `autorun-install install`
+    style commands by converting them to `autorun --install` style flags.
 
     Args:
         args: Legacy positional arguments (e.g., ["install", "--force"])
@@ -2036,9 +2036,9 @@ def _map_legacy_flags(args: list[str]) -> list[str]:
 
 
 def install_main():
-    """Entry point for clautorun-install console script.
+    """Entry point for autorun-install console script.
 
-    Provides backward compatibility with the legacy `clautorun-install`
+    Provides backward compatibility with the legacy `autorun-install`
     command by mapping legacy subcommands to the unified CLI flags.
     """
     args = sys.argv[1:]
@@ -2056,11 +2056,11 @@ def install_main():
 
 
 if __name__ == "__main__":
-    # Configure logging for CLI use (file-only when CLAUTORUN_DEBUG=1, disabled otherwise)
+    # Configure logging for CLI use (file-only when AUTORUN_DEBUG=1, disabled otherwise)
     import os
-    if os.environ.get('CLAUTORUN_DEBUG') == '1':
+    if os.environ.get('AUTORUN_DEBUG') == '1':
         from pathlib import Path
-        log_file = Path.home() / ".clautorun" / "daemon.log"
+        log_file = Path.home() / ".autorun" / "daemon.log"
         logging.basicConfig(
             handlers=[logging.FileHandler(log_file)],
             level=logging.DEBUG,

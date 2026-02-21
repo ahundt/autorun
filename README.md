@@ -1,11 +1,11 @@
-# clautorun
+# autorun
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache%20v2-green.svg)](LICENSE)
 
-![clautorun Architecture](clautorun-architecture.png)
+![autorun Architecture](autorun-architecture.png)
 
-**clautorun** - Reduce interruptions while Claude completes tasks more safely and autonomously.
+**autorun** - Reduce interruptions while Claude completes tasks more safely and autonomously.
 
 ## Table of Contents
 
@@ -44,29 +44,29 @@
 
 ```bash
 # Install from GitHub
-/plugin install https://github.com/ahundt/clautorun.git
+/plugin install https://github.com/ahundt/autorun.git
 
 # Verify installation
-/cr:st
+/ar:st
 # Expected: "AutoFile policy: allow-all"
 
 # Start autonomous task
-/cr:go Build a REST API with authentication and tests
+/ar:go Build a REST API with authentication and tests
 
 # Set file policy (prevent file clutter)
-/cr:f                    # Strict: only modify existing files
-/cr:j                    # Justify: require justification for new files
-/cr:a                    # Allow: create files freely (default)
+/ar:f                    # Strict: only modify existing files
+/ar:j                    # Justify: require justification for new files
+/ar:a                    # Allow: create files freely (default)
 
 # Emergency stop
-/cr:sos
+/ar:sos
 ```
 
 ## UV Installation (Recommended)
 
-The clautorun marketplace includes 2 plugins: **clautorun** and **pdf-extractor**.
+The autorun marketplace includes 2 plugins: **autorun** and **pdf-extractor**.
 
-> **Note:** plan-export functionality is now built into the clautorun plugin. Use `/cr:planexport` commands for plan management.
+> **Note:** plan-export functionality is now built into the autorun plugin. Use `/ar:planexport` commands for plan management.
 
 ### GitHub Installation
 
@@ -74,10 +74,10 @@ Install the entire marketplace directly from GitHub:
 
 ```bash
 # Install all 3 plugins from GitHub
-uv pip install git+https://github.com/ahundt/clautorun.git
+uv pip install git+https://github.com/ahundt/autorun.git
 
 # Register plugins with Claude Code
-clautorun --install
+autorun --install
 ```
 
 ### Local Installation
@@ -86,17 +86,17 @@ Install from a local clone:
 
 ```bash
 # Clone repository
-git clone https://github.com/ahundt/clautorun.git
-cd clautorun
+git clone https://github.com/ahundt/autorun.git
+cd autorun
 
 # Install marketplace
 uv pip install .
 
 # Register plugins with Claude Code
-clautorun --install
+autorun --install
 ```
 
-> **Note:** Use `clautorun --install` to ensure the command runs in the correct UV environment. If `clautorun-marketplace` is in your PATH, you can run it directly without `uv run`.
+> **Note:** Use `autorun --install` to ensure the command runs in the correct UV environment. If `autorun-marketplace` is in your PATH, you can run it directly without `uv run`.
 
 ### Development Installation
 
@@ -104,22 +104,22 @@ For contributors and developers:
 
 ```bash
 # Clone repository
-git clone https://github.com/ahundt/clautorun.git
-cd clautorun
+git clone https://github.com/ahundt/autorun.git
+cd autorun
 
 # Option 1: UV (recommended - faster, better dependency management)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force
+uv run python -m plugins.autorun.src.autorun.install --install --force
 
 # Option 2: pip fallback (if UV not available)
-pip install -e . && python -m plugins.clautorun.src.clautorun.install --install --force
+pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability
-# This makes 'clautorun' and 'claude-session-tools' commands globally available
+# This makes 'autorun' and 'claude-session-tools' commands globally available
 # which are needed for proper daemon operation and session management
-cd plugins/clautorun && uv tool install --force --editable .
+cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
-clautorun --status  # Verifies UV tool installation works
+autorun --status  # Verifies UV tool installation works
 ```
 
 **Install UV (if needed):**
@@ -145,14 +145,14 @@ claude plugin marketplace list
 # See all available commands
 /help
 
-# Test clautorun
-/cr:st
+# Test autorun
+/ar:st
 # Expected: "AutoFile policy: allow-all"
 ```
 
 ### Dual CLI Support (Claude Code + Gemini CLI)
 
-**clautorun works identically in both Claude Code and Gemini CLI**, providing the same safety features, commands, and autonomous execution capabilities across both platforms.
+**autorun works identically in both Claude Code and Gemini CLI**, providing the same safety features, commands, and autonomous execution capabilities across both platforms.
 
 #### Gemini CLI Requirements
 
@@ -182,48 +182,48 @@ npm install -g @google/gemini-cli@latest
 gemini --version  # Should show 0.28.0 or later
 ```
 
-For troubleshooting, see [TROUBLESHOOTING.md](plugins/clautorun/TROUBLESHOOTING.md).
+For troubleshooting, see [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md).
 
 #### Gemini CLI Installation
 
 ```bash
 # Clone and install
-git clone https://github.com/ahundt/clautorun.git && cd clautorun
+git clone https://github.com/ahundt/autorun.git && cd autorun
 
 # Option 1: UV (recommended)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force
-uv run python plugins/clautorun/scripts/restart_daemon.py
+uv run python -m plugins.autorun.src.autorun.install --install --force
+uv run python plugins/autorun/scripts/restart_daemon.py
 
 # Option 2: pip fallback
 pip install -e . && \
-python -m plugins.clautorun.src.clautorun.install --install --force && \
-python plugins/clautorun/scripts/restart_daemon.py
+python -m plugins.autorun.src.autorun.install --install --force && \
+python plugins/autorun/scripts/restart_daemon.py
 
 # Verify installation
 gemini extensions list
-# Should show: clautorun-workspace@0.8.0
+# Should show: autorun-workspace@0.8.0
 
 # Test in Gemini CLI
 gemini
-/cr:st
+/ar:st
 # Expected: "AutoFile policy: allow-all"
 ```
 
 #### Multi-Model Workflows
 
-Use clautorun's safety features across both CLIs:
+Use autorun's safety features across both CLIs:
 
 ```bash
 # Claude Code creates implementation
 claude
-/cr:go "Implement user authentication system"
+/ar:go "Implement user authentication system"
 
 # Gemini CLI reviews with vision capabilities
 gemini
 "Review the authentication code and analyze this architecture diagram"
 # Attach: architecture.png
 
-# Both sessions use clautorun safety:
+# Both sessions use autorun safety:
 # - File policies enforce consistently
 # - Command blocking prevents dangerous operations
 # - Sessions are isolated (no state leakage)
@@ -231,13 +231,13 @@ gemini
 
 #### Gemini-Specific Features
 
-**Vision + Safety**: Analyze images/diagrams with clautorun safety guards active:
+**Vision + Safety**: Analyze images/diagrams with autorun safety guards active:
 
 ```bash
 gemini -i screenshot.png -c "Convert this UI mockup to React components"
 ```
 
-Clautorun ensures generated code respects file policies (`/cr:f` for strict mode) and blocks dangerous operations.
+Autorun ensures generated code respects file policies (`/ar:f` for strict mode) and blocks dangerous operations.
 
 **Cross-Model Code Review**: Use Gemini to review Claude's work with safety features active:
 
@@ -249,28 +249,28 @@ gemini -c "Review src/auth.py for security issues and suggest improvements"
 
 #### Installation Notes
 
-- **Single install command**: `clautorun --install` detects both CLIs and installs for whichever are present
-- **Same commands**: All `/cr:*` and `/pdf-extractor:*` commands work identically
+- **Single install command**: `autorun --install` detects both CLIs and installs for whichever are present
+- **Same commands**: All `/ar:*` and `/pdf-extractor:*` commands work identically
 - **Isolated sessions**: Claude and Gemini sessions don't interfere with each other
 - **Shared safety**: File policies, command blocking, and hooks work the same in both CLIs
 
 For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 
-## What clautorun Does For You
+## What autorun Does For You
 
 **Problem Statement**: Claude Code sessions can end unexpectedly during extended tasks, requiring manual intervention to continue work. AI creates numerous experimental files during development, leading to cluttered project directories. Network disconnections or application crashes terminate active sessions, losing all in-progress work.
 
-**Solution Overview**: clautorun addresses these specific limitations through session automation, file policy enforcement, and session persistence.
+**Solution Overview**: autorun addresses these specific limitations through session automation, file policy enforcement, and session persistence.
 
 ### Reduce User Interruptions
 - **Current Behavior**: Claude Code sessions can end unexpectedly, requiring manual intervention to continue work
-- **With clautorun**: Claude continues working autonomously on the same task, reducing user interruptions
+- **With autorun**: Claude continues working autonomously on the same task, reducing user interruptions
 - **Mechanism**: Automatic task continuation when Claude stops working, ensuring focus stays on completing the original task without user intervention
 - **Result**: Tasks get completed with reduced interruptions
 
 ### File Creation Control
 - **Current Behavior**: AI creates multiple experimental files during development
-- **With clautorun**: Three-tier policy system restricts unnecessary file creation
+- **With autorun**: Three-tier policy system restricts unnecessary file creation
 - **Policy Levels**:
   1. Strict search (search for and modify existing files instead of creating new ones)
   2. Justified creation (require explanation for new files)
@@ -278,15 +278,15 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 - **Mechanism**: "Strict search" requires AI to first search for existing functionality or similar files, then modify those files rather than creating new ones
 - **Result**: Project directories contain essential files only, reducing cleanup requirements
 
-### Reduce Manual Interventions (clautorun feature)
+### Reduce Manual Interventions (autorun feature)
 - **Current Behavior**: Claude Code stops and waits for manually typing continue
-- **clautorun Action**: Hook system intercepts Claude Code stop events and automatically re-injects continuation prompts
+- **autorun Action**: Hook system intercepts Claude Code stop events and automatically re-injects continuation prompts
 - **Mechanism**: UserPromptSubmit and Stop hooks detect when Claude stops working, analyze the transcript for completion markers, and inject "continue working" prompts when tasks are incomplete
 - **Benefit**: Start autonomous tasks and return to completed work with fewer interruptions
 
-### Prevent File Clutter (clautorun feature)
+### Prevent File Clutter (autorun feature)
 - **Current Behavior**: AI creates multiple experimental files during development
-- **clautorun Action**: PreToolUse hooks intercept Write tool calls and enforce file creation policies
+- **autorun Action**: PreToolUse hooks intercept Write tool calls and enforce file creation policies
 - **Mechanism**: Before each file creation, the hook scans the conversation transcript for policy compliance. It blocks or allows file operations based on the current policy level (`/afs`, `/afj`, `/afa`) and any required justifications
 - **Policy Levels**:
   1. Strict search - Hook blocks all new file creation, forcing AI to modify existing files found through search
@@ -294,9 +294,9 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
   3. Allow all - Hook allows all file creation operations
 - **Benefit**: Maintain clean project directories with only essential files
 
-### Ensure Complete Tasks (clautorun feature)
+### Ensure Complete Tasks (autorun feature)
 - **Current Behavior**: AI may claim task completion after implementing only partial requirements
-- **clautorun Action**: Hook system implements three-stage verification by detecting completion markers and re-injecting the original task
+- **autorun Action**: Hook system implements three-stage verification by detecting completion markers and re-injecting the original task
 - **Mechanism**: When AI outputs a completion marker, the hook detects this first completion and re-injects the original task with a verification checklist. Only after a second completion marker does the system allow the session to end
 - **Benefit**: Reduce incomplete features and ensure all requirements are implemented
 
@@ -305,14 +305,14 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 - **tmux/byobu Action**: Maintains session state across interruptions using terminal multiplexing
 - **How it Works**: Terminal multiplexer keeps processes running on the server regardless of client connectivity
 - **Benefit**: Resume work from the exact interruption point after reconnection
-- **Note**: clautorun integrates with tmux/byobu but does not provide session persistence itself
+- **Note**: autorun integrates with tmux/byobu but does not provide session persistence itself
 
 ### Work From Anywhere (tmux/byobu + SSH/Mosh feature)
 - **Current Behavior**: Users must stay at their workstation to monitor and intervene in AI sessions
 - **SSH/Mosh + tmux Action**: Enables remote session monitoring and intervention from any device
 - **How it Works**: SSH/Mosh clients connect to the tmux session through network connections
 - **Benefit**: Monitor and control AI work from any location with internet access
-- **Note**: clautorun provides commands to work within tmux sessions but does not provide remote access
+- **Note**: autorun provides commands to work within tmux sessions but does not provide remote access
 
 ### Concrete Capabilities Matrix
 
@@ -323,7 +323,7 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 - **Multiplexing**: Split terminal windows for simultaneous viewing
 - **Process Recovery**: Automatic session recovery after system restart
 
-**clautorun Enhanced Capabilities:**
+**autorun Enhanced Capabilities:**
 - **Automatic Continuation**: Keeps Claude working without manually typing continue
 - **File Policy Enforcement**: Three-tier system to prevent file clutter
 - **Three-Stage Verification**: Helps ensure tasks are complete
@@ -332,13 +332,13 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 
 ### Measurable Technical Benefits
 
-**Before clautorun + tmux/byobu:**
+**Before autorun + tmux/byobu:**
 - AI work lost when terminal closes
 - Manual intervention required for session interruptions
 - No file creation control during autonomous workflows
 - No verification that tasks are actually complete
 
-**With clautorun + tmux/byobu:**
+**With autorun + tmux/byobu:**
 - Reduced data loss during crashes or disconnections
 - Decreased need for manual intervention
 - File creation policies to reduce unnecessary files
@@ -346,32 +346,32 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 
 ### Testing
 
-clautorun includes a comprehensive testing suite with multiple approaches to verify functionality and integration.
+autorun includes a comprehensive testing suite with multiple approaches to verify functionality and integration.
 
 #### Quick Integration Test
 
 **Test the complete workflow:**
 ```bash
 # Create byobu session with crash protection
-byobu-new-session clautorun-work
+byobu-new-session autorun-work
 
 # Start autonomous task that simulates crash
-/clautorun /autorun simulate network issues during build process
+/autorun /autorun simulate network issues during build process
 
 # Test session recovery
 # Close terminal, reconnect with SSH/Mosh
-byobu-attach clautorun-work
+byobu-attach autorun-work
 # Expected: AI work continues from interruption point
 ```
 
 **Recovery Verification:**
 ```bash
 # Check if AI is still working
-ps aux | grep python  # Look for running clautorun processes
+ps aux | grep python  # Look for running autorun processes
 
 # Verify session state persistence
-tmux list-sessions | grep clautorun
-# Expected: "clautorun-work" session exists and is running
+tmux list-sessions | grep autorun
+# Expected: "autorun-work" session exists and is running
 ```
 
 #### Comprehensive pytest Testing
@@ -388,13 +388,13 @@ UV is a modern, extremely fast Python package manager and virtual environment ma
 **Quick Core Tests:**
 ```bash
 # With UV (Recommended)
-uv run pytest plugins/clautorun/tests/test_unit_simple.py -v
+uv run pytest plugins/autorun/tests/test_unit_simple.py -v
 
 # With Traditional pip
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest plugins/clautorun/tests/test_unit_simple.py -v
+pytest plugins/autorun/tests/test_unit_simple.py -v
 
 # Using Makefile
 make test-quick
@@ -412,13 +412,13 @@ tests/test_unit_simple.py::TestConfiguration::test_emergency_stop_phrase PASSED
 **Full Test Suite with Coverage:**
 ```bash
 # With UV
-uv run pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing
+uv run pytest --cov=plugins/autorun/src/autorun --cov-report=term-missing
 
 # With make
 make test-all
 
 # With traditional pip
-pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing
+pytest --cov=plugins/autorun/src/autorun --cov-report=term-missing
 ```
 
 **Test Categories:**
@@ -428,7 +428,7 @@ pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing
 **Specific Test Categories:**
 ```bash
 # Unit tests only
-uv run pytest plugins/clautorun/tests/test_unit_simple.py -v
+uv run pytest plugins/autorun/tests/test_unit_simple.py -v
 
 # With markers
 uv run pytest -m unit -v
@@ -447,19 +447,19 @@ cat coverage.txt
 **Manual Testing:**
 ```bash
 # Test interactive commands
-uv run python src/clautorun/main.py
+uv run python src/autorun/main.py
 # Then try: /afs, /afa, /afj, /afst, quit
 
 # Test hook integration
-echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/clautorun/main.py
+echo '{"hook_event_name": "UserPromptSubmit", "session_id": "test", "prompt": "/afs"}' | uv run python src/autorun/main.py
 
 # Test plugin mode (same as hook integration now)
-echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/afa", "session_id": "test"}' | uv run python src/clautorun/main.py
+echo '{"hook_event_name": "UserPromptSubmit", "prompt": "/afa", "session_id": "test"}' | uv run python src/autorun/main.py
 ```
 
 ## Why Byobu + tmux Integration
 
-**clautorun is designed for use with byobu (tmux-compatible terminal multiplexer)** - this integration provides concrete technical capabilities:
+**autorun is designed for use with byobu (tmux-compatible terminal multiplexer)** - this integration provides concrete technical capabilities:
 
 ### Survive System Failures
 - **Technical Issue**: Terminal application crashes, network disconnections, or system reboots terminate Claude Code sessions, losing all in-progress AI work
@@ -547,7 +547,7 @@ graph TD
 
 ```mermaid
 graph TD
-    A["/cr:go task description"] --> B[Stage 1: Initial Implementation]
+    A["/ar:go task description"] --> B[Stage 1: Initial Implementation]
     B --> C{AUTORUN_INITIAL_TASKS_COMPLETED?}
     C -->|No| D[Continue working]
     D --> B
@@ -568,34 +568,34 @@ graph TD
 
 **Stage 3 - Final Verification**: Claude verifies all requirements met, outputs `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` to finish.
 
-**Emergency Stop**: At any point, `/cr:sos` outputs `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` and immediately halts.
+**Emergency Stop**: At any point, `/ar:sos` outputs `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` and immediately halts.
 
 ### How It Works
 
-1. User sends `/cr:go <task description>` (or legacy `/autorun`)
+1. User sends `/ar:go <task description>` (or legacy `/autorun`)
 2. UserPromptSubmit hook activates session state with three-stage tracking
 3. AI works autonomously through each stage
 4. At each stage boundary, the system validates completion markers
 5. Only after all three stages complete does the session end
-6. Emergency stop (`/cr:sos`) immediately halts at any point
+6. Emergency stop (`/ar:sos`) immediately halts at any point
 
 ### Safety Mechanisms
 - **Maximum recheck limit**: Prevents infinite loops (default: 3 attempts per stage)
-- **Emergency stop**: `/cr:sos` immediately terminates any runaway process
+- **Emergency stop**: `/ar:sos` immediately terminates any runaway process
 - **Plan acceptance**: Plans can auto-trigger autorun via "PLAN ACCEPTED" marker
 - **State validation**: Ensures session integrity throughout process
 
 ### Verification Example
 
-**Before clautorun**: Claude stops after implementing basic login form
-**With clautorun three-stage verification**:
+**Before autorun**: Claude stops after implementing basic login form
+**With autorun three-stage verification**:
 1. Stage 1: "Login form implemented!" → `AUTORUN_INITIAL_TASKS_COMPLETED`
 2. Stage 2: "Critically evaluated - added error handling, tests missing" → continues working → `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED`
 3. Stage 3: "Verified: Form works, tests pass, error handling complete" → `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` → Session ends
 
 ## Tmux Integration
 
-For crash-safe sessions that survive disconnections, use **byobu** (recommended) with clautorun.
+For crash-safe sessions that survive disconnections, use **byobu** (recommended) with autorun.
 
 ### Install byobu (Recommended)
 
@@ -626,13 +626,13 @@ sudo apt install byobu
 
 ```bash
 # Create byobu session
-byobu-new-session clautorun-work
+byobu-new-session autorun-work
 
 # Start autonomous work
-/cr:go Build a complete web application with authentication
+/ar:go Build a complete web application with authentication
 
 # Detach: Ctrl+A, D (or close terminal)
-# Reattach anytime: byobu-attach clautorun-work
+# Reattach anytime: byobu-attach autorun-work
 ```
 
 ### Remote Access with Mosh (Optional)
@@ -640,7 +640,7 @@ byobu-new-session clautorun-work
 For better mobile/unreliable connections, use [Mosh](https://mosh.org/) instead of SSH:
 ```bash
 # Install: brew install mosh (macOS) or sudo apt install mosh (Linux)
-mosh user@server    # Then: byobu-attach clautorun-work
+mosh user@server    # Then: byobu-attach autorun-work
 ```
 
 ## Development
@@ -648,7 +648,7 @@ mosh user@server    # Then: byobu-attach clautorun-work
 ### Repository Structure
 
 **Git Repository (Development Location):**
-- Edit source files in your clautorun git repository
+- Edit source files in your autorun git repository
 - Run tests from the plugin directory
 - Commit changes to git
 - Push changes to GitHub for sharing
@@ -660,8 +660,8 @@ mosh user@server    # Then: byobu-attach clautorun-work
 
 **Typical Development Workflow:**
 ```bash
-# Navigate to your clautorun repository
-cd /path/to/clautorun
+# Navigate to your autorun repository
+cd /path/to/autorun
 
 # Edit files in the repository
 # Run tests
@@ -672,37 +672,37 @@ git add .
 git commit -m "Description of changes"
 
 # Update plugin (or reinstall for local development)
-/plugin update clautorun
-# OR for local development: /plugin install clautorun@clautorun
+/plugin update autorun
+# OR for local development: /plugin install autorun@autorun
 ```
 
 ### Active vs Deprecated
 
-**✅ clautorun plugin v0.8.0 (Current)**
-- Installed via `/plugin install https://github.com/ahundt/clautorun.git`
-- Commands: `/cr:st`, `/cr:a`, `/cr:j`, `/cr:f`, `/cr:go`, `/cr:gp`, `/cr:x`, `/cr:sos`, `/cr:tm`, `/cr:tt`, `/cr:tabs`
-- **NEW v0.6.0:** `/cr:no`, `/cr:ok`, `/cr:clear`, `/cr:globalno`, `/cr:globalok`, `/cr:globalstatus` (Command Blocking)
+**✅ autorun plugin v0.8.0 (Current)**
+- Installed via `/plugin install https://github.com/ahundt/autorun.git`
+- Commands: `/ar:st`, `/ar:a`, `/ar:j`, `/ar:f`, `/ar:go`, `/ar:gp`, `/ar:x`, `/ar:sos`, `/ar:tm`, `/ar:tt`, `/ar:tabs`
+- **NEW v0.6.0:** `/ar:no`, `/ar:ok`, `/ar:clear`, `/ar:globalno`, `/ar:globalok`, `/ar:globalstatus` (Command Blocking)
 - Active and maintained
 
 ## 🔧 Advanced Setup (Optional)
 
 ### Development Installation (Contributors)
 
-For contributing to clautorun development:
+For contributing to autorun development:
 
 ```bash
 # Clone repository and set up development environment
-git clone https://github.com/ahundt/clautorun.git
-cd clautorun
+git clone https://github.com/ahundt/autorun.git
+cd autorun
 
 # Install development dependencies
 uv sync --extra dev
 
 # Add local development marketplace for testing
-/plugin marketplace add ./clautorun
+/plugin marketplace add ./autorun
 
 # Install your local development version
-/plugin install clautorun@clautorun
+/plugin install autorun@autorun
 ```
 
 **Contributor Workflow:**
@@ -727,72 +727,72 @@ Git provides complete version control for collaborative development. Essential c
 
 ```bash
 # Option 1: UV (recommended)
-uv run python -m plugins.clautorun.src.clautorun.install --install --force
+uv run python -m plugins.autorun.src.autorun.install --install --force
 
 # Option 2: pip fallback (if UV not available)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m plugins.clautorun.src.clautorun.install --install --force
+python -m plugins.autorun.src.autorun.install --install --force
 ```
 
 ## 📋 Available Commands
 
 ### Plugin Naming
 
-- **Project/Repo name**: `clautorun`
-- **Marketplace name**: `clautorun` (used for `/plugin install clautorun@clautorun`)
-- **Command prefix**: `cr` (used for short commands like `/cr:st`, `/cr:a`, `/cr:f`)
+- **Project/Repo name**: `autorun`
+- **Marketplace name**: `autorun` (used for `/plugin install autorun@autorun`)
+- **Command prefix**: `cr` (used for short commands like `/ar:st`, `/ar:a`, `/ar:f`)
 
-The short `cr` prefix is intentional to make commands quick to type while the full name `clautorun` is used for the project, repository, and marketplace identification.
+The short `cr` prefix is intentional to make commands quick to type while the full name `autorun` is used for the project, repository, and marketplace identification.
 
 ### Command Prefix
 
-Commands use the `/cr:` prefix with both **short** (for power users) and **long** (for discoverability) forms.
+Commands use the `/ar:` prefix with both **short** (for power users) and **long** (for discoverability) forms.
 
 ### Command Reference Table
 
 | Short | Long | Legacy | Description |
 |-------|------|--------|-------------|
-| `/cr:a` | `/cr:allow` | `/afa` | Allow all file creation (Level 3) |
-| `/cr:j` | `/cr:justify` | `/afj` | Require justification for new files (Level 2) |
-| `/cr:f` | `/cr:find` | `/afs` | Find existing files only - no creation (Level 1) |
-| `/cr:st` | `/cr:status` | `/afst` | Show current policy status |
-| `/cr:go` | `/cr:run` | `/autorun` | Start autonomous task execution |
-| `/cr:gp` | `/cr:proc` | `/autoproc` | Procedural autonomous workflow |
-| `/cr:gc` | `/cr:commit` | - | Display Git Commit Requirements (17-step process) |
-| `/cr:ph` | `/cr:philosophy` | - | Display Universal System Design Philosophy (17 principles) |
-| `/cr:pn` | `/cr:plannew` | - | Create new structured plan |
-| `/cr:x` | `/cr:stop` | `/autostop` | Graceful stop |
-| `/cr:sos` | `/cr:estop` | `/estop` | Emergency stop |
-| `/cr:pr` | `/cr:planrefine` | - | Refine and improve existing plan |
-| `/cr:pu` | `/cr:planupdate` | - | Update plan with new information |
-| `/cr:pp` | `/cr:planprocess` | - | Execute plan with development process |
-| `/cr:tm` | `/cr:tmux` | - | Tmux session management |
-| `/cr:tt` | `/cr:ttest` | - | Tmux test workflow |
-| `/cr:tabs` | - | - | Discover and manage Claude sessions across tmux |
-| `/cr:no <p>` | - | - | Block command pattern in session |
-| `/cr:ok <p>` | - | - | Allow command pattern in session |
-| `/cr:clear` | - | - | Clear session blocks |
-| `/cr:globalno <p>` | - | - | Block command pattern globally |
-| `/cr:globalok <p>` | - | - | Allow command pattern globally |
+| `/ar:a` | `/ar:allow` | `/afa` | Allow all file creation (Level 3) |
+| `/ar:j` | `/ar:justify` | `/afj` | Require justification for new files (Level 2) |
+| `/ar:f` | `/ar:find` | `/afs` | Find existing files only - no creation (Level 1) |
+| `/ar:st` | `/ar:status` | `/afst` | Show current policy status |
+| `/ar:go` | `/ar:run` | `/autorun` | Start autonomous task execution |
+| `/ar:gp` | `/ar:proc` | `/autoproc` | Procedural autonomous workflow |
+| `/ar:gc` | `/ar:commit` | - | Display Git Commit Requirements (17-step process) |
+| `/ar:ph` | `/ar:philosophy` | - | Display Universal System Design Philosophy (17 principles) |
+| `/ar:pn` | `/ar:plannew` | - | Create new structured plan |
+| `/ar:x` | `/ar:stop` | `/autostop` | Graceful stop |
+| `/ar:sos` | `/ar:estop` | `/estop` | Emergency stop |
+| `/ar:pr` | `/ar:planrefine` | - | Refine and improve existing plan |
+| `/ar:pu` | `/ar:planupdate` | - | Update plan with new information |
+| `/ar:pp` | `/ar:planprocess` | - | Execute plan with development process |
+| `/ar:tm` | `/ar:tmux` | - | Tmux session management |
+| `/ar:tt` | `/ar:ttest` | - | Tmux test workflow |
+| `/ar:tabs` | - | - | Discover and manage Claude sessions across tmux |
+| `/ar:no <p>` | - | - | Block command pattern in session |
+| `/ar:ok <p>` | - | - | Allow command pattern in session |
+| `/ar:clear` | - | - | Clear session blocks |
+| `/ar:globalno <p>` | - | - | Block command pattern globally |
+| `/ar:globalok <p>` | - | - | Allow command pattern globally |
 
 ### AutoFile Commands (File Creation Control)
 
-- **/cr:a** or **/cr:allow** - Allow all file creation (Level 3 - default)
+- **/ar:a** or **/ar:allow** - Allow all file creation (Level 3 - default)
   - No restrictions on creating new files
   - Best for new projects and initial development
 
-- **/cr:j** or **/cr:justify** - Require justification before creating new files (Level 2)
+- **/ar:j** or **/ar:justify** - Require justification before creating new files (Level 2)
   - AI must include \<AUTOFILE_JUSTIFICATION> tag with reasoning
   - Ideal for security-sensitive work and established projects
 
-- **/cr:f** or **/cr:find** - Find existing files only (Level 1 - strictest)
+- **/ar:f** or **/ar:find** - Find existing files only (Level 1 - strictest)
   - Blocks ALL new file creation
   - Forces AI to FIND and modify existing files via Glob/Grep search
   - Perfect for refactoring established codebases
 
-- **/cr:st** or **/cr:status** - Display current AutoFile policy and settings
+- **/ar:st** or **/ar:status** - Display current AutoFile policy and settings
   - Shows current policy level and name
   - Displays current enforcement status
 
@@ -802,21 +802,21 @@ Commands use the `/cr:` prefix with both **short** (for power users) and **long*
 **General-purpose command blocking** - Block dangerous commands per-session or globally
 
 **Session Commands:**
-- **/cr:no \<pattern> [description]** - Block pattern in this session
-- **/cr:ok \<pattern>** - Allow pattern in this session
-- **/cr:clear [pattern]** - Clear session blocks (or specific pattern)
-- **/cr:blocks** - Show active session-level pattern blocks and allows
-- **/cr:status** - Show blocked patterns
+- **/ar:no \<pattern> [description]** - Block pattern in this session
+- **/ar:ok \<pattern>** - Allow pattern in this session
+- **/ar:clear [pattern]** - Clear session blocks (or specific pattern)
+- **/ar:blocks** - Show active session-level pattern blocks and allows
+- **/ar:status** - Show blocked patterns
 
 **Global Commands:**
-- **/cr:globalno \<pattern> [description]** - Block pattern globally (all sessions)
-- **/cr:globalok \<pattern>** - Allow pattern globally
-- **/cr:globalstatus** - Show global blocks
-- **/cr:globalclear** - Clear all global pattern blocks and allows
+- **/ar:globalno \<pattern> [description]** - Block pattern globally (all sessions)
+- **/ar:globalok \<pattern>** - Allow pattern globally
+- **/ar:globalstatus** - Show global blocks
+- **/ar:globalclear** - Clear all global pattern blocks and allows
 
 **Developer/Admin Commands:**
-- **/cr:reload** - Force-reload all integration rules from config files
-- **/cr:restart-daemon** - Restart daemon to reload Python code changes
+- **/ar:reload** - Force-reload all integration rules from config files
+- **/ar:restart-daemon** - Restart daemon to reload Python code changes
 
 **Pattern Type Prefixes (NEW):**
 - **regex:\<pattern>** - Use regular expression matching
@@ -830,22 +830,22 @@ Add custom descriptions when blocking patterns to provide specific guidance to u
 **Examples:**
 ```bash
 # Basic blocking (uses DEFAULT_INTEGRATIONS for suggestions)
-/cr:no rm
+/ar:no rm
 
 # Custom description for specific guidance
-/cr:no "exec(" unsafe exec function - use alternatives
+/ar:no "exec(" unsafe exec function - use alternatives
 
 # Regex pattern matching for flexible patterns
-/cr:no regex:eval\( dangerous eval usage - blocked for security
+/ar:no regex:eval\( dangerous eval usage - blocked for security
 
 # Glob pattern matching for wildcards
-/cr:no glob:*.tmp temporary files are not allowed in this session
+/ar:no glob:*.tmp temporary files are not allowed in this session
 
 # Global blocking with custom description
-/cr:globalno "git reset --hard" PERMANENTLY DESTRUCTIVE - use git restore instead
+/ar:globalno "git reset --hard" PERMANENTLY DESTRUCTIVE - use git restore instead
 
 # Auto-detect regex when pattern contains metacharacters
-/cr:no /eval\(.*assert/ matches eval( or assert(
+/ar:no /eval\(.*assert/ matches eval( or assert(
 ```
 
 **Pattern Type Examples:**
@@ -895,20 +895,20 @@ All existing patterns without type prefixes default to literal matching. Existin
 
 ### Autorun Commands (Autonomous Execution)
 
-- **/cr:go** or **/cr:run** \<prompt> - Start autonomous workflow with extended work sessions
+- **/ar:go** or **/ar:run** \<prompt> - Start autonomous workflow with extended work sessions
   - Reduces manual "continue" prompts significantly
   - Enables three-stage verification to prevent premature exits
   - Takes task description as argument (required)
 
-- **/cr:gp** or **/cr:proc** \<prompt> - Procedural autonomous workflow
+- **/ar:gp** or **/ar:proc** \<prompt> - Procedural autonomous workflow
   - Uses Sequential Improvement Methodology
   - Includes wait process and best practices generation
 
-- **/cr:x** or **/cr:stop** - Stop gracefully after current task completion
+- **/ar:x** or **/ar:stop** - Stop gracefully after current task completion
   - Allows AI to finish current work before stopping
   - Cleans up processes and state files properly
 
-- **/cr:sos** or **/cr:estop** - Emergency stop - immediately halt any runaway process
+- **/ar:sos** or **/ar:estop** - Emergency stop - immediately halt any runaway process
   - Stops all processes immediately without waiting
   - Use for critical situations or when something goes wrong
 
@@ -918,24 +918,24 @@ Structured planning for complex development tasks.
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `/cr:pn` | `/cr:plannew` | Create a new structured plan |
-| `/cr:pr` | `/cr:planrefine` | Refine and improve an existing plan |
-| `/cr:pu` | `/cr:planupdate` | Update plan with new information |
-| `/cr:pp` | `/cr:planprocess` | Execute plan with development process |
+| `/ar:pn` | `/ar:plannew` | Create a new structured plan |
+| `/ar:pr` | `/ar:planrefine` | Refine and improve an existing plan |
+| `/ar:pu` | `/ar:planupdate` | Update plan with new information |
+| `/ar:pp` | `/ar:planprocess` | Execute plan with development process |
 
-- **/cr:pn** or **/cr:plannew** - Create a new development plan
+- **/ar:pn** or **/ar:plannew** - Create a new development plan
   - Generates structured plan with checkboxes and dependencies
   - Includes task breakdown and verification criteria
 
-- **/cr:pr** or **/cr:planrefine** - Refine an existing plan
+- **/ar:pr** or **/ar:planrefine** - Refine an existing plan
   - Critically evaluates and improves plan quality
   - Identifies gaps and adds missing steps
 
-- **/cr:pu** or **/cr:planupdate** - Update plan with new context
+- **/ar:pu** or **/ar:planupdate** - Update plan with new context
   - Incorporates new requirements or changes
   - Maintains plan consistency
 
-- **/cr:pp** or **/cr:planprocess** - Execute development process
+- **/ar:pp** or **/ar:planprocess** - Execute development process
   - Follows the plan with Sequential Improvement Methodology
   - Auto-triggers autorun when plan is approved ("PLAN ACCEPTED" marker)
 
@@ -1001,8 +1001,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/task_lifecycle_cli.py --configure
 
 **Storage:**
 - **State**: `~/.claude/sessions/daemon_state.json` (single JSON file via filelock+JSON backend)
-- **Logs**: `~/.clautorun/task-tracking/{session_id}/audit.log` (per-session)
-- **Config**: `~/.clautorun/task-lifecycle.config.json`
+- **Logs**: `~/.autorun/task-tracking/{session_id}/audit.log` (per-session)
+- **Config**: `~/.autorun/task-lifecycle.config.json`
 
 **Test Coverage:**
 
@@ -1010,14 +1010,14 @@ Comprehensive test suite with 48 tests across 5 test files:
 
 ```bash
 # Run all task lifecycle + command blocking tests
-uv run pytest plugins/clautorun/tests/test_task_lifecycle_*.py plugins/clautorun/tests/test_pipe_context_blocking.py -v
+uv run pytest plugins/autorun/tests/test_task_lifecycle_*.py plugins/autorun/tests/test_pipe_context_blocking.py -v
 
 # Run specific test suites
-uv run pytest plugins/clautorun/tests/test_task_lifecycle_basic.py          # 8 basic tests
-uv run pytest plugins/clautorun/tests/test_task_lifecycle_integration.py    # 10 integration tests
-uv run pytest plugins/clautorun/tests/test_task_lifecycle_failure_modes.py  # 8 failure mode tests
-uv run pytest plugins/clautorun/tests/test_task_lifecycle_edge_cases.py     # 10 edge case tests
-uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12 pipe context tests
+uv run pytest plugins/autorun/tests/test_task_lifecycle_basic.py          # 8 basic tests
+uv run pytest plugins/autorun/tests/test_task_lifecycle_integration.py    # 10 integration tests
+uv run pytest plugins/autorun/tests/test_task_lifecycle_failure_modes.py  # 8 failure mode tests
+uv run pytest plugins/autorun/tests/test_task_lifecycle_edge_cases.py     # 10 edge case tests
+uv run pytest plugins/autorun/tests/test_pipe_context_blocking.py         # 12 pipe context tests
 ```
 
 **Test Categories:**
@@ -1075,7 +1075,7 @@ uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12
 
 ### Commit Command
 
-- **/cr:gc** or **/cr:commit** - Display Git Commit Requirements
+- **/ar:gc** or **/ar:commit** - Display Git Commit Requirements
   - 17-step process for high-quality commit messages
   - Subject line formats, message structure, content requirements
   - Security checks, validation checklist, pitfalls & solutions
@@ -1093,7 +1093,7 @@ uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12
 
 ### Philosophy Command
 
-- **/cr:ph** or **/cr:philosophy** - Display Universal System Design Philosophy
+- **/ar:ph** or **/ar:philosophy** - Display Universal System Design Philosophy
   - 17 core principles for exceptional systems
   - Ordered from most fundamental to most specific
   - Use during planning, code review, and architecture decisions
@@ -1112,10 +1112,10 @@ uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12
 
 ### Tmux Automation Commands
 
-- **/cr:tm** or **/cr:tmux** - Session lifecycle management (create, list, cleanup)
-- **/cr:tt** or **/cr:ttest** - Comprehensive CLI and plugin testing in isolated sessions
-- **/cr:tabs** - Discover and manage Claude sessions running across tmux windows
-- **/cr:tabw** - Execute actions on Claude sessions across tmux windows (DANGEROUS: sends keystrokes to other sessions)
+- **/ar:tm** or **/ar:tmux** - Session lifecycle management (create, list, cleanup)
+- **/ar:tt** or **/ar:ttest** - Comprehensive CLI and plugin testing in isolated sessions
+- **/ar:tabs** - Discover and manage Claude sessions running across tmux windows
+- **/ar:tabw** - Execute actions on Claude sessions across tmux windows (DANGEROUS: sends keystrokes to other sessions)
   - Scans all tmux panes for Claude Code sessions using pattern matching
   - Displays organized table with session letter (A, B, C), directory, purpose, and status
   - Supports batch actions: `all:continue`, `awaiting:continue`, `A:git status, B:pwd`
@@ -1123,7 +1123,7 @@ uv run pytest plugins/clautorun/tests/test_pipe_context_blocking.py         # 12
 
 #### Session Status Types
 
-When `/cr:tabs` discovers sessions, it displays these status indicators:
+When `/ar:tabs` discovers sessions, it displays these status indicators:
 
 | Status | Description | Action |
 |--------|-------------|--------|
@@ -1135,59 +1135,59 @@ When `/cr:tabs` discovers sessions, it displays these status indicators:
 | `error` | Error state detected | Investigate before acting |
 
 **See also**:
-- `/cr:tmux` or `/cr:tm` - Create and manage isolated tmux sessions
-- `/cr:ttest` or `/cr:tt` - Automated CLI testing in isolated sessions
+- `/ar:tmux` or `/ar:tm` - Create and manage isolated tmux sessions
+- `/ar:ttest` or `/ar:tt` - Automated CLI testing in isolated sessions
 - `tmux-session-automation.md` agent - Advanced session lifecycle automation
 
 ### Usage Examples
 
 ```bash
 # Start autonomous work on a large project
-/cr:go Build complete REST API with authentication, testing, and documentation
+/ar:go Build complete REST API with authentication, testing, and documentation
 
 # Enable strict file control for security-sensitive work
-/cr:j
-/cr:go Implement OAuth2 authentication system
+/ar:j
+/ar:go Implement OAuth2 authentication system
 
 # Check current file creation policy
-/cr:st
+/ar:st
 # Output: "Current policy: justify-create"
 
 # Protect existing codebase during refactoring (find existing files, don't create new ones)
-/cr:f
-/cr:go Refactor authentication module to use new database schema
+/ar:f
+/ar:go Refactor authentication module to use new database schema
 
 # Stop gracefully when task is complete
-/cr:x
+/ar:x
 
 # Emergency stop if something goes wrong
-/cr:sos
+/ar:sos
 
 # Tmux session management
-/cr:tm create my-project
-/cr:tm list
-/cr:tm cleanup
+/ar:tm create my-project
+/ar:tm list
+/ar:tm cleanup
 
 # Discover and manage Claude sessions across tmux windows
-/cr:tabs
+/ar:tabs
 # Shows table of sessions (A, B, C...) with status
 # Then respond with selections like: "A, B:git status, all:continue"
 
 # Advanced session discovery examples
-/cr:tabs                    # Show all Claude sessions with AI analysis
+/ar:tabs                    # Show all Claude sessions with AI analysis
 # Output: Table with sessions labeled A, B, C... with status and purpose
 
 # Continue all sessions awaiting input
-/cr:tabs awaiting:continue
+/ar:tabs awaiting:continue
 
 # Run different commands on specific sessions
-/cr:tabs A:git status, B:pwd, C:ls -la
+/ar:tabs A:git status, B:pwd, C:ls -la
 
 # Emergency stop all active sessions
-/cr:tabs all:escape
+/ar:tabs all:escape
 
 # Check status of all sessions
-/cr:tabs all:pwd
+/ar:tabs all:pwd
 ```
 
 ### Legacy Commands (Backward Compatible)
@@ -1198,29 +1198,29 @@ All legacy commands continue to work: `/afa`, `/afj`, `/afs`, `/afst`, `/autorun
 
 **Official Claude Code Plugin Structure:**
 ```
-clautorun/
+autorun/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest and metadata
 ├── agents/
 │   ├── tmux-session-automation.md      # Session lifecycle automation
 │   └── cli-test-automation.md         # CLI testing automation
 ├── commands/
-│   ├── clautorun            # Core plugin command script
+│   ├── autorun            # Core plugin command script
 │   ├── tmux-test-workflow.md           # Testing workflow
 │   └── tmux-session-management.md      # Session management
 ├── src/
-│   └── clautorun/           # Package code
+│   └── autorun/           # Package code
 └── ... (other files)
 ```
 
 ### Integration Approach Guidance
 
-**clautorun provides three integration approaches - choose based on your needs:**
+**autorun provides three integration approaches - choose based on your needs:**
 
 #### 1. **Official Plugin Integration** (Recommended for most users)
-- **Use When**: Standard clautorun functionality via `/plugin install`
+- **Use When**: Standard autorun functionality via `/plugin install`
 - **Commands**: `/afs`, `/afa`, `/afj`, `/afst`, `/autorun`, `/autostop`, `/estop`
-- **How**: `/plugin install https://github.com/ahundt/clautorun.git`
+- **How**: `/plugin install https://github.com/ahundt/autorun.git`
 - **Benefits**: Official plugin system, automatic updates, seamless integration
 - **State Management**: Enhanced session management with verification engine
 
@@ -1232,7 +1232,7 @@ clautorun/
 
 #### 3. **Interactive Mode** (Development and testing)
 - **Use When**: Standalone command processing, development, testing
-- **Setup**: `AGENT_MODE=SDK_ONLY python src/clautorun/main.py`
+- **Setup**: `AGENT_MODE=SDK_ONLY python src/autorun/main.py`
 - **Benefits**: Direct testing, development debugging, standalone operation
 - **State Management**: Local session state for testing purposes
 
@@ -1245,7 +1245,7 @@ clautorun/
 - Automatic dependency resolution through plugin environment
 
 **Canonical Entry Point:**
-The canonical entry point for clautorun is `commands/clautorun` - this is the executable that Claude Code calls when processing plugin commands. Configuration is centralized in `src/clautorun/config.py` which serves as the single source of truth for all CONFIG values used throughout the plugin (DRY principle).
+The canonical entry point for autorun is `commands/autorun` - this is the executable that Claude Code calls when processing plugin commands. Configuration is centralized in `src/autorun/config.py` which serves as the single source of truth for all CONFIG values used throughout the plugin (DRY principle).
 
 **Plugin Documentation:**
 - Follows Claude Code plugin specification with `.claude-plugin/plugin.json` manifest
@@ -1259,7 +1259,7 @@ The canonical entry point for clautorun is `commands/clautorun` - this is the ex
 
 **Environment Variables:**
 - `${CLAUDE_PLUGIN_ROOT}`: Absolute path to plugin directory for script execution
-- `${CLAUDE_PLUGIN_NAME}`: Plugin name from manifest (clautorun)
+- `${CLAUDE_PLUGIN_NAME}`: Plugin name from manifest (autorun)
 
 **Debugging Plugin Issues:**
 ```bash
@@ -1267,23 +1267,23 @@ The canonical entry point for clautorun is `commands/clautorun` - this is the ex
 claude --debug
 
 # Verify plugin structure
-ls -la ~/.claude/plugins/clautorun/.claude-plugin/
-ls -la ~/.claude/plugins/clautorun/commands/
+ls -la ~/.claude/plugins/autorun/.claude-plugin/
+ls -la ~/.claude/plugins/autorun/commands/
 
 # Test plugin manually
-echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun
+echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/autorun/commands/autorun
 ```
 
 **Plugin Management Commands:**
 ```bash
 # Uninstall plugin
-/plugin uninstall clautorun
+/plugin uninstall autorun
 
 # Reinstall plugin
-/plugin install clautorun@main
+/plugin install autorun@main
 
 # Update plugin from repository
-/plugin update clautorun
+/plugin update autorun
 
 # Browse available plugins
 /plugin marketplace list
@@ -1294,7 +1294,7 @@ echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/co
 This method intercepts all Claude Code prompts through the hook system.
 
 **What are Hooks?**
-Hooks are automated scripts that run at specific points during program execution. Think of them as custom triggers that let you extend or modify how a program works. In clautorun, hooks intercept commands before they reach Claude Code, enabling file policy enforcement and command processing.
+Hooks are automated scripts that run at specific points during program execution. Think of them as custom triggers that let you extend or modify how a program works. In autorun, hooks intercept commands before they reach Claude Code, enabling file policy enforcement and command processing.
 
 **What is JSON?**
 JSON (JavaScript Object Notation) is a lightweight data format that's easy for humans to read and write, and easy for computers to parse and generate. It's commonly used for configuration files and data exchange between programs.
@@ -1303,7 +1303,7 @@ JSON (JavaScript Object Notation) is a lightweight data format that's easy for h
 ```bash
 # The hooks entry point is hooks/hook_entry.py, configured via hooks/claude-hooks.json
 # Install the plugin to register hooks automatically:
-uv run --project plugins/clautorun python -m clautorun --install --force
+uv run --project plugins/autorun python -m autorun --install --force
 ```
 
 **Update settings.json:**
@@ -1312,7 +1312,7 @@ uv run --project plugins/clautorun python -m clautorun --install --force
   "hooks": {
     "hooks": [
       {
-        "command": "clautorun"
+        "command": "autorun"
       }
     ]
   }
@@ -1320,7 +1320,7 @@ uv run --project plugins/clautorun python -m clautorun --install --force
 ```
 
 **What happens:**
-- All prompts go through clautorun first
+- All prompts go through autorun first
 - File policy commands are handled locally
 - Other prompts continue to Claude Code normally
 
@@ -1330,14 +1330,14 @@ Run as a standalone application that communicates with Claude Code via the Agent
 
 **Setup:**
 ```bash
-# Navigate to clautorun directory
-cd /path/to/clautorun
+# Navigate to autorun directory
+cd /path/to/autorun
 
 # Activate virtual environment
 source .venv/bin/activate
 
 # Run interactive mode
-AGENT_MODE=SDK_ONLY python clautorun.py
+AGENT_MODE=SDK_ONLY python autorun.py
 ```
 
 **Example session:**
@@ -1362,7 +1362,7 @@ AGENT_MODE=SDK_ONLY python clautorun.py
 
 ## Tmux Automation Agents
 
-clautorun includes specialized agents for tmux-based automation and testing workflows with reliable session targeting:
+autorun includes specialized agents for tmux-based automation and testing workflows with reliable session targeting:
 
 ### tmux-session-automation Agent
 Automates tmux session lifecycle management with health monitoring and recovery:
@@ -1371,7 +1371,7 @@ Automates tmux session lifecycle management with health monitoring and recovery:
 - **Health Monitoring**: Continuous monitoring of session responsiveness and resource usage
 - **Automated Recovery**: Detect and recover from stuck or unresponsive sessions
 - **Integration Ready**: Works with ai-monitor for extended autonomous workflows
-- **Safe Session Targeting**: Commands always target "clautorun" session, never affect current Claude Code session
+- **Safe Session Targeting**: Commands always target "autorun" session, never affect current Claude Code session
 
 ### cli-test-automation Agent
 Comprehensive CLI application testing automation with verification capabilities:
@@ -1386,17 +1386,17 @@ Comprehensive CLI application testing automation with verification capabilities:
 
 **Critical Safety Feature**: All tmux utilities use explicit session targeting to prevent commands from accidentally affecting the current Claude Code session.
 
-- **Default Session**: "clautorun" - ensures commands never interfere with current session
+- **Default Session**: "autorun" - ensures commands never interfere with current session
 - **Custom Targeting**: Pass session parameter to target different sessions when needed
 - **Format**: `session:window.pane` for precise targeting
 - **Guarantee**: Commands will NEVER go to the wrong session accidentally
 
 ```python
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
-# Default: Always targets "clautorun" session
+# Default: Always targets "autorun" session
 tmux = get_tmux_utilities()
-tmux.send_keys("npm test")  # Executes in "clautorun" session, not current session
+tmux.send_keys("npm test")  # Executes in "autorun" session, not current session
 
 # Custom: Target specific session
 tmux.send_keys("npm test", "my-test-session")  # Executes in "my-test-session"
@@ -1406,16 +1406,16 @@ tmux.send_keys("npm test", "my-test-session")  # Executes in "my-test-session"
 
 ```bash
 # Test claude CLI with comprehensive automation
-/clautorun tmux-test-workflow claude --test-categories basic,integration,performance
+/autorun tmux-test-workflow claude --test-categories basic,integration,performance
 
 # Create and manage interactive development session
-/clautorun tmux-session-management create my-project --template development
+/autorun tmux-session-management create my-project --template development
 
 # Start health monitoring for existing session
-/clautorun tmux-session-management monitor my-dev-session
+/autorun tmux-session-management monitor my-dev-session
 
 # Safe command execution - never affects current Claude Code session
-/clautorun tmux-test-workflow --session=test-session --verify-functionality
+/autorun tmux-test-workflow --session=test-session --verify-functionality
 ```
 
 ## File Policy Details
@@ -1439,13 +1439,13 @@ tmux.send_keys("npm test", "my-test-session")  # Executes in "my-test-session"
 ## Project Structure
 
 ```
-clautorun/
+autorun/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest and metadata
 ├── commands/
-│   └── clautorun            # Plugin command script (Claude Code commands)
+│   └── autorun            # Plugin command script (Claude Code commands)
 ├── src/
-│   └── clautorun/
+│   └── autorun/
 │       ├── __init__.py          # Package exports
 │       ├── main.py              # Deprecated v0.6.1 backward-compatibility shim (hooks entry: hooks/hook_entry.py)
 │       ├── core.py              # Core hook processing logic
@@ -1467,7 +1467,7 @@ clautorun/
 │   └── test_pretooluse_policy_enforcement.py # PreToolUse policy tests
 ├── docs/
 │   └── INTEGRATION_GUIDE.md           # Detailed setup instructions
-├── clautorun.py                       # Entry point for interactive mode
+├── autorun.py                       # Entry point for interactive mode
 ├── requirements.txt                   # Python dependencies
 ├── pyproject.toml                    # Package configuration
 ├── README.md                          # This file
@@ -1493,7 +1493,7 @@ clautorun/
 
 ### Core Design Principles
 
-This section outlines the essential design principles, patterns, and architectural decisions that guide clautorun development.
+This section outlines the essential design principles, patterns, and architectural decisions that guide autorun development.
 
 #### **DRY Code Patterns**
 
@@ -1503,7 +1503,7 @@ This section outlines the essential design principles, patterns, and architectur
 
 #### **RAII Pattern Implementation**
 
-clautorun uses Resource Acquisition Is Initialization (RAII) patterns for robust resource management:
+autorun uses Resource Acquisition Is Initialization (RAII) patterns for robust resource management:
 
 ```python
 # RAII Session Lock - Automatic acquisition and guaranteed release
@@ -1544,7 +1544,7 @@ with session_manager.session_state(session_id, timeout=30.0) as state:
 
 #### **Dispatch Pattern**
 
-clautorun uses a **command dispatch pattern** for processing different types of commands:
+autorun uses a **command dispatch pattern** for processing different types of commands:
 
 ```python
 # Command Detection and Dispatch Logic
@@ -1588,10 +1588,10 @@ uv sync --extra claude-code  # Install dependencies
 
 #### **Centralized Error Handling (DRY)**
 
-Following DRY principles, clautorun implements centralized error handling:
+Following DRY principles, autorun implements centralized error handling:
 
 ```python
-from clautorun.error_handling import show_comprehensive_uv_error
+from autorun.error_handling import show_comprehensive_uv_error
 
 # Single source of truth for all import errors
 show_comprehensive_uv_error("MODULE ERROR", "Specific error details")
@@ -1606,7 +1606,7 @@ show_comprehensive_uv_error("MODULE ERROR", "Specific error details")
 ### System Architecture
 
 **Integration Architecture:**
-clautorun provides multiple integration approaches, each using the same core session management and error handling infrastructure:
+autorun provides multiple integration approaches, each using the same core session management and error handling infrastructure:
 
 1. **Claude Code Plugin**: Official plugin system integration
 2. **Hook Integration**: Event-based command interception
@@ -1627,7 +1627,7 @@ clautorun provides multiple integration approaches, each using the same core ses
 
 - Plugin commands can be **markdown files** with YAML frontmatter
 - Commands appear in Claude Code with the format: `plugin-name:command-name`
-- Example: `commands/test.md` appears as `/clautorun:test` in slash commands list
+- Example: `commands/test.md` appears as `/autorun:test` in slash commands list
 
 **Plugin Manifest Structure**:
 ```json
@@ -1660,14 +1660,14 @@ Source: https://docs.claude.com/en/docs/claude-code/plugins-reference
 5. `continue: true` means pass to AI for processing
 
 **Current Implementation**:
-- ✅ `commands/clautorun` executable script - Agent SDK JSON protocol
+- ✅ `commands/autorun` executable script - Agent SDK JSON protocol
 - ✅ Receives: `{"prompt": "/afst", "session_id": "test"}`
 - ✅ Returns: `{"continue": false, "response": "Current policy: strict-search"}`
-- ✅ Symlinked in `~/.claude/commands/clautorun` for system-wide access
+- ✅ Symlinked in `~/.claude/commands/autorun` for system-wide access
 
 **Testing**:
 ```bash
-echo '{"prompt": "/afst", "session_id": "test"}' | ~/.claude/commands/clautorun
+echo '{"prompt": "/afst", "session_id": "test"}' | ~/.claude/commands/autorun
 # Output: {"continue": false, "response": "Current policy: strict-search"}
 ```
 
@@ -1684,10 +1684,10 @@ Source: https://docs.claude.com/en/docs/claude-code/plugins-reference
 **Current UV Tool Setup**:
 ```bash
 # Main plugin functionality (reads JSON stdin)
-clautorun
+autorun
 
 # Installation management utility
-clautorun-install
+autorun-install
 
 # Session tools CLI (daemon management, session state inspection)
 claude-session-tools
@@ -1696,16 +1696,16 @@ claude-session-tools
 **Entry Points** (from `pyproject.toml`):
 ```toml
 [project.scripts]
-clautorun = "clautorun.__main__:main"
-clautorun-install = "clautorun.install:install_main"
-claude-session-tools = "clautorun.claude_session_tools:main"
+autorun = "autorun.__main__:main"
+autorun-install = "autorun.install:install_main"
+claude-session-tools = "autorun.claude_session_tools:main"
 ```
 
 #### Plugin Development Workflow
 
 1. **Create markdown commands** in `commands/` directory
 2. **Markdown files call UV tool** via shell execution
-3. **UV tool** (`clautorun`) processes commands using Python package
+3. **UV tool** (`autorun`) processes commands using Python package
 4. **Fallback mechanisms** ensure functionality when UV tool unavailable
 
 **Testing Plugin Loading**:
@@ -1803,8 +1803,8 @@ The SDK provides direct communication with Claude Code:
 This means Python code CAN communicate with Claude Code directly, but the documented pattern for slash commands is still markdown files that can call bash scripts.
 
 **Our Implementation** (Non-standard JSON Protocol):
-- Executable `commands/clautorun` script using JSON stdin/stdout protocol
-- Works when symlinked to `~/.claude/commands/clautorun`
+- Executable `commands/autorun` script using JSON stdin/stdout protocol
+- Works when symlinked to `~/.claude/commands/autorun`
 - Not recognized by plugin system's command discovery
 - Uses Agent SDK-style JSON communication pattern
 
@@ -1819,7 +1819,7 @@ This means Python code CAN communicate with Claude Code directly, but the docume
 1. **Bash Integration in Markdown** (RECOMMENDED - Official Pattern):
    - Create markdown command files (e.g., `afs.md`, `afa.md`)
    - Use `allowed-tools: Bash(...)` in frontmatter
-   - Call our executable with `!`echo '{"prompt": "/afs"}' | clautorun``
+   - Call our executable with `!`echo '{"prompt": "/afs"}' | autorun``
    - Output becomes context for Claude's response
    - Fully documented and supported approach
 
@@ -1873,31 +1873,31 @@ This means Python code CAN communicate with Claude Code directly, but the docume
 **GitHub Version Management:**
 ```bash
 # Install or update from GitHub (recommended)
-/plugin install https://github.com/ahundt/clautorun.git
+/plugin install https://github.com/ahundt/autorun.git
 
 # Update to latest version
-/plugin update clautorun
+/plugin update autorun
 
 # List installed plugins
 /plugin
 
 # Uninstall plugin
-/plugin uninstall clautorun
+/plugin uninstall autorun
 ```
 
 **Local Development Management:**
 ```bash
 # Add/refresh local development marketplace
-/plugin marketplace add ./clautorun
+/plugin marketplace add ./autorun
 
 # Install or update local development version
-/plugin install clautorun@clautorun
+/plugin install autorun@autorun
 
 # List available marketplaces
 /plugin marketplace list
 
 # Remove local marketplace when done
-/plugin marketplace remove clautorun
+/plugin marketplace remove autorun
 ```
 
 **General Management:**
@@ -1918,24 +1918,24 @@ UV provides simple, clean commands for development:
 
 ```bash
 # Install plugin (handles everything automatically)
-uv run clautorun install
+uv run autorun install
 
 # Check installation status
-uv run clautorun check
+uv run autorun check
 
 # Uninstall plugin
-uv run clautorun uninstall
+uv run autorun uninstall
 
 # Force reinstall (overwrites existing)
-uv run clautorun install --force
+uv run autorun install --force
 ```
 
 **Testing with UV:**
 See the comprehensive [Testing](#testing) section above for all testing commands and approaches.
 
 **Python Environment Reminders:**
-- With UV (recommended): `uv run python -m clautorun --install`
-- With pip fallback: `python -m clautorun --install`
+- With UV (recommended): `uv run python -m autorun --install`
+- With pip fallback: `python -m autorun --install`
 - The plugin inherits dependencies from the active Python environment
 - For production use, prefer the official `/plugin` commands
 
@@ -1946,7 +1946,7 @@ source .venv/bin/activate  # Must be done in each new terminal
 
 ## Companion Tools
 
-clautorun works well with these complementary tools for a complete development workflow. These tools solve different problems than clautorun and can be used alongside it.
+autorun works well with these complementary tools for a complete development workflow. These tools solve different problems than autorun and can be used alongside it.
 
 ### Git Workflow Utilities
 
@@ -1956,16 +1956,16 @@ clautorun works well with these complementary tools for a complete development w
 - Useful for moving commits from backup/polluted repos to fresh clones
 - Usage: `/git-transfer-commits`
 
-**Why this is separate:** Git commit transfer is a cross-repository operation, while clautorun handles intra-repository session automation. Different domains, separate tools.
+**Why this is separate:** Git commit transfer is a cross-repository operation, while autorun handles intra-repository session automation. Different domains, separate tools.
 
 ### Security Hooks
 
-**Command Blocking System (Integrated in clautorun v0.6.0)** - General-purpose command blocking
-- **Built into clautorun** - No separate hook installation needed
-- Session-level commands: `/cr:no <pattern>`, `/cr:ok <pattern>`, `/cr:clear`, `/cr:status`
-- Global-level commands: `/cr:globalno <pattern>`, `/cr:globalok <pattern>`, `/cr:globalstatus`
+**Command Blocking System (Integrated in autorun v0.6.0)** - General-purpose command blocking
+- **Built into autorun** - No separate hook installation needed
+- Session-level commands: `/ar:no <pattern>`, `/ar:ok <pattern>`, `/ar:clear`, `/ar:status`
+- Global-level commands: `/ar:globalno <pattern>`, `/ar:globalok <pattern>`, `/ar:globalstatus`
 - Supports any command pattern (not just `rm`)
-- All block messages include "To allow in this session: /cr:ok <pattern>" instruction
+- All block messages include "To allow in this session: /ar:ok <pattern>" instruction
 - Default integrations include installation instructions:
   - `rm` → trash CLI (`brew install trash` on macOS, or `go install github.com/andraschume/trash-cli@latest` on Linux)
   - `rm -rf` → trash CLI with warning about permanent deletion
@@ -1984,7 +1984,7 @@ clautorun works well with these complementary tools for a complete development w
 - `hookify.block-gh-pr-issue-create-comment.local.md` - Blocks direct GitHub API calls
 - Managed via `/hookify` command
 
-**Relationship to clautorun:** Hookify is a separate Claude Code plugin for creating custom hooks based on patterns. Can work alongside clautorun for additional safety.
+**Relationship to autorun:** Hookify is a separate Claude Code plugin for creating custom hooks based on patterns. Can work alongside autorun for additional safety.
 
 ### Session Discovery
 
@@ -1993,7 +1993,7 @@ clautorun works well with these complementary tools for a complete development w
 - Analyze conversation history
 - Usage: `/session-explorer`
 
-**Why this is separate:** Session discovery is an analysis tool for finding existing sessions, while clautorun creates and manages new autonomous sessions. Different purposes.
+**Why this is separate:** Session discovery is an analysis tool for finding existing sessions, while autorun creates and manages new autonomous sessions. Different purposes.
 
 ## Troubleshooting
 
@@ -2006,17 +2006,17 @@ clautorun works well with these complementary tools for a complete development w
 claude --debug
 
 # Reinstall plugin (GitHub version)
-/plugin uninstall clautorun
-/plugin install https://github.com/ahundt/clautorun.git
+/plugin uninstall autorun
+/plugin install https://github.com/ahundt/autorun.git
 
 # Reinstall plugin (local development version)
-/plugin uninstall clautorun
-/plugin marketplace add ./clautorun
-/plugin install clautorun@clautorun
+/plugin uninstall autorun
+/plugin marketplace add ./autorun
+/plugin install autorun@autorun
 
 # Check plugin structure after installation
-ls -la ~/.claude/plugins/clautorun/.claude-plugin/
-ls -la ~/.claude/plugins/clautorun/commands/
+ls -la ~/.claude/plugins/autorun/.claude-plugin/
+ls -la ~/.claude/plugins/autorun/commands/
 ```
 
 **UV Installation Issues:**
@@ -2025,35 +2025,35 @@ ls -la ~/.claude/plugins/clautorun/commands/
 source .venv/bin/activate
 
 # Check installation status
-uv run clautorun check
+uv run autorun check
 
 # Force reinstall if needed
-uv run clautorun install --force
+uv run autorun install --force
 
 # Ensure dependencies are up to date
 uv sync --extra claude-code
 ```
 
 **Python Environment Issues:**
-- **Automatic Version Detection**: clautorun now checks Python version and provides helpful error messages
-- **Error: "PYTHON VERSION ERROR: clautorun requires Python 3.10 or higher"** → Follow the on-screen solutions
+- **Automatic Version Detection**: autorun now checks Python version and provides helpful error messages
+- **Error: "PYTHON VERSION ERROR: autorun requires Python 3.10 or higher"** → Follow the on-screen solutions
 - **Error: "ImportError: No module named pathlib"** → You're using Python 2.7, use `python3` instead
 - **Error: "dbm error: db type could not be determined"** → Normal for first run, plugin still works
 - **Solution**: Always activate UV environment: `source .venv/bin/activate`
-- **Alternative**: Use UV runner: `uv run python -m clautorun --status` (or `python -m clautorun --status` with pip)
+- **Alternative**: Use UV runner: `uv run python -m autorun --status` (or `python -m autorun --status` with pip)
 
 **Built-in Python Version Checking:**
-clautorun includes comprehensive Python version validation:
+autorun includes comprehensive Python version validation:
 - **Python 2.x**: Blocked with clear error message and solutions
 - **Python 3.0-3.9**: Warning shown but functionality allowed
 - **Python 3.10+**: Full compatibility and no warnings
 - **Automatic Solutions**: Provides specific commands to fix Python version issues
 
 **Plugin not working:**
-- Verify the plugin installation: `uv run clautorun check`
-- Check plugin structure: `ls -la ~/.claude/plugins/clautorun/.claude-plugin/`
-- Check plugin permissions: `ls -la ~/.claude/plugins/clautorun/commands/`
-- Test plugin manually: `echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/clautorun/commands/clautorun`
+- Verify the plugin installation: `uv run autorun check`
+- Check plugin structure: `ls -la ~/.claude/plugins/autorun/.claude-plugin/`
+- Check plugin permissions: `ls -la ~/.claude/plugins/autorun/commands/`
+- Test plugin manually: `echo '{"prompt": "/afs", "session_id": "test"}' | ~/.claude/plugins/autorun/commands/autorun`
 
 **UV Environment Issues:**
 - Ensure UV is installed: `uv --version`
@@ -2061,17 +2061,17 @@ clautorun includes comprehensive Python version validation:
 - Re-sync dependencies: `uv sync --extra claude-code`
 
 **Testing Issues:**
-- Run tests with UV: `uv run pytest plugins/clautorun/tests/`
-- Check test coverage: `uv run pytest --cov=plugins/clautorun/src/clautorun --cov-report=term-missing`
+- Run tests with UV: `uv run pytest plugins/autorun/tests/`
+- Check test coverage: `uv run pytest --cov=plugins/autorun/src/autorun --cov-report=term-missing`
 
 **Common Solutions:**
-- Force reinstall: `uv run clautorun install --force`
-- Check installation: `uv run clautorun check`
+- Force reinstall: `uv run autorun install --force`
+- Check installation: `uv run autorun check`
 - Ensure UV is working: `uv run python --version`
 
 ## Contributing and Sharing
 
-clautorun is an open source project that thrives on community contributions. If you find bugs, have suggestions, or create improvements, please consider sharing them with the community.
+autorun is an open source project that thrives on community contributions. If you find bugs, have suggestions, or create improvements, please consider sharing them with the community.
 
 ### How to Share Your Improvements
 
@@ -2079,11 +2079,11 @@ clautorun is an open source project that thrives on community contributions. If 
 ```bash
 # Fork the repository on GitHub
 # Clone your fork
-git clone https://github.com/yourusername/clautorun.git
-cd clautorun
+git clone https://github.com/yourusername/autorun.git
+cd autorun
 
 # Add the original repository as upstream
-git remote add upstream https://github.com/ahundt/clautorun.git
+git remote add upstream https://github.com/ahundt/autorun.git
 
 # Create your improvement branch
 git checkout -b feature/your-improvement
@@ -2099,12 +2099,12 @@ git push origin feature/your-improvement
 ```
 
 **Option 2: Report Issues**
-- **Bugs**: Use the [GitHub Issues](https://github.com/ahundt/clautorun/issues) page
+- **Bugs**: Use the [GitHub Issues](https://github.com/ahundt/autorun/issues) page
 - **Feature requests**: Share ideas for new functionality
 - **Documentation**: Help improve clarity and completeness
 
 **Option 3: Share Knowledge**
-- Write blog posts about your clautorun workflows
+- Write blog posts about your autorun workflows
 - Share screenshots of successful autonomous tasks
 - Document unique use cases and solutions
 - Help other users in discussions
@@ -2114,7 +2114,7 @@ git push origin feature/your-improvement
 - **Help others**: Your improvements benefit the entire community
 - **Get feedback**: Community review makes your contributions stronger
 - **Build reputation**: Contributors are recognized in the project
-- **Improve the tool**: Shared knowledge makes clautorun better for everyone
+- **Improve the tool**: Shared knowledge makes autorun better for everyone
 
 ## License
 
@@ -2122,7 +2122,7 @@ Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
 ### Custom Command Workflows
 
-You can extend clautorun with your own command workflows by creating markdown files:
+You can extend autorun with your own command workflows by creating markdown files:
 
 #### Creating Custom Workflows
 1. Create a markdown file in `~/.claude/commands/` (e.g., `myworkflow.md`)

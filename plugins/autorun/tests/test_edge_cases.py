@@ -11,7 +11,7 @@ Tests all individual functions with edge cases:
 - Export operations
 - Approval detection logic
 
-Run: uv run pytest plugins/clautorun/tests/test_edge_cases.py -v
+Run: uv run pytest plugins/autorun/tests/test_edge_cases.py -v
 """
 
 import json
@@ -27,8 +27,8 @@ from contextlib import nullcontext
 import pytest
 
 # Import the module to get reference for patching
-import clautorun.plan_export as plan_export
-from clautorun.plan_export import (
+import autorun.plan_export as plan_export
+from autorun.plan_export import (
     PlanExport,
     PlanExportConfig,
     export_plan,
@@ -65,7 +65,7 @@ def plans_dir(temp_dir):
 @pytest.fixture
 def config_dir(temp_dir):
     """Create a temporary config directory."""
-    config = temp_dir / ".claude" / "clautorun"
+    config = temp_dir / ".claude" / "autorun"
     config.mkdir(parents=True)
     return config
 
@@ -82,7 +82,7 @@ def project_dir(temp_dir):
 @pytest.fixture
 def plan_exporter(project_dir):
     """Create a PlanExport instance for testing class methods."""
-    from clautorun.core import ThreadSafeDB
+    from autorun.core import ThreadSafeDB
     store = ThreadSafeDB()
     ctx = EventContext(
         session_id="test-session",
@@ -457,7 +457,7 @@ class TestExportPlan:
         plan_file.write_text("# Plan to Export\n\nContent here")
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
-             patch('clautorun.plan_export.session_state', make_mock_session_state()):
+             patch('autorun.plan_export.session_state', make_mock_session_state()):
             result = export_plan(plan_file, project_dir)
 
         assert result["success"] is True
@@ -469,7 +469,7 @@ class TestExportPlan:
         plan_file.write_text("# Plan\n\nContent")
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
-             patch('clautorun.plan_export.session_state', make_mock_session_state()):
+             patch('autorun.plan_export.session_state', make_mock_session_state()):
             result = export_plan(plan_file, project_dir, session_id="test-session")
 
         assert result["success"] is True
@@ -487,7 +487,7 @@ class TestExportRejectedPlan:
         plan_file.write_text("# Rejected Plan\n\nNot approved")
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
-             patch('clautorun.plan_export.session_state', make_mock_session_state()):
+             patch('autorun.plan_export.session_state', make_mock_session_state()):
             result = export_rejected_plan(plan_file, project_dir)
 
         assert result["success"] is True
@@ -628,7 +628,7 @@ class TestErrorHandling:
 
     def test_session_timeout_handled(self):
         """SessionTimeoutError is handled gracefully."""
-        from clautorun.session_manager import SessionTimeoutError
+        from autorun.session_manager import SessionTimeoutError
 
         try:
             raise SessionTimeoutError("Test timeout")
@@ -649,7 +649,7 @@ class TestFullExportFlow:
         plan_file.write_text("# Approved Plan\n\nThis plan was approved.")
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
-             patch('clautorun.plan_export.session_state', make_mock_session_state()):
+             patch('autorun.plan_export.session_state', make_mock_session_state()):
             result = export_plan(plan_file, project_dir, session_id="integration-test")
 
         assert result["success"] is True
@@ -663,7 +663,7 @@ class TestFullExportFlow:
         plan_file.write_text("# Rejected Plan\n\nThis plan was not approved.")
 
         with patch.object(PlanExportConfig, 'load', return_value=PlanExportConfig()), \
-             patch('clautorun.plan_export.session_state', make_mock_session_state()):
+             patch('autorun.plan_export.session_state', make_mock_session_state()):
             result = export_rejected_plan(plan_file, project_dir, session_id="integration-test")
 
         assert result["success"] is True

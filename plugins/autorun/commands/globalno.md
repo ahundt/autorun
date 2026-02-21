@@ -6,17 +6,17 @@ description: Block a command pattern globally (persists across sessions)
 
 Add a command pattern to the global block list. Persists across all Claude Code sessions.
 
-**Usage**: `/cr:globalno <pattern>`
+**Usage**: `/ar:globalno <pattern>`
 
 **Pattern types**:
-- Literal: `/cr:globalno rm` (blocks commands containing "rm")
-- Regex: `/cr:globalno regex:eval\(` (blocks regex match)
-- Glob: `/cr:globalno glob:*.tmp` (blocks glob match)
+- Literal: `/ar:globalno rm` (blocks commands containing "rm")
+- Regex: `/ar:globalno regex:eval\(` (blocks regex match)
+- Glob: `/ar:globalno glob:*.tmp` (blocks glob match)
 
 **Examples**:
-- `/cr:globalno "docker rm"` — globally block docker rm
-- `/cr:globalno "kubectl delete"` — globally block kubectl delete
+- `/ar:globalno "docker rm"` — globally block docker rm
+- `/ar:globalno "kubectl delete"` — globally block kubectl delete
 
-See also: `/cr:globalstatus` to view global blocks, `/cr:globalclear` to remove all.
+See also: `/ar:globalstatus` to view global blocks, `/ar:globalclear` to remove all.
 
 UserPromptSubmit hook processes this command and updates global state (shelve DB).

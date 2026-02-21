@@ -21,7 +21,7 @@ CRITICAL IMPACT:
 EXAMPLES OF BLOCKED COMMANDS:
 1. `python3 << 'EOF' ... pattern = "grep" ... EOF` - BLOCKED (grep in Python string)
 2. `echo "Use Grep tool instead of grep"` - BLOCKED (grep in echo argument)
-3. `gemini extensions list | grep clautorun || echo "..."` - BLOCKED (grep in logical OR)
+3. `gemini extensions list | grep autorun || echo "..."` - BLOCKED (grep in logical OR)
 """
 
 import sys
@@ -31,7 +31,7 @@ from pathlib import Path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from clautorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
+from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
 
 
 class TestNaiveStringMatchingBug:
@@ -49,9 +49,9 @@ class TestNaiveStringMatchingBug:
         # This is the ACTUAL command that got blocked
         heredoc_cmd = """python3 << 'EOF'
 import sys
-sys.path.insert(0, "plugins/clautorun/src")
-from clautorun.command_detection import command_matches_pattern
-test_cmd = "gemini extensions list | grep -A 2 -B 2 clautorun"
+sys.path.insert(0, "plugins/autorun/src")
+from autorun.command_detection import command_matches_pattern
+test_cmd = "gemini extensions list | grep -A 2 -B 2 autorun"
 pattern = "grep"
 result = command_matches_pattern(test_cmd, pattern)
 print(f"Result: {result}")
@@ -167,7 +167,7 @@ EOF"""
             ("git log | grep fix", "grep"),
             ("ls -la | head -20", "head"),
             ("cat file.txt | tail -50", "tail"),
-            ("gemini extensions list | grep -A 2 -B 2 clautorun || echo 'Not found'", "grep"),
+            ("gemini extensions list | grep -A 2 -B 2 autorun || echo 'Not found'", "grep"),
         ]
 
         for cmd, pattern in piped_commands:

@@ -41,7 +41,7 @@ This command sends input to tmux windows. Before executing:
 The output of `tmux_list_windows()` flows directly into `tmux_dangerous_batch_execute()`:
 
 ```python
-from clautorun.tmux_utils import (
+from autorun.tmux_utils import (
     get_tmux_utilities,
     tmux_list_windows,
     tmux_dangerous_batch_execute
@@ -80,7 +80,7 @@ result = tmux_dangerous_batch_execute(tmux, 'continue', targets)
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows
+from autorun.tmux_utils import get_tmux_utilities, tmux_list_windows
 import json
 
 windows = tmux_list_windows(content_lines=100)
@@ -135,7 +135,7 @@ print(json.dumps(result, indent=2))
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
+from autorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
 windows = tmux_list_windows(content_lines=100)
@@ -154,7 +154,7 @@ print(f'\\nSuccess: {result[\"success_count\"]}, Failed: {result[\"failure_count
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
+from autorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
 windows = tmux_list_windows(content_lines=100)
@@ -173,7 +173,7 @@ print(f'\\nSuccess: {result[\"success_count\"]}, Failed: {result[\"failure_count
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities, tmux_dangerous_batch_execute
+from autorun.tmux_utils import get_tmux_utilities, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
 # Replace 'main:5' with actual target
@@ -186,7 +186,7 @@ print(f'Result: {result}')
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "
-from clautorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
+from autorun.tmux_utils import get_tmux_utilities, tmux_list_windows, tmux_dangerous_batch_execute
 
 tmux = get_tmux_utilities()
 windows = tmux_list_windows(content_lines=100)
@@ -240,14 +240,14 @@ Action: Cycle mode to "plan" on sessions A, B, C
 
 ```bash
 # Discover sessions
-/cr:tabs
+/ar:tabs
 
 # Send continue to idle sessions
-/cr:tabw awaiting:continue
+/ar:tabw awaiting:continue
 
 # Stop all active generation
-/cr:tabw all:escape
+/ar:tabw all:escape
 
 # Exit all sessions
-/cr:tabw all:exit
+/ar:tabw all:exit
 ```

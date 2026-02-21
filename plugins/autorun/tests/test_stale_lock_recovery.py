@@ -24,7 +24,7 @@ from typing import Dict, List
 
 import pytest
 
-from clautorun.session_manager import (
+from autorun.session_manager import (
     SessionLock,
     SessionTimeoutError,
     session_state,
@@ -43,7 +43,7 @@ from clautorun.session_manager import (
 def _hold_session_for_contention(session_id: str, state_dir: str,
                                   lock_held, lock_released):
     """First process holds session_state open to block other processes."""
-    from clautorun.session_manager import session_state
+    from autorun.session_manager import session_state
     with session_state(session_id, state_dir=state_dir, timeout=10.0):
         lock_held.value = True
         time.sleep(0.5)  # Hold long enough for second process to attempt acquire
@@ -52,7 +52,7 @@ def _hold_session_for_contention(session_id: str, state_dir: str,
 
 def _try_acquire_while_held(session_id: str, state_dir: str, second_result):
     """Second process tries to acquire session_state while first holds it."""
-    from clautorun.session_manager import session_state, SessionTimeoutError
+    from autorun.session_manager import session_state, SessionTimeoutError
     time.sleep(0.1)  # Wait for first to acquire before trying
     try:
         with session_state(session_id, state_dir=state_dir, timeout=0.2):
@@ -66,7 +66,7 @@ def _try_acquire_while_held(session_id: str, state_dir: str, second_result):
 
 def _hold_session_simple(session_id: str, state_dir: str, first_acquired):
     """First process holds the session lock."""
-    from clautorun.session_manager import session_state
+    from autorun.session_manager import session_state
     with session_state(session_id, state_dir=state_dir, timeout=5.0):
         first_acquired.value = True
         time.sleep(0.4)  # Hold long enough for second to try acquiring
@@ -74,7 +74,7 @@ def _hold_session_simple(session_id: str, state_dir: str, first_acquired):
 
 def _try_acquire_simple(session_id: str, state_dir: str, second_result):
     """Second process tries to acquire a lock held by another."""
-    from clautorun.session_manager import session_state, SessionTimeoutError
+    from autorun.session_manager import session_state, SessionTimeoutError
     time.sleep(0.05)  # Give first process time to acquire
     try:
         with session_state(session_id, state_dir=state_dir, timeout=0.2):
@@ -87,7 +87,7 @@ def _try_acquire_simple(session_id: str, state_dir: str, second_result):
 def _write_and_read_session(session_id: str, state_dir: str, worker_id: int,
                              result):
     """Worker: write a key, read it back, report success/value."""
-    from clautorun.session_manager import session_state
+    from autorun.session_manager import session_state
     try:
         with session_state(session_id, state_dir=state_dir) as s:
             s[f"worker_{worker_id}"] = worker_id

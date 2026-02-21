@@ -128,10 +128,10 @@ DEFAULT_CORRECTION_PATTERNS = [
 
 # Planning commands to search for
 DEFAULT_PLANNING_COMMANDS = [
-    r'/cr:plannew\b', r'/cr:pn\b',
-    r'/cr:planrefine\b', r'/cr:pr\b',
-    r'/cr:planupdate\b', r'/cr:pu\b',
-    r'/cr:planprocess\b', r'/cr:pp\b',
+    r'/ar:plannew\b', r'/ar:pn\b',
+    r'/ar:planrefine\b', r'/ar:pr\b',
+    r'/ar:planupdate\b', r'/ar:pu\b',
+    r'/ar:planprocess\b', r'/ar:pp\b',
     r'/plannew\b', r'/planrefine\b', r'/planupdate\b', r'/planprocess\b',
 ]
 

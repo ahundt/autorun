@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Enhanced Transcript Analyzer for clautorun - Advanced evidence detection and analysis"""
+"""Enhanced Transcript Analyzer for autorun - Advanced evidence detection and analysis"""
 
 import re
 import json
@@ -37,7 +37,7 @@ except ImportError:
                 pass
         return DummyState()
     def log_info(message):
-        """Fallback logging - file-only when CLAUTORUN_DEBUG=1"""
+        """Fallback logging - file-only when AUTORUN_DEBUG=1"""
         try:
             from .logging_utils import get_logger
             logger = get_logger(__name__)

@@ -16,7 +16,7 @@
 """
 Centralized tmux utilities - DRY compliant implementation
 
-Ensures consistent tmux/byobu handling across clautorun with proper
+Ensures consistent tmux/byobu handling across autorun with proper
 control sequence parsing, session naming, and command dispatch.
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -80,18 +80,18 @@ class TmuxUtilities:
     """
     Centralized tmux utilities with control sequence support and session management
 
-    Enforces clautorun standards: default session naming "clautorun",
+    Enforces autorun standards: default session naming "autorun",
     control sequence parsing, and comprehensive WIN_OPS dispatch.
 
     Session Targeting:
-    - Default session: "clautorun" - prevents interference with current Claude Code session
+    - Default session: "autorun" - prevents interference with current Claude Code session
     - Custom targeting: Pass session parameter to target different sessions
     - Safety guarantee: All commands are explicitly targeted to prevent accidental execution in wrong session
     - Format: session:window.pane for precise targeting
     """
 
     # Default session name as required by CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS.md
-    DEFAULT_SESSION_NAME = "clautorun"
+    DEFAULT_SESSION_NAME = "autorun"
 
     # Complete WIN_OPS dispatch dictionary as required by documentation
     WIN_OPS = {
@@ -287,7 +287,7 @@ class TmuxUtilities:
 
         Args:
             cmd: Command list to execute
-            session: Target session (uses instance default "clautorun" if None)
+            session: Target session (uses instance default "autorun" if None)
             window: Target window (optional, defaults to current window in session)
             pane: Target pane (optional, defaults to current pane in window)
 
@@ -295,15 +295,15 @@ class TmuxUtilities:
             Command result dict or None if failed
 
         Session Targeting Behavior:
-        - Default: Always targets "clautorun" session to avoid affecting current Claude Code session
+        - Default: Always targets "autorun" session to avoid affecting current Claude Code session
         - Custom session: Pass session parameter to target a different session
         - Full targeting: session:window.pane format for precise targeting
         - Safety: Commands will NEVER go to the current Claude Code session accidentally
 
         Examples:
-            tmux.execute_tmux_command(['list-windows'])  # Targets "clautorun" session
+            tmux.execute_tmux_command(['list-windows'])  # Targets "autorun" session
             tmux.execute_tmux_command(['send-keys', 'test'], 'custom-session')  # Targets custom session
-            tmux.execute_tmux_command(['capture-pane'], None, '0', '0')  # Targets clautorun:0.0
+            tmux.execute_tmux_command(['capture-pane'], None, '0', '0')  # Targets autorun:0.0
         """
         target_session = session or self.session_name
 
@@ -744,7 +744,7 @@ def get_tmux_utilities(session_name: Optional[str] = None) -> TmuxUtilities:
     """Get or create tmux utilities instance with session-based caching.
 
     Args:
-        session_name: Target session. Defaults to "clautorun" (safe isolation).
+        session_name: Target session. Defaults to "autorun" (safe isolation).
                      Pass detect_current_tmux_session() to target your own session.
 
     Returns:
@@ -833,7 +833,7 @@ class WindowList(list):
 
         Example:
             .contains('title', HAPPY_TITLE_MARKER)  # Happy-cli sessions
-            .contains('path', 'clautorun')          # Path contains
+            .contains('path', 'autorun')          # Path contains
         """
         return WindowList([w for w in self if substr in str(w.get(key, ''))])
 
@@ -2189,9 +2189,9 @@ def send_to_session(tmux: 'TmuxUtilities', session: dict, cmd: str) -> dict:
 
 def execute_session_selections(selection_str: str, sessions: list,
                                tmux: 'TmuxUtilities | None' = None) -> 'list[dict]':
-    """Execute commands on selected Claude sessions using the /cr:tabs selection syntax.
+    """Execute commands on selected Claude sessions using the /ar:tabs selection syntax.
 
-    Selection syntax (same as /cr:tabs command interface):
+    Selection syntax (same as /ar:tabs command interface):
       'A,C' or 'AC'          Execute each session's default action (sessions[i]['actions'][0])
       'A:git status, B:pwd'  Execute custom commands per session
       'all:continue'         Execute on every session in the list

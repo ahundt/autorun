@@ -16,7 +16,7 @@ pytestmark = pytest.mark.tmux
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
 
 def test_session_targeting_root_cause_analysis():

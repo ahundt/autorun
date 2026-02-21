@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""tmux-based prompt injection system for clautorun - Using centralized tmux utilities"""
+"""tmux-based prompt injection system for autorun - Using centralized tmux utilities"""
 
 import time
 import os
@@ -41,11 +41,11 @@ except ImportError:
         """Fallback logging"""
         print(f"INFO: {message}")
 
-# Configure logging - file-only when CLAUTORUN_DEBUG=1, disabled otherwise
+# Configure logging - file-only when AUTORUN_DEBUG=1, disabled otherwise
 # CRITICAL: No stderr output to avoid breaking hooks
-if os.environ.get('CLAUTORUN_DEBUG') == '1':
+if os.environ.get('AUTORUN_DEBUG') == '1':
     from pathlib import Path
-    log_file = Path.home() / ".clautorun" / "daemon.log"
+    log_file = Path.home() / ".autorun" / "daemon.log"
     logging.basicConfig(
         handlers=[logging.FileHandler(log_file)],
         level=logging.DEBUG,
@@ -69,7 +69,7 @@ class TmuxInjector:
     """tmux-based prompt injection system with user activity detection using centralized utilities"""
 
     def __init__(self, session_id: str = None):
-        # Use default "clautorun" session if none provided (standards compliance)
+        # Use default "autorun" session if none provided (standards compliance)
         self.session_id = session_id or get_tmux_utilities().DEFAULT_SESSION_NAME
         self.tmux_utils = get_tmux_utilities(self.session_id)
         self.tmux_session = None
@@ -225,7 +225,7 @@ class DualChannelInjector:
     """Dual-channel prompt injection system with API and tmux fallback using centralized utilities"""
 
     def __init__(self, session_id: str = None):
-        # Use default "clautorun" session if none provided (standards compliance)
+        # Use default "autorun" session if none provided (standards compliance)
         self.session_id = session_id or get_tmux_utilities().DEFAULT_SESSION_NAME
         self.tmux_injector = TmuxInjector(self.session_id)
         self.injection_history = []

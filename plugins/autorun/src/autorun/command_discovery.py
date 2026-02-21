@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Command Discovery Engine for clautorun - Enhanced with main.py DRY patterns"""
+"""Command Discovery Engine for autorun - Enhanced with main.py DRY patterns"""
 
 import json
 import time

@@ -6,12 +6,12 @@ description: Show active session-level pattern blocks and allows
 
 Display the current session-level command blocks and allows.
 
-**Usage**: `/cr:blocks`
+**Usage**: `/ar:blocks`
 
 Shows:
-- Session blocks added via `/cr:no <pattern>`
-- Session allows added via `/cr:ok <pattern>`
+- Session blocks added via `/ar:no <pattern>`
+- Session allows added via `/ar:ok <pattern>`
 
-Does not show global blocks (use `/cr:globalstatus` for those) or default safety guards.
+Does not show global blocks (use `/ar:globalstatus` for those) or default safety guards.
 
 UserPromptSubmit hook processes this command and displays session state.

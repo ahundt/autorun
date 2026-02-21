@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Clautorun Hook Entry Point - fast path with background bootstrap.
+"""Autorun Hook Entry Point - fast path with background bootstrap.
 
 Entry point for Claude Code hooks that works with or without UV installation.
 
 Execution Priority:
-1. Fast path: Plugin-local venv (${CLAUDE_PLUGIN_ROOT}/.venv/bin/clautorun)
+1. Fast path: Plugin-local venv (${CLAUDE_PLUGIN_ROOT}/.venv/bin/autorun)
 2. Fast path: Global CLI if available (UV/pip installed)
 3. Fallback: Run from plugin cache via CLAUDE_PLUGIN_ROOT
 
@@ -40,9 +40,9 @@ from typing import NoReturn
 # Gemini CLI enforces 5s timeout; Claude Code enforces 10s.
 # We use 4s to stay safe on both platforms.
 HOOK_TIMEOUT = 4
-BOOTSTRAP_LOCKFILE = "/tmp/clautorun_bootstrap.lock"
+BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
 BOOTSTRAP_MSG = (
-    "clautorun deps not installed. Run: uv pip install clautorun && clautorun --install"
+    "autorun deps not installed. Run: uv pip install autorun && autorun --install"
 )
 
 # =============================================================================
@@ -124,12 +124,12 @@ def get_plugin_root() -> str:
     Returns:
         str: Absolute path to plugin root directory
 
-    Safety: Works with both CLAUDE_PLUGIN_ROOT and Gemini's CLAUTORUN_PLUGIN_ROOT.
+    Safety: Works with both CLAUDE_PLUGIN_ROOT and Gemini's AUTORUN_PLUGIN_ROOT.
             Falls back to using __file__ location if env vars not set.
     """
     try:
-        # Try CLAUTORUN_PLUGIN_ROOT first (set by Claude Code hooks when specified)
-        plugin_root = os.environ.get("CLAUTORUN_PLUGIN_ROOT")
+        # Try AUTORUN_PLUGIN_ROOT first (set by Claude Code hooks when specified)
+        plugin_root = os.environ.get("AUTORUN_PLUGIN_ROOT")
         if plugin_root:
             return plugin_root
 
@@ -168,7 +168,7 @@ def fail_open(message: str = "") -> NoReturn:
         "continue": True,
         "stopReason": "",
         "suppressOutput": False,
-        "systemMessage": f"[clautorun] {message}" if message else "",
+        "systemMessage": f"[autorun] {message}" if message else "",
     }
     print(json.dumps(response))
     sys.exit(0)
@@ -179,11 +179,11 @@ def fail_open(message: str = "") -> NoReturn:
 # =============================================================================
 
 
-def get_clautorun_bin() -> Path | None:
-    """Find clautorun executable with priority: venv > global.
+def get_autorun_bin() -> Path | None:
+    """Find autorun executable with priority: venv > global.
 
     Returns:
-        Path to clautorun binary, or None if not found.
+        Path to autorun binary, or None if not found.
 
     Priority order:
         1. Plugin-local venv (isolated, preferred)
@@ -195,12 +195,12 @@ def get_clautorun_bin() -> Path | None:
 
     if plugin_root:
         # Priority 1: Plugin-local venv
-        venv_bin = Path(plugin_root) / ".venv" / "bin" / "clautorun"
+        venv_bin = Path(plugin_root) / ".venv" / "bin" / "autorun"
         if venv_bin.exists():
             return venv_bin
 
     # Priority 2: Global installation
-    global_bin = shutil.which("clautorun")
+    global_bin = shutil.which("autorun")
     if global_bin:
         return Path(global_bin)
 
@@ -208,10 +208,10 @@ def get_clautorun_bin() -> Path | None:
 
 
 def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
-    """Try to run clautorun CLI, passing pre-read stdin payload.
+    """Try to run autorun CLI, passing pre-read stdin payload.
 
     Args:
-        bin_path: Path to clautorun executable
+        bin_path: Path to autorun executable
         stdin_data: Pre-read stdin payload (read once in main() to avoid
             consuming stdin before the fallback path needs it)
 
@@ -249,7 +249,7 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         # Debug logging (ALWAYS enabled to diagnose hook issues)
         try:
             from pathlib import Path as DebugPath
-            debug_log = DebugPath.home() / ".clautorun" / "hook_entry_debug.log"
+            debug_log = DebugPath.home() / ".autorun" / "hook_entry_debug.log"
             with open(debug_log, 'a') as f:
                 f.write(f"CLI exit code: {result.returncode}\n")
                 f.write(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}\n")
@@ -336,15 +336,15 @@ def is_bootstrap_disabled() -> bool:
     """Check if bootstrap is disabled via --no-bootstrap flag or env var.
 
     Disabled by:
-    - --no-bootstrap flag in command (added to hooks.json via `clautorun --no-bootstrap`)
-    - CLAUTORUN_NO_BOOTSTRAP=1 environment variable
+    - --no-bootstrap flag in command (added to hooks.json via `autorun --no-bootstrap`)
+    - AUTORUN_NO_BOOTSTRAP=1 environment variable
     """
     # Check command line flag (added to hooks.json commands)
     if "--no-bootstrap" in sys.argv:
         return True
 
     # Check environment variable
-    if os.environ.get("CLAUTORUN_NO_BOOTSTRAP", "0") == "1":
+    if os.environ.get("AUTORUN_NO_BOOTSTRAP", "0") == "1":
         return True
 
     return False
@@ -386,9 +386,9 @@ def can_bootstrap() -> tuple[bool, str]:
     if not has_uv and not has_pip:
         return False, "Neither uv nor pip found in PATH"
 
-    # Check plugin root is set (either CLAUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)
-    if not os.environ.get("CLAUTORUN_PLUGIN_ROOT") and not os.environ.get("CLAUDE_PLUGIN_ROOT"):
-        return False, "Plugin root not set (need CLAUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)"
+    # Check plugin root is set (either AUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)
+    if not os.environ.get("AUTORUN_PLUGIN_ROOT") and not os.environ.get("CLAUDE_PLUGIN_ROOT"):
+        return False, "Plugin root not set (need AUTORUN_PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT)"
 
     return True, "uv" if has_uv else "pip"
 
@@ -396,7 +396,7 @@ def can_bootstrap() -> tuple[bool, str]:
 def spawn_background_bootstrap() -> bool:
     """Spawn bootstrap process in background using nohup.
 
-    This runs uv pip install + clautorun --install detached from the hook process.
+    This runs uv pip install + autorun --install detached from the hook process.
     The hook returns immediately; next invocation will find deps installed.
 
     Returns:
@@ -424,13 +424,13 @@ def spawn_background_bootstrap() -> bool:
     # Bootstrap script: install deps, then run plugin install
     # Use uv if available, fall back to pip3
     if tool_or_reason == "uv":
-        install_cmd = "uv pip install clautorun"
+        install_cmd = "uv pip install autorun"
     else:
-        install_cmd = "pip3 install --user clautorun"
+        install_cmd = "pip3 install --user autorun"
 
     bootstrap_cmd = f"""
         {install_cmd} 2>/dev/null
-        clautorun --install 2>/dev/null
+        autorun --install 2>/dev/null
         rm -f {BOOTSTRAP_LOCKFILE}
     """
 
@@ -470,8 +470,7 @@ def get_src_dir() -> Path | None:
 def run_fallback() -> None:
     """Run with direct import (limited functionality, no external deps).
 
-    This is the fallback when no CLI is available. It attempts to import
-    clautorun directly from the plugin source. If dependencies are missing,
+    This is the fallback when no CLI is available. It attempts to import autorun directly from the plugin source. If dependencies are missing,
     it spawns a background bootstrap process and returns fail_open so the CLI
     can continue. The next hook invocation will find deps installed.
 
@@ -494,28 +493,28 @@ def run_fallback() -> None:
         sys.path.insert(0, src_str)
 
     try:
-        from clautorun.__main__ import main as clautorun_main
+        from autorun.__main__ import main as autorun_main
 
-        exit_code = clautorun_main()
+        exit_code = autorun_main()
         sys.exit(exit_code if exit_code is not None else 0)
     except ImportError as e:
         # Deps missing - try background bootstrap
         if is_bootstrap_disabled():
             fail_open(
                 f"Import error: {e}. Bootstrap disabled. "
-                "Run manually: uv pip install clautorun && clautorun --install"
+                "Run manually: uv pip install autorun && autorun --install"
             )
         elif is_bootstrap_running():
-            fail_open("clautorun bootstrapping in background, will be ready shortly")
+            fail_open("autorun bootstrapping in background, will be ready shortly")
         else:
             can_run, reason = can_bootstrap()
             if can_run:
                 spawn_background_bootstrap()
-                fail_open("clautorun bootstrapping in background, will be ready shortly")
+                fail_open("autorun bootstrapping in background, will be ready shortly")
             else:
                 fail_open(
                     f"Import error: {e}. Cannot bootstrap: {reason}. "
-                    "Run manually: uv pip install clautorun && clautorun --install"
+                    "Run manually: uv pip install autorun && autorun --install"
                 )
     except Exception as e:
         fail_open(f"Runtime error: {e}")
@@ -557,7 +556,7 @@ def main() -> None:
     # Debug logging (ALWAYS enabled to diagnose hook issues)
     def log_debug(msg: str):
         try:
-            debug_log = Path.home() / ".clautorun" / "hook_entry_debug.log"
+            debug_log = Path.home() / ".autorun" / "hook_entry_debug.log"
             debug_log.parent.mkdir(exist_ok=True)
             with open(debug_log, 'a') as f:
                 import datetime
@@ -576,8 +575,8 @@ def main() -> None:
     log_debug(f"Hook entry started (Event: {event_name})")
     log_debug(f"Hook entry stdin ({len(stdin_data)} bytes)")
 
-    clautorun_bin = get_clautorun_bin()
-    log_debug(f"Selected binary: {clautorun_bin}")
+    autorun_bin = get_autorun_bin()
+    log_debug(f"Selected binary: {autorun_bin}")
     cli_type = detect_cli_type()
     log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
@@ -596,16 +595,16 @@ def main() -> None:
         except (json.JSONDecodeError, Exception) as e:
             log_debug(f"Could not inject cli_type: {e}")
 
-    if clautorun_bin:
+    if autorun_bin:
         try:
             # OPTIMIZATION: Bypassing 'uv run' overhead by using venv python directly.
-            # If clautorun_bin is in a .venv, we use its python to run the module.
-            cmd = [str(clautorun_bin)]
-            if ".venv/bin/clautorun" in str(clautorun_bin):
-                venv_python = clautorun_bin.parent / "python"
+            # If autorun_bin is in a .venv, we use its python to run the module.
+            cmd = [str(autorun_bin)]
+            if ".venv/bin/autorun" in str(autorun_bin):
+                venv_python = autorun_bin.parent / "python"
                 if venv_python.exists():
                     # Check if it's a script we can run as a module
-                    cmd = [str(venv_python), "-m", "clautorun"]
+                    cmd = [str(venv_python), "-m", "autorun"]
                     log_debug(f"Using optimized venv path: {' '.join(cmd)}")
 
             # Inline try_cli logic to allow for better logging

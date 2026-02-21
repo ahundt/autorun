@@ -23,7 +23,7 @@
 
 ## Overview
 
-clautorun implements a unified hook system that works across both **Claude Code** and **Gemini CLI**. The system uses separate hooks files for each CLI but shares the same Python handler code.
+autorun implements a unified hook system that works across both **Claude Code** and **Gemini CLI**. The system uses separate hooks files for each CLI but shares the same Python handler code.
 
 **Key Principles**:
 - **Single Source of Truth**: One Python handler (`hook_entry.py`) for all CLIs
@@ -70,7 +70,7 @@ clautorun implements a unified hook system that works across both **Claude Code*
 │              └─ main()                                      │
 │                        │                                     │
 │                        ▼                                     │
-│           src/clautorun/main.py                             │
+│           src/autorun/main.py                             │
 │           ├─ handle_pretooluse()                            │
 │           ├─ handle_posttooluse()                           │
 │           ├─ handle_userpromptsubmit()                      │
@@ -82,7 +82,7 @@ clautorun implements a unified hook system that works across both **Claude Code*
 
 ### Installation Flow
 
-**Installer Logic** (`plugins/clautorun/src/clautorun/install.py:883-920`):
+**Installer Logic** (`plugins/autorun/src/autorun/install.py:883-920`):
 
 1. `hooks/hooks.json` is always Gemini format (`${extensionPath}`, Gemini event names)
 2. `hooks/claude-hooks.json` is always Claude Code format (`${CLAUDE_PLUGIN_ROOT}`)
@@ -99,7 +99,7 @@ No swap logic required. Each CLI reads its own hooks file.
 
 ```json
 {
-  "description": "clautorun v0.8 - unified daemon-based hook handler",
+  "description": "autorun v0.8 - unified daemon-based hook handler",
   "hooks": {
     "PreToolUse": [
       {
@@ -123,7 +123,7 @@ No swap logic required. Each CLI reads its own hooks file.
     ],
     "UserPromptSubmit": [
       {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
         "hooks": [{
           "type": "command",
           "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
@@ -154,13 +154,13 @@ No swap logic required. Each CLI reads its own hooks file.
 
 ```json
 {
-  "description": "clautorun v0.8 - Gemini CLI native compatibility hooks",
+  "description": "autorun v0.8 - Gemini CLI native compatibility hooks",
   "hooks": {
     "BeforeTool": [
       {
         "matcher": "write_file|run_shell_command|replace",
         "hooks": [{
-          "name": "clautorun-pretool",
+          "name": "autorun-pretool",
           "type": "command",
           "command": "python3 ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
@@ -171,7 +171,7 @@ No swap logic required. Each CLI reads its own hooks file.
       {
         "matcher": "write_file|replace",
         "hooks": [{
-          "name": "clautorun-posttool-plan",
+          "name": "autorun-posttool-plan",
           "type": "command",
           "command": "python3 ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
@@ -180,9 +180,9 @@ No swap logic required. Each CLI reads its own hooks file.
     ],
     "BeforeAgent": [
       {
-        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/cr:",
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
         "hooks": [{
-          "name": "clautorun-command",
+          "name": "autorun-command",
           "type": "command",
           "command": "python3 ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
@@ -192,7 +192,7 @@ No swap logic required. Each CLI reads its own hooks file.
     "SessionStart": [
       {
         "hooks": [{
-          "name": "clautorun-session-start",
+          "name": "autorun-session-start",
           "type": "command",
           "command": "python3 ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
@@ -202,7 +202,7 @@ No swap logic required. Each CLI reads its own hooks file.
     "SessionEnd": [
       {
         "hooks": [{
-          "name": "clautorun-session-end",
+          "name": "autorun-session-end",
           "type": "command",
           "command": "python3 ${extensionPath}/hooks/hook_entry.py",
           "timeout": 10000
@@ -240,12 +240,12 @@ def get_plugin_root() -> str:
     """Get plugin root directory (works for both installed and source).
 
     Priority:
-    1. CLAUTORUN_PLUGIN_ROOT env var
+    1. AUTORUN_PLUGIN_ROOT env var
     2. CLAUDE_PLUGIN_ROOT env var
     3. Infer from __file__ (for Gemini CLI)
     """
     try:
-        plugin_root = os.environ.get("CLAUTORUN_PLUGIN_ROOT")
+        plugin_root = os.environ.get("AUTORUN_PLUGIN_ROOT")
         if plugin_root:
             return plugin_root
 
@@ -380,7 +380,7 @@ def normalize_payload(hook_input: dict) -> dict:
 ```json
 {
   "hook_event_name": "UserPromptSubmit",  // or "BeforeAgent" for Gemini
-  "prompt": "/cr:go Implement auth",
+  "prompt": "/ar:go Implement auth",
   "cwd": "/current/directory",
   "session_id": "abc123..."
 }
@@ -395,7 +395,7 @@ def normalize_payload(hook_input: dict) -> dict:
 ```
 
 **Example Use Cases**:
-- Set AutoFile policy before /cr:go
+- Set AutoFile policy before /ar:go
 - Initialize session state
 - Validate commands
 
@@ -471,7 +471,7 @@ def normalize_payload(hook_input: dict) -> dict:
 | `TaskCreate` | `task_create` | Create task |
 | `TaskUpdate` | `task_update` | Update task |
 
-**Handler Code** (`src/clautorun/main.py:normalize_tool_name()`):
+**Handler Code** (`src/autorun/main.py:normalize_tool_name()`):
 
 ```python
 def normalize_tool_name(tool_input: dict) -> str:
@@ -531,7 +531,7 @@ Gemini CLI and Claude Code use different JSON formats for hook payloads. Normali
 
 ### Testing Normalization
 
-**File**: `plugins/clautorun/tests/test_actual_command_blocking.py:TestGeminiPayloadNormalization`
+**File**: `plugins/autorun/tests/test_actual_command_blocking.py:TestGeminiPayloadNormalization`
 
 ```python
 def test_gemini_cat_blocked_through_normalization():
@@ -572,21 +572,21 @@ def test_gemini_cat_blocked_through_normalization():
 
 ```bash
 # All hook tests
-uv run pytest plugins/clautorun/tests/test_*hook*.py -v
+uv run pytest plugins/autorun/tests/test_*hook*.py -v
 
 # Gemini integration tests (requires Gemini CLI installed)
-uv run pytest plugins/clautorun/tests/test_gemini_before_tool_hooks.py -v
+uv run pytest plugins/autorun/tests/test_gemini_before_tool_hooks.py -v
 
 # Format validation
-uv run pytest plugins/clautorun/tests/test_hooks_format.py -v
+uv run pytest plugins/autorun/tests/test_hooks_format.py -v
 
 # Command blocking
-uv run pytest plugins/clautorun/tests/test_actual_command_blocking.py -v
+uv run pytest plugins/autorun/tests/test_actual_command_blocking.py -v
 ```
 
 ### Integration Testing via Tmux
 
-**File**: `plugins/clautorun/tests/test_gemini_before_tool_hooks.py`
+**File**: `plugins/autorun/tests/test_gemini_before_tool_hooks.py`
 
 **Approach**: Use tmux sessions to test Gemini CLI interactively (avoid `--prompt` hangs)
 
@@ -660,7 +660,7 @@ if __name__ == "__main__":
 ```
 
 **Usage**:
-1. Replace `~/.gemini/extensions/cr/hooks/hook_entry.py` with debug script
+1. Replace `~/.gemini/extensions/ar/hooks/hook_entry.py` with debug script
 2. Run Gemini commands
 3. Check `/tmp/gemini-before-tool-debug.log`
 4. Restore original hook
@@ -698,7 +698,7 @@ For comprehensive troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 ❌ **WRONG**:
 ```json
 {
-  "command": "CLAUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py"
+  "command": "AUTORUN_PLUGIN_ROOT=${extensionPath} python3 ${extensionPath}/hooks/hook_entry.py"
 }
 ```
 
@@ -716,17 +716,17 @@ For comprehensive troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 ❌ **WRONG**:
 ```bash
 # Editing installed extension
-vim ~/.gemini/extensions/cr/hooks/hooks.json
+vim ~/.gemini/extensions/ar/hooks/hooks.json
 ```
 
 ✅ **CORRECT**:
 ```bash
 # Edit source repository
-cd ~/.claude/clautorun
-vim plugins/clautorun/hooks/hooks.json
+cd ~/.claude/autorun
+vim plugins/autorun/hooks/hooks.json
 
 # Reinstall
-uv run python -m plugins.clautorun.src.clautorun.install --install --gemini-only --force
+uv run python -m plugins.autorun.src.autorun.install --install --gemini-only --force
 ```
 
 **Reason**: Installed extensions are overwritten on reinstall.
@@ -810,5 +810,5 @@ tmux.send_keys('gemini', session_name)
 ---
 
 **Version**: 0.8.0
-**Maintainer**: clautorun project
+**Maintainer**: autorun project
 **Last Verified**: 2026-02-10 with Gemini CLI v0.28.0 and Claude Code

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from clautorun.aix_manifest import generate_manifests
+from autorun.aix_manifest import generate_manifests
 
 def test_generate_manifests_correctness():
     """Verify that generated manifests match expectations from aix.toml."""
@@ -16,7 +16,7 @@ def test_generate_manifests_correctness():
         
         # 1. Setup mock repository structure
         repo_root = tmp_path
-        plugin_dir = repo_root / "plugins" / "clautorun"
+        plugin_dir = repo_root / "plugins" / "autorun"
         plugin_dir.mkdir(parents=True)
         (plugin_dir / "skills").mkdir()
         (plugin_dir / "skills" / "test-skill").mkdir()
@@ -26,7 +26,7 @@ def test_generate_manifests_correctness():
         aix_toml = repo_root / "aix.toml"
         aix_toml.write_text("""
 [package]
-name = "clautorun"
+name = "autorun"
 version = "0.9.9"
 description = "Test Description"
 authors = ["Test Author"]
@@ -34,7 +34,7 @@ repository = "https://github.com/test/repo"
 
 [[skills]]
 name = "test_skill"
-path = "plugins/clautorun/skills/test-skill/SKILL.md"
+path = "plugins/autorun/skills/test-skill/SKILL.md"
 """)
 
         # 3. Generate

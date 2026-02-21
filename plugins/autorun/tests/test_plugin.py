@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Integration tests for clautorun plugin functionality
+Integration tests for autorun plugin functionality
 """
 import pytest
 import json
@@ -14,12 +14,12 @@ from io import StringIO
 src_path = str(Path(__file__).parent.parent / "src")
 sys.path.insert(0, src_path)
 
-# Also add clautorun package path
-clautorun_path = str(Path(__file__).parent.parent / "src" / "clautorun")
-if clautorun_path not in sys.path:
-    sys.path.insert(0, clautorun_path)
+# Also add autorun package path
+autorun_path = str(Path(__file__).parent.parent / "src" / "autorun")
+if autorun_path not in sys.path:
+    sys.path.insert(0, autorun_path)
 
-import clautorun.main as plugin_module
+import autorun.main as plugin_module
 
 
 class TestPluginIntegration:

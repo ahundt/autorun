@@ -5,7 +5,7 @@ Extract text and structured data from PDF documents using a multi-backend approa
 ## Installation
 
 ```bash
-cd ~/.claude/clautorun/plugins/pdf-extractor
+cd ~/.claude/autorun/plugins/pdf-extractor
 uv venv
 source .venv/bin/activate
 uv pip install -e .

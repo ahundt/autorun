@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for the /cr:tabs Claude session manager.
+Tests for the /ar:tabs Claude session manager.
 
 Tests:
 - Session discovery logic (tmux_utils.discover_claude_sessions)
@@ -14,13 +14,13 @@ Tests:
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from clautorun.tmux_utils import (
+from autorun.tmux_utils import (
     TmuxUtilities,
     discover_claude_sessions,
     execute_session_selections,
     send_to_session,
 )
-from clautorun.tmux_tab_ai_session_status import (
+from autorun.tmux_tab_ai_session_status import (
     analyze_sessions_heuristic,
     execute_selections,
     extract_directory,
@@ -48,7 +48,7 @@ class TestIsClaudeSession:
         tmux = self._make_tmux_utils()
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
-             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+             patch('autorun.tmux_utils.subprocess.run') as mock_run:
             mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),  # pgrep -P
@@ -62,7 +62,7 @@ class TestIsClaudeSession:
         tmux = self._make_tmux_utils()
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
-             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+             patch('autorun.tmux_utils.subprocess.run') as mock_run:
             mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),
@@ -76,7 +76,7 @@ class TestIsClaudeSession:
         tmux = self._make_tmux_utils()
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
-             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+             patch('autorun.tmux_utils.subprocess.run') as mock_run:
             mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
             mock_run.side_effect = [
                 Mock(returncode=0, stdout='12346\n'),
@@ -90,7 +90,7 @@ class TestIsClaudeSession:
         tmux = self._make_tmux_utils()
 
         with patch.object(tmux, 'execute_tmux_command') as mock_tmux, \
-             patch('clautorun.tmux_utils.subprocess.run') as mock_run:
+             patch('autorun.tmux_utils.subprocess.run') as mock_run:
             mock_tmux.return_value = {'returncode': 0, 'stdout': '12345'}
             mock_run.return_value = Mock(returncode=1, stdout='')
 
@@ -117,14 +117,14 @@ class TestIsClaudeSessionIntegration:
             pytest.skip("tmux not installed")
 
     def _make_tmux_utils(self):
-        return TmuxUtilities(session_name="clautorun-test-tabs")
+        return TmuxUtilities(session_name="autorun-test-tabs")
 
     def test_real_non_claude_session(self):
         """A plain shell session should not be detected as Claude."""
         import subprocess
         import time
 
-        session_name = "clautorun-test-tabs"
+        session_name = "autorun-test-tabs"
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", session_name, "-x", "80", "-y", "24"],
             check=False, capture_output=True,
@@ -300,7 +300,7 @@ class TestSelectionParsing:
             {'tmux_target': 'dev:0', 'actions': ['continue']},
             {'tmux_target': 'test:1', 'actions': ['status']},
         ]
-        with patch('clautorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
+        with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('A', sessions)
         assert 'dev:0' in result
         assert '1/1' in result
@@ -312,7 +312,7 @@ class TestSelectionParsing:
             {'tmux_target': 'test:1', 'actions': ['status']},
             {'tmux_target': 'docs:2', 'actions': ['review']},
         ]
-        with patch('clautorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
+        with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('AC', sessions)
         assert 'dev:0' in result
         assert 'docs:2' in result
@@ -321,7 +321,7 @@ class TestSelectionParsing:
     def test_parse_custom_command(self):
         """Test 'A:git status' format."""
         sessions = [{'tmux_target': 'dev:0', 'actions': ['continue']}]
-        with patch('clautorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
+        with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('A:git status', sessions)
         assert 'git status' in result
 
@@ -332,7 +332,7 @@ class TestSelectionParsing:
             {'tmux_target': 'test:1'},
             {'tmux_target': 'docs:2'},
         ]
-        with patch('clautorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
+        with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('all:continue', sessions)
         assert '3/3' in result
 
@@ -343,7 +343,7 @@ class TestSelectionParsing:
             {'tmux_target': 'test:1', 'awaiting': True},
             {'tmux_target': 'docs:2', 'awaiting': True},
         ]
-        with patch('clautorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
+        with patch('autorun.tmux_utils.get_tmux_utilities', return_value=self._make_mock_tmux()):
             result = execute_selections('awaiting:continue', sessions)
         assert '2/2' in result
 

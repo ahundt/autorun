@@ -18,7 +18,7 @@ pytestmark = pytest.mark.tmux
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from clautorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities
 
 
 class TestTmuxUtilitiesEnhanced:
@@ -98,7 +98,7 @@ class TestTmuxUtilitiesEnhanced:
 
     def test_control_sequence_parsing(self):
         """Test control sequence parsing for byobu compatibility"""
-        from clautorun.tmux_utils import TmuxControlState
+        from autorun.tmux_utils import TmuxControlState
         tmux = get_tmux_utilities()
 
         # Test normal text - method returns tuple of (text, state)
@@ -199,7 +199,7 @@ class TestTmuxUtilitiesEnhanced:
 class TestAgentIntegrationScenarios:
     """Test integration scenarios for tmux automation agents"""
 
-    @patch('clautorun.tmux_utils.get_tmux_utilities')
+    @patch('autorun.tmux_utils.get_tmux_utilities')
     def test_session_automation_agent_workflow(self, mock_get_tmux):
         """Test session automation agent workflow"""
         # Mock tmux utilities
@@ -216,7 +216,7 @@ class TestAgentIntegrationScenarios:
         mock_get_tmux.return_value = mock_tmux
 
         # Import and test agent functionality
-        from clautorun.tmux_utils import get_tmux_utilities
+        from autorun.tmux_utils import get_tmux_utilities
 
         tmux = get_tmux_utilities('test-session')
 
@@ -234,7 +234,7 @@ class TestAgentIntegrationScenarios:
         info = tmux.get_session_info()
         assert info['session'] == 'test-session'
 
-    @patch('clautorun.tmux_utils.get_tmux_utilities')
+    @patch('autorun.tmux_utils.get_tmux_utilities')
     def test_cli_test_automation_workflow(self, mock_get_tmux):
         """Test CLI test automation workflow"""
         # Mock tmux utilities for CLI testing
@@ -243,7 +243,7 @@ class TestAgentIntegrationScenarios:
         mock_tmux.execute_tmux_command.return_value = {'returncode': 0, 'stdout': 'test output'}
         mock_get_tmux.return_value = mock_tmux
 
-        from clautorun.tmux_utils import get_tmux_utilities
+        from autorun.tmux_utils import get_tmux_utilities
 
         tmux = get_tmux_utilities('cli-test')
 
@@ -406,7 +406,7 @@ class TestCommandWorkflowIntegration:
         assert 'name' in manifest
         assert 'description' in manifest
         assert 'commands' in manifest
-        assert manifest['name'] == 'cr'
+        assert manifest['name'] == 'ar'
 
         # Test command directory exists
         commands_dir = os.path.join(os.path.dirname(__file__), '..', 'commands')

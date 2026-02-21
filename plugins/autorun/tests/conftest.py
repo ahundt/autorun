@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-pytest configuration and fixtures for clautorun testing
+pytest configuration and fixtures for autorun testing
 
 Environment Variables:
-    CLAUTORUN_KEEP_TEST_ARTIFACTS: Set to 'true', '1', or 'yes' to keep test artifacts
+    AUTORUN_KEEP_TEST_ARTIFACTS: Set to 'true', '1', or 'yes' to keep test artifacts
                                    for debugging instead of cleaning them up.
 """
 import os
@@ -78,7 +78,7 @@ def pytest_collection_modifyitems(config, items):
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clautorun import CONFIG
+from autorun import CONFIG
 
 
 # =============================================================================
@@ -106,9 +106,9 @@ class DaemonManager:
 
     @classmethod
     def _get_all_daemon_pids(cls) -> list:
-        """Get all clautorun daemon PIDs currently running."""
+        """Get all autorun daemon PIDs currently running."""
         result = subprocess.run(
-            ["pgrep", "-f", "clautorun.daemon"],
+            ["pgrep", "-f", "autorun.daemon"],
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -154,7 +154,7 @@ class DaemonManager:
         """
         before = set(cls._get_all_daemon_pids())
         subprocess.run(
-            ["clautorun", "--restart-daemon"],
+            ["autorun", "--restart-daemon"],
             capture_output=True, timeout=30
         )
         time.sleep(0.5)
@@ -204,7 +204,7 @@ class DaemonManager:
             pytest.fail(
                 f"Too many test daemons ({len(test_pids)}): {test_pids}. "
                 f"Production daemons ({len(prod_pids)}): {prod_pids}. "
-                f"Run: pkill -f 'clautorun.daemon'"
+                f"Run: pkill -f 'autorun.daemon'"
             )
         elif len(test_pids) > 0:
             warnings.warn(
@@ -232,9 +232,9 @@ def stress_test_timeout():
 def should_keep_test_artifacts():
     """Check if test artifacts should be kept for debugging.
 
-    Set CLAUTORUN_KEEP_TEST_ARTIFACTS=true to keep all test artifacts.
+    Set AUTORUN_KEEP_TEST_ARTIFACTS=true to keep all test artifacts.
     """
-    value = os.getenv("CLAUTORUN_KEEP_TEST_ARTIFACTS", "false").lower().strip()
+    value = os.getenv("AUTORUN_KEEP_TEST_ARTIFACTS", "false").lower().strip()
     return value in {"true", "1", "yes", "on", "enabled"}
 
 
@@ -251,7 +251,7 @@ def cleanup_test_sessions():
     """Clean up all registered test sessions.
 
     This removes database files created during tests.
-    Skipped if CLAUTORUN_KEEP_TEST_ARTIFACTS is set.
+    Skipped if AUTORUN_KEEP_TEST_ARTIFACTS is set.
     """
     if should_keep_test_artifacts():
         print(f"\n[DEBUG] Keeping {len(_test_session_ids)} test session artifacts for debugging")
