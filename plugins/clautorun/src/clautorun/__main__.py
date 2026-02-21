@@ -567,6 +567,70 @@ Aliases: file status, file st, file s (all equivalent)""",
         help="Skip archiving (DANGEROUS - permanent data loss)",
     )
 
+    # Worktree subcommand
+    worktree_parser = subparsers.add_parser(
+        "worktree",
+        aliases=["wt"],
+        help="Git worktree lifecycle management (terminal equivalent of /cr:wt)",
+        description="Manage git worktrees with Claude/Gemini sessions.",
+    )
+    wt_sub = worktree_parser.add_subparsers(dest="wt_command", help="Worktree operations")
+
+    wt_new = wt_sub.add_parser("new", help="Create worktree + AI session")
+    wt_new.add_argument("branch", help="Branch name for new worktree")
+    wt_new.add_argument("-p", "--prompt", default="", help="Initial task prompt")
+    wt_new.add_argument("--tmux", action="store_true", help="Launch in new tmux window (non-blocking)")
+    wt_new.add_argument("--gemini", action="store_true", help="Use Gemini CLI instead of Claude")
+
+    wt_start = wt_sub.add_parser("start", help="Resume existing worktree session")
+    wt_start.add_argument("branch", nargs="?", default="", help="Branch (auto-detects from cwd)")
+    wt_start.add_argument("-p", "--prompt", default="", help="Continuation prompt")
+    wt_start.add_argument("--tmux", action="store_true", help="Launch in new tmux window")
+    wt_start.add_argument("--gemini", action="store_true", help="Use Gemini CLI")
+
+    wt_ls = wt_sub.add_parser("ls", aliases=["list", "l"], help="List worktrees")
+
+    wt_rm = wt_sub.add_parser("rm", aliases=["remove"], help="Remove worktree")
+    wt_rm.add_argument("branch", nargs="?", default="", help="Branch (auto-detects from cwd)")
+    wt_rm.add_argument("--force", "-f", action="store_true", help="Force remove dirty worktree")
+    wt_rm.add_argument("--all", action="store_true", help="Remove all worktrees (interactive confirm)")
+
+    wt_merge_p = wt_sub.add_parser("merge", aliases=["m"], help="Merge worktree branch into primary")
+    wt_merge_p.add_argument("branch", nargs="?", default="", help="Branch (auto-detects from cwd)")
+    wt_merge_p.add_argument("--squash", action="store_true", help="Squash merge")
+
+    wt_cd = wt_sub.add_parser("cd", help="Print cd command for worktree path")
+    wt_cd.add_argument("branch", nargs="?", default=None, help="Branch (no arg = repo root)")
+
+    wt_init = wt_sub.add_parser("init", aliases=["i"], help="Generate .cmux/setup hook")
+    wt_init.add_argument("--replace", action="store_true", help="Regenerate even if exists")
+
+    wt_cfg = wt_sub.add_parser("config", help="Show or set git worktree layout")
+    wt_cfg_sub = wt_cfg.add_subparsers(dest="config_command")
+    wt_cfg_set = wt_cfg_sub.add_parser("set", help="Set layout")
+    wt_cfg_set.add_argument("layout_key", metavar="layout", help="'layout'")
+    wt_cfg_set.add_argument("layout", metavar="preset",
+                            choices=["nested", "outer-nested", "sibling"])
+    wt_cfg.add_argument("--global", dest="global_config", action="store_true",
+                        help="Apply globally (not just this repo)")
+
+    # Tmux subcommand
+    tmux_parser_p = subparsers.add_parser(
+        "tmux",
+        help="Tmux session management (terminal equivalent of /cr:tabs + /cr:tmux)",
+    )
+    tmux_sub = tmux_parser_p.add_subparsers(dest="tmux_command")
+
+    tmux_sub.add_parser("ls", aliases=["list"],
+                        help="List tmux windows with git branch and AI session status")
+    tmux_sub.add_parser("sessions", help="List tmux sessions")
+    tmux_new_p = tmux_sub.add_parser("new", help="Create new tmux session")
+    tmux_new_p.add_argument("name", nargs="?", default="clautorun")
+    tmux_kill_p = tmux_sub.add_parser("kill", help="Kill tmux session")
+    tmux_kill_p.add_argument("name", nargs="?", default=None)
+    tmux_attach_p = tmux_sub.add_parser("attach", help="Attach to tmux session")
+    tmux_attach_p.add_argument("name", nargs="?", default=None)
+
     return parser
 
 
@@ -874,6 +938,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ttl_days=args.ttl,
                 confirm=not args.no_confirm
             )
+
+    # Worktree subcommand
+    if args.command in ("worktree", "wt"):
+        from clautorun.git_worktree_cli import handle_worktree_cli
+        return handle_worktree_cli(args)
+
+    # Tmux subcommand
+    if args.command == "tmux":
+        from clautorun.git_worktree_cli import handle_tmux_cli
+        return handle_tmux_cli(args)
 
     # Default: run as hook handler
     return run_hook_handler()

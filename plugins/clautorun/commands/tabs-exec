@@ -121,8 +121,8 @@ def discover_claude_sessions(tmux: TmuxUtilities) -> List[Dict[str, Any]]:
     Uses tmux_list_windows() for efficient single-query window listing,
     then filters to Claude sessions using process-based detection.
     """
-    # Get all windows with content for Claude detection
-    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES)
+    # Get all windows with content for Claude detection + git branch annotation
+    all_windows = tmux_list_windows(content_lines=DEFAULT_CAPTURE_LINES, include_git=True)
 
     # Filter to Claude sessions using process-based detection
     claude_sessions = []
@@ -143,6 +143,8 @@ def discover_claude_sessions(tmux: TmuxUtilities) -> List[Dict[str, Any]]:
                 'active': win.get('active', False),
                 'activity': win.get('activity', 0),
                 'flags': win.get('flags', ''),
+                # Git branch of this window's working directory (None if not in git repo)
+                'branch': win.get('branch'),
             })
 
     return claude_sessions

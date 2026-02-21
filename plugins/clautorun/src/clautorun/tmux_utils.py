@@ -704,6 +704,77 @@ class TmuxUtilities:
             # Fail safely - don't report as Claude session if detection fails
             return False
 
+    def is_ai_session(self, session: str, window: str) -> bool:
+        """Detect if a tmux window is running Claude OR Gemini CLI.
+
+        Extends is_claude_session() to also detect Gemini CLI processes.
+        Uses the same execute_tmux_command pattern as is_claude_session() —
+        FIX Bug 3: _get_pane_pid() does not exist in this class; use
+        execute_tmux_command(['list-panes', '-F', '#{pane_pid}']) exactly as
+        is_claude_session() does (lines 657-668).
+
+        Args:
+            session: Tmux session name
+            window: Window index within session
+
+        Returns:
+            True if window contains Claude Code or Gemini CLI session
+
+        AI indicators checked:
+            - 'claude' (Claude Code CLI)
+            - 'happy' (Claude CLI wrapper)
+            - 'happy-dev' (development build)
+            - 'gemini' (Gemini CLI)
+        """
+        try:
+            # Get pane PID — same pattern as is_claude_session() (no _get_pane_pid())
+            result = self.execute_tmux_command(
+                ['list-panes', '-F', '#{pane_pid}'],
+                session=session,
+                window=window
+            )
+
+            if not result or result['returncode'] != 0 or not result['stdout'].strip():
+                return False
+
+            pane_pid = result['stdout'].strip()
+
+            # Get child processes
+            child_result = subprocess.run(
+                ['pgrep', '-P', pane_pid],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+
+            if child_result.returncode != 0 or not child_result.stdout.strip():
+                return False
+
+            # AI indicators — superset of is_claude_session() claude_indicators
+            # Includes 'gemini' for Gemini CLI first-class support
+            ai_indicators = {'claude', 'happy', 'happy-dev', 'gemini'}
+
+            for child_pid in child_result.stdout.strip().split('\n'):
+                if not child_pid.strip():
+                    continue
+
+                ps_result = subprocess.run(
+                    ['ps', '-p', child_pid.strip(), '-o', 'comm='],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+
+                if ps_result.returncode == 0:
+                    process_name = ps_result.stdout.strip().lower()
+                    if process_name in ai_indicators:
+                        return True
+
+        except (subprocess.TimeoutExpired, Exception):
+            # Fail safely - don't report as AI session if detection fails
+            pass
+        return False
+
 
 # Global instance for consistent usage
 _tmux_utils = None
@@ -970,6 +1041,47 @@ class WindowList(list):
         """
         return WindowList([w for w in self if w.get('is_thinking') is True])
 
+    def in_git_worktree(self, branch: str = None) -> 'WindowList':
+        """Filter tmux windows whose working directory is inside a git worktree.
+
+        Requires tmux_list_windows(include_git=True) — windows need the 'branch' key
+        populated. A window is "in a git worktree" when win['branch'] is not None
+        (i.e. its cwd is inside a git repository with a named branch checked out).
+        Detached HEADs have branch=None and are excluded.
+
+        If branch is specified: filter to windows in that specific git branch only.
+        If branch is None: filter to all windows in any git worktree.
+
+        Chains with other WindowList filters:
+          tmux_list_windows(include_git=True).in_git_worktree().claude_sessions()
+          tmux_list_windows(include_git=True).in_git_worktree('feat-x').prompting_user_for_input()
+
+        Enables orchestrating AI to discover: which git worktree Claude sessions
+        need attention right now.
+        """
+        if branch:
+            return WindowList([w for w in self if w.get('branch') == branch])
+        return WindowList([w for w in self if w.get('branch') is not None])
+
+    def ai_sessions(self) -> 'WindowList':
+        """Return only windows that are AI sessions (Claude OR Gemini).
+
+        Filters for windows with is_claude_session=True or is_ai_session=True,
+        meaning the process tree contains claude, happy, happy-dev, or gemini processes.
+        Falls back to is_claude_session for backwards compatibility.
+
+        Requires content_lines > 0 when calling tmux_list_windows.
+
+        Example:
+            ai_only = windows.ai_sessions()
+            # Chain: find git worktree AI sessions waiting for input
+            tmux_list_windows(include_git=True).in_git_worktree().ai_sessions()
+        """
+        return WindowList([
+            w for w in self
+            if w.get('is_ai_session') is True or w.get('is_claude_session') is True
+        ])
+
     def __repr__(self) -> str:
         """Debug-friendly representation."""
         return f'WindowList({list.__repr__(self)})'
@@ -978,7 +1090,8 @@ class WindowList(list):
 def tmux_list_windows(
     session: Optional[str] = None,
     content_lines: int = DEFAULT_CONTENT_LINES,
-    exclude_current: bool = True
+    exclude_current: bool = True,
+    include_git: bool = False,
 ) -> WindowList:
     """List all tmux windows as a filterable WindowList.
 
@@ -989,6 +1102,10 @@ def tmux_list_windows(
         session: Filter to specific session name (None = all sessions)
         content_lines: Lines to capture per pane (0 = none, >0 = last N lines)
         exclude_current: Skip the window running this script (default: True)
+        include_git: If True, populate win['branch'] with the git branch name of
+            each window's working directory via _tmux_get_git_branch(). Adds one
+            subprocess call per window (1s timeout each); False by default to avoid
+            overhead in normal usage. Required for WindowList.in_git_worktree() to work.
 
     Returns:
         WindowList of window dicts. Each dict contains:
@@ -1001,6 +1118,8 @@ def tmux_list_windows(
         - active: bool - True if this window is currently selected/visible in its session
         - activity: int - Unix timestamp of last activity in this window
         - flags: str - tmux window flags (* = current, - = last, Z = zoomed, ! = bell)
+        - branch: str|None - (only if include_git=True) git branch name of window's cwd,
+            None if not in a git repo or detached HEAD
         - content: str - (only if content_lines > 0) captured terminal output, last N lines
         - prompt_type: str|None - (only if content_lines > 0) detected Claude Code prompt type:
           'input', 'plan_approval', 'tool_permission_yn', 'tool_permission_numbered',
@@ -1057,6 +1176,9 @@ def tmux_list_windows(
             if exclude_current and win_session == current_session and win_index == current_window:
                 continue
 
+            # Resolve real path (~ expansion) for git branch lookup
+            real_path = os.path.expanduser(data['path'])
+
             # Build window dict
             win = {
                 'session': win_session,
@@ -1070,7 +1192,9 @@ def tmux_list_windows(
                 'pid': int(data['pid']) if data['pid'].isdigit() else 0,
                 'active': data['active'] == '1',  # Is this the current window?
                 'activity': int(data['activity']) if data['activity'].isdigit() else 0,  # Unix timestamp
-                'flags': data['flags']  # * = current, - = last, etc.
+                'flags': data['flags'],  # * = current, - = last, etc.
+                # Git branch: populated only if include_git=True (1 subprocess per window)
+                'branch': _tmux_get_git_branch(real_path) if include_git else None,
             }
 
             # Optional: capture pane content and detect state
@@ -1088,6 +1212,8 @@ def tmux_list_windows(
                 win['is_thinking'] = tmux_detect_claude_thinking_mode(win['content'])
                 # Check if this is a Claude Code session (process tree contains claude/happy)
                 win['is_claude_session'] = tmux.is_claude_session(win_session, win_index)
+                # Check if this is any AI session: Claude OR Gemini (superset of is_claude_session)
+                win['is_ai_session'] = tmux.is_ai_session(win_session, win_index)
 
             windows.append(win)
 
@@ -1126,6 +1252,35 @@ def _tmux_capture_pane(
         session=session, window=window
     )
     return result['stdout'] if result and result.get('returncode') == 0 else ''
+
+
+def _tmux_get_git_branch(path: str) -> 'str | None':
+    """Return the git branch name for the given filesystem path, or None.
+
+    Used by tmux_list_windows(include_git=True) to annotate each tmux window
+    with the git branch of its working directory. Enables git worktree awareness
+    in the tmux window list without importing git_worktree_utils (no circular import).
+
+    Returns None if: path is not a git repo, git not installed, subprocess
+    times out (timeout=1s), or HEAD is detached (git returns 'HEAD').
+    timeout=1s prevents blocking the window list on slow/network-mounted git repos.
+
+    Note: subprocess is already a module-level import in tmux_utils.py.
+    No local 'import subprocess as _sp' needed (FIX Issue 16: remove redundant local import).
+    """
+    try:
+        result = subprocess.run(
+            ['git', '-C', os.path.expanduser(path), 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            return None if branch == 'HEAD' else branch  # 'HEAD' = detached HEAD
+    except Exception:
+        pass
+    return None
 
 
 def _tmux_enhance_title(

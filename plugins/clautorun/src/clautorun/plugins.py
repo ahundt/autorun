@@ -50,6 +50,10 @@ from . import plan_export  # noqa: F401
 from . import task_lifecycle  # noqa: F401
 task_lifecycle.register_hooks(app)  # Register task lifecycle hooks
 
+# Import git_worktree_plugin and register hooks for /cr:wt command + SessionStart recovery
+from . import git_worktree_plugin  # noqa: F401  — git worktree lifecycle management
+git_worktree_plugin.register_hooks(app)
+
 
 # ============================================================================
 # FILE POLICY PLUGIN (DRY Factory Pattern)
