@@ -529,64 +529,91 @@ class TestRespondToHuman:
     # PATHWAY 2: PostToolUse — fully supported
     # =========================================================================
 
-    def test_posttooluse_to_human_false_default_ai_injection(self):
-        """Default (to_human=False): hookSpecificOutput present → AI context injection."""
+    def test_posttooluse_default_sends_to_both_channels(self):
+        """Default (to_human=True, to_ai=True): both systemMessage and additionalContext set."""
         ctx = EventContext(session_id="test", event="PostToolUse")
-        response = ctx.respond("allow", "context msg")
+        response = ctx.respond("allow", "📋 Plan exported to notes/test.md")
+        assert response["systemMessage"] == "📋 Plan exported to notes/test.md"
         assert "hookSpecificOutput" in response
-        assert response["hookSpecificOutput"]["additionalContext"] == "context msg"
+        assert response["hookSpecificOutput"]["additionalContext"] == "📋 Plan exported to notes/test.md"
+        assert response.get("reason", "") == ""  # empty prevents double-print
+
+    def test_posttooluse_to_human_true_with_default_to_ai_sends_both(self):
+        """Explicit to_human=True with default to_ai=True: same as default — both channels."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "msg", to_human=True)
+        assert response["systemMessage"] == "msg"
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["additionalContext"] == "msg"
+
+    def test_posttooluse_custom_strings_per_channel(self):
+        """Different custom strings for human and AI channels."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "reason", to_human="📋 Saved", to_ai="Plan at notes/x.md")
+        assert response["systemMessage"] == "📋 Saved"
+        assert response["hookSpecificOutput"]["additionalContext"] == "Plan at notes/x.md"
+
+    def test_posttooluse_to_ai_false_human_only(self):
+        """to_ai=False: human-only (replaces old to_human=True behavior)."""
+        ctx = EventContext(session_id="test", event="PostToolUse")
+        response = ctx.respond("allow", "msg", to_ai=False)
+        assert response["systemMessage"] == "msg"
+        assert "hookSpecificOutput" not in response
 
     def test_posttooluse_to_human_true_shows_reason_to_user(self):
-        """to_human=True: hookSpecificOutput absent, reason empty → no double-print."""
+        """to_human=True, to_ai=False: hookSpecificOutput absent, reason empty → no double-print."""
         ctx = EventContext(session_id="test", event="PostToolUse")
-        response = ctx.respond("allow", "Plan exported to notes/plan.md", to_human=True)
+        response = ctx.respond("allow", "Plan exported to notes/plan.md", to_human=True, to_ai=False)
         assert response["systemMessage"] == "Plan exported to notes/plan.md"
-        assert "hookSpecificOutput" not in response  # absent → human-visible path
+        assert "hookSpecificOutput" not in response  # absent → human-only when to_ai=False
         # reason must be empty — canonical example (claude-code-hooks-api.md:202-210) omits it
         assert response.get("reason", "") == ""
 
     def test_posttooluse_to_human_custom_string(self):
-        """to_human='custom': human sees custom string; reason empty to prevent double-print."""
+        """to_human='custom', to_ai=False: human sees custom string; reason empty to prevent double-print."""
         ctx = EventContext(session_id="test", event="PostToolUse")
-        response = ctx.respond("allow", "verbose AI context", to_human="📋 Plan saved")
+        response = ctx.respond("allow", "verbose AI context", to_human="📋 Plan saved", to_ai=False)
         assert response["systemMessage"] == "📋 Plan saved"
         assert "hookSpecificOutput" not in response
         assert response.get("reason", "") == ""
 
     def test_posttooluse_to_human_empty_string_treated_as_false(self):
-        """to_human='': empty string is falsy → behaves like False (AI injection)."""
+        """to_human='': empty string is falsy → _resolve_channel returns None."""
         ctx = EventContext(session_id="test", event="PostToolUse")
         response = ctx.respond("allow", "context", to_human="")
+        # to_ai=True (default) → hookSpecificOutput present; sys_msg falls back to ai_text
         assert "hookSpecificOutput" in response
 
     def test_posttooluse_to_human_truthy_int_treated_as_false(self):
-        """to_human=1: truthy int but not True by identity → AI injection path."""
+        """to_human=1: truthy int but not True by identity → _resolve_channel returns None."""
         ctx = EventContext(session_id="test", event="PostToolUse")
         response = ctx.respond("allow", "context", to_human=1)
+        # to_ai=True (default) → hookSpecificOutput present
         assert "hookSpecificOutput" in response
 
     def test_posttooluse_to_human_true_with_empty_reason(self):
-        """to_human=True + empty reason: human path taken but systemMessage is empty.
+        """to_human=True + empty reason + to_ai=False: human path taken but systemMessage is empty.
         Documented trap — callers must pass non-empty reason when to_human=True."""
         ctx = EventContext(session_id="test", event="PostToolUse")
-        response = ctx.respond("allow", "", to_human=True)
-        assert "hookSpecificOutput" not in response  # human path taken
+        response = ctx.respond("allow", "", to_human=True, to_ai=False)
+        assert "hookSpecificOutput" not in response  # human path taken, AI explicitly off
         assert response["systemMessage"] == ""       # empty — no visible output
 
     def test_posttooluse_ai_injection_has_reason_not_empty(self):
         """AI injection path (to_human=False): reason field carries context to AI."""
         ctx = EventContext(session_id="test", event="PostToolUse")
-        response = ctx.respond("allow", "AI context here")
+        response = ctx.respond("allow", "AI context here", to_human=False)
         assert "hookSpecificOutput" in response
         assert response["hookSpecificOutput"]["additionalContext"] == "AI context here"
-        assert response["reason"] == "AI context here"
+        assert response["reason"] == "AI context here"  # human_text=None → reason=msg_reason (backwards compat)
+        assert response["systemMessage"] == "AI context here"  # sys_msg falls back to ai_text
 
     def test_posttooluse_to_human_gemini_no_hso(self):
-        """Gemini AfterTool + to_human=True: hookSpecificOutput absent, systemMessage set.
+        """Gemini AfterTool + to_human=True + to_ai=False: hookSpecificOutput absent, systemMessage set.
         decision: 'approve' — consistent with existing PATHWAY 2 AI path (pre-existing pattern).
         reason: '' — no double-print."""
         ctx = EventContext(session_id="test", event="PostToolUse", cli_type="gemini")
-        response = ctx.respond("allow", "Plan exported", to_human=True)
+        response = ctx.respond("allow", "Plan exported", to_human=True, to_ai=False)
         assert response["systemMessage"] == "Plan exported"
         assert "hookSpecificOutput" not in response
         assert response["decision"] == "approve"  # PATHWAY 2 uses "approve" for both CLIs

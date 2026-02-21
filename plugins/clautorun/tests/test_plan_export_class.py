@@ -2402,10 +2402,10 @@ class TestHumanVisibleNotifications:
     """
 
     def test_export_on_exit_plan_mode_response_is_human_visible(self, temp_project):
-        """export_on_exit_plan_mode() PostToolUse response must be human-visible.
+        """export_on_exit_plan_mode() PostToolUse response must reach both user and AI.
 
-        Correct: systemMessage present, hookSpecificOutput absent, reason empty.
-        hookSpecificOutput absent → outcome matrix row 3: shown to user.
+        Correct: systemMessage present (user terminal), hookSpecificOutput present (AI context),
+        reason empty (prevents double-print).
         """
         from clautorun.plan_export import export_on_exit_plan_mode
 
@@ -2424,8 +2424,9 @@ class TestHumanVisibleNotifications:
         assert "systemMessage" in response
         assert response["systemMessage"].startswith("📋")
         assert "Plan exported to" in response["systemMessage"]
-        # hookSpecificOutput absent → human-visible path (outcome matrix row 3)
-        assert "hookSpecificOutput" not in response
+        # Both channels set: systemMessage (user) + hookSpecificOutput (AI)
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["additionalContext"] == response["systemMessage"]
         # reason must be empty to prevent double-print (canonical pattern)
         assert response.get("reason", "") == ""
 
@@ -2473,6 +2474,12 @@ class TestHumanVisibleNotifications:
             f"dedup message must say 'Plan exported to' not 'Plan already exported to'. "
             f"Got: {response2['systemMessage']!r}"
         )
+        # Both channels must be set (user terminal + Claude AI context)
+        assert "hookSpecificOutput" in response2, "PostToolUse response must include hookSpecificOutput"
+        assert response2["hookSpecificOutput"].get("additionalContext"), \
+            "additionalContext must be set so Claude's AI context receives the notification"
+        assert response2["hookSpecificOutput"]["additionalContext"] == response2["systemMessage"], \
+            "additionalContext and systemMessage must carry the same notification text"
 
     def test_export_on_exit_plan_mode_timeout_is_human_visible(self, temp_project):
         """Timeout: user MUST see warning — plan was NOT exported.
@@ -2497,8 +2504,9 @@ class TestHumanVisibleNotifications:
 
         assert response is not None
         assert "systemMessage" in response
-        # hookSpecificOutput absent → human-visible (not AI context injection only)
-        assert "hookSpecificOutput" not in response
+        # Both channels set: systemMessage (user) + hookSpecificOutput (AI)
+        assert "hookSpecificOutput" in response
+        assert response["hookSpecificOutput"]["additionalContext"] == response["systemMessage"]
         assert "timeout" in response["systemMessage"].lower()
 
     def test_pretooluse_backup_path_notifies_when_posttooluse_missing(self, temp_project):
@@ -3483,6 +3491,12 @@ class TestAcceptedRejectedRouting:
         assert "already" not in msg.lower(), (
             f"message must say 'Plan exported to' not 'Plan already exported to'. Got: {msg!r}"
         )
+        # Both channels must be set (user terminal + Claude AI context)
+        assert "hookSpecificOutput" in opt2_result, "PostToolUse response must include hookSpecificOutput"
+        assert opt2_result["hookSpecificOutput"].get("additionalContext"), \
+            "additionalContext must be set so Claude's AI context receives the notification"
+        assert opt2_result["hookSpecificOutput"]["additionalContext"] == msg, \
+            "additionalContext and systemMessage must carry the same notification text"
 
     def test_option2_after_option1_recovery_dedup_notifies(self, temp_project):
         """Regression: Option 2 PostToolUse must notify even when plan not in active_plans.
@@ -3554,6 +3568,12 @@ class TestAcceptedRejectedRouting:
             f"notification must say 'Plan exported to' not 'Plan already exported to'. "
             f"Got: {msg!r}"
         )
+        # Both channels must be set (user terminal + Claude AI context)
+        assert "hookSpecificOutput" in result, "PostToolUse response must include hookSpecificOutput"
+        assert result["hookSpecificOutput"].get("additionalContext"), \
+            "additionalContext must be set so Claude's AI context receives the notification"
+        assert result["hookSpecificOutput"]["additionalContext"] == msg, \
+            "additionalContext and systemMessage must carry the same notification text"
 
     def test_multi_plan_recovery_skips_already_tracked(self, temp_project):
         """Plan already in tracking must be skipped by get_unexported() in multi-plan recovery.
