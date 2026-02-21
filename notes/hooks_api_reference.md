@@ -1229,6 +1229,7 @@ if __name__ == "__main__":
 | 0 | `hookSpecificOutput.permissionDecision` | `"allow"` | - | Tool result passed to AI |
 | 0 | `hookSpecificOutput.permissionDecision` | `"block"` | "feedback" | Feedback injected, AI adjusts |
 | 0 | - | - | "info text" | Message shown to user (stdin→stdout) |
+| 0 | `hookSpecificOutput.additionalContext` | "context text" | optional | Context injected into Claude AI |
 
 **Gemini CLI AfterTool:**
 
@@ -1333,7 +1334,7 @@ if __name__ == "__main__":
 
 | Field | Type | Purpose | Events |
 |-------|------|---------|--------|
-| `additionalContext` | string | Inject context into AI view | BeforeAgent, BeforeModel |
+| `additionalContext` | string | Inject context into AI view | PostToolUse/AfterTool, UserPromptSubmit/BeforeAgent, BeforeModel |
 | `llm_request` | LLMRequest | Modify LLM request | BeforeModel |
 | `llm_response` | LLMResponse | Modify LLM response | AfterModel |
 | `toolConfig` | object | Filter available tools | BeforeToolSelection |
