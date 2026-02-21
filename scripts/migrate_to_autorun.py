@@ -363,6 +363,27 @@ REPLACEMENTS = [
         "Class name: Clautorun* → Autorun* (ClautorunDaemon → AutorunDaemon, etc.)"
     ),
 
+    # TIER 11C: CRITICAL - Identifiers and environment variables with underscores
+    # These MUST come before catch-all because \bCLAUTORUN\b won't match CLAUTORUN_* (underscore breaks word boundary)
+    # ALL CAPS environment variables: CLAUTORUN_PLUGIN_ROOT, CLAUTORUN_NO_BOOTSTRAP, etc.
+    Replacement(
+        r"\bCLAUTORUN_",
+        "AUTORUN_",
+        "Environment variable: CLAUTORUN_* → AUTORUN_* (all caps)"
+    ),
+    # Title case variants (rare but should be handled): Clautorun_something
+    Replacement(
+        r"\bClautorun_",
+        "Autorun_",
+        "Environment variable: Clautorun_* → Autorun_* (title case)"
+    ),
+    # Lowercase identifiers: clautorun_available, clautorun_result, clautorun_bin, clautorun_diagnostic_*.log, etc.
+    Replacement(
+        r"\bclautorun_",
+        "autorun_",
+        "Identifier with underscore: clautorun_* → autorun_* (lowercase)"
+    ),
+
     # TIER 12 (FINAL): Catch-all for bare "clautorun" word (comments, messages, etc.)
     # MUST come LAST so specific patterns take priority
     Replacement(
