@@ -13,6 +13,8 @@ SAFETY NOTES:
 4. Script filename: migrate_to_autorun.py is explicitly protected from modification
 5. .gitignore handling: Uses hardcoded EXCLUDE_PATTERNS (respects common patterns but not full .gitignore)
    - If .gitignore specifies additional exclusions, verify they're in EXCLUDE_PATTERNS
+6. ENCODING: All files are read/written as UTF-8. Non-UTF-8 files will trigger encoding errors (safe fail).
+   - Original file encodings are NOT preserved (Bug #8 - future enhancement)
 """
 
 import os
@@ -20,6 +22,7 @@ import re
 import argparse
 import logging
 import random
+import fnmatch
 from pathlib import Path
 from typing import List, Tuple, Dict
 from dataclasses import dataclass
@@ -360,7 +363,9 @@ EXCLUDE_PATTERNS = [
 
 def setup_logging(verbose: bool = False):
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, format='%(message)s')
+    # Clear existing handlers to prevent duplication (Bug #4 fix)
+    logging.root.handlers.clear()
+    logging.basicConfig(level=level, format='%(message)s', force=True)
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +374,7 @@ def should_exclude_file(file_path: Path) -> bool:
 
     CRITICAL: This function ensures the migration script never modifies itself.
     The script is located in scripts/ which is explicitly excluded.
+    Uses fnmatch for proper glob pattern matching (not naive substring matching).
     """
     path_str = str(file_path)
 
@@ -376,7 +382,11 @@ def should_exclude_file(file_path: Path) -> bool:
     if "migrate_to_autorun.py" in path_str:
         return True
 
-    return any(pattern.replace("*", "").replace("/", "") in path_str for pattern in EXCLUDE_PATTERNS)
+    # Use fnmatch for proper glob pattern matching (Bug #1 fix)
+    for pattern in EXCLUDE_PATTERNS:
+        if fnmatch.fnmatch(path_str, f"*{pattern}*") or fnmatch.fnmatch(path_str, pattern):
+            return True
+    return False
 
 def get_files_to_process(root_dir: Path, extensions: List[str]) -> List[Path]:
     files = []
@@ -431,12 +441,16 @@ def collect_all_changes(content: str, file_path: Path, replacements: List[Replac
                 for i in range(len(after_lines), len(before_lines)):
                     after_lines.append((i + 1, ''))
 
-            # Detect which patterns matched this line
+            # Bug #3 fix: Detect which patterns ACTUALLY caused the change
+            # Apply each pattern individually to see which one changed this line
             pattern_descs = []
+            current_line = lines[line_num]
             for replacement in replacements:
                 pattern = replacement.compile()
-                if pattern.search(lines[line_num]):
+                modified_line = pattern.sub(replacement.replacement, current_line)
+                if modified_line != current_line:
                     pattern_descs.append(replacement.description)
+                    current_line = modified_line  # Track cumulative changes
 
             combined_desc = " + ".join(pattern_descs) if pattern_descs else "Unknown pattern"
 
@@ -500,8 +514,19 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
     """Generate migration preview (dry-run) or apply changes (dangerously_do_real_file_edits)"""
     setup_logging(verbose)
 
-    if not (root / "plugins" / "clautorun").exists():
-        logger.error("plugins/clautorun not found")
+    # Bug #6 fix: Validate root directory and permissions
+    plugins_dir = root / "plugins" / "clautorun"
+    if not plugins_dir.exists():
+        logger.error(f"plugins/clautorun not found at {plugins_dir}")
+        return False
+    if not plugins_dir.is_dir():
+        logger.error(f"plugins/clautorun is not a directory")
+        return False
+    if not os.access(plugins_dir, os.R_OK):
+        logger.error(f"No read permission for {plugins_dir}")
+        return False
+    if dangerously_do_real_file_edits and not os.access(plugins_dir, os.W_OK):
+        logger.error(f"No write permission for {plugins_dir} (required for REAL-RUN mode)")
         return False
 
     # HUMAN CONFIRMATION GATE - ONLY for dangerously_do_real_file_edits mode
@@ -559,11 +584,18 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
     # Collect ALL changes
     all_changes = []
     files_changed = set()
+    files_modified = set()  # Bug #7 fix: Track modified vs skipped separately
+    files_skipped = set()
     all_issues = []
 
     for file_path in all_files:
         try:
-            original_content = file_path.read_text(encoding='utf-8', errors='ignore')
+            # Bug #2 fix: Fail explicitly on encoding errors, don't silently corrupt
+            try:
+                original_content = file_path.read_text(encoding='utf-8')
+            except UnicodeDecodeError as e:
+                all_issues.append((file_path.relative_to(root), f"ENCODING ERROR: {e}"))
+                continue
 
             # Collect changes from this file
             file_changes = collect_all_changes(original_content, file_path, REPLACEMENTS, context_lines=3)
@@ -588,17 +620,23 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
                         verify_content = file_path.read_text(encoding='utf-8')
                         if verify_content != modified_content:
                             all_issues.append((file_path.relative_to(root), "WRITE VERIFICATION FAILED: content mismatch"))
+                            files_skipped.add(file_path)  # Track skipped
                         else:
                             logger.info(f"✓ Modified: {file_path.relative_to(root)}")
-                    except Exception as e:
-                        all_issues.append((file_path.relative_to(root), f"WRITE ERROR: {e}"))
+                            files_modified.add(file_path)  # Track modified
+                    except (IOError, OSError) as e:
+                        # Bug #5 fix: Specific exception handling
+                        all_issues.append((file_path.relative_to(root), f"WRITE ERROR: {type(e).__name__}: {e}"))
+                        files_skipped.add(file_path)
                 elif dangerously_do_real_file_edits and issues:
                     logger.warning(f"⚠️  Skipped (issues found): {file_path.relative_to(root)}")
+                    files_skipped.add(file_path)  # Track skipped
                     for issue in issues:
                         logger.warning(f"    - {issue}")
 
-        except Exception as e:
-            all_issues.append((file_path.relative_to(root), f"ERROR: {e}"))
+        except (IOError, OSError, ValueError, TypeError) as e:
+            # Bug #5 fix: Specific exception handling, not broad Exception
+            all_issues.append((file_path.relative_to(root), f"ERROR: {type(e).__name__}: {e}"))
 
     # Calculate sample size
     sample_size = max(1, int(len(all_changes) * sample_percent / 100))
@@ -670,7 +708,8 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
 
     logger.info(f"\n{'=' * 100}")
     if dangerously_do_real_file_edits:
-        logger.info(f"✓ REAL-RUN COMPLETE - {len(files_changed)} files modified")
+        # Bug #10 fix: Show modified + skipped counts separately
+        logger.info(f"✓ REAL-RUN COMPLETE - {len(files_modified)} files modified, {len(files_skipped)} files skipped")
         logger.info("Next steps:")
         logger.info("  1. Review changes: git diff")
         logger.info("  2. Test changes: uv run pytest plugins/autorun/tests/ -v")
@@ -681,6 +720,7 @@ def migrate(root: Path = Path.cwd(), sample_percent: float = 5.0, verbose: bool 
         logger.info("Review samples above to verify replacements are correct")
     logger.info("=" * 100)
 
+    # Bug #7 fix: Return False only if there are actual issues, not if only some files were skipped
     return len(all_issues) == 0
 
 if __name__ == "__main__":
@@ -709,9 +749,20 @@ if __name__ == "__main__":
         action="store_true",
         help="REAL-RUN MODE: Actually modify files (requires human confirmation 'i am human')"
     )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible sampling (default: 42, set to None for non-reproducible)"
+    )
 
     args = parser.parse_args()
-    random.seed(42)  # Reproducible samples
+    # Bug #9 fix: Document random seed and make it configurable
+    if args.random_seed is not None:
+        random.seed(args.random_seed)
+        logger.debug(f"Random seed set to {args.random_seed} (reproducible samples)")
+    else:
+        logger.debug("Random seed not set (non-reproducible samples)")
 
     # Redirect logging to output file if specified
     if args.output:
