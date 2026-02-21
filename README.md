@@ -49,7 +49,7 @@ autorun --install
 ## Key Features
 
 1. **Autonomous Execution**: Claude/Gemini continues working without constant "continue" prompts
-2. **Three-Stage Verification**: Ensures tasks are actually complete before stopping
+2. **Implement, Evaluate, Verify**: AI must complete all three stages before a session ends. Reduces premature "done"
 3. **Plan Management**: Create, refine, update, and execute structured plans
 4. **File Policy Control**: Prevent AI from creating unnecessary files
 5. **Command Redirecting**: Block dangerous commands and suggest safer alternatives (e.g., `rm` → `trash`)
@@ -289,7 +289,7 @@ For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 | Problem | autorun Solution |
 |---------|-----------------|
 | Claude stops mid-task, requiring manual "continue" | **Automatic continuation** — hooks detect incomplete work and re-inject the task |
-| AI claims "done" with partial implementation | **Three-stage verification** — completion markers must pass all three stages before session ends |
+| AI claims "done" with partial implementation | **Implement, evaluate, verify** before session ends. Reduces premature exits |
 | AI creates dozens of experimental files | **File policy control** — strict search (`/ar:f`), justified creation (`/ar:j`), or allow all (`/ar:a`) |
 | Dangerous commands run without warning | **Command redirecting** — blocks `rm`, `git reset --hard`, etc. and suggests safer alternatives |
 | Terminal crash loses all progress | **Session persistence** — [tmux](https://github.com/tmux/tmux)/[byobu](https://www.byobu.org/) keeps sessions alive across crashes, reboots, and network drops |
@@ -387,7 +387,7 @@ graph TD
 
 **Emergency Stop**: At any point, `/ar:sos` outputs `AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP` and immediately halts.
 
-**Hook mechanism**: User sends `/ar:go <task>` → UserPromptSubmit hook activates three-stage tracking → AI works autonomously → system validates completion markers at each stage boundary → session ends only after all three stages complete.
+**Hook mechanism**: User sends `/ar:go <task>` → UserPromptSubmit hook activates stage tracking → AI works autonomously → system validates completion markers at each stage boundary (implement, evaluate, verify) → session ends only after all stages complete.
 
 ### Safety Mechanisms
 - **Maximum recheck limit**: Prevents infinite loops (default: 3 attempts per stage)
@@ -398,7 +398,7 @@ graph TD
 ### Verification Example
 
 **Before autorun**: Claude stops after implementing basic login form
-**With autorun three-stage verification**:
+**With autorun (implement, evaluate, verify)**:
 1. Stage 1: "Login form implemented!" → `AUTORUN_INITIAL_TASKS_COMPLETED`
 2. Stage 2: "Critically evaluated - added error handling, tests missing" → continues working → `CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED`
 3. Stage 3: "Verified: Form works, tests pass, error handling complete" → `AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY` → Session ends
@@ -480,28 +480,68 @@ python -m plugins.autorun.src.autorun.install --install --force
 
 The `autorun` CLI command is available after installation for managing plugins, file policies, and task lifecycle outside of Claude Code/Gemini sessions.
 
-```
-autorun --help
+**Installation:**
 
-autorun --install                    # Register plugins with Claude Code/Gemini
-autorun --install --gemini           # Register for Gemini CLI only
+```bash
+autorun --install                    # Register all plugins with Claude Code + Gemini
+autorun --install autorun            # Register only autorun plugin
 autorun --install --claude           # Register for Claude Code only
-autorun --status                     # Show installation status
+autorun --install --gemini           # Register for Gemini CLI only
+autorun --install --force            # Force reinstall (development)
+autorun --install --tool             # Also run uv tool install for global CLI
+autorun --uninstall                  # Uninstall plugins and UV tools
+```
+
+**Information:**
+
+```bash
+autorun --status                     # Show installation status for all CLIs
 autorun --version                    # Show version
+autorun --help                       # Full help with all options
+```
+
+**Maintenance:**
+
+```bash
 autorun --restart-daemon             # Restart the autorun daemon
 autorun --update                     # Check for and install updates
-autorun --uninstall                  # Uninstall plugins
-
-autorun file status                  # Show current file policy
-autorun file allow                   # Allow all file creation
-autorun file justify                 # Require justification for new files
-autorun file search                  # Only modify existing files
-
-autorun task status                  # Show current task status
-autorun task status --verbose        # Detailed task information
-autorun task export tasks.json       # Export task history
-autorun task gc --dry-run            # Preview cleanup of old data
+autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip|aix)
+autorun --no-bootstrap               # Disable automatic bootstrap in hooks
+autorun --enable-bootstrap           # Re-enable automatic bootstrap
 ```
+
+**AutoFile subcommand** (control file creation policy):
+
+```bash
+autorun file status                  # Show current policy (aliases: st, s)
+autorun file allow                   # Allow all file creation (alias: a)
+autorun file justify                 # Require justification for new files (alias: j)
+autorun file search                  # Only modify existing files (aliases: find, f)
+```
+
+**Task subcommand** (task lifecycle management):
+
+```bash
+autorun task status                  # Show task status for session
+autorun task status --verbose        # Detailed task information
+autorun task export tasks.json       # Export task history to JSON
+autorun task clear                   # Clear task data
+autorun task gc --dry-run            # Preview cleanup of old data
+autorun task gc --no-confirm         # Clean up old task data without prompt
+```
+
+**Advanced installation options:**
+
+```bash
+autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|always|never
+autorun --conductor                  # Install Conductor extension for Gemini (default)
+autorun --no-conductor               # Skip Conductor extension
+autorun --aix                        # Force AIX installation (local only)
+autorun --no-aix                     # Skip AIX even if installed
+autorun --cli claude                 # Set CLI type (used internally by hooks)
+```
+
+> `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).
 
 ## Available Commands
 
@@ -636,11 +676,11 @@ All existing patterns without type prefixes default to literal matching. Existin
 
 ### Autorun Commands (Autonomous Execution)
 
-Start a task and walk away — autorun keeps Claude working through three verification stages so you don't have to type "continue" repeatedly:
+Start a task and walk away. Autorun keeps Claude/Gemini working through implement, evaluate, and verify so you don't have to type "continue" repeatedly:
 
 - **/ar:go** or **/ar:run** \<prompt> - Start autonomous workflow with extended work sessions
   - Reduces manual "continue" prompts significantly
-  - Enables three-stage verification to prevent premature exits
+  - Requires implement, evaluate, and verify stages to reduce premature exits
   - Takes task description as argument (required)
 
 - **/ar:gp** or **/ar:proc** \<prompt> - Procedural autonomous workflow
