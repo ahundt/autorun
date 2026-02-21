@@ -24,10 +24,12 @@ However, some files require MANUAL updates and are intentionally NOT processed b
 1. aix.toml (AIX Marketplace Configuration)
    - Paths like: path = "plugins/clautorun/commands/go.md"
    - Project references: name = "clautorun", repository URLs
-   - Installation commands with old package name
+   - Installation commands: git+https://github.com/ahundt/clautorun.git
+   - post_install commands: ["clautorun", "--install"] → ["autorun", "--install"]
+   - Comment text: "clautorun's bootstrap mechanism", etc.
    - MANUAL FIX: Use find-replace to update:
      * "plugins/clautorun/" → "plugins/autorun/"
-     * "clautorun" → "autorun" (in name and paths)
+     * "clautorun" → "autorun" (in name, paths, commands, and comments)
      * "github.com/ahundt/clautorun" → "github.com/ahundt/autorun"
 
 2. .dmux/dmux.config.json (Tmux/Byobu Project Config)
@@ -36,23 +38,30 @@ However, some files require MANUAL updates and are intentionally NOT processed b
    - MANUAL FIX: Update paths to use ~/.claude/autorun
 
 3. .claude/settings.local.json (Claude Code Bash Integration)
-   - PYTHONPATH and python module paths with old package names
-   - References to "src/clautorun/main.py" in Bash configuration
+   - Permission entries referencing "clautorun.main" and "src/clautorun/"
    - MANUAL FIX: Update all clautorun references to autorun
 
 4. plugins/known_marketplaces.json (Marketplace Registry)
-   - name: "clautorun", source: "plugins/clautorun"
-   - MANUAL FIX: Update to plugins/autorun
+   - [DONE] Already updated in prior commit
 
 5. .claude-plugin/marketplace.json (Plugin Manifest)
-   - Plugin name, description, source paths
-   - MANUAL FIX: Update all references
+   - [DONE] Already updated in prior commit
 
 6. Test Function Names (NOT Renamed by Script)
    - Script does NOT rename test functions like:
      * test_commands_clautorun_fallback_config → test_commands_autorun_fallback_config
      * test_clautorun_import_error → test_autorun_import_error
      * test_has_install_clautorun_function → test_has_install_autorun_function
+     * test_checks_if_clautorun_already_installed → test_checks_if_autorun_already_installed
+     * test_hook_entry_calls_clautorun_install → test_hook_entry_calls_autorun_install
+     * test_install_syncs_clautorun_deps → test_install_syncs_autorun_deps
+     * test_read_plugin_version_clautorun → test_read_plugin_version_autorun
+     * test_install_order_uv_then_clautorun_then_bashlex → test_install_order_uv_then_autorun_then_bashlex
+     * test_clautorun_main (in agents/cli-test-automation.md)
+     * ensure_clautorun_session() (in tests/test_tmux_injector.py, 4 refs)
+   - Also test ASSERTIONS that check for old function names:
+     * assert "def _install_clautorun(" in content → "def _install_autorun("
+     * content.find("_install_clautorun") → content.find("_install_autorun")
    - REASON: Regex patterns can't safely rename function definitions without AST parsing
    - MANUAL FIX: Rename test functions and update assertions in test files
 
@@ -68,20 +77,53 @@ However, some files require MANUAL updates and are intentionally NOT processed b
    - __pycache__/ (Python cache - regenerates automatically)
    - *.egg-info/ (package metadata - regenerates on install)
 
+9. plugins/autorun/pyproject.toml line 120 (Stale Source Path)
+   - source = ["plugins/clautorun/src/clautorun", "src/clautorun"]
+   - MANUAL FIX: Update to ["plugins/autorun/src/autorun", "src/autorun"]
+
+10. .gitignore line 201 (Symlink Artifact)
+    - /clautorun → should be /autorun
+    - MANUAL FIX: Update the gitignore entry
+
+11. plugins/autorun/commands/clautorun (Legacy Command File - Needs Rename + Content Fix)
+    - File needs git mv to plugins/autorun/commands/autorun
+    - Imports from clautorun.* modules → autorun.*
+    - Contains hardcoded /clautorun command mappings and string offsets
+    - MANUAL FIX: git mv + update all clautorun refs and string slice offsets
+
+12. plugins/autorun/Makefile line 5
+    - echo "clautorun Test Suite" → "autorun Test Suite"
+    - MANUAL FIX: Update the echo string
+
+13. src/clautorun/metadata.json (Stale Directory)
+    - File still exists at old path src/clautorun/ (should have been moved/deleted)
+    - MANUAL FIX: Remove src/clautorun/ directory or move metadata.json to src/autorun/
+
+14. plugins/autorun/tests/test_marketplace_name.py line 98
+    - test_readme_does_not_reference_clautorun_dev() — INTENTIONAL: tests that old name
+      "clautorun-dev" is not used in marketplace; the function name documents what it checks
+    - NO FIX NEEDED: Keep as-is (the "clautorun" reference is the test's purpose)
+
 POST-MIGRATION CHECKLIST:
 ================================================================================
 After running this script:
 1. [DONE] git mv plugins/clautorun/ → plugins/autorun/
 2. [DONE] Python source file edits (handled by script)
-3. [TODO] Manual: Update aix.toml paths and project name
-4. [TODO] Manual: Update .dmux/dmux.config.json paths
-5. [TODO] Manual: Update .claude/settings.local.json
-6. [TODO] Manual: Update plugins/known_marketplaces.json
-7. [TODO] Manual: Update .claude-plugin/marketplace.json
-8. [TODO] Test: Rename test functions and update assertions
+3. [DONE] Manual: Update aix.toml paths, project name, repo URLs, install commands, comments
+4. [DONE] Manual: Update .dmux/dmux.config.json paths
+5. [DONE] Manual: Update .claude/settings.local.json permission entries
+6. [DONE] Manual: Update plugins/known_marketplaces.json
+7. [DONE] Manual: Update .claude-plugin/marketplace.json
+8. [DONE] Test: Rename test functions and update assertions (see item 6 above for full list)
 9. [DONE] Function names: Updated in daemon.py, ai_monitor.py, diagnostics.py
 10. [DONE] Create symlink: ~/.claude/clautorun → ~/.claude/autorun (for backwards compat)
 11. [DONE] git commit with all changes
+12. [DONE] Manual: Update plugins/autorun/pyproject.toml source paths (item 9 above)
+13. [DONE] Manual: Update .gitignore /clautorun → /autorun (item 10 above)
+14. [DONE] Manual: git mv plugins/autorun/commands/clautorun → commands/autorun + fix contents (item 11 above)
+15. [DONE] Manual: Update plugins/autorun/Makefile echo string (item 12 above)
+16. [DONE] Manual: Moved src/clautorun/ → src/autorun/ (item 13 above)
+17. [TODO] Version bump: 0.8.0 → 0.9.0 in all version locations (see docs/version_update_checklist.md)
 
 SCRIPT DESIGN RATIONALE:
 ================================================================================

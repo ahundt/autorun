@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enhanced clautorun plugin - supports arbitrary command wrapping and enhanced prompt injection"""
+"""Enhanced autorun plugin - supports arbitrary command wrapping and enhanced prompt injection"""
 
 import json
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
-    from clautorun.command_discovery import (
+    from autorun.command_discovery import (
         discover_existing_commands,
         load_command_content,
         parse_command_args,
@@ -25,13 +25,13 @@ except ImportError:
 
 # Import centralized configuration (DRY principle - single source of truth)
 try:
-    from clautorun.config import CONFIG as BASE_CONFIG
+    from autorun.config import CONFIG as BASE_CONFIG
     # Extend with command-specific mappings
     CONFIG = dict(BASE_CONFIG)
     CONFIG["command_mappings"] = dict(BASE_CONFIG["command_mappings"])
     CONFIG["command_mappings"].update({
-        "/clautorun-discover": "command_discovery",
-        "/clautorun-search": "command_search"
+        "/autorun-discover": "command_discovery",
+        "/autorun-search": "command_search"
     })
     # Map legacy key names for backward compatibility
     CONFIG["completion_marker"] = BASE_CONFIG["stage1_confirmation"]
@@ -48,8 +48,8 @@ except ImportError:
             "/afa": "ALLOW",
             "/afj": "JUSTIFY",
             "/afst": "STATUS",
-            "/clautorun-discover": "command_discovery",
-            "/clautorun-search": "command_search"
+            "/autorun-discover": "command_discovery",
+            "/autorun-search": "command_search"
         },
         "policies": {
             "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
@@ -272,20 +272,20 @@ def main():
         wrapped_command = None
         command_args = ""
 
-        # Try exact match first for known clautorun commands
+        # Try exact match first for known autorun commands
         command = CONFIG["command_mappings"].get(prompt, None)
 
         if not command:
             # Check for commands that support arguments (autorun/autoproc and prefixed versions)
             for cmd_key, cmd_value in CONFIG["command_mappings"].items():
-                if (cmd_key.startswith('/autorun') or cmd_key.startswith('/autoproc')) and (prompt.startswith(cmd_key) or prompt.startswith('/clautorun ')):
+                if (cmd_key.startswith('/autorun') or cmd_key.startswith('/autoproc')) and prompt.startswith(cmd_key):
                     command = cmd_value
                     break
 
-        # Handle arbitrary command wrapping: /clautorun:yourcommand
-        if not command and COMMAND_DISCOVERY_AVAILABLE and prompt.startswith('/clautorun:'):
-            # Extract command name after /clautorun:
-            wrapped_command = prompt[11:].strip()  # Remove '/clautorun:' prefix
+        # Handle arbitrary command wrapping: /autorun:yourcommand
+        if not command and COMMAND_DISCOVERY_AVAILABLE and prompt.startswith('/autorun:'):
+            # Extract command name after /autorun:
+            wrapped_command = prompt[9:].strip()  # Remove '/autorun:' prefix
 
             # Handle potential arguments in the wrapped command
             if ' ' in wrapped_command:
@@ -302,9 +302,9 @@ def main():
             else:
                 wrapped_command = None
 
-        # Handle space-separated autorun commands: /clautorun /yourcommand
-        if not command and prompt.startswith('/clautorun ') and len(prompt) > 12:
-            space_separated_cmd = prompt[12:].strip()  # Remove '/clautorun ' prefix
+        # Handle space-separated autorun commands: /autorun /yourcommand
+        if not command and prompt.startswith('/autorun ') and len(prompt) > 10:
+            space_separated_cmd = prompt[10:].strip()  # Remove '/autorun ' prefix
 
             # Handle potential arguments
             if ' ' in space_separated_cmd:
@@ -317,9 +317,9 @@ def main():
                 wrapped_command = space_separated_cmd
                 command = "wrapped_command"
 
-        # Handle clautorun search command: /clautorun-search query
-        if not command and prompt.startswith('/clautorun-search ') and len(prompt) > 19:
-            search_query = prompt[19:].strip()  # Remove '/clautorun-search ' prefix
+        # Handle autorun search command: /autorun-search query
+        if not command and prompt.startswith('/autorun-search ') and len(prompt) > 17:
+            search_query = prompt[17:].strip()  # Remove '/autorun-search ' prefix
             if search_query:
                 response = handle_command_search(search_query)
                 result = {

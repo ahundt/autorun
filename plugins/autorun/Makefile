@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "clautorun Test Suite"
+	@echo "autorun Test Suite"
 	@echo ""
 	@echo "Available targets:"
 	@echo "  test          - Run all tests with coverage"

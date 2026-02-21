@@ -22,7 +22,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
 SRC_DIR = PLUGIN_ROOT / "src"
-DAEMON_PY = PLUGIN_ROOT / "src" / "clautorun" / "daemon.py"
+DAEMON_PY = PLUGIN_ROOT / "src" / "autorun" / "daemon.py"
 
 
 # =============================================================================
@@ -184,7 +184,7 @@ class TestHookEntryIntegration:
         hooks_dir = HOOK_ENTRY.parent
         relative_src = hooks_dir.parent / "src"
         assert relative_src.exists(), f"Relative src not found: {relative_src}"
-        assert (relative_src / "clautorun" / "__main__.py").exists()
+        assert (relative_src / "autorun" / "__main__.py").exists()
 
 
 # =============================================================================
@@ -328,14 +328,14 @@ class TestHooksJson:
                 for hook in matcher.get("hooks", []):
                     command = hook.get("command", "")
                     # Should use hook_entry.py wrapper
-                    if "clautorun" in command.lower():
+                    if "autorun" in command.lower():
                         assert "hook_entry.py" in command
 
     def test_no_shell_script_reference(self):
         """claude-hooks.json does not reference old shell script."""
         hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
         content = hooks_json.read_text()
-        assert "clautorun-hook.sh" not in content
+        assert "autorun-hook.sh" not in content
 
 
 # =============================================================================
@@ -367,10 +367,10 @@ class TestDaemonBootstrapStructure:
         content = DAEMON_PY.read_text()
         assert "\ndef _install_bashlex(" in content
 
-    def test_has_install_clautorun_function(self):
-        """daemon.py has _install_clautorun() to enable fast CLI path."""
+    def test_has_install_autorun_function(self):
+        """daemon.py has _install_autorun() to enable fast CLI path."""
         content = DAEMON_PY.read_text()
-        assert "def _install_clautorun(" in content
+        assert "def _install_autorun(" in content
 
     def test_has_get_plugin_root_function(self):
         """daemon.py has _get_plugin_root() to find local install path."""
@@ -408,37 +408,37 @@ class TestDaemonBootstrapBehavior:
         assert "_bootstrap_optional_deps()" in content
 
 
-class TestDaemonBootstrapClautorun:
-    """Test clautorun CLI installation in bootstrap."""
+class TestDaemonBootstrapAutorun:
+    """Test autorun CLI installation in bootstrap."""
 
-    def test_checks_if_clautorun_already_installed(self):
-        """_install_clautorun() skips if CLI already available."""
+    def test_checks_if_autorun_already_installed(self):
+        """_install_autorun() skips if CLI already available."""
         content = DAEMON_PY.read_text()
-        assert "shutil.which('clautorun')" in content
+        assert "shutil.which('autorun')" in content
 
     def test_installs_from_local_path(self):
-        """_install_clautorun() uses local plugin path, not GitHub."""
+        """_install_autorun() uses local plugin path, not GitHub."""
         content = DAEMON_PY.read_text()
         # Should use _get_plugin_root() or similar for local path
         assert "_get_plugin_root" in content
         # Should NOT install from GitHub
-        assert "github.com/ahundt/clautorun" not in content
+        assert "github.com/ahundt/autorun" not in content
 
     def test_uses_uv_tool_install(self):
-        """_install_clautorun() uses 'uv tool install' for global CLI."""
+        """_install_autorun() uses 'uv tool install' for global CLI."""
         content = DAEMON_PY.read_text()
         assert "uv" in content and "tool" in content and "install" in content
 
-    def test_install_order_uv_then_clautorun_then_bashlex(self):
-        """Bootstrap order: UV -> clautorun -> bashlex."""
+    def test_install_order_uv_then_autorun_then_bashlex(self):
+        """Bootstrap order: UV -> autorun -> bashlex."""
         content = DAEMON_PY.read_text()
         # Find the _bootstrap_optional_deps function or install orchestration
         uv_idx = content.find("_ensure_uv")
-        clautorun_idx = content.find("_install_clautorun")
+        autorun_idx = content.find("_install_autorun")
         bashlex_idx = content.find("_install_bashlex")
-        # UV should be installed before clautorun, clautorun before bashlex
-        assert uv_idx < clautorun_idx < bashlex_idx, \
-            f"Wrong order: uv={uv_idx}, clautorun={clautorun_idx}, bashlex={bashlex_idx}"
+        # UV should be installed before autorun, autorun before bashlex
+        assert uv_idx < autorun_idx < bashlex_idx, \
+            f"Wrong order: uv={uv_idx}, autorun={autorun_idx}, bashlex={bashlex_idx}"
 
 
 # =============================================================================
@@ -674,7 +674,7 @@ class TestCacheSync:
     where a developer fixes the source but forgets to update the cache.
     """
 
-    CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "clautorun" / "clautorun"
+    CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun"
 
     def _get_cache_versions(self):
         """Find installed cache versions."""
@@ -737,18 +737,18 @@ class TestCommandBlockingE2E:
     Bug history:
     - UV stderr from deprecated pyproject.toml fields caused Claude Code to
       treat hook output as "hook error" → fail-open → ALL commands passed
-    - Substring matching caused "/cr:plannew" to match "rm" pattern (substring
+    - Substring matching caused "/ar:plannew" to match "rm" pattern (substring
       of "plannew") → false positive blocking of slash commands
     """
 
     @pytest.fixture(autouse=True)
     def _import_main(self):
         """Import main module functions for testing."""
-        # Add source to path so we can import clautorun
+        # Add source to path so we can import autorun
         src_dir = PLUGIN_ROOT / "src"
         if str(src_dir) not in sys.path:
             sys.path.insert(0, str(src_dir))
-        from clautorun.main import (
+        from autorun.main import (
             should_block_command,
             build_pretooluse_response,
             command_matches_pattern,
@@ -851,14 +851,14 @@ class TestCommandBlockingE2E:
 class TestSlashCommandFalsePositives:
     """Tests that slash commands are NOT falsely blocked by hook patterns.
 
-    Bug history: Substring matching caused "/cr:plannew" to match "rm"
+    Bug history: Substring matching caused "/ar:plannew" to match "rm"
     pattern because "rm" is a substring of "plannew". The AST-based
     command detection (command_detection.py) fixes this by parsing the
     command as a shell AST and only matching commands in command position,
     not as substrings of arguments or other tokens.
 
     These tests prevent regression of the fix by verifying that all
-    clautorun slash commands are not falsely blocked.
+    autorun slash commands are not falsely blocked.
     """
 
     @pytest.fixture(autouse=True)
@@ -867,7 +867,7 @@ class TestSlashCommandFalsePositives:
         src_dir = PLUGIN_ROOT / "src"
         if str(src_dir) not in sys.path:
             sys.path.insert(0, str(src_dir))
-        from clautorun.main import (
+        from autorun.main import (
             should_block_command,
             command_matches_pattern,
         )
@@ -877,23 +877,23 @@ class TestSlashCommandFalsePositives:
     # ─── Pattern matching must not match substrings ───────────────────
 
     def test_rm_pattern_does_not_match_plannew(self):
-        """'rm' pattern must NOT match '/cr:plannew' (substring bug)."""
-        assert not self.command_matches_pattern("/cr:plannew", "rm"), \
-            "'rm' falsely matched '/cr:plannew' — substring matching bug. " \
+        """'rm' pattern must NOT match '/ar:plannew' (substring bug)."""
+        assert not self.command_matches_pattern("/ar:plannew", "rm"), \
+            "'rm' falsely matched '/ar:plannew' — substring matching bug. " \
             "command_matches_pattern must use AST-based detection."
 
     def test_rm_pattern_does_not_match_autorun(self):
-        """'rm' pattern must NOT match '/cr:autorun' (substring 'run')."""
-        assert not self.command_matches_pattern("/cr:autorun task", "rm"), \
-            "'rm' falsely matched '/cr:autorun' — substring matching bug"
+        """'rm' pattern must NOT match '/ar:autorun' (substring 'run')."""
+        assert not self.command_matches_pattern("/ar:autorun task", "rm"), \
+            "'rm' falsely matched '/ar:autorun' — substring matching bug"
 
     def test_rm_pattern_does_not_match_planrefine(self):
-        """'rm' pattern must NOT match '/cr:planrefine'."""
-        assert not self.command_matches_pattern("/cr:planrefine", "rm")
+        """'rm' pattern must NOT match '/ar:planrefine'."""
+        assert not self.command_matches_pattern("/ar:planrefine", "rm")
 
     def test_rm_pattern_does_not_match_commit(self):
-        """'rm' pattern must NOT match '/cr:commit'."""
-        assert not self.command_matches_pattern("/cr:commit", "rm")
+        """'rm' pattern must NOT match '/ar:commit'."""
+        assert not self.command_matches_pattern("/ar:commit", "rm")
 
     def test_rm_pattern_does_not_match_echo_rm(self):
         """'rm' pattern must NOT match 'echo rm' (argument position)."""
@@ -903,40 +903,40 @@ class TestSlashCommandFalsePositives:
     # ─── Slash commands must not be blocked ───────────────────────────
 
     def test_slash_plannew_not_blocked(self):
-        """'/cr:plannew' must not be blocked by any pattern."""
-        result = self.should_block_command("test-session", "/cr:plannew")
+        """'/ar:plannew' must not be blocked by any pattern."""
+        result = self.should_block_command("test-session", "/ar:plannew")
         assert result is None, \
-            f"/cr:plannew was falsely blocked: {result}"
+            f"/ar:plannew was falsely blocked: {result}"
 
     def test_slash_go_not_blocked(self):
-        """'/cr:go task' must not be blocked."""
-        result = self.should_block_command("test-session", "/cr:go implement feature")
+        """'/ar:go task' must not be blocked."""
+        result = self.should_block_command("test-session", "/ar:go implement feature")
         assert result is None, \
-            f"/cr:go was falsely blocked: {result}"
+            f"/ar:go was falsely blocked: {result}"
 
     def test_slash_status_not_blocked(self):
-        """'/cr:st' must not be blocked."""
-        result = self.should_block_command("test-session", "/cr:st")
+        """'/ar:st' must not be blocked."""
+        result = self.should_block_command("test-session", "/ar:st")
         assert result is None, \
-            f"/cr:st was falsely blocked: {result}"
+            f"/ar:st was falsely blocked: {result}"
 
     def test_slash_commit_not_blocked(self):
-        """'/cr:commit' must not be blocked."""
-        result = self.should_block_command("test-session", "/cr:commit")
+        """'/ar:commit' must not be blocked."""
+        result = self.should_block_command("test-session", "/ar:commit")
         assert result is None, \
-            f"/cr:commit was falsely blocked: {result}"
+            f"/ar:commit was falsely blocked: {result}"
 
     def test_slash_philosophy_not_blocked(self):
-        """'/cr:philosophy' must not be blocked."""
-        result = self.should_block_command("test-session", "/cr:philosophy")
+        """'/ar:philosophy' must not be blocked."""
+        result = self.should_block_command("test-session", "/ar:philosophy")
         assert result is None, \
-            f"/cr:philosophy was falsely blocked: {result}"
+            f"/ar:philosophy was falsely blocked: {result}"
 
     def test_slash_estop_not_blocked(self):
-        """'/cr:sos' (emergency stop) must not be blocked."""
-        result = self.should_block_command("test-session", "/cr:sos")
+        """'/ar:sos' (emergency stop) must not be blocked."""
+        result = self.should_block_command("test-session", "/ar:sos")
         assert result is None, \
-            f"/cr:sos was falsely blocked: {result}"
+            f"/ar:sos was falsely blocked: {result}"
 
     # ─── Edge cases: rm in various positions ──────────────────────────
 
@@ -969,15 +969,15 @@ class TestAllLocationsSync:
     - Build/ artifacts lag behind source
 
     9 code locations that can desync:
-    1. Source: plugins/clautorun/src/clautorun/
-    2. Dev venv: plugins/clautorun/.venv/.../clautorun/
-    3. Build: plugins/clautorun/build/lib/clautorun/
-    4. Claude cache: ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/
-    5. UV tool: ~/.local/share/uv/tools/clautorun/.../clautorun/
-    6. Gemini source: ~/.gemini/extensions/clautorun-workspace/plugins/clautorun/src/
-    7. Gemini plugin venv: ~/.gemini/extensions/clautorun-workspace/plugins/clautorun/.venv/
-    8. Gemini workspace venv: ~/.gemini/extensions/clautorun-workspace/.venv/
-    9. Gemini build: ~/.gemini/extensions/clautorun-workspace/plugins/clautorun/build/
+    1. Source: plugins/autorun/src/autorun/
+    2. Dev venv: plugins/autorun/.venv/.../autorun/
+    3. Build: plugins/autorun/build/lib/autorun/
+    4. Claude cache: ~/.claude/plugins/cache/autorun/autorun/0.8.0/
+    5. UV tool: ~/.local/share/uv/tools/autorun/.../autorun/
+    6. Gemini source: ~/.gemini/extensions/autorun-workspace/plugins/autorun/src/
+    7. Gemini plugin venv: ~/.gemini/extensions/autorun-workspace/plugins/autorun/.venv/
+    8. Gemini workspace venv: ~/.gemini/extensions/autorun-workspace/.venv/
+    9. Gemini build: ~/.gemini/extensions/autorun-workspace/plugins/autorun/build/
 
     Target state (after symlink migration):
     - Source: 1 location (authoritative)
@@ -993,7 +993,7 @@ class TestAllLocationsSync:
 
         assert "unified daemon-based hook handler" in content, \
             "Source claude-hooks.json has wrong format. Should be Claude Code, not Gemini. " \
-            "Restore from: ~/.claude/plugins/cache/clautorun/clautorun/0.8.0/hooks/claude-hooks.json"
+            "Restore from: ~/.claude/plugins/cache/autorun/autorun/0.8.0/hooks/claude-hooks.json"
 
         assert "PreToolUse" in content, \
             "Must have Claude Code event names (not Gemini's BeforeTool)"
@@ -1006,7 +1006,7 @@ class TestAllLocationsSync:
         """Location 4: Claude Code cache hook_entry.py must match source."""
         cache_versions = [
             p for p in Path.home().glob(
-                ".claude/plugins/cache/clautorun/clautorun/*/hooks/hook_entry.py"
+                ".claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py"
             )
             if not p.parts[-3].endswith(".backup")  # Ignore install-time rollback backups
         ]
@@ -1020,24 +1020,24 @@ class TestAllLocationsSync:
             cache_content = cache_file.read_text()
             assert cache_content == source_content, \
                 f"Cache {cache_file} doesn't match source. " \
-                f"Run: uv run --project plugins/clautorun python -m clautorun --install --force"
+                f"Run: uv run --project plugins/autorun python -m autorun --install --force"
 
     def test_uv_tool_is_editable_not_copy(self):
         """Location 5: UV tool should be editable install (symlink), not copy."""
-        if not shutil.which("clautorun"):
+        if not shutil.which("autorun"):
             pytest.skip("UV tool not installed")
 
         # Check for direct_url.json (indicates editable)
         tool_paths = list(Path.home().glob(
-            ".local/share/uv/tools/clautorun/lib/python*/site-packages/clautorun*.dist-info/direct_url.json"
+            ".local/share/uv/tools/autorun/lib/python*/site-packages/autorun*.dist-info/direct_url.json"
         ))
 
         if not tool_paths:
             pytest.fail(
                 "UV tool is not editable (no direct_url.json found). "
                 "This is a COPY which will desync from source. "
-                "Run: uv tool uninstall clautorun && "
-                "cd plugins/clautorun && uv tool install --editable ."
+                "Run: uv tool uninstall autorun && "
+                "cd plugins/autorun && uv tool install --editable ."
             )
 
         # Verify it's actually editable
@@ -1048,7 +1048,7 @@ class TestAllLocationsSync:
 
     def test_gemini_extension_is_symlink_not_copy(self):
         """Locations 6-9: Gemini extension should be symlink, not copy."""
-        gemini_ext = Path.home() / ".gemini/extensions/clautorun-workspace"
+        gemini_ext = Path.home() / ".gemini/extensions/autorun-workspace"
 
         if not gemini_ext.exists():
             pytest.skip("Gemini extension not installed")
@@ -1056,14 +1056,14 @@ class TestAllLocationsSync:
         assert gemini_ext.is_symlink(), \
             "Gemini extension is a COPY which will desync from source. " \
             "This creates 4 separate code locations that must be manually synced. " \
-            "Run: gemini extensions uninstall clautorun-workspace && " \
+            "Run: gemini extensions uninstall autorun-workspace && " \
             f"gemini extensions link {PLUGIN_ROOT.parent.parent}"
 
     def test_build_artifacts_do_not_exist(self):
         """Locations 3, 9: Build artifacts should be deleted."""
         build_dirs = [
             PLUGIN_ROOT / "build",
-            Path.home() / ".gemini/extensions/clautorun-workspace/plugins/clautorun/build"
+            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/build"
         ]
 
         for build_dir in build_dirs:
@@ -1090,6 +1090,6 @@ class TestCleanup:
     """Verify old/unused files are removed."""
 
     def test_shell_script_deleted(self):
-        """clautorun-hook.sh should not exist."""
-        old_script = PLUGIN_ROOT / "hooks" / "clautorun-hook.sh"
+        """autorun-hook.sh should not exist."""
+        old_script = PLUGIN_ROOT / "hooks" / "autorun-hook.sh"
         assert not old_script.exists()

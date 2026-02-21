@@ -62,7 +62,7 @@
 <polygon points="1026.6475,609.2 1140.4475,723 1026.6475,836.8 912.8475000000001,723" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
 <rect x="725.5475" y="893.8000000000001" width="182.15" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
 <rect x="931.6975000000001" y="893.8000000000001" width="232.20000000000002" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-<text x="660.1750000000001" y="723" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;/cr:go task description&quot;</text>
+<text x="660.1750000000001" y="723" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;/ar:go task description&quot;</text>
 <text x="201.4000000000001" y="911.8000000000001" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Stage 1: Initial Implementation</text>
 <text x="153.80000000000007" y="438.40000000000003" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">AUTORUN_STAGE1_COMPLETE?</text>
 <text x="201.4000000000001" y="723" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Continue working</text>

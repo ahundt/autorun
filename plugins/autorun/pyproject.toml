@@ -117,7 +117,7 @@ markers = [
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["plugins/clautorun/src/clautorun", "src/clautorun"]
+source = ["plugins/autorun/src/autorun", "src/autorun"]
 omit = [
     # Entry points and system integration
     "**/install.py",
