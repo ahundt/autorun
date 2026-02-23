@@ -1628,7 +1628,7 @@ def install_plugins(
         print("Installing ai-session-tools (aise)...")
         aise_result = run_cmd(
             ["uv", "tool", "install", "--force",
-             "git+https://github.com/ahundt/ai_session_tools.git@v0.1.0"],
+             "git+https://github.com/ahundt/ai_session_tools.git@v0.2.0"],
             timeout=120,
         )
         if aise_result.ok:
@@ -1786,7 +1786,7 @@ def show_status() -> int:
     # Check UV CLI tools in PATH
     print()
     print("UV CLI Tools:")
-    for tool_name in ["autorun", "claude-session-tools"]:
+    for tool_name in ["autorun", "aise", "claude-session-tools"]:
         path = shutil.which(tool_name)
         if path:
             print(f"  {tool_name}: {path}")
