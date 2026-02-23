@@ -17,250 +17,234 @@ allowed-tools:
 
 # Claude Session Tools
 
-General-purpose tool for exploring, searching, analyzing, exporting, and recovering files and code from Claude Code session histories stored in `~/.claude/projects/`.
+Use `aise` to explore, search, analyze, export, and recover files and code from Claude Code session histories in `~/.claude/projects/`. All commands below are `aise` subcommands.
 
-All capabilities are provided by `aise` (from [ai-session-tools](https://github.com/ahundt/ai_session_tools)).
+**When you don't know the session ID**, always start with `aise list` to identify it.
+**When you need full content**, add `--format json` and pipe to `jq` or read raw output.
+**Prefer the most targeted command** — `aise tools search Edit` is faster than searching all messages.
 
-## Quick Reference
+---
+
+## Command Reference
+
+| Command | When to use |
+|---------|-------------|
+| `aise list` | Orient: find sessions by project, date, branch |
+| `aise files search` | Find which files Claude wrote or edited across sessions |
+| `aise files history <name>` | See all recorded versions of a specific file |
+| `aise files extract <name>` | Get the content of a file version (pipe to restore it) |
+| `aise files cross-ref <path>` | Check which session edits are present in the current file |
+| `aise messages search <query>` | Full-text search across all user+assistant messages |
+| `aise messages get <session-id>` | Read all messages from one session chronologically |
+| `aise messages extract <session-id> pbcopy` | Get clipboard content piped via heredoc in that session |
+| `aise messages analyze <session-id>` | Stats: message counts, tool usage counts, files touched |
+| `aise messages timeline <session-id>` | Chronological event view with content previews |
+| `aise messages corrections` | Find messages where the user corrected Claude |
+| `aise messages planning` | Count planning command usage (`/ar:plannew` etc.) |
+| `aise tools search <Tool> [query]` | Find specific tool invocations (Edit, Bash, Write, Read…) |
+| `aise export session <session-id>` | Render one session as a markdown document |
+| `aise export recent [days]` | Bulk export last N days of sessions to markdown |
+| `aise search` | Cross-domain: files + messages + tools in one command |
+| `aise stats` | Aggregate counts: sessions, files, versions, most-edited |
+
+**Output formats** (all commands): `--format table` (default) | `--format json` | `--format csv` | `--format plain`
+
+---
+
+## Goal: Recover a lost or overwritten file
+
+Use when the user says "I lost a file", "Claude deleted something", or "find the old version of X".
 
 ```bash
-# Show all available commands
-aise --help
-aise files --help
-aise messages --help
-aise tools --help
-aise export --help
+# 1. Find the file — see all sessions that touched it, with edit counts
+aise files search --pattern "filename.py"
+
+# 2. See every saved version with line counts and timestamps
+aise files history filename.py
+
+# 3. Preview the content of a specific version
+aise files extract filename.py --version 3
+
+# 4. Restore the latest version to disk
+aise files extract filename.py > filename.py
+
+# 5. If you know it was in a specific session, filter to confirm
+aise files search --pattern "filename.py" --include-sessions SESSION_ID
 ```
 
-## File and Code Recovery
+---
+
+## Goal: Find what was done in a specific session
+
+Use when the user wants to understand what happened in a session — what was discussed, what was built, what tools were used.
 
 ```bash
-# Find all files Claude wrote or edited across all sessions
-aise files search
-
-# Find specific files by pattern
-aise files search --pattern "*.py"
-aise files search --pattern "cli.py"
-
-# See version history of a file (read-only)
-aise files history cli.py
-
-# Extract latest version of a file to stdout
-aise files extract cli.py
-
-# Extract a specific version
-aise files extract cli.py --version 2
-
-# Redirect to disk
-aise files extract cli.py > cli.py
-
-# Find files modified in a specific session
-aise files search --include-sessions ab841016
-
-# Find files by extension with min edits
-aise files search --include-extensions py --min-edits 3
-```
-
-## Session Discovery
-
-```bash
-# List all sessions (newest first)
-aise list
-
-# Filter by project
+# 1. Identify the session (if you don't have the ID)
 aise list --project myproject
+aise list --after 2026-01-20
 
-# Filter by date range
-aise list --after 2026-01-01 --before 2026-02-01
+# 2. See high-level stats: how many messages, which tools, which files
+aise messages analyze SESSION_ID
 
-# JSON output for scripting
-aise list --format json
+# 3. Read the full conversation in order
+aise messages get SESSION_ID
 
-# Limit results
-aise list --limit 10
+# 4. View a chronological timeline with content previews
+aise messages timeline SESSION_ID
+
+# 5. See every Edit and Write call to understand what was changed
+aise tools search Edit --limit 20
+aise tools search Write --limit 20
+
+# 6. Get what was copied to the clipboard
+aise messages extract SESSION_ID pbcopy
 ```
 
-## Message Search
+---
+
+## Goal: Verify that a change was applied to a file
+
+Use when the user asks "did that edit actually get applied?" or "is the session content in the current file?".
 
 ```bash
-# Search messages across all sessions
-aise messages search "authentication bug"
-aise search messages --query "authentication bug"
+# 1. Run cross-reference — shows each Edit/Write call as ✓ (found) or ✗ (missing)
+aise files cross-ref ./path/to/file.py
 
-# Filter by message type
-aise messages search "error" --type user
-aise messages search "fix" --type assistant
+# 2. Narrow to a specific session if needed
+aise files cross-ref ./path/to/file.py --session SESSION_ID
 
-# Increase result limit
-aise messages search "function" --limit 20
+# 3. Get full detail in JSON to inspect specific snippets
+aise files cross-ref ./path/to/file.py --format json
 
-# Search with context (N messages before/after match)
-aise messages search "error" --context 3
-
-# JSON output
-aise messages search "refactor" --format json
+# 4. If edits are missing, extract the session version of the file to compare
+aise files history filename.py
+aise files extract filename.py --version N
 ```
 
-## Session Content
+---
+
+## Goal: Search for when something was discussed
+
+Use when the user asks "when did we talk about X", "find the session where we decided Y", or "what did I tell Claude about Z".
 
 ```bash
-# Read all messages from a specific session
-aise messages get ab841016
-aise get ab841016
+# 1. Search all messages for the topic
+aise messages search "authentication"
 
-# Read only user messages
-aise messages get ab841016 --type user
+# 2. See surrounding conversation for context
+aise messages search "authentication" --context 3
 
-# Read only assistant messages
-aise messages get ab841016 --type assistant --limit 5
+# 3. Narrow to user messages only (what YOU said)
+aise messages search "authentication" --type user
 
-# Extract clipboard (pbcopy) content from a session
-aise messages extract ab841016 pbcopy
+# 4. Search for a specific tool invocation with that topic
+aise tools search Bash "authentication"
+aise tools search Edit "auth"
 
-# JSON output of clipboard entries
-aise messages extract ab841016 pbcopy --format json
+# 5. Once you have a session ID, read the full surrounding conversation
+aise messages get SESSION_ID --limit 30
 ```
 
-## Tool Usage Analysis
+---
+
+## Goal: Find specific tool usage across sessions
+
+Use when the user wants to see every time Claude ran a particular command, edited a particular file, or used a particular tool.
 
 ```bash
-# Find all Write tool calls
-aise tools search Write
-
-# Find Bash calls matching a pattern
+# Find all Bash calls with a pattern
 aise tools search Bash "git commit"
+aise tools search Bash "pytest"
 
-# Find Edit calls with a specific filename
+# Find all edits to files matching a name
 aise tools search Edit "cli.py"
+aise tools search Write "config"
 
-# Find all Read calls (via root search with --tool)
-aise search --tool Read --query "engine.py"
+# Find all Read calls — useful to see what Claude was reading
+aise tools search Read
 
-# JSON output
-aise tools search Edit --format json
+# Get JSON for deeper inspection
+aise tools search Edit "engine.py" --format json
+
+# Cross-domain: search messages AND filter to tool calls
+aise messages search "login" --tool Edit
 ```
 
-## Session Analysis
+---
+
+## Goal: Analyze patterns in your AI usage
+
+Use when the user wants to understand their own habits: what they correct, how they plan, how heavily they use sessions.
 
 ```bash
-# Analyze session structure (message counts, tool usage, files touched)
-aise messages analyze ab841016
-
-# Chronological timeline of user/assistant events
-aise messages timeline ab841016
-
-# Shorter content preview in timeline
-aise messages timeline ab841016 --preview-chars 80
-
-# JSON output
-aise messages analyze ab841016 --format json
-```
-
-## Correction Pattern Analysis
-
-```bash
-# Find user corrections across all sessions
+# Find messages where you corrected Claude's behavior
 aise messages corrections
+aise messages corrections --project myproject --limit 50
 
-# Filter by project
-aise messages corrections --project myproject
+# See which correction categories appear most (regression/skip_step/misunderstanding/incomplete/other)
+aise messages corrections --format json | jq 'group_by(.category) | map({category: .[0].category, count: length})'
 
-# Limit results
-aise messages corrections --limit 50
-
-# Filter by date range
-aise messages corrections --after 2026-01-01
-
-# JSON output
-aise messages corrections --format json
-```
-
-Categories detected: `regression`, `skip_step`, `misunderstanding`, `incomplete`, `other`
-
-Patterns include: "you forgot", "you broke", "actually", "wrong", "nono", "stop", "you didn't", "wait,", "should have", "but you", and more.
-
-## Planning Command Analysis
-
-```bash
-# Count planning command usage across all sessions
+# Count how often you use planning commands
 aise messages planning
-
-# Filter by project
 aise messages planning --project myproject
 
-# JSON output
-aise messages planning --format json
-```
-
-Commands tracked: `/ar:plannew`, `/ar:planrefine`, `/ar:planupdate`, `/ar:planprocess`, and their short aliases (`/ar:pn`, `/ar:pr`, `/ar:pu`, `/ar:pp`).
-
-## Cross-Reference
-
-```bash
-# Find all Edit/Write calls to a file and check if content appears in current version
-aise files cross-ref ./path/to/file.md
-
-# Limit to a specific session
-aise files cross-ref ./cli.py --session ab841016
-
-# JSON output
-aise files cross-ref ./engine.py --format json
-```
-
-Shows `✓` for edits found in current file, `✗` for edits that are missing or were overwritten.
-
-## Export Operations
-
-```bash
-# Export single session to stdout (pipe to file)
-aise export session ab841016
-aise export session ab841016 > session.md
-
-# Export to explicit output file
-aise export session ab841016 --output session.md
-
-# Preview without writing
-aise export session ab841016 --dry-run
-
-# Export all sessions from last N days
-aise export recent 7 --output weekly_sessions.md
-aise export recent 14 --output fortnight.md
-
-# Bulk export filtered by project
-aise export recent 7 --project myproject --output project_sessions.md
-
-# Default: last 7 days
-aise export recent --output this_week.md
-```
-
-Export includes: session metadata (date, git branch, working directory), all user+assistant messages filtered of system noise, and compact summaries when present.
-
-## Statistics
-
-```bash
-# Session and file recovery statistics
+# See overall session and file statistics
 aise stats
 ```
 
-## Combined / Cross-Domain Search
+---
+
+## Goal: Export session history for documentation or handoff
+
+Use when the user wants a markdown document of a session, or to archive recent work.
 
 ```bash
-# Search both files and messages at once
-aise search --pattern "*.py" --query "error"
+# Export one session to stdout (redirect to save)
+aise export session SESSION_ID > notes/session-2026-01-24.md
 
-# Auto-detect domain from flags
-aise search --query "authentication"       # → messages domain
-aise search --pattern "cli.py"             # → files domain
-aise search --tool Write --query "login"   # → tool search
+# Export to an explicit file
+aise export session SESSION_ID --output notes/session.md
 
-# Explicit domain + tool filter
-aise search tools --tool Bash --query "git commit"
+# Preview what would be written without actually writing
+aise export session SESSION_ID --dry-run
 
-# Aliases: find == search
-aise find messages --query "error"
-aise find files --pattern "*.py"
-aise find --tool Edit --query "engine.py"
+# Export all sessions from the last 7 days
+aise export recent 7 --output docs/weekly-work.md
+
+# Export recent sessions for one project only
+aise export recent 14 --project myproject --output docs/sprint.md
+
+# Append to an existing notes file
+aise export session SESSION_ID >> notes/investigation.md
 ```
+
+Export content: session metadata (date, branch, cwd), all user+assistant messages, compact summaries — system noise filtered out.
+
+---
+
+## Goal: Find sessions by project, date, or branch
+
+```bash
+# All sessions, newest first
+aise list
+
+# Filter by project name (substring match on encoded dir)
+aise list --project autorun
+aise list --project ai_session_tools
+
+# Filter by date range
+aise list --after 2026-01-15
+aise list --before 2026-02-01
+aise list --after 2026-01-15 --before 2026-02-01
+
+# JSON for scripting (session IDs, timestamps, branch names)
+aise list --format json
+
+# Get just the session ID of the most recent session for a project
+aise list --project myproject --format json --limit 1 | jq -r '.[0].session_id'
+```
+
+---
 
 ## Arguments
 
@@ -270,217 +254,27 @@ This command accepts arguments for automated operations:
 $ARGUMENTS
 ```
 
-## Exploration Workflow
-
-### 1. List and understand available sessions
-```bash
-aise list --project myproject
-aise list --after 2026-01-01
-```
-Identify which session contains the work you want to verify.
-
-### 2. Extract relevant content
-```bash
-aise messages get SESSION_ID --type user     # what was asked
-aise messages extract SESSION_ID pbcopy      # what was copied to clipboard
-aise messages timeline SESSION_ID            # chronological view
-```
-
-### 3. Analyze changes
-```bash
-aise messages analyze SESSION_ID
-```
-Understand scale and scope of changes (tool usage, files touched).
-
-### 4. Cross-reference with files
-```bash
-aise files cross-ref path/to/file.md --session SESSION_ID
-```
-Verify which of Claude's edits are present in the current file version.
-
-### 5. Deep dive into specifics
-```bash
-aise tools search Edit "filename"
-aise messages search "specific-phrase"
-aise messages search "specific-phrase" --context 2
-```
-See all edits to a specific file, or find when something was discussed.
-
-## Multi-Layer Verification Strategy
-
-When verifying that changes were applied correctly:
-
-### Layer 1: Content Classification
-Identify all content types being modified:
-- Tool outputs (Bash, Edit, Read results)
-- User prompts and discussions
-- Assistant responses and reasoning
-- Code snippets and examples
-- Structured data (tables, lists, configurations)
-
-### Layer 2: Temporal Ordering
-Track chronological sequence of events:
-```bash
-aise messages timeline SESSION_ID
-aise messages analyze SESSION_ID --format json | jq '.tool_uses_by_name'
-```
-
-### Layer 3: Change Detection
-Look for specific patterns of change:
-```bash
-aise messages search "content reordering" --context 3
-aise messages search "section" --type user
-```
-
-### Layer 4: File Cross-Reference
-Compare current files against session changes:
-```bash
-aise files cross-ref path/to/file.md
-```
-Shows which of Claude's Edit/Write calls are found in the current file.
-
-### Layer 5: Pattern Matching
-Use distinctive markers to find specific changes:
-```bash
-aise messages search "unique phrase"
-aise tools search Edit "filename"
-aise messages search "table column" --context 2
-```
-
-## Common Search Patterns
-
-### Find all code discussions
-```bash
-aise messages search "function"
-aise messages search "class"
-aise messages search "interface"
-```
-
-### Find specific operations
-```bash
-aise messages search "git commit"
-aise messages search "npm run"
-aise messages search "pytest"
-```
-
-### Find all tool usage
-```bash
-aise tools search Bash
-aise tools search Edit
-aise tools search Read
-aise tools search Grep
-```
-
-### Find discussion topics
-```bash
-aise messages search "error"
-aise messages search "refactor"
-aise messages search "optimization"
-```
+---
 
 ## Session File Structure
 
-Sessions are stored as `.jsonl` files (JSON Lines format) at:
-```
-~/.claude/projects/<ENCODED-PATH>/
-  ├── <SESSION-ID>.jsonl
-  ├── agent-<ID>.jsonl
-  └── ...
-```
+Sessions are stored as `.jsonl` files at `~/.claude/projects/<ENCODED-PATH>/<SESSION-ID>.jsonl`.
 
-The `<ENCODED-PATH>` is the project directory path with every non-alphanumeric,
-non-hyphen character replaced by `-` (rule: `[^a-zA-Z0-9-]` → `-`):
+The `<ENCODED-PATH>` is the project directory path with non-alphanumeric/non-hyphen characters replaced by `-`:
 - macOS: `/Users/<user>/project` → `-Users-<user>-project`
 - macOS: `/Users/<user>/.claude` → `-Users-<user>--claude` (`.` → `-`)
 - Linux: `/home/<user>/project` → `-home-<user>-project`
-- Underscores: `/my_project` → `-my-project` (`_` → `-`)
 
-Each line is a complete JSON object:
+Each JSONL line is a JSON object with `type` (`user`/`assistant`/`system`), `timestamp`, and `message.content` (array of `text`, `tool_use`, `tool_result` blocks).
 
-```json
-{
-  "type": "user|assistant|system",
-  "timestamp": "2025-11-25T20:30:15.744Z",
-  "message": {
-    "content": [
-      {
-        "type": "text|tool_use|tool_result",
-        "text": "...",
-        "name": "ToolName",
-        "input": { "/* tool input */" },
-        "content": "..."
-      }
-    ]
-  }
-}
-```
+Common tool names in `tool_use` blocks: `Bash`, `Read`, `Edit`, `Write`, `Grep`, `Glob`, `TodoWrite`, `Task`.
 
-### Common Tool Types
-
-- **Bash**: Shell command execution
-- **Read**: File content reading
-- **Edit**: File modification
-- **Write**: New file creation
-- **Grep**: Pattern searching in files
-- **Glob**: File pattern matching
-- **TodoWrite**: Task list management
-- **Task**: Launch specialized agents
+---
 
 ## Configuration
 
-### Environment Variable
-
-Override the projects directory:
+Override the projects directory (default: `~/.claude/projects`):
 
 ```bash
-export AI_SESSION_TOOLS_PROJECTS=~/.claude/projects
+export AI_SESSION_TOOLS_PROJECTS=/path/to/projects
 ```
-
-## Tips and Best Practices
-
-1. **Always extract complete content** - Don't rely on truncated previews; use `--max-chars 0`
-2. **Use timestamps to verify order** - Chronological sequence matters; use `aise messages timeline`
-3. **Cross-reference multiple sources** - Compare tool outputs with file results via `aise files cross-ref`
-4. **Search broadly first** - Find all mentions before deep dive; use `aise messages search`
-5. **Classify by content type** - Group similar changes together using `--type user/assistant`
-6. **Use JSON output for scripting** - Add `--format json` to pipe results to `jq` or other tools
-7. **Combine domains** - `aise search --pattern "*.py" --query "error"` searches both files and messages
-8. **Check corrections** - `aise messages corrections` reveals patterns in how you guide Claude
-9. **Track planning** - `aise messages planning` shows which planning commands you use most
-10. **Export for documentation** - `aise export session ID > notes/session.md`
-
-## Verification Checklist
-
-When verifying changes were applied:
-
-- [ ] `aise list --project myproject` — identify relevant sessions
-- [ ] `aise messages get SESSION_ID --type user` — review what was asked
-- [ ] `aise messages timeline SESSION_ID` — understand chronological sequence
-- [ ] `aise messages analyze SESSION_ID` — check tool usage counts
-- [ ] `aise files cross-ref path/to/file.md` — verify edits appear in current file
-- [ ] `aise tools search Edit "filename"` — see all specific file edits
-- [ ] `aise messages search "key phrase" --context 2` — find decision points with context
-- [ ] `aise export session SESSION_ID > notes/session.md` — document the session
-
-## Export for Documentation
-
-### Single Session Export
-
-```bash
-aise export session SESSION_ID --output documentation/session-analysis.md
-aise export session SESSION_ID > documentation/session-analysis.md
-```
-
-### Bulk Export
-
-```bash
-aise export recent 7 --output documentation/weekly-work.md
-aise export recent 14 --project myproject --output documentation/sprint.md
-```
-
-### Integration with Notes
-
-```bash
-aise export session SESSION_ID >> notes/investigation.md
-```
-
