@@ -484,28 +484,3 @@ aise export recent 14 --project myproject --output documentation/sprint.md
 aise export session SESSION_ID >> notes/investigation.md
 ```
 
-## Migration from claude_session_tools.py
-
-| Old Command | New `aise` Command |
-|-------------|---------------------|
-| `list <PROJECT>` | `aise list --project <PROJECT>` |
-| `search <PATTERN>` | `aise messages search "<PATTERN>"` |
-| `extract <PROJECT> <ID> pbcopy` | `aise messages extract <ID> pbcopy` |
-| `extract <PROJECT> <ID> user-prompts` | `aise messages get <ID> --type user` |
-| `extract <PROJECT> <ID> assistant-responses` | `aise messages get <ID> --type assistant` |
-| `analyze <PROJECT> <ID>` | `aise messages analyze <ID>` |
-| `timeline <PROJECT> <ID>` | `aise messages timeline <ID>` |
-| `find-tool <TOOL> [PATTERN]` | `aise tools search <TOOL> [PATTERN]` |
-| `corrections [PROJECT]` | `aise messages corrections --project <PROJECT>` |
-| `find-commands <PATTERN> [CTX]` | `aise messages search "<PATTERN>" --context <CTX>` |
-| `planning-usage` | `aise messages planning` |
-| `cross-ref <PROJECT> <ID> <FILE>` | `aise files cross-ref <FILE> --session <ID>` |
-| `export <PROJECT> <ID> [OUTPUT]` | `aise export session <ID> --output <OUTPUT>` |
-| `export-recent [DAYS] [OUTPUT]` | `aise export recent [DAYS] --output <OUTPUT>` |
-
-**Improvements in aise vs old script:**
-- `cross-ref`: checks actual Edit/Write tool calls (not just pbcopy clipboard content)
-- `export`: exports ALL messages (user+assistant), not user-only
-- Project discovery: iterates all dirs (not just `-Users-*`)
-- All commands support `--format json/table/csv/plain`
-- No PROJECT argument needed — session IDs are globally unique across all projects
