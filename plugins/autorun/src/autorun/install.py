@@ -1624,6 +1624,18 @@ def install_plugins(
         else:
             print(f"   uv tool: {result.output}")
 
+        # Install ai-session-tools (aise) as a global UV tool
+        print("Installing ai-session-tools (aise)...")
+        aise_result = run_cmd(
+            ["uv", "tool", "install", "--force",
+             "git+https://github.com/ahundt/ai_session_tools.git@v0.1.0"],
+            timeout=120,
+        )
+        if aise_result.ok:
+            print("   aise: ok")
+        else:
+            print(f"   aise: {aise_result.output}")
+
     # Check for hook conflicts (warn if hookify or others might interfere)
     _check_hook_conflicts()
 
