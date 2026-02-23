@@ -181,6 +181,27 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /ar:ok 'echo >'\n- Block globally: /ar:globalno 'echo >'",
     },
+    # Remote write operations require explicit user permission
+    "git push": {
+        "action": "block",
+        "suggestion": "Command blocked: git push\n\nThe user requires explicit permission before pushing code to a remote repository.\n\n**Do NOT push. Continue with local tasks only:**\n- Commit changes locally with 'git commit'\n- Run tests, linting, or other local validation\n- Make further code changes as needed\n\nWhen you have completed all local tasks, inform the user and ask if they would like to push.\n\nTo allow in this session: /ar:ok 'git push'",
+    },
+    "gh pr create": {
+        "action": "block",
+        "suggestion": "Command blocked: gh pr create\n\nThe user requires explicit permission before creating pull requests or other remote write operations via gh.\n\n**Do NOT create PRs or other remote resources. Continue with local tasks only:**\n- Finish and commit all local changes\n- Run tests and validation locally\n- Summarize what would be in the PR and ask the user for permission\n\nTo allow in this session: /ar:ok 'gh pr create'",
+    },
+    "gh pr merge": {
+        "action": "block",
+        "suggestion": "Command blocked: gh pr merge\n\nThe user requires explicit permission before merging pull requests.\n\nInform the user the PR is ready to merge and ask for permission.\n\nTo allow in this session: /ar:ok 'gh pr merge'",
+    },
+    "gh release create": {
+        "action": "block",
+        "suggestion": "Command blocked: gh release create\n\nThe user requires explicit permission before creating releases.\n\nInform the user the release is ready and ask for permission.\n\nTo allow in this session: /ar:ok 'gh release create'",
+    },
+    "gh repo create": {
+        "action": "block",
+        "suggestion": "Command blocked: gh repo create\n\nThe user requires explicit permission before creating remote repositories.\n\nAsk the user for permission before proceeding.\n\nTo allow in this session: /ar:ok 'gh repo create'",
+    },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",
