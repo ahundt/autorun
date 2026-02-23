@@ -1786,7 +1786,7 @@ def show_status() -> int:
     # Check UV CLI tools in PATH
     print()
     print("UV CLI Tools:")
-    for tool_name in ["autorun", "aise", "claude-session-tools"]:
+    for tool_name in ["autorun", "aise"]:
         path = shutil.which(tool_name)
         if path:
             print(f"  {tool_name}: {path}")

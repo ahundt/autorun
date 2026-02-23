@@ -62,7 +62,6 @@ all = ["bashlex>=0.18"]
 [project.scripts]
 autorun = "autorun.__main__:main"
 autorun-install = "autorun.install:install_main"
-claude-session-tools = "autorun.claude_session_tools:main"
 
 [project.urls]
 Homepage = "https://github.com/ahundt/autorun"

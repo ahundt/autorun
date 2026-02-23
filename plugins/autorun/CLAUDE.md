@@ -37,7 +37,7 @@ install step can take 1-2 minutes on first run or when dependencies change.
 
 **What this does:**
 1. Syncs plugin to cache (both Claude Code and Gemini CLI)
-2. Installs UV tool globally (`autorun`, `claude-session-tools` commands)
+2. Installs UV tool globally (`autorun`, `aise` commands)
 3. Restarts daemon to pick up code changes
 4. Logs output to timestamped file: `install-YYYYMMDD-HHMMSS.log`
 

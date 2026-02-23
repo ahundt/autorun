@@ -142,7 +142,7 @@ uv run python -m plugins.autorun.src.autorun.install --install --force
 pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability
-# This makes 'autorun' and 'claude-session-tools' commands globally available
+# This makes 'autorun' and 'aise' commands globally available
 # which are needed for proper daemon operation and session management
 cd plugins/autorun && uv tool install --force --editable .
 
@@ -1061,7 +1061,7 @@ The `commands/autorun` script uses JSON stdin/stdout for Claude Code communicati
 **UV Tool Entry Points** (from `pyproject.toml`):
 1. `autorun` — Main plugin functionality
 2. `autorun-install` — Installation management
-3. `claude-session-tools` — Daemon management and session state inspection
+3. `aise` — Session history analysis (ai-session-tools; `aise --help` for commands)
 
 See [References](#references) for plugin development documentation links.
 
