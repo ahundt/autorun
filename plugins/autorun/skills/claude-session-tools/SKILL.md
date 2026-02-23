@@ -324,10 +324,12 @@ Sessions are stored as `.jsonl` files (JSON Lines format) at:
   └── ...
 ```
 
-The `<ENCODED-PATH>` is the project directory path with `/` replaced by `-`:
+The `<ENCODED-PATH>` is the project directory path with every non-alphanumeric,
+non-hyphen character replaced by `-` (rule: `[^a-zA-Z0-9-]` → `-`):
 - macOS: `/Users/<user>/project` → `-Users-<user>-project`
+- macOS: `/Users/<user>/.claude` → `-Users-<user>--claude` (`.` → `-`)
 - Linux: `/home/<user>/project` → `-home-<user>-project`
-- Windows: `C:\Users\<user>\project` → `C--Users-<user>-project`
+- Underscores: `/my_project` → `-my-project` (`_` → `-`)
 
 Each line is a complete JSON object:
 

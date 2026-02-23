@@ -200,10 +200,12 @@ def find_project_dir(projects_dir: Path, project_name: str) -> Optional[Path]:
     base_dir = Path(projects_dir)
     username = get_username()
 
-    # Try common patterns
+    # Try common patterns (macOS and Linux home directories)
     patterns = [
-        f'-Users-{username}-source-{project_name}',
-        f'-Users-{username}-{project_name}',
+        f'-Users-{username}-source-{project_name}',   # macOS ~/source/
+        f'-Users-{username}-{project_name}',           # macOS ~/
+        f'-home-{username}-source-{project_name}',     # Linux ~/source/
+        f'-home-{username}-{project_name}',            # Linux ~/
     ]
 
     for pattern in patterns:
@@ -211,14 +213,15 @@ def find_project_dir(projects_dir: Path, project_name: str) -> Optional[Path]:
         if candidate.exists():
             return candidate
 
-    # Case-insensitive match
+    # Case-insensitive and partial match across all project dirs
     project_lower = project_name.lower()
-    for project_dir in base_dir.glob('-Users-*'):
+    all_dirs = list(base_dir.glob('*'))
+    for project_dir in all_dirs:
         if extract_project_name(project_dir.name).lower() == project_lower:
             return project_dir
 
     # Partial match (substring)
-    for project_dir in base_dir.glob('-Users-*'):
+    for project_dir in all_dirs:
         if project_lower in extract_project_name(project_dir.name).lower():
             return project_dir
 
@@ -228,8 +231,12 @@ def find_project_dir(projects_dir: Path, project_name: str) -> Optional[Path]:
 def encode_project_path(project_path: str) -> str:
     """Convert project path to Claude's encoded directory format.
 
-    Claude encodes project paths by replacing '/' with '-' in directory names.
-    This is needed for session discovery and export functionality.
+    Claude Code encodes project paths by replacing every character that is
+    NOT alphanumeric or a hyphen with '-'. This means '/', '.', '_', spaces,
+    and all other special characters all become '-'.
+
+    Source: Claude Code TypeScript source, getProjectPath() in utils/path.ts
+    Rule:   path.replace(/[^a-zA-Z0-9-]/g, '-')
 
     Args:
         project_path: Absolute or relative path to project
@@ -238,12 +245,13 @@ def encode_project_path(project_path: str) -> str:
         Encoded path suitable for finding Claude session directories
 
     Examples:
-        /Users/username/project    -> -Users-username-project
-        /home/username/source/app  -> -home-username-source-app
+        /Users/alice/project       -> -Users-alice-project
+        /home/user/source/app      -> -home-user-source-app
+        /Users/alice/.claude       -> -Users-alice--claude   (. becomes -)
+        /Users/me/my_project       -> -Users-me-my-project   (_ becomes -)
     """
-    if project_path.startswith('/'):
-        project_path = project_path[1:]
-    return project_path.replace('/', '-')
+    abs_path = os.path.abspath(project_path)
+    return re.sub(r'[^a-zA-Z0-9-]', '-', abs_path)
 
 
 # ============================================================================

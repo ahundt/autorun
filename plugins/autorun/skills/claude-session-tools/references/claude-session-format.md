@@ -16,9 +16,15 @@ Claude session files are **newline-delimited JSON** (JSONL format):
 ~/.claude/projects/<encoded-project-path>/<session-id>.jsonl
 ```
 
-**Path encoding:** Special characters in project paths are encoded:
-- `/` → `-`
-- Example: `/Users/<user>/source/myproject` → `-Users-<user>-source-myproject`
+**Path encoding:** Every character that is NOT alphanumeric or a hyphen is replaced with `-`.
+This includes `/`, `.`, `_`, spaces, and all other special characters.
+
+Source: Claude Code TypeScript source, `getProjectPath()` in `utils/path.ts`
+Rule: `path.replace(/[^a-zA-Z0-9-]/g, '-')`
+
+- Example: `/Users/alice/source/myproject` → `-Users-alice-source-myproject`
+- Example: `/Users/alice/.claude` → `-Users-alice--claude` (`.` → `-`, creating double dash)
+- Example: `/Users/me/my_project` → `-Users-me-my-project` (`_` → `-`)
 
 ### Subagent Sessions
 ```
