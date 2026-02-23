@@ -1,7 +1,7 @@
 ---
 name: claude-session-tools
 description: This skill should be used when the user asks to "find Claude sessions", "explore session history", "search Claude sessions", "analyze session", "list sessions", "extract session content", "export Claude sessions", "find tool usage in sessions", "session timeline", "recover a file", "find a file from a previous session", "recover code from a session", mentions "Claude Code session.jsonl files", or needs to explore, search, analyze, export, or recover files and code from Claude Code session histories stored in ~/.claude/projects/.
-version: "3.0.0"
+version: "0.9.0"
 
 # VISIBILITY & TRIGGERING
 user-invocable: true
@@ -484,7 +484,7 @@ aise export recent 14 --project myproject --output documentation/sprint.md
 aise export session SESSION_ID >> notes/investigation.md
 ```
 
-## Migration from v2.0.0 (claude_session_tools.py)
+## Migration from claude_session_tools.py
 
 | Old Command | New `aise` Command |
 |-------------|---------------------|
