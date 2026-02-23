@@ -1,6 +1,6 @@
 ---
 name: claude-session-tools
-description: This skill should be used when the user asks to "find Claude sessions", "explore session history", "search Claude sessions", "analyze session", "list sessions", "extract session content", "export Claude sessions", "find tool usage in sessions", "session timeline", mentions "Claude Code session.jsonl files", or needs to explore, search, analyze, or export Claude Code session histories stored in ~/.claude/projects/.
+description: This skill should be used when the user asks to "find Claude sessions", "explore session history", "search Claude sessions", "analyze session", "list sessions", "extract session content", "export Claude sessions", "find tool usage in sessions", "session timeline", "recover a file", "find a file from a previous session", "recover code from a session", mentions "Claude Code session.jsonl files", or needs to explore, search, analyze, export, or recover files and code from Claude Code session histories stored in ~/.claude/projects/.
 version: "2.0.0"
 
 # VISIBILITY & TRIGGERING
@@ -17,7 +17,43 @@ allowed-tools:
 
 # Claude Session Tools
 
-General-purpose tool for exploring, searching, analyzing, and exporting Claude Code session histories stored in `~/.claude/projects/`.
+General-purpose tool for exploring, searching, analyzing, exporting, and recovering files and code from Claude Code session histories stored in `~/.claude/projects/`.
+
+## File and Code Recovery with aise
+
+For recovering code files, searching file history, and extracting file content across sessions, use `aise` (from [ai-session-tools](https://github.com/ahundt/ai_session_tools)):
+
+```bash
+# Find all files Claude wrote or edited across all sessions
+aise files search
+
+# Find specific files by pattern
+aise files search --pattern "*.py"
+aise files search --pattern "cli.py"
+
+# See version history of a file (read-only — no disk writes)
+aise files history cli.py
+
+# Extract latest version of a file to stdout
+aise files extract cli.py
+
+# Extract a specific version
+aise files extract cli.py --version 2
+
+# Redirect to disk
+aise files extract cli.py > cli.py
+
+# Search messages across all sessions
+aise search messages --query "authentication bug"
+
+# Read all messages from a specific session
+aise get --session ab841016-f07b-444c-bb18-22f6b373be52
+
+# Session statistics
+aise stats
+```
+
+Use `aise` when the goal is **file/code recovery** or **message search**. Use the `/ar:claude-session-tools` commands below when the goal is **session analysis** (timelines, corrections, tool usage patterns, cross-reference, export to markdown).
 
 **Usage:**
 - `/ar:claude-session-tools` - Show full guide
