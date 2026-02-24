@@ -9,7 +9,7 @@
  *
  * Dependencies (beautiful-mermaid) are auto-installed by bun on first run.
  */
-import { renderMermaid, THEMES } from 'beautiful-mermaid'
+import { renderMermaidSVGAsync, THEMES } from 'beautiful-mermaid'
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, basename, dirname, extname } from 'path'
 
@@ -169,7 +169,7 @@ for (const { name, source, dest } of jobs) {
   try {
     // Strip %%{init:...}%% front matter — beautiful-mermaid handles theming
     const cleaned = source.replace(/^%%\{init:.*?\}%%\n?/s, '')
-    const svg = await renderMermaid(cleaned, theme)
+    const svg = await renderMermaidSVGAsync(cleaned, theme)
     mkdirSync(dirname(dest), { recursive: true })
     writeFileSync(dest, svg)
     console.log(`  ok  ${dest}`)
