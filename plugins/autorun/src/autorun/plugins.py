@@ -396,10 +396,14 @@ def _make_block_op(scope: str, op: str):
             if not args:
                 prefix = "global" if scope == "global" else ""
                 return f"❌ Usage: /ar:{prefix}ok <pattern>"
+            try:
+                pattern, desc, ptype = _parse_args(args)
+            except ValueError as e:
+                return f"❌ Error: {e}"
             before = len(blocks)
-            blocks = [b for b in blocks if b["pattern"] != args.strip()]
+            blocks = [b for b in blocks if b["pattern"] != pattern]
             accessor.set(blocks)
-            return f"✅ Allowed: {args}" if len(blocks) < before else f"⚠️ Not found: {args}"
+            return f"✅ Allowed: {pattern}" if len(blocks) < before else f"⚠️ Not found: {pattern}"
 
         if op == "clear":
             accessor.set([])
