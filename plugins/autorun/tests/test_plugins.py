@@ -790,3 +790,845 @@ class TestWhenPredicateIntegration:
         if result is not None:
             # Should be allow, not deny
             assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+
+
+# ============================================================================
+# Allow Patterns System Tests (TDD)
+# ============================================================================
+
+class TestAllowPatternsSystem:
+    """/ar:ok adds to allowed list that overrides all blocks (session, global, integrations)."""
+
+    def test_ar_ok_adds_to_session_allowed_patterns(self):
+        """/ar:ok 'git push' should add pattern (without quotes) to session_allowed_patterns."""
+        import uuid
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id=f"test-ok-add-{uuid.uuid4().hex[:8]}", event="UserPromptSubmit",
+                           prompt="/ar:ok 'git push'", store=store)
+        ctx.activation_prompt = "/ar:ok 'git push'"
+
+        handler = app.command_handlers.get("/ar:ok")
+        result = handler(ctx)
+
+        assert "Allowed" in result
+        allows = ctx.session_allowed_patterns or []
+        assert any(a["pattern"] == "git push" for a in allows)
+
+    def test_ar_ok_success_message_includes_revert_hint(self):
+        """/ar:ok success message includes 'To block:' hint on same line, no newlines."""
+        import uuid
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id=f"test-ok-hint-{uuid.uuid4().hex[:8]}", event="UserPromptSubmit",
+                           prompt="/ar:ok 'git push'", store=store)
+        ctx.activation_prompt = "/ar:ok 'git push'"
+
+        result = app.command_handlers["/ar:ok"](ctx)
+
+        assert "\n" not in result
+        assert "(to block:" in result
+        assert "/ar:no" in result
+        assert "'git push'" in result
+
+    def test_ar_no_removes_pattern_from_allows(self):
+        """/ar:no is the inverse of /ar:ok: removes pattern from allows list."""
+        import uuid
+        store = ThreadSafeDB()
+        session = f"test-no-inverse-{uuid.uuid4().hex[:8]}"
+        ctx = EventContext(session_id=session, event="UserPromptSubmit",
+                           prompt="/ar:no 'git push'", store=store)
+        ctx.activation_prompt = "/ar:no 'git push'"
+        # Pre-populate the allow
+        ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
+
+        app.command_handlers["/ar:no"](ctx)
+
+        # Pattern must be removed from allows
+        allows = ctx.session_allowed_patterns or []
+        assert not any(a["pattern"] == "git push" for a in allows)
+
+    def test_ar_ok_quoted_pattern_parses_without_quotes(self):
+        """/ar:ok 'git push' should store pattern without surrounding quotes."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-ok-quoted", event="UserPromptSubmit",
+                           prompt="/ar:ok 'git push'", store=store)
+        ctx.activation_prompt = "/ar:ok 'git push'"
+
+        handler = app.command_handlers.get("/ar:ok")
+        result = handler(ctx)
+
+        allows = ctx.session_allowed_patterns or []
+        assert any(a["pattern"] == "git push" for a in allows), \
+            f"Expected 'git push' (no quotes) in allows, got: {allows}"
+        assert "git push" in result
+
+    def test_ar_ok_idempotent_returns_already_allowed(self):
+        """Running /ar:ok twice on same pattern returns ℹ️ Already allowed."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-ok-dup", event="UserPromptSubmit",
+                           prompt="/ar:ok 'git push'", store=store)
+        ctx.activation_prompt = "/ar:ok 'git push'"
+        ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
+
+        handler = app.command_handlers.get("/ar:ok")
+        result = handler(ctx)
+
+        assert "Already allowed" in result
+        # Count should not change
+        assert len(ctx.session_allowed_patterns) == 1
+
+    def test_session_allow_overrides_default_integration_block(self):
+        """Session allow overrides DEFAULT_INTEGRATIONS block (e.g. 'git push')."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-allow-intg",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "git push origin main"},
+            store=store
+        )
+        ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # Allow wins — result is None or explicit allow
+        assert result is None or \
+            result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+
+    def test_session_allow_overrides_session_block(self):
+        """Session allow takes priority over a session block for the same pattern."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-allow-vs-block",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "rm file.txt"},
+            store=store
+        )
+        ctx.session_blocked_patterns = [
+            {"pattern": "rm", "suggestion": "Use trash", "pattern_type": "literal"}
+        ]
+        ctx.session_allowed_patterns = [{"pattern": "rm", "pattern_type": "literal"}]
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is None or \
+            result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+
+    def test_ar_clear_clears_blocks_and_allows(self):
+        """/ar:clear should reset both session_blocked_patterns and session_allowed_patterns."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-clear-both", event="UserPromptSubmit",
+                           prompt="/ar:clear", store=store)
+        ctx.activation_prompt = "/ar:clear"
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "s", "pattern_type": "literal"}]
+        ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
+
+        handler = app.command_handlers.get("/ar:clear")
+        result = handler(ctx)
+
+        assert ctx.session_blocked_patterns == []
+        assert ctx.session_allowed_patterns == []
+        assert "Cleared" in result
+
+    def test_ar_blocks_status_shows_allows(self):
+        """/ar:blocks status command shows allowed patterns."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-blocks-status", event="UserPromptSubmit",
+                           prompt="/ar:blocks", store=store)
+        ctx.activation_prompt = "/ar:blocks"
+        ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
+
+        handler = app.command_handlers.get("/ar:blocks")
+        result = handler(ctx)
+
+        assert "git push" in result
+        assert "Allows" in result
+
+    def test_ar_no_usage_error_without_args(self):
+        """/ar:ok without args returns usage error."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-ok-noarg", event="UserPromptSubmit",
+                           prompt="/ar:ok", store=store)
+        ctx.activation_prompt = "/ar:ok"
+
+        handler = app.command_handlers.get("/ar:ok")
+        result = handler(ctx)
+
+        assert "Usage" in result
+
+
+class TestScopeAccessorAllowed:
+    """Tests for ScopeAccessor get_allowed / set_allowed methods."""
+
+    def test_get_allowed_returns_empty_by_default(self):
+        """get_allowed should return empty list when no allows set."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-ga-empty", event="test", store=store)
+
+        accessor = plugins.ScopeAccessor(ctx, "session")
+        assert accessor.get_allowed() == []
+
+    def test_set_and_get_allowed_roundtrip(self):
+        """set_allowed then get_allowed should return same data."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-ga-rt", event="test", store=store)
+        accessor = plugins.ScopeAccessor(ctx, "session")
+
+        allows = [{"pattern": "git push", "pattern_type": "literal"}]
+        accessor.set_allowed(allows)
+
+        assert accessor.get_allowed() == allows
+        assert ctx.session_allowed_patterns == allows
+
+
+class TestFormatPatternList:
+    """Tests for the _format_pattern_list DRY helper."""
+
+    def test_empty_list_returns_empty(self):
+        """Empty pattern list returns empty list."""
+        result = plugins._format_pattern_list([], "Blocks", "🚫")
+        assert result == []
+
+    def test_single_literal_pattern(self):
+        """Single literal pattern formats correctly."""
+        patterns = [{"pattern": "rm", "pattern_type": "literal"}]
+        result = plugins._format_pattern_list(patterns, "Session Blocks", "🚫")
+
+        assert len(result) == 2  # header + item
+        assert "🚫 Session Blocks (1):" in result[0]
+        assert "• rm" in result[1]
+        assert "(literal)" not in result[1]  # literal type not shown
+
+    def test_non_literal_type_shown(self):
+        """Non-literal pattern type (regex, glob) is shown in output."""
+        patterns = [{"pattern": "rm.*rf", "pattern_type": "regex"}]
+        result = plugins._format_pattern_list(patterns, "Blocks", "🚫")
+
+        assert "(regex)" in result[1]
+
+    def test_multiple_patterns_all_listed(self):
+        """Multiple patterns all appear in output."""
+        patterns = [
+            {"pattern": "rm", "pattern_type": "literal"},
+            {"pattern": "dd", "pattern_type": "literal"},
+        ]
+        result = plugins._format_pattern_list(patterns, "Blocks", "🚫")
+
+        assert len(result) == 3  # header + 2 items
+        assert any("rm" in line for line in result)
+        assert any("dd" in line for line in result)
+
+
+# ============================================================================
+# Policy Aliases — every slash-command alias must be registered and functional
+# ============================================================================
+
+class TestPolicyAliasesRegistered:
+    """All policy command aliases must be registered and map to the same handler."""
+
+    # Ground truth from _POLICY_ALIASES in plugins.py
+    ALLOW_ALIASES  = ("/ar:a", "/ar:allow", "/afa", "ALLOW")
+    JUSTIFY_ALIASES = ("/ar:j", "/ar:justify", "/afj", "JUSTIFY")
+    SEARCH_ALIASES  = ("/ar:f", "/ar:find", "/afs", "SEARCH")
+
+    def _run_alias(self, alias: str, prompt: str):
+        """Helper: call handler for alias, return (result_str, ctx)."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id=f"test-alias-{alias.strip('/')}", event="UserPromptSubmit",
+                           prompt=prompt, store=store)
+        ctx.activation_prompt = prompt
+        handler = app.command_handlers.get(alias)
+        assert handler is not None, f"Handler for '{alias}' not registered"
+        result = handler(ctx)
+        return result, ctx
+
+    # ── ALLOW aliases ──────────────────────────────────────────────────────
+
+    def test_ar_a_sets_allow_policy(self):
+        result, ctx = self._run_alias("/ar:a", "/ar:a")
+        assert ctx.file_policy == "ALLOW"
+        assert "allow-all" in result.lower()
+
+    def test_ar_allow_sets_allow_policy(self):
+        result, ctx = self._run_alias("/ar:allow", "/ar:allow")
+        assert ctx.file_policy == "ALLOW"
+        assert "allow-all" in result.lower()
+
+    def test_afa_sets_allow_policy(self):
+        result, ctx = self._run_alias("/afa", "/afa")
+        assert ctx.file_policy == "ALLOW"
+
+    def test_allow_key_sets_allow_policy(self):
+        result, ctx = self._run_alias("ALLOW", "ALLOW")
+        assert ctx.file_policy == "ALLOW"
+
+    # ── JUSTIFY aliases ────────────────────────────────────────────────────
+
+    def test_ar_j_sets_justify_policy(self):
+        result, ctx = self._run_alias("/ar:j", "/ar:j")
+        assert ctx.file_policy == "JUSTIFY"
+        assert "justify" in result.lower()
+
+    def test_ar_justify_sets_justify_policy(self):
+        result, ctx = self._run_alias("/ar:justify", "/ar:justify")
+        assert ctx.file_policy == "JUSTIFY"
+
+    def test_afj_sets_justify_policy(self):
+        result, ctx = self._run_alias("/afj", "/afj")
+        assert ctx.file_policy == "JUSTIFY"
+
+    def test_justify_key_sets_justify_policy(self):
+        result, ctx = self._run_alias("JUSTIFY", "JUSTIFY")
+        assert ctx.file_policy == "JUSTIFY"
+
+    # ── SEARCH (strict) aliases ────────────────────────────────────────────
+
+    def test_ar_f_sets_search_policy(self):
+        result, ctx = self._run_alias("/ar:f", "/ar:f")
+        assert ctx.file_policy == "SEARCH"
+        assert "strict" in result.lower()
+
+    def test_ar_find_sets_search_policy(self):
+        result, ctx = self._run_alias("/ar:find", "/ar:find")
+        assert ctx.file_policy == "SEARCH"
+
+    def test_afs_sets_search_policy(self):
+        result, ctx = self._run_alias("/afs", "/afs")
+        assert ctx.file_policy == "SEARCH"
+
+    def test_search_key_sets_search_policy(self):
+        result, ctx = self._run_alias("SEARCH", "SEARCH")
+        assert ctx.file_policy == "SEARCH"
+
+
+class TestPolicySwitching:
+    """Switching between policies updates ctx.file_policy correctly."""
+
+    def _switch(self, ctx, alias: str, prompt: str) -> str:
+        ctx.activation_prompt = prompt
+        handler = app.command_handlers.get(alias)
+        return handler(ctx)
+
+    def test_allow_to_search(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-switch-a2s", event="UserPromptSubmit",
+                           prompt="", store=store)
+        ctx.file_policy = "ALLOW"
+        self._switch(ctx, "/ar:f", "/ar:f")
+        assert ctx.file_policy == "SEARCH"
+
+    def test_search_to_justify(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-switch-s2j", event="UserPromptSubmit",
+                           prompt="", store=store)
+        ctx.file_policy = "SEARCH"
+        self._switch(ctx, "/ar:j", "/ar:j")
+        assert ctx.file_policy == "JUSTIFY"
+
+    def test_justify_to_allow(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-switch-j2a", event="UserPromptSubmit",
+                           prompt="", store=store)
+        ctx.file_policy = "JUSTIFY"
+        self._switch(ctx, "/ar:a", "/ar:a")
+        assert ctx.file_policy == "ALLOW"
+
+    def test_status_reflects_switched_policy(self):
+        """After switching, /ar:st shows the new policy name."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-switch-status", event="UserPromptSubmit",
+                           prompt="/ar:f", store=store)
+        ctx.activation_prompt = "/ar:f"
+        app.command_handlers["/ar:f"](ctx)
+        assert ctx.file_policy == "SEARCH"
+
+        ctx.activation_prompt = "/ar:st"
+        status_result = app.command_handlers["STATUS"](ctx)
+        assert "strict-search" in status_result.lower()
+
+
+class TestPoliciesConfigStructure:
+    """CONFIG['policies'] has correct keys, names, and descriptions for all modes."""
+
+    def test_all_three_policies_present(self):
+        assert "ALLOW" in CONFIG["policies"]
+        assert "JUSTIFY" in CONFIG["policies"]
+        assert "SEARCH" in CONFIG["policies"]
+
+    def test_allow_policy_name_and_desc(self):
+        name, desc = CONFIG["policies"]["ALLOW"]
+        assert name == "allow-all"
+        assert "full permission" in desc.lower() or "allow all" in desc.lower()
+
+    def test_justify_policy_name_and_desc(self):
+        name, desc = CONFIG["policies"]["JUSTIFY"]
+        assert name == "justify-create"
+        assert "AUTOFILE_JUSTIFICATION" in desc
+
+    def test_search_policy_name_and_desc(self):
+        name, desc = CONFIG["policies"]["SEARCH"]
+        assert name == "strict-search"
+        assert "only modify existing" in desc.lower() or "no new files" in desc.lower()
+
+    def test_policy_names_are_unique(self):
+        names = [v[0] for v in CONFIG["policies"].values()]
+        assert len(names) == len(set(names)), "Policy names must be unique"
+
+    def test_policy_blocked_messages_exist(self):
+        """CONFIG['policy_blocked'] must have messages for SEARCH and JUSTIFY."""
+        assert "policy_blocked" in CONFIG
+        assert "SEARCH" in CONFIG["policy_blocked"]
+        assert "JUSTIFY" in CONFIG["policy_blocked"]
+        assert len(CONFIG["policy_blocked"]["SEARCH"]) > 0
+        assert len(CONFIG["policy_blocked"]["JUSTIFY"]) > 0
+
+
+# ============================================================================
+# Command Blocking — /ar:no, /ar:clear, /ar:blocks + global variants
+# ============================================================================
+
+class TestBlockingCommandBehavior:
+    """/ar:no blocks session commands; /ar:ok allows; /ar:clear resets both."""
+
+    def test_ar_no_empty_args_returns_usage(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-no-empty", event="UserPromptSubmit",
+                           prompt="/ar:no", store=store)
+        ctx.activation_prompt = "/ar:no"
+        result = app.command_handlers["/ar:no"](ctx)
+        assert "Usage" in result
+
+    def test_ar_no_adds_pattern_to_session_blocks(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-no-add", event="UserPromptSubmit",
+                           prompt="/ar:no mytool", store=store)
+        ctx.activation_prompt = "/ar:no mytool"
+        result = app.command_handlers["/ar:no"](ctx)
+
+        assert "Blocked" in result
+        blocks = ctx.session_blocked_patterns or []
+        assert any(b["pattern"] == "mytool" for b in blocks)
+
+    def test_ar_no_then_command_is_blocked(self):
+        """After /ar:no mytool, running mytool in Bash is denied."""
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-no-enforce", event="UserPromptSubmit",
+                           prompt="/ar:no mytool", store=store)
+        ctx.activation_prompt = "/ar:no mytool"
+        app.command_handlers["/ar:no"](ctx)
+
+        # Now simulate a PreToolUse for that command
+        ctx2 = EventContext(
+            session_id="test-no-enforce", event="PreToolUse",
+            tool_name="Bash", tool_input={"command": "mytool --run"}, store=store
+        )
+        ctx2.session_blocked_patterns = ctx.session_blocked_patterns
+        result = plugins.check_blocked_commands(ctx2)
+
+        assert result is not None
+        assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+    def test_ar_ok_empty_args_returns_usage(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-ok-empty2", event="UserPromptSubmit",
+                           prompt="/ar:ok", store=store)
+        ctx.activation_prompt = "/ar:ok"
+        result = app.command_handlers["/ar:ok"](ctx)
+        assert "Usage" in result
+
+    def test_ar_clear_resets_session_blocks_and_allows(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-clear-all", event="UserPromptSubmit",
+                           prompt="/ar:clear", store=store)
+        ctx.activation_prompt = "/ar:clear"
+        ctx.session_blocked_patterns = [{"pattern": "mytool", "suggestion": "s", "pattern_type": "literal"}]
+        ctx.session_allowed_patterns = [{"pattern": "git push", "pattern_type": "literal"}]
+
+        result = app.command_handlers["/ar:clear"](ctx)
+
+        assert ctx.session_blocked_patterns == []
+        assert ctx.session_allowed_patterns == []
+        assert "Cleared" in result
+
+    def test_ar_blocks_shows_session_blocks(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-blocks-show", event="UserPromptSubmit",
+                           prompt="/ar:blocks", store=store)
+        ctx.activation_prompt = "/ar:blocks"
+        ctx.session_blocked_patterns = [{"pattern": "mytool", "suggestion": "s", "pattern_type": "literal"}]
+
+        result = app.command_handlers["/ar:blocks"](ctx)
+        assert "mytool" in result
+
+    def test_ar_blocks_empty_shows_no_blocks(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-blocks-empty", event="UserPromptSubmit",
+                           prompt="/ar:blocks", store=store)
+        ctx.activation_prompt = "/ar:blocks"
+
+        result = app.command_handlers["/ar:blocks"](ctx)
+        assert "No session blocks" in result or "no" in result.lower()
+
+
+class TestGlobalBlockingCommands:
+    """/ar:globalno, /ar:globalok, /ar:globalstatus, /ar:globalclear."""
+
+    def test_globalno_registered(self):
+        assert "/ar:globalno" in app.command_handlers
+
+    def test_globalok_registered(self):
+        assert "/ar:globalok" in app.command_handlers
+
+    def test_globalstatus_registered(self):
+        assert "/ar:globalstatus" in app.command_handlers
+
+    def test_globalclear_registered(self):
+        assert "/ar:globalclear" in app.command_handlers
+
+    def test_globalno_empty_args_returns_usage(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-globalno-empty", event="UserPromptSubmit",
+                           prompt="/ar:globalno", store=store)
+        ctx.activation_prompt = "/ar:globalno"
+        result = app.command_handlers["/ar:globalno"](ctx)
+        assert "Usage" in result
+
+    def test_globalok_empty_args_returns_usage(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-globalok-empty", event="UserPromptSubmit",
+                           prompt="/ar:globalok", store=store)
+        ctx.activation_prompt = "/ar:globalok"
+        result = app.command_handlers["/ar:globalok"](ctx)
+        assert "Usage" in result
+
+    def test_globalstatus_returns_string(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-globalstatus", event="UserPromptSubmit",
+                           prompt="/ar:globalstatus", store=store)
+        ctx.activation_prompt = "/ar:globalstatus"
+        result = app.command_handlers["/ar:globalstatus"](ctx)
+        assert isinstance(result, str)
+
+    def test_globalclear_returns_cleared_message(self):
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="test-globalclear", event="UserPromptSubmit",
+                           prompt="/ar:globalclear", store=store)
+        ctx.activation_prompt = "/ar:globalclear"
+        result = app.command_handlers["/ar:globalclear"](ctx)
+        assert "Cleared" in result or "cleared" in result.lower()
+
+
+# ============================================================================
+# Redirect in Deny/Warn Messages (end-to-end via check_blocked_commands)
+# ============================================================================
+
+class TestRedirectInDenyMessage:
+    """Redirect alternative command appears in the deny message (end-to-end)."""
+
+    def test_redirect_args_substituted_in_deny_message(self):
+        """rm file.txt blocked → deny message contains 'trash file.txt'."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-redirect-args",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm file.txt"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        assert "trash file.txt" in str(result)
+
+    def test_redirect_multiple_args_substituted(self):
+        """rm -rf /tmp/dir blocked → deny message contains 'trash -rf /tmp/dir'."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-redirect-multi",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm -rf /tmp/dir"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        assert "trash -rf /tmp/dir" in str(result)
+
+    def test_redirect_file_substituted_in_deny_message(self):
+        """git checkout -- src/main.py → deny contains 'git stash push src/main.py'."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-redirect-file",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "git checkout -- src/main.py"}, store=store
+        )
+        # The when predicate _file_has_unstaged_changes is evaluated;
+        # mock subprocess so it signals a dirty file
+        with patch("autorun.integrations.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="M src/main.py")
+            result = plugins.check_blocked_commands(ctx)
+
+        if result is not None and result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
+            assert "src/main.py" in str(result)
+
+    def test_redirect_no_args_falls_back_to_empty(self):
+        """rm (no args) → redirect substitutes empty string for {args}."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-redirect-noargs",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        # redirect="trash {args}" → "trash " (with trailing space is acceptable)
+        result_str = str(result)
+        assert "trash" in result_str
+
+    def test_git_stash_drop_redirect_to_pop(self):
+        """git stash drop → redirect suggests 'git stash pop'."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-redirect-stash-drop",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "git stash drop"}, store=store
+        )
+        with patch("autorun.integrations.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="stash@{0}: WIP")
+            result = plugins.check_blocked_commands(ctx)
+
+        if result is not None and result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
+            assert "git stash pop" in str(result)
+
+    def test_no_redirect_means_no_use_instead_line(self):
+        """Integration without redirect doesn't add 'Use instead:' to message."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-no-redirect",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "git push origin main"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        # git push has no redirect field → no "Use instead:" line
+        assert result is not None
+        assert "Use instead:" not in str(result)
+
+
+# ============================================================================
+# action: "warn" — allows command but includes message (and redirect)
+# ============================================================================
+
+class TestWarnActionBehavior:
+    """action='warn' allows execution but includes suggestion + redirect in message."""
+
+    def test_warn_action_returns_allow_not_deny(self):
+        """action='warn' (git) → permissionDecision is allow, not deny."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-warn-allow",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "git status"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        # git matches the "git" warn integration
+        if result is not None:
+            assert result.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+    def test_warn_action_message_included_in_response(self):
+        """action='warn' response contains the suggestion text."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-warn-msg",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "git commit -m 'test'"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        # If warn triggered, response contains suggestion text (CLAUDE.md or similar)
+        if result is not None:
+            assert "CLAUDE.md" in str(result) or "git" in str(result).lower()
+
+    def test_warn_does_not_block_safe_git_commands(self):
+        """git log, git diff, git status — none are denied."""
+        store = ThreadSafeDB()
+        for cmd in ["git log", "git diff", "git status", "git branch"]:
+            ctx = EventContext(
+                session_id=f"test-warn-safe-{cmd.replace(' ', '-')}",
+                event="PreToolUse", tool_name="Bash",
+                tool_input={"command": cmd}, store=store
+            )
+            result = plugins.check_blocked_commands(ctx)
+            if result is not None:
+                assert result.get("hookSpecificOutput", {}).get("permissionDecision") != "deny", \
+                    f"'{cmd}' should not be denied (action: warn)"
+
+
+# ============================================================================
+# Global Allows System (/ar:globalok)
+# ============================================================================
+
+class TestGlobalAllowsSystem:
+    """Global allows added via /ar:globalok override DEFAULT_INTEGRATIONS."""
+
+    def test_globalok_registered_as_handler(self):
+        """/ar:globalok command is registered."""
+        assert "/ar:globalok" in app.command_handlers
+
+    def test_globalok_adds_to_global_allowed_patterns(self):
+        """/ar:globalok 'git push' adds pattern to global_allowed_patterns."""
+        import uuid
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-globalok-{uuid.uuid4().hex[:8]}",
+            event="UserPromptSubmit",
+            prompt="/ar:globalok 'git push'", store=store
+        )
+        ctx.activation_prompt = "/ar:globalok 'git push'"
+
+        handler = app.command_handlers.get("/ar:globalok")
+        result = handler(ctx)
+
+        assert "Allowed" in result or "allowed" in result.lower()
+
+    def test_scope_accessor_global_allowed_roundtrip(self):
+        """ScopeAccessor global scope stores and retrieves allowed patterns."""
+        import uuid
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-ga-global-{uuid.uuid4().hex[:8]}",
+            event="test", store=store
+        )
+        accessor = plugins.ScopeAccessor(ctx, "global")
+        key = f"test-pattern-{uuid.uuid4().hex[:6]}"
+        allows = [{"pattern": key, "pattern_type": "literal"}]
+
+        accessor.set_allowed(allows)
+        retrieved = accessor.get_allowed()
+
+        assert any(a["pattern"] == key for a in retrieved)
+
+    def test_session_allow_takes_priority_over_global_allow(self):
+        """Session allow checked before global allow — both result in allow."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-session-vs-global",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm file.txt"}, store=store
+        )
+        ctx.session_allowed_patterns = [{"pattern": "rm", "pattern_type": "literal"}]
+
+        result = plugins.check_blocked_commands(ctx)
+
+        # Session allow → command passes through
+        assert result is None or \
+            result.get("hookSpecificOutput", {}).get("permissionDecision") == "allow"
+
+
+# ============================================================================
+# DEFAULT_INTEGRATIONS Config Validation
+# ============================================================================
+
+class TestDefaultIntegrationsConfig:
+    """Validate ALL entries in DEFAULT_INTEGRATIONS follow config conventions."""
+
+    def test_all_entries_have_valid_action(self):
+        """Every integration must have action 'block' or 'warn' (default 'block')."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        valid_actions = {"block", "warn"}
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            action = cfg.get("action", "block")
+            assert action in valid_actions, \
+                f"Integration '{pattern}' has invalid action '{action}'"
+
+    def test_all_entries_have_suggestion(self):
+        """Every integration must have a non-empty suggestion."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            assert "suggestion" in cfg, f"Integration '{pattern}' missing 'suggestion'"
+            assert len(cfg["suggestion"]) > 0, f"Integration '{pattern}' has empty suggestion"
+
+    def test_block_action_suggestions_include_ar_ok_hint(self):
+        """All block-action integrations must include /ar:ok hint in suggestion."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            if cfg.get("action", "block") != "block":
+                continue  # warn actions don't need /ar:ok
+            suggestion = cfg["suggestion"]
+            assert "/ar:ok" in suggestion, \
+                f"Block integration '{pattern}' suggestion missing '/ar:ok' hint"
+
+    def test_redirect_templates_use_valid_placeholders(self):
+        """All redirect templates use only {args} or {file} placeholders."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        import re
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            redirect = cfg.get("redirect")
+            if not redirect:
+                continue
+            # Find all {placeholder} occurrences
+            placeholders = set(re.findall(r"\{(\w+)\}", redirect))
+            invalid = placeholders - {"args", "file"}
+            assert not invalid, \
+                f"Integration '{pattern}' redirect '{redirect}' has unknown placeholders: {invalid}"
+
+    def test_when_predicates_are_registered_or_always(self):
+        """All 'when' values must be 'always' or a registered predicate name."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        from autorun.integrations import _WHEN_PREDICATES
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            when = cfg.get("when", "always")
+            if when == "always":
+                continue
+            assert when in _WHEN_PREDICATES, \
+                f"Integration '{pattern}' references unregistered predicate '{when}'"
+
+    def test_event_values_are_valid(self):
+        """All 'event' values must be 'bash', 'file', 'stop', or 'all'."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        valid_events = {"bash", "file", "stop", "all"}
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            event = cfg.get("event", "bash")
+            assert event in valid_events, \
+                f"Integration '{pattern}' has invalid event '{event}'"
+
+    def test_redirect_entries_are_strings(self):
+        """All redirect values must be strings."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        for pattern, cfg in DEFAULT_INTEGRATIONS.items():
+            redirect = cfg.get("redirect")
+            if redirect is not None:
+                assert isinstance(redirect, str), \
+                    f"Integration '{pattern}' redirect is not a string: {type(redirect)}"
+
+    def test_git_push_has_ar_ok_hint(self):
+        """git push integration includes the exact /ar:ok 'git push' hint."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        suggestion = DEFAULT_INTEGRATIONS["git push"]["suggestion"]
+        assert "/ar:ok 'git push'" in suggestion
+
+    def test_rm_has_redirect_to_trash(self):
+        """rm integration redirects to trash."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["rm"]["redirect"] == "trash {args}"
+        assert DEFAULT_INTEGRATIONS["rm -rf"]["redirect"] == "trash {args}"
+
+    def test_git_checkout_dot_uses_stash_redirect(self):
+        """git checkout . redirect suggests git stash push."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        redirect = DEFAULT_INTEGRATIONS["git checkout ."]["redirect"]
+        assert redirect.startswith("git stash push")
+
+    def test_git_stash_drop_redirect_to_pop(self):
+        """git stash drop redirects to git stash pop."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git stash drop"]["redirect"] == "git stash pop"
+
+    def test_file_redirect_entries_use_file_placeholder(self):
+        """Integrations targeting specific files use {file} placeholder."""
+        from autorun.config import DEFAULT_INTEGRATIONS
+        file_patterns = ["git checkout --", "git checkout", "git restore"]
+        for pattern in file_patterns:
+            redirect = DEFAULT_INTEGRATIONS[pattern].get("redirect", "")
+            assert "{file}" in redirect, \
+                f"Integration '{pattern}' should use {{file}} placeholder, got: '{redirect}'"

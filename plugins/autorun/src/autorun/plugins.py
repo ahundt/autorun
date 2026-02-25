@@ -86,7 +86,7 @@ for policy, aliases in _POLICY_ALIASES.items():
 @app.command("/ar:st", "/ar:status", "/afst", "STATUS")
 def handle_status(ctx: EventContext) -> str:
     """
-    Unified status: Shows file policy + session/global blocks.
+    Unified status: Shows file policy + session/global blocks and allows.
     """
     lines = []
 
@@ -95,22 +95,23 @@ def handle_status(ctx: EventContext) -> str:
     name, desc = CONFIG["policies"].get(current_policy, ("unknown", ""))
     lines.append(f"✅ AutoFile policy: {name}\n\n{desc}\n")
 
-    # Block status (session + global unified view)
-    session_blocks = ScopeAccessor(ctx, "session").get()
-    global_blocks = ScopeAccessor(ctx, "global").get()
+    # Block/Allow status — loop over scopes, DRY via _format_pattern_list
+    control_lines = []
+    for scope in ("session", "global"):
+        accessor = ScopeAccessor(ctx, scope)
+        scope_title = scope.title()
+        section = (
+            _format_pattern_list(accessor.get(), f"{scope_title} blocks", "🚫") +
+            _format_pattern_list(accessor.get_allowed(), f"{scope_title} allows", "✅")
+        )
+        if section:
+            if control_lines:
+                control_lines.append("")
+            control_lines.extend(section)
 
-    if session_blocks or global_blocks:
-        lines.append("\n📊 Command Blocking Status\n")
-        if session_blocks:
-            lines.append(f"Session blocks ({len(session_blocks)}):")
-            for b in session_blocks:
-                ptype = f" ({b.get('pattern_type', 'literal')})" if b.get('pattern_type') != 'literal' else ""
-                lines.append(f"  • {b['pattern']}{ptype}")
-        if global_blocks:
-            lines.append(f"\nGlobal blocks ({len(global_blocks)}):")
-            for b in global_blocks:
-                ptype = f" ({b.get('pattern_type', 'literal')})" if b.get('pattern_type') != 'literal' else ""
-                lines.append(f"  • {b['pattern']}{ptype}")
+    if control_lines:
+        lines.append("\n📊 Command Control Status\n")
+        lines.extend(control_lines)
 
     return "\n".join(lines)
 
@@ -330,6 +331,26 @@ def _get_suggestion(pattern: str) -> str:
     return f"Blocked: {pattern}\n\nTo allow: /ar:ok {pattern}"
 
 
+def _format_pattern_list(patterns: list, label: str, icon: str) -> list:
+    """Format a list of pattern dicts into display lines.
+
+    Args:
+        patterns: List of dicts with 'pattern' and optional 'pattern_type' keys.
+        label:    Section label, e.g. "Session blocks".
+        icon:     Emoji prefix for the header line, e.g. "🚫" or "✅".
+
+    Returns:
+        Empty list when patterns is empty; otherwise [header_line, *item_lines].
+    """
+    if not patterns:
+        return []
+    lines = [f"{icon} {label} ({len(patterns)}):"]
+    for p in patterns:
+        ptype = f" ({p.get('pattern_type', 'literal')})" if p.get('pattern_type') != 'literal' else ""
+        lines.append(f"  • {p['pattern']}{ptype}")
+    return lines
+
+
 # === DRY SCOPE ACCESSOR (eliminates session vs global duplication) ===
 class ScopeAccessor:
     """
@@ -340,20 +361,38 @@ class ScopeAccessor:
     def __init__(self, ctx: EventContext, scope: str):
         self.ctx = ctx
         self.scope = scope
-        self._key = "session_blocked_patterns" if scope == "session" else "global_blocked_patterns"
+        self._blocked_key = "session_blocked_patterns" if scope == "session" else "global_blocked_patterns"
+        self._allowed_key = "session_allowed_patterns" if scope == "session" else "global_allowed_patterns"
 
     def get(self) -> list:
+        """Get blocked patterns."""
         if self.scope == "session":
             return list(self.ctx.session_blocked_patterns or [])
         with session_state("__global__") as st:
-            return list(st.get(self._key, []))
+            return list(st.get(self._blocked_key, []))
 
     def set(self, blocks: list):
+        """Set blocked patterns."""
         if self.scope == "session":
             self.ctx.session_blocked_patterns = blocks
         else:
             with session_state("__global__") as st:
-                st[self._key] = blocks
+                st[self._blocked_key] = blocks
+
+    def get_allowed(self) -> list:
+        """Get allowed patterns."""
+        if self.scope == "session":
+            return list(self.ctx.session_allowed_patterns or [])
+        with session_state("__global__") as st:
+            return list(st.get(self._allowed_key, []))
+
+    def set_allowed(self, allows: list):
+        """Set allowed patterns."""
+        if self.scope == "session":
+            self.ctx.session_allowed_patterns = allows
+        else:
+            with session_state("__global__") as st:
+                st[self._allowed_key] = allows
 
 
 # MEGA DRY: Single factory for ALL block operations
@@ -384,6 +423,12 @@ def _make_block_op(scope: str, op: str):
             except ValueError as e:
                 return f"❌ Error: {e}"
 
+            # Remove from allows first (so /ar:no is the true inverse of /ar:ok)
+            allows = accessor.get_allowed()
+            new_allows = [a for a in allows if a["pattern"] != pattern]
+            if len(new_allows) != len(allows):
+                accessor.set_allowed(new_allows)
+
             blocks.append({
                 "pattern": pattern,
                 "suggestion": desc or _get_suggestion(pattern),
@@ -400,23 +445,31 @@ def _make_block_op(scope: str, op: str):
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:
                 return f"❌ Error: {e}"
-            before = len(blocks)
-            blocks = [b for b in blocks if b["pattern"] != pattern]
-            accessor.set(blocks)
-            return f"✅ Allowed: {pattern}" if len(blocks) < before else f"⚠️ Not found: {pattern}"
+            allows = accessor.get_allowed()
+            # Check if already in allowed list
+            if any(a["pattern"] == pattern for a in allows):
+                return f"ℹ️ Already allowed: {pattern}"
+            # Add to allowed patterns
+            allows.append({
+                "pattern": pattern,
+                "pattern_type": ptype
+            })
+            accessor.set_allowed(allows)
+            prefix = "global" if scope == "global" else ""
+            return f"✅ Allowed: '{pattern}' (to block: /ar:{prefix}no '{pattern}')"
 
         if op == "clear":
             accessor.set([])
-            return f"✅ Cleared {scope} blocks"
+            accessor.set_allowed([])
+            return f"✅ Cleared {scope} blocks and allows"
 
         if op == "status":
-            if not blocks:
-                return f"ℹ️ No {scope} blocks"
-            lines = [f"📋 {scope.title()} Blocks:"]
-            for b in blocks:
-                ptype = f" ({b.get('pattern_type', 'literal')})" if b.get('pattern_type') != 'literal' else ""
-                lines.append(f"  • {b['pattern']}{ptype}")
-            return "\n".join(lines)
+            allows = accessor.get_allowed()
+            lines = (
+                _format_pattern_list(blocks, f"{scope.title()} Blocks", "🚫") +
+                _format_pattern_list(allows, f"{scope.title()} Allows", "✅")
+            )
+            return "\n".join(lines) if lines else f"ℹ️ No {scope} blocks or allows"
 
         return ""
 
@@ -452,7 +505,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     """
     Unified command integrations (superset of hookify).
 
-    Priority: Session blocks > Global blocks > User files > Python defaults
+    Priority: Session allows > Global allows > Session blocks > Global blocks > User files > Python defaults
     Features: action (block/warn), redirect with {args}, when predicates, conditions
     Supports: Bash commands (event: bash), Write/Edit operations (event: file)
     """
@@ -473,7 +526,17 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if cmd.strip().startswith("/ar:"):
         return ctx.allow()
 
-    # Check session blocks first (highest priority)
+    # Check session allows FIRST (highest priority - explicitly allowed overrides everything)
+    for a in ScopeAccessor(ctx, "session").get_allowed():
+        if _match(cmd, a["pattern"], a.get("pattern_type", "literal")):
+            return ctx.allow()
+
+    # Check global allows
+    for a in ScopeAccessor(ctx, "global").get_allowed():
+        if _match(cmd, a["pattern"], a.get("pattern_type", "literal")):
+            return ctx.allow()
+
+    # Check session blocks
     for b in ScopeAccessor(ctx, "session").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
             return ctx.deny(f"{b['suggestion']}\n\nTo allow: /ar:ok {b['pattern']}")
