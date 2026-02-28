@@ -1433,7 +1433,8 @@ def record_demo(
                 else:
                     print(f"[demo] Session preserved: tmux attach-session -t {session.session_name}")
 
-    # Convert cast → GIF (same for both modes)
+    # Convert cast → GIF and MP4 (same for both modes)
+    mp4_file = f"{output_name}.mp4"
     if agg_bin and Path(cast_file).exists():
         print(f"[demo] Converting to GIF: {cast_file} → {gif_file}")
         subprocess.run([
@@ -1442,10 +1443,32 @@ def record_demo(
             cast_file, gif_file,
         ])
         print(f"[demo] GIF written: {gif_file}")
+
+        # Convert GIF → MP4 via ffmpeg (widely available, shareable on social/GitHub)
+        # yuv420p for broad browser/player compatibility; scale ensures even dimensions.
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if ffmpeg_bin and Path(gif_file).exists():
+            print(f"[demo] Converting GIF → MP4: {gif_file} → {mp4_file}")
+            subprocess.run([
+                ffmpeg_bin, "-y",
+                "-i", gif_file,
+                "-movflags", "faststart",
+                "-pix_fmt", "yuv420p",
+                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                mp4_file,
+            ], capture_output=True)
+            if Path(mp4_file).exists():
+                mp4_size = Path(mp4_file).stat().st_size
+                print(f"[demo] MP4 written: {mp4_file} ({mp4_size // 1024}KB)")
+            else:
+                print("[demo] MP4 conversion failed — GIF-only output")
+        else:
+            print("[demo] ffmpeg not found — GIF only (install: brew install ffmpeg)")
+
         print(f"[demo] Replay cast: asciinema play {cast_file}")
     elif Path(cast_file).exists():
         print(f"[demo] Cast file written: {cast_file}")
-        print("[demo] Install agg to convert to GIF:")
+        print("[demo] Install agg to convert to GIF/MP4:")
         print("  curl -L https://github.com/asciinema/agg/releases/latest/download/"
               "agg-aarch64-apple-darwin -o /tmp/agg && chmod +x /tmp/agg")
         print(f"[demo] Replay: asciinema play {cast_file}")
