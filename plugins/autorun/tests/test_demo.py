@@ -83,6 +83,37 @@ _DEMO_WITH_TIMING = False
 # Set to True by --play CLI flag.
 _SCRIPTED = False
 
+# Python script to print the intro banner in the tmux terminal (act0).
+# Written to a temp file and executed via run_shell_cmd() to avoid shell escaping issues.
+# The banner answers "what does autorun do?" before any demo feature is shown.
+_BANNER_SCRIPT = r'''#!/usr/bin/env python3
+import sys
+CYAN  = "\033[96m"
+BOLD  = "\033[1m"
+RESET = "\033[0m"
+GRAY  = "\033[90m"
+GREEN = "\033[92m"
+lines = [
+    ("", ""),
+    ("  ┌─────────────────────────────────────────────────────────┐", CYAN),
+    ("  │  autorun — a safety plugin for Claude Code             │", CYAN),
+    ("  │                                                         │", CYAN),
+    ("  │  Install once. Then, silently in the background:       │", CYAN),
+    ("  │  · Blocks dangerous commands before Claude runs them   │", CYAN),
+    ("  │  · Controls whether Claude can create new files        │", CYAN),
+    ("  │  · Auto-saves your plans so they survive resets        │", CYAN),
+    ("  │  · Adds /ar:go — makes Claude finish tasks properly    │", CYAN),
+    ("  └─────────────────────────────────────────────────────────┘", CYAN),
+    ("", ""),
+    ("  This demo shows 7 features in ~3 minutes.", GRAY),
+    ("  Live Claude Code session (claude-haiku-4-5-20251001, < $0.05 total).", GRAY),
+    ("", ""),
+]
+for text, color in lines:
+    sys.stdout.write(color + text + RESET + "\n")
+sys.stdout.flush()
+'''
+
 # ─── Terminal output helpers ──────────────────────────────────────────────────
 
 ANSI = {
@@ -484,21 +515,32 @@ class DemoSession:
 
         Strategy:
         1. Wait a brief moment for activity to start (Claude may respond immediately).
-        2. Poll until active=False AND prompt_type='input'.
+        2. Poll until active=False AND prompt_type='input' — confirmed by TWO consecutive
+           idle checks (1 second apart) to avoid false positives between tool calls where
+           Claude briefly shows the input prompt between executing multiple tools.
 
         Returns True if Claude became ready within timeout.
         """
         time.sleep(1.5)  # Give claude a moment to start responding
         deadline = time.time() + timeout
         saw_active = False
+        consecutive_idle = 0
         while time.time() < deadline:
             content = self.capture_pane(30)
             is_active = tmux_detect_claude_active(content)
             prompt = tmux_detect_prompt_type(content)
             if is_active:
                 saw_active = True
-            if prompt == PROMPT_TYPE_INPUT and not is_active:
-                return True
+                consecutive_idle = 0
+            elif prompt == PROMPT_TYPE_INPUT:
+                consecutive_idle += 1
+                # Require 3 consecutive idle checks (~1.5s total) to confirm Claude is
+                # genuinely done — not just briefly idle between chained tool calls.
+                if consecutive_idle >= 3:
+                    return True
+            else:
+                # Not active and not at input prompt: reset (could be between states)
+                consecutive_idle = 0
             time.sleep(self._ACTIVITY_POLL_INTERVAL)
         return False
 
@@ -531,6 +573,38 @@ class DemoSession:
         last = lines[-1]
         return (last.endswith('%') or last.endswith('$') or
                 last.endswith('±') or last.endswith('#'))
+
+    # ── Session identity properties ─────────────────────────────────────────
+
+    @property
+    def pane_target(self) -> str:
+        """The tmux pane target string used for all send-keys/capture-pane calls.
+
+        Format: 'session-name:window.pane'  (e.g., 'autorun-demo:1.0').
+        Populated after create_shell() queries the actual window/pane IDs.
+        """
+        return self._pane_target
+
+    @property
+    def session_info(self) -> dict:
+        """Session identity dict with names and state for logging/debugging.
+
+        Returns:
+            {
+              "session_name": str,     # tmux session name
+              "pane_target": str,      # full target used for send-keys
+              "claude_started": bool,  # True after start_claude() was called
+              "cols": int,             # terminal width
+              "rows": int,             # terminal height
+            }
+        """
+        return {
+            "session_name": self.session_name,
+            "pane_target": self._pane_target,
+            "claude_started": self._claude_started,
+            "cols": self.cols,
+            "rows": self.rows,
+        }
 
     def exit_claude(self) -> None:
         """Send /exit to Claude if it's still running, then wait for it to quit.
@@ -590,11 +664,24 @@ def setup_mock_git_repo(work_dir: Path) -> None:
 
 # ─── Live demo acts (real Claude TUI via tmux) ────────────────────────────────
 
-def act0_live(session: DemoSession) -> None:
-    """Act 0: Show autorun status in the shell before starting Claude (10s)."""
+def act0_live(session: DemoSession, tmp_dir: Path) -> None:
+    """Act 0: Banner explaining autorun + daemon status in shell before Claude starts.
+
+    Answers "what does autorun do?" for viewers who are seeing it for the first time.
+    The banner runs in the tmux terminal so it appears in the recording. After the
+    banner, 'autorun --status' proves the daemon is running before any feature is shown.
+    """
     session.run_shell_cmd("clear", wait=0.5)
-    session.run_shell_cmd("autorun --status", wait=3.0)
-    pause(1.5)
+
+    # Print newcomer-oriented banner via a temp Python script (avoids shell escaping
+    # issues with box-drawing characters and ANSI codes).
+    banner_script = tmp_dir / "_demo_banner.py"
+    banner_script.write_text(_BANNER_SCRIPT)
+    session.run_shell_cmd(f"python3 {banner_script}", wait=1.0)
+    pause(4.0)  # Viewers need time to read the banner
+
+    session.run_shell_cmd("autorun --status", wait=2.0)
+    pause(4.0)  # Viewers need time to read the status output
 
 
 def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
@@ -605,7 +692,7 @@ def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
     Claude responds explaining the block and suggests trash.
     Returns True if file survived.
     """
-    pause(1.5)
+    pause(2.0)  # Give viewers time to see the transition
     test_file = tmp_dir / "project_data.csv"
     # Verify file exists (it was created by setup_mock_git_repo)
     session.send_prompt(
@@ -613,89 +700,92 @@ def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
         "Please delete it to free up space — use the bash rm command."
     )
     session.wait_for_response(timeout=180)
-    pause(2.0)
+    pause(7.0)  # Let viewers read the block message and Claude's response
     return test_file.exists()
 
 
 def act2_live(session: DemoSession, tmp_dir: Path) -> None:
     """Act 2: Tool redirections — grep/find/cat blocked, redirected to native tools."""
-    pause(1.0)
+    pause(2.0)
     session.send_prompt(
         "Search for TODO comments in main.py using grep in bash."
     )
     session.wait_for_response(timeout=180)
-    pause(2.0)
+    pause(7.0)  # Let viewers read the redirect message and Claude's explanation
 
 
 def act3_live(session: DemoSession, tmp_dir: Path) -> None:
     """Act 3: Git safety — git reset --hard blocked."""
-    pause(1.0)
+    pause(2.0)
     session.send_prompt(
         "Please run git reset --hard to undo the last 2 commits — "
         "I want to go back to the initial state."
     )
     session.wait_for_response(timeout=180)
-    pause(2.0)
+    pause(7.0)  # Let viewers read the git safety block message
 
 
 def act4_live(session: DemoSession) -> None:
     """Act 4: AutoFile policy cycle — set strict, show Write blocked, restore."""
-    pause(1.0)
+    pause(2.0)
     # Set strict mode via autorun slash command
     session.send_prompt("/ar:f")
     session.wait_for_response(timeout=60)
-    pause(1.0)
+    # Extra wait: the hook state update must complete before we send the next prompt,
+    # otherwise Claude may start the create task before strict mode takes effect.
+    pause(4.0)
 
     # Ask Claude to create a new file (should be blocked by strict policy)
     session.send_prompt(
         "Create a new Python file called new_feature.py with a basic feature class."
     )
     session.wait_for_response(timeout=180)
-    pause(2.0)
+    pause(7.0)  # Let viewers read the file-blocked message
 
     # Restore full access
     session.send_prompt("/ar:allow")
     session.wait_for_response(timeout=60)
-    pause(1.0)
+    pause(4.0)  # Wait for restore to take effect before next act
 
 
 def act5_live(session: DemoSession) -> None:
     """Act 5: Custom blocks — /ar:no blocks git push, /ar:ok restores it."""
-    pause(1.0)
+    pause(2.0)
     # Block git push for this session
     session.send_prompt("/ar:no git push")
     session.wait_for_response(timeout=60)
-    pause(1.0)
+    pause(4.0)  # Wait for block to register before the next prompt
 
     # Ask Claude to push (should be blocked)
     session.send_prompt(
         "Push the current changes to origin using git push."
     )
     session.wait_for_response(timeout=180)
-    pause(2.0)
+    pause(7.0)  # Let viewers read the custom-block message
 
     # Restore git push
     session.send_prompt("/ar:ok git push")
     session.wait_for_response(timeout=60)
-    pause(1.0)
+    pause(4.0)  # Wait for restore before next act
 
 
 def act6_live(session: DemoSession) -> None:
     """Act 6: Plan export — show status, explain auto-save behavior."""
-    pause(1.0)
+    pause(2.0)
     session.send_prompt("/ar:pe")
     session.wait_for_response(timeout=60)
-    pause(3.0)
+    pause(7.0)  # Let viewers read the plan export status and understand the feature
 
 
 def act7_live(session: DemoSession) -> None:
     """Act 7: /ar:go — three-stage autonomous execution (brief task)."""
-    pause(1.0)
+    pause(3.0)  # Longer pre-prompt pause: /ar:go is the climax — viewers need to be ready
     session.send_prompt(
         "/ar:go Add a docstring to the main() function in main.py."
     )
-    # /ar:go can take several minutes; give generous timeout
-    session.wait_for_response(timeout=360)
+    # /ar:go runs three mandatory checkpoints; give a very generous timeout.
+    # After each checkpoint Claude shows a marker then continues — we wait for full completion.
+    session.wait_for_response(timeout=420)
     pause(2.0)
 
 
@@ -1079,8 +1169,8 @@ def _run_live_acts(session: DemoSession, tmp_dir: Path) -> None:
     Called directly for interactive viewing, or from a background thread
     during recording. Exits claude when complete.
     """
-    # Act 0: autorun status in shell (before starting claude)
-    act0_live(session)
+    # Act 0: banner + autorun status in shell (before starting claude)
+    act0_live(session, tmp_dir)
 
     # Start claude interactively
     if not session.start_claude():
