@@ -1255,7 +1255,7 @@ def run_demo_scripted() -> None:
 
 # ─── Recording ────────────────────────────────────────────────────────────────
 
-def _gif_to_mp4(ffmpeg_bin: str, gif_file: str, mp4_file: str) -> bool:
+def _gif_to_mp4(ffmpeg_bin: str, gif_file: str, mp4_file: str, quiet: bool = False) -> bool:
     """Convert a GIF to MP4 using ffmpeg, with hardware acceleration when available.
 
     Tries three strategies in order:
@@ -1282,7 +1282,8 @@ def _gif_to_mp4(ffmpeg_bin: str, gif_file: str, mp4_file: str) -> bool:
         capture_output=True,
     )
     if r.returncode == 0 and Path(mp4_file).exists():
-        print("[demo] MP4 encoder: h264_videotoolbox (hardware)")
+        if not quiet:
+            print("[demo] MP4 encoder: h264_videotoolbox (hardware)")
         return True
 
     # Strategy 2: libx264 software encoder (cross-platform). CRF 18 is near-lossless
@@ -1294,7 +1295,8 @@ def _gif_to_mp4(ffmpeg_bin: str, gif_file: str, mp4_file: str) -> bool:
         capture_output=True,
     )
     if r.returncode == 0 and Path(mp4_file).exists():
-        print("[demo] MP4 encoder: libx264 (software)")
+        if not quiet:
+            print("[demo] MP4 encoder: libx264 (software)")
         return True
 
     # Strategy 3: default ffmpeg encoder (last resort — let ffmpeg pick)
@@ -1303,7 +1305,8 @@ def _gif_to_mp4(ffmpeg_bin: str, gif_file: str, mp4_file: str) -> bool:
         capture_output=True,
     )
     if r.returncode == 0 and Path(mp4_file).exists():
-        print("[demo] MP4 encoder: ffmpeg default")
+        if not quiet:
+            print("[demo] MP4 encoder: ffmpeg default")
         return True
 
     print(f"[demo] All MP4 encoding strategies failed. ffmpeg stderr: {r.stderr[-500:]}")
@@ -1348,6 +1351,7 @@ def record_demo(
     output_name: str = "autorun_demo",
     scripted: bool = False,
     cleanup: bool = True,
+    quiet: bool = False,
 ) -> None:
     """Record the demo using asciinema.
 
@@ -1388,9 +1392,13 @@ def record_demo(
     gif_file = f"{output_name}.gif"
     agg_bin = _find_agg()
 
+    def _log(*args, **kwargs):
+        if not quiet:
+            print(*args, **kwargs)
+
     if scripted:
         # Record scripted mode: asciinema records this process directly.
-        print(f"[demo] Recording scripted demo → {cast_file}")
+        _log(f"[demo] Recording scripted demo → {cast_file}")
         asciinema_cmd = [
             asciinema_bin, "rec", cast_file,
             "--overwrite",
@@ -1421,13 +1429,13 @@ def record_demo(
             session = DemoSession(work_dir=tmp_dir)
 
             if not session.create_shell():
-                print("[demo] Failed to create tmux session for recording")
+                _log("[demo] Failed to create tmux session for recording")
                 return
 
-            print(f"[demo] Recording live session: {session.session_name}")
-            print(f"[demo] Output: {cast_file} → {gif_file if agg_bin else '(no agg — cast only)'}")
+            _log(f"[demo] Recording live session: {session.session_name}")
+            _log(f"[demo] Output: {cast_file} → {gif_file if agg_bin else '(no agg — cast only)'}")
             if not cleanup:
-                print(f"[demo] --no-cleanup: session '{session.session_name}' will be preserved")
+                _log(f"[demo] --no-cleanup: session '{session.session_name}' will be preserved")
 
             # asciinema spawns `tmux attach-session` as its child, capturing everything
             # that appears in the session. Commands sent via send-keys from the background
@@ -1466,7 +1474,7 @@ def record_demo(
                 # Wait for the demo thread to finish all acts first
                 demo_t.join(timeout=600)
                 if demo_t.is_alive():
-                    print("[demo] Demo thread timeout — stopping", file=sys.stderr)
+                    _log("[demo] Demo thread timeout — stopping", file=sys.stderr)
                 # After demo acts complete, terminate asciinema gracefully.
                 # This finalizes the cast file regardless of cleanup mode.
                 # (asciinema only exits naturally when the tmux session is destroyed,
@@ -1486,40 +1494,44 @@ def record_demo(
                 if cleanup:
                     session.destroy()
                 else:
-                    print(f"[demo] Session preserved: tmux attach-session -t {session.session_name}")
+                    _log(f"[demo] Session preserved: tmux attach-session -t {session.session_name}")
 
     # Convert cast → GIF and MP4 (same for both modes)
     mp4_file = f"{output_name}.mp4"
     if agg_bin and Path(cast_file).exists():
-        print(f"[demo] Converting to GIF: {cast_file} → {gif_file}")
-        subprocess.run([
+        _log(f"[demo] Converting to GIF: {cast_file} → {gif_file}")
+        agg_cmd = [
             agg_bin, "--theme", "dracula", "--speed", "1.5",
-            "--font-size", "14",
+            "--font-size", "20",        # larger font → sharper, more readable GIF
+            "--renderer", "fontdue",    # fontdue renders crisp vector-quality text
             cast_file, gif_file,
-        ])
-        print(f"[demo] GIF written: {gif_file}")
+        ]
+        if quiet:
+            agg_cmd.insert(1, "-q")
+        subprocess.run(agg_cmd)
+        _log(f"[demo] GIF written: {gif_file}")
 
         # Convert GIF → MP4 via ffmpeg (shareable on social/GitHub/Slack).
         # Tries hardware acceleration first, falls back to software.
         ffmpeg_bin = shutil.which("ffmpeg")
         if ffmpeg_bin and Path(gif_file).exists():
-            print(f"[demo] Converting GIF → MP4: {gif_file} → {mp4_file}")
-            _gif_to_mp4(ffmpeg_bin, gif_file, mp4_file)
+            _log(f"[demo] Converting GIF → MP4: {gif_file} → {mp4_file}")
+            _gif_to_mp4(ffmpeg_bin, gif_file, mp4_file, quiet=quiet)
             if Path(mp4_file).exists():
                 mp4_size = Path(mp4_file).stat().st_size
-                print(f"[demo] MP4 written: {mp4_file} ({mp4_size // 1024}KB)")
+                _log(f"[demo] MP4 written: {mp4_file} ({mp4_size // 1024}KB)")
             else:
-                print("[demo] MP4 conversion failed — GIF-only output")
+                _log("[demo] MP4 conversion failed — GIF-only output")
         else:
-            print("[demo] ffmpeg not found — GIF only (install: brew install ffmpeg)")
+            _log("[demo] ffmpeg not found — GIF only (install: brew install ffmpeg)")
 
-        print(f"[demo] Replay cast: asciinema play {cast_file}")
+        _log(f"[demo] Replay cast: asciinema play {cast_file}")
     elif Path(cast_file).exists():
-        print(f"[demo] Cast file written: {cast_file}")
-        print("[demo] Install agg to convert to GIF/MP4:")
-        print("  curl -L https://github.com/asciinema/agg/releases/latest/download/"
-              "agg-aarch64-apple-darwin -o /tmp/agg && chmod +x /tmp/agg")
-        print(f"[demo] Replay: asciinema play {cast_file}")
+        _log(f"[demo] Cast file written: {cast_file}")
+        _log("[demo] Install agg to convert to GIF/MP4:")
+        _log("  curl -L https://github.com/asciinema/agg/releases/latest/download/"
+             "agg-aarch64-apple-darwin -o /tmp/agg && chmod +x /tmp/agg")
+        _log(f"[demo] Replay: asciinema play {cast_file}")
 
 
 # ─── Pytest tests ─────────────────────────────────────────────────────────────
@@ -1824,6 +1836,9 @@ live demo requirements:
     parser.add_argument("--no-cleanup", action="store_true", dest="no_cleanup",
                         help="Preserve tmux session after recording for debugging "
                              "(default: session is destroyed after recording)")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress [demo] progress messages and agg progress bar "
+                             "(useful when running via pytest to avoid wasting tokens)")
     args = parser.parse_args()
 
     mode, scripted = _resolve_mode(args)
@@ -1834,7 +1849,7 @@ live demo requirements:
     _SCRIPTED = scripted
 
     if mode == "record":
-        record_demo(scripted=scripted, cleanup=cleanup)
+        record_demo(scripted=scripted, cleanup=cleanup, quiet=args.quiet)
     elif mode == "scripted":
         run_demo_scripted()
     else:
