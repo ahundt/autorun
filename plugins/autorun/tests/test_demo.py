@@ -1076,97 +1076,114 @@ def _find_agg() -> Optional[str]:
     )
 
 
-def record_demo(output_name: str = "autorun_demo") -> None:
-    """Record the live Claude TUI demo using asciinema attached to a tmux session.
+def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> None:
+    """Record the demo using asciinema.
 
-    Flow:
+    Two recording modes:
+      scripted=False (default): asciinema attaches to a tmux session running the
+          real Claude Code TUI — shows actual tool calls and autorun block messages.
+      scripted=True (--play --record): asciinema records run_demo_scripted() directly
+          in the current terminal — $0.00, no tmux or claude required.
+
+    Flow (live mode):
       1. Create tmux session (DemoSession.create_shell)
-      2. Start asciinema recording that session (tmux attach-session as child)
+      2. asciinema records that session (tmux attach-session as child process)
       3. Background thread runs all demo acts via tmux send-keys
       4. When acts complete, claude exits → tmux session ends → asciinema finishes
       5. Convert .cast → GIF with agg (if available)
 
-    The resulting GIF shows the REAL Claude Code TUI, not simulated output.
-
-    Requirements:
+    Requirements (live mode):
       asciinema: brew install asciinema
       agg (optional): github.com/asciinema/agg/releases
-      tmux + claude + ANTHROPIC_API_KEY (same as live demo)
+      tmux + claude + ANTHROPIC_API_KEY
+
+    Requirements (scripted mode):
+      asciinema only (brew install asciinema)
     """
     asciinema_bin = shutil.which("asciinema")
     if not asciinema_bin:
         print("asciinema not found. Install: brew install asciinema")
-        print("Falling back to scripted terminal playback (--play)...")
+        print("Falling back to scripted terminal playback...")
         run_demo_scripted()
-        return
-
-    if not shutil.which("tmux"):
-        print("tmux is required for recording. Install: brew install tmux")
-        return
-
-    if not shutil.which("claude"):
-        print("claude CLI is required. Install from https://claude.ai/download")
         return
 
     cast_file = f"{output_name}.cast"
     gif_file = f"{output_name}.gif"
     agg_bin = _find_agg()
 
-    with tempfile.TemporaryDirectory(prefix="autorun-demo-") as tmp:
-        tmp_dir = Path(tmp)
-        setup_mock_git_repo(tmp_dir)
-        session = DemoSession(work_dir=tmp_dir)
-
-        if not session.create_shell():
-            print("[demo] Failed to create tmux session for recording")
-            return
-
-        print(f"[demo] Recording session: {session.session_name}")
-        print(f"[demo] Output: {cast_file} → {gif_file if agg_bin else '(no agg found)'}")
-
-        # Launch asciinema recording the tmux session.
-        # asciinema spawns `tmux attach-session` as its child process, capturing
-        # everything that appears in the terminal. Commands sent via send-keys from
-        # the background thread are reflected in the attach output.
+    if scripted:
+        # Record scripted mode: asciinema records this process directly.
+        print(f"[demo] Recording scripted demo → {cast_file}")
         asciinema_cmd = [
             asciinema_bin, "rec", cast_file,
-            "--command", f"tmux attach-session -t {session.session_name}",
-            "--title", "autorun — safety plugin for Claude Code",
-            "--idle-time-limit", "5",
+            "--command",
+            f"{sys.executable} {Path(__file__)} --play",
+            "--title", "autorun — safety plugin for Claude Code (scripted)",
+            "--idle-time-limit", "3",
             "--quiet",
-            "--cols", str(session.cols),
-            "--rows", str(session.rows),
         ]
-        asciinema_proc = subprocess.Popen(asciinema_cmd)
+        subprocess.run(asciinema_cmd)
+    else:
+        # Record live mode: asciinema attaches to the demo tmux session.
+        if not shutil.which("tmux"):
+            print("tmux is required for live recording. Install: brew install tmux")
+            return
+        if not shutil.which("claude"):
+            print("claude CLI is required. Install from https://claude.ai/download")
+            return
 
-        # Let asciinema attach before we start sending commands
-        time.sleep(2)
+        with tempfile.TemporaryDirectory(prefix="autorun-demo-") as tmp:
+            tmp_dir = Path(tmp)
+            setup_mock_git_repo(tmp_dir)
+            session = DemoSession(work_dir=tmp_dir)
 
-        # Run demo acts in a background thread while asciinema records
-        def _demo_thread():
-            try:
-                _run_live_acts(session, tmp_dir)
-            except Exception as e:
-                print(f"[demo] Error in demo thread: {e}", file=sys.stderr)
+            if not session.create_shell():
+                print("[demo] Failed to create tmux session for recording")
+                return
+
+            print(f"[demo] Recording live session: {session.session_name}")
+            print(f"[demo] Output: {cast_file} → {gif_file if agg_bin else '(no agg — cast only)'}")
+
+            # asciinema spawns `tmux attach-session` as its child, capturing everything
+            # that appears in the session. Commands sent via send-keys from the background
+            # thread show up in the attach output exactly as a user would see them.
+            asciinema_cmd = [
+                asciinema_bin, "rec", cast_file,
+                "--command", f"tmux attach-session -t {session.session_name}",
+                "--title", "autorun — safety plugin for Claude Code",
+                "--idle-time-limit", "5",
+                "--quiet",
+                "--cols", str(session.cols),
+                "--rows", str(session.rows),
+            ]
+            asciinema_proc = subprocess.Popen(asciinema_cmd)
+
+            # Let asciinema attach before sending the first command
+            time.sleep(2)
+
+            def _demo_thread():
                 try:
-                    session.exit_claude()
-                except Exception:
-                    pass
+                    _run_live_acts(session, tmp_dir)
+                except Exception as e:
+                    print(f"[demo] Error in demo thread: {e}", file=sys.stderr)
+                    try:
+                        session.exit_claude()
+                    except Exception:
+                        pass
 
-        demo_t = threading.Thread(target=_demo_thread, daemon=True)
-        demo_t.start()
+            demo_t = threading.Thread(target=_demo_thread, daemon=True)
+            demo_t.start()
 
-        # Wait for asciinema to finish (tmux session exits when claude exits)
-        try:
-            asciinema_proc.wait(timeout=900)
-        except subprocess.TimeoutExpired:
-            print("[demo] Recording timeout — killing asciinema")
-            asciinema_proc.kill()
+            try:
+                asciinema_proc.wait(timeout=900)
+            except subprocess.TimeoutExpired:
+                print("[demo] Recording timeout — killing asciinema")
+                asciinema_proc.kill()
 
-        demo_t.join(timeout=15)
-        session.destroy()
+            demo_t.join(timeout=15)
+            session.destroy()
 
-    # Convert cast → GIF
+    # Convert cast → GIF (same for both modes)
     if agg_bin and Path(cast_file).exists():
         print(f"[demo] Converting to GIF: {cast_file} → {gif_file}")
         subprocess.run([
@@ -1176,7 +1193,7 @@ def record_demo(output_name: str = "autorun_demo") -> None:
         ])
         print(f"[demo] GIF written: {gif_file}")
         print(f"[demo] Replay cast: asciinema play {cast_file}")
-    elif not agg_bin:
+    elif Path(cast_file).exists():
         print(f"[demo] Cast file written: {cast_file}")
         print("[demo] Install agg to convert to GIF:")
         print("  curl -L https://github.com/asciinema/agg/releases/latest/download/"
@@ -1406,40 +1423,96 @@ class TestDemoRealMoney:
 
 # ─── CLI entry point ──────────────────────────────────────────────────────────
 
+def _resolve_mode(args) -> tuple:
+    """Return (mode, scripted) from CLI args + env var.
+
+    Priority: CLI flags > AUTORUN_DEMO_MODE env var > default (live).
+
+    AUTORUN_DEMO_MODE values: live | scripted | record
+    AUTORUN_DEMO_SCRIPTED=1   shorthand for scripted mode (useful in CI)
+
+    Returns:
+        mode:     'live' | 'scripted' | 'record'
+        scripted: True when scripted pathway is active
+    """
+    env_mode = os.environ.get("AUTORUN_DEMO_MODE", "").strip().lower()
+    env_scripted = os.environ.get("AUTORUN_DEMO_SCRIPTED", "0").strip() in ("1", "true", "yes")
+
+    # CLI flags take precedence over env vars
+    if args.record:
+        scripted = args.play or env_scripted
+        return "record", scripted
+    if args.play:
+        return "scripted", True
+    if args.live:
+        return "live", False
+
+    # Env var fallback
+    if env_mode == "record":
+        return "record", env_scripted
+    if env_mode in ("scripted", "play"):
+        return "scripted", True
+    if env_mode == "live":
+        return "live", False
+    if env_scripted:
+        return "scripted", True
+
+    # Default: live Claude TUI
+    return "live", False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="autorun demo — real Claude TUI or scripted, with optional recording",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+pathway summary:
+  live (tmux)    real Claude Code TUI in a dedicated tmux window    [default]
+  scripted       hook-level JSON subprocess calls, $0.00 cost       [--play]
+  record         asciinema recording of live or scripted mode       [--record]
+
 examples:
-  python test_demo.py             # live demo: real Claude TUI in tmux (default)
-  python test_demo.py --play      # scripted demo: hook-level output, $0.00
-  python test_demo.py --record    # record live demo → autorun_demo.gif
-  pytest test_demo.py::TestDemoFree           # hook-level tests ($0.00)
+  python test_demo.py                    # live: real Claude TUI in tmux
+  python test_demo.py --live             # live: explicit flag
+  python test_demo.py --play             # scripted: hook-level JSON, $0.00
+  python test_demo.py --record           # record live TUI → autorun_demo.gif
+  python test_demo.py --record --play    # record scripted demo → autorun_demo.gif
+  AUTORUN_DEMO_MODE=scripted python test_demo.py   # env var selects scripted
+  AUTORUN_DEMO_MODE=record   python test_demo.py   # env var selects record
+  AUTORUN_DEMO_SCRIPTED=1    python test_demo.py   # env var shorthand
+  pytest test_demo.py::TestDemoFree                # hook tests, $0.00
   AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 pytest test_demo.py -v
+
+env vars:
+  AUTORUN_DEMO_MODE=live|scripted|record   select demo pathway
+  AUTORUN_DEMO_SCRIPTED=1                  shorthand: use scripted pathway
+  AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1  enable real-money pytest tests
 
 live demo requirements:
   tmux, claude CLI, ANTHROPIC_API_KEY, autorun daemon (autorun --restart-daemon)
   cost: ~$0.02 (claude-haiku-4-5-20251001, 7 acts)
         """,
     )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--play", action="store_true",
-                      help="Pre-scripted mode: hook-level output, $0.00 cost, no claude TUI")
-    mode.add_argument("--record", action="store_true",
-                      help="Record live demo with asciinema → autorun_demo.gif")
+    parser.add_argument("--live", action="store_true",
+                        help="Live mode: real Claude Code TUI in tmux (default)")
+    parser.add_argument("--play", action="store_true",
+                        help="Scripted mode: hook-level JSON output, $0.00 cost, no claude TUI")
+    parser.add_argument("--record", action="store_true",
+                        help="Record with asciinema → autorun_demo.gif "
+                             "(combine with --play for scripted recording)")
     args = parser.parse_args()
 
-    global _DEMO_WITH_TIMING, _SCRIPTED
-    _DEMO_WITH_TIMING = True  # All interactive modes use real timing
+    mode, scripted = _resolve_mode(args)
 
-    if args.record:
-        record_demo()
-    elif args.play:
-        _SCRIPTED = True
+    global _DEMO_WITH_TIMING, _SCRIPTED
+    _DEMO_WITH_TIMING = True   # All interactive modes use real timing
+    _SCRIPTED = scripted
+
+    if mode == "record":
+        record_demo(scripted=scripted)
+    elif mode == "scripted":
         run_demo_scripted()
     else:
-        # Default: live demo with real Claude TUI in tmux
         run_demo_live()
 
     return 0
