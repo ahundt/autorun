@@ -1255,6 +1255,61 @@ def run_demo_scripted() -> None:
 
 # ─── Recording ────────────────────────────────────────────────────────────────
 
+def _gif_to_mp4(ffmpeg_bin: str, gif_file: str, mp4_file: str) -> bool:
+    """Convert a GIF to MP4 using ffmpeg, with hardware acceleration when available.
+
+    Tries three strategies in order:
+    1. h264_videotoolbox (macOS Apple Silicon/Intel hardware encoder — very fast)
+    2. libx264 (software — cross-platform, high quality via crf=18)
+    3. Default ffmpeg H.264 encoder (last-resort fallback)
+
+    The scale filter ensures even pixel dimensions required by H.264.
+    movflags faststart puts the MP4 atom at the front for streaming/web embed.
+    color_range tv suppresses the chroma range warning from GIF input.
+
+    Returns True if MP4 was produced successfully.
+    """
+    scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    base = [ffmpeg_bin, "-y", "-i", gif_file, "-movflags", "faststart",
+            "-vf", scale_filter]
+
+    # Strategy 1: VideoToolbox hardware encoder (macOS). High bitrate (8 Mbps)
+    # keeps text sharp without forcing a chroma subsampling mode — VideoToolbox
+    # picks the best native format automatically.
+    r = subprocess.run(
+        base + ["-c:v", "h264_videotoolbox", "-b:v", "8M", "-color_range", "tv",
+                mp4_file],
+        capture_output=True,
+    )
+    if r.returncode == 0 and Path(mp4_file).exists():
+        print("[demo] MP4 encoder: h264_videotoolbox (hardware)")
+        return True
+
+    # Strategy 2: libx264 software encoder (cross-platform). CRF 18 is near-lossless
+    # for screen content; slow preset improves compression efficiency.
+    # yuv420p is required by libx264 baseline profile for broad player compatibility.
+    r = subprocess.run(
+        base + ["-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                "-pix_fmt", "yuv420p", mp4_file],
+        capture_output=True,
+    )
+    if r.returncode == 0 and Path(mp4_file).exists():
+        print("[demo] MP4 encoder: libx264 (software)")
+        return True
+
+    # Strategy 3: default ffmpeg encoder (last resort — let ffmpeg pick)
+    r = subprocess.run(
+        base + ["-pix_fmt", "yuv420p", mp4_file],
+        capture_output=True,
+    )
+    if r.returncode == 0 and Path(mp4_file).exists():
+        print("[demo] MP4 encoder: ffmpeg default")
+        return True
+
+    print(f"[demo] All MP4 encoding strategies failed. ffmpeg stderr: {r.stderr[-500:]}")
+    return False
+
+
 def _find_agg() -> Optional[str]:
     """Find the agg binary. Checks PATH and common manual-download locations."""
     return (
@@ -1444,19 +1499,12 @@ def record_demo(
         ])
         print(f"[demo] GIF written: {gif_file}")
 
-        # Convert GIF → MP4 via ffmpeg (widely available, shareable on social/GitHub)
-        # yuv420p for broad browser/player compatibility; scale ensures even dimensions.
+        # Convert GIF → MP4 via ffmpeg (shareable on social/GitHub/Slack).
+        # Tries hardware acceleration first, falls back to software.
         ffmpeg_bin = shutil.which("ffmpeg")
         if ffmpeg_bin and Path(gif_file).exists():
             print(f"[demo] Converting GIF → MP4: {gif_file} → {mp4_file}")
-            subprocess.run([
-                ffmpeg_bin, "-y",
-                "-i", gif_file,
-                "-movflags", "faststart",
-                "-pix_fmt", "yuv420p",
-                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-                mp4_file,
-            ], capture_output=True)
+            _gif_to_mp4(ffmpeg_bin, gif_file, mp4_file)
             if Path(mp4_file).exists():
                 mp4_size = Path(mp4_file).stat().st_size
                 print(f"[demo] MP4 written: {mp4_file} ({mp4_size // 1024}KB)")
