@@ -1239,9 +1239,13 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
     if '❯' in last_text and re.search(r'[1-4]\.\s+\w', last_text):
         return PROMPT_TYPE_QUESTION
 
-    # 5. Main input prompt - standalone > at end of line
+    # 5. Main input prompt - standalone > or ❯ (Claude Code uses Unicode ❯)
     for line in last_lines[-5:]:
         if line == '>' or line == '> ':
+            return PROMPT_TYPE_INPUT
+        # Claude Code uses ❯ as its main input prompt (with optional placeholder text)
+        # Exclude numbered menus (already handled by checks 1, 3, 4) and plan approval
+        if line.startswith('❯') and not re.search(r'[1-9]\.\s', line):
             return PROMPT_TYPE_INPUT
 
     # 6. Happy-cli mode prompts

@@ -278,7 +278,9 @@ class DemoSession:
         self.cols = cols
         self.rows = rows
         self.work_dir = work_dir
-        self._pane_target = f"{session_name}:0.0"
+        # _pane_target is set after create_shell() queries the actual window/pane IDs.
+        # Initialized to session_name only (safe default; updated after creation).
+        self._pane_target = session_name
         self._claude_started = False
 
     # ── Tmux lifecycle ──────────────────────────────────────────────────────
@@ -306,17 +308,57 @@ class DemoSession:
         if result.returncode != 0:
             return False
         time.sleep(0.3)
+
+        # Detect the actual window and pane index created (respects tmux base-index).
+        # tmux base-index may be 0 or 1 depending on ~/.tmux.conf; querying avoids
+        # the hardcoded :0.0 assumption that breaks when base-index=1.
+        pane_info = subprocess.run(
+            ["tmux", "list-panes", "-t", self.session_name,
+             "-F", "#{window_index}:#{pane_index}"],
+            capture_output=True, text=True,
+        )
+        if pane_info.returncode == 0 and pane_info.stdout.strip():
+            win_pane = pane_info.stdout.strip().splitlines()[0]  # e.g. "1:0" or "0:0"
+            win_idx, pane_idx = win_pane.split(":", 1)
+            self._pane_target = f"{self.session_name}:{win_idx}.{pane_idx}"
+        else:
+            # Fallback: use session name only (tmux picks active window/pane)
+            self._pane_target = self.session_name
+
         return True
 
     def start_claude(self) -> bool:
         """Start claude interactively in the existing shell session.
 
         Returns True once Claude shows its input prompt (ready to accept messages).
-        Blocks up to 45 seconds.
+        Blocks up to 90 seconds. Automatically confirms the "trust this folder?"
+        security dialog that Claude shows for new/untrusted directories.
         """
-        self._send_literal(f"claude --model {HAIKU_MODEL}", enter=True)
+        # --dangerously-skip-permissions: bypass permission prompts during demo.
+        # The "trust this folder?" dialog is separate and still requires Enter —
+        # handled by the polling loop below.
+        self._send_literal(
+            f"claude --model {HAIKU_MODEL} --dangerously-skip-permissions",
+            enter=True,
+        )
         self._claude_started = True
-        return self.wait_for_input_prompt(timeout=45)
+        # Claude shows a "Quick safety check / trust this folder?" dialog for
+        # new/untrusted directories. Detect it and auto-confirm by pressing Enter
+        # (selects the default "Yes, I trust this folder" option).
+        deadline = time.time() + 90
+        trust_confirmed = False
+        while time.time() < deadline:
+            content = self.capture_pane(40)
+            if "Yes, I trust this folder" in content and not trust_confirmed:
+                time.sleep(0.5)
+                self._send_key("Enter")
+                trust_confirmed = True
+                time.sleep(1.5)
+                continue
+            if tmux_detect_prompt_type(content) == PROMPT_TYPE_INPUT:
+                return True
+            time.sleep(self._READY_POLL_INTERVAL)
+        return False
 
     def destroy(self) -> None:
         """Kill the tmux session unconditionally."""
@@ -363,11 +405,45 @@ class DemoSession:
 
     # ── High-level demo controls ────────────────────────────────────────────
 
+    def wait_for_shell_prompt(self, timeout: float = 30.0) -> bool:
+        """Block until the pane shows a shell prompt (not a claude prompt).
+
+        Detects common shell prompt patterns (zsh %, bash $, git ±, etc.)
+        in the last few lines of the pane. Used to ensure a command has
+        finished before sending the next one.
+
+        Returns True if shell prompt appeared within timeout.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            content = self.capture_pane(10)
+            lines = [l.rstrip() for l in content.splitlines() if l.rstrip()]
+            if lines:
+                last = lines[-1]
+                # Common shell prompt endings: %, $, ±, ❯ (not claude's ❯), #
+                # The zsh prompt here ends with ± or % or $
+                if (last.endswith('%') or last.endswith('$') or
+                        last.endswith('±') or last.endswith('#') or
+                        last.endswith('$ ') or last.endswith('% ') or
+                        last.endswith('±\n') or
+                        # Also match prompt lines that contain @ (user@host patterns)
+                        ('±' in last and last.strip().endswith('±'))):
+                    return True
+            time.sleep(self._READY_POLL_INTERVAL)
+        return False
+
     def run_shell_cmd(self, cmd: str, wait: float = 2.0) -> None:
-        """Run a shell command (in bash, before or between claude sessions)."""
+        """Run a shell command and wait for it to complete.
+
+        Sends the command and then waits for the shell prompt to return,
+        ensuring the command finishes before the next one is sent.
+        The `wait` param is the minimum time to show the output visually.
+        """
         self._send_literal(cmd, enter=True)
         if _DEMO_WITH_TIMING:
             time.sleep(wait)
+        # Wait for shell to return to prompt (ensures command completed)
+        self.wait_for_shell_prompt(timeout=30.0)
 
     def type_to_session(self, text: str, delay: float = 0.05) -> None:
         """Type text character-by-character to the pane (visible typing effect)."""
@@ -441,11 +517,34 @@ class DemoSession:
         self._send_key("Enter")
         return self.wait_for_response(timeout=180)
 
+    def is_at_claude_prompt(self) -> bool:
+        """Return True if the pane is showing Claude's ❯ input prompt."""
+        content = self.capture_pane(10)
+        return tmux_detect_prompt_type(content) == PROMPT_TYPE_INPUT
+
+    def is_at_shell_prompt(self) -> bool:
+        """Return True if the pane is at a shell prompt (Claude has exited)."""
+        content = self.capture_pane(10)
+        lines = [l.rstrip() for l in content.splitlines() if l.rstrip()]
+        if not lines:
+            return False
+        last = lines[-1]
+        return (last.endswith('%') or last.endswith('$') or
+                last.endswith('±') or last.endswith('#'))
+
     def exit_claude(self) -> None:
-        """Send /exit to Claude and wait for it to quit."""
-        if self._claude_started:
+        """Send /exit to Claude if it's still running, then wait for it to quit.
+
+        Checks whether the pane is showing Claude's input prompt before sending
+        /exit, to avoid sending /exit to the shell (which errors on zsh).
+        """
+        if not self._claude_started:
+            return
+        # Only send /exit if Claude is showing its input prompt
+        if self.is_at_claude_prompt():
             self._send_literal("/exit", enter=True)
             time.sleep(2)
+        # If Claude already exited (shell prompt visible), nothing to do
 
 
 # ─── Demo project setup ───────────────────────────────────────────────────────
@@ -1076,7 +1175,35 @@ def _find_agg() -> Optional[str]:
     )
 
 
-def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> None:
+def _kill_stale_recording_procs(session_name: str) -> None:
+    """Kill any asciinema processes recording the given tmux session.
+
+    Prevents duplicate recordings when re-running record_demo() without
+    cleaning up the previous run's process first.
+    """
+    import signal
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", f"asciinema.*{session_name}"],
+            capture_output=True, text=True,
+        )
+        for pid_str in result.stdout.strip().splitlines():
+            try:
+                pid = int(pid_str.strip())
+                if pid != os.getpid():
+                    os.kill(pid, signal.SIGTERM)
+                    print(f"[demo] Killed stale asciinema PID {pid}")
+            except (ValueError, ProcessLookupError):
+                pass
+    except Exception:
+        pass
+
+
+def record_demo(
+    output_name: str = "autorun_demo",
+    scripted: bool = False,
+    cleanup: bool = True,
+) -> None:
     """Record the demo using asciinema.
 
     Two recording modes:
@@ -1085,12 +1212,17 @@ def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> No
       scripted=True (--play --record): asciinema records run_demo_scripted() directly
           in the current terminal — $0.00, no tmux or claude required.
 
+    cleanup=True (default): tmux session is destroyed after recording.
+    cleanup=False (--no-cleanup): session is preserved for manual inspection.
+
     Flow (live mode):
-      1. Create tmux session (DemoSession.create_shell)
-      2. asciinema records that session (tmux attach-session as child process)
-      3. Background thread runs all demo acts via tmux send-keys
-      4. When acts complete, claude exits → tmux session ends → asciinema finishes
-      5. Convert .cast → GIF with agg (if available)
+      1. Kill any stale asciinema processes recording the same session name
+      2. Create tmux session (DemoSession.create_shell)
+      3. asciinema records that session (tmux attach-session as child process)
+      4. Background thread runs all demo acts via tmux send-keys
+      5. When acts complete, claude exits → tmux session ends → asciinema finishes
+      6. Cleanup session (unless --no-cleanup)
+      7. Convert .cast → GIF with agg (if available)
 
     Requirements (live mode):
       asciinema: brew install asciinema
@@ -1116,6 +1248,7 @@ def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> No
         print(f"[demo] Recording scripted demo → {cast_file}")
         asciinema_cmd = [
             asciinema_bin, "rec", cast_file,
+            "--overwrite",
             "--command",
             f"{sys.executable} {Path(__file__)} --play",
             "--title", "autorun — safety plugin for Claude Code (scripted)",
@@ -1132,6 +1265,11 @@ def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> No
             print("claude CLI is required. Install from https://claude.ai/download")
             return
 
+        session = DemoSession()
+        # Kill any stale asciinema processes from a previous run before creating
+        # a new session (prevents duplicate recordings to the same cast file).
+        _kill_stale_recording_procs(session.session_name)
+
         with tempfile.TemporaryDirectory(prefix="autorun-demo-") as tmp:
             tmp_dir = Path(tmp)
             setup_mock_git_repo(tmp_dir)
@@ -1143,12 +1281,15 @@ def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> No
 
             print(f"[demo] Recording live session: {session.session_name}")
             print(f"[demo] Output: {cast_file} → {gif_file if agg_bin else '(no agg — cast only)'}")
+            if not cleanup:
+                print(f"[demo] --no-cleanup: session '{session.session_name}' will be preserved")
 
             # asciinema spawns `tmux attach-session` as its child, capturing everything
             # that appears in the session. Commands sent via send-keys from the background
             # thread show up in the attach output exactly as a user would see them.
             asciinema_cmd = [
                 asciinema_bin, "rec", cast_file,
+                "--overwrite",
                 "--command", f"tmux attach-session -t {session.session_name}",
                 "--title", "autorun — safety plugin for Claude Code",
                 "--idle-time-limit", "5",
@@ -1166,6 +1307,8 @@ def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> No
                     _run_live_acts(session, tmp_dir)
                 except Exception as e:
                     print(f"[demo] Error in demo thread: {e}", file=sys.stderr)
+                finally:
+                    # Always try to exit claude gracefully so asciinema can finish
                     try:
                         session.exit_claude()
                     except Exception:
@@ -1175,13 +1318,30 @@ def record_demo(output_name: str = "autorun_demo", scripted: bool = False) -> No
             demo_t.start()
 
             try:
-                asciinema_proc.wait(timeout=900)
-            except subprocess.TimeoutExpired:
-                print("[demo] Recording timeout — killing asciinema")
-                asciinema_proc.kill()
-
-            demo_t.join(timeout=15)
-            session.destroy()
+                # Wait for the demo thread to finish all acts first
+                demo_t.join(timeout=600)
+                if demo_t.is_alive():
+                    print("[demo] Demo thread timeout — stopping", file=sys.stderr)
+                # After demo acts complete, terminate asciinema gracefully.
+                # This finalizes the cast file regardless of cleanup mode.
+                # (asciinema only exits naturally when the tmux session is destroyed,
+                # which doesn't happen with --no-cleanup.)
+                if asciinema_proc.poll() is None:
+                    time.sleep(1)  # Brief pause so last output is captured
+                    asciinema_proc.terminate()
+                    try:
+                        asciinema_proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        asciinema_proc.kill()
+            except KeyboardInterrupt:
+                print("[demo] Interrupted — stopping recording", file=sys.stderr)
+                asciinema_proc.terminate()
+                raise
+            finally:
+                if cleanup:
+                    session.destroy()
+                else:
+                    print(f"[demo] Session preserved: tmux attach-session -t {session.session_name}")
 
     # Convert cast → GIF (same for both modes)
     if agg_bin and Path(cast_file).exists():
@@ -1500,16 +1660,20 @@ live demo requirements:
     parser.add_argument("--record", action="store_true",
                         help="Record with asciinema → autorun_demo.gif "
                              "(combine with --play for scripted recording)")
+    parser.add_argument("--no-cleanup", action="store_true", dest="no_cleanup",
+                        help="Preserve tmux session after recording for debugging "
+                             "(default: session is destroyed after recording)")
     args = parser.parse_args()
 
     mode, scripted = _resolve_mode(args)
+    cleanup = not args.no_cleanup
 
     global _DEMO_WITH_TIMING, _SCRIPTED
     _DEMO_WITH_TIMING = True   # All interactive modes use real timing
     _SCRIPTED = scripted
 
     if mode == "record":
-        record_demo(scripted=scripted)
+        record_demo(scripted=scripted, cleanup=cleanup)
     elif mode == "scripted":
         run_demo_scripted()
     else:
