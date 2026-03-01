@@ -790,6 +790,11 @@ def setup_mock_git_repo(work_dir: Path) -> None:
     # project_data.csv — uncommitted, represents "important unsaved work"
     (work_dir / "project_data.csv").write_text("col1,col2\n1,important\n2,data\n3,here\n")
 
+    # Unstaged modification — ensures _has_unstaged_changes fires for git reset --hard block
+    (work_dir / "auth.py").write_text(
+        "# Authentication\n\ndef login(user, pwd):\n    pass  # TODO: implement\n\n# WIP: refactoring\n"
+    )
+
 
 # ─── Live demo acts (real Claude TUI via tmux) ────────────────────────────────
 
@@ -834,15 +839,17 @@ def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
 
 
 def act2_live(session: DemoSession, tmp_dir: Path) -> None:
-    """Act 2: Tool redirections — grep blocked when Claude uses Bash tool.
+    """Act 2: sed blocked, redirected to Edit tool.
 
-    Prompt must force Claude to use the Bash tool (not the native Grep tool).
-    When Claude uses its native Grep tool, the PreToolUse/Bash hook never fires.
-    "Use the Bash tool to run:" is the clearest way to force bash execution.
+    Uses sed instead of grep because:
+    - Claude has no native sed tool, so it MUST use the Bash tool
+    - autorun blocks sed and redirects to the Edit tool (always blocked, no pipe exception)
+    - Demonstrates the 'use dedicated AI tools' class of guards
     """
     pause(2.0)
     session.send_prompt(
-        "Use the Bash tool to run: grep 'TODO' main.py"
+        "Update the TODO comment in main.py to be more specific. "
+        "Use sed to change 'add input validation' to 'add email and password validation'."
     )
     session.wait_for_response(timeout=180)
     pause(7.0)  # Let viewers read the redirect message and Claude's explanation
@@ -851,13 +858,14 @@ def act2_live(session: DemoSession, tmp_dir: Path) -> None:
 def act3_live(session: DemoSession, tmp_dir: Path) -> None:
     """Act 3: Git safety — git reset --hard blocked.
 
-    Prompt must be a bare command with no framing that triggers Claude's own
-    safety refusal before the Bash tool is called (which would prevent the hook
-    from firing). "Execute now:" forces Claude to run it immediately.
+    Providing a concrete reason (e.g., reverting broken commits) causes Claude
+    to call the Bash tool directly rather than pausing for confirmation.
+    The mock repo has an unstaged auth.py change so _has_unstaged_changes fires.
     """
     pause(2.0)
     session.send_prompt(
-        "Execute now in Bash: git reset --hard HEAD~2"
+        "The last two commits introduced a regression — the tests are failing. "
+        "Revert to the working state before those commits: git reset --hard HEAD~2"
     )
     session.wait_for_response(timeout=180)
     pause(7.0)  # Let viewers read the git safety block message
