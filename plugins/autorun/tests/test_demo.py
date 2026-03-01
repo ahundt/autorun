@@ -9,8 +9,10 @@ autorun demo — shows safety guards, file policies, planning commands, and /ar:
 ━━━ RECOMMENDED RECORDING RUN (produces autorun_demo.gif + autorun_demo.mp4) ━━
 
   ⚠️  COSTS REAL MONEY — uses claude-haiku-4-5-20251001, ~$0.02 per full run.
+       Free if covered by a Claude Max/Pro subscription (no API key needed when
+       logged in via the claude CLI). API key auth also supported via ANTHROPIC_API_KEY.
   ⚠️  Requires explicit opt-in:  export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-  ⚠️  Also requires: tmux, claude CLI in PATH, ANTHROPIC_API_KEY set,
+  ⚠️  Also requires: tmux, claude CLI in PATH (logged in or ANTHROPIC_API_KEY set),
                      asciinema installed, agg installed (see below).
 
   # One-time environment setup:
@@ -60,10 +62,13 @@ autorun demo — shows safety guards, file policies, planning commands, and /ar:
 
   tmux              brew install tmux                  (session management)
   claude CLI        in PATH                            (the Claude Code CLI)
-  ANTHROPIC_API_KEY set in environment                 (for Haiku API calls)
+  Auth (one of):
+    • Claude Max/Pro plan — logged in via 'claude' CLI (no API key needed)
+    • ANTHROPIC_API_KEY  — set in environment for API key auth
   autorun daemon    autorun --restart-daemon            (hooks must be active)
   Model used:       claude-haiku-4-5-20251001
   Cost:             ~$0.02 total for all 7 acts (Haiku model, minimal tokens)
+                    Free if covered by Claude Max/Pro subscription.
 
 ━━━ RECORDING TOOL REQUIREMENTS (optional, NOT project dependencies) ━━━━━━━━
 
