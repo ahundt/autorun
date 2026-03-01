@@ -1,29 +1,89 @@
 #!/usr/bin/env python3
 """
-autorun demo — shows safety guards, file policies, plan export, and /ar:go.
+autorun demo — shows safety guards, file policies, planning commands, and /ar:go.
 
-This file serves dual purpose:
-  AS A DEMO:  python test_demo.py [--live|--play|--record]
-  AS A TEST:  pytest test_demo.py [::TestDemoFree|::TestDemoRealMoney]
+═══════════════════════════════════════════════════════════════════════════════
+ DUAL PURPOSE: this file is both a runnable demo script AND a pytest test file
+═══════════════════════════════════════════════════════════════════════════════
 
-Demo modes:
-  (default)   Run live demo: real Claude Code TUI in a new tmux window
-  --play      Pre-scripted mode: hook-level output only, $0.00 cost
-  --record    Record live demo with asciinema + agg → autorun_demo.gif
+━━━ RECOMMENDED RECORDING RUN (produces autorun_demo.gif + autorun_demo.mp4) ━━
 
-Real-money tests:
+  ⚠️  COSTS REAL MONEY — uses claude-haiku-4-5-20251001, ~$0.02 per full run.
+  ⚠️  Requires explicit opt-in:  export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+  ⚠️  Also requires: tmux, claude CLI in PATH, ANTHROPIC_API_KEY set,
+                     asciinema installed, agg installed (see below).
+
+  # One-time environment setup:
+  export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1   # required: opt-in to API cost
+
+  # Run the recording (from the repo root):
+  uv run python plugins/autorun/tests/test_demo.py --record --quiet
+
+  # Outputs written to the current working directory:
+  #   autorun_demo.cast   raw asciinema terminal recording
+  #   autorun_demo.gif    animated GIF (from agg)
+  #   autorun_demo.mp4    video (from ffmpeg, hardware-accelerated if available)
+
+━━━ ALL DEMO MODES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  python test_demo.py                    Live mode (default): real Claude Code TUI
+                                         in a dedicated tmux window. ~$0.02.
+  python test_demo.py --live             Same as above (explicit flag).
+  python test_demo.py --play             Scripted mode: hook-level subprocess calls,
+                                         NO claude TUI, NO API cost ($0.00).
+  python test_demo.py --record           Record live TUI → autorun_demo.{cast,gif,mp4}
+  python test_demo.py --record --play    Record scripted demo → same outputs, $0.00
+  python test_demo.py --no-cleanup       Keep tmux session alive after run (debug)
+  python test_demo.py --quiet / -q       Suppress [demo] progress + agg progress bar
+                                         (recommended when running automated/recording)
+
+  # Environment variable equivalents (useful for CI or wrapper scripts):
+  AUTORUN_DEMO_MODE=live       python test_demo.py   # live TUI
+  AUTORUN_DEMO_MODE=scripted   python test_demo.py   # scripted ($0.00)
+  AUTORUN_DEMO_MODE=record     python test_demo.py   # record live
+  AUTORUN_DEMO_SCRIPTED=1      python test_demo.py   # shorthand for scripted
+
+━━━ PYTEST TEST MODES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Free tests — hook-level only, no Claude API, $0.00, always safe to run:
+  uv run pytest plugins/autorun/tests/test_demo.py::TestDemoFree -v
+
+  # Real-money tests — live Claude Haiku session, ~$0.02 per run:
+  # ⚠️  Requires explicit opt-in via env var (will skip without it):
   export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-  pytest tests/test_demo.py::TestDemoRealMoney -v
+  uv run pytest plugins/autorun/tests/test_demo.py::TestDemoRealMoney -v
 
-Live demo requirements:
-  - tmux (brew install tmux)
-  - claude CLI in PATH
-  - ANTHROPIC_API_KEY set (uses claude-haiku-4-5-20251001, < $0.02 total)
-  - autorun daemon running (autorun --restart-daemon)
+  # Run all demo tests (free + real-money if opted in):
+  uv run pytest plugins/autorun/tests/test_demo.py -v
 
-Recording tools (optional external deps — NOT in requirements.txt):
-  asciinema: brew install asciinema
-  agg:       curl -L https://github.com/asciinema/agg/releases/latest/download/agg-aarch64-apple-darwin -o /tmp/agg && chmod +x /tmp/agg
+━━━ LIVE DEMO REQUIREMENTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  tmux              brew install tmux                  (session management)
+  claude CLI        in PATH                            (the Claude Code CLI)
+  ANTHROPIC_API_KEY set in environment                 (for Haiku API calls)
+  autorun daemon    autorun --restart-daemon            (hooks must be active)
+  Model used:       claude-haiku-4-5-20251001
+  Cost:             ~$0.02 total for all 7 acts (Haiku model, minimal tokens)
+
+━━━ RECORDING TOOL REQUIREMENTS (optional, NOT project dependencies) ━━━━━━━━
+
+  asciinema   Terminal session recorder → produces .cast file
+              Install: brew install asciinema
+              Required for: --record mode
+
+  agg         Converts .cast → animated GIF
+              Install: brew install agg
+                    OR curl -L https://github.com/asciinema/agg/releases/latest/\
+                           download/agg-aarch64-apple-darwin -o ~/.local/bin/agg \
+                           && chmod +x ~/.local/bin/agg
+              Required for: GIF output from --record mode
+
+  ffmpeg      Converts GIF → MP4 (hardware-accelerated on macOS via VideoToolbox)
+              Install: brew install ffmpeg
+              Optional: MP4 is produced if ffmpeg is found; skipped if not.
+
+  Neither asciinema, agg, nor ffmpeg are added to pyproject.toml dependencies.
+  The script detects them with shutil.which() and skips gracefully if absent.
 """
 import argparse
 import json
