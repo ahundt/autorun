@@ -381,12 +381,13 @@ class DemoSession:
         self._claude_started = True
         # Claude shows a "Quick safety check / trust this folder?" dialog for
         # new/untrusted directories. Detect it and auto-confirm by pressing Enter
-        # (selects the default "Yes, I trust this folder" option).
+        # (selects the default trust/yes option without hardcoding its exact label).
         deadline = time.time() + 90
         trust_confirmed = False
+        _TRUST_KEYWORDS = ("trust", "safe", "quick safety check")
         while time.time() < deadline:
             content = self.capture_pane(40)
-            if "Yes, I trust this folder" in content and not trust_confirmed:
+            if not trust_confirmed and any(kw in content.lower() for kw in _TRUST_KEYWORDS):
                 time.sleep(0.5)
                 self._send_key("Enter")
                 trust_confirmed = True
@@ -561,9 +562,45 @@ class DemoSession:
         return False
 
     def approve_plan(self) -> bool:
-        """Press Enter to approve a plan, then wait for Claude to finish."""
+        """Approve the plan while keeping context, then wait for Claude to finish.
+
+        Reads the actual menu from the terminal to find the option that accepts the plan
+        WITHOUT clearing context. Avoids hardcoding option numbers since menu order can
+        change across Claude Code versions.
+
+        Selection criteria:
+        - Must contain an acceptance word ("yes", "proceed", "accept", "bypass")
+        - Must NOT contain a context-clear indicator ("clear context", "new conversation",
+          "fresh context") — those destroy conversation history needed by /ar:planrefine.
+        - Falls back to "1" + Enter if no matching option found (least-bad fallback).
+        """
+        content = self.capture_pane(20)
+        option_num = self._find_keep_context_option(content)
+        self._send_key(option_num)
+        time.sleep(0.3)   # brief pause so the selector registers the digit before Enter
         self._send_key("Enter")
         return self.wait_for_response(timeout=180)
+
+    def _find_keep_context_option(self, content: str) -> str:
+        """Parse plan approval menu and return the option number that keeps context.
+
+        Looks for a numbered menu line that contains an acceptance word but does NOT
+        indicate context clearing. Returns '1' as fallback if detection fails.
+        """
+        _ACCEPT_WORDS = ("yes", "proceed", "accept", "bypass")
+        _CLEAR_WORDS = ("clear context", "new conversation", "fresh context", "clear history")
+        for line in content.splitlines():
+            stripped = line.strip().lower()
+            # Match lines like "1. Yes, ..." or "❯ 2. Yes, ..."
+            m = re.match(r'[❯\s]*(\d+)\.\s+(.+)', stripped)
+            if not m:
+                continue
+            num, text = m.group(1), m.group(2)
+            has_accept = any(w in text for w in _ACCEPT_WORDS)
+            has_clear = any(w in text for w in _CLEAR_WORDS)
+            if has_accept and not has_clear:
+                return num
+        return "1"  # fallback: first option
 
     def is_at_claude_prompt(self) -> bool:
         """Return True if the pane is showing Claude's ❯ input prompt."""
@@ -816,9 +853,10 @@ def act6_live(session: DemoSession) -> None:
     session.wait_for_plan_approval(timeout=300)
     pause(7.0)  # Let viewers read the plan before we accept it
 
-    # Accept the plan — press Enter = Option 1 "Yes" (keeps context + history intact).
-    # Do NOT send "2" — that is "Yes, and start a new conversation" which clears context.
-    # ExitPlanMode PostToolUse hook fires on acceptance → plan auto-saved to notes/.
+    # Accept the plan — send '2' = "Yes, and bypass permissions" (keeps context).
+    # The real menu: 1=clear context+bypass, 2=keep context+bypass, 3=manual approve, 4=feedback
+    # Enter (default ❯) = Option 1 = clears context — bad for demo since planrefine needs the plan.
+    # ExitPlanMode PostToolUse hook fires on any acceptance → plan auto-saved to notes/.
     session.approve_plan()
     pause(2.0)
 
@@ -1119,16 +1157,15 @@ def act6_scripted(plugin_root: Path) -> None:
     print(c("     1. Add validate_login_input() with length, format, sanitize checks", "gray"))
     print(c("     2. Raise ValidationError with user-facing messages", "gray"))
     print(c("     3. Add unit tests for empty, too-long, invalid-char inputs", "gray"))
-    # Plan approval: Claude Code shows "Would you like to proceed?" with a ❯ selector.
-    #   ❯ 1. Yes                              ← Enter selects this (keeps context + history)
-    #     2. Yes, and start a new conversation ← clears context (DO NOT use for demo)
-    #     3. No, give Claude more context
-    # Pressing Enter = Option 1 = accept + keep context.
+    # Plan approval: Claude Code shows a numbered selector — "Would you like to proceed?".
+    # Options vary by Claude Code version; the demo selects the option that accepts
+    # WITHOUT clearing context (so /ar:planrefine can see the plan we just created).
     print(c("  Would you like to proceed?", "white"))
-    print(c("  ❯ 1. Yes", "green"))
-    print(c("    2. Yes, and start a new conversation", "gray"))
-    print(c("    3. No, give Claude more context (Esc)", "gray"))
-    print(c("  [Enter]  ← accepts plan, triggers auto-save to notes/", "gray"))
+    print(c("    1. Yes, clear context and bypass permissions", "gray"))
+    print(c("  ❯ 2. Yes, and bypass permissions", "green"),
+          c("  ← keeps context + history, plan saved to notes/", "gray"))
+    print(c("    3. Yes, manually approve edits", "gray"))
+    print(c("    ...", "gray"))
     pause(1.0)
 
     # Show the notes/ file that was just created by plan export
