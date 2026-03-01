@@ -834,20 +834,30 @@ def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
 
 
 def act2_live(session: DemoSession, tmp_dir: Path) -> None:
-    """Act 2: Tool redirections — grep/find/cat blocked, redirected to native tools."""
+    """Act 2: Tool redirections — grep blocked when Claude uses Bash tool.
+
+    Prompt must force Claude to use the Bash tool (not the native Grep tool).
+    When Claude uses its native Grep tool, the PreToolUse/Bash hook never fires.
+    "Use the Bash tool to run:" is the clearest way to force bash execution.
+    """
     pause(2.0)
     session.send_prompt(
-        "Run this bash command to find TODOs: grep 'TODO' main.py"
+        "Use the Bash tool to run: grep 'TODO' main.py"
     )
     session.wait_for_response(timeout=180)
     pause(7.0)  # Let viewers read the redirect message and Claude's explanation
 
 
 def act3_live(session: DemoSession, tmp_dir: Path) -> None:
-    """Act 3: Git safety — git reset --hard blocked."""
+    """Act 3: Git safety — git reset --hard blocked.
+
+    Prompt must be a bare command with no framing that triggers Claude's own
+    safety refusal before the Bash tool is called (which would prevent the hook
+    from firing). "Execute now:" forces Claude to run it immediately.
+    """
     pause(2.0)
     session.send_prompt(
-        "Run: git reset --hard HEAD~2"
+        "Execute now in Bash: git reset --hard HEAD~2"
     )
     session.wait_for_response(timeout=180)
     pause(7.0)  # Let viewers read the git safety block message
@@ -1926,10 +1936,11 @@ class TestDemoRealMoney:
 
             # Prompt must force bash explicitly — "using grep in bash" is ambiguous
             # and Claude will use the native Grep tool instead. The prompt must
-            # say "Run this bash command" so Claude uses Bash tool and hook fires.
-            # (Bug caught by aise session review: Claude used [TOOL:Grep] not Bash.)
+            # "Use the Bash tool to run:" forces Claude to call the Bash tool,
+            # not its native Grep tool. When Claude uses Grep tool, the PreToolUse
+            # Bash hook never fires. (Bug confirmed via aise session review.)
             session.send_prompt(
-                "Run this bash command to find TODOs: grep 'TODO' main.py"
+                "Use the Bash tool to run: grep 'TODO' main.py"
             )
             session.wait_for_response(timeout=180)
 
