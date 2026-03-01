@@ -795,21 +795,23 @@ def act5_live(session: DemoSession) -> None:
 
 
 def act6_live(session: DemoSession) -> None:
-    """Act 6: Plan export — show toggle behavior.
+    """Act 6: Planning commands — /ar:plannew creates a structured plan,
+    /ar:planrefine critiques it.
 
-    We use /ar:pe-off and /ar:pe-on (UserPromptSubmit hook commands) instead
-    of /ar:pe (which runs an external script via ! bash exec that may not
-    produce visible output in the TUI session context).
+    These are the most commonly used autorun plan commands.
+    Shown before /ar:go so viewers see the full plan-then-execute flow.
     """
     pause(2.0)
-    session.send_prompt("/ar:pe-on")   # Enable — hook responds with status text
-    session.wait_for_response(timeout=60)
-    pause(4.0)
     session.send_prompt(
-        "What does the plan export feature do, and how does it help me?"
+        "/ar:plannew Add input validation to the login() function in auth.py"
     )
-    session.wait_for_response(timeout=120)
-    pause(7.0)  # Let viewers read the explanation
+    session.wait_for_response(timeout=300)  # Planning can take time
+    pause(7.0)  # Let viewers read the plan
+
+    pause(2.0)
+    session.send_prompt("/ar:planrefine")
+    session.wait_for_response(timeout=300)
+    pause(7.0)  # Let viewers read the critique
 
 
 def act7_live(session: DemoSession) -> None:
@@ -1072,44 +1074,42 @@ def act5_scripted(plugin_root: Path) -> None:
     pause(2.0)
 
 
-def act6_scripted(plugin_root: Path, tmp_dir: Path) -> None:
-    """Act 6: Plan export — auto-saves plans to notes/ (12s, $0.00)."""
-    section("Act 6: Plan Export — Plans That Survive Context Resets")
+def act6_scripted(plugin_root: Path) -> None:
+    """Act 6: Planning commands — /ar:plannew + /ar:planrefine (scripted, $0.00).
+
+    These are the most commonly used autorun commands for structured planning.
+    /ar:plannew creates a plan with best practices and critique methodology.
+    /ar:planrefine runs a second pass that harshly evaluates the existing plan.
+    """
+    section("Act 6: Planning — /ar:plannew and /ar:planrefine")
     setup_label([
-        "Claude Code plans vanish when context resets. This is a known pain.",
+        "/ar:plannew and /ar:planrefine are autorun's most-used planning commands.",
         "",
-        "autorun silently fixes it: the moment you approve a plan,",
-        "it auto-saves to notes/{date}_{plan-name}.md in your project folder.",
-        "No commands. No manual export. It just happens.",
+        "/ar:plannew   Create a new structured plan with best practices, critique,",
+        "              and multiple solution proposals before writing any code.",
+        "/ar:planrefine   Critically evaluate an existing plan — finds gaps,",
+        "                 proposes improvements, ensures completeness.",
     ])
-    session_id = f"demo-planexport-{os.getpid()}"
 
-    type_cmd("/ar:pe                     # check plan export status")
-    run_hook("UserPromptSubmit",
-             make_userpromptsubmit(session_id, "/ar:pe"), plugin_root)
-    print(c("  📤 Plan Export: enabled", "green"))
-    print(c("     Saves to:    notes/{date}_{plan-name}.md  ← timestamped automatically",
-            "gray"))
-    pause(1.5)
+    type_cmd("/ar:plannew Add input validation to the login() function in auth.py")
+    print(c("  # Claude enters plan mode and creates a structured plan:", "gray"))
+    print(c("  ## Step 1: Identify Expertise Areas", "cyan"))
+    print(c("     Input validation, Python security, Flask/FastAPI patterns", "gray"))
+    print(c("  ## Step 2: Best Practices (20 rules generated)", "cyan"))
+    print(c("     Validate at boundaries, fail-fast, never trust client data...", "gray"))
+    print(c("  ## Step 3: Implementation Plan", "cyan"))
+    print(c("     1. Add validate_login_input() with length, format, sanitize checks", "gray"))
+    print(c("     2. Raise ValidationError with user-facing messages", "gray"))
+    print(c("     3. Add unit tests for empty, too-long, invalid-char inputs", "gray"))
+    print(c("  [ User approves plan → plan auto-saved to notes/ ]", "green"))
+    pause(2.0)
 
-    print()
-    print(c("  # After approving plans in Claude Code — they auto-save:", "gray"))
-    type_cmd("ls notes/")
-    print(c("  2026_02_28_0943_design_rest_api_with_auth_and_tests.md", "white"))
-    print(c("  2026_02_27_1632_add_rate_limiting_middleware.md", "white"))
-    print(c("  2026_02_26_1021_fix_authentication_bug.md", "white"))
-    pause(1.5)
-
-    type_cmd("cat notes/2026_02_28_0943_design_rest_api_with_auth_and_tests.md")
-    print(c("  # Design REST API with auth and tests", "cyan", "bold"))
-    print(c("  ## Step 1: Define endpoints ...", "white"))
-    pause(1.5)
-
-    type_cmd("/ar:pe-off   # disable if you don't want auto-export")
-    print(c("  📤 Plan Export: disabled", "yellow"))
-    pause(0.5)
-    type_cmd("/ar:pe-on    # re-enable")
-    print(c("  📤 Plan Export: enabled", "green"))
+    type_cmd("/ar:planrefine               # critique the plan before executing")
+    print(c("  # Claude re-reads the plan and harshly evaluates it:", "gray"))
+    print(c("  ✗ Missing: rate limiting — brute-force vulnerability", "yellow"))
+    print(c("  ✗ Missing: timing-safe comparison to prevent timing attacks", "yellow"))
+    print(c("  ✗ Missing: logging failed attempts for audit trail", "yellow"))
+    print(c("  → Plan updated with 3 additional requirements", "green"))
     pause(2.0)
 
 
@@ -1182,8 +1182,10 @@ def outro() -> None:
           c("/ar:f = only edit existing files · /ar:allow = full access", "gray"))
     print(c("  🚫  Custom Blocks  ", "white", "bold") +
           c("/ar:no 'cmd' block · /ar:ok 'cmd' unblock — your rules", "gray"))
-    print(c("  📤  Plan Export    ", "white", "bold") +
-          c("every approved plan auto-saved to notes/ as plain Markdown", "gray"))
+    print(c("  📋  /ar:plannew    ", "white", "bold") +
+          c("structured plan: best practices, critique, multiple proposals", "gray"))
+    print(c("  🔍  /ar:planrefine ", "white", "bold") +
+          c("harsh critique of existing plan — finds gaps before you execute", "gray"))
     print(c("  ⚡  /ar:go         ", "white", "bold") +
           c("NEW command: 3-checkpoint execution — properly finished work", "gray"))
     print()
@@ -1286,7 +1288,7 @@ def run_demo_scripted() -> None:
         act3_scripted(plugin_root)
         act4_scripted(plugin_root)
         act5_scripted(plugin_root)
-        act6_scripted(plugin_root, tmp_dir)
+        act6_scripted(plugin_root)
         act7_scripted(plugin_root)
         outro()
     finally:
