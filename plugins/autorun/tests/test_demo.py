@@ -816,9 +816,16 @@ def act6_live(session: DemoSession) -> None:
     session.wait_for_plan_approval(timeout=300)
     pause(7.0)  # Let viewers read the plan before we accept it
 
-    # Accept the plan — press Enter, which saves it to notes/ via plan export
+    # Accept the plan — press Enter = Option 1 "Yes" (keeps context + history intact).
+    # Do NOT send "2" — that is "Yes, and start a new conversation" which clears context.
+    # ExitPlanMode PostToolUse hook fires on acceptance → plan auto-saved to notes/.
     session.approve_plan()
-    pause(3.0)  # Brief pause after acceptance before refine
+    pause(2.0)
+
+    # Show viewers the plan file that was just created by plan export
+    session.send_prompt("Run: ls notes/ to show the plan file that was just saved")
+    session.wait_for_response(timeout=60)
+    pause(4.0)  # Let viewers see the notes/ listing
 
     session.send_prompt("/ar:planrefine")
     session.wait_for_response(timeout=300)
@@ -1112,7 +1119,22 @@ def act6_scripted(plugin_root: Path) -> None:
     print(c("     1. Add validate_login_input() with length, format, sanitize checks", "gray"))
     print(c("     2. Raise ValidationError with user-facing messages", "gray"))
     print(c("     3. Add unit tests for empty, too-long, invalid-char inputs", "gray"))
-    print(c("  [ User approves plan → plan auto-saved to notes/ ]", "green"))
+    # Plan approval: Claude Code shows "Would you like to proceed?" with a ❯ selector.
+    #   ❯ 1. Yes                              ← Enter selects this (keeps context + history)
+    #     2. Yes, and start a new conversation ← clears context (DO NOT use for demo)
+    #     3. No, give Claude more context
+    # Pressing Enter = Option 1 = accept + keep context.
+    print(c("  Would you like to proceed?", "white"))
+    print(c("  ❯ 1. Yes", "green"))
+    print(c("    2. Yes, and start a new conversation", "gray"))
+    print(c("    3. No, give Claude more context (Esc)", "gray"))
+    print(c("  [Enter]  ← accepts plan, triggers auto-save to notes/", "gray"))
+    pause(1.0)
+
+    # Show the notes/ file that was just created by plan export
+    type_cmd("ls notes/")
+    print(c("  2026_02_28_1043_add-input-validation-to-login.md", "white"),
+          c("  ← saved the instant you pressed Enter", "gray"))
     pause(2.0)
 
     type_cmd("/ar:planrefine               # critique the plan before executing")
