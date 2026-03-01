@@ -800,15 +800,26 @@ def act6_live(session: DemoSession) -> None:
 
     These are the most commonly used autorun plan commands.
     Shown before /ar:go so viewers see the full plan-then-execute flow.
+
+    Flow:
+    1. /ar:plannew writes the plan and calls ExitPlanMode → plan approval UI shown
+    2. wait_for_plan_approval() detects the approval prompt
+    3. pause so viewers can read the plan
+    4. approve_plan() presses Enter → plan accepted, saved to notes/
+    5. /ar:planrefine critiques the now-accepted plan
     """
     pause(2.0)
     session.send_prompt(
         "/ar:plannew Add input validation to the login() function in auth.py"
     )
-    session.wait_for_response(timeout=300)  # Planning can take time
-    pause(7.0)  # Let viewers read the plan
+    # Wait for Claude to finish writing the plan and show the approval prompt
+    session.wait_for_plan_approval(timeout=300)
+    pause(7.0)  # Let viewers read the plan before we accept it
 
-    pause(2.0)
+    # Accept the plan — press Enter, which saves it to notes/ via plan export
+    session.approve_plan()
+    pause(3.0)  # Brief pause after acceptance before refine
+
     session.send_prompt("/ar:planrefine")
     session.wait_for_response(timeout=300)
     pause(7.0)  # Let viewers read the critique
