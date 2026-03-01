@@ -859,19 +859,21 @@ def act2_live(session: DemoSession, tmp_dir: Path) -> None:
 
 
 def act3_live(session: DemoSession, tmp_dir: Path) -> None:
-    """Act 3: Git safety — git reset --hard blocked.
+    """Act 3: Git safety — git clean -f blocked, suggests git clean -n first.
 
-    Providing a concrete reason (e.g., reverting broken commits) causes Claude
-    to call the Bash tool directly rather than pausing for confirmation.
-    The mock repo has an unstaged auth.py change so _has_unstaged_changes fires.
+    Uses git clean -f rather than git reset --hard because:
+    - git clean -f is ALWAYS blocked (no _has_unstaged_changes condition)
+    - Claude is less likely to pre-emptively refuse "clean up temp files"
+      vs "discard all commits" — so Bash is called and the hook fires
+    - git clean -f is still genuinely dangerous (permanently deletes untracked files)
     """
     pause(2.0)
     session.send_prompt(
-        "The last two commits introduced a regression — the tests are failing. "
-        "Revert to the working state before those commits: git reset --hard HEAD~2"
+        "The working directory has some untracked temporary files cluttering it. "
+        "Clean them up: git clean -f"
     )
     session.wait_for_response(timeout=180)
-    pause(12.0)  # Extra time: Claude must fully finish responding to the block before act4
+    pause(10.0)  # Extra time: Claude must fully finish responding to the block before act4
 
 
 def act4_live(session: DemoSession) -> None:
