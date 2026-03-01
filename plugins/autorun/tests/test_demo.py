@@ -851,8 +851,7 @@ def act2_live(session: DemoSession, tmp_dir: Path) -> None:
     """
     pause(2.0)
     session.send_prompt(
-        "Show me what the sed command would match in main.py — "
-        "run: sed -n '/TODO/p' main.py"
+        "Using the Bash tool, run: sed -n '/TODO/p' main.py"
     )
     session.wait_for_response(timeout=180)
     pause(7.0)  # Let viewers read the redirect message and Claude's explanation
@@ -870,7 +869,8 @@ def act3_live(session: DemoSession, tmp_dir: Path) -> None:
     pause(2.0)
     session.send_prompt(
         "The working directory has some untracked temporary files cluttering it. "
-        "Clean them up: git clean -f"
+        "Using the Bash tool, run: git clean -f — do not override any safety blocks, "
+        "just report what the hook says."
     )
     session.wait_for_response(timeout=180)
     pause(10.0)  # Extra time: Claude must fully finish responding to the block before act4
