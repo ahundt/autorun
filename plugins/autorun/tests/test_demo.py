@@ -841,15 +841,16 @@ def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
 def act2_live(session: DemoSession, tmp_dir: Path) -> None:
     """Act 2: sed blocked, redirected to Edit tool.
 
-    Uses sed instead of grep because:
-    - Claude has no native sed tool, so it MUST use the Bash tool
-    - autorun blocks sed and redirects to the Edit tool (always blocked, no pipe exception)
-    - Demonstrates the 'use dedicated AI tools' class of guards
+    Uses sed -n (dry-run, print-only) so Claude cannot substitute Edit tool:
+    - "show me what sed matches" requires bash execution, not file editing
+    - Claude has no native sed tool and can't substitute Edit for a read-only sed
+    - autorun blocks all sed commands (always, no pipe/flag exception)
+    - The block message redirects to the Edit tool, explaining why
     """
     pause(2.0)
     session.send_prompt(
-        "Update the TODO comment in main.py to be more specific. "
-        "Use sed to change 'add input validation' to 'add email and password validation'."
+        "Show me what the sed command would match in main.py — "
+        "run: sed -n '/TODO/p' main.py"
     )
     session.wait_for_response(timeout=180)
     pause(7.0)  # Let viewers read the redirect message and Claude's explanation
@@ -868,7 +869,7 @@ def act3_live(session: DemoSession, tmp_dir: Path) -> None:
         "Revert to the working state before those commits: git reset --hard HEAD~2"
     )
     session.wait_for_response(timeout=180)
-    pause(7.0)  # Let viewers read the git safety block message
+    pause(12.0)  # Extra time: Claude must fully finish responding to the block before act4
 
 
 def act4_live(session: DemoSession) -> None:
