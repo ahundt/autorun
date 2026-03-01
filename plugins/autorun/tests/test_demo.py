@@ -161,18 +161,20 @@ GRAY  = "\033[90m"
 GREEN = "\033[92m"
 lines = [
     ("", ""),
-    ("  ┌─────────────────────────────────────────────────────────┐", CYAN),
-    ("  │  autorun — a safety plugin for Claude Code             │", CYAN),
-    ("  │                                                         │", CYAN),
-    ("  │  Install once. Then, silently in the background:       │", CYAN),
-    ("  │  · Blocks dangerous commands before Claude runs them   │", CYAN),
-    ("  │  · Controls whether Claude can create new files        │", CYAN),
-    ("  │  · Auto-saves your plans so they survive resets        │", CYAN),
-    ("  │  · Adds /ar:go — makes Claude finish tasks properly    │", CYAN),
-    ("  └─────────────────────────────────────────────────────────┘", CYAN),
-    ("", ""),
-    ("  This demo shows 7 features in ~3 minutes.", GRAY),
-    ("  Live Claude Code session (claude-haiku-4-5-20251001, < $0.05 total).", GRAY),
+    ("  ┌──────────────────────────────────────────────────────────────┐", CYAN),
+    ("  │  autorun — safety plugin for Claude Code + Gemini CLI       │", CYAN),
+    ("  │                                                              │", CYAN),
+    ("  │  Install once. Runs silently in the background.             │", CYAN),
+    ("  │                                                              │", CYAN),
+    ("  │  This demo shows:                                           │", CYAN),
+    ("  │    1. Safety guards  — rm, sed, git reset blocked + redirect│", CYAN),
+    ("  │    2. File policy    — /ar:f: edit existing files only      │", CYAN),
+    ("  │    3. Custom blocks  — /ar:no and /ar:ok for your own rules │", CYAN),
+    ("  │    4. Plan commands  — /ar:plannew, auto-saved on approval  │", CYAN),
+    ("  │    5. /ar:go         — 3-stage: implement → review → verify │", CYAN),
+    ("  │                                                              │", CYAN),
+    ("  │  Live Claude session  (claude-haiku-4-5-20251001, <$0.05)  │", GRAY),
+    ("  └──────────────────────────────────────────────────────────────┘", CYAN),
     ("", ""),
 ]
 for text, color in lines:
@@ -945,8 +947,12 @@ def act6_live(session: DemoSession) -> None:
     session.approve_plan()
     pause(2.0)
 
-    # Show viewers the plan file that was just created by plan export
-    session.send_prompt("Run: ls notes/ to show the plan file that was just saved")
+    # Show the auto-saved plan file. The key point: this happened automatically
+    # when the plan was accepted — no command needed, no "export" step.
+    # Listing notes/ shows the timestamped file; reading it confirms it's the real plan.
+    session.send_prompt(
+        "Run: ls notes/ — autorun auto-saved the plan when it was accepted"
+    )
     session.wait_for_response(timeout=60)
     pause(4.0)  # Let viewers see the notes/ listing
 
@@ -1333,14 +1339,14 @@ def outro() -> None:
           c("rm, git reset --hard, git clean -f, and more", "gray"))
     print(c("  🧭  Tool Redirects ", "white", "bold") +
           c("guides Claude toward built-in tools (Grep, Glob, Read)", "gray"))
-    print(c("  📋  File Policy    ", "white", "bold") +
+    print(c("  📁  File Policy    ", "white", "bold") +
           c("/ar:f = only edit existing files · /ar:allow = full access", "gray"))
     print(c("  🚫  Custom Blocks  ", "white", "bold") +
           c("/ar:no 'cmd' block · /ar:ok 'cmd' unblock — your rules", "gray"))
     print(c("  📋  /ar:plannew    ", "white", "bold") +
-          c("structured plan: best practices, critique, multiple proposals", "gray"))
+          c("structured plan — auto-saved to notes/ when you accept it", "gray"))
     print(c("  🔍  /ar:planrefine ", "white", "bold") +
-          c("harsh critique of existing plan — finds gaps before you execute", "gray"))
+          c("critique existing plan — finds gaps before you execute", "gray"))
     print(c("  ⚡  /ar:go         ", "white", "bold") +
           c("NEW command: 3-checkpoint execution — properly finished work", "gray"))
     print()
