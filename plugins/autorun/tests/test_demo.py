@@ -214,8 +214,14 @@ def find_plugin_root() -> Path:
     candidates = [
         Path(__file__).parent.parent,          # tests/ → plugins/autorun/
         Path.home() / ".claude" / "autorun" / "plugins" / "autorun",
-        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.9.0",
     ]
+    # Also search plugin cache with any version (avoids hardcoding "0.9.0")
+    cache_base = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun"
+    if cache_base.is_dir():
+        for version_dir in sorted(cache_base.iterdir(), reverse=True):
+            if (version_dir / "pyproject.toml").exists():
+                candidates.append(version_dir)
+                break  # Use most recent version only
     for candidate in candidates:
         if (candidate / "pyproject.toml").exists():
             return candidate
