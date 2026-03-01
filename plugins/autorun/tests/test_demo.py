@@ -795,11 +795,21 @@ def act5_live(session: DemoSession) -> None:
 
 
 def act6_live(session: DemoSession) -> None:
-    """Act 6: Plan export — show status, explain auto-save behavior."""
+    """Act 6: Plan export — show toggle behavior.
+
+    We use /ar:pe-off and /ar:pe-on (UserPromptSubmit hook commands) instead
+    of /ar:pe (which runs an external script via ! bash exec that may not
+    produce visible output in the TUI session context).
+    """
     pause(2.0)
-    session.send_prompt("/ar:pe")
+    session.send_prompt("/ar:pe-on")   # Enable — hook responds with status text
     session.wait_for_response(timeout=60)
-    pause(7.0)  # Let viewers read the plan export status and understand the feature
+    pause(4.0)
+    session.send_prompt(
+        "What does the plan export feature do, and how does it help me?"
+    )
+    session.wait_for_response(timeout=120)
+    pause(7.0)  # Let viewers read the explanation
 
 
 def act7_live(session: DemoSession) -> None:
