@@ -93,6 +93,7 @@ autorun demo — shows safety guards, file policies, planning commands, and /ar:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
