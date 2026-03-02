@@ -393,7 +393,7 @@ class DemoSession:
     _ACTIVITY_POLL_INTERVAL = 0.5  # seconds between active-status polls
 
     def __init__(self, session_name: str = "autorun-demo",
-                 cols: int = 220, rows: int = 55,
+                 cols: int = 160, rows: int = 48,
                  work_dir: Optional[Path] = None):
         self.session_name = session_name
         self.cols = cols
@@ -1669,8 +1669,8 @@ def record_demo(
                 "--title", "autorun — safety plugin for Claude Code",
                 "--idle-time-limit", "5",
                 "--quiet",
-                "--cols", str(session.cols),
-                "--rows", str(session.rows),
+                # asciinema v3: --window-size replaces deprecated --cols/--rows
+                "--window-size", f"{session.cols}x{session.rows}",
             ]
             asciinema_proc = subprocess.Popen(asciinema_cmd)
 
@@ -1727,7 +1727,7 @@ def record_demo(
         _log(f"[demo] Converting to GIF: {cast_file} → {gif_file}")
         agg_cmd = [
             agg_bin, "--theme", "dracula", "--speed", "0.75",
-            "--font-size", "14",        # smaller font → more content visible per frame
+            "--font-size", "16",        # font-16: readable at full res, more content than font-20
             "--idle-time-limit", "10",  # preserve up to 10s of banner/status pauses
             "--renderer", "fontdue",    # fontdue renders crisp vector-quality text
             cast_file, gif_file,
