@@ -18,8 +18,8 @@ autorun demo — shows safety guards, file policies, planning commands, and /ar:
   # One-time environment setup:
   export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1   # required: opt-in to API cost
 
-  # Run the recording (from the repo root):
-  uv run python plugins/autorun/tests/test_demo.py --record --quiet
+  # Run the recording (from the repo root) — quiet by default:
+  uv run python plugins/autorun/tests/test_demo.py --record
 
   # Outputs written to the current working directory:
   #   autorun_demo.cast   raw asciinema terminal recording
@@ -36,8 +36,8 @@ autorun demo — shows safety guards, file policies, planning commands, and /ar:
   python test_demo.py --record           Record live TUI → autorun_demo.{cast,gif,mp4}
   python test_demo.py --record --play    Record scripted demo → same outputs, $0.00
   python test_demo.py --no-cleanup       Keep tmux session alive after run (debug)
-  python test_demo.py --quiet / -q       Suppress [demo] progress + agg progress bar
-                                         (recommended when running automated/recording)
+  python test_demo.py --progress         Show [demo] progress messages + agg progress bar
+                                         (default is quiet — no progress output)
 
   # Environment variable equivalents (useful for CI or wrapper scripts):
   AUTORUN_DEMO_MODE=live       python test_demo.py   # live TUI
@@ -155,30 +155,46 @@ _SCRIPTED = False
 _BANNER_SCRIPT = r'''#!/usr/bin/env python3
 import sys
 CYAN  = "\033[96m"
-BOLD  = "\033[1m"
 RESET = "\033[0m"
 GRAY  = "\033[90m"
-GREEN = "\033[92m"
+
+W = 70  # visible chars inside box (between the ║ borders)
+
+def row(text=""):
+    # Pad content to exactly W visible chars (ljust ignores ANSI codes
+    # only when text has no embedded codes — keep text plain here).
+    content = " " + text
+    return CYAN + "  ║" + content.ljust(W) + "║" + RESET
+
+def top(): return CYAN + "  ╔" + "═" * W + "╗" + RESET
+def sep(): return CYAN + "  ╠" + "═" * W + "╣" + RESET
+def bot(): return CYAN + "  ╚" + "═" * W + "╝" + RESET
+
 lines = [
-    ("", ""),
-    ("  ┌──────────────────────────────────────────────────────────────┐", CYAN),
-    ("  │  autorun — safety plugin for Claude Code + Gemini CLI       │", CYAN),
-    ("  │                                                              │", CYAN),
-    ("  │  Install once. Runs silently in the background.             │", CYAN),
-    ("  │                                                              │", CYAN),
-    ("  │  This demo shows:                                           │", CYAN),
-    ("  │    1. Safety guards  — rm, sed, git reset blocked + redirect│", CYAN),
-    ("  │    2. File policy    — /ar:f: edit existing files only      │", CYAN),
-    ("  │    3. Custom blocks  — /ar:no and /ar:ok for your own rules │", CYAN),
-    ("  │    4. Plan commands  — /ar:plannew, auto-saved on approval  │", CYAN),
-    ("  │    5. /ar:go         — 3-stage: implement → review → verify │", CYAN),
-    ("  │                                                              │", CYAN),
-    ("  │  Live Claude session  (claude-haiku-4-5-20251001, <$0.05)  │", GRAY),
-    ("  └──────────────────────────────────────────────────────────────┘", CYAN),
-    ("", ""),
+    "",
+    top(),
+    row(),
+    row("  autorun — safety plugin for Claude Code & Gemini CLI"),
+    row(),
+    row("  Install once. Runs silently in the background."),
+    row(),
+    sep(),
+    row(),
+    row("  This demo shows:"),
+    row(),
+    row("    1.  Safety guards    rm, sed, git clean  →  safe alternatives"),
+    row("    2.  File policy      /ar:f  —  edit existing files only"),
+    row("    3.  Custom blocks    /ar:no  block  ·  /ar:ok  unblock"),
+    row("    4.  Plan commands    /ar:plannew  —  auto-saved on acceptance"),
+    row("    5.  /ar:go           3-stage: implement  →  review  →  verify"),
+    row(),
+    bot(),
+    "",
+    GRAY + "  Live session: claude-haiku-4-5-20251001  (<$0.05 per run)" + RESET,
+    "",
 ]
-for text, color in lines:
-    sys.stdout.write(color + text + RESET + "\n")
+for line in lines:
+    sys.stdout.write(line + "\n")
 sys.stdout.flush()
 '''
 
@@ -377,7 +393,7 @@ class DemoSession:
     _ACTIVITY_POLL_INTERVAL = 0.5  # seconds between active-status polls
 
     def __init__(self, session_name: str = "autorun-demo",
-                 cols: int = 180, rows: int = 50,
+                 cols: int = 220, rows: int = 55,
                  work_dir: Optional[Path] = None):
         self.session_name = session_name
         self.cols = cols
@@ -814,10 +830,10 @@ def act0_live(session: DemoSession, tmp_dir: Path) -> None:
     banner_script = tmp_dir / "_demo_banner.py"
     banner_script.write_text(_BANNER_SCRIPT)
     session.run_shell_cmd(f"python3 {banner_script}", wait=1.0)
-    pause(4.0)  # Viewers need time to read the banner
+    pause(10.0)  # Viewers need time to read the banner
 
     session.run_shell_cmd("autorun --status", wait=2.0)
-    pause(4.0)  # Viewers need time to read the status output
+    pause(6.0)  # Viewers need time to read the status output
 
 
 def act1_live(session: DemoSession, tmp_dir: Path) -> bool:
@@ -1710,8 +1726,9 @@ def record_demo(
     if agg_bin and Path(cast_file).exists():
         _log(f"[demo] Converting to GIF: {cast_file} → {gif_file}")
         agg_cmd = [
-            agg_bin, "--theme", "dracula", "--speed", "1.5",
-            "--font-size", "20",        # larger font → sharper, more readable GIF
+            agg_bin, "--theme", "dracula", "--speed", "0.75",
+            "--font-size", "14",        # smaller font → more content visible per frame
+            "--idle-time-limit", "10",  # preserve up to 10s of banner/status pauses
             "--renderer", "fontdue",    # fontdue renders crisp vector-quality text
             cast_file, gif_file,
         ]
@@ -2096,20 +2113,24 @@ live demo requirements:
     parser.add_argument("--no-cleanup", action="store_true", dest="no_cleanup",
                         help="Preserve tmux session after recording for debugging "
                              "(default: session is destroyed after recording)")
+    parser.add_argument("--progress", action="store_true",
+                        help="Show [demo] progress messages and agg progress bar "
+                             "(default: quiet — suppress all progress output)")
     parser.add_argument("--quiet", "-q", action="store_true",
-                        help="Suppress [demo] progress messages and agg progress bar "
-                             "(useful when running via pytest to avoid wasting tokens)")
+                        help="(legacy, now the default) Suppress progress — use --progress to show")
     args = parser.parse_args()
 
     mode, scripted = _resolve_mode(args)
     cleanup = not args.no_cleanup
+    # Quiet by default; --progress shows agg bar + [demo] log messages.
+    quiet = not args.progress
 
     global _DEMO_WITH_TIMING, _SCRIPTED
     _DEMO_WITH_TIMING = True   # All interactive modes use real timing
     _SCRIPTED = scripted
 
     if mode == "record":
-        record_demo(scripted=scripted, cleanup=cleanup, quiet=args.quiet)
+        record_demo(scripted=scripted, cleanup=cleanup, quiet=quiet)
     elif mode == "scripted":
         run_demo_scripted()
     else:
