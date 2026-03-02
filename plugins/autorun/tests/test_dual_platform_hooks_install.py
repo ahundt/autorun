@@ -813,5 +813,206 @@ class TestHookEntryBootstrap:
         assert "start_new_session" in content
 
 
+# =============================================================================
+# Test Class 14: _install_for_gemini marketplace.json source-field resolution
+# =============================================================================
+
+
+class TestInstallForGeminiMarketplaceResolution:
+    """Functional tests for Strategy 0: marketplace.json source-field resolution.
+
+    Regression tests for the bug where _install_for_gemini() searched for a
+    directory literally named after the plugin logical name (e.g. "ar") but the
+    actual directory was named differently (e.g. "autorun").
+
+    Covers: plugins/autorun/src/autorun/install.py lines 1004-1021, 1028-1031.
+    """
+
+    def _make_plugin_dir(self, base: Path, dirname: str, ext_name: str) -> Path:
+        """Create a minimal plugin directory with gemini-extension.json."""
+        plugin_dir = base / dirname
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "gemini-extension.json").write_text(
+            json.dumps({"name": ext_name, "version": "1.0.0", "description": "test"})
+        )
+        return plugin_dir
+
+    def _make_marketplace(self, root: Path, plugins: list[dict]) -> Path:
+        """Create .claude-plugin/marketplace.json with given plugin entries."""
+        claude_plugin_dir = root / ".claude-plugin"
+        claude_plugin_dir.mkdir(parents=True, exist_ok=True)
+        marketplace = {
+            "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+            "name": "test-marketplace",
+            "version": "1.0.0",
+            "description": "test",
+            "plugins": plugins,
+        }
+        mp_path = claude_plugin_dir / "marketplace.json"
+        mp_path.write_text(json.dumps(marketplace))
+        return mp_path
+
+    def _run(self, tmp: Path, plugins: list[str], gemini_ok: bool = True):
+        """Call _install_for_gemini with all external calls mocked."""
+        import autorun.install as install_mod
+
+        gemini_dir = tmp / ".gemini"
+        gemini_dir.mkdir(exist_ok=True)
+
+        mock_result = MagicMock()
+        mock_result.ok = gemini_ok
+        mock_result.has_text = MagicMock(return_value=False)
+
+        with (
+            patch.object(install_mod.shutil, "which", return_value="/usr/bin/gemini"),
+            patch("autorun.install.Path.home", return_value=tmp),
+            patch.object(install_mod, "run_cmd", return_value=mock_result),
+        ):
+            return install_mod._install_for_gemini(tmp, plugins)
+
+    # ------------------------------------------------------------------
+    # Strategy 0: marketplace.json source-field resolution
+    # ------------------------------------------------------------------
+
+    def test_name_differs_from_dir_resolved_via_marketplace_json(self, tmp_path):
+        """Core regression: name='ar' but dir='autorun' — must install correctly."""
+        self._make_plugin_dir(tmp_path / "plugins", "autorun", "ar")
+        self._make_marketplace(tmp_path, [
+            {"name": "ar", "source": "./plugins/autorun"},
+        ])
+        success, msg = self._run(tmp_path, ["ar"])
+        assert success, f"Expected success but got: {msg}"
+
+    def test_name_matches_dir_still_works(self, tmp_path):
+        """Traditional case: name='pdf-extractor' dir='pdf-extractor' — unaffected."""
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        self._make_marketplace(tmp_path, [
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ])
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected success but got: {msg}"
+
+    def test_multiple_plugins_all_resolved(self, tmp_path):
+        """Both ar and pdf-extractor resolved via marketplace.json in one call."""
+        self._make_plugin_dir(tmp_path / "plugins", "autorun", "ar")
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        self._make_marketplace(tmp_path, [
+            {"name": "ar", "source": "./plugins/autorun"},
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ])
+        success, msg = self._run(tmp_path, ["ar", "pdf-extractor"])
+        assert success, f"Expected success but got: {msg}"
+
+    # ------------------------------------------------------------------
+    # Edge cases: marketplace.json missing / malformed / incomplete
+    # ------------------------------------------------------------------
+
+    def test_missing_marketplace_json_falls_through_to_strategy1(self, tmp_path):
+        """No marketplace.json → falls through to strategy 1 (plugins/<name> lookup)."""
+        # Plugin dir name matches logical name → strategy 1 finds it
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        # No marketplace.json created
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected strategy 1 fallback to succeed but got: {msg}"
+
+    def test_malformed_marketplace_json_falls_through(self, tmp_path):
+        """Malformed JSON → exception caught, falls through to strategy 1."""
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        claude_plugin_dir = tmp_path / ".claude-plugin"
+        claude_plugin_dir.mkdir()
+        (claude_plugin_dir / "marketplace.json").write_text("{not valid json}")
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected graceful fallback but got: {msg}"
+
+    def test_source_dir_missing_skipped_silently(self, tmp_path):
+        """source points to non-existent dir → skipped, fallback to strategy 1."""
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        self._make_marketplace(tmp_path, [
+            {"name": "ar", "source": "./plugins/does-not-exist"},
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ])
+        # ar will fail (missing dir); pdf-extractor should still succeed
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected pdf-extractor to succeed but got: {msg}"
+
+    def test_source_dir_no_gemini_extension_json_skipped(self, tmp_path):
+        """source dir exists but has no gemini-extension.json → excluded from map."""
+        bad_dir = tmp_path / "plugins" / "autorun"
+        bad_dir.mkdir(parents=True)
+        # No gemini-extension.json in bad_dir
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        self._make_marketplace(tmp_path, [
+            {"name": "ar", "source": "./plugins/autorun"},
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ])
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected pdf-extractor to succeed but got: {msg}"
+
+    def test_empty_name_field_skipped(self, tmp_path):
+        """marketplace.json entry with empty name → skipped without crash."""
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        self._make_marketplace(tmp_path, [
+            {"name": "", "source": "./plugins/autorun"},
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ])
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected pdf-extractor to succeed but got: {msg}"
+
+    def test_empty_source_field_skipped(self, tmp_path):
+        """marketplace.json entry with empty source → skipped without crash."""
+        self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
+        self._make_marketplace(tmp_path, [
+            {"name": "ar", "source": ""},
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ])
+        success, msg = self._run(tmp_path, ["pdf-extractor"])
+        assert success, f"Expected pdf-extractor to succeed but got: {msg}"
+
+    def test_no_plugins_found_returns_false(self, tmp_path):
+        """Plugin requested but not found anywhere → returns False."""
+        # marketplace.json exists but doesn't include requested plugin
+        self._make_marketplace(tmp_path, [])
+        success, msg = self._run(tmp_path, ["nonexistent-plugin"])
+        assert not success
+
+    # ------------------------------------------------------------------
+    # Regression: hardcoded "cr, pdf-extractor" success message removed
+    # ------------------------------------------------------------------
+
+    def test_no_hardcoded_cr_pdf_extractor_in_success_message(self):
+        """Verify the old hardcoded 'cr, pdf-extractor' string was removed."""
+        content = INSTALL_PY.read_text()
+        assert "cr, pdf-extractor" not in content, (
+            "Hardcoded 'cr, pdf-extractor' found in install.py — "
+            "success message must use the actual plugins list"
+        )
+
+    def test_success_message_uses_join(self):
+        """Verify Gemini success message uses ', '.join(plugins) not a literal string."""
+        content = INSTALL_PY.read_text()
+        assert "', '.join(plugins)" in content
+
+    # ------------------------------------------------------------------
+    # Source-code level: new strategy 0 logic exists
+    # ------------------------------------------------------------------
+
+    def test_strategy_0_marketplace_source_map_built(self):
+        """Source code contains marketplace_source_map construction."""
+        content = INSTALL_PY.read_text()
+        assert "marketplace_source_map" in content
+
+    def test_strategy_0_reads_source_field(self):
+        """Source code reads 'source' field from marketplace.json entries."""
+        content = INSTALL_PY.read_text()
+        assert '_entry.get("source", "")' in content
+
+    def test_strategy_0_checks_gemini_extension_json(self):
+        """Strategy 0 verifies gemini-extension.json exists before adding to map."""
+        content = INSTALL_PY.read_text()
+        func = _extract_function(content, "_install_for_gemini")
+        # Both the marketplace_source_map building and the per-plugin loop check it
+        assert func.count("gemini-extension.json") >= 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
