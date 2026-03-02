@@ -1001,17 +1001,43 @@ def _install_for_gemini(
         marketplace_root.parent
     ]
 
+    # Build name→source map from marketplace.json (plugin name may differ from dir name,
+    # e.g. name="ar" maps to source="./plugins/autorun")
+    marketplace_source_map: dict[str, Path] = {}
+    marketplace_json = marketplace_root / ".claude-plugin" / "marketplace.json"
+    if marketplace_json.exists():
+        try:
+            import json as _json
+            with open(marketplace_json) as _f:
+                _mdata = _json.load(_f)
+            for _entry in _mdata.get("plugins", []):
+                _entry_name = _entry.get("name", "")
+                _source = _entry.get("source", "")
+                if _entry_name and _source:
+                    _resolved = (marketplace_root / _source).resolve()
+                    if _resolved.is_dir() and (_resolved / "gemini-extension.json").exists():
+                        marketplace_source_map[_entry_name] = _resolved
+        except Exception:
+            pass
+
     # Find directories for requested plugins (must have gemini-extension.json)
     plugins_to_install = []
     for name in plugins:
         found = False
-        for p_dir in potential_plugin_dirs:
-            target = p_dir / name
-            if target.is_dir() and (target / "gemini-extension.json").exists():
-                plugins_to_install.append(target)
-                found = True
-                break
-        
+
+        # Strategy 0: resolve via marketplace.json source field (handles name ≠ dir name)
+        if name in marketplace_source_map:
+            plugins_to_install.append(marketplace_source_map[name])
+            found = True
+
+        if not found:
+            for p_dir in potential_plugin_dirs:
+                target = p_dir / name
+                if target.is_dir() and (target / "gemini-extension.json").exists():
+                    plugins_to_install.append(target)
+                    found = True
+                    break
+
         if not found:
             # Check if marketplace_root itself is the plugin
             if marketplace_root.name == name and (marketplace_root / "gemini-extension.json").exists():
@@ -1653,7 +1679,7 @@ def install_plugins(
 
     if "gemini" in target_clis:
         if gemini_success:
-            print(f"✓ Gemini CLI: Plugins installed (cr, pdf-extractor)")
+            print(f"✓ Gemini CLI: Plugins installed ({', '.join(plugins)})")
             if conductor:
                 conductor_ok = _verify_conductor_installation()
                 if conductor_ok:
