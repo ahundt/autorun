@@ -1,6 +1,6 @@
 ---
 name: claude-session-tools
-description: Explore, search, analyze, and recover files and conversations from Claude Code session histories stored in ~/.claude/projects/ using the aise command-line tool.
+description: Explore, search, analyze, and recover files and conversations from Claude Code, AI Studio, and Gemini CLI session histories using the aise command-line tool.
 version: "0.9.0"
 
 # VISIBILITY & TRIGGERING
@@ -17,15 +17,15 @@ allowed-tools:
 
 # Claude Session Tools
 
-Search, analyze, and recover anything from Claude Code session histories. Use when the user needs to find past work, understand what Claude did in a session, recover a file, search conversation history, or detect patterns in how Claude is being used.
+Search, analyze, and recover anything from AI session histories (Claude Code, AI Studio, Gemini CLI). Use when the user needs to find past work, understand what Claude did in a session, recover a file, search conversation history, or detect patterns in how Claude is being used.
 
 **Invoke with:** `/ar:claude-session-tools` or natural language like "find that file from last week's session", "what did Claude do in session ab841016", "search my Claude sessions for authentication"
 
-**Tool:** `aise` — run `aise --help` to see all commands
+**Tool:** `aise` -- run `aise --help` to see all commands
 
 ---
 
-## Goal → Command Quick Reference
+## Goal -> Command Quick Reference
 
 | Goal | Command |
 |------|---------|
@@ -47,6 +47,8 @@ Search, analyze, and recover anything from Claude Code session histories. Use wh
 | Export last N days of sessions | `aise export recent 7 --output week.md` |
 | Search files + messages together | `aise search --pattern "*.py" --query "error"` |
 | Find specific tool invocations | `aise tools search Bash "git commit"` |
+| List configured session sources | `aise source list` |
+| Add an AI Studio source directory | `aise source add aistudio /path/to/dir` |
 
 ---
 
@@ -110,7 +112,7 @@ aise search --query "authentication" --pattern "*.py"
 
 ```bash
 # Show each Edit/Write call Claude made to the file
-# and mark ✓ (found in current file) or ✗ (missing)
+# and mark (found in current file) or (missing)
 aise files cross-ref ./path/to/file.md
 
 # Limit to one session
@@ -122,7 +124,7 @@ aise files cross-ref ./engine.py --format json
 
 ---
 
-### "Find a specific tool use (Bash, Edit, Write, Read…)"
+### "Find a specific tool use (Bash, Edit, Write, Read...)"
 
 ```bash
 # All Write calls across all sessions
@@ -169,7 +171,7 @@ aise export recent 14 --project myproject --output sprint.md
 aise messages corrections
 
 # Filter by project or date
-aise messages corrections --project myproject --after 2026-01-01
+aise messages corrections --project myproject --since 2026-01-01
 
 # Count planning command usage (/ar:plannew, /ar:planrefine, etc.)
 aise messages planning
@@ -186,8 +188,8 @@ aise messages extract ab841016 pbcopy
 ```bash
 aise list                                    # all sessions, newest first
 aise list --project myproject                # filter by project
-aise list --after 2026-01-01                 # sessions since date
-aise list --before 2026-02-01                # sessions before date
+aise list --since 2026-01-01                 # sessions on or after date
+aise list --until 2026-02-01                 # sessions on or before date
 aise list --limit 20                         # cap results
 aise list --format json                      # machine-readable
 ```
@@ -213,7 +215,7 @@ aise files search --include-extensions py ts # by extension
 aise files search --min-edits 5              # heavily-edited files
 aise files search --include-sessions ID      # files in one session
 aise files history filename.py               # version history
-aise files extract filename.py               # latest version → stdout
+aise files extract filename.py               # latest version -> stdout
 aise files extract filename.py --version 2   # specific version
 aise files cross-ref ./file.py               # verify edits in current file
 aise files cross-ref ./file.py --session ID
@@ -245,10 +247,10 @@ aise messages extract SESSION_ID pbcopy --format json
 
 ### Export
 ```bash
-aise export session SESSION_ID               # → stdout
-aise export session SESSION_ID --output f.md # → file
+aise export session SESSION_ID               # -> stdout
+aise export session SESSION_ID --output f.md # -> file
 aise export session SESSION_ID --dry-run     # preview
-aise export recent 7                         # last 7 days → stdout
+aise export recent 7                         # last 7 days -> stdout
 aise export recent 7 --output week.md
 aise export recent 14 --project myproject --output sprint.md
 ```
@@ -268,6 +270,40 @@ aise find files --pattern "*.py"
 ### Statistics
 ```bash
 aise stats                                   # session + file counts
+aise stats --since 7d                        # filtered to last 7 days
+aise stats --since 2026-01-01 --until 2026-03-31
+```
+
+### Source Management
+```bash
+aise source list                             # show configured sources
+aise source add aistudio /path/to/dir        # add AI Studio source directory
+aise source add gemini /path/to/dir          # add Gemini CLI source directory
+aise config show                             # view full config
+aise config init                             # create default config file
+```
+
+---
+
+## Date Filtering
+
+All commands that accept `--since`/`--until` support multiple formats:
+
+```bash
+# ISO dates
+aise list --since 2026-01-01
+aise list --since 2026-01-01 --until 2026-03-31
+
+# Duration shorthands
+aise list --since 7d                         # last 7 days
+aise list --since 2w                         # last 2 weeks
+aise list --since 1m                         # last month
+
+# EDTF intervals (single --since sets both bounds)
+aise list --since 2026-01/2026-03            # Q1 2026
+aise list --when 202X                        # entire decade
+
+# --after/--before are accepted as hidden aliases for --since/--until
 ```
 
 ---
@@ -278,10 +314,32 @@ All commands support `--format` / `-f`:
 
 | Format | Use When |
 |--------|----------|
-| `table` | Default — human-readable in terminal |
+| `table` | Default -- human-readable in terminal |
 | `json` | Scripting, piping to `jq`, programmatic use |
 | `csv` | Spreadsheet import |
 | `plain` | Raw text, minimal formatting |
+
+---
+
+## Multi-Source Support
+
+`aise` reads from Claude Code, AI Studio, and Gemini CLI sessions simultaneously.
+
+```bash
+# Show all sessions across all configured sources
+aise list
+
+# Filter to one source
+aise list --provider claude
+aise list --provider aistudio
+aise list --provider gemini
+
+# Add additional source directories
+aise source add aistudio ~/Downloads/ai-studio-exports
+aise source list
+```
+
+Claude Code sessions are auto-detected from `~/.claude/projects/`. AI Studio and Gemini CLI paths must be configured with `aise source add` or in the config file.
 
 ---
 
@@ -289,10 +347,10 @@ All commands support `--format` / `-f`:
 
 Sessions live at `~/.claude/projects/<ENCODED-PATH>/<SESSION-ID>.jsonl`
 
-Path encoding: non-alphanumeric characters → `-`
-- `/Users/alice/myproject` → `-Users-alice-myproject`
-- `/Users/alice/.claude` → `-Users-alice--claude` (dot → dash)
-- `/home/alice/project` → `-home-alice-project`
+Path encoding: non-alphanumeric characters -> `-`
+- `/Users/alice/myproject` -> `-Users-alice-myproject`
+- `/Users/alice/.claude` -> `-Users-alice--claude` (dot -> dash)
+- `/home/alice/project` -> `-home-alice-project`
 
 Each JSONL line is a JSON object with `type` (`user`/`assistant`/`system`), `timestamp`, and `message` containing tool calls and text content.
 
