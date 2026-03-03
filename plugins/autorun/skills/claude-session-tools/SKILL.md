@@ -31,9 +31,10 @@ Search, analyze, and recover anything from AI session histories (Claude Code, AI
 |------|---------|
 | Find all sessions | `aise list` |
 | Find sessions for a project | `aise list --project myproject` |
+| Filter by source | `aise list --provider claude` |
 | Read all messages from a session | `aise messages get SESSION_ID` |
 | Search text across all sessions | `aise messages search "query"` |
-| See what tools Claude used | `aise messages analyze SESSION_ID` |
+| See what tools Claude used | `aise messages inspect SESSION_ID` |
 | See chronological session events | `aise messages timeline SESSION_ID` |
 | Find a file Claude wrote or edited | `aise files search --pattern "name.py"` |
 | See version history of a file | `aise files history filename.py` |
@@ -48,7 +49,11 @@ Search, analyze, and recover anything from AI session histories (Claude Code, AI
 | Search files + messages together | `aise search --pattern "*.py" --query "error"` |
 | Find specific tool invocations | `aise tools search Bash "git commit"` |
 | List configured session sources | `aise source list` |
+| Scan for new sources | `aise source scan` |
 | Add an AI Studio source directory | `aise source add aistudio /path/to/dir` |
+| Remove a source | `aise source remove aistudio /path/to/dir` |
+| Run full analysis pipeline | `aise analyze` |
+| Show date format reference | `aise dates` |
 
 ---
 
@@ -82,7 +87,7 @@ aise list --project myproject
 aise messages get ab841016
 
 # 3. See statistics: tool counts, files touched
-aise messages analyze ab841016
+aise messages inspect ab841016
 
 # 4. See chronological event timeline
 aise messages timeline ab841016
@@ -182,12 +187,44 @@ aise messages extract ab841016 pbcopy
 
 ---
 
+### "Run the full analysis pipeline"
+
+```bash
+# Run all stages: qualitative coding -> graph -> taxonomy symlinks
+aise analyze
+
+# Check which stages are stale without running
+aise analyze --status
+
+# Force re-run all stages
+aise analyze --force
+
+# Analyze only one provider
+aise analyze --provider aistudio
+aise analyze --provider gemini
+
+# Run a specific stage
+aise analyze --step analyze
+aise analyze --step graph
+```
+
+---
+
 ## All Commands Reference
+
+### Global Options
+```bash
+aise --version                               # show version
+aise --provider claude COMMAND               # filter to one source: claude | aistudio | gemini | all
+aise --claude-dir /path COMMAND              # override ~/.claude location
+aise --config /path/config.json COMMAND      # override config file
+```
 
 ### Session Discovery
 ```bash
 aise list                                    # all sessions, newest first
 aise list --project myproject                # filter by project
+aise list --provider claude                  # filter by source
 aise list --since 2026-01-01                 # sessions on or after date
 aise list --until 2026-02-01                 # sessions on or before date
 aise list --limit 20                         # cap results
@@ -207,6 +244,20 @@ aise messages get SESSION_ID --type user
 aise messages get SESSION_ID --limit 10
 ```
 
+### Session Analysis
+```bash
+aise messages inspect SESSION_ID             # tool counts, files touched
+aise messages inspect SESSION_ID --format json
+aise messages timeline SESSION_ID            # chronological events
+aise messages timeline SESSION_ID --preview-chars 80
+aise messages corrections                    # user corrections to Claude
+aise messages corrections --project myproject
+aise messages corrections --limit 50
+aise messages planning                       # planning command frequency
+aise messages extract SESSION_ID pbcopy      # clipboard content
+aise messages extract SESSION_ID pbcopy --format json
+```
+
 ### File Recovery
 ```bash
 aise files search                            # all files Claude touched
@@ -219,6 +270,10 @@ aise files extract filename.py               # latest version -> stdout
 aise files extract filename.py --version 2   # specific version
 aise files cross-ref ./file.py               # verify edits in current file
 aise files cross-ref ./file.py --session ID
+
+# Top-level shortcuts (same as files subcommands):
+aise extract filename.py                     # latest version -> stdout
+aise history filename.py                     # version history
 ```
 
 ### Tool Call Search
@@ -229,20 +284,6 @@ aise tools search Edit "filename"            # Edit calls
 aise tools search Read                       # all Read calls
 aise tools search Write --format json
 aise tools search Write --limit 20
-```
-
-### Session Analysis
-```bash
-aise messages analyze SESSION_ID             # tool counts, files touched
-aise messages analyze SESSION_ID --format json
-aise messages timeline SESSION_ID            # chronological events
-aise messages timeline SESSION_ID --preview-chars 80
-aise messages corrections                    # user corrections to Claude
-aise messages corrections --project myproject
-aise messages corrections --limit 50
-aise messages planning                       # planning command frequency
-aise messages extract SESSION_ID pbcopy      # clipboard content
-aise messages extract SESSION_ID pbcopy --format json
 ```
 
 ### Export
@@ -272,15 +313,36 @@ aise find files --pattern "*.py"
 aise stats                                   # session + file counts
 aise stats --since 7d                        # filtered to last 7 days
 aise stats --since 2026-01-01 --until 2026-03-31
+aise stats --provider claude                 # one source only
+```
+
+### Analysis Pipeline
+```bash
+aise analyze                                 # full pipeline: coding -> graph -> taxonomy
+aise analyze --status                        # show which stages are stale/current
+aise analyze --force                         # force re-run all stages
+aise analyze --provider aistudio             # one source only
+aise analyze --step analyze                  # run one stage
+aise analyze --step graph
 ```
 
 ### Source Management
 ```bash
 aise source list                             # show configured sources
+aise source scan                             # scan standard locations for new sources
 aise source add aistudio /path/to/dir        # add AI Studio source directory
 aise source add gemini /path/to/dir          # add Gemini CLI source directory
-aise config show                             # view full config
+aise source remove aistudio /path/to/dir     # remove a source
+aise source disable claude                   # disable auto-discovery for a type
+aise source enable claude                    # re-enable auto-discovery
+```
+
+### Configuration
+```bash
+aise config show                             # view full config + resolved path
+aise config path                             # print config file path
 aise config init                             # create default config file
+aise dates                                   # show full date format reference
 ```
 
 ---
@@ -304,6 +366,9 @@ aise list --since 2026-01/2026-03            # Q1 2026
 aise list --when 202X                        # entire decade
 
 # --after/--before are accepted as hidden aliases for --since/--until
+
+# Show full reference
+aise dates
 ```
 
 ---
@@ -336,6 +401,7 @@ aise list --provider gemini
 
 # Add additional source directories
 aise source add aistudio ~/Downloads/ai-studio-exports
+aise source scan                             # auto-detect new sources
 aise source list
 ```
 
@@ -358,7 +424,18 @@ Each JSONL line is a JSON object with `type` (`user`/`assistant`/`system`), `tim
 
 ## Configuration
 
+Config file location (priority order):
+1. `--config` CLI flag
+2. `AI_SESSION_TOOLS_CONFIG` env var
+3. OS default: `~/Library/Application Support/ai_session_tools/config.json` (macOS) or `~/.config/ai_session_tools/config.json` (Linux)
+
 ```bash
-# Override projects directory (default: ~/.claude/projects)
+aise config show                             # view current config
+aise config path                             # print path (even if file doesn't exist)
+aise config init                             # create starter config
+```
+
+```bash
+# Override projects directory
 export AI_SESSION_TOOLS_PROJECTS=~/.claude/projects
 ```
