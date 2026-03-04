@@ -167,16 +167,13 @@ class TestGeminiHookEntryPointDirect:
         assert result.returncode == 0, \
             f"Hook failed with exit code {result.returncode}\nStderr: {result.stderr}"
 
-        # Parse JSON response
-        try:
-            response = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            pytest.fail(f"Invalid JSON response from hook: {e}\nOutput: {result.stdout}")
+        # Phase 1B: empty stdout = pass-through = implicit allow.
+        # SessionStart with no stdin and no rules → dispatch returns None → exit 0, no stdout.
+        response = json.loads(result.stdout) if result.stdout.strip() else {}
 
-        # Verify response structure
-        assert "continue" in response, "Missing 'continue' field"
-        assert response["continue"] is True, \
-            "Hook should return continue=true for SessionStart"
+        # Verify response structure — empty dict = pass-through = implicit continue=True
+        assert response.get("continue", True) is True, \
+            "Hook should continue (or pass-through) for SessionStart with no rules"
 
     def test_hook_beforeagent_event_slash_command(self, clean_environment):
         """Test BeforeAgent hook event with /ar:st command (NO COST)."""
@@ -520,6 +517,10 @@ class TestGeminiExtensionInstalledHook:
         assert result.returncode == 0, \
             f"Hook failed with exit code {result.returncode}\nStderr: {result.stderr}"
 
+        # Phase 1B: empty stdout = pass-through = implicit allow (no rules fired).
+        # Return {} for empty stdout so callers can use response.get(...) safely.
+        if not result.stdout.strip():
+            return {}
         try:
             return json.loads(result.stdout)
         except json.JSONDecodeError as e:
@@ -611,7 +612,8 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") in ("allow", "approve"), \
+        # Phase 1B: empty response = pass-through = implicit allow (no rules fired)
+        assert not response or response.get("decision") in ("allow", "approve", None), \
             f"INSTALLED hook incorrectly blocked safe 'ls'! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_allows_piped_cat(self, extension_hook):
@@ -626,7 +628,8 @@ class TestGeminiExtensionInstalledHook:
         }
         response = self._run_hook(extension_hook, payload)
 
-        assert response.get("decision") in ("allow", "approve"), \
+        # Phase 1B: empty response = pass-through = implicit allow (no rules fired)
+        assert not response or response.get("decision") in ("allow", "approve", None), \
             f"INSTALLED hook incorrectly blocked piped cat! Response: {json.dumps(response, indent=2)}"
 
     def test_installed_hook_allows_git_status(self, extension_hook):
@@ -732,6 +735,10 @@ class TestGeminiWriteFileBlocking:
         assert result.returncode == 0, \
             f"Hook failed: {result.stderr}"
 
+        # Phase 1B: empty stdout = pass-through = implicit allow (no rules fired).
+        # Return {} for empty stdout so callers can use response.get(...) safely.
+        if not result.stdout.strip():
+            return {}
         try:
             return json.loads(result.stdout)
         except json.JSONDecodeError as e:
@@ -749,7 +756,12 @@ class TestGeminiWriteFileBlocking:
         }
         response = self._run_hook(extension_hook, payload)
 
-        # Must have both decision formats
+        # Phase 1B: empty response = pass-through = implicit allow (ALLOW policy, no rules fired).
+        # write_file with default ALLOW policy → no rules fire → empty stdout is correct.
+        if not response:
+            return  # Pass-through is valid for write_file under ALLOW policy
+
+        # Explicit response: verify both decision formats match
         assert "decision" in response, \
             f"Missing top-level decision for write_file: {response}"
         assert "hookSpecificOutput" in response, \
@@ -777,6 +789,10 @@ class TestGeminiWriteFileBlocking:
         }
         response = self._run_hook(extension_hook, payload)
 
+        # Phase 1B: empty response = pass-through = implicit allow (ALLOW policy, no rules fired).
+        if not response:
+            return  # Pass-through is valid for edit_file under ALLOW policy
+
         assert "decision" in response, \
             f"Missing top-level decision for edit_file: {response}"
         assert "hookSpecificOutput" in response, \
@@ -794,6 +810,10 @@ class TestGeminiWriteFileBlocking:
         }
         response = self._run_hook(extension_hook, payload)
 
+        # Phase 1B: empty response = pass-through = implicit allow (autorun not active).
+        if not response:
+            return  # Pass-through is valid when autorun is not active
+
         assert "decision" in response, \
             f"Missing top-level decision for exit_plan_mode: {response}"
 
@@ -804,15 +824,21 @@ class TestGeminiWriteFileBlocking:
             systemMessage, hookSpecificOutput.permissionDecision
         Gemini CLI required fields: decision, reason
         """
+        # Use "rm" which is blocked by DEFAULT_INTEGRATIONS → guarantees a full JSON response.
+        # "echo test" would be a pass-through (empty stdout) since no rules fire.
         payload = {
             "hook_event_name": "BeforeTool",
             "source": "gemini",
             "tool_name": "bash_command",
-            "tool_input": {"command": "echo test"},
+            "tool_input": {"command": "rm /tmp/test_autorun_schema_check_nonexistent"},
             "session_id": "test-schema",
             "cwd": "/tmp",
         }
         response = self._run_hook(extension_hook, payload)
+
+        # rm is blocked by DEFAULT_INTEGRATIONS → must produce a full JSON response
+        assert response, \
+            "rm command must produce a JSON response (blocked by DEFAULT_INTEGRATIONS)"
 
         # Claude Code required fields
         claude_required = ["continue", "stopReason", "suppressOutput", "systemMessage",

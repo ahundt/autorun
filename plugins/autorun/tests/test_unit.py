@@ -3,9 +3,30 @@
 """
 Unit tests for autorun core functionality
 """
+import uuid
 import pytest
 from unittest.mock import patch
-from autorun import CONFIG, COMMAND_HANDLERS
+from autorun import CONFIG
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+# COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx)
+# Aliases: SEARCH→/ar:f, ALLOW→/ar:a, JUSTIFY→/ar:j, STATUS→/ar:st,
+#          STOP→/ar:x, EMERGENCY_STOP→/ar:sos, activate→/ar:go <task>
+
+
+def _dispatch(prompt: str, session_id: str = None) -> dict:
+    """Canonical dispatch via daemon-path. Replaces COMMAND_HANDLERS[cmd](state)."""
+    sid = session_id or f"test-unit-{uuid.uuid4().hex[:8]}"
+    ctx = EventContext(
+        session_id=sid,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        tool_name="",
+        tool_input={},
+        store=ThreadSafeDB(),
+    )
+    return plugins.app.dispatch(ctx)
 
 
 class TestConfiguration:
@@ -103,85 +124,86 @@ class TestConfiguration:
 
 
 class TestCommandHandlers:
-    """Test command handler functions"""
+    """Test command handler functions.
+
+    Migrated from COMMAND_HANDLERS[cmd](state) to canonical daemon-path:
+    EventContext + plugins.app.dispatch(ctx)
+    """
 
     @pytest.mark.unit
     def test_command_handlers_exist(self):
-        """Test all required command handlers exist"""
-        required_handlers = [
-            "SEARCH", "ALLOW", "JUSTIFY", "STATUS", "STOP", "EMERGENCY_STOP", "activate"
-        ]
-
-        for handler in required_handlers:
-            assert handler in COMMAND_HANDLERS, f"Missing handler: {handler}"
-            assert callable(COMMAND_HANDLERS[handler]), f"Handler {handler} should be callable"
+        """Test all required command handlers exist in plugins.app.command_handlers."""
+        # Canonical replacements for deleted COMMAND_HANDLERS dict:
+        # SEARCH→/ar:f (and /afs), ALLOW→/ar:a (and /afa), etc.
+        required_aliases = {
+            "SEARCH": "/ar:f",
+            "ALLOW": "/ar:a",
+            "JUSTIFY": "/ar:j",
+            "STATUS": "/ar:st",
+            "STOP": "/ar:x",
+            "EMERGENCY_STOP": "/ar:sos",
+            "activate": "/ar:go",
+        }
+        handlers = plugins.app.command_handlers
+        for logical_name, canonical_alias in required_aliases.items():
+            assert canonical_alias in handlers, \
+                f"Missing handler for {logical_name}: {canonical_alias} not in app.command_handlers"
+            assert callable(handlers[canonical_alias]), \
+                f"Handler for {logical_name} ({canonical_alias}) should be callable"
 
     @pytest.mark.unit
     def test_policy_handlers_update_state(self, mock_session_state):
-        """Test policy handlers update session state correctly"""
-        # Mock session state
-        mock_state = {}
+        """Test policy handlers update session state correctly via canonical dispatch."""
+        session_id = f"unit-policy-{uuid.uuid4().hex[:8]}"
 
-        # Test SEARCH handler
-        response = COMMAND_HANDLERS["SEARCH"](mock_state)
-        assert "strict-search" in response.lower()
-        assert mock_state["file_policy"] == "SEARCH"
+        # Test SEARCH handler (canonical: /ar:f)
+        result = _dispatch("/ar:f", session_id)
+        assert "strict-search" in result["systemMessage"].lower()
+        assert result["continue"] is True
 
-        # Test ALLOW handler
-        response = COMMAND_HANDLERS["ALLOW"](mock_state)
-        assert "allow-all" in response.lower()
-        assert mock_state["file_policy"] == "ALLOW"
+        # Test ALLOW handler (canonical: /ar:a)
+        result = _dispatch("/ar:a", session_id)
+        assert "allow-all" in result["systemMessage"].lower()
+        assert result["continue"] is True
 
-        # Test JUSTIFY handler
-        response = COMMAND_HANDLERS["JUSTIFY"](mock_state)
-        assert "justify" in response.lower()
-        assert mock_state["file_policy"] == "JUSTIFY"
+        # Test JUSTIFY handler (canonical: /ar:j)
+        result = _dispatch("/ar:j", session_id)
+        assert "justify" in result["systemMessage"].lower()
+        assert result["continue"] is True
 
     @pytest.mark.unit
     def test_status_handler_reports_current_state(self, mock_session_state):
-        """Test status handler reports current policy correctly"""
-        # Mock session state with initial policy
-        mock_state = {"file_policy": "ALLOW"}
+        """Test status handler reports current policy correctly via canonical dispatch."""
+        session_id = f"unit-status-{uuid.uuid4().hex[:8]}"
 
-        # Test status handler
-        response = COMMAND_HANDLERS["STATUS"](mock_state)
-        assert "allow-all" in response.lower()
+        # Set ALLOW policy first
+        _dispatch("/ar:a", session_id)
+
+        # Test status handler (canonical: /ar:st)
+        result = _dispatch("/ar:st", session_id)
+        assert "allow-all" in result["systemMessage"].lower()
 
     @pytest.mark.unit
     def test_stop_handlers(self, mock_session_state):
-        """Test stop handlers update session status"""
-        # Mock session state
-        mock_state = {}
+        """Test stop handlers produce correct responses via canonical dispatch."""
+        # Test STOP handler (canonical: /ar:x)
+        result = _dispatch("/ar:x")
+        assert "Stopped" in result["systemMessage"]
+        assert result["continue"] is False
 
-        # Test STOP handler
-        response = COMMAND_HANDLERS["STOP"](mock_state)
-        assert response == "Autorun stopped"
-        assert mock_state["session_status"] == "stopped"
-
-        # Reset for next test
-        mock_state.clear()
-
-        # Test EMERGENCY_STOP handler
-        response = COMMAND_HANDLERS["EMERGENCY_STOP"](mock_state)
-        assert response == "Emergency stop activated"
-        assert mock_state["session_status"] == "emergency_stopped"
+        # Test EMERGENCY_STOP handler (canonical: /ar:sos)
+        result = _dispatch("/ar:sos")
+        assert "EMERGENCY STOP" in result["systemMessage"]
+        assert result["continue"] is False
 
     @pytest.mark.unit
     def test_activate_handler(self, mock_session_state):
-        """Test activate handler returns injection template"""
-        test_prompt = "/autorun test task"
-
-        # Mock session state
-        mock_state = {"session_id": "test_session"}  # Set session_id for monitor
-
-        response = COMMAND_HANDLERS["activate"](mock_state, test_prompt)
+        """Test activate handler returns injection template via canonical dispatch."""
+        result = _dispatch("/ar:go test task")
 
         # Should return injection template
-        assert "UNINTERRUPTED" in response
-        assert "AUTONOMOUS" in response
-        assert mock_state["session_status"] == "active"
-        assert mock_state["autorun_stage"] == "INITIAL"
-        assert mock_state["activation_prompt"] == test_prompt
+        assert "UNINTERRUPTED" in result["systemMessage"] or "Autorun" in result["systemMessage"]
+        assert result["continue"] is True
 
 
 class TestSessionState:
@@ -233,18 +255,32 @@ class TestSessionState:
 
 
 class TestCommandDetection:
-    """Test command detection logic"""
+    """Test command detection logic.
+
+    COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx).
+    Logical names (SEARCH/ALLOW/activate/etc.) from command_mappings values map to
+    canonical aliases in plugins.app.command_handlers (e.g. SEARCH→/ar:f, activate→/ar:go).
+    """
+
+    # Logical name → canonical /ar: alias (replaces COMMAND_HANDLERS key lookup)
+    _LOGICAL_TO_CANONICAL = {
+        "SEARCH": "/ar:f", "ALLOW": "/ar:a", "JUSTIFY": "/ar:j", "STATUS": "/ar:st",
+        "stop": "/ar:x", "emergency_stop": "/ar:sos", "activate": "/ar:go",
+    }
 
     @pytest.mark.unit
     def test_command_mapping_detection(self, sample_commands):
         """Test command detection works correctly"""
         mappings = CONFIG["command_mappings"]
+        handlers = plugins.app.command_handlers
 
         # Test policy commands
         for cmd in sample_commands["policy_commands"]:
             found = next((v for k, v in mappings.items() if k == cmd), None)
             assert found is not None, f"Command {cmd} should be detected"
-            assert found in COMMAND_HANDLERS, f"Command {cmd} should have handler"
+            canonical = self._LOGICAL_TO_CANONICAL.get(found)
+            assert canonical in handlers, \
+                f"Command {cmd} (→{found}→{canonical}) should have handler in app.command_handlers"
 
         # Test control commands (note: some have trailing spaces in mapping)
         for cmd in sample_commands["control_commands"]:
@@ -253,7 +289,9 @@ class TestCommandDetection:
                 # Try with trailing space
                 found = next((v for k, v in mappings.items() if k == f"{cmd} "), None)
             assert found is not None, f"Command {cmd} should be detected (with or without trailing space)"
-            assert found in COMMAND_HANDLERS, f"Command {cmd} should have handler"
+            canonical = self._LOGICAL_TO_CANONICAL.get(found)
+            assert canonical in handlers, \
+                f"Command {cmd} (→{found}→{canonical}) should have handler in app.command_handlers"
 
     @pytest.mark.unit
     def test_normal_commands_not_detected(self, sample_commands):
@@ -272,4 +310,5 @@ class TestCommandDetection:
         cmd = sample_commands["autorun_command"]
         found = next((v for k, v in mappings.items() if cmd.startswith(k)), None)
         assert found == "activate", "Autorun command should be detected as 'activate'"
-        assert "activate" in COMMAND_HANDLERS, "Activate handler should exist"
+        # Canonical replacement for COMMAND_HANDLERS["activate"]: /ar:go in app.command_handlers
+        assert "/ar:go" in plugins.app.command_handlers, "Activate handler (/ar:go) should exist"

@@ -11,7 +11,27 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun import session_state, COMMAND_HANDLERS
+import uuid
+from autorun import session_state
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+# COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx)
+# Policy aliases: SEARCH→/ar:f, ALLOW→/ar:a, JUSTIFY→/ar:j, STATUS→/ar:st
+_POLICY_PROMPTS = {"SEARCH": "/ar:f", "ALLOW": "/ar:a", "JUSTIFY": "/ar:j"}
+
+
+def _dispatch_policy(session_id: str, policy: str) -> dict:
+    """Dispatch a policy command via canonical daemon-path. Returns response dict."""
+    ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=_POLICY_PROMPTS[policy],
+        tool_name="",
+        tool_input={},
+        store=ThreadSafeDB(),
+    )
+    return plugins.app.dispatch(ctx)
 
 
 class TestRealDatabaseOperations:
@@ -66,46 +86,57 @@ class TestRealDatabaseOperations:
                 state.clear()
 
     def test_policy_changes_persist(self):
-        """Test that policy changes persist using real database"""
-        session_id = "policy_persistence_test"
+        """Test that policy changes persist using real database.
 
-        # Test changing policies and verify they persist
-        policies = ["SEARCH", "ALLOW", "JUSTIFY"]
+        Canonical replacement for COMMAND_HANDLERS[policy](state):
+        Uses EventContext + plugins.app.dispatch(ctx) which auto-persists
+        file_policy via ctx.__setattr__ → ThreadSafeDB → session_state JSON.
+        """
+        session_id = f"policy_persistence_test_{uuid.uuid4().hex[:8]}"
 
-        for policy in policies:
+        for policy in ["SEARCH", "ALLOW", "JUSTIFY"]:
+            # Change policy via canonical dispatch
+            result = _dispatch_policy(session_id, policy)
+
+            # Verify response contains expected policy
+            assert "AutoFile policy:" in result["systemMessage"], \
+                f"Policy response must include 'AutoFile policy:' for {policy}"
+
+            # Verify policy persists in session_state (EventContext wrote through ThreadSafeDB)
             with session_state(session_id) as state:
-                # Change policy
-                response = COMMAND_HANDLERS[policy](state)
-
-                # Verify response contains expected policy
-                assert "AutoFile policy:" in response
-
-                # Verify state was updated
-                assert state["file_policy"] == policy
-
-            # Verify policy persists in new context
-            with session_state(session_id) as state:
-                assert state["file_policy"] == policy, f"Policy {policy} should persist"
+                assert state.get("file_policy") == policy, f"Policy {policy} should persist"
 
         # Clean up
         with session_state(session_id) as state:
             state.clear()
 
     def test_status_command_with_real_state(self):
-        """Test status command reflects real database state"""
-        session_id = "status_test_session"
+        """Test status command reflects real database state.
 
-        # Set initial policy
+        Canonical replacement for COMMAND_HANDLERS["STATUS"](state):
+        Uses EventContext + plugins.app.dispatch(ctx) with /ar:st prompt.
+        """
+        session_id = f"status_test_{uuid.uuid4().hex[:8]}"
+
+        # Set initial policy directly in session_state
         with session_state(session_id) as state:
             state["file_policy"] = "JUSTIFY"
             state["policy_changes"] = 3
 
-        # Test status command
-        with session_state(session_id) as state:
-            response = COMMAND_HANDLERS["STATUS"](state)
+        # Test status command via canonical dispatch
+        ctx = EventContext(
+            session_id=session_id,
+            event="UserPromptSubmit",
+            prompt="/ar:st",
+            tool_name="",
+            tool_input={},
+            store=ThreadSafeDB(),
+        )
+        result = plugins.app.dispatch(ctx)
 
-            # Should reflect current state
-            assert "justify-create" in response.lower(), "Status should show current policy"
+        # Should reflect current state
+        assert "justify-create" in result["systemMessage"].lower(), \
+            "Status should show current policy"
 
         # Clean up
         with session_state(session_id) as state:
@@ -142,30 +173,37 @@ class TestRealDatabaseOperations:
             state.clear()
 
     def test_multiple_policies_in_same_session(self):
-        """Test multiple policy changes in same session using real database"""
-        session_id = "multiple_policy_test"
+        """Test multiple policy changes in same session using real database.
 
+        Canonical replacement for COMMAND_HANDLERS[policy](state):
+        Each dispatch creates EventContext with the same session_id so policy
+        writes persist across calls (ThreadSafeDB → session_state JSON).
+        """
+        session_id = f"multiple_policy_test_{uuid.uuid4().hex[:8]}"
+
+        # Start with SEARCH
+        result1 = _dispatch_policy(session_id, "SEARCH")
         with session_state(session_id) as state:
-            # Start with SEARCH
-            response1 = COMMAND_HANDLERS["SEARCH"](state)
-            assert state["file_policy"] == "SEARCH"
+            assert state.get("file_policy") == "SEARCH"
 
-            # Change to ALLOW
-            response2 = COMMAND_HANDLERS["ALLOW"](state)
-            assert state["file_policy"] == "ALLOW"
+        # Change to ALLOW
+        result2 = _dispatch_policy(session_id, "ALLOW")
+        with session_state(session_id) as state:
+            assert state.get("file_policy") == "ALLOW"
 
-            # Change to JUSTIFY
-            response3 = COMMAND_HANDLERS["JUSTIFY"](state)
-            assert state["file_policy"] == "JUSTIFY"
+        # Change to JUSTIFY
+        result3 = _dispatch_policy(session_id, "JUSTIFY")
+        with session_state(session_id) as state:
+            assert state.get("file_policy") == "JUSTIFY"
 
-            # Verify all responses are valid
-            for response in [response1, response2, response3]:
-                assert "AutoFile policy:" in response
-                assert len(response) > 0
+        # Verify all responses are valid
+        for result in [result1, result2, result3]:
+            assert "AutoFile policy:" in result["systemMessage"]
+            assert len(result["systemMessage"]) > 0
 
         # Verify final state persists
         with session_state(session_id) as state:
-            assert state["file_policy"] == "JUSTIFY"
+            assert state.get("file_policy") == "JUSTIFY"
 
         # Clean up
         with session_state(session_id) as state:

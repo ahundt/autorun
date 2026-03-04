@@ -9,7 +9,10 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun import CONFIG, COMMAND_HANDLERS, log_info
+import uuid
+from autorun import CONFIG, log_info
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 
 def test_three_stage_confirmations():
     """Test three-stage confirmation markers are properly configured with DESCRIPTIVE strings"""
@@ -221,88 +224,117 @@ def test_config_values():
 
     print("✅ All configuration values are correct")
 
+def _dispatch(prompt: str, session_id: str = None) -> dict:
+    """Canonical dispatch via daemon-path plugins.app.dispatch().
+
+    Replaces deleted COMMAND_HANDLERS[cmd](state) calls.
+    Canonical path: EventContext + plugins.app.dispatch(ctx).
+    """
+    sid = session_id or f"test-cfg-{uuid.uuid4().hex[:8]}"
+    store = ThreadSafeDB()
+    ctx = EventContext(
+        session_id=sid,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        tool_name="",
+        tool_input={},
+        store=store,
+    )
+    return plugins.app.dispatch(ctx)
+
+
 def test_command_handlers():
-    """Test command handlers produce correct responses"""
+    """Test command handlers produce correct responses via canonical daemon-path dispatch.
 
-    # Use a simple dict instead of shelve for testing
-    test_state = {}
+    Canonical replacement for deleted COMMAND_HANDLERS[cmd](state):
+      - SEARCH → /ar:f  (plugins._make_policy_handler("SEARCH"))
+      - ALLOW  → /ar:a  (plugins._make_policy_handler("ALLOW"))
+      - JUSTIFY → /ar:j  (plugins._make_policy_handler("JUSTIFY"))
+      - STATUS → /ar:st  (plugins.handle_status)
+      - stop/STOP → /ar:x  (plugins.handle_stop)
+      - emergency_stop → /ar:sos  (plugins.handle_sos)
+      - activate → /ar:go <task>  (plugins.handle_activate)
+    All via: EventContext + plugins.app.dispatch(ctx).
+    """
+    # Test policy commands via canonical path
+    result = _dispatch("/ar:f")
+    assert result is not None, "SEARCH handler must return a result"
+    assert result["continue"] is True, "Policy commands continue to AI"
+    assert "strict-search" in result["systemMessage"], "SEARCH response must mention strict-search"
+    assert "AutoFile policy:" in result["systemMessage"], "SEARCH response must include policy header"
 
-    # Test policy commands (uppercase only - main.py doesn't have lowercase for policy commands)
-    test_state.clear()
-    response = COMMAND_HANDLERS["SEARCH"](test_state)
-    expected = "AutoFile policy: strict-search - STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep} tools. NO new files."
-    assert response == expected, "SEARCH handler response mismatch"
-    assert test_state["file_policy"] == "SEARCH", "SEARCH handler should update state"
+    result = _dispatch("/ar:a")
+    assert result is not None, "ALLOW handler must return a result"
+    assert result["continue"] is True
+    assert "allow-all" in result["systemMessage"], "ALLOW response must mention allow-all"
 
-    test_state.clear()
-    response = COMMAND_HANDLERS["ALLOW"](test_state)
-    expected = "AutoFile policy: allow-all - ALLOW ALL: Full permission to create/modify files."
-    assert response == expected, "ALLOW handler response mismatch"
-    assert test_state["file_policy"] == "ALLOW", "ALLOW handler should update state"
+    result = _dispatch("/ar:j")
+    assert result is not None, "JUSTIFY handler must return a result"
+    assert result["continue"] is True
+    assert "justify-create" in result["systemMessage"], "JUSTIFY response must mention justify-create"
 
-    test_state.clear()
-    response = COMMAND_HANDLERS["JUSTIFY"](test_state)
-    expected = "AutoFile policy: justify-create - JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."
-    assert response == expected, "JUSTIFY handler response mismatch"
-    assert test_state["file_policy"] == "JUSTIFY", "JUSTIFY handler should update state"
+    # Test status command
+    result = _dispatch("/ar:st")
+    assert result is not None, "STATUS handler must return a result"
+    assert result["continue"] is True
+    assert "AutoFile policy:" in result["systemMessage"], "STATUS response must show current policy"
 
-    # Test status command (both versions available)
-    for status_cmd in ["STATUS", "status"]:
-        response = COMMAND_HANDLERS[status_cmd](test_state)
-        expected = "Current policy: justify-create"
-        assert response == expected, f"{status_cmd} handler response mismatch"
+    # Test stop commands
+    result = _dispatch("/ar:x")
+    assert result is not None, "stop handler must return a result"
+    assert result["continue"] is False, "Stop command must NOT continue to AI"
+    assert "Stopped" in result["systemMessage"], "Stop response must mention 'Stopped'"
 
-    # Test stop commands (both versions available)
-    for stop_cmd in ["stop", "STOP"]:
-        test_state.clear()
-        response = COMMAND_HANDLERS[stop_cmd](test_state)
-        expected = "Autorun stopped"
-        assert response == expected, f"{stop_cmd} handler response mismatch"
-        assert test_state["session_status"] == "stopped", f"{stop_cmd} handler should update state"
-
-    for emergency_cmd in ["emergency_stop", "EMERGENCY_STOP"]:
-        test_state.clear()
-        response = COMMAND_HANDLERS[emergency_cmd](test_state)
-        expected = "Emergency stop activated"
-        assert response == expected, f"{emergency_cmd} handler response mismatch"
-        assert test_state["session_status"] == "emergency_stopped", f"{emergency_cmd} handler should update state"
+    result = _dispatch("/ar:sos")
+    assert result is not None, "emergency stop handler must return a result"
+    assert result["continue"] is False, "Emergency stop must NOT continue to AI"
+    assert "EMERGENCY STOP" in result["systemMessage"], "Emergency stop response must mention 'EMERGENCY STOP'"
 
     # Test activation command
-    test_prompt = "/autorun test task description"
-    test_state.clear()
-    test_state["session_id"] = "test_session"  # Set session_id for monitor
-    response = COMMAND_HANDLERS["activate"](test_state, test_prompt)
-    assert "UNINTERRUPTED, FULLY AUTONOMOUS" in response, "activate handler should return injection template"
-    assert test_state["session_status"] == "active", "activate handler should set session status"
-    assert test_state["autorun_stage"] == "INITIAL", "activate handler should set autorun stage"
-    assert test_state["activation_prompt"] == test_prompt, "activate handler should store activation prompt"
+    result = _dispatch("/ar:go test task description")
+    assert result is not None, "activate handler must return a result"
+    assert result["continue"] is True, "Autorun activation continues to AI"
+    assert "UNINTERRUPTED" in result["systemMessage"] or "Autorun" in result["systemMessage"], \
+        "Activate response must contain injection template or task confirmation"
 
     print("✅ All command handlers produce correct responses")
 
 def test_handler_variations_available():
-    """Test that required handler variations are available"""
-    # Policy commands - uppercase only
-    policy_handlers = ["SEARCH", "ALLOW", "JUSTIFY"]
-    for handler in policy_handlers:
-        assert handler in COMMAND_HANDLERS, f"Missing policy handler: {handler}"
+    """Test that required handler variations are registered in canonical daemon-path.
 
-    # Commands with both uppercase and lowercase
-    expected_pairs = [
-        ("STATUS", "status"),
-        ("STOP", "stop"),
-        ("EMERGENCY_STOP", "emergency_stop")
-    ]
+    Canonical replacement for COMMAND_HANDLERS dict:
+      Handlers are now registered in plugins.app.command_handlers via @app.command() decorator.
+      Both short (/ar:*) and legacy (/afs, /afa, etc.) aliases are registered.
+    """
+    handlers = plugins.app.command_handlers
 
-    for uppercase, lowercase in expected_pairs:
-        assert uppercase in COMMAND_HANDLERS, f"Missing uppercase handler: {uppercase}"
-        assert lowercase in COMMAND_HANDLERS, f"Missing lowercase handler: {lowercase}"
-        # Both should point to the same function
-        assert COMMAND_HANDLERS[uppercase] == COMMAND_HANDLERS[lowercase], f"Handlers for {uppercase}/{lowercase} should be the same function"
+    # Policy commands — short and legacy aliases must be registered
+    policy_aliases = {
+        "SEARCH": ["/ar:f", "/ar:find", "/afs"],
+        "ALLOW":  ["/ar:a", "/ar:allow", "/afa"],
+        "JUSTIFY": ["/ar:j", "/ar:justify", "/afj"],
+    }
+    for policy, aliases in policy_aliases.items():
+        for alias in aliases:
+            assert alias in handlers, f"Missing policy handler alias: {alias} (policy: {policy})"
+
+    # Status command — multiple aliases
+    for alias in ["/ar:st", "/ar:status", "/afst", "STATUS"]:
+        assert alias in handlers, f"Missing status handler alias: {alias}"
+
+    # Stop commands
+    for alias in ["/ar:x", "/ar:stop", "/autostop", "stop"]:
+        assert alias in handlers, f"Missing stop handler alias: {alias}"
+
+    # Emergency stop
+    for alias in ["/ar:sos", "/ar:estop", "/estop", "emergency_stop"]:
+        assert alias in handlers, f"Missing emergency_stop handler alias: {alias}"
 
     # Activation command
-    assert "activate" in COMMAND_HANDLERS, "Missing activate handler"
+    for alias in ["/ar:go", "/ar:run", "/autorun"]:
+        assert alias in handlers, f"Missing activate handler alias: {alias}"
 
-    print("✅ All required handler variations available")
+    print("✅ All required handler variations available in plugins.app.command_handlers")
 
 def test_log_function():
     """Test log_info function writes to correct log files"""

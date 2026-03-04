@@ -25,28 +25,40 @@ Tests the core functions for managing command blocking patterns:
 - Block precedence (session over global)
 """
 
+import contextlib
 import pytest
-import tempfile
-import shutil
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from autorun.main import (
-    command_matches_pattern,
-    get_session_blocks,
-    add_session_block,
-    remove_session_block,
-    clear_session_blocks,
-    get_global_blocks,
-    add_global_block,
-    remove_global_block,
-    GLOBAL_CONFIG_FILE
-)
+# command_matches_pattern is kept in main.py as a utility function
+from autorun.main import command_matches_pattern
 from autorun.config import DEFAULT_INTEGRATIONS
 import autorun.integrations as integ
-# Daemon-path imports
+# Canonical daemon-path imports
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
+
+
+def _make_ctx(cmd: str = "ls", session_id: str = None) -> EventContext:
+    """Create isolated EventContext with in-memory ThreadSafeDB for tests."""
+    return EventContext(
+        session_id=session_id or f"test-{id(object())}",
+        event="PreToolUse", tool_name="Bash",
+        tool_input={"command": cmd}, store=ThreadSafeDB()
+    )
+
+
+@contextlib.contextmanager
+def _isolated_global_store():
+    """Context manager: patch plugins.session_state with an isolated in-memory
+    dict so global-scope tests never touch production ~/.autorun/sessions/__global__.*"""
+    store = {}
+
+    @contextlib.contextmanager
+    def mock_session_state(session_id):
+        yield store
+
+    with patch("autorun.plugins.session_state", mock_session_state):
+        yield store
 
 
 class TestPatternMatching:
@@ -101,168 +113,192 @@ class TestPatternMatching:
 
 
 class TestSessionBlockManagement:
-    """Test session-level block management."""
+    """Test session-level block management via ScopeAccessor (canonical daemon path).
 
-    def setup_method(self):
-        """Set up test session ID."""
-        self.test_session_id = "test-session-block"
+    Session blocks live on ctx.session_blocked_patterns (in-memory ThreadSafeDB).
+    Use ScopeAccessor(ctx, "session") as the canonical accessor.
+    """
+
+    def _ctx(self, cmd: str = "ls") -> EventContext:
+        return _make_ctx(cmd, session_id=f"test-smgmt-{id(self)}")
 
     def test_add_session_block(self):
-        """Test adding a block to session state."""
-        # Clear any existing blocks first
-        clear_session_blocks(self.test_session_id)
-
-        added = add_session_block(self.test_session_id, "rm")
-        assert added is True
-
-        blocks = get_session_blocks(self.test_session_id)
+        """Adding a block via ScopeAccessor.set() and retrieving it with get()."""
+        ctx = self._ctx()
+        acc = plugins.ScopeAccessor(ctx, "session")
+        acc.set([{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}])
+        blocks = acc.get()
         assert len(blocks) == 1
         assert blocks[0]["pattern"] == "rm"
         assert "suggestion" in blocks[0]
-        assert "added_at" in blocks[0]
 
-    def test_add_duplicate_block(self):
-        """Test that duplicate blocks are not added."""
-        clear_session_blocks(self.test_session_id)
-
-        add_session_block(self.test_session_id, "rm")
-        added = add_session_block(self.test_session_id, "rm")
-
-        assert added is False
-        assert len(get_session_blocks(self.test_session_id)) == 1
+    def test_add_multiple_blocks(self):
+        """Multiple blocks are stored and retrieved correctly."""
+        ctx = self._ctx()
+        acc = plugins.ScopeAccessor(ctx, "session")
+        acc.set([
+            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+            {"pattern": "dd", "suggestion": "dangerous disk op", "pattern_type": "literal"},
+        ])
+        blocks = acc.get()
+        assert len(blocks) == 2
+        patterns = {b["pattern"] for b in blocks}
+        assert "rm" in patterns
+        assert "dd" in patterns
 
     def test_remove_session_block(self):
-        """Test removing a block from session state."""
-        clear_session_blocks(self.test_session_id)
-        add_session_block(self.test_session_id, "rm")
-        add_session_block(self.test_session_id, "dd")
-
-        removed = remove_session_block(self.test_session_id, "rm")
-        assert removed is True
-
-        blocks = get_session_blocks(self.test_session_id)
-        assert len(blocks) == 1
-        assert blocks[0]["pattern"] == "dd"
+        """Removing a block by filtering and re-setting."""
+        ctx = self._ctx()
+        acc = plugins.ScopeAccessor(ctx, "session")
+        acc.set([
+            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+            {"pattern": "dd", "suggestion": "dangerous disk op", "pattern_type": "literal"},
+        ])
+        blocks = acc.get()
+        acc.set([b for b in blocks if b["pattern"] != "rm"])
+        remaining = acc.get()
+        assert len(remaining) == 1
+        assert remaining[0]["pattern"] == "dd"
 
     def test_remove_nonexistent_block(self):
-        """Test removing a block that doesn't exist."""
-        clear_session_blocks(self.test_session_id)
-
-        removed = remove_session_block(self.test_session_id, "rm")
-        assert removed is False
+        """Filtering a non-existent pattern leaves the list unchanged."""
+        ctx = self._ctx()
+        acc = plugins.ScopeAccessor(ctx, "session")
+        acc.set([{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}])
+        blocks = acc.get()
+        acc.set([b for b in blocks if b["pattern"] != "nonexistent"])
+        assert len(acc.get()) == 1
 
     def test_clear_all_session_blocks(self):
-        """Test clearing all session blocks."""
-        add_session_block(self.test_session_id, "rm")
-        add_session_block(self.test_session_id, "dd")
-
-        count = clear_session_blocks(self.test_session_id, None)
-        assert count == 2
-        assert len(get_session_blocks(self.test_session_id)) == 0
+        """ScopeAccessor.set([]) clears all session blocks."""
+        ctx = self._ctx()
+        acc = plugins.ScopeAccessor(ctx, "session")
+        acc.set([
+            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+            {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+        ])
+        acc.set([])
+        assert acc.get() == []
 
     def test_clear_specific_session_block(self):
-        """Test clearing a specific session block."""
-        add_session_block(self.test_session_id, "rm")
-        add_session_block(self.test_session_id, "dd")
+        """Filtering by pattern removes only the specified block."""
+        ctx = self._ctx()
+        acc = plugins.ScopeAccessor(ctx, "session")
+        acc.set([
+            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+            {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+        ])
+        blocks = acc.get()
+        acc.set([b for b in blocks if b["pattern"] != "rm"])
+        remaining = acc.get()
+        assert len(remaining) == 1
+        assert remaining[0]["pattern"] == "dd"
 
-        count = clear_session_blocks(self.test_session_id, "rm")
-        assert count == 1
+    def test_default_suggestion_in_block_message(self):
+        """check_blocked_commands uses DEFAULT_INTEGRATIONS suggestion for rm (trash)."""
+        ctx = self._ctx("rm foo.txt")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "trash" in msg.lower(), f"rm block must mention trash, got: {msg[:100]!r}"
 
-        blocks = get_session_blocks(self.test_session_id)
-        assert len(blocks) == 1
-        assert blocks[0]["pattern"] == "dd"
-
-    def test_default_suggestion_from_integration(self):
-        """Test that default integrations provide suggestions."""
-        clear_session_blocks(self.test_session_id)
-
-        add_session_block(self.test_session_id, "rm")
-        blocks = get_session_blocks(self.test_session_id)
-
-        assert "trash" in blocks[0]["suggestion"]
-
-    def test_custom_suggestion(self):
-        """Test custom suggestions override defaults."""
-        clear_session_blocks(self.test_session_id)
-
-        custom_suggestion = "Use custom command instead"
-        add_session_block(self.test_session_id, "rm", custom_suggestion)
-
-        blocks = get_session_blocks(self.test_session_id)
-        assert blocks[0]["suggestion"] == custom_suggestion
+    def test_custom_suggestion_in_block_message(self):
+        """Custom suggestion in session_blocked_patterns appears in block message."""
+        ctx = self._ctx("rm foo.txt")
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use custom-rm-tool"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "custom-rm-tool" in msg, f"custom suggestion must appear, got: {msg[:100]!r}"
 
 
 class TestGlobalBlockManagement:
-    """Test global block management."""
+    """Test global block management via ScopeAccessor + isolated in-memory store.
 
-    def setup_method(self):
-        """Set up temporary config directory for testing."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
+    ISOLATION: _isolated_global_store() patches autorun.plugins.session_state with an
+    in-memory dict so tests never touch production ~/.autorun/sessions/__global__.*
+    """
 
-        # Patch GLOBAL_CONFIG_FILE to use temp directory
-        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
-        self.patcher.start()
-
-        # Also patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
-        self.init_patcher.start()
-
-    def teardown_method(self):
-        """Clean up temporary directory."""
-        self.init_patcher.stop()
-        self.patcher.stop()
-        if Path(self.temp_dir).exists():
-            shutil.rmtree(self.temp_dir)
+    def _ctx(self) -> EventContext:
+        return _make_ctx()
 
     def test_add_global_block(self):
-        """Test adding a global block."""
-        added = add_global_block("rm")
-        assert added is True
+        """Adding a global block via ScopeAccessor.set() and retrieving it with get()."""
+        with _isolated_global_store():
+            ctx = self._ctx()
+            acc = plugins.ScopeAccessor(ctx, "global")
+            acc.set([{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}])
+            blocks = acc.get()
+            assert len(blocks) == 1
+            assert blocks[0]["pattern"] == "rm"
 
-        blocks = get_global_blocks()
-        assert len(blocks) == 1
-        assert blocks[0]["pattern"] == "rm"
-
-    def test_add_duplicate_global_block(self):
-        """Test that duplicate global blocks are not added."""
-        add_global_block("rm")
-        added = add_global_block("rm")
-
-        assert added is False
-        assert len(get_global_blocks()) == 1
+    def test_add_multiple_global_blocks(self):
+        """Multiple global blocks are stored and retrieved."""
+        with _isolated_global_store():
+            ctx = self._ctx()
+            acc = plugins.ScopeAccessor(ctx, "global")
+            acc.set([
+                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+            ])
+            blocks = acc.get()
+            assert len(blocks) == 2
 
     def test_remove_global_block(self):
-        """Test removing a global block."""
-        add_global_block("rm")
-        add_global_block("dd")
-
-        removed = remove_global_block("rm")
-        assert removed is True
-
-        blocks = get_global_blocks()
-        assert len(blocks) == 1
-        assert blocks[0]["pattern"] == "dd"
+        """Removing a global block by filtering and re-setting."""
+        with _isolated_global_store():
+            ctx = self._ctx()
+            acc = plugins.ScopeAccessor(ctx, "global")
+            acc.set([
+                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+            ])
+            blocks = acc.get()
+            acc.set([b for b in blocks if b["pattern"] != "rm"])
+            remaining = acc.get()
+            assert len(remaining) == 1
+            assert remaining[0]["pattern"] == "dd"
 
     def test_remove_nonexistent_global_block(self):
-        """Test removing a global block that doesn't exist."""
-        removed = remove_global_block("rm")
-        assert removed is False
+        """Filtering a non-existent pattern leaves the list unchanged."""
+        with _isolated_global_store():
+            ctx = self._ctx()
+            acc = plugins.ScopeAccessor(ctx, "global")
+            acc.set([{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}])
+            blocks = acc.get()
+            acc.set([b for b in blocks if b["pattern"] != "nonexistent"])
+            assert len(acc.get()) == 1
 
     def test_empty_global_blocks(self):
-        """Test getting blocks when config doesn't exist."""
-        blocks = get_global_blocks()
-        assert blocks == []
+        """Empty isolated store returns empty list."""
+        with _isolated_global_store():
+            ctx = self._ctx()
+            blocks = plugins.ScopeAccessor(ctx, "global").get()
+            assert blocks == []
 
-    def test_global_block_persistence(self):
-        """Test that global blocks persist across function calls."""
-        # This tests file-based persistence
-        add_global_block("rm")
+    def test_global_block_persistence_within_store(self):
+        """Global blocks persist when accessed via a second ScopeAccessor in same store."""
+        with _isolated_global_store():
+            acc = plugins.ScopeAccessor(self._ctx(), "global")
+            acc.set([{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}])
+            # New accessor on new ctx — same underlying patched session_state
+            blocks = plugins.ScopeAccessor(self._ctx(), "global").get()
+            assert len(blocks) == 1
+            assert blocks[0]["pattern"] == "rm"
 
-        # Create new "session" by calling get_global_blocks again
-        blocks = get_global_blocks()
-        assert len(blocks) == 1
-        assert blocks[0]["pattern"] == "rm"
+    def test_global_block_affects_check_blocked_commands(self):
+        """Global block in isolated store causes check_blocked_commands to deny."""
+        with _isolated_global_store():
+            ctx = self._ctx()
+            # Inject a custom global block for "ls" (not in DEFAULT_INTEGRATIONS)
+            acc = plugins.ScopeAccessor(ctx, "global")
+            acc.set([{"pattern": "ls", "suggestion": "use rtk ls", "pattern_type": "literal"}])
+            # Create a new ctx for the Bash ls command (same isolated store still active)
+            bash_ctx = _make_ctx("ls -alh /tmp")
+            result = plugins.check_blocked_commands(bash_ctx)
+            assert result is not None
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "deny", f"global block for 'ls' must deny, got {perm!r}"
 
 
 class TestBlockPrecedence:

@@ -106,43 +106,43 @@ class TestParseSelection:
         """Verify 'all' returns all plugins."""
         install = get_install_module()
         result = install._parse_selection("all")
-        assert result == ["autorun", "pdf-extractor"]
+        assert result == ["ar", "pdf-extractor"]
 
     def test_parse_empty(self):
         """Verify empty string treated as 'all'."""
         install = get_install_module()
         result = install._parse_selection("")
-        assert result == ["autorun", "pdf-extractor"]
+        assert result == ["ar", "pdf-extractor"]
 
     def test_parse_single(self):
-        """Verify single plugin selection."""
+        """Verify single plugin selection by canonical name 'ar'."""
         install = get_install_module()
-        result = install._parse_selection("autorun")
-        assert result == ["autorun"]
+        result = install._parse_selection("ar")
+        assert result == ["ar"]
 
     def test_parse_multiple(self):
         """Verify comma-separated selection."""
         install = get_install_module()
-        result = install._parse_selection("autorun,pdf-extractor")
-        assert result == ["autorun", "pdf-extractor"]
+        result = install._parse_selection("ar,pdf-extractor")
+        assert result == ["ar", "pdf-extractor"]
 
     def test_parse_with_spaces(self):
         """Verify spaces are stripped."""
         install = get_install_module()
-        result = install._parse_selection("autorun , pdf-extractor")
-        assert result == ["autorun", "pdf-extractor"]
+        result = install._parse_selection("ar , pdf-extractor")
+        assert result == ["ar", "pdf-extractor"]
 
     def test_parse_deduplicates(self):
         """Verify duplicate plugins are removed."""
         install = get_install_module()
-        result = install._parse_selection("autorun,autorun,pdf-extractor")
-        assert result == ["autorun", "pdf-extractor"]
+        result = install._parse_selection("ar,ar,pdf-extractor")
+        assert result == ["ar", "pdf-extractor"]
 
     def test_parse_invalid_plugins_skipped(self):
         """Verify invalid plugin names are skipped."""
         install = get_install_module()
-        result = install._parse_selection("autorun,invalid,pdf-extractor")
-        assert result == ["autorun", "pdf-extractor"]
+        result = install._parse_selection("ar,invalid,pdf-extractor")
+        assert result == ["ar", "pdf-extractor"]
 
 
 class TestMapLegacyFlags:

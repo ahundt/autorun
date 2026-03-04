@@ -125,14 +125,13 @@ class TestHookEntryFailOpen:
         # Should exit 0 (not crash)
         assert result.returncode == 0, f"Exit {result.returncode}, stderr: {result.stderr}"
 
-        # Should output valid JSON
-        try:
-            output = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            pytest.fail(f"Invalid JSON: {result.stdout}")
+        # Phase 1B: empty stdout = pass-through = implicit allow.
+        # This IS the correct fail-open behavior — Claude Code treats no JSON
+        # output as implicit allow, same as {"continue": true}.
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
 
-        # Should have continue=True (fail-open)
-        assert output.get("continue") is True
+        # Should have continue=True (fail-open) — empty dict defaults to True
+        assert output.get("continue", True) is True
 
     def test_invalid_plugin_root_fails_open(self):
         """Invalid CLAUDE_PLUGIN_ROOT outputs valid JSON and exits 0."""
@@ -586,14 +585,10 @@ class TestUVCompatibility:
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
-        # Verify valid JSON on stdout
-        try:
-            output = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            pytest.fail(
-                f"Hook produced invalid JSON on stdout: {result.stdout!r}\n"
-                f"stderr: {result.stderr}"
-            )
+        # Phase 1B: empty stdout = pass-through = implicit allow (no rules fired).
+        # Input {"tool_name":"Bash",...} with no hook_event_name → event=unknown →
+        # dispatch returns None → exit 0 with no stdout (RTK compatibility).
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
 
         # Check for unexpected stderr (filter build/install noise)
         stderr_lines = [
@@ -648,16 +643,14 @@ class TestUVCompatibility:
             f"stderr: {result.stderr}"
         )
 
-        try:
-            output = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            pytest.fail(
-                f"Hook produced invalid JSON for 'rm' command: {result.stdout!r}\n"
-                f"stderr: {result.stderr}"
-            )
+        # Phase 1B: empty stdout = pass-through = implicit allow.
+        # Input has no hook_event_name → event=unknown → dispatch returns None →
+        # exit 0 with no stdout. Empty = pass-through (no rules fire without event).
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
 
-        assert "continue" in output, (
-            f"Hook response missing 'continue' field for 'rm' command: {output}"
+        # Empty dict = pass-through = implicit allow (not a block)
+        assert output.get("continue", True) is not False, (
+            f"Hook should not block 'rm' without configured session rules: {output}"
         )
 
 

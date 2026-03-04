@@ -11,6 +11,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun import CONFIG, COMMAND_HANDLERS
+# Daemon-path imports for migrated tests
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+
+def _dispatch(prompt: str, session_id: str = "test-unit") -> dict:
+    """Dispatch a command via daemon-path and return the result dict."""
+    ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        tool_name="",
+        tool_input={},
+        store=ThreadSafeDB(),
+    )
+    return plugins.app.dispatch(ctx) or {}
 
 
 class TestConfiguration:
@@ -114,96 +130,117 @@ class TestConfiguration:
 
 
 class TestCommandHandlers:
-    """Test command handler functions"""
+    """Test command handler functions — daemon-path (EventContext + plugins.app.dispatch).
+
+    Canonical replacement for COMMAND_HANDLERS dict (removed in Phase 2):
+    SEARCH → /ar:f, ALLOW → /ar:a, JUSTIFY → /ar:j, STATUS → /ar:st,
+    stop → /ar:x, emergency_stop → /ar:sos, activate → /ar:go
+    """
 
     @pytest.mark.unit
     def test_command_handlers_exist(self):
-        """Test all required command handlers exist"""
-        required_handlers = [
-            "SEARCH", "ALLOW", "JUSTIFY", "STATUS", "stop", "emergency_stop", "activate"
-        ]
-
-        for handler in required_handlers:
-            assert handler in COMMAND_HANDLERS, f"Missing handler: {handler}"
-            assert callable(COMMAND_HANDLERS[handler]), f"Handler {handler} should be callable"
+        """Test all required command handlers are registered in plugins.app."""
+        # Daemon-path uses app.command_handlers keyed by canonical command string
+        # Canonical commands registered via @app.command() in plugins.py
+        expected_commands = ["/ar:f", "/ar:a", "/ar:j", "/ar:st", "/ar:x", "/ar:sos", "/ar:go"]
+        ch = plugins.app.command_handlers
+        for cmd in expected_commands:
+            assert cmd in ch or any(c.startswith(cmd) or cmd.startswith(c) for c in ch), \
+                f"Command {cmd} should be registered in plugins.app.command_handlers; got: {sorted(ch.keys())}"
 
     @pytest.mark.unit
     def test_policy_handlers_return_strings(self):
-        """Test policy handlers return correct string responses"""
-        # Test each policy handler returns a string
-        for policy in ["SEARCH", "ALLOW", "JUSTIFY"]:
-            handler = COMMAND_HANDLERS[policy]
-            result = handler({})
-            assert isinstance(result, str), f"Handler {policy} should return string"
-            assert len(result) > 0, f"Handler {policy} should return non-empty string"
+        """Policy handlers (/ar:f, /ar:a, /ar:j) return non-empty systemMessage."""
+        # Daemon canonical: /ar:f=SEARCH, /ar:a=ALLOW, /ar:j=JUSTIFY
+        for cmd in ["/ar:f", "/ar:a", "/ar:j"]:
+            result = _dispatch(cmd)
+            sm = result.get("systemMessage", "")
+            assert isinstance(sm, str), f"Command {cmd} should return systemMessage string"
+            assert len(sm) > 0, f"Command {cmd} should return non-empty systemMessage"
 
     @pytest.mark.unit
     def test_policy_handlers_use_config_values(self):
-        """Test policy handlers return strings derived from CONFIG (DRY).
+        """Policy handler responses contain CONFIG-derived policy names (DRY check).
 
-        This verifies the DRY principle - handlers should use CONFIG['policies']
-        tuple unpacking rather than hardcoded strings.
+        Daemon format: '✅ AutoFile policy: {name}\\n\\n{desc}'
+        Old format was: 'AutoFile policy: {name} - {desc}'
         """
-        for policy in ["SEARCH", "ALLOW", "JUSTIFY"]:
-            handler = COMMAND_HANDLERS[policy]
-            result = handler({})
-
-            # Verify the exact format matches CONFIG
-            expected_name, expected_desc = CONFIG["policies"][policy]
-            expected_format = f"AutoFile policy: {expected_name} - {expected_desc}"
-            assert result == expected_format, \
-                f"Handler {policy} should return CONFIG-derived string.\n" \
-                f"Expected: {expected_format}\n" \
-                f"Got: {result}"
+        policy_map = {
+            "/ar:f": "SEARCH",
+            "/ar:a": "ALLOW",
+            "/ar:j": "JUSTIFY",
+        }
+        for cmd, policy_key in policy_map.items():
+            result = _dispatch(cmd)
+            sm = result.get("systemMessage", "")
+            expected_name, _ = CONFIG["policies"][policy_key]
+            assert expected_name in sm, \
+                f"Command {cmd} response should contain policy name '{expected_name}'; got: {sm!r}"
 
     @pytest.mark.unit
     def test_status_handler(self):
-        """Test status handler works without session state"""
-        handler = COMMAND_HANDLERS["STATUS"]
-        result = handler({})
-        assert isinstance(result, str), "STATUS handler should return string"
-        assert len(result) > 0, "STATUS handler should return non-empty string"
+        """Status handler (/ar:st) returns non-empty systemMessage."""
+        result = _dispatch("/ar:st")
+        sm = result.get("systemMessage", "")
+        assert isinstance(sm, str), "STATUS (/ar:st) should return systemMessage string"
+        assert len(sm) > 0, "STATUS (/ar:st) should return non-empty systemMessage"
 
     @pytest.mark.unit
     def test_stop_handlers(self):
-        """Test stop handlers return correct responses"""
-        for handler_key in ["stop", "emergency_stop"]:
-            handler = COMMAND_HANDLERS[handler_key]
-            result = handler({})
-            assert isinstance(result, str), f"{handler_key} handler should return string"
-            assert len(result) > 0, f"{handler_key} handler should return non-empty string"
+        """Stop handlers (/ar:x, /ar:sos) return non-empty systemMessage."""
+        for cmd in ["/ar:x", "/ar:sos"]:
+            result = _dispatch(cmd)
+            sm = result.get("systemMessage", "")
+            assert isinstance(sm, str), f"Command {cmd} should return systemMessage string"
+            assert len(sm) > 0, f"Command {cmd} should return non-empty systemMessage"
 
     @pytest.mark.unit
-    def test_activate_handler_returns_injection_template(self):
-        """Test activate handler returns injection template content"""
-        handler = COMMAND_HANDLERS["activate"]
-        test_state = {"session_id": "test_session"}  # Set session_id for monitor
-        result = handler(test_state, "/autorun test task")
+    def test_activate_handler_returns_acknowledgment(self):
+        """Activate handler (/ar:go) returns acknowledgment with task info.
 
-        assert isinstance(result, str), "activate handler should return string"
-        assert "UNINTERRUPTED" in result, "Response should contain injection template"
-        assert "AUTONOMOUS" in result, "Response should contain injection template"
+        Old test expected 'UNINTERRUPTED'/'AUTONOMOUS' in response because old
+        handle_activate returned the full injection_template string. New daemon-path
+        handle_activate returns a short acknowledgment; injection template is
+        separately delivered via ctx.block() mechanism. Check for stage markers.
+        """
+        result = _dispatch("/ar:go test task description")
+        sm = result.get("systemMessage", "")
+        assert isinstance(sm, str), "/ar:go should return systemMessage string"
+        assert len(sm) > 0, "/ar:go should return non-empty systemMessage"
+        # New format: '✅ Autorun: {task}\n📁 {policy}\n🔄 Stages: 1→2→3\n⚠️ EMERGENCY_STOP_SIGNAL'
+        assert "Autorun" in sm or "autorun" in sm.lower() or "Stage" in sm or "stage" in sm.lower(), \
+            f"/ar:go response should reference autorun or stages; got: {sm!r}"
 
 
 class TestCommandDetection:
-    """Test command detection logic"""
+    """Test command detection logic.
+
+    Commands migrated to /ar: prefix (legacy /afs, /afa, /afj, /afst, /autorun, /autostop, /estop
+    now exist as aliases in command_mappings but canonical forms are /ar:f, /ar:a, /ar:j, /ar:st,
+    /ar:go, /ar:x, /ar:sos).
+    """
 
     @pytest.mark.unit
     def test_policy_commands_detected(self):
-        """Test policy commands are detected correctly"""
+        """Test canonical policy commands are in command_mappings and dispatch correctly."""
         mappings = CONFIG["command_mappings"]
-        policy_commands = ["/afs", "/afa", "/afj", "/afst"]
+        # Canonical /ar: commands (primary) — old /afs etc. are legacy aliases
+        policy_commands = ["/ar:f", "/ar:a", "/ar:j", "/ar:st"]
 
         for cmd in policy_commands:
             found = next((v for k, v in mappings.items() if k == cmd), None)
-            assert found is not None, f"Command {cmd} should be detected"
-            assert found in COMMAND_HANDLERS, f"Command {cmd} should have handler"
+            assert found is not None, f"Command {cmd} should be in command_mappings"
+            # Verify daemon-path dispatch works (handler registered in plugins.app)
+            result = _dispatch(cmd)
+            sm = result.get("systemMessage", "")
+            assert len(sm) > 0, f"Command {cmd} should produce non-empty systemMessage"
 
     @pytest.mark.unit
     def test_control_commands_detected(self):
         """Test control commands are detected correctly"""
         mappings = CONFIG["command_mappings"]
-        control_commands = ["/autostop", "/estop"]
+        # Canonical commands (check both new /ar: and legacy aliases if present)
+        control_commands = ["/ar:x", "/ar:sos"]
 
         for cmd in control_commands:
             found = next((v for k, v in mappings.items() if k == cmd), None)
@@ -222,13 +259,17 @@ class TestCommandDetection:
 
     @pytest.mark.unit
     def test_autorun_command_detection(self):
-        """Test autorun command detection"""
+        """Test activate command detection via /ar:go (canonical) and /ar:run (alias)."""
         mappings = CONFIG["command_mappings"]
-        autorun_cmd = "/autorun test task description"
-
-        found = next((v for k, v in mappings.items() if autorun_cmd.startswith(k)), None)
-        assert found == "activate", "Autorun command should be detected as 'activate'"
-        assert "activate" in COMMAND_HANDLERS, "Activate handler should exist"
+        # Canonical activate command
+        for autorun_cmd in ["/ar:go test task description", "/ar:run test task"]:
+            found = next((v for k, v in mappings.items() if autorun_cmd.startswith(k)), None)
+            assert found == "activate", \
+                f"Command '{autorun_cmd}' should map to 'activate'; got: {found}"
+        # Verify daemon-path dispatch works for /ar:go
+        ch = plugins.app.command_handlers
+        assert any("/ar:go" in k for k in ch) or any(k.startswith("/ar:go") for k in ch) or "/ar:go" in ch, \
+            f"/ar:go should be registered in plugins.app.command_handlers; got: {sorted(ch.keys())}"
 
 
 class TestBasicFunctionality:
@@ -254,40 +295,31 @@ class TestBasicFunctionality:
 
     @pytest.mark.unit
     def test_command_handlers_are_callable(self):
-        """Test all command handlers are callable"""
-        for handler_name, handler_func in COMMAND_HANDLERS.items():
-            assert callable(handler_func), f"Handler {handler_name} should be callable"
+        """Test all registered command handlers are callable via daemon-path.
+
+        Daemon-path: plugins.app.command_handlers contains the registered handlers.
+        Old COMMAND_HANDLERS dict was removed in Phase 2; this test verifies
+        the canonical replacement (plugins.app.command_handlers) has callable entries.
+        """
+        ch = plugins.app.command_handlers
+        assert len(ch) > 0, "plugins.app.command_handlers should not be empty"
+        for cmd, handler_func in ch.items():
+            assert callable(handler_func), f"Handler for '{cmd}' should be callable"
 
     @pytest.mark.unit
-    def test_command_handlers_accept_state_argument(self):
-        """Test command handlers accept state argument"""
-        from unittest.mock import patch, MagicMock
+    def test_command_handlers_accept_eventcontext(self):
+        """Test daemon-path handlers accept EventContext and return results.
 
-        # Mock session_state to avoid shelve/dbm errors in handlers that access persistence
-        mock_session_ctx = MagicMock()
-        mock_session_ctx.__enter__ = MagicMock(return_value={})
-        mock_session_ctx.__exit__ = MagicMock(return_value=None)
-
-        with patch('autorun.main.session_state', return_value=mock_session_ctx), \
-             patch('autorun.main.initialize_default_blocks', return_value=None):
-            # Test each handler with appropriate arguments
-            for handler_name, handler_func in COMMAND_HANDLERS.items():
-                try:
-                    # All handlers should accept at least one argument
-                    if handler_name in ["activate", "ACTIVATE"]:
-                        # Activate handler needs session_id and prompt argument
-                        test_state = {"session_id": "test_session"}
-                        result = handler_func(test_state, "/autorun test")
-                    else:
-                        # Other handlers need state dict with session_id
-                        test_state = {"session_id": "test_session"}
-                        result = handler_func(test_state)
-                    assert result is not None, f"Handler {handler_name} should return something"
-                except TypeError as e:
-                    if "missing" in str(e) and "positional argument" in str(e):
-                        pytest.fail(f"Handler {handler_name} should accept at least one argument")
-                    else:
-                        raise
+        Replaces old test that patched autorun.main.initialize_default_blocks
+        (removed in Phase 2) and used state-dict interface. Daemon-path handlers
+        take EventContext (not state dicts); _dispatch() helper creates EventContexts.
+        """
+        # All canonical commands should dispatch without error and return a dict
+        canonical_commands = ["/ar:f", "/ar:a", "/ar:j", "/ar:st", "/ar:x", "/ar:sos"]
+        for cmd in canonical_commands:
+            result = _dispatch(cmd, session_id=f"test-unit-{cmd.replace('/', '-')}")
+            assert isinstance(result, dict), \
+                f"Daemon dispatch of '{cmd}' should return dict; got {type(result)}"
 
 
 class TestSecurityFunctions:

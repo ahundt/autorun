@@ -2,61 +2,67 @@
 """Test script to demonstrate the interactive Agent SDK functionality"""
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 # Add the current directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from autorun import CONFIG, COMMAND_HANDLERS
+import uuid
+from autorun import CONFIG
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+# COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx)
+# Legacy command mappings: /afs→/ar:f, /afa→/ar:a, /afj→/ar:j, /afst→/ar:st,
+#   /autostop→/ar:x, /estop→/ar:sos
+
 
 def test_command_processing():
-    """Test the command processing logic with efficient dispatch"""
+    """Test the command processing logic with efficient dispatch.
+
+    Canonical replacement for COMMAND_HANDLERS-based dispatch:
+    Uses EventContext + plugins.app.dispatch(ctx) directly.
+    All legacy command aliases (/afs, /afa, etc.) are still registered
+    in plugins.app.command_handlers.
+    """
     print("🧪 Testing autorun command processing")
     print("=" * 45)
 
-    # Mock session state to avoid database creation
-    mock_state = {"file_policy": "ALLOW"}
+    session_id = f"test-interactive-{uuid.uuid4().hex[:8]}"
 
-    with patch('autorun.main.session_state') as mock_session:
-        mock_session.return_value.__enter__.return_value = mock_state
-        mock_session.return_value.__exit__.return_value = None
+    # Test all commands via canonical dispatch
+    test_commands = [
+        ("/afs", "strict-search", True),
+        ("/afa", "allow-all", True),
+        ("/afj", "justify-create", True),
+        ("/afst", "AutoFile policy:", True),
+        ("/autostop", "Stopped", False),
+        ("/estop", "EMERGENCY STOP", False),
+    ]
 
-        # Test all commands
-        test_commands = [
-            ("/afs", "SEARCH"),
-            ("/afa", "ALLOW"),
-            ("/afj", "JUSTIFY"),
-            ("/afst", "STATUS"),
-            ("/autostop", "STOP"),
-            ("/estop", "EMERGENCY_STOP")
-        ]
+    for cmd, expected_content, should_continue in test_commands:
+        print(f"\n🔧 Testing: {cmd}")
 
-        for cmd, expected_action in test_commands:
-            print(f"\n🔧 Testing: {cmd}")
+        ctx = EventContext(
+            session_id=session_id,
+            event="UserPromptSubmit",
+            prompt=cmd,
+            tool_name="",
+            tool_input={},
+            store=ThreadSafeDB(),
+        )
+        result = plugins.app.dispatch(ctx)
 
-            if expected_action in CONFIG["policies"]:
-                # Policy change commands
-                response = COMMAND_HANDLERS[expected_action](mock_state)
-                print(f"   Response: {response}")
+        assert result is not None, f"Command {cmd!r} must return a result"
+        assert result["continue"] == should_continue, \
+            f"Command {cmd!r}: continue should be {should_continue}"
+        assert expected_content in result["systemMessage"], \
+            f"Command {cmd!r}: response must contain {expected_content!r}"
 
-                # Verify state change - the COMMAND_HANDLERS already update the state
-                if expected_action in ["SEARCH", "ALLOW", "JUSTIFY"]:
-                    current_policy = mock_state.get("file_policy", "ALLOW")
-                    print(f"   ✅ State after command: file_policy = {current_policy}")
+        print(f"   ✅ Response: {result['systemMessage'][:60]}...")
 
-            elif expected_action == "STATUS":
-                # Status command
-                response = COMMAND_HANDLERS[expected_action](mock_state)
-                print(f"   Response: {response}")
-
-            else:
-                # Stop commands
-                response = COMMAND_HANDLERS[expected_action](mock_state)
-                print(f"   Response: {response}")
-
-        print("\n🎯 All commands processed successfully!")
-        print("📊 Efficiency: Zero AI tokens used for command processing")
-        print("⚡ Speed: Instant responses (no AI delay)")
+    print("\n🎯 All commands processed successfully!")
+    print("📊 Efficiency: Zero AI tokens used for command processing")
+    print("⚡ Speed: Instant responses (no AI delay)")
 
 def test_command_detection():
     """Test efficient command detection - O(1) lookup pattern"""

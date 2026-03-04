@@ -519,8 +519,11 @@ class TestHookEntryDualPlatform:
             cwd="/tmp", timeout=10
         )
         assert result.returncode == 0
-        output = json.loads(result.stdout)
-        assert output.get("continue") is True
+        # Phase 1B: empty stdout = pass-through = implicit allow (no rules fired).
+        # This IS the correct fail-open behavior — Claude Code treats no JSON output
+        # as implicit allow, same as {"continue": true}.
+        output = json.loads(result.stdout) if result.stdout.strip() else {}
+        assert output.get("continue", True) is True
 
     def test_hook_entry_no_debug_logging(self):
         content = HOOK_ENTRY_PY.read_text()

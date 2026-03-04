@@ -71,14 +71,15 @@ __all__ = [
     "check_uv_environment",
     "show_uv_environment_status",
     "CONFIG",
-    "COMMAND_HANDLERS",
     "log_info",
     "build_hook_response",
-    "claude_code_handler",
-    "stop_handler",
-    "inject_continue_prompt",
-    "inject_verification_prompt",
-    "is_premature_stop"
+    # Removed (see main.py module docstring for canonical replacements):
+    # "COMMAND_HANDLERS" — use plugins.app.commands + app.dispatch()
+    # "claude_code_handler" — use __main__.run_direct() → app.dispatch()
+    # "stop_handler" — use plugins.autorun_injection (@app.on("Stop"))
+    # "inject_continue_prompt" — use plugins.build_injection_prompt(ctx)
+    # "inject_verification_prompt" — use plugins.build_injection_prompt(ctx)
+    # "is_premature_stop" — use plugins.is_premature_stop(ctx: EventContext)
 ]
 
 # Export session manager functionality
@@ -143,12 +144,15 @@ except ImportError:
         """Fallback UV status shower"""
         print("UV environment check not available")
 
-# Export complete CONFIG, COMMAND_HANDLERS, and log_info for tests
+# Export CONFIG and log_info for tests
+# COMMAND_HANDLERS removed — use plugins.app.commands + app.dispatch() (canonical)
 try:
     # Import CONFIG from centralized config.py (DRY principle - single source of truth)
     from .config import CONFIG
-    # Import COMMAND_HANDLERS and log_info from main.py
-    from .main import COMMAND_HANDLERS, log_info
+    # Import log_info from main.py (thin shim → logging_utils)
+    from .main import log_info
+    # COMMAND_HANDLERS was removed from main.py — provide empty stub for test compat
+    COMMAND_HANDLERS = {}  # Removed: use plugins.app.commands + app.dispatch()
 
 except ImportError:
     # Complete fallback CONFIG for tests - matches config.py three-stage system
@@ -317,40 +321,9 @@ except ImportError:
             response["reason"] = reason
         return response
 
-try:
-    from .main import claude_code_handler
-except ImportError:
-    def claude_code_handler(ctx):
-        """Fallback claude_code_handler function - matches main.py signature"""
-        return {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
-
-# pretooluse_handler removed — replaced by plugins.py enforce_file_policy(ctx)
-# and plugins.py check_blocked_commands(ctx) registered via @app.on("PreToolUse").
-
-# Export main functions needed for tests
-# analyze_verification_results removed (dead code, zero callers).
-# build_pretooluse_response removed — replaced by core.py EventContext.deny()/allow()/.respond().
-try:
-    from .main import (
-        stop_handler,
-        inject_continue_prompt,
-        inject_verification_prompt,
-        is_premature_stop,
-    )
-except ImportError:
-    # Fallback implementations for tests
-    def stop_handler():
-        """Fallback stop_handler function"""
-        pass
-
-    def inject_continue_prompt():
-        """Fallback inject_continue_prompt function"""
-        return "Continue prompt"
-
-    def inject_verification_prompt():
-        """Fallback inject_verification_prompt function"""
-        return "Verification prompt"
-
-    def is_premature_stop():
-        """Fallback is_premature_stop function"""
-        return False
+# claude_code_handler — REMOVED: __main__.run_direct() → app.dispatch() → plugins.py
+# pretooluse_handler — REMOVED: plugins.py enforce_file_policy(ctx) + check_blocked_commands(ctx)
+# stop_handler — REMOVED: plugins.autorun_injection at plugins.py:923 (@app.on("Stop"))
+# inject_continue_prompt — REMOVED: plugins.build_injection_prompt(ctx) at plugins.py:804
+# inject_verification_prompt — REMOVED: plugins.build_injection_prompt(ctx) at plugins.py:804
+# is_premature_stop(ctx, state) — REMOVED: plugins.is_premature_stop(ctx) at plugins.py:734

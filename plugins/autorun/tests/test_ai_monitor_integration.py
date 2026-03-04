@@ -1,6 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Test ai_monitor integration functionality in autorun"""
+"""Test ai_monitor integration functionality in autorun.
+
+DEPRECATED: All tests in this file are skipped because the ai_monitor integration
+was removed in the main.py cleanup (Phase 2 of Task #13 - main.py consolidation).
+
+The functions under test (is_premature_stop, stop_handler, inject_continue_prompt,
+inject_verification_prompt, _manage_monitor, update_injection_outcome) were deleted
+from main.py as dead/deprecated code.
+
+Canonical replacements (daemon path):
+- is_premature_stop(ctx, state) → plugins.is_premature_stop(ctx: EventContext) at plugins.py
+- stop_handler → plugins.autorun_injection(ctx: EventContext) registered via @app.on("Stop")
+- inject_continue_prompt → plugins.build_injection_prompt(ctx) at plugins.py
+- inject_verification_prompt → plugins.build_injection_prompt(ctx) at plugins.py
+- _manage_monitor → removed (ai_monitor integration not in daemon path)
+- update_injection_outcome → removed (ai_monitor integration not in daemon path)
+"""
+
+import pytest
+pytestmark = pytest.mark.skip(reason=(
+    "ai_monitor integration removed from daemon path (Phase 2, Task #13). "
+    "Canonical replacements: plugins.autorun_injection(ctx) for stop_handler, "
+    "plugins.build_injection_prompt(ctx) for inject_*. "
+    "See plugins/autorun/src/autorun/plugins.py."
+))
 
 import sys
 from pathlib import Path
