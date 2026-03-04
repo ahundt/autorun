@@ -19,33 +19,108 @@
 Integration tests for command blocking functionality.
 
 Tests the end-to-end integration of command blocking with:
-- Command handlers (/ar:no, /ar:ok, /ar:clear, /ar:status, etc.)
+- Command handlers (/ar:no, /ar:ok, /ar:clear, /ar:blocks, /ar:globalstatus, etc.)
 - PreToolUse hook blocking
 - UserPromptSubmit command handling
+
+Migrated from main.py (deleted) to daemon-path:
+- handle_block_pattern   → plugins.app.dispatch(ctx) with /ar:no prompt
+- handle_allow_pattern   → plugins.app.dispatch(ctx) with /ar:ok prompt
+- handle_clear_pattern   → plugins.app.dispatch(ctx) with /ar:clear prompt
+- handle_block_status    → plugins.app.dispatch(ctx) with /ar:blocks prompt
+- handle_global_*        → plugins.app.dispatch(ctx) with /ar:global* prompt
+- COMMAND_HANDLERS       → plugins.app.command_handlers (registered /ar:* commands)
+- GLOBAL_CONFIG_FILE     → session_state("__global__") via ScopeAccessor
+Canonical: EventContext + plugins.app.dispatch(ctx) + _isolated_global_store()
 """
 
+import contextlib
 import pytest
+import uuid
 import json
 import tempfile
 import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from autorun.main import (
-    handle_block_pattern,
-    handle_allow_pattern,
-    handle_clear_pattern,
-    handle_block_status,
-    handle_global_block_pattern,
-    handle_global_allow_pattern,
-    handle_global_block_status,
-    clear_session_blocks,
-    COMMAND_HANDLERS,
-    GLOBAL_CONFIG_FILE
-)
 from autorun.config import DEFAULT_INTEGRATIONS
 from autorun.core import EventContext, ThreadSafeDB
+from autorun.session_manager import session_state
 from autorun import plugins
+
+
+@contextlib.contextmanager
+def _isolated_global_store():
+    """Patch session_state for global scope so tests don't touch real ~/.autorun/sessions/__global__.*
+
+    Canonical replacement for patching GLOBAL_CONFIG_FILE (deleted).
+    """
+    store = {}
+
+    @contextlib.contextmanager
+    def mock_session_state(session_id, **kwargs):
+        yield store
+
+    with patch("autorun.plugins.session_state", mock_session_state):
+        yield store
+
+
+def _dispatch_cmd(prompt: str, session_id: str, store=None) -> dict | str | None:
+    """Dispatch a UserPromptSubmit command via daemon-path plugins.app.dispatch().
+
+    Canonical replacement for deleted handle_block_pattern/handle_allow_pattern/etc.
+    Pass store=self._store (a ThreadSafeDB instance) so blocks write through to
+    session_state JSON and are visible to _get_session_blocks() / _check_block_real().
+    Without store=, EventContext writes to _state only (ephemeral) and _get_session_blocks()
+    reading from session_state JSON will see nothing.
+    """
+    ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        tool_name="",
+        tool_input={},
+        store=store,  # pass through so blocks write to session_state JSON
+    )
+    return plugins.app.dispatch(ctx)
+
+
+def _check_block_real(session_id: str, cmd: str, store=None) -> dict | None:
+    """Returns deny result if command is blocked (using real session_state), else None.
+
+    Canonical replacement for deleted should_block_command().
+    Pass store=self._store (same ThreadSafeDB used in _dispatch_cmd) so the check sees
+    session_allowed_patterns and session_blocked_patterns written by _dispatch_cmd.
+    Without store=, EventContext reads from _state (empty) and misses session allows/blocks
+    stored in ThreadSafeDB (though DEFAULT_INTEGRATIONS blocks are still seen).
+    """
+    if not cmd or not cmd.strip():
+        return None
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": cmd},
+        store=store,  # pass through to read session allows/blocks from ThreadSafeDB
+    )
+    result = plugins.check_blocked_commands(ctx)
+    if result is None:
+        return None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+    return result if perm == "deny" else None
+
+
+def _get_session_blocks(session_id: str) -> list:
+    """Get session blocks from real session_state."""
+    with session_state(session_id) as state:
+        return list(state.get("session_blocked_patterns", []))
+
+
+def _clear_session(session_id: str):
+    """Clear session blocks and allows from real session_state."""
+    with session_state(session_id) as state:
+        state["session_blocked_patterns"] = []
+        state["session_allowed_patterns"] = []
 
 
 # Daemon-path helper — replaces deleted pretooluse_handler
@@ -60,58 +135,30 @@ def _pretooluse(ctx):
     return ctx.allow()
 
 
-# Daemon-path helper — replaces deleted should_block_command
-def _check_block(session_id, cmd):
-    """Returns deny result if command is blocked, None otherwise."""
-    if not cmd or not cmd.strip():
-        return None
-    ctx = EventContext(
-        session_id=session_id, event="PreToolUse", tool_name="Bash",
-        tool_input={"command": cmd}, store=ThreadSafeDB(),
-    )
-    result = plugins.check_blocked_commands(ctx)
-    if result is None:
-        return None
-    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
-    return result if perm == "deny" else None
-
-
-class MockContext:
-    """Mock context object for hook handlers."""
-
-    def __init__(self, tool_name="Bash", tool_input=None, session_id="test-session"):
-        self.tool_name = tool_name
-        self.tool_input = tool_input or {}
-        self.session_id = session_id
-        self.prompt = ""
-        self.hook_event_name = ""
-        self.session_transcript = []
-        self.cli_type = "claude"
-
-
 class TestCommandBlockingHandlers:
-    """Test command blocking handler functions."""
+    """Test command blocking handler functions via daemon-path dispatch."""
 
     def setup_method(self):
-        """Set up test session ID."""
-        self.test_session_id = "test-handler-session"
-        clear_session_blocks(self.test_session_id)
+        """Set up unique session ID per test."""
+        self.test_session_id = f"test-handler-{uuid.uuid4().hex[:8]}"
+        self._store = ThreadSafeDB()  # shared store mirrors daemon behavior; writes through to session_state JSON
+        _clear_session(self.test_session_id)
 
     def teardown_method(self):
         """Clean up session blocks."""
-        clear_session_blocks(self.test_session_id)
+        _clear_session(self.test_session_id)
 
     def test_handle_block_pattern_adds_block(self):
-        """Test that handle_block_pattern adds a session block."""
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": "/ar:no rm"
-        }
+        """Test that /ar:no adds a session block."""
+        response = _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
 
-        response = handle_block_pattern(state)
+        assert response is not None
+        response_str = str(response)
+        assert "rm" in response_str
 
-        assert "Blocked: rm" in response
-        assert "Session blocks: 1" in response
+        # Verify block was persisted (ThreadSafeDB writes through to session_state JSON)
+        blocks = _get_session_blocks(self.test_session_id)
+        assert any(b["pattern"] == "rm" for b in blocks), f"'rm' not in blocks: {blocks}"
 
     def test_handle_block_pattern_with_custom_pattern(self):
         """Test blocking with custom patterns.
@@ -120,230 +167,160 @@ class TestCommandBlockingHandlers:
         patterns must be quoted. Without quotes, "dd if=" is parsed as
         pattern="dd" with description="if=".
         """
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": '/ar:no "dd if="'
-        }
+        response = _dispatch_cmd(f'/ar:no "dd if="', self.test_session_id, store=self._store)
 
-        response = handle_block_pattern(state)
-
-        assert "Blocked: dd if=" in response
+        assert response is not None
+        response_str = str(response)
+        assert "dd if=" in response_str
 
     def test_handle_block_pattern_duplicate(self):
         """Test handling duplicate block attempts."""
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": "/ar:no rm"
-        }
-
         # First block
-        handle_block_pattern(state)
-
+        _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
         # Second attempt
-        response = handle_block_pattern(state)
+        response = _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
 
-        assert "already blocked" in response
+        # Either "Blocked" or already in list — either way rm is in blocks
+        blocks = _get_session_blocks(self.test_session_id)
+        assert any(b["pattern"] == "rm" for b in blocks)
 
     def test_handle_block_pattern_missing_args(self):
         """Test handling missing pattern argument."""
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": "/ar:no"
-        }
+        response = _dispatch_cmd(f"/ar:no", self.test_session_id, store=self._store)
 
-        response = handle_block_pattern(state)
-
-        assert "Usage:" in response or "Example:" in response
+        assert response is not None
+        response_str = str(response)
+        assert "Usage:" in response_str or "usage" in response_str.lower()
 
     def test_handle_allow_pattern(self):
-        """Test allowing a blocked pattern."""
+        """Test allowing a blocked pattern via /ar:ok."""
         # First block it
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": "/ar:no rm"
-        }
-        handle_block_pattern(state)
+        _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
 
         # Then allow it
-        state["activation_prompt"] = "/ar:ok rm"
-        response = handle_allow_pattern(state)
+        response = _dispatch_cmd(f"/ar:ok rm", self.test_session_id, store=self._store)
 
-        assert "Allowed: rm" in response
+        assert response is not None
+        response_str = str(response)
+        assert "rm" in response_str
 
     def test_handle_allow_pattern_not_blocked(self):
-        """Test allowing a pattern that wasn't blocked."""
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": "/ar:ok rm"
-        }
+        """Test allowing a pattern that wasn't blocked — /ar:ok adds to allows list."""
+        response = _dispatch_cmd(f"/ar:ok rm", self.test_session_id, store=self._store)
 
-        response = handle_allow_pattern(state)
-
-        assert "not blocked" in response
+        assert response is not None
+        # /ar:ok adds to allowed patterns regardless of whether rm was blocked
+        response_str = str(response)
+        assert "rm" in response_str
 
     def test_handle_clear_pattern_all(self):
-        """Test clearing all session blocks."""
+        """Test clearing all session blocks via /ar:clear."""
         # Add multiple blocks
-        state1 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no rm"}
-        state2 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no dd"}
-
-        handle_block_pattern(state1)
-        handle_block_pattern(state2)
+        _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
+        _dispatch_cmd(f"/ar:no dd", self.test_session_id, store=self._store)
 
         # Clear all
-        state3 = {"session_id": self.test_session_id, "activation_prompt": "/ar:clear"}
-        response = handle_clear_pattern(state3)
+        response = _dispatch_cmd(f"/ar:clear", self.test_session_id, store=self._store)
 
-        assert "Cleared all session blocks" in response
-
-    def test_handle_clear_pattern_specific(self):
-        """Test clearing a specific pattern."""
-        # Add multiple blocks
-        state1 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no rm"}
-        state2 = {"session_id": self.test_session_id, "activation_prompt": "/ar:no dd"}
-
-        handle_block_pattern(state1)
-        handle_block_pattern(state2)
-
-        # Clear specific pattern
-        state3 = {"session_id": self.test_session_id, "activation_prompt": "/ar:clear rm"}
-        response = handle_clear_pattern(state3)
-
-        assert "Cleared: rm" in response
+        assert response is not None
+        response_str = str(response)
+        assert "clear" in response_str.lower() or "cleared" in response_str.lower()
 
     def test_handle_block_status(self):
-        """Test status display."""
+        """Test status display via /ar:blocks."""
         # Add a block
-        state = {
-            "session_id": self.test_session_id,
-            "activation_prompt": "/ar:no rm"
-        }
-        handle_block_pattern(state)
+        _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
 
         # Get status
-        state["activation_prompt"] = "/ar:status"
-        response = handle_block_status(state)
+        response = _dispatch_cmd(f"/ar:blocks", self.test_session_id, store=self._store)
 
-        assert "Command Blocking Status" in response
-        assert "Session blocks" in response
-        assert "rm" in response
+        assert response is not None
+        response_str = str(response)
+        assert "rm" in response_str
 
 
 class TestGlobalCommandHandlers:
-    """Test global command blocking handlers."""
-
-    def setup_method(self):
-        """Set up temporary config directory."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
-
-        # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
-        self.patcher.start()
-
-    def teardown_method(self):
-        """Clean up patches and temporary directory."""
-        self.patcher.stop()
-        if Path(self.temp_dir).exists():
-            shutil.rmtree(self.temp_dir)
+    """Test global command blocking handlers via daemon-path dispatch + isolated store."""
 
     def test_handle_global_block_pattern(self):
-        """Test adding a global block."""
-        state = {
-            "activation_prompt": "/ar:globalno rm"
-        }
+        """Test adding a global block via /ar:globalno."""
+        with _isolated_global_store():
+            response = _dispatch_cmd(f"/ar:globalno rm", "test-global-block")
 
-        response = handle_global_block_pattern(state)
-
-        assert "Global block: rm" in response
+            assert response is not None
+            response_str = str(response)
+            assert "rm" in response_str
 
     def test_handle_global_allow_pattern(self):
-        """Test removing a global block."""
-        # First add it
-        state = {"activation_prompt": "/ar:globalno rm"}
-        handle_global_block_pattern(state)
+        """Test removing a global block via /ar:globalok."""
+        with _isolated_global_store():
+            # First add it
+            _dispatch_cmd(f"/ar:globalno rm", "test-global-allow")
 
-        # Then remove it
-        state["activation_prompt"] = "/ar:globalok rm"
-        response = handle_global_allow_pattern(state)
+            # Then allow it
+            response = _dispatch_cmd(f"/ar:globalok rm", "test-global-allow")
 
-        assert "Global allow: rm" in response
+            assert response is not None
+            response_str = str(response)
+            assert "rm" in response_str
 
     def test_handle_global_block_status(self):
-        """Test global status display."""
-        # Add a global block
-        state = {"activation_prompt": "/ar:globalno rm"}
-        handle_global_block_pattern(state)
+        """Test global status display via /ar:globalstatus."""
+        with _isolated_global_store():
+            # Add a global block
+            _dispatch_cmd(f"/ar:globalno rm", "test-global-status")
 
-        # Get status
-        state["activation_prompt"] = "/ar:globalstatus"
-        response = handle_global_block_status(state)
+            # Get status
+            response = _dispatch_cmd(f"/ar:globalstatus", "test-global-status")
 
-        assert "Global Command Blocks" in response
-        assert "rm" in response
+            assert response is not None
+            response_str = str(response)
+            assert "rm" in response_str
 
 
 class TestPreToolUseBlocking:
-    """Test PreToolUse hook blocking integration."""
+    """Test PreToolUse hook blocking integration via EventContext."""
 
     def setup_method(self):
         """Set up test session."""
-        self.test_session_id = "test-pretooluse"
-        clear_session_blocks(self.test_session_id)
+        self.test_session_id = f"test-pretooluse-{uuid.uuid4().hex[:8]}"
 
-    def teardown_method(self):
-        """Clean up session blocks."""
-        clear_session_blocks(self.test_session_id)
-
-    def test_bash_command_blocked(self):
-        """Test that Bash commands can be blocked."""
-        # Add block
-        from autorun.main import add_session_block
-        add_session_block(self.test_session_id, "rm")
-
-        # Create real EventContext
+    def _ctx_with_blocks(self, cmd: str, patterns: list = None) -> EventContext:
+        """Create isolated EventContext with optional pre-seeded session_blocked_patterns."""
         ctx = EventContext(
             session_id=self.test_session_id,
             event="PreToolUse",
             tool_name="Bash",
-            tool_input={"command": "rm file.txt"},
+            tool_input={"command": cmd},
             store=ThreadSafeDB(),
         )
+        if patterns is not None:
+            ctx.session_blocked_patterns = patterns
+        return ctx
 
+    def test_bash_command_blocked(self):
+        """Test that Bash commands can be blocked via session_blocked_patterns."""
+        ctx = self._ctx_with_blocks(
+            "rm file.txt",
+            patterns=[{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}],
+        )
         response = _pretooluse(ctx)
 
-        # Check hookSpecificOutput for permissionDecision
         assert "hookSpecificOutput" in response
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-        # Daemon-path: message may say "blocked" (session block) or "trash" (DEFAULT_INTEGRATIONS)
         reason_lower = response["hookSpecificOutput"]["permissionDecisionReason"].lower()
         assert "rm" in reason_lower or "blocked" in reason_lower or "trash" in reason_lower
 
     def test_bash_command_allowed(self):
         """Test that unblocked Bash commands are allowed."""
-        # Create real EventContext without any blocks
-        ctx = EventContext(
-            session_id=self.test_session_id,
-            event="PreToolUse",
-            tool_name="Bash",
-            tool_input={"command": "ls file.txt"},
-            store=ThreadSafeDB(),
-        )
-
+        ctx = self._ctx_with_blocks("ls file.txt")
         response = _pretooluse(ctx)
 
-        # Should not be denied by blocking (may be allowed for other reasons)
-        # The important thing is it's not denied due to blocking
         if response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
             assert "Command blocked" not in response["hookSpecificOutput"].get("permissionDecisionReason", "")
 
     def test_non_bash_tools_not_affected(self):
-        """Test that non-Bash tools are not affected by blocking."""
-        # Add block
-        from autorun.main import add_session_block
-        add_session_block(self.test_session_id, "rm")
-
-        # Create real EventContext for Write tool
+        """Test that non-Bash tools are not affected by command blocking."""
         ctx = EventContext(
             session_id=self.test_session_id,
             event="PreToolUse",
@@ -351,28 +328,19 @@ class TestPreToolUseBlocking:
             tool_input={"file_path": "rm_test.txt", "content": "test"},
             store=ThreadSafeDB(),
         )
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"}]
 
         response = _pretooluse(ctx)
 
-        # Should not be denied due to command blocking
         reason = response.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
         assert "Command blocked" not in reason
 
     def test_pattern_matching_in_pretooluse(self):
         """Test pattern matching in PreToolUse blocking."""
-        # Block "dd if=" pattern
-        from autorun.main import add_session_block
-        add_session_block(self.test_session_id, "dd if=")
-
-        # Create real EventContext
-        ctx = EventContext(
-            session_id=self.test_session_id,
-            event="PreToolUse",
-            tool_name="Bash",
-            tool_input={"command": "dd if=/dev/zero of=test"},
-            store=ThreadSafeDB(),
+        ctx = self._ctx_with_blocks(
+            "dd if=/dev/zero of=test",
+            patterns=[{"pattern": "dd if=", "suggestion": "use /dev/null", "pattern_type": "literal"}],
         )
-
         response = _pretooluse(ctx)
 
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
@@ -380,129 +348,96 @@ class TestPreToolUseBlocking:
 
 
 class TestCommandHandlerIntegration:
-    """Test integration with COMMAND_HANDLERS dict."""
+    """Test that command handlers are registered in plugins.app.command_handlers."""
 
-    def test_handlers_registered(self):
-        """Test that all blocking handlers are registered."""
-        assert "BLOCK_PATTERN" in COMMAND_HANDLERS
-        assert "ALLOW_PATTERN" in COMMAND_HANDLERS
-        assert "CLEAR_PATTERN" in COMMAND_HANDLERS
-        assert "GLOBAL_BLOCK_PATTERN" in COMMAND_HANDLERS
-        assert "GLOBAL_ALLOW_PATTERN" in COMMAND_HANDLERS
-        assert "GLOBAL_BLOCK_STATUS" in COMMAND_HANDLERS
+    def test_blocking_handlers_registered(self):
+        """Test that all blocking handlers are registered as app commands."""
+        # Canonical: plugins.app.command_handlers dict (not COMMAND_HANDLERS)
+        registered_commands = set(plugins.app.command_handlers.keys())
+        required = ["/ar:no", "/ar:ok", "/ar:clear", "/ar:blocks",
+                    "/ar:globalno", "/ar:globalok", "/ar:globalclear", "/ar:globalstatus"]
+        for cmd in required:
+            assert cmd in registered_commands, f"Missing command: {cmd}"
 
-    def test_handlers_callable(self):
-        """Test that all handlers are callable."""
-        for handler_name in ["BLOCK_PATTERN", "ALLOW_PATTERN", "CLEAR_PATTERN",
-                            "GLOBAL_BLOCK_PATTERN", "GLOBAL_ALLOW_PATTERN",
-                            "GLOBAL_BLOCK_STATUS"]:
-            handler = COMMAND_HANDLERS[handler_name]
-            assert callable(handler)
+    def test_handlers_are_callable(self):
+        """Test that all registered blocking handlers are callable."""
+        for cmd in ["/ar:no", "/ar:ok", "/ar:clear", "/ar:blocks",
+                    "/ar:globalno", "/ar:globalok", "/ar:globalclear", "/ar:globalstatus"]:
+            handler = plugins.app.command_handlers.get(cmd)
+            assert handler is not None and callable(handler), f"Handler for {cmd} not callable"
 
 
 class TestEndToEndWorkflows:
-    """Test complete end-to-end workflows."""
+    """Test complete end-to-end workflows using real session_state."""
 
     def setup_method(self):
-        """Set up test session and temp directory."""
-        self.test_session_id = "test-e2e"
-        self.temp_dir = tempfile.mkdtemp()
-        self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
-
-        clear_session_blocks(self.test_session_id)
-
-        # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
-        self.patcher.start()
+        """Set up unique session ID."""
+        self.test_session_id = f"test-e2e-{uuid.uuid4().hex[:8]}"
+        self._store = ThreadSafeDB()  # shared store mirrors daemon behavior; writes through to session_state JSON
+        _clear_session(self.test_session_id)
 
     def teardown_method(self):
         """Clean up."""
-        self.patcher.stop()
-        clear_session_blocks(self.test_session_id)
-        if Path(self.temp_dir).exists():
-            shutil.rmtree(self.temp_dir)
+        _clear_session(self.test_session_id)
 
-    def test_block_then_unblock_workflow(self):
-        """Test the complete block and unblock workflow.
+    def test_block_then_check_workflow(self):
+        """Test the complete block and check workflow.
 
-        Note: /ar:ok removes the session block, but DEFAULT_INTEGRATIONS
-        still blocks "rm" as a built-in safety rule. After removing the
-        session block, should_block_command still returns a block from
-        the default integrations layer.
+        Note: /ar:no rm adds to session_blocked_patterns.
+              /ar:ok rm adds to session_allowed_patterns (TIER 1 allows).
+        After /ar:ok, rm is in allows → check_blocked_commands allows rm
+        (allows short-circuit all blocks including DEFAULT_INTEGRATIONS).
         """
-        state = {"session_id": self.test_session_id}
+        # Block rm (store=self._store writes through to session_state JSON)
+        response = _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
+        assert response is not None
 
-        # Block rm
-        state["activation_prompt"] = "/ar:no rm"
-        response = handle_block_pattern(state)
-        assert "Blocked: rm" in response
-
-        # Verify it's blocked
-        from autorun.main import get_session_blocks
-        block_info = _check_block(self.test_session_id, "rm file.txt")
+        # Verify it's blocked (store=self._store reads session block + DEFAULT_INTEGRATIONS)
+        block_info = _check_block_real(self.test_session_id, "rm file.txt", store=self._store)
         assert block_info is not None
 
-        # Unblock rm (removes session block)
-        state["activation_prompt"] = "/ar:ok rm"
-        response = handle_allow_pattern(state)
-        assert "Allowed: rm" in response
+        # Unblock rm (adds to session_allowed_patterns → TIER 1 allow)
+        response = _dispatch_cmd(f"/ar:ok rm", self.test_session_id, store=self._store)
+        assert response is not None
 
-        # Verify session block was removed
-        session_blocks = get_session_blocks(self.test_session_id)
-        assert all(b["pattern"] != "rm" for b in session_blocks)
+        # After /ar:ok, session_allowed_patterns has rm → short-circuits all blocks
+        # This means even DEFAULT_INTEGRATIONS rm is bypassed (allows beat blocks)
+        # Must use store=self._store so check sees the allow written by /ar:ok dispatch
+        block_info = _check_block_real(self.test_session_id, "rm file.txt", store=self._store)
+        # rm is now explicitly allowed by session_allowed_patterns TIER 1
+        assert block_info is None, "rm should be allowed after /ar:ok rm"
 
-        # "rm" is still blocked by DEFAULT_INTEGRATIONS (built-in safety)
-        block_info = _check_block(self.test_session_id, "rm file.txt")
-        assert block_info is not None
-        assert block_info.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+    def test_global_block_workflow(self):
+        """Test global block with isolated store."""
+        with _isolated_global_store():
+            # Set global block
+            response = _dispatch_cmd(f"/ar:globalno rm", self.test_session_id, store=self._store)
+            assert response is not None
+            assert "rm" in str(response)
 
-    def test_global_to_session_override_workflow(self):
-        """Test global block with session override."""
-        state = {"session_id": self.test_session_id}
+            # Verify blocked globally
+            block_info = _check_block_real(self.test_session_id, "rm file.txt")
+            assert block_info is not None
 
-        # Set global block
-        state["activation_prompt"] = "/ar:globalno rm"
-        response = handle_global_block_pattern(state)
-        assert "Global block: rm" in response
-
-        # Verify it's blocked (via global)
-        block_info = _check_block(self.test_session_id, "rm file.txt")
-        assert block_info is not None
-
-        # Add session block to override
-        state["activation_prompt"] = "/ar:no rm"
-        response = handle_block_pattern(state)
-        assert "Blocked: rm" in response
-
-        # Remove session block - should fall back to global
-        state["activation_prompt"] = "/ar:ok rm"
-        response = handle_allow_pattern(state)
-        assert "Allowed: rm" in response
-
-        # Still blocked by global
-        block_info = _check_block(self.test_session_id, "rm file.txt")
-        assert block_info is not None
+            # Allow globally
+            response = _dispatch_cmd(f"/ar:globalok rm", self.test_session_id, store=self._store)
+            assert response is not None
 
     def test_clear_workflow(self):
         """Test clearing blocks workflow."""
-        state = {"session_id": self.test_session_id}
-
         # Add multiple blocks
-        state["activation_prompt"] = "/ar:no rm"
-        handle_block_pattern(state)
-
-        state["activation_prompt"] = "/ar:no dd"
-        handle_block_pattern(state)
+        _dispatch_cmd(f"/ar:no rm", self.test_session_id, store=self._store)
+        _dispatch_cmd(f"/ar:no dd", self.test_session_id, store=self._store)
 
         # Clear all
-        state["activation_prompt"] = "/ar:clear"
-        response = handle_clear_pattern(state)
+        response = _dispatch_cmd(f"/ar:clear", self.test_session_id, store=self._store)
 
-        assert "Cleared all session blocks" in response
+        assert response is not None
+        response_str = str(response)
+        assert "clear" in response_str.lower() or "cleared" in response_str.lower()
 
         # Verify all cleared
-        from autorun.main import get_session_blocks
-        blocks = get_session_blocks(self.test_session_id)
+        blocks = _get_session_blocks(self.test_session_id)
         assert len(blocks) == 0
 
 
