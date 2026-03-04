@@ -13,13 +13,28 @@ from unittest.mock import patch, Mock
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun.main import (
-    CONFIG, COMMAND_HANDLERS, build_hook_response, build_pretooluse_response,
+    CONFIG, COMMAND_HANDLERS, build_hook_response,
     handle_search, handle_allow, handle_justify, handle_status,
     handle_stop, handle_emergency_stop, handle_activate,
     log_info, inject_continue_prompt, inject_verification_prompt,
-    is_premature_stop, should_trigger_verification, stop_handler,
-    pretooluse_handler, claude_code_handler
+    is_premature_stop, stop_handler,
+    claude_code_handler
 )
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+from autorun.session_manager import session_state
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 
 
 class TestBuildHookResponse:
@@ -52,23 +67,35 @@ class TestBuildHookResponse:
 
 
 class TestBuildPretoolUseResponse:
-    """Test build_pretooluse_response function"""
+    """Test daemon-path response building via EventContext.deny/allow"""
+
+    def _make_ctx(self, tool_name="Bash", command="echo test"):
+        return EventContext(
+            session_id=f"test-resp-{id(self)}",
+            event="PreToolUse",
+            tool_name=tool_name,
+            tool_input={"command": command},
+            store=ThreadSafeDB(),
+        )
 
     def test_default_allow_response(self):
-        """Test default allow response"""
-        response = build_pretooluse_response()
+        """Test default allow response via ctx.allow()"""
+        ctx = self._make_ctx()
+        response = ctx.allow()
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
         assert response["continue"]
 
     def test_deny_response(self):
-        """Test deny response"""
-        response = build_pretooluse_response("deny", "blocked by policy")
+        """Test deny response via ctx.deny()"""
+        ctx = self._make_ctx()
+        response = ctx.deny("blocked by policy")
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "blocked by policy" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
     def test_allow_with_reason(self):
-        """Test allow with reason"""
-        response = build_pretooluse_response("allow", "permitted action")
+        """Test allow with reason via ctx.allow()"""
+        ctx = self._make_ctx()
+        response = ctx.allow("permitted action")
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
         assert "permitted action" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
@@ -226,86 +253,59 @@ class TestInjectContinuePrompt:
 
 
 class TestPretoolUseHandler:
-    """Test pretooluse_handler function"""
+    """Test daemon-path PreToolUse chain (enforce_file_policy + check_blocked_commands)"""
+
+    def setup_method(self):
+        """Unique session per test to avoid state leakage."""
+        import uuid
+        self.session_id = f"test-main-ptu-{uuid.uuid4().hex[:8]}"
+
+    def _ctx(self, tool_name, tool_input):
+        return EventContext(
+            session_id=self.session_id,
+            event="PreToolUse",
+            tool_name=tool_name,
+            tool_input=tool_input,
+            store=ThreadSafeDB(),
+        )
 
     def test_non_write_tool_allowed(self):
-        """Test non-Write tool is allowed"""
-        ctx = Mock()
-        ctx.tool_name = "Read"
-        ctx.tool_input = {"file_path": "/some/path"}
-        ctx.session_id = "test_session"
-        ctx.session_transcript = []
-
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {"file_policy": "SEARCH"}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            response = pretooluse_handler(ctx)
-
+        """Test non-Write tool is allowed regardless of policy"""
+        with session_state(self.session_id) as s:
+            s["file_policy"] = "SEARCH"
+        ctx = self._ctx("Read", {"file_path": "/some/path"})
+        response = _pretooluse(ctx)
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_write_existing_file_allowed(self):
         """Test Write to existing file is allowed even under SEARCH policy"""
-        ctx = Mock()
-        ctx.tool_name = "Write"
-        ctx.tool_input = {"file_path": "/tmp/existing_file.py"}
-        ctx.session_id = "test_session"
-        ctx.session_transcript = []
-
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {"file_policy": "SEARCH"}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            # Mock Path.exists() instead of os.path.exists
-            with patch('autorun.main.Path') as mock_path:
-                mock_path.return_value.exists.return_value = True
-                response = pretooluse_handler(ctx)
-
-        assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+        import tempfile, os
+        with session_state(self.session_id) as s:
+            s["file_policy"] = "SEARCH"
+        # Create a real temp file that exists
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            existing_path = f.name
+        try:
+            ctx = self._ctx("Write", {"file_path": existing_path})
+            response = _pretooluse(ctx)
+            assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+        finally:
+            os.unlink(existing_path)
 
     def test_write_new_file_blocked_by_search_policy(self):
         """Test Write to new file is blocked under SEARCH policy"""
-        ctx = Mock()
-        ctx.tool_name = "Write"
-        ctx.tool_input = {"file_path": "/tmp/new_file.py"}
-        ctx.session_id = "test_session"
-        ctx.session_transcript = []
-
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {"file_policy": "SEARCH"}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            # Mock Path chain: Path(file_path).resolve().exists()
-            with patch('autorun.main.Path') as mock_path:
-                mock_resolved = Mock()
-                mock_resolved.exists.return_value = False
-                mock_resolved.is_file.return_value = False
-                mock_path.return_value.resolve.return_value = mock_resolved
-                response = pretooluse_handler(ctx)
-
+        with session_state(self.session_id) as s:
+            s["file_policy"] = "SEARCH"
+        ctx = self._ctx("Write", {"file_path": "/tmp/nonexistent_autorun_test_xyz_main_comp.txt"})
+        response = _pretooluse(ctx)
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_write_new_file_allowed_by_allow_policy(self):
         """Test Write to new file is allowed under ALLOW policy"""
-        ctx = Mock()
-        ctx.tool_name = "Write"
-        ctx.tool_input = {"file_path": "/tmp/new_file.py"}
-        ctx.session_id = "test_session"
-        ctx.session_transcript = []
-
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {"file_policy": "ALLOW"}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            # Mock Path.exists() instead of os.path.exists
-            with patch('autorun.main.Path') as mock_path:
-                mock_path.return_value.exists.return_value = False
-                response = pretooluse_handler(ctx)
-
+        with session_state(self.session_id) as s:
+            s["file_policy"] = "ALLOW"
+        ctx = self._ctx("Write", {"file_path": "/tmp/nonexistent_autorun_test_xyz_main_comp.txt"})
+        response = _pretooluse(ctx)
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
@@ -475,40 +475,6 @@ class TestIsPrematureStop:
         assert not result
 
 
-class TestShouldTriggerVerification:
-    """Test should_trigger_verification function"""
-
-    def test_trigger_verification_initial_stage(self):
-        """Test verification trigger with INITIAL stage"""
-        state = {
-            "autorun_stage": "INITIAL",
-            "verification_attempts": 0
-        }
-
-        result = should_trigger_verification(state)
-        assert result
-
-    def test_no_trigger_max_attempts_reached(self):
-        """Test no verification trigger when max attempts reached"""
-        state = {
-            "autorun_stage": "INITIAL",
-            "verification_attempts": CONFIG["max_recheck_count"]
-        }
-
-        result = should_trigger_verification(state)
-        assert not result
-
-    def test_no_trigger_non_initial_stage(self):
-        """Test no verification trigger for non-INITIAL stage"""
-        state = {
-            "autorun_stage": "STAGE2",
-            "verification_attempts": 0
-        }
-
-        result = should_trigger_verification(state)
-        assert not result
-
-
 class TestInjectVerificationPrompt:
     """Test inject_verification_prompt function"""
 
@@ -572,48 +538,46 @@ class TestCONFIGPolicies:
 
 
 class TestPretoolUseEdgeCases:
-    """Test pretooluse_handler edge cases"""
+    """Test daemon-path PreToolUse edge cases"""
+
+    def setup_method(self):
+        import uuid
+        self.session_id = f"test-main-edge-{uuid.uuid4().hex[:8]}"
+
+    def _ctx(self, tool_name, tool_input, transcript=None):
+        return EventContext(
+            session_id=self.session_id,
+            event="PreToolUse",
+            tool_name=tool_name,
+            tool_input=tool_input,
+            session_transcript=transcript or [],
+            store=ThreadSafeDB(),
+        )
 
     def test_justify_policy_with_justification(self):
         """Test JUSTIFY policy allows when justification found"""
-        ctx = Mock()
-        ctx.tool_name = "Write"
-        ctx.tool_input = {"file_path": "/tmp/new_file.py"}
-        ctx.session_id = "test_session"
-        ctx.session_transcript = ["<AUTOFILE_JUSTIFICATION>Need new file</AUTOFILE_JUSTIFICATION>"]
-
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {"file_policy": "JUSTIFY"}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            with patch('autorun.main.Path') as mock_path:
-                mock_path.return_value.exists.return_value = False
-                response = pretooluse_handler(ctx)
+        with session_state(self.session_id) as s:
+            s["file_policy"] = "JUSTIFY"
+        ctx = self._ctx(
+            "Write",
+            {"file_path": "/tmp/nonexistent_autorun_test_xyz_edge.py"},
+            ["<AUTOFILE_JUSTIFICATION>Need new file</AUTOFILE_JUSTIFICATION>"],
+        )
+        response = _pretooluse(ctx)
 
         # Should allow because justification is in transcript
         assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     def test_justify_policy_without_justification(self):
         """Test JUSTIFY policy blocks when no justification"""
-        ctx = Mock()
-        ctx.tool_name = "Write"
-        ctx.tool_input = {"file_path": "/tmp/new_file.py"}
-        ctx.session_id = "test_session"
-        ctx.session_transcript = ["Just creating a file"]
-
-        with patch('autorun.main.session_state') as mock_session:
-            mock_state = {"file_policy": "JUSTIFY"}
-            mock_session.return_value.__enter__.return_value = mock_state
-            mock_session.return_value.__exit__.return_value = None
-
-            # Mock Path chain: Path(file_path).resolve().exists()
-            with patch('autorun.main.Path') as mock_path:
-                mock_resolved = Mock()
-                mock_resolved.exists.return_value = False
-                mock_resolved.is_file.return_value = False
-                mock_path.return_value.resolve.return_value = mock_resolved
-                response = pretooluse_handler(ctx)
+        with session_state(self.session_id) as s:
+            s["file_policy"] = "JUSTIFY"
+        ctx = self._ctx(
+            "Write",
+            {"file_path": "/tmp/nonexistent_autorun_test_xyz_edge.py"},
+            ["Just creating a file"],
+        )
+        response = _pretooluse(ctx)
 
         # Should deny because no justification
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"

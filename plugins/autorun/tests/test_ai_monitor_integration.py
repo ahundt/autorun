@@ -43,29 +43,6 @@ def test_premature_stop_detection():
 
     print("✅ test_premature_stop_detection passed")
 
-def test_verification_trigger_logic():
-    """Test verification stage triggering logic"""
-    from autorun import should_trigger_verification, CONFIG
-
-    # Test initial stage with attempts below max
-    state = {
-        "autorun_stage": "INITIAL",
-        "verification_attempts": 1
-    }
-    assert should_trigger_verification(state), "Should trigger verification in initial stage"
-
-    # Test max attempts reached
-    state["verification_attempts"] = CONFIG["max_recheck_count"]
-    assert not should_trigger_verification(state), "Should not trigger verification when max attempts reached"
-
-    # Test already in verification stage
-    state = {
-        "autorun_stage": "VERIFICATION",
-        "verification_attempts": 1
-    }
-    assert not should_trigger_verification(state), "Should not trigger verification when already in verification stage"
-
-    print("✅ test_verification_trigger_logic passed")
 
 def test_continue_prompt_injection():
     """Test continue prompt injection functionality with three-stage system"""

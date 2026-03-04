@@ -1,4 +1,17 @@
 # -*- coding: utf-8 -*-
+# conftest.py — pytest automatically discovers and loads this file before running
+# any tests in this directory. This is a standard pytest convention:
+# https://docs.pytest.org/en/stable/reference/fixtures.html#conftest-py-sharing-fixtures-across-files
+#
+# This file (plugins/autorun/tests/conftest.py) provides:
+#   - Custom pytest markers (slow, stress, race, daemon, e2e, serial)
+#   - Serial/parallel test assignment based on file name
+#   - DaemonManager: protects production daemon PIDs; manages test-spawned daemons
+#   - Shared fixtures: unique_session_id, temp_session_dir, ensure_single_daemon, etc.
+#   - pytest_sessionstart / pytest_sessionfinish hooks for cleanup
+#
+# The parent conftest.py (plugins/autorun/conftest.py) runs first and provides
+# a Python 3.10+ version guard via src/autorun/python_check.py.
 """
 pytest configuration and fixtures for autorun testing
 

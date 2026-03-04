@@ -31,9 +31,21 @@ import pytest
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from autorun.core import EventContext
-from autorun.main import pretooluse_handler
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 from autorun.session_manager import session_state, clear_test_session_state
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 
 # =============================================================================
 # Utilities
@@ -650,13 +662,19 @@ class TestDaemonContinueField:
         assert '"continue": True' in respond_block
         assert "keep AI working" in respond_block or "loop keeps running" in respond_block
 
-    def test_main_py_pretooluse_deny_keeps_ai_working(self):
-        content = MAIN_PY.read_text()
-        func_block = _extract_function(content, "build_pretooluse_response")
-        assert func_block, "Could not find def build_pretooluse_response() in main.py"
-        # Verify continue: True is used even on denial to keep AI loop running
-        assert '"continue": True' in func_block
-        assert "Keep AI working" in func_block or "loop keeps running" in func_block
+    def test_plugins_py_enforce_file_policy_deny_keeps_ai_working(self):
+        """Verify enforce_file_policy in plugins.py keeps AI working on denial."""
+        plugins_py = PLUGIN_ROOT / "src" / "autorun" / "plugins.py"
+        content = plugins_py.read_text()
+        func_block = _extract_function(content, "enforce_file_policy")
+        assert func_block, "Could not find def enforce_file_policy() in plugins.py"
+        # Verify the function exists and delegates to ctx.deny() which uses continue: True
+        assert "enforce_file_policy" in func_block
+        # The response format (continue: True) is in core.py EventContext.respond()
+        core_content = CORE_PY.read_text()
+        respond_block = _extract_function(core_content, "respond")
+        assert '"continue": True' in respond_block, \
+            "core.py EventContext.respond() must use continue: True to keep AI working"
 
 
 # =============================================================================
@@ -686,14 +704,14 @@ class TestRmBlockingBothPaths:
 
     def test_rm_blocked_via_legacy_handler(self):
         ctx = self._create_test_context("Bash", {"command": "rm -rf /tmp/test"})
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         assert result is not None
         # continue should be True to keep AI working even if tool is blocked
         assert result.get("continue") is True
 
     def test_rm_blocked_mentions_trash(self):
         ctx = self._create_test_context("Bash", {"command": "rm important.txt"})
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         reason = result.get("reason", "") or result.get("stopReason", "")
         hook_output = result.get("hookSpecificOutput", {})
         full_reason = reason + str(hook_output.get("permissionDecisionReason", ""))
@@ -702,26 +720,26 @@ class TestRmBlockingBothPaths:
     def test_safe_commands_allowed(self):
         for cmd in ["ls -la", "pwd", "echo hello", "git status"]:
             ctx = self._create_test_context("Bash", {"command": cmd})
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
             if result is not None:
                 assert result.get("continue") is not False, \
                     f"Safe command '{cmd}' should not be blocked"
 
     def test_cat_blocked(self):
         ctx = self._create_test_context("Bash", {"command": "cat /etc/passwd"})
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         assert result is not None
         assert result.get("continue") is True
 
     def test_gemini_tool_name_run_shell_command(self):
         ctx = self._create_test_context("run_shell_command", {"command": "rm file.txt"})
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         if result is not None:
             assert result.get("continue") is True
 
     def test_gemini_tool_name_bash_command(self):
         ctx = self._create_test_context("bash_command", {"command": "rm file.txt"})
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         if result is not None:
             assert result.get("continue") is True
 

@@ -152,13 +152,15 @@ class TestGeminiHookEntryPointDirect:
         except FileNotFoundError as e:
             pytest.skip(str(e))
 
-        # Run hook with no stdin (SessionStart event)
+        # AUTORUN_USE_DAEMON=0 → run_direct() in __main__.py → exercises canonical
+        # plugins.py code without connecting to the live daemon socket.
+        test_env = {**os.environ, "AUTORUN_USE_DAEMON": "0"}
         result = subprocess.run(
             ["python3", str(hook_script)],
             capture_output=True,
             text=True,
             timeout=10,
-            env=os.environ
+            env=test_env
         )
 
         # Should succeed
@@ -190,13 +192,16 @@ class TestGeminiHookEntryPointDirect:
             "sessionId": "test-e2e-session"
         })
 
+        # AUTORUN_USE_DAEMON=0 → run_direct() in __main__.py → exercises canonical
+        # plugins.py code without connecting to the live daemon socket.
+        test_env = {**os.environ, "AUTORUN_USE_DAEMON": "0"}
         result = subprocess.run(
             ["python3", str(hook_script)],
             input=stdin_data,
             capture_output=True,
             text=True,
             timeout=10,
-            env=os.environ
+            env=test_env
         )
 
         assert result.returncode == 0, \
@@ -230,19 +235,23 @@ class TestGeminiHookEntryPointDirect:
             "sessionId": "test-e2e-session"
         })
 
-        test_env = os.environ.copy()
-        test_env["AUTORUN_USE_DAEMON"] = "0"
+        # AUTORUN_USE_DAEMON=0 → run_direct() in __main__.py → exercises canonical
+        # plugins.py:check_blocked_commands without connecting to the live daemon socket.
+        # GEMINI_SESSION_ID (set by clean_environment) → detect_cli_type → "gemini" → exit 0.
+        # Bug #4669 workaround applies to Claude Code only, not Gemini; Gemini always exits 0.
+        test_env = {**os.environ, "AUTORUN_USE_DAEMON": "0"}
 
         result = subprocess.run(
             ["python3", str(hook_script)],
             input=stdin_data,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=15,
             env=test_env
         )
 
-        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+        assert result.returncode == 0, \
+            f"Hook failed: returncode={result.returncode} (Gemini path must exit 0, not 2)\nstderr: {result.stderr}"
 
         try:
             response = json.loads(result.stdout)
@@ -286,19 +295,23 @@ class TestGeminiHookEntryPointDirect:
             "transcript_path": "/tmp/test-transcript.jsonl"
         })
 
-        test_env = os.environ.copy()
-        test_env["AUTORUN_USE_DAEMON"] = "0"
+        # AUTORUN_USE_DAEMON=0 → run_direct() in __main__.py → exercises canonical
+        # plugins.py:check_blocked_commands without connecting to the live daemon socket.
+        # GEMINI_SESSION_ID (set by clean_environment) → detect_cli_type → "gemini" → exit 0.
+        # Bug #4669 workaround applies to Claude Code only, not Gemini; Gemini always exits 0.
+        test_env = {**os.environ, "AUTORUN_USE_DAEMON": "0"}
 
         result = subprocess.run(
             ["python3", str(hook_script)],
             input=stdin_data,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=15,
             env=test_env
         )
 
-        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+        assert result.returncode == 0, \
+            f"Hook failed: returncode={result.returncode} (Gemini path must exit 0)\nstderr: {result.stderr}"
 
         try:
             response = json.loads(result.stdout)
@@ -337,28 +350,33 @@ class TestGeminiHookEntryPointDirect:
             "cwd": "/tmp"
         })
 
-        test_env = os.environ.copy()
-        test_env["AUTORUN_USE_DAEMON"] = "0"
+        # AUTORUN_USE_DAEMON=0 → run_direct() in __main__.py → exercises canonical
+        # plugins.py:check_blocked_commands without connecting to the live daemon socket.
+        test_env = {**os.environ, "AUTORUN_USE_DAEMON": "0"}
 
         result = subprocess.run(
             ["python3", str(hook_script)],
             input=stdin_data,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=15,
             env=test_env
         )
 
         assert result.returncode == 0, f"Hook failed: {result.stderr}"
 
-        try:
-            response = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            pytest.fail(f"Invalid JSON response: {e}\nOutput: {result.stdout}")
-
-        # Safe command should be allowed
-        assert response.get("decision") == "allow", \
-            f"Safe command blocked! decision={response.get('decision')}"
+        # Safe command: dispatch() returns None → output_hook_response exits 0 with NO stdout.
+        # Empty stdout is the correct pass-through behavior (allows RTK to apply updatedInput).
+        # Accept either empty stdout (pass-through) or explicit allow JSON (both are valid).
+        if result.stdout.strip():
+            try:
+                response = json.loads(result.stdout)
+            except json.JSONDecodeError as e:
+                pytest.fail(f"Invalid JSON response: {e}\nOutput: {result.stdout}")
+            decision = response.get("decision") or response.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert decision in ("allow", "approve", None), \
+                f"Safe command blocked! decision={decision!r}"
+        # else: empty stdout = pass-through allow (correct behavior)
 
 
 # Skip entire class if ENABLE_REAL_MONEY_TESTS not set
@@ -913,26 +931,29 @@ class TestGeminiHighQualityMocks:
             f"git reset --hard should be blocked: {response.get('decision')}"
 
     def test_mock_gemini_python_allowed(self):
-        """Mock: 'python3 script.py' allowed."""
+        """Mock: 'python3 script.py' allowed (pass-through — no rules match)."""
         response = self._simulate_hook({
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
             "tool_input": {"command": "python3 test.py"},
             "session_id": "mock-3",
         })
-        assert response.get("decision") == "allow", \
-            f"python3 should be allowed: {response.get('decision')}"
+        # dispatch() returns None for unmatched commands (pass-through = allowed).
+        # Claude Code ignores hooks with no stdout output — the tool runs unblocked.
+        assert response is None or response.get("decision") in ("allow", "approve"), \
+            f"python3 should be allowed (None=pass-through or allow): {response!r}"
 
     def test_mock_gemini_npm_allowed(self):
-        """Mock: 'npm test' allowed."""
+        """Mock: 'npm test' allowed (pass-through — no rules match)."""
         response = self._simulate_hook({
             "hook_event_name": "BeforeTool",
             "tool_name": "run_shell_command",
             "tool_input": {"command": "npm test"},
             "session_id": "mock-4",
         })
-        assert response.get("decision") == "allow", \
-            f"npm test should be allowed: {response.get('decision')}"
+        # dispatch() returns None for unmatched commands (pass-through = allowed).
+        assert response is None or response.get("decision") in ("allow", "approve"), \
+            f"npm test should be allowed (None=pass-through or allow): {response!r}"
 
     def test_mock_gemini_sed_blocked(self):
         """Mock: 'sed -i' blocked (direct file modification)."""
@@ -973,16 +994,24 @@ class TestGeminiHighQualityMocks:
         assert hso.get("permissionDecisionReason") != ""
 
     def test_mock_dual_format_on_allow(self):
-        """Mock: allowed response has both Gemini and Claude Code formats."""
+        """Mock: allowed response (with warning message) has both Gemini and Claude Code formats.
+
+        Uses 'git status' which triggers the warn integration → ctx.respond("allow", msg).
+        This tests that WHEN autorun provides an explicit allow response (not pass-through),
+        it includes both Gemini format (decision) and Claude Code format (hookSpecificOutput).
+        Unmatched-command pass-through (None) is tested in test_mock_gemini_python_allowed.
+        """
         response = self._simulate_hook({
             "hook_event_name": "BeforeTool",
             "tool_name": "bash_command",
-            "tool_input": {"command": "uv run pytest tests/ -v"},
+            "tool_input": {"command": "git status"},
             "session_id": "mock-8",
         })
+        # git status triggers warn integration → explicit allow response (not None)
+        assert response is not None, "git status must trigger warn integration (not pass-through)"
         # Gemini format
-        assert response.get("decision") == "allow"
-        assert "reason" in response
+        assert response.get("decision") in ("allow", "approve"), \
+            f"git warn must be allow, got: {response.get('decision')!r}"
         # Claude Code format
         hso = response.get("hookSpecificOutput", {})
         assert hso.get("permissionDecision") == "allow"

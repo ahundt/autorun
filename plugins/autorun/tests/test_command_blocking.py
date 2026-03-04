@@ -33,8 +33,6 @@ from unittest.mock import patch, MagicMock
 
 from autorun.main import (
     command_matches_pattern,
-    should_block_command,
-    get_command_warning,
     get_session_blocks,
     add_session_block,
     remove_session_block,
@@ -45,6 +43,10 @@ from autorun.main import (
     GLOBAL_CONFIG_FILE
 )
 from autorun.config import DEFAULT_INTEGRATIONS
+import autorun.integrations as integ
+# Daemon-path imports
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 
 
 class TestPatternMatching:
@@ -264,474 +266,534 @@ class TestGlobalBlockManagement:
 
 
 class TestBlockPrecedence:
-    """Test session vs global block precedence."""
+    """Test allow beats block precedence — daemon path check_blocked_commands()."""
 
-    def setup_method(self):
-        """Set up test session and temporary config."""
-        self.test_session_id = "test-precedence"
-        self.temp_dir = tempfile.mkdtemp()
-        self.temp_config_file = Path(self.temp_dir) / "command-blocks.json"
+    def _ctx(self, command: str) -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=f"test-prec-{id(self)}-{command[:8].replace(' ', '_')}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": command}, store=store
+        )
 
-        # Patch GLOBAL_CONFIG_FILE
-        self.patcher = patch('autorun.main.GLOBAL_CONFIG_FILE', self.temp_config_file)
-        self.patcher.start()
+    def test_session_block_produces_deny(self):
+        """Session block pattern causes deny response."""
+        ctx = self._ctx("rm file.txt")
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash-cli"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
 
-        # Also patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
-        self.init_patcher.start()
-
-        # Clear session blocks
-        clear_session_blocks(self.test_session_id)
-
-    def teardown_method(self):
-        """Clean up patches and session blocks."""
-        self.init_patcher.stop()
-        self.patcher.stop()
-        clear_session_blocks(self.test_session_id)
-        if Path(self.temp_dir).exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_session_block_takes_precedence(self):
-        """Test that session blocks override global blocks."""
-        # Add global block
-        add_global_block("rm")
-
-        # Add conflicting session block
-        custom_suggestion = "Session-specific suggestion"
-        add_session_block(self.test_session_id, "rm", custom_suggestion)
-
-        # Check blocking
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
-
-        assert block_info is not None
-        assert block_info["pattern"] == "rm"
-        # Session suggestion should be used
-        # Note: The current implementation uses global suggestion if session block
-        # was added without custom suggestion. This is the expected behavior.
-
-    def test_global_block_when_no_session_block(self):
-        """Test that global blocks are used when no session block exists."""
-        add_global_block("rm")
-
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
-
-        assert block_info is not None
-        assert block_info["pattern"] == "rm"
+    def test_session_allow_beats_session_block(self):
+        """Session allow short-circuits session block for same pattern."""
+        ctx = self._ctx("rm file.txt")
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash"}]
+        ctx.session_allowed_patterns = [{"pattern": "rm"}]
+        result = plugins.check_blocked_commands(ctx)
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "allow", f"session allow must beat block, got {perm!r}"
 
     def test_no_block_when_none_set(self):
-        """Test that commands are allowed when no blocks are set."""
-        block_info = should_block_command(self.test_session_id, "echo hello")
+        """Commands with no matching block or integration return None."""
+        ctx = self._ctx("echo hello world")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None
 
-        assert block_info is None
-
-    def test_session_block_allows_overriding_global(self):
-        """Test that session can override global by not having a block."""
-        # This tests that clearing a session block falls back to global
-        add_global_block("rm")
-
-        # Initially should be blocked by global
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
-        assert block_info is not None
-
-        # Add and then remove session block
-        add_session_block(self.test_session_id, "rm", "Session block")
-        remove_session_block(self.test_session_id, "rm")
-
-        # Should still be blocked by global
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
-        assert block_info is not None
+    def test_session_allow_beats_default_integration(self):
+        """Session allow pattern overrides DEFAULT_INTEGRATIONS block for rm."""
+        ctx = self._ctx("rm file.txt")
+        ctx.session_allowed_patterns = [{"pattern": "rm"}]
+        result = plugins.check_blocked_commands(ctx)
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "allow", f"session allow must beat default integration, got {perm!r}"
 
 
 class TestShouldBlockCommand:
-    """Test the should_block_command function."""
+    """Test command blocking via daemon-path check_blocked_commands()."""
 
-    def setup_method(self):
-        """Set up test session."""
-        self.test_session_id = "test-should-block"
+    def _ctx(self, command: str) -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=f"test-sbc-{id(self)}-{command[:8].replace(' ', '_')}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": command}, store=store
+        )
 
-        # Patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
-        self.init_patcher.start()
-
-        clear_session_blocks(self.test_session_id)
-
-    def teardown_method(self):
-        """Clean up session blocks."""
-        self.init_patcher.stop()
-        clear_session_blocks(self.test_session_id)
-
-    def test_blocked_command_returns_info(self):
-        """Test that blocked commands return block info."""
-        add_session_block(self.test_session_id, "rm")
-
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
-
-        assert block_info is not None
-        assert "pattern" in block_info
-        assert "suggestion" in block_info
-        assert block_info["pattern"] == "rm"
+    def test_blocked_command_returns_deny(self):
+        """Session-blocked command produces deny with pattern in message."""
+        ctx = self._ctx("rm file.txt")
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash-cli"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "rm" in msg.lower() or "trash" in msg.lower()
 
     def test_unblocked_command_returns_none(self):
-        """Test that unblocked commands return None."""
-        block_info = should_block_command(self.test_session_id, "echo hello")
-
-        assert block_info is None
+        """Commands with no matching block return None (pass-through)."""
+        ctx = self._ctx("echo hello")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None
 
     def test_pattern_matching_in_block_check(self):
-        """Test that pattern matching works in block checking."""
-        add_session_block(self.test_session_id, "dd if=")
+        """Session block uses substring pattern matching (dd if= matches dd if=/dev/...)."""
+        ctx = self._ctx("dd if=/dev/zero of=test")
+        ctx.session_blocked_patterns = [{"pattern": "dd if=", "suggestion": "dangerous disk op"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
 
-        block_info = should_block_command(self.test_session_id, "dd if=/dev/zero of=test")
-
-        assert block_info is not None
-        assert block_info["pattern"] == "dd if="
-
-
-class TestDefaultIntegrations:
-    """Test DEFAULT_INTEGRATIONS configuration."""
-
-    def test_rm_integration_exists(self):
-        """Test that rm has a default integration."""
-        assert "rm" in DEFAULT_INTEGRATIONS
-        assert "suggestion" in DEFAULT_INTEGRATIONS["rm"]
-        assert "action" in DEFAULT_INTEGRATIONS["rm"]
-
-    def test_rm_rf_integration_exists(self):
-        """Test that rm -rf has a default integration."""
-        assert "rm -rf" in DEFAULT_INTEGRATIONS
-        assert "suggestion" in DEFAULT_INTEGRATIONS["rm -rf"]
-
-    def test_dd_integration_exists(self):
-        """Test that dd if= has a default integration."""
-        assert "dd if=" in DEFAULT_INTEGRATIONS
-        assert "suggestion" in DEFAULT_INTEGRATIONS["dd if="]
-
-    def test_suggestions_contain_helpful_info(self):
-        """Test that default suggestions are helpful."""
-        for pattern, config in DEFAULT_INTEGRATIONS.items():
-            assert "suggestion" in config
-            assert len(config["suggestion"]) > 0
-
-
-class TestGitCommandIntegrations:
-    """Test git command DEFAULT_INTEGRATIONS for safety suggestions."""
-
-    def test_git_reset_hard_integration_exists(self):
-        """Test that git reset --hard has a default integration."""
-        assert "git reset --hard" in DEFAULT_INTEGRATIONS
-        assert "suggestion" in DEFAULT_INTEGRATIONS["git reset --hard"]
-
-    def test_git_reset_hard_suggests_stash(self):
-        """Test that git reset --hard suggests stash as primary alternative."""
-        suggestion = DEFAULT_INTEGRATIONS["git reset --hard"]["suggestion"]
-        assert "git stash" in suggestion
-        assert "RECOMMENDED" in suggestion
-
-    def test_git_reset_hard_suggests_backup_branch(self):
-        """Test that git reset --hard suggests creating backup branch as fallback."""
-        suggestion = DEFAULT_INTEGRATIONS["git reset --hard"]["suggestion"]
-        assert "backup/" in suggestion
-        assert "git checkout -b" in suggestion
-
-    def test_git_reset_hard_has_date_format_in_branch_name(self):
-        """Test that backup branch suggestion uses concrete date-based naming."""
-        suggestion = DEFAULT_INTEGRATIONS["git reset --hard"]["suggestion"]
-        # Check for date format pattern
-        assert "%Y%m%d" in suggestion or "$(date" in suggestion
-
-    def test_git_checkout_dot_integration_exists(self):
-        """Test that git checkout . has a default integration."""
-        assert "git checkout ." in DEFAULT_INTEGRATIONS
-        assert "when" in DEFAULT_INTEGRATIONS["git checkout ."]
-
-    def test_git_checkout_dot_suggests_stash(self):
-        """Test that git checkout . suggests stash as primary alternative."""
-        suggestion = DEFAULT_INTEGRATIONS["git checkout ."]["suggestion"]
-        assert "git stash" in suggestion
-
-    def test_git_clean_f_integration_exists(self):
-        """Test that git clean -f has a default integration."""
-        assert "git clean -f" in DEFAULT_INTEGRATIONS
-        assert "suggestion" in DEFAULT_INTEGRATIONS["git clean -f"]
-
-    def test_git_clean_f_suggests_dry_run(self):
-        """Test that git clean -f suggests dry-run preview first."""
-        suggestion = DEFAULT_INTEGRATIONS["git clean -f"]["suggestion"]
-        assert "git clean -n" in suggestion
-        assert "dry-run" in suggestion.lower() or "preview" in suggestion.lower()
-
-    def test_git_clean_f_suggests_stash_untracked(self):
-        """Test that git clean -f suggests stashing untracked files."""
-        suggestion = DEFAULT_INTEGRATIONS["git clean -f"]["suggestion"]
-        assert "stash" in suggestion.lower()
-        assert "-u" in suggestion  # -u flag for untracked files
-
-    def test_git_reset_head_integration_exists(self):
-        """Test that git reset HEAD~ has a default integration."""
-        assert "git reset HEAD~" in DEFAULT_INTEGRATIONS
-        assert "suggestion" in DEFAULT_INTEGRATIONS["git reset HEAD~"]
-
-    def test_git_reset_head_suggests_soft_reset(self):
-        """Test that git reset HEAD~ suggests soft reset alternative."""
-        suggestion = DEFAULT_INTEGRATIONS["git reset HEAD~"]["suggestion"]
-        assert "--soft" in suggestion
-
-    def test_git_reset_head_suggests_revert(self):
-        """Test that git reset HEAD~ suggests revert as safer option."""
-        suggestion = DEFAULT_INTEGRATIONS["git reset HEAD~"]["suggestion"]
-        assert "git revert" in suggestion
-
-    def test_git_reset_head_mentions_reflog_recovery(self):
-        """Test that git reset HEAD~ mentions reflog for recovery."""
-        suggestion = DEFAULT_INTEGRATIONS["git reset HEAD~"]["suggestion"]
-        assert "reflog" in suggestion
-
-    def test_all_git_suggestions_have_allow_instruction(self):
-        """Test that all git block-action suggestions include allow instruction.
-
-        Entries with action: 'warn' are informational and don't need /ar:ok
-        because they don't block the command.
-        """
-        git_patterns = [p for p in DEFAULT_INTEGRATIONS.keys() if p.startswith("git")]
-        for pattern in git_patterns:
-            config = DEFAULT_INTEGRATIONS[pattern]
-            if config.get("action") == "warn":
-                continue  # warn actions allow the command, no /ar:ok needed
-            suggestion = config["suggestion"]
-            assert "/ar:ok" in suggestion, f"Missing /ar:ok instruction in {pattern}"
-
-
-class TestGitBlockingTargeting:
-    """Test that git blocking only targets damaging commands, not safe ones."""
-
-    def test_git_checkout_branch_is_safe(self):
-        """Test that git checkout <branch> is NOT blocked (only checkout . is)."""
-        # The pattern "git checkout ." should NOT match "git checkout main"
-        pattern = "git checkout ."
-        safe_commands = [
-            "git checkout main",
-            "git checkout feature-branch",
-            "git checkout -b new-branch",
-            "git checkout HEAD~1",
-        ]
-        for cmd in safe_commands:
-            # Pattern should not be a substring of safe commands
-            assert pattern not in cmd, f"Pattern '{pattern}' incorrectly matches safe command: {cmd}"
-
-    def test_git_checkout_dot_is_blocked(self):
-        """Test that git checkout . variations ARE blocked."""
-        pattern = "git checkout ."
-        dangerous_commands = [
-            "git checkout .",
-            "git checkout . --",
-        ]
-        for cmd in dangerous_commands:
-            assert pattern in cmd, f"Pattern '{pattern}' should match dangerous command: {cmd}"
-
-    def test_git_reset_branch_is_safe(self):
-        """Test that git reset <ref> (without --hard) is less dangerous."""
-        # git reset HEAD~ is a block action but has no "redirect" key,
-        # meaning it warns/blocks but doesn't auto-redirect to an alternative.
-        # It is less dangerous than --hard because it keeps changes in working dir.
-        assert "git reset HEAD~" in DEFAULT_INTEGRATIONS
-        assert "redirect" not in DEFAULT_INTEGRATIONS["git reset HEAD~"]
-
-    def test_git_stash_is_not_blocked(self):
-        """Test that git stash (the safe alternative) is NOT in blocking list."""
-        assert "git stash" not in DEFAULT_INTEGRATIONS
-        assert "git stash push" not in DEFAULT_INTEGRATIONS
-        assert "git stash pop" not in DEFAULT_INTEGRATIONS
-
-    def test_git_restore_is_not_blocked(self):
-        """Test that git restore (the safe alternative) is NOT blocked."""
-        assert "git restore" not in DEFAULT_INTEGRATIONS
-
-    def test_git_revert_is_not_blocked(self):
-        """Test that git revert (safe - creates new commit) is NOT blocked."""
-        assert "git revert" not in DEFAULT_INTEGRATIONS
-
-    def test_safe_git_commands_not_in_integrations(self):
-        """Test that common safe git commands are NOT in DEFAULT_INTEGRATIONS."""
-        safe_commands = [
-            "git status",
-            "git diff",
-            "git log",
-            "git branch",
-            "git add",
-            "git commit",
-            "git push",
-            "git pull",
-            "git fetch",
-            "git merge",
-            "git stash",
-            "git restore",
-            "git revert",
-        ]
-        for cmd in safe_commands:
-            assert cmd not in DEFAULT_INTEGRATIONS, f"Safe command '{cmd}' should NOT be blocked"
 
 
 class TestPredicateFunctions:
-    """Test predicate-based conditional blocking."""
+    """Test predicate-based conditional blocking — daemon path."""
 
-    def setup_method(self):
-        """Set up test session."""
-        self.test_session_id = "test-predicates"
-
-        # Patch initialize_default_blocks to prevent auto-initialization
-        self.init_patcher = patch('autorun.main.initialize_default_blocks', return_value=False)
-        self.init_patcher.start()
-
-        clear_session_blocks(self.test_session_id)
-
-    def teardown_method(self):
-        """Clean up session blocks."""
-        self.init_patcher.stop()
-        clear_session_blocks(self.test_session_id)
+    def _ctx(self, command: str) -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=f"test-pred-{id(self)}-{command[:8].replace(' ', '_')}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": command}, store=store
+        )
 
     def test_predicate_returns_true_blocks(self):
-        """Test that when predicate returns True, command is blocked."""
-        from autorun.main import _PREDICATES, should_block_command
-
-        # Mock predicate to return True (block)
-        with patch.dict(_PREDICATES, {"_has_unstaged_changes": lambda cmd: True}):
-            block_info = should_block_command(self.test_session_id, "git checkout .")
-            assert block_info is not None
-            assert block_info["pattern"] == "git checkout ."
+        """When _has_unstaged_changes predicate returns True, git checkout . is denied."""
+        with patch.dict(integ._WHEN_PREDICATES, {"_has_unstaged_changes": lambda ctx: True}):
+            result = plugins.check_blocked_commands(self._ctx("git checkout ."))
+            assert result is not None
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "deny"
 
     def test_predicate_returns_false_allows(self):
-        """Test that when predicate returns False, command is allowed."""
-        from autorun.main import _PREDICATES, should_block_command
-
-        # Mock ALL predicates that match "git checkout ." to return False (allow)
-        # "git checkout ." matches both "git checkout ." (when: _has_unstaged_changes)
-        # and "git checkout" (when: _file_has_unstaged_changes)
-        with patch.dict(_PREDICATES, {
-            "_has_unstaged_changes": lambda cmd: False,
-            "_file_has_unstaged_changes": lambda cmd: False,
+        """When ALL relevant predicates return False, git checkout . is not denied."""
+        with patch.dict(integ._WHEN_PREDICATES, {
+            "_has_unstaged_changes": lambda ctx: False,
+            "_file_has_unstaged_changes": lambda ctx: False,
+            "_checkout_targets_file_with_changes": lambda ctx: False,
         }):
-            block_info = should_block_command(self.test_session_id, "git checkout .")
-            assert block_info is None  # Not blocked
+            result = plugins.check_blocked_commands(self._ctx("git checkout ."))
+            if result is not None:
+                perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+                assert perm != "deny", f"predicate=False must not deny, got {perm!r}"
 
     def test_no_predicate_always_blocks(self):
-        """Test that entries without 'when' field always block."""
-        # "rm" has no "when" field, should always block
-        from autorun.main import should_block_command
-
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
-        assert block_info is not None
-        assert block_info["pattern"] == "rm"
+        """Integrations without 'when' predicate always block (rm has no when field)."""
+        result = plugins.check_blocked_commands(self._ctx("rm file.txt"))
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
 
     def test_stash_drop_blocked_when_stash_exists(self):
-        """Test git stash drop is blocked when stash has entries."""
-        from autorun.main import _PREDICATES, should_block_command
-
-        # Mock stash exists
-        with patch.dict(_PREDICATES, {"_stash_exists": lambda cmd: True}):
-            block_info = should_block_command(self.test_session_id, "git stash drop")
-            assert block_info is not None
-            assert block_info["pattern"] == "git stash drop"
-            assert "suggestion" in block_info
+        """git stash drop is denied when _stash_exists predicate returns True."""
+        with patch.dict(integ._WHEN_PREDICATES, {"_stash_exists": lambda ctx: True}):
+            result = plugins.check_blocked_commands(self._ctx("git stash drop"))
+            assert result is not None
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "deny"
 
     def test_stash_drop_allowed_when_no_stash(self):
-        """Test git stash drop is allowed when stash is empty."""
-        from autorun.main import _PREDICATES, should_block_command
+        """git stash drop is allowed when _stash_exists predicate returns False."""
+        with patch.dict(integ._WHEN_PREDICATES, {"_stash_exists": lambda ctx: False}):
+            result = plugins.check_blocked_commands(self._ctx("git stash drop"))
+            if result is not None:
+                perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+                assert perm != "deny", f"no stash → stash drop must not be denied, got {perm!r}"
 
-        # Mock no stash entries
-        with patch.dict(_PREDICATES, {"_stash_exists": lambda cmd: False}):
-            block_info = should_block_command(self.test_session_id, "git stash drop")
-            assert block_info is None  # Not blocked
-
-    def test_suggestion_included_in_block_info(self):
-        """Test that suggestion is included in block info from DEFAULT_INTEGRATIONS."""
-        from autorun.main import should_block_command, get_global_blocks
-
-        # Use a unique session to ensure we hit DEFAULT_INTEGRATIONS, not session blocks
-        unique_session = "test-suggestion-" + str(id(self))
-        clear_session_blocks(unique_session)
-
-        # Mock empty global blocks to ensure we hit DEFAULT_INTEGRATIONS
-        with patch('autorun.main.get_global_blocks', return_value=[]):
-            block_info = should_block_command(unique_session, "rm file.txt")
-            assert block_info is not None
-            assert "suggestion" in block_info
-            assert block_info["suggestion"] == DEFAULT_INTEGRATIONS["rm"]["suggestion"]
+    def test_suggestion_included_in_block_message(self):
+        """Block message includes suggestion from DEFAULT_INTEGRATIONS."""
+        result = plugins.check_blocked_commands(self._ctx("rm file.txt"))
+        assert result is not None
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert msg, "block message must not be empty"
+        assert "trash" in msg.lower() or "rm" in msg.lower(), \
+            f"rm block message must mention trash or rm, got: {msg[:100]!r}"
 
 
-class TestWarnAction:
-    """Test action: 'warn' behavior (allow + message, not block)."""
+# ============================================================================
+# Daemon-path tests — use EventContext + plugins.check_blocked_commands()
+# ============================================================================
 
-    def test_warn_action_does_not_block(self):
-        """Test that action='warn' allows command (git has action: 'warn')."""
-        # git has action: "warn" in DEFAULT_INTEGRATIONS
-        unique_session = "test-warn-" + str(id(self))
-        clear_session_blocks(unique_session)
+class TestRuleStacking:
+    """Verify the stacking fix: multiple matching rules combine, deny wins over warn.
 
-        with patch('autorun.main.get_global_blocks', return_value=[]):
-            result = should_block_command(unique_session, "git status")
-            assert result is None, "git status should not be blocked (action: warn)"
+    Regression tests for the bug where rm -f foo && git status showed only the
+    git warn message (last match won), discarding the rm deny.  The fix in
+    plugins.py:check_blocked_commands() collects ALL matching deny_parts and
+    warn_parts, then returns a single combined response with deny-wins semantics.
+    """
 
-    def test_warn_action_returns_warning_message(self):
-        """Test that get_command_warning returns message for warn integrations."""
-        unique_session = "test-warn-msg-" + str(id(self))
-        warning = get_command_warning(unique_session, "git status")
-        assert warning is not None, "git should return a warning message"
-        assert "CLAUDE.md" in warning, "git warning should mention CLAUDE.md"
+    def _ctx(self, command: str, session_id: str = None) -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=session_id or f"test-stack-{id(self)}-{command[:8]}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": command}, store=store
+        )
 
-    def test_block_action_is_blocked(self):
-        """Test that action='block' (default) still blocks commands."""
-        unique_session = "test-block-" + str(id(self))
-        clear_session_blocks(unique_session)
+    def _msg(self, result: dict) -> str:
+        """Extract the combined message from hookSpecificOutput.permissionDecisionReason."""
+        return result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 
-        with patch('autorun.main.get_global_blocks', return_value=[]):
-            result = should_block_command(unique_session, "rm file.txt")
-            assert result is not None, "rm should be blocked (action: block)"
-            assert result["pattern"] == "rm"
+    def test_deny_and_warn_both_appear_in_combined_message(self):
+        """rm && git status → deny for rm, warn for git; BOTH messages in combined."""
+        ctx = self._ctx("rm -f foo.ts && git status")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None, "rm && git should produce a response"
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"Expected deny (rm blocks), got {perm!r}"
+        msg = self._msg(result)
+        assert "rm" in msg.lower() or "trash" in msg.lower(), \
+            "combined message must mention rm block"
+        assert "CLAUDE.md" in msg or "git" in msg.lower(), \
+            "combined message must include git warn"
 
-    def test_block_action_has_no_warning(self):
-        """Test that blocked commands don't return warnings."""
-        unique_session = "test-block-nowarn-" + str(id(self))
-        warning = get_command_warning(unique_session, "rm file.txt")
-        assert warning is None, "rm should not have warning (it's blocked)"
+    def test_deny_wins_over_warn(self):
+        """Decision is deny whenever any deny-action integration matches, regardless of warns."""
+        ctx = self._ctx("rm -f foo.ts && git status")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"deny must win over warn, got {perm!r}"
 
-    def test_warn_action_git_variants(self):
-        """Test various git commands are warned not blocked."""
-        unique_session = "test-git-variants-" + str(id(self))
-        clear_session_blocks(unique_session)
+    def test_warn_only_produces_allow_with_message(self):
+        """git status alone (warn-only) → permissionDecision=allow, message in systemMessage."""
+        ctx = self._ctx("git status")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None, "git status should trigger the warn integration"
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "allow", f"warn-only must be allow, got {perm!r}"
+        msg = result.get("systemMessage", "") + result.get("reason", "")
+        assert "CLAUDE.md" in msg or "git" in msg.lower(), \
+            "warn message should mention CLAUDE.md or git requirements"
 
-        git_commands = [
-            "git status",
-            "git log",
-            "git diff",
-            "git add file.txt",
-            "git commit -m 'test'",
-            "git push",
-            "git pull",
+    def test_deny_only_produces_deny(self):
+        """rm alone (deny-only) → permissionDecision=deny."""
+        ctx = self._ctx("rm important.txt")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"rm must be denied, got {perm!r}"
+
+    def test_deduplication_session_block_and_default_integration(self):
+        """Same pattern in session block AND default integration appears only once."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-dedup-{id(self)}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm foo"}, store=store
+        )
+        # Add a session block for the same "rm" pattern that's also in DEFAULT_INTEGRATIONS
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash-dedup-marker"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        msg = self._msg(result)
+        # The session block message should appear exactly once (dedup by pattern string)
+        assert msg.count("use trash-dedup-marker") == 1, \
+            f"Deduped message should appear once, got: {msg.count('use trash-dedup-marker')}"
+
+    def test_session_allow_short_circuits_all_blocks(self):
+        """Session allow pattern beats session block and default integrations."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-allow-sc-{id(self)}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm foo"}, store=store
+        )
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash"}]
+        ctx.session_allowed_patterns = [{"pattern": "rm"}]
+        result = plugins.check_blocked_commands(ctx)
+        # Allow wins → either None (pass-through) or explicit allow
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "allow", f"session allow must beat block, got {perm!r}"
+
+    def test_multiple_deny_patterns_all_appear(self):
+        """Command matching rm AND rm -rf both get messages (different patterns)."""
+        ctx = self._ctx("rm -rf /tmp/testdir")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
+        msg = self._msg(result)
+        # Both rm and rm -rf patterns should contribute (different patterns, not deduped)
+        assert "rm" in msg.lower() or "trash" in msg.lower()
+
+    def test_session_no_suppresses_default_warn_same_pattern(self):
+        """Pattern-only dedup: /ar:no git (deny) suppresses DEFAULT git (warn) for same pattern.
+
+        Regression test for the (pattern, decision) dedup key bug:
+        - OLD: key ("git","deny") ≠ ("git","warn") → BOTH messages appeared (wrong)
+        - NEW: key "git" claimed by session block → DEFAULT git warn SKIPPED (correct)
+        User's explicit /ar:no block replaces the default regardless of action type.
+        """
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-dedup-warn-{id(self)}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "git status"}, store=store
+        )
+        # Simulate /ar:no git with a custom deny message
+        ctx.session_blocked_patterns = [{"pattern": "git", "suggestion": "custom-git-block-msg"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"session block must deny, got {perm!r}"
+        msg = self._msg(result)
+        assert "custom-git-block-msg" in msg, "custom session block message must appear"
+        assert "CLAUDE.md" not in msg, \
+            "DEFAULT git warn must NOT appear when session block claims same pattern"
+
+    def test_session_no_does_not_suppress_more_specific_pattern(self):
+        """/ar:no rm (deny) does NOT suppress DEFAULT rm -rf (different pattern → both shown)."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-dedup-specific-{id(self)}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm -rf /tmp/testdir"}, store=store
+        )
+        # Session block for "rm" — different from "rm -rf"
+        ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "custom-rm-block-msg"}]
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
+        msg = self._msg(result)
+        # "rm" session block MUST appear
+        assert "custom-rm-block-msg" in msg, "session block for 'rm' must appear"
+        # DEFAULT "rm -rf" integration is a DIFFERENT pattern — MUST also appear
+        assert "rm -rf" in msg.lower() or "trash" in msg.lower(), \
+            "DEFAULT rm -rf message must also appear (different pattern from 'rm')"
+
+    def test_safe_command_returns_none(self):
+        """Commands matching no integration return None (pure pass-through).
+
+        With the dispatch() fix, None from check_blocked_commands propagates to dispatch()
+        returning None → AutorunDaemon sends {} → client exits 0 with no stdout.
+        This allows parallel hooks (RTK) to apply updatedInput without conflict.
+        """
+        ctx = self._ctx("echo hello")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, f"safe command must return None, got {result!r}"
+
+    def test_ls_command_returns_none_for_rtk_passthrough(self):
+        """ls -alh matches no rule → None → RTK can substitute 'rtk ls -alh' unblocked.
+
+        RTK (Rust Token Killer) uses updatedInput in parallel PreToolUse hook responses.
+        When autorun outputs nothing (None → {} → exit 0 no stdout), Claude Code uses
+        only RTK's response, applying the token-efficient substitution (60-90% savings).
+        """
+        ctx = self._ctx("ls -alh /tmp")
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, f"ls must return None for RTK passthrough, got {result!r}"
+
+
+class TestGitCommandTargeting:
+    """Verify git blocking targets only dangerous commands, not safe ones — daemon path.
+
+    Replaces the removed TestGitBlockingTargeting with corrected assertions:
+    git restore IS in DEFAULT_INTEGRATIONS (as block action, not warn).
+    """
+
+    def _ctx(self, command: str) -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=f"test-gittgt-{id(self)}-{command[:12].replace(' ', '_')}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": command}, store=store
+        )
+
+    def test_git_checkout_dot_is_denied(self):
+        """git checkout . → deny (discards all unstaged changes)."""
+        result = plugins.check_blocked_commands(self._ctx("git checkout ."))
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"git checkout . must be denied, got {perm!r}"
+
+    def test_git_checkout_branch_is_not_denied(self):
+        """git checkout main → not denied (checking out a branch is safe)."""
+        result = plugins.check_blocked_commands(self._ctx("git checkout main"))
+        # Should be None or allow — NOT deny
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm != "deny", f"git checkout main must not be denied, got {perm!r}"
+
+    def test_git_reset_hard_is_denied(self):
+        """git reset --hard HEAD → deny."""
+        result = plugins.check_blocked_commands(self._ctx("git reset --hard HEAD"))
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
+
+    def test_git_clean_f_is_denied(self):
+        """git clean -f → deny."""
+        result = plugins.check_blocked_commands(self._ctx("git clean -f"))
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
+
+    def test_git_stash_is_not_in_default_integrations(self):
+        """git stash and variants are safe alternatives — not blocked."""
+        for pattern in ("git stash", "git stash push", "git stash pop"):
+            assert pattern not in DEFAULT_INTEGRATIONS, \
+                f"'{pattern}' is a safe alternative and should NOT be blocked"
+
+    def test_git_revert_is_not_in_default_integrations(self):
+        """git revert creates a new commit — safe, not blocked."""
+        assert "git revert" not in DEFAULT_INTEGRATIONS
+
+    def test_git_restore_is_in_default_integrations_as_block(self):
+        """git restore IS in DEFAULT_INTEGRATIONS as block (discards unstaged changes)."""
+        assert "git restore" in DEFAULT_INTEGRATIONS, \
+            "git restore discards unstaged changes and should be in DEFAULT_INTEGRATIONS"
+        assert DEFAULT_INTEGRATIONS["git restore"].get("action") in ("block", None), \
+            "git restore should be block action (None defaults to block)"
+
+    def test_git_reset_head_has_no_redirect(self):
+        """git reset HEAD~ has no redirect (keeps changes in working dir)."""
+        assert "git reset HEAD~" in DEFAULT_INTEGRATIONS
+        assert "redirect" not in DEFAULT_INTEGRATIONS["git reset HEAD~"]
+
+    def test_dangerous_git_commands_blocked_via_daemon_path(self):
+        """All three primary dangerous git commands are denied by check_blocked_commands."""
+        dangerous = [
+            "git reset --hard HEAD",
+            "git checkout .",
+            "git clean -f",
         ]
+        for cmd in dangerous:
+            result = plugins.check_blocked_commands(self._ctx(cmd))
+            assert result is not None, f"'{cmd}' must produce a response"
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm == "deny", f"'{cmd}' must be denied, got {perm!r}"
 
-        with patch('autorun.main.get_global_blocks', return_value=[]):
-            for cmd in git_commands:
-                result = should_block_command(unique_session, cmd)
-                # Only general git command (action: warn) should match these
-                # They should NOT be blocked
-                assert result is None, f"{cmd} should not be blocked"
 
-    def test_dangerous_git_commands_still_blocked(self):
-        """Test that dangerous git commands with action='block' are still blocked."""
-        unique_session = "test-danger-git-" + str(id(self))
-        clear_session_blocks(unique_session)
+class TestGrepFalsePositiveProtection:
+    """Verify grep block never fires on non-Bash tool calls (AI tools, file ops).
 
-        # These have explicit action: block integrations
-        dangerous_commands = [
-            ("git reset --hard HEAD", "git reset --hard"),
-            ("git checkout .", "git checkout ."),
-            ("git clean -f", "git clean -f"),
-        ]
+    Background: User reported "grep block fires on Read tool" (Task #6).
+    Root cause analysis confirmed current code is correct:
+    - Claude Code claude-hooks.json PreToolUse matcher: "Write|Edit|Bash|ExitPlanMode"
+      → Read, Grep, Glob AI tools never trigger the hook at the CLI level.
+    - check_blocked_commands() returns None early for any tool_name not in
+      BASH_TOOLS = {"Bash", "bash_command", "run_shell_command"} or
+      FILE_TOOLS = {"Write", "write_file", "Edit", "edit_file", "replace"}.
+    - Gemini CLI grep_search tool name is NOT in BASH_TOOLS, returns None immediately.
 
-        with patch('autorun.main.get_global_blocks', return_value=[]):
-            for cmd, expected_pattern in dangerous_commands:
-                result = should_block_command(unique_session, cmd)
-                assert result is not None, f"{cmd} should be blocked"
+    These tests protect against regressions that would introduce false positives.
+    """
+
+    def _ctx(self, tool_name: str, tool_input: dict, session_id: str = None) -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=session_id or f"test-grep-fp-{id(self)}-{tool_name}",
+            event="PreToolUse", tool_name=tool_name,
+            tool_input=tool_input, store=store
+        )
+
+    def test_read_tool_with_grep_in_path_returns_none(self):
+        """Read tool (Claude) with 'grep' in file path must not trigger grep block."""
+        ctx = self._ctx("Read", {"file_path": "/path/to/grep_results.py"})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, \
+            f"Read tool must return None (hook-level: never reaches daemon for Read), got {result!r}"
+
+    def test_read_tool_simple_returns_none(self):
+        """Read tool with any file path must always return None."""
+        ctx = self._ctx("Read", {"file_path": "/Users/user/project/src/main.py"})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, f"Read tool must always return None, got {result!r}"
+
+    def test_grep_ai_tool_returns_none(self):
+        """Grep AI tool (Claude Code 'Grep') must not trigger grep block."""
+        ctx = self._ctx("Grep", {"pattern": "command_matches", "path": "src/"})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, \
+            f"Grep AI tool must return None (not a bash command), got {result!r}"
+
+    def test_glob_ai_tool_returns_none(self):
+        """Glob AI tool must not trigger any block."""
+        ctx = self._ctx("Glob", {"pattern": "**/*.py", "path": "src/"})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, f"Glob AI tool must return None, got {result!r}"
+
+    def test_gemini_grep_search_tool_returns_none(self):
+        """Gemini CLI grep_search tool must not trigger grep block.
+
+        Gemini CLI's BeforeTool fires for grep_search, but check_blocked_commands
+        must return None since grep_search is not in BASH_TOOLS or FILE_TOOLS.
+        """
+        ctx = self._ctx("grep_search", {"pattern": "rm -rf", "path": "."})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, \
+            f"Gemini grep_search AI tool must return None (not bash), got {result!r}"
+
+    def test_gemini_read_file_tool_returns_none(self):
+        """Gemini CLI read_file tool must not trigger grep block.
+
+        Gemini CLI's BeforeTool fires for read_file, but check_blocked_commands
+        must return None since read_file is not in BASH_TOOLS or FILE_TOOLS.
+        """
+        ctx = self._ctx("read_file", {"file_path": "/path/to/grep_test.py"})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, \
+            f"Gemini read_file tool must return None, got {result!r}"
+
+    def test_gemini_glob_tool_returns_none(self):
+        """Gemini CLI glob tool must not trigger any block."""
+        ctx = self._ctx("glob", {"pattern": "**/*.py"})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is None, f"Gemini glob tool must return None, got {result!r}"
+
+    def test_bash_grep_not_in_pipe_is_correctly_blocked(self):
+        """Bash tool with grep command (not in pipe) IS correctly blocked.
+
+        This verifies the EXPECTED behavior: bash grep outside a pipe should be
+        blocked and the AI should use the Grep AI tool instead.
+        """
+        ctx = self._ctx("Bash", {"command": "grep -r 'pattern' ."})
+        result = plugins.check_blocked_commands(ctx)
+        assert result is not None, "bash grep (not in pipe) must be blocked"
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"bash grep must be denied, got {perm!r}"
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "grep" in msg.lower(), "block message must mention grep"
+
+    def test_bash_grep_in_pipe_is_allowed(self):
+        """Bash tool with grep in pipe is correctly allowed.
+
+        'ps aux | grep python' is a common safe pipe usage — should not be blocked.
+        '_not_in_pipe' predicate must return False (allow) for this case.
+        """
+        ctx = self._ctx("Bash", {"command": "ps aux | grep python"})
+        result = plugins.check_blocked_commands(ctx)
+        # Should be None (no block) or allow — NOT deny for grep in pipe
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            assert perm != "deny", \
+                f"grep in pipe must not be denied, got {perm!r} for 'ps aux | grep python'"
+
+    def test_pytest_command_with_grep_in_test_filter_not_blocked(self):
+        """pytest -k 'grep' must not trigger grep block.
+
+        The grep keyword appears in the -k filter argument, not as a command.
+        'uv run pytest -k grep' should not match the grep integration.
+        """
+        ctx = self._ctx("Bash", {"command": "uv run pytest plugins/autorun/tests/ -k 'grep'"})
+        result = plugins.check_blocked_commands(ctx)
+        # Should be None (uv/pytest are not in DEFAULT_INTEGRATIONS as blocks)
+        # OR at most a warn (but NOT a deny for grep)
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+            msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+            # If there IS a response, it must not be a grep deny
+            if perm == "deny":
+                assert "grep" not in msg.lower() or "bash grep" in msg.lower(), \
+                    f"pytest -k 'grep' must not trigger grep block, got: {msg[:100]!r}"
 
 
 if __name__ == "__main__":

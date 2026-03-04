@@ -117,40 +117,47 @@ class TestDaemonPreToolUseDenyBlocks:
 # =============================================================================
 
 class TestLegacyPreToolUseDenyBlocks:
-    """main.py build_pretooluse_response() must set continue=True for deny (AI keeps running)."""
+    """EventContext.deny()/allow() must set continue=True for PreToolUse (AI keeps running).
+
+    These tests were previously for main.py build_pretooluse_response() (now deleted).
+    They now test the canonical daemon-path equivalent: EventContext.deny()/allow().
+    """
 
     def test_build_pretooluse_response_deny(self):
-        """build_pretooluse_response('deny') must return continue=True.
+        """ctx.deny() for PreToolUse must return continue=True.
 
         Per official hooks docs: continue controls AI lifecycle, not tool blocking.
         Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669 workaround).
         """
-        from autorun.main import build_pretooluse_response
+        from autorun.core import EventContext
 
-        response = build_pretooluse_response("deny", "Use trash instead")
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.deny("Use trash instead")
 
         assert response["continue"] is True, (
-            "build_pretooluse_response('deny') must have continue=True. "
+            "ctx.deny() must have continue=True. "
             "Tool blocking uses permissionDecision='deny' + exit code 2 (Bug #4669)."
         )
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_build_pretooluse_response_allow(self):
-        """build_pretooluse_response('allow') must return continue=True."""
-        from autorun.main import build_pretooluse_response
+        """ctx.allow() for PreToolUse must return continue=True."""
+        from autorun.core import EventContext
 
-        response = build_pretooluse_response("allow", "Allowed")
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.allow("Allowed")
 
         assert response["continue"] is True, (
-            "build_pretooluse_response('allow') must have continue=True. "
+            "ctx.allow() must have continue=True. "
             "Fix must not introduce false positives."
         )
 
     def test_build_pretooluse_response_deny_has_permission_decision(self):
         """When denying, permissionDecision must be 'deny'."""
-        from autorun.main import build_pretooluse_response
+        from autorun.core import EventContext
 
-        response = build_pretooluse_response("deny", "Use trash instead")
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.deny("Use trash instead")
 
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny", (
             "deny response must have permissionDecision='deny' to block tool."
@@ -158,9 +165,10 @@ class TestLegacyPreToolUseDenyBlocks:
 
     def test_build_pretooluse_response_allow_empty_stop_reason(self):
         """When allowing, stopReason must be empty."""
-        from autorun.main import build_pretooluse_response
+        from autorun.core import EventContext
 
-        response = build_pretooluse_response("allow", "OK")
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.allow("OK")
 
         assert response["stopReason"] == "", (
             "Allow response must have empty stopReason."
@@ -176,20 +184,19 @@ class TestLegacyPreToolUseDenyBlocks:
 # =============================================================================
 
 class TestDaemonLegacyConsistency:
-    """Both code paths must produce identical continue values for same inputs."""
+    """Daemon path must produce correct continue values (legacy path was removed)."""
 
     @pytest.mark.parametrize("decision,expected_continue", [
         ("deny", True),   # continue=True: AI keeps running, tool blocked by permissionDecision
         ("allow", True),   # continue=True: AI keeps running, tool allowed
     ])
     def test_continue_consistency(self, decision, expected_continue):
-        """Daemon and legacy paths must agree on continue value for same decision.
+        """Daemon path (EventContext.respond) must return continue=True for PreToolUse.
 
         Per official hooks docs: continue=True always for PreToolUse.
         Tool blocking uses permissionDecision="deny" + exit code 2 (Bug #4669).
         """
         from autorun.core import EventContext
-        from autorun.main import build_pretooluse_response
 
         reason = "test reason"
 
@@ -197,43 +204,21 @@ class TestDaemonLegacyConsistency:
         ctx = EventContext(session_id="test", event="PreToolUse")
         daemon_response = ctx.respond(decision, reason)
 
-        # Legacy path
-        legacy_response = build_pretooluse_response(decision, reason)
-
         assert daemon_response["continue"] == expected_continue, (
             f"Daemon path: continue={daemon_response['continue']} "
             f"for decision={decision}, expected {expected_continue}"
         )
-        assert legacy_response["continue"] == expected_continue, (
-            f"Legacy path: continue={legacy_response['continue']} "
-            f"for decision={decision}, expected {expected_continue}"
-        )
-        assert daemon_response["continue"] == legacy_response["continue"], (
-            f"INCONSISTENCY: Daemon continue={daemon_response['continue']} "
-            f"vs Legacy continue={legacy_response['continue']} "
-            f"for decision={decision}. Both paths must agree."
-        )
 
     @pytest.mark.parametrize("decision", ["deny", "allow"])
     def test_decision_field_consistency(self, decision):
-        """Both paths must include the same decision field values."""
+        """Daemon path must include correct decision field values."""
         from autorun.core import EventContext
-        from autorun.main import build_pretooluse_response
 
         ctx = EventContext(session_id="test", event="PreToolUse")
         daemon_response = ctx.respond(decision, "test")
-        legacy_response = build_pretooluse_response(decision, "test")
 
-        # Both must have hookSpecificOutput with raw permissionDecision
+        # Must have hookSpecificOutput with raw permissionDecision
         assert daemon_response["hookSpecificOutput"]["permissionDecision"] == decision
-        assert legacy_response["hookSpecificOutput"]["permissionDecision"] == decision
-
-        # Top-level decision is CLI-mapped (approve/block for Claude, allow/deny for Gemini)
-        # Both paths must agree on the mapped value
-        assert daemon_response.get("decision") == legacy_response.get("decision"), (
-            f"Decision mismatch: daemon={daemon_response.get('decision')} "
-            f"vs legacy={legacy_response.get('decision')}"
-        )
 
 
 # =============================================================================
@@ -412,10 +397,11 @@ class TestContinueDecisionInvariant:
 
     @pytest.mark.parametrize("decision", ["deny", "allow"])
     def test_legacy_response_continue_always_true(self, decision):
-        """Legacy build_pretooluse_response() must always return continue=True."""
-        from autorun.main import build_pretooluse_response
+        """EventContext.respond() must always return continue=True for PreToolUse."""
+        from autorun.core import EventContext
 
-        response = build_pretooluse_response(decision, "test reason")
+        ctx = EventContext(session_id="test", event="PreToolUse")
+        response = ctx.respond(decision, "test reason")
 
         assert response["continue"] is True, (
             f"PreToolUse must always have continue=True (AI keeps running). "
@@ -447,12 +433,24 @@ class TestContinueDecisionInvariant:
 
 
 # =============================================================================
-# Integration: End-to-end rm blocking through pretooluse_handler
+# Integration: End-to-end rm blocking through the daemon-path handler
 # Tests the full handler flow with real EventContext, matching production.
 # =============================================================================
 
+def _pretooluse_regression(ctx):
+    """Daemon-path helper replacing deleted pretooluse_handler."""
+    from autorun import plugins as _plugins
+    result = _plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = _plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
+
+
 class TestRmBlockingEndToEnd:
-    """End-to-end test that rm commands are blocked through the handler."""
+    """End-to-end test that rm commands are blocked through the daemon handler."""
 
     @pytest.fixture(autouse=True)
     def clean_session(self):
@@ -465,21 +463,18 @@ class TestRmBlockingEndToEnd:
             state.clear()
 
     def test_rm_blocked_via_legacy_handler(self):
-        """rm command blocked via main.py pretooluse_handler (legacy path).
-
-        This is the direct function call path used when USE_DAEMON=0.
-        """
-        from autorun.main import pretooluse_handler
-        from autorun.core import EventContext
+        """rm command blocked via daemon-path check_blocked_commands."""
+        from autorun.core import EventContext, ThreadSafeDB
 
         ctx = EventContext(
             session_id="regression-test",
             event="PreToolUse",
             tool_name="Bash",
             tool_input={"command": "rm /tmp/test.txt"},
+            store=ThreadSafeDB(),
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse_regression(ctx)
 
         assert result["continue"] is True, (
             "PreToolUse must have continue=True (AI keeps running). "
@@ -492,18 +487,21 @@ class TestRmBlockingEndToEnd:
 
     def test_rm_blocked_mentions_trash(self):
         """rm blocking message must suggest 'trash' as alternative."""
-        from autorun.main import pretooluse_handler
-        from autorun.core import EventContext
+        from autorun.core import EventContext, ThreadSafeDB
 
         ctx = EventContext(
             session_id="regression-test",
             event="PreToolUse",
             tool_name="Bash",
             tool_input={"command": "rm /tmp/test.txt"},
+            store=ThreadSafeDB(),
         )
 
-        result = pretooluse_handler(ctx)
-        message = result.get("systemMessage", "") or result.get("reason", "")
+        result = _pretooluse_regression(ctx)
+        # For Claude Code deny, 'reason' and 'systemMessage' are intentionally empty
+        # (message goes to stderr via exit 2, anti-triple-print design in core.py:respond()).
+        # The canonical location for the blocking message is hookSpecificOutput.permissionDecisionReason.
+        message = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 
         assert "trash" in message.lower(), (
             "rm blocking message must suggest 'trash' as safe alternative."
@@ -511,8 +509,7 @@ class TestRmBlockingEndToEnd:
 
     def test_safe_commands_not_blocked(self):
         """Safe commands like ls, echo must NOT be blocked (no false positives)."""
-        from autorun.main import pretooluse_handler
-        from autorun.core import EventContext
+        from autorun.core import EventContext, ThreadSafeDB
 
         safe_commands = [
             "ls -la",
@@ -527,29 +524,31 @@ class TestRmBlockingEndToEnd:
                 event="PreToolUse",
                 tool_name="Bash",
                 tool_input={"command": cmd},
+                store=ThreadSafeDB(),
             )
 
-            result = pretooluse_handler(ctx)
+            result = _pretooluse_regression(ctx)
 
-            assert result["continue"] is True, (
-                f"False positive: safe command '{cmd}' was blocked (continue=False). "
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+            assert perm != "deny", (
+                f"False positive: safe command '{cmd}' was denied. "
                 "Fix must not introduce false positives."
             )
 
     @pytest.mark.parametrize("tool_name", ["Bash", "bash_command", "run_shell_command"])
     def test_rm_blocked_all_tool_name_variants(self, tool_name):
         """rm must be blocked for all Bash tool name variants (Claude + Gemini)."""
-        from autorun.main import pretooluse_handler
-        from autorun.core import EventContext
+        from autorun.core import EventContext, ThreadSafeDB
 
         ctx = EventContext(
             session_id="regression-test",
             event="PreToolUse",
             tool_name=tool_name,
             tool_input={"command": "rm /tmp/test.txt"},
+            store=ThreadSafeDB(),
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse_regression(ctx)
 
         assert result["continue"] is True, (
             "PreToolUse must have continue=True (AI keeps running). "

@@ -296,30 +296,9 @@ def log_info(message):
 # Fixes Issue #29 (process-local _session_backends) and Issue #28 (filename extensions)
 from autorun.session_manager import session_state
 
-# Import _not_in_pipe for pipe detection predicate
-try:
-    from autorun.integrations import _not_in_pipe
-except ImportError as e:
-    # Import failed - define fallback and log diagnostic info
-    # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
-    try:
-        from .logging_utils import get_logger
-        logger = get_logger(__name__)
-        logger.error("=" * 70)
-        logger.error("IMPORT ERROR: Failed to load command predicate")
-        logger.error("=" * 70)
-        logger.error("Module: autorun.integrations")
-        logger.error("Function: _not_in_pipe")
-        logger.error(f"Exception: {type(e).__name__}: {e}")
-        logger.error("IMPACT: Pipe detection will not work correctly")
-        logger.error("SYMPTOM: Commands like 'git log | grep fix' may be blocked")
-        logger.error("ACTION: Check autorun installation and module paths")
-        logger.error("=" * 70)
-    except ImportError:
-        pass  # Silently skip if logging not available (don't break hooks)
-    # Define a fallback that always returns True (block everything)
-    def _not_in_pipe(ctx):
-        return True
+# NOTE: _not_in_pipe import removed (fallback path only).
+# Modern replacement: integrations.py — _not_in_pipe(ctx) in _WHEN_PREDICATES,
+# used via integrations.check_when_predicate() from plugins.check_blocked_commands().
 
 # =============================================================================
 # Command Blocking State Management
@@ -782,202 +761,41 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
 
 
 # =============================================================================
-# Predicate Functions for Conditional Command Blocking
+# Predicate Functions — MOVED to integrations.py (fallback copies removed)
 # =============================================================================
-# These predicates return True to block (condition met), False to allow.
-# Used by DEFAULT_INTEGRATIONS entries with "when" field.
+# The fallback-path copies of these predicates (taking cmd: str) were removed.
+#
+# CANONICAL implementations now live in:
+#   integrations.py — _has_unstaged_changes(ctx), _file_has_unstaged_changes(ctx)
+#   integrations.py — _stash_exists(ctx), _not_in_pipe(ctx)
+#   integrations.py — _checkout_targets_file_with_changes(ctx), _restore_is_destructive(ctx)
+#   integrations.py — _WHEN_PREDICATES dict: maps name string → predicate function
+#   integrations.py — check_when_predicate(when, ctx): calls _WHEN_PREDICATES[when](ctx)
+#   plugins.py      — check_blocked_commands(ctx): calls check_when_predicate per integration
+#
+# Key difference: daemon-path predicates take EventContext (not a raw cmd string)
+# and can access full hook context (session state, tool input, transcript, etc.)
 # =============================================================================
 
-def _has_unstaged_changes(command: str) -> bool:
-    """Return True to block if there are unstaged changes (work to lose)."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only"],
-            capture_output=True, text=True, timeout=2
-        )
-        return bool(result.stdout.strip())
-    except Exception:
-        return True  # Fail-safe: block on error
 
 
-def _file_has_unstaged_changes(command: str) -> bool:
-    """Return True to block if specific file has unstaged changes."""
-    try:
-        import shlex
-        parts = shlex.split(command)
-        file_path = parts[-1] if len(parts) > 1 else None
-        # Handle "git checkout -- file" pattern
-        if "--" in parts:
-            idx = parts.index("--")
-            file_path = parts[idx + 1] if idx + 1 < len(parts) else None
-        if not file_path:
-            return True  # Can't determine file, fail-safe: block
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "--", file_path],
-            capture_output=True, text=True, timeout=2
-        )
-        return bool(result.stdout.strip())
-    except Exception:
-        return True  # Fail-safe: block on error
-
-
-def _stash_exists(command: str) -> bool:
-    """Return True to block if stash has entries (something to lose)."""
-    try:
-        result = subprocess.run(
-            ["git", "stash", "list"],
-            capture_output=True, text=True, timeout=2
-        )
-        return bool(result.stdout.strip())
-    except Exception:
-        return True  # Fail-safe: block on error
-
-
-# Wrapper for _not_in_pipe to match predicate signature
-def _not_in_pipe_predicate(command: str) -> bool:
-    """Wrapper for _not_in_pipe that takes command string instead of context.
-
-    Returns True to BLOCK (not in pipe), False to ALLOW (in pipe).
-    """
-    try:
-        from unittest.mock import MagicMock
-        ctx = MagicMock()
-        ctx.tool_input = {'command': command}
-        return _not_in_pipe(ctx)
-    except Exception as e:
-        # Predicate evaluation failed - log details and fail-safe to BLOCK
-        # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
-        try:
-            from .logging_utils import get_logger
-            logger = get_logger(__name__)
-            logger.error(f"ERROR: Predicate '_not_in_pipe' evaluation failed")
-            logger.error(f"  Command: {command[:100]}...")
-            logger.error(f"  Exception: {type(e).__name__}: {e}")
-            logger.error(f"  IMPACT: Command will be blocked (fail-safe behavior)")
-        except ImportError:
-            pass  # Silently skip if logging not available
-        return True  # Fail-safe: block on error
-
-
-# Predicate lookup table
-# CRITICAL: _not_in_pipe MUST be in this table for pipe detection to work
-_PREDICATES = {
-    "_has_unstaged_changes": _has_unstaged_changes,
-    "_file_has_unstaged_changes": _file_has_unstaged_changes,
-    "_stash_exists": _stash_exists,
-    "_not_in_pipe": _not_in_pipe_predicate,  # Task #17: Allow grep/head/tail/cat in pipes
-}
-
-# Verify CONFIG references only defined predicates
-# This catches mismatches between CONFIG['default_integrations'] and _PREDICATES
-_undefined_predicates = set()
-for pattern, config in CONFIG.get("default_integrations", {}).items():
-    when_predicate = config.get("when")
-    if when_predicate and when_predicate not in _PREDICATES:
-        _undefined_predicates.add((pattern, when_predicate))
-
-if _undefined_predicates:
-    # CRITICAL: Don't print to stderr - breaks hooks! Log to file instead.
-    try:
-        from .logging_utils import get_logger
-        logger = get_logger(__name__)
-        logger.error("=" * 70)
-        logger.error("CONFIGURATION ERROR: Predicate Mismatch Detected")
-        logger.error("=" * 70)
-        logger.error(f"Found {len(_undefined_predicates)} command pattern(s) referencing undefined predicates:")
-        for pattern, predicate in sorted(_undefined_predicates):
-            logger.error(f"  - Pattern '{pattern}' uses undefined predicate '{predicate}'")
-        logger.error(f"\nDefined predicates: {sorted(_PREDICATES.keys())}")
-        logger.error("\nIMPACT: Commands matching these patterns will be incorrectly blocked")
-        logger.error("ACTION: Add missing predicates to _PREDICATES lookup table in main.py")
-        logger.error("=" * 70)
-    except ImportError:
-        pass  # Silently skip if logging not available (don't break hooks)
-
-
-def should_block_command(session_id: str, command: str) -> Optional[Dict]:
-    """
-    Check if a command should be blocked.
-
-    Args:
-        session_id: Claude/Gemini session identifier
-        command: Command string to check
-
-    Returns:
-        Block dict with 'pattern', 'suggestion', 'pattern_type', 'decision' if blocked,
-        None otherwise
-    """
-    log_info(f"should_block_command(session_id={session_id}, command='{command}')")
-    # Check session blocks first (highest priority)
-    for block in get_session_blocks(session_id):
-        pattern_type = block.get("pattern_type", "literal")
-        if command_matches_pattern(command, block["pattern"], pattern_type):
-            log_info(f"Command blocked by session pattern: {block['pattern']}")
-            # Ensure decision field is present for consistent handling
-            res = block.copy()
-            res["decision"] = "deny"
-            return res
-
-    # Check global blocks (fallback)
-    for block in get_global_blocks():
-        pattern_type = block.get("pattern_type", "literal")
-        if command_matches_pattern(command, block["pattern"], pattern_type):
-            log_info(f"Command blocked by global pattern: {block['pattern']}")
-            # Ensure decision field is present for consistent handling
-            res = block.copy()
-            res["decision"] = "deny"
-            return res
-
-    # Check default integrations (built-in safety rules)
-    for pattern, config in CONFIG["default_integrations"].items():
-        if command_matches_pattern(command, pattern):
-            # Skip if action is "warn" (warn = allow + message, not block)
-            # This allows warn integrations to pass through without blocking
-            if config.get("action") == "warn":
-                continue  # Don't block - warning will be injected separately
-
-            # Check predicate if present (when field)
-            when_name = config.get("when")
-            if when_name and when_name in _PREDICATES:
-                if not _PREDICATES[when_name](command):
-                    continue  # Predicate says allow (no changes to lose)
-
-            log_info(f"Command blocked by default integration: {pattern}")
-            result = {
-                "pattern": pattern,
-                "suggestion": config["suggestion"],
-                "pattern_type": "literal",
-                "decision": "deny"
-            }
-            if config.get("commands"):
-                result["commands"] = config["commands"]
-            if config.get("commands_description"):
-                result["commands_description"] = config["commands_description"]
-            return result
-
-    # Not blocked
-    return None
-
-
-def get_command_warning(session_id: str, command: str) -> Optional[str]:
-    """
-    Get warning message for command if any warn integration matches.
-
-    This is used to inject warning messages for commands that match
-    integrations with action: "warn" (allow + message).
-
-    Args:
-        session_id: Claude session identifier (for future session-specific warns)
-        command: Command string to check
-
-    Returns:
-        Warning message if a warn integration matches, None otherwise
-    """
-    for pattern, config in CONFIG["default_integrations"].items():
-        if config.get("action") == "warn" and command_matches_pattern(command, pattern):
-            return config.get("suggestion", "")
-    return None
-
+# =============================================================================
+# Command Blocking Functions — REMOVED (daemon path)
+# =============================================================================
+# should_block_command(session_id, cmd) and get_command_warning(session_id, cmd)
+# were only used by pretooluse_handler (fallback path, AUTORUN_USE_DAEMON=0).
+#
+# Modern replacement (daemon path, default):
+#   plugins.py — check_blocked_commands(ctx) — stacks all matching rules,
+#                deny-wins over warn, deduplicates, returns combined message.
+#   plugins.py — ScopeAccessor — session/global scope block management.
+#
+# build_pretooluse_response(decision, reason, ctx) was the response builder
+# for the fallback path.
+#
+# Modern replacement:
+#   core.py — EventContext.deny(msg) / .allow() / .respond("allow", msg)
+# =============================================================================
 
 # =============================================================================
 # CLAUDE CODE HOOK RESPONSE SEMANTICS
@@ -1033,78 +851,6 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
         response["reason"] = reason
         
     return validate_hook_response(event_name, response, cli_type=cli_type)
-
-def build_pretooluse_response(decision="allow", reason="", ctx=None):
-    """Build PreToolUse hook response for permission decisions.
-
-    Returns a response compatible with BOTH Claude Code and Gemini CLI:
-    - Claude Code reads: hookSpecificOutput.permissionDecision (allow/deny/ask)
-    - Gemini CLI reads: top-level decision (allow/deny/block)
-    - permissionDecisionReason is displayed to the user (not to Claude)
-
-    Decision Values:
-    - "allow": Tool executes immediately, no prompt
-    - "ask": Shows confirmation prompt to user with permissionDecisionReason
-    - "deny": Exit code 2 workaround (blocks command but doesn't show reason)
-
-    IMPORTANT: Claude Code Bugs #4669 and #10964
-    ---------------------------------------------
-    Bug #4669: permissionDecision: "deny" in JSON is ignored
-    Bug #10964: Exit code 2 stderr goes to Claude, not to user
-
-    Solution for command blocking: Use decision="ask" instead of "deny".
-    This shows a confirmation prompt to the user with the reason/suggestion,
-    allowing them to see safe alternatives (e.g., "Use 'trash' instead...").
-
-    IMPORTANT: Tool Denial vs Hook Success
-    ---------------------------------------
-    Hook exits with code 0 (success) even when denying tool access.
-    The JSON permissionDecision: "deny" blocks the tool.
-    Exit code 0 means "hook worked correctly", NOT "tool allowed".
-    Exit code 2 would be a blocking ERROR causing "hook error".
-
-    GitHub Issues: #4669, #18312, #13744, #20946, #10964
-
-    References:
-    - Claude Code hooks: https://code.claude.com/docs/en/hooks#pretooluse-decision-control
-    - Exit code semantics: https://claude.com/blog/how-to-configure-hooks
-    - DataCamp guide: https://www.datacamp.com/tutorial/claude-code-hooks
-    - Gemini CLI: https://geminicli.com/docs/hooks/reference/
-    """
-    from .config import detect_cli_type
-    
-    # Priority: explicit ctx cli_type > global detection
-    if ctx and hasattr(ctx, 'cli_type'):
-        cli_type = ctx.cli_type
-    else:
-        cli_type = detect_cli_type()
-
-    # CRITICAL SEMANTICS:
-    # 1. 'continue: True' - Keep AI working even on denial so the AI loop keeps running,
-    #    sees feedback and suggests alternatives. False would kill the session.
-    # 2. 'decision' / 'permissionDecision' controls the TOOL, not the AI.
-    # 3. Bug #4669 workaround is exit code 2 (in client.py), NOT decision remapping.
-    if cli_type == "gemini":
-        top_decision = "allow" if decision == "allow" else "deny"
-    else:
-        top_decision = "approve" if decision == "allow" else "block"
-
-    response = {
-        "decision": top_decision,
-        "reason": reason,
-        "continue": True,
-        "stopReason": "",
-        "suppressOutput": False,
-        "systemMessage": reason,
-        "hookSpecificOutput": {
-            "hookEventName": get_cli_event_name("PreToolUse", cli_type),
-            "permissionDecision": decision,
-            "permissionDecisionReason": reason
-        },
-    }
-
-    return validate_hook_response("PreToolUse", response, cli_type=cli_type)
-
 
 def has_valid_justification(*texts: str) -> bool:
     """
@@ -1655,122 +1401,11 @@ def claude_code_handler(ctx):
     # Let AI handle non-commands
     return build_hook_response(event_name="UserPromptSubmit", ctx=ctx)
 
-@handler("PreToolUse")
-def pretooluse_handler(ctx):
-    """PreToolUse hook - command blocking and file policy enforcement"""
-    log_info(f"pretooluse_handler started: tool={ctx.tool_name}, cli={ctx.cli_type}")
-    # =========================================================================
-    # NEW: Command blocking check (highest priority)
-    # =========================================================================
-    if ctx.tool_name in BASH_TOOLS:
-        # Handle None tool_input gracefully (defensive programming)
-        tool_input = ctx.tool_input or {}
-        command = tool_input.get("command", "")
-
-        # Check if command should be blocked
-        block_info = should_block_command(ctx.session_id, command)
-
-        if block_info:
-            # Command is blocked
-            pattern = block_info["pattern"]
-            suggestion = block_info.get("suggestion", f"Pattern '{pattern}' is blocked")
-
-            return build_pretooluse_response(
-                decision="deny",
-                reason=f"Command blocked: {pattern}\n{suggestion}\n\n"
-                       f"To allow in this session: /ar:ok {pattern}\n"
-                       f"To show status: /ar:status",
-                ctx=ctx
-            )
-
-        # Check for warnings (allow but show message for action: "warn")
-        warning = get_command_warning(ctx.session_id, command)
-        if warning:
-            return build_pretooluse_response("allow", warning, ctx=ctx)
-
-    # =========================================================================
-    # EXISTING: AutoFile policy enforcement
-    # =========================================================================
-    # Extract file path from Write tool input (handle None gracefully)
-    tool_input = ctx.tool_input or {}
-    file_path = tool_input.get("file_path", "")
-
-    # Debug logging using log_info for consistent logging
-    log_info(f"PreToolUse Debug: Tool Name: {ctx.tool_name}")
-    log_info(f"PreToolUse Debug: File Path: {file_path}")
-    log_info(f"PreToolUse Debug: Tool Input: {ctx.tool_input}")
-
-    # Apply file creation policies - enhanced based on test expectations
-    session_id = ctx.session_id
-    with session_state(session_id) as state:
-        file_policy = state.get("file_policy", "ALLOW")
-
-        # For non-Write tools, always allow - file policies only apply to file creation
-        # The Write tool is the only tool that creates files, so other tools don't need policy checks
-        if ctx.tool_name not in WRITE_TOOLS:
-            return build_pretooluse_response("allow", "Non-Write tool allowed - file policies only apply to Write tool", ctx=ctx)
-
-        # Write tools - always apply policy
-        if file_policy == "SEARCH":
-            # Extensive logging for SEARCH policy enforcement
-            log_info("PreToolUse SEARCH Policy Debug:")
-            log_info(f"  Current Policy: {file_policy}")
-            log_info(f"  File Path: {file_path}")
-
-            # Security: Normalize and validate path before existence check
-            # This prevents some path traversal edge cases, though Claude Code's
-            # sandbox provides the primary protection against unauthorized access.
-            file_exists = False
-            if file_path:
-                try:
-                    # Resolve to absolute path (normalizes ../.. sequences)
-                    resolved_path = Path(file_path).resolve()
-                    file_exists = resolved_path.exists() and resolved_path.is_file()
-                    log_info(f"  Resolved Path: {resolved_path}")
-                    log_info(f"  Path Exists (file): {file_exists}")
-                except (OSError, ValueError) as e:
-                    # Invalid path - treat as non-existent
-                    log_info(f"  Path resolution error: {e}")
-                    file_exists = False
-
-            log_info(f"  Session State: {state}")
-
-            # SEARCH policy blocks new file creation but allows editing existing files
-            if file_path and file_exists:
-                # File exists - allow editing
-                log_info("  Decision: ALLOW (Existing file modification)")
-                return build_pretooluse_response("allow", "Existing file modification allowed under SEARCH policy", ctx=ctx)
-            else:
-                # No file path or file doesn't exist - block new file creation
-                # Use policy description which contains "NO new files" as expected by tests
-                log_info("  Decision: DENY (No file or does not exist)")
-                return build_pretooluse_response("deny", f"SEARCH policy: {CONFIG['policies']['SEARCH'][1]}", ctx=ctx)
-
-        elif file_policy == "JUSTIFY":
-            # JUSTIFY policy: Allow existing file modifications, require justification for NEW files only
-            # Check if file exists first
-            file_exists = False
-            if file_path:
-                try:
-                    resolved_path = Path(file_path).resolve()
-                    file_exists = resolved_path.exists() and resolved_path.is_file()
-                except (OSError, ValueError):
-                    file_exists = False
-
-            # If file exists, allow modification without justification
-            if file_exists:
-                return build_pretooluse_response("allow", "Existing file modification allowed under JUSTIFY policy", ctx=ctx)
-
-            # For NEW files, check for justification in state flag, transcript, OR Write tool content
-            justification_found = (
-                state.get("autofile_justification_detected", False) or
-                has_valid_justification(str(ctx.session_transcript), str(tool_input.get("content", "")))
-            )
-            if not justification_found:
-                return build_pretooluse_response("deny", f"JUSTIFY policy: {CONFIG['policies']['JUSTIFY'][1]}", ctx=ctx)
-
-        # ALLOW policy - allow all operations
-        return build_pretooluse_response("allow", "File operations allowed under ALLOW policy", ctx=ctx)
+# pretooluse_handler — REMOVED (daemon path)
+# Modern replacement: plugins.py — enforce_file_policy(ctx) (file policy)
+#                    plugins.py — check_blocked_commands(ctx) (command blocking)
+# Both are registered with @app.on("PreToolUse") in plugins.py and called
+# by core.py AutorunApp._run_chain() for every PreToolUse event.
 
 # ai_monitor integration: Continuation enforcement functions
 def inject_continue_prompt(state, event_name="unknown", ctx=None):
@@ -1942,121 +1577,10 @@ def inject_verification_prompt(state, event_name="unknown", ctx=None):
         ctx=ctx
     )
 
-def analyze_verification_results(state, transcript):
-    """Analyze verification results using enhanced verification engine and transcript analyzer"""
-    if not VERIFICATION_ENGINE_AVAILABLE or "verification_engine" not in state:
-        return None
-
-    try:
-        engine = state["verification_engine"]
-        activation_prompt = state.get("activation_prompt", "")
-
-        # Enhanced transcript analysis using transcript analyzer
-        transcript_analysis = None
-        if TRANSCRIPT_ANALYZER_AVAILABLE:
-            try:
-                analyzer = TranscriptAnalyzer()
-                transcript_analysis = analyzer.analyze_full_transcript(transcript, state.get("session_id", "default"))
-
-                # Analyze task completion specifically
-                task_completion = analyzer.analyze_task_completion(transcript, activation_prompt)
-                state["task_completion_analysis"] = task_completion
-
-                log_info(f"Transcript analysis found {transcript_analysis.total_evidence} evidence items")
-            except Exception as e:
-                log_info(f"Enhanced transcript analysis failed: {e}")
-
-        # Analyze transcript for evidence using verification engine
-        evidence_by_requirement = engine.analyze_transcript_evidence(transcript)
-
-        # Enhance evidence with transcript analyzer results
-        if transcript_analysis:
-            evidence_by_requirement = _enhance_evidence_with_analysis(
-                evidence_by_requirement, transcript_analysis
-            )
-
-        # Verify each requirement
-        results = {}
-        for req_id, evidence in evidence_by_requirement.items():
-            result = engine.verify_single_requirement(req_id, evidence)
-            results[req_id] = result
-
-        # Generate verification report
-        report = engine.generate_verification_report()
-
-        # Enhance report with transcript analysis data
-        if transcript_analysis:
-            report["transcript_analysis"] = {
-                "total_evidence": transcript_analysis.total_evidence,
-                "confidence_score": transcript_analysis.confidence_score,
-                "evidence_summary": transcript_analysis.summary,
-                "high_confidence_evidence": transcript_analysis.summary.get("high_confidence_evidence", 0)
-            }
-
-        # Check if forced compliance is needed
-        failed_mandatory = [
-            req_id for req_id, result in results.items()
-            if (engine.requirements.get(req_id) and
-                engine.requirements[req_id].mandatory and
-                result.status != VerificationStatus.COMPLETED)
-        ]
-
-        # Use enhanced completion confidence to determine forced compliance
-        completion_confidence = state.get("task_completion_analysis", {}).get("completion_confidence", 0.0)
-        should_force_compliance = (
-            (failed_mandatory and state.get('verification_attempts', 1) >= CONFIG["max_recheck_count"]) or
-            (completion_confidence > 0.7 and state.get('verification_attempts', 1) >= CONFIG["max_recheck_count"] - 1)
-        )
-
-        if should_force_compliance and failed_mandatory:
-            log_info("Forcing compliance for failed mandatory requirements")
-            engine.force_requirement_compliance(failed_mandatory)
-            report["forced_compliance_reason"] = "Failed mandatory requirements after max attempts"
-
-        # Store enhanced report in state
-        state["verification_report"] = report
-        state["transcript_analysis_result"] = transcript_analysis
-
-        log_info(f"Enhanced verification analysis complete: {report['summary']['completed']}/{report['summary']['total_requirements']} completed")
-        if transcript_analysis:
-            log_info(f"Transcript confidence score: {transcript_analysis.confidence_score:.2f}")
-
-        return report
-
-    except Exception as e:
-        log_info(f"Enhanced verification analysis failed: {e}")
-        return None
-
-def _enhance_evidence_with_analysis(evidence_by_requirement, transcript_analysis):
-    """Enhance verification evidence with transcript analyzer results"""
-    if not transcript_analysis:
-        return evidence_by_requirement
-
-    # Map transcript analyzer evidence types to verification engine evidence
-    type_mapping = {
-        EvidenceType.FILE_OPERATION: "file_operation",
-        EvidenceType.TEST_RESULT: "test_result",
-        EvidenceType.SUCCESS_INDICATOR: "success_indicator"
-    }
-
-    for req_id, evidence_list in evidence_by_requirement.items():
-        # Add high-confidence evidence from transcript analyzer
-        for evidence_type, mapped_type in type_mapping.items():
-            if evidence_type in transcript_analysis.evidence_by_type:
-                for analyzer_evidence in transcript_analysis.evidence_by_type[evidence_type]:
-                    if analyzer_evidence.confidence in [ConfidenceLevel.HIGH, ConfidenceLevel.VERY_HIGH]:
-                        # Convert analyzer evidence to verification engine format
-                        enhanced_evidence = RequirementEvidence(
-                            requirement_id=req_id,
-                            evidence_type=mapped_type,
-                            evidence_data=analyzer_evidence.content,
-                            confidence_score=analyzer_evidence.confidence.value,
-                            timestamp=analyzer_evidence.timestamp,
-                            source_location=f"transcript_analyzer:{analyzer_evidence.position}"
-                        )
-                        evidence_list.append(enhanced_evidence)
-
-    return evidence_by_requirement
+# analyze_verification_results — REMOVED (dead code, zero callers)
+# _enhance_evidence_with_analysis was only called from this function (also dead).
+# The three-stage verification system in stop_handler() (below) handles
+# stage progression via CONFIG stage markers without this engine.
 
 def is_premature_stop(ctx, state):
     """Check if this is a premature stop - ai_monitor logic"""
@@ -2097,16 +1621,6 @@ def get_stage3_instructions(state):
             return f"STAGE 3: {CONFIG['stage3_instruction']}. Output **{CONFIG['stage3_message']}** to complete."
     else:
         return "Complete Stage 1 before proceeding to Stage 2."
-
-def should_trigger_stage2(state):
-    """Check if we should trigger stage 2"""
-    return (state.get("autorun_stage") == "INITIAL" and
-            state.get("stage1_completed", False))
-
-def should_trigger_verification(state):
-    """Check if we should trigger verification stage"""
-    return (state.get("autorun_stage") == "INITIAL" and
-            state.get("verification_attempts", 0) < CONFIG["max_recheck_count"])
 
 @handler("Stop")
 @handler("SubagentStop")

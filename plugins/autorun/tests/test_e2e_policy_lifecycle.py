@@ -17,11 +17,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun.main import (
     claude_code_handler,  # UserPromptSubmit handler
-    pretooluse_handler,
     session_state,
     CONFIG
 )
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 from conftest import register_test_session
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 
 
 class TestE2EPolicyLifecycle:
@@ -41,15 +54,19 @@ class TestE2EPolicyLifecycle:
         return ctx
 
     def create_pretooluse_context(self, tool_name, file_path=None, transcript=""):
-        """Create mock context for PreToolUse hook"""
-        ctx = Mock()
-        ctx.tool_name = tool_name
-        ctx.tool_input = {}
+        """Create real EventContext for PreToolUse hook"""
+        tool_input = {}
         if file_path:
-            ctx.tool_input["file_path"] = file_path
-        ctx.session_id = self.session_id
-        ctx.session_transcript = transcript
-        return ctx
+            tool_input["file_path"] = file_path
+        transcript_list = [transcript] if transcript else []
+        return EventContext(
+            session_id=self.session_id,
+            event="PreToolUse",
+            tool_name=tool_name,
+            tool_input=tool_input,
+            session_transcript=transcript_list,
+            store=ThreadSafeDB(),
+        )
 
     def test_justify_policy_lifecycle_no_justification(self):
         """E2E: Set JUSTIFY policy, try Write without justification → BLOCKED"""
@@ -63,7 +80,7 @@ class TestE2EPolicyLifecycle:
 
         # Step 2: Simulate PreToolUse hook for Write tool (no justification)
         ctx = self.create_pretooluse_context("Write", "/new/file.txt", "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should be blocked
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny", \
@@ -80,7 +97,7 @@ class TestE2EPolicyLifecycle:
         Creating config file for new authentication feature
         </AUTOFILE_JUSTIFICATION>"""
         ctx = self.create_pretooluse_context("Write", "/new/config.txt", transcript)
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should be allowed
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow", \
@@ -98,7 +115,7 @@ class TestE2EPolicyLifecycle:
 
         # Step 2: Try to write new file
         ctx = self.create_pretooluse_context("Write", "/nonexistent/new.txt", "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should be blocked
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny", \
@@ -113,7 +130,7 @@ class TestE2EPolicyLifecycle:
         # Step 2: Try to write existing file (this test file exists)
         existing_file = str(Path(__file__).resolve())
         ctx = self.create_pretooluse_context("Write", existing_file, "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should be allowed
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow", \
@@ -131,7 +148,7 @@ class TestE2EPolicyLifecycle:
 
         # Step 2: Try to write new file
         ctx = self.create_pretooluse_context("Write", "/any/new/file.txt", "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should be allowed
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow", \
@@ -145,7 +162,7 @@ class TestE2EPolicyLifecycle:
 
         # Write should be allowed
         ctx = self.create_pretooluse_context("Write", "/new/file.txt", "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
 
         # Switch to SEARCH
@@ -154,7 +171,7 @@ class TestE2EPolicyLifecycle:
 
         # Same write should now be blocked
         ctx = self.create_pretooluse_context("Write", "/new/file.txt", "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
         # Switch to JUSTIFY
@@ -163,13 +180,13 @@ class TestE2EPolicyLifecycle:
 
         # Still blocked without justification
         ctx = self.create_pretooluse_context("Write", "/new/file.txt", "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
         # Allowed with justification
         transcript = "<AUTOFILE_JUSTIFICATION>Valid reason</AUTOFILE_JUSTIFICATION>"
         ctx = self.create_pretooluse_context("Write", "/new/file.txt", transcript)
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
@@ -207,23 +224,34 @@ print("POLICY_SET")
         assert result1.returncode == 0, f"Subprocess 1 failed: {result1.stderr}"
         assert "POLICY_SET" in result1.stdout
 
-        # Subprocess 2: Simulate PreToolUse checking policy
+        # Subprocess 2: Simulate PreToolUse checking policy via daemon path
         result2 = subprocess.run([
             sys.executable, "-c",
             f"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{src_path}').resolve()))
-from unittest.mock import Mock
-from autorun.main import pretooluse_handler
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 
-ctx = Mock()
-ctx.tool_name = "Write"
-ctx.tool_input = {{"file_path": "/new/file.txt"}}
-ctx.session_id = "{self.session_id}"
-ctx.session_transcript = ""
+def _pretooluse(ctx):
+    r = plugins.enforce_file_policy(ctx)
+    if r is not None:
+        return r
+    r = plugins.check_blocked_commands(ctx)
+    if r is not None:
+        return r
+    return ctx.allow()
 
-result = pretooluse_handler(ctx)
+ctx = EventContext(
+    session_id="{self.session_id}",
+    event="PreToolUse",
+    tool_name="Write",
+    tool_input={{"file_path": "/new/file.txt"}},
+    store=ThreadSafeDB(),
+)
+
+result = _pretooluse(ctx)
 decision = result["hookSpecificOutput"]["permissionDecision"]
 print(f"DECISION:{{decision}}")
 """

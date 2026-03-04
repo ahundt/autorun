@@ -947,13 +947,17 @@ class TestAutorunApp:
 
         assert result["decision"] == "block"
 
-    def test_dispatch_default_allow(self):
-        """dispatch should return allow for unhandled events."""
+    def test_dispatch_default_passthrough(self):
+        """dispatch returns None for unhandled events (pass-through).
+
+        None → daemon sends {} → client exits 0 with no stdout.
+        Allows parallel hooks (RTK) to apply updatedInput without conflict.
+        """
         test_app = AutorunApp()
         ctx = EventContext(session_id="test", event="SomeOtherEvent")
         result = test_app.dispatch(ctx)
 
-        assert result["continue"] is True
+        assert result is None, f"unhandled event must return None for pass-through, got {result!r}"
 
 
 # ============================================================================

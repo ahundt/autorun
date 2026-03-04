@@ -505,7 +505,39 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     """
     Unified command integrations (superset of hookify).
 
-    Priority: Session allows > Global allows > Session blocks > Global blocks > User files > Python defaults
+    Priority:
+      TIER 1 — Session allows > Global allows (short-circuit, first match wins)
+        - /ar:ok <pattern>       → adds to session_allowed_patterns
+        - /ar:globalok <pattern> → adds to global_allowed_patterns
+        - Any TIER 1 match immediately returns ctx.allow(), skipping ALL blocks/warns.
+        - This is how users override a default deny rule for their current work.
+
+      TIER 2 — ALL of these collected together, deny-wins over warn:
+        - Session blocks   (/ar:no <pattern>       → session_blocked_patterns, always deny)
+        - Global blocks    (/ar:globalno <pattern>  → global config JSON, always deny)
+        - User integration files (hookify *.md)     (action: block or warn)
+        - Python defaults  (config.py DEFAULT_INTEGRATIONS, action: block or warn)
+
+      Within TIER 2:
+        - ALL matching rules have their messages collected (stacking).
+        - Deduplication: same (pattern, decision) pair across tiers shows only once.
+        - If ANY deny matches → final decision is deny; all deny msgs first, then warns.
+        - If ONLY warns match → final decision is allow with combined warning message.
+
+    Note on /ar:no and DEFAULT_INTEGRATIONS overlap:
+      If a user runs /ar:no rm AND the default rm integration also fires, BOTH messages
+      appear in the combined deny response. This gives additional context (the user's
+      custom reason plus the built-in trash suggestion). To silence the default and show
+      ONLY the custom message, the user should also /ar:ok rm to move rm to TIER 1 allows,
+      then create a separate session block with a different pattern scope.
+
+    Note on response fields (PreToolUse deny responses):
+      - Claude Code deny: reason="" and systemMessage="" (message sent via stderr+exit 2,
+        anti-triple-print). The message is in hookSpecificOutput.permissionDecisionReason.
+      - Gemini deny:      reason=msg, systemMessage=msg, and permissionDecisionReason=msg.
+      - Both CLIs:        hookSpecificOutput.permissionDecisionReason ALWAYS has the message.
+      Tests should use hookSpecificOutput.permissionDecisionReason for portable assertions.
+
     Features: action (block/warn), redirect with {args}, when predicates, conditions
     Supports: Bash commands (event: bash), Write/Edit operations (event: file)
     """
@@ -526,27 +558,42 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if cmd.strip().startswith("/ar:"):
         return ctx.allow()
 
-    # Check session allows FIRST (highest priority - explicitly allowed overrides everything)
+    # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
     for a in ScopeAccessor(ctx, "session").get_allowed():
         if _match(cmd, a["pattern"], a.get("pattern_type", "literal")):
             return ctx.allow()
-
-    # Check global allows
     for a in ScopeAccessor(ctx, "global").get_allowed():
         if _match(cmd, a["pattern"], a.get("pattern_type", "literal")):
             return ctx.allow()
 
-    # Check session blocks
+    # TIER 2: Collect ALL matching blocks + warns (stacking: deny wins over warn)
+    deny_parts: list = []
+    warn_parts: list = []
+    # Dedup by pattern string only (not by decision). This ensures that if the user adds
+    # /ar:no git (deny), it suppresses the DEFAULT "git" (warn) integration for the same
+    # pattern — user's explicit block replaces the default regardless of action type.
+    # Different patterns (e.g. "rm" vs "rm -rf") are distinct and both shown if they match.
+    seen: set = set()  # dedup by pattern string — same pattern from ANY tier shows once
+
+    # Session blocks (always deny)
     for b in ScopeAccessor(ctx, "session").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /ar:ok {b['pattern']}")
+            key = b["pattern"]
+            if key not in seen:
+                seen.add(key)
+                suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
+                deny_parts.append(f"{suggestion}\n\nTo allow: /ar:ok {b['pattern']}")
 
-    # Then global blocks
+    # Global blocks (always deny)
     for b in ScopeAccessor(ctx, "global").get():
         if _match(cmd, b["pattern"], b.get("pattern_type", "literal")):
-            return ctx.deny(f"{b['suggestion']}\n\nTo allow: /ar:globalok {b['pattern']}")
+            key = b["pattern"]
+            if key not in seen:
+                seen.add(key)
+                suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
+                deny_parts.append(f"{suggestion}\n\nTo allow: /ar:globalok {b['pattern']}")
 
-    # User files + Python defaults (sorted by specificity) - FIX Bug 2
+    # User files + Python defaults (deny or warn per action field)
     try:
         for intg in load_all_integrations():  # O(1) cached
             # Check event type (bash/file/stop/all)
@@ -560,7 +607,6 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 allowed_tools = set(intg.tool_matcher.split("|"))
                 expanded = set()
                 for tool in allowed_tools:
-                    # Tool sets from config.py: BASH_TOOLS, WRITE_TOOLS, etc.
                     for family in (BASH_TOOLS, FILE_TOOLS, PLAN_TOOLS):
                         if tool in family:
                             expanded |= family
@@ -570,7 +616,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 if ctx.tool_name not in expanded:
                     continue
 
-            # Check when predicate - FIX Bug 1
+            # Check when predicate
             try:
                 if not check_when_predicate(intg.when, ctx):
                     continue
@@ -587,38 +633,45 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                     logger.warning(f"Conditions check failed: {e}")
                     continue
 
-            # Check patterns (OR-ed)
+            # Check patterns (OR-ed): first match within this intg adds its message once
             for pattern in intg.patterns:
                 try:
                     if command_matches_pattern(cmd, pattern):  # O(1) cached
-                        # Build message (add redirect if present)
-                        msg = format_suggestion(intg.message, ctx.cli_type)
-                        if intg.redirect:
-                            # Substitute {args} with actual args, {file} with target file
-                            args = cmd.split(maxsplit=1)[1] if " " in cmd else ""
-                            redirect_cmd = intg.redirect.replace("{args}", args)
-                            if "{file}" in redirect_cmd:
-                                # Extract file: last arg that isn't a flag or "--"
-                                parts = cmd.split()
-                                file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
-                                file_val = file_args[-1] if file_args else args
-                                redirect_cmd = redirect_cmd.replace("{file}", file_val)
-                            msg += f"\n\nUse instead: `{redirect_cmd}`"
-
-                        # Apply action (warn = allow + message, block = deny)
-                        if intg.action == "warn":
-                            # Log warning to AI but allow command
-                            logger.info(f"Integration warning for '{pattern}': {intg.name}")
-                            return ctx.respond("allow", msg)
-                        else:
-                            # Block command
-                            return ctx.deny(msg)
+                        decision = "warn" if intg.action == "warn" else "deny"
+                        key = pattern  # dedup by pattern string only (see TIER 2 comment above)
+                        if key not in seen:
+                            seen.add(key)
+                            msg = format_suggestion(intg.message, ctx.cli_type)
+                            if intg.redirect:
+                                # Substitute {args} with actual args, {file} with target file
+                                args = cmd.split(maxsplit=1)[1] if " " in cmd else ""
+                                redirect_cmd = intg.redirect.replace("{args}", args)
+                                if "{file}" in redirect_cmd:
+                                    parts = cmd.split()
+                                    file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
+                                    file_val = file_args[-1] if file_args else args
+                                    redirect_cmd = redirect_cmd.replace("{file}", file_val)
+                                msg += f"\n\nUse instead: `{redirect_cmd}`"
+                            if decision == "warn":
+                                logger.info(f"Integration warning for '{pattern}': {intg.name}")
+                                warn_parts.append(msg)
+                            else:
+                                deny_parts.append(msg)
+                        break  # First matching pattern in this intg is enough
                 except Exception as e:
                     logger.warning(f"Pattern match error for '{pattern}': {e}")
                     continue
     except Exception as e:
         logger.error(f"Error in check_blocked_commands: {e}")
         # Fail-open: allow command on error (never crash Claude Code)
+
+    # Apply deny-wins: combine all messages, deny takes precedence over warn
+    if deny_parts or warn_parts:
+        combined = "\n\n".join(p for p in (deny_parts + warn_parts) if p)
+        if deny_parts:
+            return ctx.deny(combined)
+        else:
+            return ctx.respond("allow", combined)
 
     return None
 

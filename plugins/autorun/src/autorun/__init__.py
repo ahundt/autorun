@@ -74,15 +74,11 @@ __all__ = [
     "COMMAND_HANDLERS",
     "log_info",
     "build_hook_response",
-    "build_pretooluse_response",
     "claude_code_handler",
-    "pretooluse_handler",
     "stop_handler",
     "inject_continue_prompt",
     "inject_verification_prompt",
-    "is_premature_stop",
-    "should_trigger_verification",
-    "analyze_verification_results"
+    "is_premature_stop"
 ]
 
 # Export session manager functionality
@@ -328,23 +324,18 @@ except ImportError:
         """Fallback claude_code_handler function - matches main.py signature"""
         return {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
-try:
-    from .main import pretooluse_handler
-except ImportError:
-    def pretooluse_handler(ctx):
-        """Fallback pretooluse_handler function - matches main.py signature"""
-        return {"decision": "allow", "reason": "fallback"}
+# pretooluse_handler removed — replaced by plugins.py enforce_file_policy(ctx)
+# and plugins.py check_blocked_commands(ctx) registered via @app.on("PreToolUse").
 
 # Export main functions needed for tests
+# analyze_verification_results removed (dead code, zero callers).
+# build_pretooluse_response removed — replaced by core.py EventContext.deny()/allow()/.respond().
 try:
     from .main import (
         stop_handler,
         inject_continue_prompt,
         inject_verification_prompt,
         is_premature_stop,
-        should_trigger_verification,
-        analyze_verification_results,
-        build_pretooluse_response
     )
 except ImportError:
     # Fallback implementations for tests
@@ -363,61 +354,3 @@ except ImportError:
     def is_premature_stop():
         """Fallback is_premature_stop function"""
         return False
-
-    def should_trigger_verification():
-        """Fallback should_trigger_verification function"""
-        return False
-
-    def analyze_verification_results():
-        """Fallback analyze_verification_results function"""
-        return {}
-
-    def build_pretooluse_response(decision="allow", reason="", ctx=None):
-        """Fallback build_pretooluse_response function - matches main.py signature.
-
-        DRY: This is a fallback for tests if main.py import fails.
-        Source of truth: main.py build_pretooluse_response()
-
-        Claude Code Bug #4669 Workaround:
-        The decision and exit code are now handled by the unified output logic
-        in client.py and the main dispatch loop in main.py.
-        """
-        # Try to import dynamic event name mapping
-        try:
-            from .core import get_cli_event_name
-            from .config import detect_cli_type
-
-            # Detect CLI type
-            if ctx and hasattr(ctx, 'cli_type'):
-                cli_type = ctx.cli_type
-            else:
-                cli_type = detect_cli_type()
-
-            event_name = get_cli_event_name("PreToolUse", cli_type)
-        except ImportError:
-            # Fallback to hardcoded event name if imports fail
-            event_name = "PreToolUse"
-
-        safe_reason = json.dumps(reason)[1:-1] if reason else ""
-        return {
-            "decision": decision,
-            "reason": safe_reason,
-            # continue=true is correct because:
-            #   - Claude Code: "continue:false stops processing entirely"
-            #     https://code.claude.com/docs/en/hooks#json-output
-            #   - Gemini CLI: "continue:false stops agent loop"
-            #     https://geminicli.com/docs/hooks/reference/
-            # We want to block the TOOL (via exit code 2 + decision:"deny")
-            # but let the AI continue running to suggest alternatives.
-            "continue": True,
-            "stopReason": "",
-            "suppressOutput": False,
-            "systemMessage": safe_reason,
-            "hookSpecificOutput": {
-                "hookEventName": event_name,
-                "permissionDecision": decision,
-                "permissionDecisionReason": safe_reason
-            }
-        }
-                        
-            

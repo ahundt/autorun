@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify actual command blocking logic for both Claude Code and Gemini CLI.
 
-Tests the pretooluse_handler function directly using real EventContext to ensure:
+Tests the daemon-path PreToolUse chain directly using real EventContext to ensure:
 1. Commands are actually blocked (permissionDecision='deny')
 2. Piped commands are allowed (bashlex detects pipe context)
 3. File creation is blocked in justify mode
@@ -20,11 +20,23 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
-from autorun.main import pretooluse_handler
-from autorun.core import EventContext
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 from autorun.command_detection import BASHLEX_AVAILABLE
 from autorun.config import BASH_TOOLS, WRITE_TOOLS
 from autorun.session_manager import session_state
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +78,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "cat /etc/hosts"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Check hook response format
         assert "hookSpecificOutput" in result, "Missing hookSpecificOutput"
@@ -94,7 +106,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "head -10 file.txt"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -115,7 +127,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "cargo build 2>&1 | cat"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -133,7 +145,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "cargo build 2>&1 | head -50"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -157,9 +169,10 @@ class TestActualCommandBlocking:
                 "file_path": "/tmp/test_new_file.txt",
                 "content": "test"
             },
+            store=ThreadSafeDB(),  # Required so ctx.file_policy reads from shelve
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -214,7 +227,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "cat test.txt"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # === Universal fields (both platforms) ===
         assert "continue" in result, "Missing 'continue' field"
@@ -261,7 +274,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "cat /etc/hosts"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Top-level decision MUST be "deny" for Gemini CLI to actually block
         assert result.get("decision") == "deny", \
@@ -279,7 +292,7 @@ class TestActualCommandBlocking:
             tool_input={"command": "ls -la"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result.get("decision") == "allow", \
             f"Safe command has top-level decision='{result.get('decision')}', expected 'allow'"
@@ -298,7 +311,7 @@ class TestPipeDetectionRobustness:
             tool_input={"command": "npm test 2>&1 | head -100"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -316,7 +329,7 @@ class TestPipeDetectionRobustness:
             tool_input={"command": "pytest 2>&1 | tee log.txt"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -333,7 +346,7 @@ class TestPipeDetectionRobustness:
             tool_input={"command": "cat myfile.txt"},
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -411,7 +424,7 @@ class TestGeminiPayloadNormalization:
             tool_input=normalized["tool_input"],
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -439,7 +452,7 @@ class TestGeminiPayloadNormalization:
             tool_input=normalized["tool_input"],
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission_decision = hook_output.get("permissionDecision", "allow")
@@ -466,7 +479,7 @@ class TestGeminiPayloadNormalization:
             tool_input=normalized["tool_input"],
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result.get("decision") == "approve" or result.get("decision") == "allow", \
             f"Safe ls command was blocked! decision={result.get('decision')}"
@@ -511,7 +524,7 @@ class TestGeminiOfficialSnakeCaseFormat:
             tool_input=normalized["tool_input"],
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Gemini CLI reads top-level decision
         assert result.get("decision") == "deny", \
@@ -537,7 +550,7 @@ class TestGeminiOfficialSnakeCaseFormat:
             tool_input=normalized["tool_input"],
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result.get("decision") == "deny", \
             f"run_shell_command with cat not blocked! decision={result.get('decision')}"
@@ -560,7 +573,7 @@ class TestGeminiOfficialSnakeCaseFormat:
             tool_input=normalized["tool_input"],
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result.get("decision") == "allow", \
             f"Safe command blocked! decision={result.get('decision')}"
@@ -586,9 +599,10 @@ class TestGeminiOfficialSnakeCaseFormat:
             event=normalized["hook_event_name"],
             tool_name=normalized["tool_name"],
             tool_input=normalized["tool_input"],
+            store=ThreadSafeDB(),  # Required so ctx.file_policy reads from shelve
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result.get("decision") == "deny", \
             f"write_file not blocked in JUSTIFY mode! decision={result.get('decision')}"

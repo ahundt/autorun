@@ -14,10 +14,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun.config import CONFIG
 
+def _pretooluse_comp(ctx):
+    """Daemon-path helper replacing deleted pretooluse_handler."""
+    from autorun import plugins as _plugins
+    result = _plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = _plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
+
+
 def test_main_py_ai_monitor_workflow():
     """Test that main.py implements complete AI monitor workflow"""
     from autorun import (
-        stop_handler, pretooluse_handler, claude_code_handler,
+        stop_handler, claude_code_handler,
         CONFIG
     )
 
@@ -118,36 +130,28 @@ def test_main_py_ai_monitor_workflow():
 
     print("✅ Stage 4 final completion detection works")
 
-    # Test AutoFile policy enforcement
-    ctx = Mock()
-    ctx.session_id = "test_session_main"
-    ctx.tool_name = "Write"
-    ctx.tool_input = {"file_path": "new_file.py"}
-    ctx.session_transcript = []
-
-    # Test with proper session state mocking - patch the correct module path
-    from unittest.mock import MagicMock
-    mock_session_manager = MagicMock()
-    mock_state = {"file_policy": "SEARCH"}
-    mock_session_manager.__enter__ = MagicMock(return_value=mock_state)
-    mock_session_manager.__exit__ = MagicMock(return_value=None)
-
-    with patch('autorun.main.session_state', return_value=mock_session_manager), \
-         patch('autorun.main.Path') as mock_path:
-        # Mock Path chain: Path(file_path).resolve().exists()
-        mock_resolved = MagicMock()
-        mock_resolved.exists.return_value = False
-        mock_resolved.is_file.return_value = False
-        mock_path.return_value.resolve.return_value = mock_resolved
-
-        response = pretooluse_handler(ctx)
-
-        print(f"Debug - PreToolUse response: {response}")
-        print(f"Debug - hookSpecificOutput: {response.get('hookSpecificOutput', {})}")
-
-        assert response["continue"] is True, "continue=True (AI keeps running); tool blocked by permissionDecision=deny"
-        assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", f"Should deny file creation in SEARCH mode, got: {response.get('hookSpecificOutput', {}).get('permissionDecision')}"
-
+    # Test AutoFile policy enforcement (daemon path)
+    from autorun.core import EventContext, ThreadSafeDB
+    from autorun.session_manager import session_state
+    sid = "test_session_main_policy"
+    with session_state(sid) as state:
+        state["file_policy"] = "SEARCH"
+    ctx = EventContext(
+        session_id=sid,
+        event="PreToolUse",
+        tool_name="Write",
+        tool_input={"file_path": "new_file_that_does_not_exist_xyz.py"},
+        store=ThreadSafeDB(),
+    )
+    response = _pretooluse_comp(ctx)
+    print(f"Debug - PreToolUse response: {response}")
+    print(f"Debug - hookSpecificOutput: {response.get('hookSpecificOutput', {})}")
+    assert response["continue"] is True, "continue=True (AI keeps running); tool blocked by permissionDecision=deny"
+    assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", (
+        f"Should deny file creation in SEARCH mode, got: {response.get('hookSpecificOutput', {}).get('permissionDecision')}"
+    )
+    with session_state(sid) as state:
+        state.clear()
     print("✅ AutoFile policy enforcement works")
 
     print("✅ main.py implements complete AI monitor workflow")
@@ -234,16 +238,23 @@ def test_hook_integration_completeness():
         print(f"❌ Could not import required modules: {e}")
         return False
 
-    # Verify all required hook events are handled
-    required_hooks = ["UserPromptSubmit", "PreToolUse", "Stop", "SubagentStop"]
-    for hook in required_hooks:
-        assert hook in HOOK_HANDLERS, f"Missing handler for {hook}"
-    print("✅ All required hook events are handled")
+    # Verify hook events handled in main.py dispatch table
+    main_hooks = ["UserPromptSubmit", "Stop", "SubagentStop"]
+    for hook in main_hooks:
+        assert hook in HOOK_HANDLERS, f"Missing handler for {hook} in main.py HANDLERS"
+    print("✅ All required main.py hook events are handled")
+
+    # PreToolUse is handled by plugins.py via @app.on() (not in main.py HANDLERS)
+    from autorun.plugins import enforce_file_policy, check_blocked_commands
+    assert callable(enforce_file_policy), "enforce_file_policy must be callable"
+    assert callable(check_blocked_commands), "check_blocked_commands must be callable"
+    print("✅ PreToolUse handlers exist in plugins.py")
 
     # Verify that the hook handlers are not just placeholders
-    from autorun.main import stop_handler, pretooluse_handler
+    from autorun.main import stop_handler
+    from autorun.core import EventContext, ThreadSafeDB
 
-    # Mock context
+    # Mock context for stop handler
     ctx = Mock()
     ctx.session_id = "test_completeness"
     ctx.session_transcript = ["Some work", CONFIG["stage1_message"]]
@@ -253,10 +264,15 @@ def test_hook_integration_completeness():
     assert isinstance(response, dict), "Stop handler should return a dict"
     assert "continue" in response, "Stop handler should return continue key"
 
-    # Test PreToolUse handler does something meaningful
-    ctx.tool_name = "Write"
-    ctx.tool_input = {"file_path": "test.py"}
-    response = pretooluse_handler(ctx)
+    # Test PreToolUse handler does something meaningful (daemon path)
+    ectx = EventContext(
+        session_id="test_completeness_ptuse",
+        event="PreToolUse",
+        tool_name="Write",
+        tool_input={"file_path": "test.py"},
+        store=ThreadSafeDB(),
+    )
+    response = _pretooluse_comp(ectx)
     assert isinstance(response, dict), "PreToolUse handler should return a dict"
     assert "hookSpecificOutput" in response, "PreToolUse handler should return hookSpecificOutput"
 

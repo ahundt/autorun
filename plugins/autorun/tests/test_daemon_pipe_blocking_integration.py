@@ -15,7 +15,24 @@ sys.path.insert(0, str(plugin_root / 'src'))
 from autorun.integrations import _not_in_pipe
 from autorun.command_detection import command_matches_pattern, BASHLEX_AVAILABLE
 from autorun.config import CONFIG
-from autorun.main import should_block_command
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+
+# Daemon-path helper — replaces deleted should_block_command
+def _check_block(session_id, cmd):
+    """Returns deny result if command is blocked, None otherwise."""
+    if not cmd or not cmd.strip():
+        return None
+    ctx = EventContext(
+        session_id=session_id, event="PreToolUse", tool_name="Bash",
+        tool_input={"command": cmd}, store=ThreadSafeDB(),
+    )
+    result = plugins.check_blocked_commands(ctx)
+    if result is None:
+        return None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+    return result if perm == "deny" else None
 
 
 class TestDaemonPipeBlockingIntegration:
@@ -106,7 +123,7 @@ class TestDaemonPipeBlockingIntegration:
             )
 
     def test_should_block_command_pipes_allowed(self):
-        """Test should_block_command() allows pipes (end-to-end)."""
+        """Test _check_block() allows pipes (end-to-end)."""
         # These should NOT be blocked
         pipe_commands = [
             "git log | head -50",
@@ -117,15 +134,15 @@ class TestDaemonPipeBlockingIntegration:
         ]
 
         for cmd in pipe_commands:
-            result = should_block_command("test-session", cmd)
+            result = _check_block("test-session", cmd)
             # result should be None (not blocked)
             assert result is None, (
                 f"Pipe command should be ALLOWED: {cmd}\n"
-                f"should_block_command() returned: {result}"
+                f"_check_block() returned: {result}"
             )
 
     def test_should_block_command_direct_blocked(self):
-        """Test should_block_command() blocks direct file operations."""
+        """Test _check_block() blocks direct file operations."""
         # These SHOULD be blocked
         direct_commands = [
             "head file.txt",
@@ -135,11 +152,11 @@ class TestDaemonPipeBlockingIntegration:
         ]
 
         for cmd in direct_commands:
-            result = should_block_command("test-session", cmd)
+            result = _check_block("test-session", cmd)
             # result should be a dict with block info when blocked
             assert result is not None, (
                 f"Direct command should be BLOCKED: {cmd}\n"
-                f"should_block_command() returned: {result}"
+                f"_check_block() returned: {result}"
             )
 
     def test_logical_operators_with_pipes(self):
@@ -203,11 +220,11 @@ EOF"""
         )
 
         # Test full integration
-        integration_result = should_block_command("test-session", blocked_cmd)
+        integration_result = _check_block("test-session", blocked_cmd)
         assert integration_result is None, (
-            f"User command should be ALLOWED by should_block_command():\n"
+            f"User command should be ALLOWED by _check_block():\n"
             f"  Command: {blocked_cmd}\n"
-            f"  should_block_command() returned: {integration_result}"
+            f"  _check_block() returned: {integration_result}"
         )
 
     def test_extraction_shows_grep_in_pipe(self):

@@ -89,21 +89,26 @@ class TestGeminiEnvironmentSimulation:
         assert "task_create" in TASK_CREATE_TOOLS, "Gemini's task_create not in TASK_CREATE_TOOLS"
 
     def test_hook_accepts_gemini_bash_tool(self):
-        """Test pretooluse_handler accepts Gemini's bash_command tool."""
-        from autorun.main import pretooluse_handler
+        """Test check_blocked_commands accepts Gemini's bash_command tool (daemon path)."""
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun import plugins as _plugins
 
-        # Simulate Gemini BeforeTool event with bash_command
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"  # Gemini's bash tool
-        ctx.tool_input = {"command": "echo test"}
-        ctx.file_policy = "allow-all"
+        # Simulate Gemini BeforeTool event with bash_command — echo is safe, should not be blocked
+        ctx = EventContext(
+            session_id="test-gemini-bash",
+            event="PreToolUse",
+            tool_name="bash_command",  # Gemini's bash tool name
+            tool_input={"command": "echo test"},
+            store=ThreadSafeDB(),
+        )
 
-        # Should not raise exception
-        result = pretooluse_handler(ctx)
-        # Verify result is either None or a valid response
-        assert result is None or isinstance(result, (str, dict)), \
+        result = _plugins.check_blocked_commands(ctx)
+        # echo is a safe command — should return None (no block) or an allow response
+        assert result is None or isinstance(result, dict), \
             f"Unexpected result type: {type(result)}"
+        if result is not None:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+            assert perm == "allow", f"echo should be allowed but got: {perm}"
 
     def test_bashlex_available(self):
         """Test bashlex dependency is available (skip if not installed)."""

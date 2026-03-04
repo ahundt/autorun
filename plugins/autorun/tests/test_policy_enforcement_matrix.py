@@ -8,13 +8,27 @@ import pytest
 import sys
 import uuid
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun.main import pretooluse_handler, session_state, has_valid_justification
+from autorun.main import session_state, has_valid_justification
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
 from conftest import register_test_session
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 
 
 class TestPolicyEnforcementMatrix:
@@ -26,15 +40,19 @@ class TestPolicyEnforcementMatrix:
         register_test_session(self.session_id)
 
     def create_mock_context(self, tool_name, file_path=None, transcript_content=""):
-        """Create a mock context for PreToolUse testing"""
-        ctx = Mock()
-        ctx.tool_name = tool_name
-        ctx.tool_input = {}
+        """Create a real EventContext for PreToolUse testing"""
+        tool_input = {}
         if file_path:
-            ctx.tool_input["file_path"] = file_path
-        ctx.session_id = self.session_id
-        ctx.session_transcript = transcript_content
-        return ctx
+            tool_input["file_path"] = file_path
+        transcript = [transcript_content] if transcript_content else []
+        return EventContext(
+            session_id=self.session_id,
+            event="PreToolUse",
+            tool_name=tool_name,
+            tool_input=tool_input,
+            session_transcript=transcript,
+            store=ThreadSafeDB(),
+        )
 
     @pytest.mark.parametrize("policy,has_justification,expected_decision", [
         ("ALLOW", False, "allow"),
@@ -57,7 +75,7 @@ class TestPolicyEnforcementMatrix:
 
         # Use non-existent path (file doesn't exist = new file)
         ctx = self.create_mock_context("Write", "/nonexistent/path/newfile.txt", transcript)
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         actual_decision = result["hookSpecificOutput"]["permissionDecision"]
         assert actual_decision == expected_decision, \
@@ -73,7 +91,7 @@ class TestPolicyEnforcementMatrix:
         # Use THIS test file as a known existing file
         existing_file = str(Path(__file__).resolve())
         ctx = self.create_mock_context("Write", existing_file, "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow", \
             f"Policy {policy} should allow modifying existing files"
@@ -87,7 +105,7 @@ class TestPolicyEnforcementMatrix:
             state["file_policy"] = policy
 
         ctx = self.create_mock_context(tool_name, None, "")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow", \
             f"{tool_name} should bypass {policy} policy"

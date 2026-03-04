@@ -27,8 +27,20 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / "src"))
 
-from autorun.main import pretooluse_handler
-from autorun.core import EventContext
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 from autorun.command_detection import BASHLEX_AVAILABLE
 from autorun.config import BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 from autorun.session_manager import clear_test_session_state, session_state
@@ -73,12 +85,14 @@ def create_test_context(
 
     # Create real EventContext - same class used by daemon mode (core.py:222)
     # EventContext.__init__ handles None tool_input (defaults to {})
+    # ThreadSafeDB() needed so ctx.file_policy reads from shelve (set above via session_state)
     ctx = EventContext(
         session_id=session_id,
         event="PreToolUse",
         tool_name=tool_name,
         tool_input=tool_input,
         session_transcript=[],
+        store=ThreadSafeDB(),
     )
 
     return ctx
@@ -122,7 +136,7 @@ class TestCommandBlockingAllToolNames:
             tool_input={"command": "cat /etc/hosts"}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -147,7 +161,7 @@ class TestCommandBlockingAllToolNames:
             file_policy="justify-create"
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -182,7 +196,7 @@ class TestCommandBlockingEdgeCases:
             tool_input={"command": ""}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should allow empty command (nothing to block)
         hook_output = result.get("hookSpecificOutput", {})
@@ -196,7 +210,7 @@ class TestCommandBlockingEdgeCases:
             tool_input={"command": "   \n\t   "}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -209,7 +223,7 @@ class TestCommandBlockingEdgeCases:
             tool_input={}  # No 'command' key
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should not crash, should allow (nothing to check)
         assert "hookSpecificOutput" in result
@@ -218,14 +232,17 @@ class TestCommandBlockingEdgeCases:
         assert permission == "allow", "Missing command key should be allowed"
 
     def test_none_tool_input(self):
-        """Test handling when tool_input is None."""
-        ctx = MagicMock()
-        ctx.session_id = "test-session"
-        ctx.tool_name = "bash_command"
-        ctx.tool_input = None
-        ctx.file_policy = "allow-all"
+        """Test handling when tool_input is None — EventContext normalizes None to {}."""
+        # EventContext normalizes None tool_input to {} so handler never sees None
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="bash_command",
+            tool_input=None,  # EventContext.__init__ converts to {}
+            store=ThreadSafeDB(),
+        )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should not crash
         assert "hookSpecificOutput" in result
@@ -238,7 +255,7 @@ class TestCommandBlockingEdgeCases:
             file_policy="invalid-policy"
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should not crash
         assert "hookSpecificOutput" in result
@@ -258,7 +275,7 @@ class TestFilePathVariants:
             file_policy="justify-create"
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -277,7 +294,7 @@ class TestFilePathVariants:
             file_policy="justify-create"
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -303,7 +320,7 @@ class TestFilePathVariants:
                 file_policy="strict-search"  # Strictest mode
             )
 
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
 
             hook_output = result.get("hookSpecificOutput", {})
             permission = hook_output.get("permissionDecision", "allow")
@@ -326,7 +343,7 @@ class TestSystemMessageQuality:
             tool_input={"command": "cat myfile.txt"}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         system_message = result.get("systemMessage", "")
         reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
@@ -346,7 +363,7 @@ class TestSystemMessageQuality:
             tool_input={"command": "head -20 file.txt"}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 
@@ -362,7 +379,7 @@ class TestSystemMessageQuality:
             file_policy="justify-create"
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 
@@ -401,7 +418,7 @@ class TestPipeDetectionComprehensive:
             tool_input={"command": command}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         actual_permission = hook_output.get("permissionDecision", "allow")
@@ -418,7 +435,7 @@ class TestPipeDetectionComprehensive:
             }
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -436,7 +453,7 @@ class TestPipeDetectionComprehensive:
             }
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         hook_output = result.get("hookSpecificOutput", {})
         permission = hook_output.get("permissionDecision", "allow")
@@ -456,7 +473,7 @@ class TestHookResponseFormatCompliance:
             tool_input={"command": "cat test.txt"}
         )
 
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Top-level required fields
         assert "continue" in result, "Missing 'continue' field"
@@ -487,7 +504,7 @@ class TestHookResponseFormatCompliance:
 
         for tool_name, tool_input, expected_continue, description in test_cases:
             ctx = create_test_context(tool_name=tool_name, tool_input=tool_input)
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
 
             assert result.get("continue") is expected_continue, \
                 f"{description}: got continue={result.get('continue')} for {tool_name} {tool_input}"
@@ -505,7 +522,7 @@ class TestHookResponseFormatCompliance:
 
         for tool_name, tool_input, expected in test_cases:
             ctx = create_test_context(tool_name=tool_name, tool_input=tool_input)
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
 
             hook_output = result.get("hookSpecificOutput", {})
             permission = hook_output.get("permissionDecision")
@@ -527,7 +544,7 @@ class TestSessionStateIsolation:
             tool_input={"command": "cat file1.txt"},
             session_id="test-session-1"
         )
-        result1 = pretooluse_handler(ctx1)
+        result1 = _pretooluse(ctx1)
 
         # Test 2: Different session should not see state from test 1
         ctx2 = create_test_context(
@@ -535,7 +552,7 @@ class TestSessionStateIsolation:
             tool_input={"command": "cat file2.txt"},
             session_id="test-session-2"
         )
-        result2 = pretooluse_handler(ctx2)
+        result2 = _pretooluse(ctx2)
 
         # Both should have same behavior (both blocked)
         perm1 = result1.get("hookSpecificOutput", {}).get("permissionDecision")

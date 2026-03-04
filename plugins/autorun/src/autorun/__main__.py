@@ -621,6 +621,57 @@ def set_bootstrap_config(enabled: bool) -> int:
     return 0
 
 
+def run_direct() -> int:
+    """Handle hook payload directly in-process without the daemon socket.
+
+    Implements the same pipeline as the daemon (normalize → EventContext → dispatch)
+    but runs synchronously in the current process.  Used when AUTORUN_USE_DAEMON=0
+    so tests can exercise production plugins.py code while remaining isolated from
+    any live daemon session state.
+
+    Returns:
+        int: Exit code (0 = success, 2 = deny with exit-2 workaround for Claude Code)
+    """
+    import json
+    import sys as _sys
+
+    from .core import EventContext, ThreadSafeDB, normalize_hook_payload
+    from .config import detect_cli_type
+    from .client import output_hook_response
+    # Import plugins to register all handlers on the shared `app` object
+    from . import plugins as _plugins  # noqa: F401 (side-effect: registers handlers)
+    from .core import app
+
+    # Read payload from stdin (mirrors client.py:run_client)
+    payload: dict = {}
+    try:
+        if not _sys.stdin.isatty():
+            payload = json.load(_sys.stdin)
+    except Exception:
+        pass
+
+    cli_type = detect_cli_type(payload)
+    normalized = normalize_hook_payload(payload)
+
+    ctx = EventContext(
+        session_id=normalized["session_id"] or "direct-mode",
+        event=normalized["hook_event_name"],
+        prompt=normalized["prompt"],
+        tool_name=normalized["tool_name"],
+        tool_input=normalized["tool_input"],
+        tool_result=normalized["tool_result"],
+        session_transcript=normalized["session_transcript"],
+        store=ThreadSafeDB(),
+        cli_type=cli_type,
+        cwd=payload.get("_cwd") or os.getcwd(),
+        permission_mode=normalized["permission_mode"],
+        source=normalized["source"],
+    )
+
+    response = app.dispatch(ctx)
+    return output_hook_response(response, event=normalized["hook_event_name"], cli_type=cli_type, source="direct")
+
+
 def run_hook_handler() -> int:
     """Run autorun as a hook handler (default mode).
 
@@ -628,15 +679,16 @@ def run_hook_handler() -> int:
         Exit code: 0 = success
     """
     if USE_DAEMON:
-        # New daemon mode - forwards to Unix socket daemon
+        # Daemon mode: forwards payload to running daemon via Unix socket
         from .client import run_client
 
         return run_client()
     else:
-        # Legacy mode - direct hook handling
-        from .main import main as app_main
-
-        return app_main()
+        # Direct mode (AUTORUN_USE_DAEMON=0): run canonical plugins.py handlers
+        # in-process without connecting to the daemon socket.
+        # Used by tests to exercise production code while staying isolated from
+        # any live daemon session state.
+        return run_direct()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

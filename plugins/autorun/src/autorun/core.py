@@ -890,6 +890,15 @@ class EventContext:
             #    Setting this to False would stop the entire agent session.
             # 2. 'decision' / 'permissionDecision' controls the TOOL, not the AI.
             #    Denying the tool (block/deny) prevents execution while the AI continues.
+            # === PreToolUse response field semantics (ANTI-TRIPLE-PRINT DESIGN) ===
+            # Claude Code deny:  reason="" and systemMessage="" intentionally.
+            #   The message goes to the user via stderr (exit 2 workaround for bug #4669).
+            #   Putting reason/systemMessage would cause triple-printing in the Claude UI.
+            # Claude Code allow: reason=msg and systemMessage=msg (normal display).
+            # Gemini deny/allow: reason=msg and systemMessage=msg (Gemini has no exit-2 quirk).
+            # ALL paths:         hookSpecificOutput.permissionDecisionReason=msg ALWAYS set.
+            #   This is the CANONICAL, PORTABLE location for the blocking/warning message.
+            #   Tests should assert on hookSpecificOutput.permissionDecisionReason, not reason.
             resp = {
                 "decision": top_decision,
                 "permissionDecision": decision,
@@ -903,7 +912,7 @@ class EventContext:
                 "hookSpecificOutput": {
                     "hookEventName": get_cli_event_name(self._event, cli_type),
                     "permissionDecision": decision,
-                    "permissionDecisionReason": msg_reason
+                    "permissionDecisionReason": msg_reason  # ALWAYS populated — use this in tests
                 },
             }
             return validate_hook_response(self._event, resp, cli_type=cli_type)
@@ -1141,8 +1150,13 @@ class AutorunApp:
             if result is not None:
                 return result
 
-        # Default: allow
-        return ctx.respond("allow")
+        # Pass-through: return None when nothing fired.
+        # Autorun subprocess exits 0 with NO stdout → Claude Code ignores it entirely.
+        # This allows parallel hooks (e.g. RTK) to apply updatedInput without conflict.
+        # RTK substitutes "ls -alh" → "rtk ls -alh" for 60-90% token savings on common cmds.
+        # Contrast with UserPromptSubmit non-commands (line 1144) which still return explicit
+        # allow — needed to signal the prompt was handled by the AI, not a command.
+        return None
 
 
 # === DAEMON ===
@@ -1202,7 +1216,10 @@ class AutorunDaemon:
         import time
         start_time = time.time()
         self.last_activity = start_time
-        response = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
+        # None = pass-through (dispatch returned None = nothing fired = output nothing)
+        # _fallback = used only for error cases (timeout, buffer overflow, exception)
+        response = None
+        _fallback = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
         try:
             # Read payload (READ_BUFFER_LIMIT set on server to accept large payloads)
@@ -1266,13 +1283,14 @@ class AutorunDaemon:
                 logger.error(
                     f"Handler for '{ctx.event}' timed out after 15s (fail-open)"
                 )
-                response["systemMessage"] = f"Daemon handler for '{ctx.event}' timed out after 15s"
+                _fallback["systemMessage"] = f"Daemon handler for '{ctx.event}' timed out after 15s"
+                response = _fallback
 
         except asyncio.LimitOverrunError as e:
             # Buffer size exceeded - provide actionable guidance
             current_mb = READ_BUFFER_LIMIT // (1024 * 1024)
             logger.error(f"Buffer overflow: Session transcript exceeded {current_mb}MB limit", exc_info=True)
-            response["systemMessage"] = (
+            _fallback["systemMessage"] = (
                 f"Daemon buffer overflow (fail-open): Session transcript exceeded {current_mb}MB.\n\n"
                 f"SOLUTION: Increase buffer size with environment variable:\n"
                 f"  export AUTORUN_BUFFER_LIMIT={READ_BUFFER_LIMIT * 2}  # {current_mb * 2}MB\n"
@@ -1280,13 +1298,17 @@ class AutorunDaemon:
                 f"Current limit: {current_mb}MB (READ_BUFFER_LIMIT={READ_BUFFER_LIMIT:,} bytes)\n"
                 f"Details: {e}"
             )
+            response = _fallback
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
-            response["systemMessage"] = f"Daemon error (fail-open): {e}"
+            _fallback["systemMessage"] = f"Daemon error (fail-open): {e}"
+            response = _fallback
 
         finally:
+            # None = pass-through: send {} so client exits 0 with no stdout output
+            final = response if response is not None else {}
             # Debug logging (ALWAYS enabled)
-            response_json = json.dumps(response)
+            response_json = json.dumps(final)
             logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")
 
             writer.write(response_json.encode() + b'\n')

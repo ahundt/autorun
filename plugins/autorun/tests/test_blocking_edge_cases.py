@@ -37,7 +37,6 @@ from unittest.mock import patch, mock_open, MagicMock
 
 from autorun.main import (
     command_matches_pattern,
-    should_block_command,
     get_session_blocks,
     add_session_block,
     remove_session_block,
@@ -47,6 +46,24 @@ from autorun.main import (
     remove_global_block,
     GLOBAL_CONFIG_FILE
 )
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+
+# Daemon-path helper — replaces deleted should_block_command
+def _check_block(session_id, cmd):
+    """Returns deny result if command is blocked, None otherwise."""
+    if not cmd or not cmd.strip():
+        return None
+    ctx = EventContext(
+        session_id=session_id, event="PreToolUse", tool_name="Bash",
+        tool_input={"command": cmd}, store=ThreadSafeDB(),
+    )
+    result = plugins.check_blocked_commands(ctx)
+    if result is None:
+        return None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+    return result if perm == "deny" else None
 
 
 class TestPatternMatchingEdgeCases:
@@ -294,32 +311,32 @@ class TestShouldBlockCommandEdgeCases:
     def test_empty_command(self):
         """Test blocking an empty command."""
         add_session_block(self.test_session_id, "rm")
-        block_info = should_block_command(self.test_session_id, "")
+        block_info = _check_block(self.test_session_id, "")
         assert block_info is None
 
     def test_whitespace_only_command(self):
         """Test blocking a whitespace-only command."""
         add_session_block(self.test_session_id, "rm")
-        block_info = should_block_command(self.test_session_id, "   ")
+        block_info = _check_block(self.test_session_id, "   ")
         assert block_info is None
 
     def test_command_with_newlines(self):
         """Test blocking multi-line commands."""
         add_session_block(self.test_session_id, "rm")
-        block_info = should_block_command(self.test_session_id, "rm file.txt\nrm other.txt")
+        block_info = _check_block(self.test_session_id, "rm file.txt\nrm other.txt")
         assert block_info is not None
 
     def test_very_long_pattern(self):
         """Test blocking with very long pattern."""
         long_pattern = "a" * 1000
         add_session_block(self.test_session_id, long_pattern)
-        block_info = should_block_command(self.test_session_id, long_pattern)
+        block_info = _check_block(self.test_session_id, long_pattern)
         assert block_info is not None
 
     def test_special_characters_in_command(self):
         """Test commands with special shell characters."""
         add_session_block(self.test_session_id, "rm")
-        block_info = should_block_command(self.test_session_id, "rm 'file with spaces.txt'")
+        block_info = _check_block(self.test_session_id, "rm 'file with spaces.txt'")
         assert block_info is not None
 
 

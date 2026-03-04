@@ -23,23 +23,15 @@ import logging
 # Import centralized tmux utilities for DRY compliance
 from .tmux_utils import get_tmux_utilities
 
-# Import main.py patterns for consistency
-try:
-    from .main import CONFIG, session_state, log_info
-except ImportError:
-    # Fallback if running standalone
-    CONFIG = {}
-    def session_state(session_id):
-        """Fallback session state"""
-        class DummyState:
-            def __enter__(self):
-                return {}
-            def __exit__(self, *args):
-                pass
-        return DummyState()
-    def log_info(message):
-        """Fallback logging"""
-        print(f"INFO: {message}")
+from .config import CONFIG
+from .session_manager import session_state
+from .logging_utils import get_logger as _get_logger
+_log = _get_logger(__name__)
+
+
+def log_info(message: str) -> None:
+    """Log info message to file (AUTORUN_DEBUG=1 to enable)."""
+    _log.info(message)
 
 # Configure logging - file-only when AUTORUN_DEBUG=1, disabled otherwise
 # CRITICAL: No stderr output to avoid breaking hooks

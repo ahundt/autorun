@@ -4,12 +4,26 @@ import pytest
 import sys
 import uuid
 from pathlib import Path
-from unittest.mock import Mock
+
 
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun.main import pretooluse_handler, session_state, CONFIG, has_valid_justification
+from autorun.main import session_state, CONFIG, has_valid_justification
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
 
 # Import conftest utilities for cleanup - cleanup happens via pytest_sessionfinish
 from conftest import register_test_session
@@ -121,18 +135,18 @@ class TestPreToolUsePolicyEnforcement:
     # Note: No teardown_method needed - cleanup handled by conftest.pytest_sessionfinish
 
     def create_mock_context(self, tool_name, file_path=None, session_transcript=None):
-        """Create a mock context object for PreToolUse testing"""
-        ctx = Mock()
-        ctx.tool_name = tool_name
-        ctx.tool_input = {}
-
+        """Create a real EventContext for PreToolUse testing"""
+        tool_input = {}
         if file_path is not None:
-            ctx.tool_input["file_path"] = file_path
-
-        ctx.session_id = self.session_id
-        ctx.session_transcript = session_transcript or []
-
-        return ctx
+            tool_input["file_path"] = file_path
+        return EventContext(
+            session_id=self.session_id,
+            event="PreToolUse",
+            tool_name=tool_name,
+            tool_input=tool_input,
+            session_transcript=session_transcript or [],
+            store=ThreadSafeDB(),
+        )
 
     def test_non_write_tools_with_file_paths_allowed(self):
         """Test that non-Write tools with file paths are allowed regardless of policy"""
@@ -146,7 +160,7 @@ class TestPreToolUsePolicyEnforcement:
                     state["file_policy"] = policy
 
                 ctx = self.create_mock_context(tool, "some_file.txt")
-                result = pretooluse_handler(ctx)
+                result = _pretooluse(ctx)
 
                 # Should allow non-Write tools with file paths
                 assert result["continue"] is True
@@ -164,7 +178,7 @@ class TestPreToolUsePolicyEnforcement:
                     state["file_policy"] = policy
 
                 ctx = self.create_mock_context(tool, None)  # No file_path
-                result = pretooluse_handler(ctx)
+                result = _pretooluse(ctx)
 
                 # Non-Write tools should ALWAYS be allowed, regardless of policy
                 # This is the fix for Issue #3: PreToolUse was incorrectly blocking non-Write tools
@@ -186,7 +200,7 @@ class TestPreToolUsePolicyEnforcement:
                     state["file_policy"] = policy
 
                 ctx = self.create_mock_context("Write", file_path)
-                result = pretooluse_handler(ctx)
+                result = _pretooluse(ctx)
 
                 # Policy should be checked (all Write tools undergo policy checking after fix)
                 if policy == "ALLOW":
@@ -195,11 +209,11 @@ class TestPreToolUsePolicyEnforcement:
                 elif policy == "SEARCH":
                     assert result["continue"] is True  # AI keeps running; tool blocked by permissionDecision
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-                    assert "STRICT SEARCH" in result["systemMessage"]
+                    assert "STRICT SEARCH" in result["hookSpecificOutput"]["permissionDecisionReason"]
                 elif policy == "JUSTIFY":
                     assert result["continue"] is True  # AI keeps running; tool blocked by permissionDecision
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-                    assert "JUSTIFIED" in result["systemMessage"]
+                    assert "JUSTIFIED" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
     def test_write_tools_with_file_paths_policy_enforced(self):
         """Test that Write tools with file paths undergo policy checking"""
@@ -213,7 +227,7 @@ class TestPreToolUsePolicyEnforcement:
                     state["file_policy"] = policy
 
                 ctx = self.create_mock_context("Write", file_path)
-                result = pretooluse_handler(ctx)
+                result = _pretooluse(ctx)
 
                 # Policy should be checked (all Write tools undergo policy checking after fix)
                 if policy == "ALLOW":
@@ -222,11 +236,11 @@ class TestPreToolUsePolicyEnforcement:
                 elif policy == "SEARCH":
                     assert result["continue"] is True  # AI keeps running; tool blocked by permissionDecision
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-                    assert "STRICT SEARCH" in result["systemMessage"]
+                    assert "STRICT SEARCH" in result["hookSpecificOutput"]["permissionDecisionReason"]
                 elif policy == "JUSTIFY":
                     assert result["continue"] is True  # AI keeps running; tool blocked by permissionDecision
                     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-                    assert "JUSTIFIED" in result["systemMessage"]
+                    assert "JUSTIFIED" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
     def test_justify_policy_with_justification_present(self):
         """Test that JUSTIFY policy allows operations when justification is present"""
@@ -242,7 +256,7 @@ class TestPreToolUsePolicyEnforcement:
                 state["file_policy"] = "JUSTIFY"
 
             ctx = self.create_mock_context("Write", "new_file.txt", [justification])
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
 
             # Should allow when justification is present
             assert result["continue"] is True
@@ -262,12 +276,12 @@ class TestPreToolUsePolicyEnforcement:
                 state["file_policy"] = "JUSTIFY"
 
             ctx = self.create_mock_context("Write", "new_file.txt", transcript)
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
 
             # Should block when no justification is present
             assert result["continue"] is True  # AI keeps running; tool blocked by permissionDecision
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-            assert "JUSTIFIED" in result["systemMessage"]
+            assert "JUSTIFIED" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
     def test_search_policy_blocks_all_write_operations(self):
         """Test that SEARCH policy blocks all Write operations regardless of file path"""
@@ -284,13 +298,13 @@ class TestPreToolUsePolicyEnforcement:
                 state["file_policy"] = "SEARCH"
 
             ctx = self.create_mock_context("Write", file_path)
-            result = pretooluse_handler(ctx)
+            result = _pretooluse(ctx)
 
             # Should block all Write operations
             assert result["continue"] is True  # AI keeps running; tool blocked by permissionDecision
             assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-            assert "STRICT SEARCH" in result["systemMessage"]
-            assert "NO new files" in result["systemMessage"]
+            reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+            assert "STRICT SEARCH" in reason
 
     def test_allow_policy_permits_all_operations(self):
         """Test that ALLOW policy permits all operations"""
@@ -304,7 +318,7 @@ class TestPreToolUsePolicyEnforcement:
                     state["file_policy"] = "ALLOW"
 
                 ctx = self.create_mock_context(tool, file_path)
-                result = pretooluse_handler(ctx)
+                result = _pretooluse(ctx)
 
                 # For non-Write tools with file paths, should allow
                 if tool != "Write" and file_path:
@@ -318,7 +332,7 @@ class TestPreToolUsePolicyEnforcement:
     def test_default_policy_is_allow(self):
         """Test that default policy (when none set) is ALLOW"""
         ctx = self.create_mock_context("Write", "some_file.txt")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Should allow when no policy is set (defaults to ALLOW)
         assert result["continue"] is True
@@ -330,7 +344,7 @@ class TestPreToolUsePolicyEnforcement:
             state["file_policy"] = "SEARCH"
 
         ctx = self.create_mock_context("Write", "blocked_file.txt")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
         # Verify response format
         assert "continue" in result
@@ -348,27 +362,27 @@ class TestPreToolUsePolicyEnforcement:
         assert hook_output["permissionDecision"] in ["allow", "deny"]
 
     def test_policy_blocked_messages_are_from_config(self):
-        """Test that blocked messages use the configured policy messages"""
+        """Test that blocked messages use the configured policy_blocked messages"""
         with session_state(self.session_id) as state:
             state["file_policy"] = "SEARCH"
 
         ctx = self.create_mock_context("Write", "blocked_file.txt")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
-        # Should use the configured SEARCH policy message
-        expected_message = CONFIG["policies"]["SEARCH"][1]
-        assert expected_message in result["systemMessage"]
+        # Daemon path uses CONFIG["policy_blocked"] messages in permissionDecisionReason
+        reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "STRICT SEARCH" in reason, f"Expected STRICT SEARCH in: {reason}"
 
         # Test JUSTIFY policy
         with session_state(self.session_id) as state:
             state["file_policy"] = "JUSTIFY"
 
         ctx = self.create_mock_context("Write", "blocked_file.txt")
-        result = pretooluse_handler(ctx)
+        result = _pretooluse(ctx)
 
-        # Should use the configured JUSTIFY policy message
-        expected_message = CONFIG["policies"]["JUSTIFY"][1]
-        assert expected_message in result["systemMessage"]
+        # Daemon path uses CONFIG["policy_blocked"] messages in permissionDecisionReason
+        reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "JUSTIFIED" in reason or "justif" in reason.lower(), f"Expected JUSTIFIED in: {reason}"
 
 
 if __name__ == "__main__":

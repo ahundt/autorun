@@ -97,6 +97,17 @@ def output_hook_response(response: dict | str, event: str = "unknown",
     from .core import validate_hook_response
 
     # ═══════════════════════════════════════════════════════════════
+    # SHARED: Pass-through — no response (None or {}) means nothing fired
+    # ═══════════════════════════════════════════════════════════════
+    # Daemon sends {} when dispatch() returned None (no rules matched).
+    # Output nothing to stdout → Claude Code ignores this hook entirely.
+    # This allows parallel hooks (e.g. RTK) to apply updatedInput without conflict.
+    # Reference: Issue #10936 — any stderr at exit 0 shows as "Hook Error" in UI,
+    # so we also avoid all stderr here. Just exit 0 silently.
+    if not response:
+        sys.exit(0)
+
+    # ═══════════════════════════════════════════════════════════════
     # SHARED: Handle raw string fallback (JSON decode error)
     # ═══════════════════════════════════════════════════════════════
     if isinstance(response, str):

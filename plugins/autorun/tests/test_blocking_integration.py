@@ -39,12 +39,41 @@ from autorun.main import (
     handle_global_block_pattern,
     handle_global_allow_pattern,
     handle_global_block_status,
-    pretooluse_handler,
     clear_session_blocks,
     COMMAND_HANDLERS,
     GLOBAL_CONFIG_FILE
 )
 from autorun.config import DEFAULT_INTEGRATIONS
+from autorun.core import EventContext, ThreadSafeDB
+from autorun import plugins
+
+
+# Daemon-path helper — replaces deleted pretooluse_handler
+def _pretooluse(ctx):
+    """Run daemon-path PreToolUse chain: file policy then command blocking."""
+    result = plugins.enforce_file_policy(ctx)
+    if result is not None:
+        return result
+    result = plugins.check_blocked_commands(ctx)
+    if result is not None:
+        return result
+    return ctx.allow()
+
+
+# Daemon-path helper — replaces deleted should_block_command
+def _check_block(session_id, cmd):
+    """Returns deny result if command is blocked, None otherwise."""
+    if not cmd or not cmd.strip():
+        return None
+    ctx = EventContext(
+        session_id=session_id, event="PreToolUse", tool_name="Bash",
+        tool_input={"command": cmd}, store=ThreadSafeDB(),
+    )
+    result = plugins.check_blocked_commands(ctx)
+    if result is None:
+        return None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+    return result if perm == "deny" else None
 
 
 class MockContext:
@@ -272,30 +301,36 @@ class TestPreToolUseBlocking:
         from autorun.main import add_session_block
         add_session_block(self.test_session_id, "rm")
 
-        # Create mock context
-        ctx = MockContext(
+        # Create real EventContext
+        ctx = EventContext(
+            session_id=self.test_session_id,
+            event="PreToolUse",
             tool_name="Bash",
             tool_input={"command": "rm file.txt"},
-            session_id=self.test_session_id
+            store=ThreadSafeDB(),
         )
 
-        response = pretooluse_handler(ctx)
+        response = _pretooluse(ctx)
 
         # Check hookSpecificOutput for permissionDecision
         assert "hookSpecificOutput" in response
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert "blocked" in response["hookSpecificOutput"]["permissionDecisionReason"].lower()
+        # Daemon-path: message may say "blocked" (session block) or "trash" (DEFAULT_INTEGRATIONS)
+        reason_lower = response["hookSpecificOutput"]["permissionDecisionReason"].lower()
+        assert "rm" in reason_lower or "blocked" in reason_lower or "trash" in reason_lower
 
     def test_bash_command_allowed(self):
         """Test that unblocked Bash commands are allowed."""
-        # Create mock context without any blocks
-        ctx = MockContext(
+        # Create real EventContext without any blocks
+        ctx = EventContext(
+            session_id=self.test_session_id,
+            event="PreToolUse",
             tool_name="Bash",
             tool_input={"command": "ls file.txt"},
-            session_id=self.test_session_id
+            store=ThreadSafeDB(),
         )
 
-        response = pretooluse_handler(ctx)
+        response = _pretooluse(ctx)
 
         # Should not be denied by blocking (may be allowed for other reasons)
         # The important thing is it's not denied due to blocking
@@ -308,14 +343,16 @@ class TestPreToolUseBlocking:
         from autorun.main import add_session_block
         add_session_block(self.test_session_id, "rm")
 
-        # Create mock context for Write tool
-        ctx = MockContext(
+        # Create real EventContext for Write tool
+        ctx = EventContext(
+            session_id=self.test_session_id,
+            event="PreToolUse",
             tool_name="Write",
             tool_input={"file_path": "rm_test.txt", "content": "test"},
-            session_id=self.test_session_id
+            store=ThreadSafeDB(),
         )
 
-        response = pretooluse_handler(ctx)
+        response = _pretooluse(ctx)
 
         # Should not be denied due to command blocking
         reason = response.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
@@ -327,14 +364,16 @@ class TestPreToolUseBlocking:
         from autorun.main import add_session_block
         add_session_block(self.test_session_id, "dd if=")
 
-        # Create mock context
-        ctx = MockContext(
+        # Create real EventContext
+        ctx = EventContext(
+            session_id=self.test_session_id,
+            event="PreToolUse",
             tool_name="Bash",
             tool_input={"command": "dd if=/dev/zero of=test"},
-            session_id=self.test_session_id
+            store=ThreadSafeDB(),
         )
 
-        response = pretooluse_handler(ctx)
+        response = _pretooluse(ctx)
 
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "dd if=" in response["hookSpecificOutput"]["permissionDecisionReason"]
@@ -399,8 +438,8 @@ class TestEndToEndWorkflows:
         assert "Blocked: rm" in response
 
         # Verify it's blocked
-        from autorun.main import should_block_command, get_session_blocks
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        from autorun.main import get_session_blocks
+        block_info = _check_block(self.test_session_id, "rm file.txt")
         assert block_info is not None
 
         # Unblock rm (removes session block)
@@ -413,9 +452,9 @@ class TestEndToEndWorkflows:
         assert all(b["pattern"] != "rm" for b in session_blocks)
 
         # "rm" is still blocked by DEFAULT_INTEGRATIONS (built-in safety)
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        block_info = _check_block(self.test_session_id, "rm file.txt")
         assert block_info is not None
-        assert block_info["pattern"] == "rm"
+        assert block_info.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
 
     def test_global_to_session_override_workflow(self):
         """Test global block with session override."""
@@ -427,8 +466,7 @@ class TestEndToEndWorkflows:
         assert "Global block: rm" in response
 
         # Verify it's blocked (via global)
-        from autorun.main import should_block_command
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        block_info = _check_block(self.test_session_id, "rm file.txt")
         assert block_info is not None
 
         # Add session block to override
@@ -442,7 +480,7 @@ class TestEndToEndWorkflows:
         assert "Allowed: rm" in response
 
         # Still blocked by global
-        block_info = should_block_command(self.test_session_id, "rm file.txt")
+        block_info = _check_block(self.test_session_id, "rm file.txt")
         assert block_info is not None
 
     def test_clear_workflow(self):
