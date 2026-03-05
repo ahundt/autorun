@@ -43,8 +43,8 @@ and Gemini CLI sessions simultaneously.
 | Find sessions for a project | `aise list --project myproject` |
 | Filter by source | `aise list --provider claude` |
 | Read all messages from a session | `aise messages get SESSION_ID` |
-| Read only your (user) messages | `aise messages get SESSION_ID --type user` |
-| See recent prompts you sent to Claude | `aise messages search "" --type user --since 7d` |
+| Restore lost session context (user request sequence) | `aise messages get SESSION_ID --type user` |
+| See what you've been asking Claude recently | `aise messages search "" --type user --since 7d` |
 | Search text across all sessions | `aise messages search "query"` |
 | See what tools Claude used | `aise messages inspect SESSION_ID` |
 | See chronological session events | `aise messages timeline SESSION_ID` |
@@ -82,19 +82,21 @@ and you need to restore what you were working on:
 # 1. Find recent sessions (last 7 days, newest first)
 aise list --since 7d
 
-# 2. Read the conversation to restore context
-aise messages get SESSION_ID
-
-# 2b. Get only your (user) messages for a quick overview of what you asked
+# 2. Restore the sequence of user requests — the most valuable context signal.
+#    This gives Claude back what the human was trying to accomplish, in order,
+#    without the noise of assistant responses. Start here.
 aise messages get SESSION_ID --type user
 
-# 3. Find files Claude was working on in that session
+# 3. Read the full conversation if more detail is needed
+aise messages get SESSION_ID
+
+# 4. Find files Claude was working on in that session
 aise files search --include-sessions SESSION_ID
 
-# 4. Recover a specific file back to its original location
+# 5. Recover a specific file back to its original location
 aise files extract filename.py --restore
 
-# 5. Export session to markdown for persistent reference
+# 6. Export session to markdown for persistent reference
 aise export session SESSION_ID --output session-context.md
 ```
 
@@ -102,16 +104,20 @@ Full context restored in under 2 minutes.
 
 ---
 
-### "See what you've been asking Claude recently"
+### "Restore what the user was working on from recent sessions"
+
+The user message sequence is the most information-dense context signal: it contains
+the full sequence of requests without assistant verbosity, making it ideal for
+restoring lost context after compaction or session switches.
 
 ```bash
-# Your prompts from the last 3 days (across all projects)
+# User requests from the last 3 days — restore recent intent across all projects
 aise messages search "" --type user --since 3d
 
 # Narrow to a specific project
 aise messages search "" --type user --since 7d --project myproject
 
-# Search for a specific topic in your past prompts
+# Find when a specific topic was being worked on
 aise messages search "authentication" --type user
 ```
 
