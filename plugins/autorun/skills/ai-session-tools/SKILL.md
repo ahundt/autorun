@@ -38,14 +38,18 @@ and Gemini CLI sessions simultaneously.
 
 | Goal | Command |
 |------|---------|
+| Show session, file, and version counts | `aise stats` |
 | Find all sessions | `aise list` |
 | Find sessions for a project | `aise list --project myproject` |
 | Filter by source | `aise list --provider claude` |
 | Read all messages from a session | `aise messages get SESSION_ID` |
+| Read only your (user) messages | `aise messages get SESSION_ID --type user` |
+| See recent prompts you sent to Claude | `aise messages search "" --type user --since 7d` |
 | Search text across all sessions | `aise messages search "query"` |
 | See what tools Claude used | `aise messages inspect SESSION_ID` |
 | See chronological session events | `aise messages timeline SESSION_ID` |
 | Find a file Claude wrote or edited | `aise files search --pattern "name.py"` |
+| Find heavily-edited files | `aise files search --min-edits 2` |
 | See version history of a file | `aise files history filename.py` |
 | Recover a file to stdout | `aise files extract filename.py` |
 | Find all Write/Edit calls to a file | `aise tools search Write "filename"` |
@@ -81,6 +85,9 @@ aise list --since 7d
 # 2. Read the conversation to restore context
 aise messages get SESSION_ID
 
+# 2b. Get only your (user) messages for a quick overview of what you asked
+aise messages get SESSION_ID --type user
+
 # 3. Find files Claude was working on in that session
 aise files search --include-sessions SESSION_ID
 
@@ -92,6 +99,21 @@ aise export session SESSION_ID --output session-context.md
 ```
 
 Full context restored in under 2 minutes.
+
+---
+
+### "See what you've been asking Claude recently"
+
+```bash
+# Your prompts from the last 3 days (across all projects)
+aise messages search "" --type user --since 3d
+
+# Narrow to a specific project
+aise messages search "" --type user --since 7d --project myproject
+
+# Search for a specific topic in your past prompts
+aise messages search "authentication" --type user
+```
 
 ---
 
