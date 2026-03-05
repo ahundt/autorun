@@ -30,8 +30,13 @@ description = "Parallel Merge and Commit Workflow. Execute multiple subagents in
 path = "plugins/autorun/skills/parallel-subagent/SKILL.md"
 
 [[skills]]
+name = "ai_session_tools"
+description = "Search, recover, and analyze sessions from Claude Code, AI Studio, and Gemini CLI using the aise CLI — find files Claude wrote, restore context after compaction, search conversation history, or understand what happened in any past session."
+path = "plugins/autorun/skills/ai-session-tools/SKILL.md"
+
+[[skills]]
 name = "claude_session_tools"
-description = "Explore, search, analyze, and export Claude Code session histories."
+description = "(Renamed alias) Search and recover Claude Code, AI Studio, and Gemini CLI session histories — redirects to ai-session-tools."
 path = "plugins/autorun/skills/claude-session-tools/SKILL.md"
 
 # Command definitions (showing 10 most important of 73 total)

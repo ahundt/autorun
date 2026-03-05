@@ -1,4 +1,4 @@
-# Claude Code Claude Session File Structure Reference
+# Claude Code Session File Structure Reference
 
 This document provides detailed technical information about Claude Code `.jsonl` Claude session transcript files.
 
@@ -365,5 +365,5 @@ cat session.jsonl | jq -r '
 
 **See also:**
 - SKILL.md for usage workflows
-- export_session.sh for automated extraction
-- export_recent_sessions.sh for bulk processing
+- `aise export session SESSION_ID` — export one session to markdown
+- `aise export recent 7` — bulk export last N days of sessions
