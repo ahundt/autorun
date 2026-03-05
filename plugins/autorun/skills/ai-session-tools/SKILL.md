@@ -223,13 +223,14 @@ Claude Code sessions are auto-discovered from `~/.claude/projects/`. AI Studio a
 require configuration:
 
 ```bash
-aise source scan --save          # auto-detect and save new source directories to config
-aise source add aistudio /path   # manually add an AI Studio export directory
-aise source add gemini /path     # manually add a Gemini CLI directory
-aise source remove /path         # remove a source directory from config
-aise source disable claude       # disable auto-discovery for a type without removing
-aise source enable claude        # re-enable auto-discovery
-aise source list                 # verify what is currently configured
+aise source scan --save                        # scan standard locations; --save writes found paths to config
+aise source add /path/to/aistudio              # add AI Studio export directory (type auto-detected)
+aise source add /path/to/aistudio --type aistudio  # add with explicit type
+aise source add ~/.gemini/tmp --type gemini    # add Gemini CLI directory
+aise source remove /path/to/dir               # remove a source directory from config by path
+aise source disable aistudio                  # disable AI Studio auto-discovery (also: gemini_cli)
+aise source enable aistudio                   # re-enable auto-discovery (also: gemini_cli)
+aise source list                              # show all active sources (auto-detected + configured)
 ```
 
 ---
@@ -257,7 +258,26 @@ aise --config /custom/path.json config init  # create config at a specific path
 
 ## Date Filtering
 
-All `--since`/`--until` flags accept: `7d` `2w` `1m` `2026-01-01` `2026-01/2026-03` (EDTF interval)
+Three flags control date ranges on all commands that support them:
+
+| Flag | Purpose | Example |
+|------|---------|---------|
+| `--since` | Lower bound (inclusive) | `--since 7d` `--since 2026-01-15` |
+| `--until` | Upper bound (inclusive) | `--until 2026-03-01` |
+| `--when` | Set both bounds at once — for EDTF period patterns | `--when 202X` `--when 2026-01` |
+
+Accepted formats (all three flags):
+
+| Format | Example | Matches |
+|--------|---------|---------|
+| Duration shorthand | `7d` `2w` `1m` `24h` | Last N days/weeks/months/hours |
+| ISO date | `2026-01-15` | That exact day |
+| Partial date | `2026-01` `2026` | All of January 2026 / all of 2026 |
+| EDTF unspecified digit | `202X` `2026-01-1X` | 2020s decade / Jan 10–19 2026 |
+| EDTF interval (`--since` only) | `2026-01/2026-03` | Jan through Mar 2026 (sets both bounds) |
+
+Use `--when` for decade/month/partial-date patterns where a single expression sets the full window.
+Use `--since` + `--until` for explicit asymmetric ranges.
 
 Run `aise dates` for the full reference.
 
