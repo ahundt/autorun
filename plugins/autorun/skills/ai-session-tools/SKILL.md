@@ -1,13 +1,9 @@
 ---
 name: ai-session-tools
-description: Search, recover, and analyze sessions from Claude Code, AI Studio, and Gemini CLI using the aise CLI — find files Claude wrote, restore context after compaction, search conversation history, or understand what happened in any past session.
+description: Search, recover, and analyze AI session histories across Claude Code, AI Studio, and Gemini CLI — restore lost context after compaction, recover files the AI wrote that are missing from disk, find what was discussed in any past session, understand exactly what the AI did and why, turn recurring AI mistakes into improvements to prompts, guidelines, code, hooks, workflows, and scripts, and preserve sessions as readable documents.
 version: "0.9.0"
-
-# VISIBILITY & TRIGGERING
 user-invocable: true
 disable-model-invocation: false
-
-# EXECUTION CONTEXT - Tools this skill can use
 allowed-tools:
   - Bash
   - Read
@@ -17,437 +13,253 @@ allowed-tools:
 
 # AI Session Tools
 
-Search, analyze, and recover anything from AI session histories (Claude Code, AI Studio, Gemini CLI). Use when the user needs to find past work, understand what Claude did in a session, recover a file, search conversation history, or detect patterns in how Claude is being used.
+Search, recover, and analyze AI session histories across Claude Code, AI Studio, and Gemini CLI.
 
-**Invoke with:** `/ar:ai-session-tools` or natural language like "find that file from last week's session", "what did Claude do in session ab841016", "search my Claude sessions for authentication"
+**Invoke with:** `/ar:ai-session-tools` or natural language like "find that file from last week", "search sessions for authentication", "recover context from session ab841016"
 
-**Tool:** `aise` -- run `aise --help` to see all commands
+After a context compaction, a lost file, or a confusing session — `aise` finds it. In under a minute you can recover a file the AI (e.g. Claude / Gemini) wrote, restore the sequence of user requests, search every conversation you've ever had, or export a full session to markdown. Works across Claude Code, AI Studio, and Gemini CLI sessions simultaneously.
 
----
-
-## What You Can Do
-
-After a context compaction, a lost file, or a confusing session — `aise` finds it.
-In under a minute you can recover a file Claude wrote, search every conversation you've
-ever had, or export a full session to markdown. Works across Claude Code, AI Studio,
-and Gemini CLI sessions simultaneously.
+**Full flag reference:** `aise COMMAND --help`
 
 ---
 
-## Goal -> Command Quick Reference
+## Quick Reference
 
-| Goal | Command |
-|------|---------|
-| Show session, file, and version counts | `aise stats` |
-| Find all sessions | `aise list` |
-| Find sessions for a project | `aise list --project myproject` |
-| Filter by source | `aise list --provider claude` |
-| Read all messages from a session | `aise messages get SESSION_ID` |
-| Restore lost session context (user request sequence) | `aise messages get SESSION_ID --type user` |
-| See what you've been asking Claude recently | `aise messages search "" --type user --since 7d` |
-| Search text across all sessions | `aise messages search "query"` |
-| See what tools Claude used | `aise messages inspect SESSION_ID` |
-| See chronological session events | `aise messages timeline SESSION_ID` |
-| Find a file Claude wrote or edited | `aise files search --pattern "name.py"` |
-| Find heavily-edited files | `aise files search --min-edits 2` |
-| See version history of a file | `aise files history filename.py` |
-| Recover a file to stdout | `aise files extract filename.py` |
-| Find all Write/Edit calls to a file | `aise tools search Write "filename"` |
-| Check if edits appear in current file | `aise files cross-ref ./path/to/file` |
-| Find user corrections to Claude | `aise messages corrections` |
-| Count planning command usage | `aise messages planning` |
-| Get clipboard content from a session | `aise messages extract SESSION_ID pbcopy` |
-| Export session to markdown | `aise export session SESSION_ID` |
-| Export last N days of sessions | `aise export recent 7 --output week.md` |
-| Search files + messages together | `aise search --pattern "*.py" --query "error"` |
-| Find specific tool invocations | `aise tools search Bash "git commit"` |
-| List configured session sources | `aise source list` |
-| Scan for new sources (dry-run) | `aise source scan` |
-| Scan and save found sources | `aise source scan --save` |
-| Add an AI Studio source directory | `aise source add aistudio /path/to/dir` |
-| Remove a source by path | `aise source remove /path/to/dir` |
-| Run full analysis pipeline | `aise analyze` |
-| Show date format reference | `aise dates` |
+All commands accept `--format json` for machine-readable output and `--full-uuid` for full 36-char session IDs.
+
+| Goal | Action | Command | Key Options |
+|------|--------|---------|-------------|
+| How much history is indexed? | Count sessions, files, versions | `aise stats` | `--since 7d` `--provider claude` |
+| Know which session contains the work you need | List all sessions, newest first | `aise list` | `--project P` `--since 7d` `--limit 20` |
+| Narrow to Claude Code sessions only, excluding AI Studio / Gemini | Filter by provider | `aise list --provider claude` | `--since` `--until` `--full-uuid` |
+| What did the user ask for in this session? | User request sequence — primary context signal | `aise messages get SESSION_ID --type user` | `--limit 10` |
+| Restore the full conversation context | Every message in a session | `aise messages get SESSION_ID` | `--type user\|assistant` `--limit 10` |
+| See what the user was asking for across recent sessions | User messages from the last N days | `aise messages search "" --type user --since 7d` | `--project P` `--context 3` |
+| Find when a specific topic was discussed | Search all messages with surrounding context | `aise messages search "query"` | `--type user` `--context 3` `--limit 20` |
+| What tools did the AI (e.g. Claude / Gemini) call and how often? | Tool counts and files touched | `aise messages inspect SESSION_ID` | `--format json` |
+| Reconstruct the exact sequence of events in a session | Chronological timeline with timestamps | `aise messages timeline SESSION_ID` | `--since 14:00` `--preview-chars 80` |
+| Which sessions touched a specific file? | Search writes/edits by filename pattern | `aise files search --pattern "name.py"` | `--min-edits 2` `--include-sessions ID` `--include-extensions py ts` |
+| See every version of a file the AI (e.g. Claude / Gemini) produced across sessions | Every saved version with session and date | `aise files history filename.py` | `--export` (write versioned files) `--stdout` (pipe all versions) |
+| Recover a file missing from disk | Print latest saved version to stdout | `aise files extract filename.py` | `--version 3` `--restore` `--output-dir ./backup` |
+| Did the AI's (e.g. Claude / Gemini) edits actually land on disk? | Present vs. missing edit check | `aise files cross-ref ./file.py` | `--session ID` `--format json` |
+| See every file change the AI made to a specific file | Search tool calls by filename | `aise tools search Write "filename"` | `aise tools search Edit "file"` `aise tools search Read` |
+| See every shell command the AI ran | Search Bash calls by substring | `aise tools search Bash "git commit"` | `--format json` `--limit 20` |
+| Recover clipboard content the AI prepared | Extract pbcopy content | `aise messages extract SESSION_ID pbcopy` | `--format json` |
+| Produce a persistent readable record of a session | Export session to markdown | `aise export session SESSION_ID` | `--output file.md` `--dry-run` |
+| Document a sprint of AI-assisted work | Export last N days to a file | `aise export recent 7 --output week.md` | `--project myproject` |
+| Find something that could be in a file or a message | Cross-domain search (`aise find` is an alias) | `aise search --pattern "*.py" --query "error"` | `--tool Write` `--query only` `--pattern only` |
+| Identify where the AI (e.g. Claude / Gemini) went wrong and the user had to correct it | Detect correction patterns by category | `aise messages corrections` | `--pattern 'LABEL:regex'` `--project P` `--since` |
+| Measure how consistently planning workflows were followed | Count planning invocations across sessions | `aise messages planning` | `--commands '/custom,/cmd'` |
+| Identify recurring AI mistakes across all sessions | Qualitative analysis pipeline | `aise analyze` | `--provider claude` `--step analyze\|graph` `--status` `--force` |
+| Stop indexing sessions from a removed or unwanted directory | Deregister a session source | `aise source remove /path/to/dir` | `aise source disable claude` |
+| What date formats work with --since? | Date format examples and shorthands | `aise dates` | |
+
+For multi-step tasks, follow a workflow below.
 
 ---
 
-## Goal-Oriented Sequences
+## Workflows
 
-### "Recover context after context compaction"
-
-This is the most common use of `aise` inside Claude Code. When context was compacted
-and you need to restore what you were working on:
+### 1. Recover lost context after compaction
 
 ```bash
-# 1. Find recent sessions (last 7 days, newest first)
+# Find the session
 aise list --since 7d
 
-# 2. Restore the sequence of user requests — the most valuable context signal.
-#    This gives Claude back what the human was trying to accomplish, in order,
-#    without the noise of assistant responses. Start here.
+# Get the user request sequence — what was being accomplished, without assistant noise
+# This is the primary context signal: ordered user intent, compact, no assistant verbosity
 aise messages get SESSION_ID --type user
 
-# 3. Read the full conversation if more detail is needed
+# Read the full conversation if more detail is needed
 aise messages get SESSION_ID
 
-# 4. Find files Claude was working on in that session
+# Find files the AI was editing in that session
 aise files search --include-sessions SESSION_ID
 
-# 5. Recover a specific file back to its original location
+# Restore a specific file to its original path on disk
 aise files extract filename.py --restore
 
-# 6. Export session to markdown for persistent reference
+# Export session to markdown for persistent reference
 aise export session SESSION_ID --output session-context.md
 ```
 
-Full context restored in under 2 minutes.
-
 ---
 
-### "Restore what the user was working on from recent sessions"
-
-The user message sequence is the most information-dense context signal: it contains
-the full sequence of requests without assistant verbosity, making it ideal for
-restoring lost context after compaction or session switches.
+### 2. Recover a file the AI (e.g. Claude / Gemini) wrote that is missing from disk
 
 ```bash
-# User requests from the last 3 days — restore recent intent across all projects
-aise messages search "" --type user --since 3d
-
-# Narrow to a specific project
-aise messages search "" --type user --since 7d --project myproject
-
-# Find when a specific topic was being worked on
-aise messages search "authentication" --type user
-```
-
----
-
-### "Find and recover a file from a past session"
-
-```bash
-# 1. Find which sessions touched the file
+# Find which sessions wrote or edited the file
 aise files search --pattern "filename.py"
 
-# 2. See version history (how many times it was edited, which sessions)
+# Every version: how many edits, which sessions, which dates
 aise files history filename.py
+aise files history filename.py --export   # write versioned files: filename_v1.py, filename_v2.py, ...
+aise files history filename.py --stdout   # all versions to stdout for piping
 
-# 3. Preview a specific version
+# Preview a specific version
 aise files extract filename.py --version 3
 
-# 4. Recover latest version to disk
-aise files extract filename.py > filename.py
+# Restore the latest version to its original path on disk
+aise files extract filename.py --restore
+
+# Or write to a backup directory instead
+aise files extract filename.py --output-dir ./backup
 ```
 
 ---
 
-### "Understand what happened in session X"
+### 3. Audit what the AI (e.g. Claude / Gemini) did in a session
 
 ```bash
-# 1. Get session list to find the right ID
+# Find the session
 aise list --project myproject
 
-# 2. Read the conversation
-aise messages get ab841016
+# Tool counts, files touched — quick overview without reading everything
+aise messages inspect SESSION_ID
 
-# 3. See statistics: tool counts, files touched
-aise messages inspect ab841016
+# Chronological event timeline with timestamps
+aise messages timeline SESSION_ID
 
-# 4. See chronological event timeline
-aise messages timeline ab841016
+# Read the full conversation
+aise messages get SESSION_ID
 ```
 
 ---
 
-### "Search for when something was discussed"
+### 4. Turn recurring AI mistakes into permanent fixes in skills, prompts, and guidelines
+
+Use this to find what the AI gets wrong repeatedly, extract corrections, and turn them into
+skill rules, CLAUDE.md additions, or AGENT.md adjustments to prevent recurrence.
 
 ```bash
-# Search all sessions for a phrase
-aise messages search "authentication bug"
-
-# Search only user messages
-aise messages search "authentication" --type user
-
-# Search with surrounding context
-aise messages search "authentication" --context 3
-
-# Search across files AND messages
-aise search --query "authentication" --pattern "*.py"
-```
-
----
-
-### "Verify that Claude's edits are in the current file"
-
-```bash
-# Show each Edit/Write call Claude made to the file
-# and mark (found in current file) or (missing)
-aise files cross-ref ./path/to/file.md
-
-# Limit to one session
-aise files cross-ref ./cli.py --session ab841016
-
-# JSON output to process programmatically
-aise files cross-ref ./engine.py --format json
-```
-
----
-
-### "Find a specific tool use (Bash, Edit, Write, Read...)"
-
-```bash
-# All Write calls across all sessions
-aise tools search Write
-
-# Bash calls containing a pattern
-aise tools search Bash "git commit"
-
-# Edit calls targeting a file
-aise tools search Edit "cli.py"
-
-# Via root search with --tool flag
-aise search --tool Read --query "engine.py"
-```
-
----
-
-### "Export sessions for documentation or review"
-
-```bash
-# Export one session to stdout, redirect to file
-aise export session ab841016 > session.md
-
-# Export to an explicit file
-aise export session ab841016 --output notes/session.md
-
-# Preview without writing
-aise export session ab841016 --dry-run
-
-# Export last 7 days of sessions
-aise export recent 7 --output weekly.md
-
-# Filtered by project
-aise export recent 14 --project myproject --output sprint.md
-```
-
----
-
-### "Understand patterns in Claude usage"
-
-```bash
-# Find messages where you corrected Claude
-# Categories: regression, skip_step, misunderstanding, incomplete, other
+# Find messages where the user corrected the AI
+# Built-in categories: regression, skip_step, misunderstanding, incomplete
 aise messages corrections
 
-# Filter by project or date
+# Filter to a specific project or date range
 aise messages corrections --project myproject --since 2026-01-01
 
-# Count planning command usage (/ar:plannew, /ar:planrefine, etc.)
+# Add a custom pattern to detect a specific failure type (LABEL:regex)
+aise messages corrections --pattern 'tool_misuse:you used the wrong'
+aise messages corrections --pattern 'context_loss:you forgot'
+
+# How often were planning commands used? (add --commands to count custom slash commands)
 aise messages planning
+aise messages planning --commands '/myteam:plan,/myteam:review'
 
-# Get clipboard content Claude prepared in a session
-aise messages extract ab841016 pbcopy
+# Full qualitative analysis across all sessions:
+#   - technique taxonomy, error graph, project classification
+#   - use output to extract effective prompts, find recurring failure types,
+#     build new skills, update CLAUDE.md / AGENT.md stop-patterns
+aise analyze --status                  # check which stages are stale before running
+aise analyze                           # run the full pipeline
+aise analyze --provider claude         # scope to one source only
+aise analyze --step analyze            # run one stage: analyze | graph
+aise analyze --force                   # re-run all stages regardless of staleness
+```
+
+To make custom patterns permanent across all future runs, add them to `correction_patterns`
+in the config file — see Workflow 5.
+
+---
+
+### 5. Make custom failure categories permanent across all future sessions
+
+```bash
+aise config path    # find the config file location
+aise config show    # view all current values
+aise config init    # create a starter config if it doesn't exist yet
+```
+
+**`correction_patterns`** — persistent failure categories for `aise messages corrections`.
+Format: `"LABEL:regex"` — label names the category, regex matches in message text.
+
+```json
+"correction_patterns": [
+  "regression:you deleted",
+  "regression:you removed",
+  "skip_step:you forgot",
+  "skip_step:you missed",
+  "misunderstanding:that's wrong",
+  "incomplete:also need",
+  "tool_misuse:you used the wrong tool",
+  "context_loss:you forgot what we were working on",
+  "overengineered:that's too complex"
+]
+```
+
+**`planning_commands`** — which slash commands count toward `aise messages planning`.
+Add your own project-specific planning commands:
+
+```json
+"planning_commands": ["/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/myteam:plan"]
+```
+
+**`keyword_maps`** — classify sessions by project, task type, and workflow for `aise analyze` taxonomy.
+Empty by default — fill in to get meaningful session categorization:
+
+```json
+"keyword_maps": {
+  "project_map": {
+    "myproject": ["myproject", "my-project", "myproj"]
+  },
+  "task_categories": {
+    "auth": ["login", "jwt", "oauth", "token"],
+    "api": ["endpoint", "rest", "graphql"],
+    "testing": ["pytest", "unittest", "test suite"]
+  }
+}
+```
+
+**`scoring_weights.corrected_bonus`** (default: 25) — sessions where the user corrected the AI
+score higher in the `aise analyze` pipeline, making them more prominent in the output taxonomy.
+Increase to weight corrected sessions more heavily when looking for improvement signals.
+
+---
+
+## Sources
+
+Claude Code sessions are auto-discovered from `~/.claude/projects/`. AI Studio and Gemini CLI
+require configuration:
+
+```bash
+aise source scan --save          # auto-detect and save new source directories to config
+aise source add aistudio /path   # manually add an AI Studio export directory
+aise source add gemini /path     # manually add a Gemini CLI directory
+aise source remove /path         # remove a source directory from config
+aise source disable claude       # disable auto-discovery for a type without removing
+aise source enable claude        # re-enable auto-discovery
+aise source list                 # verify what is currently configured
 ```
 
 ---
 
-### "Run the full analysis pipeline"
+## Configuration
 
-```bash
-# Run all stages: qualitative coding -> graph -> taxonomy symlinks
-aise analyze
+The config file controls persistent failure detection patterns (`correction_patterns`), planning command tracking (`planning_commands`), session taxonomy keywords (`keyword_maps`), and analysis scoring weights — see Workflow 5 for details.
 
-# Check which stages are stale without running
-aise analyze --status
+Config file location (priority order):
+1. `--config /path/config.json` CLI flag — per-invocation override
+2. `AI_SESSION_TOOLS_CONFIG=/path/config.json` env var — session-wide override
+3. OS default: `~/Library/Application Support/ai_session_tools/config.json` (macOS) or `~/.config/ai_session_tools/config.json` (Linux)
 
-# Force re-run all stages
-aise analyze --force
+Override `~/.claude` location: `--claude-dir /path` or `CLAUDE_CONFIG_DIR=/path`
 
-# Analyze only one provider
-aise analyze --provider aistudio
-aise analyze --provider gemini
-
-# Run a specific stage
-aise analyze --step analyze
-aise analyze --step graph
-```
-
----
-
-## All Commands Reference
-
-### Global Options
-```bash
-aise --version                               # show version
-aise --provider claude COMMAND               # filter to one source: claude | aistudio | gemini | all
-aise --claude-dir /path COMMAND              # override ~/.claude location
-aise --config /path/config.json COMMAND      # override config file
-```
-
-### Session Discovery
-```bash
-aise list                                    # all sessions, newest first
-aise list --project myproject                # filter by project
-aise list --provider claude                  # filter by source
-aise list --since 2026-01-01                 # sessions on or after date
-aise list --until 2026-02-01                 # sessions on or before date
-aise list --limit 20                         # cap results
-aise list --format json                      # machine-readable
-aise list --full-uuid                        # show complete 36-char session UUIDs
-```
-
-### Message Search & Reading
-```bash
-aise messages search "query"                 # search all sessions
-aise messages search "query" --type user     # user messages only
-aise messages search "query" --type assistant
-aise messages search "query" --context 3     # N messages before/after
-aise messages search "query" --limit 20
-aise messages search "query" --format json
-aise messages search "query" --full-uuid     # full UUIDs in output
-aise messages get SESSION_ID                 # read full session
-aise messages get SESSION_ID --type user
-aise messages get SESSION_ID --limit 10
-```
-
-### Session Analysis
-```bash
-aise messages inspect SESSION_ID             # tool counts, files touched
-aise messages inspect SESSION_ID --format json
-aise messages timeline SESSION_ID            # chronological events
-aise messages timeline SESSION_ID --preview-chars 80
-aise messages timeline SESSION_ID --since 14:00  # events from 2pm onwards (time-of-day)
-aise messages corrections                    # user corrections to Claude
-aise messages corrections --project myproject
-aise messages corrections --limit 50
-aise messages corrections --full-uuid        # full UUIDs in output
-aise messages corrections --pattern 'LABEL:REGEX'  # custom correction category
-aise messages planning                       # planning command frequency
-aise messages planning --commands '/custom,/cmd'   # count custom command patterns
-aise messages extract SESSION_ID pbcopy      # clipboard content
-aise messages extract SESSION_ID pbcopy --format json
-```
-
-### File Recovery
-```bash
-aise files search                            # all files Claude touched
-aise files search --pattern "*.py"           # by glob pattern
-aise files search --include-extensions py ts # by extension
-aise files search --min-edits 5              # heavily-edited files
-aise files search --include-sessions ID      # files in one session
-aise files history filename.py               # version history
-aise files history filename.py --export      # export all versions as cli_v1.py, cli_v2.py, ...
-aise files history filename.py --stdout      # all versions to stdout (pipe-friendly)
-aise files extract filename.py               # latest version -> stdout
-aise files extract filename.py --version 2   # specific version
-aise files extract filename.py --restore     # write back to original path on disk
-aise files extract filename.py --output-dir ./backup  # write to backup directory
-aise files cross-ref ./file.py               # verify edits in current file
-aise files cross-ref ./file.py --session ID
-
-# Top-level shortcuts (same as files subcommands):
-aise extract filename.py                     # latest version -> stdout
-aise history filename.py                     # version history
-```
-
-### Tool Call Search
-```bash
-aise tools search Write                      # all Write calls
-aise tools search Bash "git"                 # Bash calls matching pattern
-aise tools search Edit "filename"            # Edit calls
-aise tools search Read                       # all Read calls
-aise tools search Write --format json
-aise tools search Write --limit 20
-```
-
-### Export
-```bash
-aise export session SESSION_ID               # -> stdout
-aise export session SESSION_ID --output f.md # -> file
-aise export session SESSION_ID --dry-run     # preview
-aise export recent 7                         # last 7 days -> stdout
-aise export recent 7 --output week.md
-aise export recent 14 --project myproject --output sprint.md
-```
-
-### Combined Search
-```bash
-aise search                                  # default: all files
-aise search --query "error"                  # auto-routes to messages
-aise search --pattern "*.py"                 # auto-routes to files
-aise search --pattern "*.py" --query "error" # both: files + messages
-aise search --tool Write --query "login"     # tool search with query
-aise search tools --tool Bash --query "git"  # explicit tools domain
-aise find messages --query "error"           # find = alias for search
-aise find files --pattern "*.py"
-```
-
-### Statistics
-```bash
-aise stats                                   # session + file counts
-aise stats --since 7d                        # filtered to last 7 days
-aise stats --since 2026-01-01 --until 2026-03-31
-aise stats --provider claude                 # one source only
-```
-
-### Analysis Pipeline
-```bash
-aise analyze                                 # full pipeline: coding -> graph -> taxonomy
-aise analyze --status                        # show which stages are stale/current
-aise analyze --force                         # force re-run all stages
-aise analyze --provider aistudio             # one source only
-aise analyze --step analyze                  # run one stage
-aise analyze --step graph
-aise analyze --window N                      # rolling window size for era detection
-aise analyze --org-dir /path                 # custom output directory for analysis artifacts
-aise analyze --format json                   # machine-readable analysis output
-```
-
-### Source Management
-```bash
-aise source list                             # show configured sources
-aise source scan                             # dry-run: show discoverable sources not yet in config
-aise source scan --save                      # scan and write found paths to config
-aise source add aistudio /path/to/dir        # add AI Studio source directory
-aise source add gemini /path/to/dir          # add Gemini CLI source directory
-aise source remove /path/to/dir             # remove a source by path
-aise source disable claude                   # disable auto-discovery for a type
-aise source enable claude                    # re-enable auto-discovery
-```
-
-### Configuration
 ```bash
 aise config show                             # view full config + resolved path
-aise config path                             # print config file path
-aise config init                             # create default config file
-aise dates                                   # show full date format reference
+aise config path                             # print config file path only
+aise config init                             # create default config (safe — errors if file exists)
+aise config init --force                     # overwrite existing config
+aise --config /custom/path.json config init  # create config at a specific path
 ```
 
 ---
 
 ## Date Filtering
 
-All commands that accept `--since`/`--until` support multiple formats:
+All `--since`/`--until` flags accept: `7d` `2w` `1m` `2026-01-01` `2026-01/2026-03` (EDTF interval)
 
-```bash
-# ISO dates
-aise list --since 2026-01-01
-aise list --since 2026-01-01 --until 2026-03-31
-
-# Duration shorthands
-aise list --since 7d                         # last 7 days
-aise list --since 2w                         # last 2 weeks
-aise list --since 1m                         # last month
-
-# EDTF intervals (single --since sets both bounds)
-aise list --since 2026-01/2026-03            # Q1 2026
-aise list --when 202X                        # entire decade
-
-# --after/--before are accepted as hidden aliases for --since/--until
-
-# Show full reference
-aise dates
-```
+Run `aise dates` for the full reference.
 
 ---
 
@@ -457,58 +269,27 @@ All commands support `--format` / `-f`:
 
 | Format | Use When |
 |--------|----------|
-| `table` | Default -- human-readable in terminal |
+| `table` | Default — human-readable in terminal |
 | `json` | Scripting, piping to `jq`, programmatic use |
 | `csv` | Spreadsheet import |
 | `plain` | Raw text, minimal formatting |
 
 ---
 
-## Multi-Source Support
+## Session File Location
 
-`aise` reads from Claude Code, AI Studio, and Gemini CLI sessions simultaneously.
+`~/.claude/projects/<ENCODED-PATH>/<SESSION-ID>.jsonl`
 
-```bash
-# Show all sessions across all configured sources
-aise list
-
-# Filter to one source
-aise list --provider claude
-aise list --provider aistudio
-aise list --provider gemini
-
-# Add additional source directories
-aise source add aistudio ~/Downloads/ai-studio-exports
-aise source scan --save                      # auto-detect and save new sources
-aise source list
-```
-
-Claude Code sessions are auto-detected from `~/.claude/projects/`. AI Studio and Gemini CLI paths must be configured with `aise source add` or in the config file.
-
----
-
-## Session File Structure
-
-Sessions live at `~/.claude/projects/<ENCODED-PATH>/<SESSION-ID>.jsonl`
-
-Path encoding: non-alphanumeric characters -> `-`
-- `/Users/alice/myproject` -> `-Users-alice-myproject`
-- `/Users/alice/.claude` -> `-Users-alice--claude` (dot -> dash)
-- `/home/alice/project` -> `-home-alice-project`
+Path encoding: all non-alphanumeric characters → `-`
+- `/Users/alice/myproject` → `-Users-alice-myproject`
+- `/Users/alice/.claude` → `-Users-alice--claude` (dot → dash)
 
 Each JSONL line is a JSON object with `type` (`user`/`assistant`/`system`), `timestamp`, and `message` containing tool calls and text content.
 
+See `references/session-format.md` for the full format reference.
+
 ---
 
-## Configuration
+## Full Flag Reference
 
-Config file location (priority order):
-1. `--config` CLI flag
-2. `AI_SESSION_TOOLS_CONFIG` env var
-3. OS default: `~/Library/Application Support/ai_session_tools/config.json` (macOS) or `~/.config/ai_session_tools/config.json` (Linux)
-
-```bash
-aise config show                             # view current config
-aise config path                             # print path (even if file doesn't exist)
-aise config init                             # create starter config
-```
+`aise COMMAND --help` — every subcommand has a `--help` flag with full option descriptions.
