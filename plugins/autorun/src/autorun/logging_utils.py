@@ -18,7 +18,9 @@ import logging
 import os
 from pathlib import Path
 
-LOG_FILE = Path.home() / ".autorun" / "daemon.log"
+from . import ipc
+
+LOG_FILE = ipc.HOME_DIR / "daemon.log"
 DEBUG_ENABLED = os.environ.get('AUTORUN_DEBUG') == '1'
 
 

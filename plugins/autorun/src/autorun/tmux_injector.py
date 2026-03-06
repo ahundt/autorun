@@ -36,8 +36,8 @@ def log_info(message: str) -> None:
 # Configure logging - file-only when AUTORUN_DEBUG=1, disabled otherwise
 # CRITICAL: No stderr output to avoid breaking hooks
 if os.environ.get('AUTORUN_DEBUG') == '1':
-    from pathlib import Path
-    log_file = Path.home() / ".autorun" / "daemon.log"
+    from . import ipc
+    log_file = ipc.HOME_DIR / "daemon.log"
     logging.basicConfig(
         handlers=[logging.FileHandler(log_file)],
         level=logging.DEBUG,

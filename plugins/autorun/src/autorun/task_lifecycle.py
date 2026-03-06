@@ -45,6 +45,7 @@ import time
 import re
 from datetime import datetime
 
+from . import ipc
 from .core import EventContext, app, logger
 from .session_manager import session_state  # REUSE - no custom shelve code
 from .config import (
@@ -55,14 +56,14 @@ from .config import (
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
 
-CONFIG_PATH = Path.home() / ".autorun" / "task-lifecycle.config.json"
+CONFIG_PATH = ipc.HOME_DIR / "task-lifecycle.config.json"
 
 
 @dataclass
 class TaskLifecycleConfig:
     """Task lifecycle configuration (follows PlanExportConfig pattern)."""
     enabled: bool = True
-    storage_dir: Path = Path.home() / ".autorun" / "task-tracking"
+    storage_dir: Path = ipc.HOME_DIR / "task-tracking"
     max_resume_tasks: int = 20
     stop_block_max_count: int = 3
     task_ttl_days: int = 30

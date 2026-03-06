@@ -46,6 +46,8 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
+from . import ipc
+
 # Configure logging (CLI entry points will set level)
 logger = logging.getLogger(__name__)
 
@@ -156,7 +158,7 @@ def _restart_daemon_if_running() -> None:
     Imports restart_daemon() from autorun.restart_daemon.
     Non-fatal: installation succeeds even if daemon restart fails.
     """
-    lock_path = Path.home() / ".autorun" / "daemon.lock"
+    lock_path = ipc.HOME_DIR / "daemon.lock"
 
     # Quick check: skip entirely if no daemon is running
     if not lock_path.exists():
@@ -2100,7 +2102,7 @@ if __name__ == "__main__":
     import os
     if os.environ.get('AUTORUN_DEBUG') == '1':
         from pathlib import Path
-        log_file = Path.home() / ".autorun" / "daemon.log"
+        log_file = ipc.HOME_DIR / "daemon.log"
         logging.basicConfig(
             handlers=[logging.FileHandler(log_file)],
             level=logging.DEBUG,
