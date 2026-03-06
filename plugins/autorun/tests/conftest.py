@@ -127,7 +127,10 @@ class DaemonManager:
 
         Uses psutil.process_iter() for cross-platform process discovery
         (replaces Unix-only pgrep -f autorun.daemon).
+        Skipped on Windows: daemon uses Unix sockets (AF_UNIX), unavailable on Windows.
         """
+        if sys.platform == "win32":
+            return []
         pids = []
         for proc in psutil.process_iter(['pid', 'cmdline']):
             try:
