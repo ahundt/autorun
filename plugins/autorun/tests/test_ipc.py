@@ -95,7 +95,7 @@ class TestServerClientRoundTrip:
 
         with mock.patch.object(ipc, "SOCKET_PATH", test_sock), \
              mock.patch.object(ipc, "PORT_FILE", test_port_file), \
-             mock.patch.object(ipc, "HOME_DIR", short_tmp_path):
+             mock.patch.object(ipc, "AUTORUN_CONFIG_DIR", short_tmp_path):
 
             received = []
 
@@ -133,7 +133,7 @@ class TestServerClientRoundTrip:
 
         with mock.patch.object(ipc, "SOCKET_PATH", test_sock), \
              mock.patch.object(ipc, "PORT_FILE", test_port_file), \
-             mock.patch.object(ipc, "HOME_DIR", short_tmp_path):
+             mock.patch.object(ipc, "AUTORUN_CONFIG_DIR", short_tmp_path):
 
             async def handler(reader, writer):
                 writer.close()
@@ -182,7 +182,7 @@ class TestSocketConnectTest:
 
         with mock.patch.object(ipc, "SOCKET_PATH", test_sock), \
              mock.patch.object(ipc, "PORT_FILE", test_port_file), \
-             mock.patch.object(ipc, "HOME_DIR", short_tmp_path):
+             mock.patch.object(ipc, "AUTORUN_CONFIG_DIR", short_tmp_path):
 
             async def handler(reader, writer):
                 writer.close()

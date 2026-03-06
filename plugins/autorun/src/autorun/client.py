@@ -52,7 +52,7 @@ except ImportError:
 
 from . import ipc
 
-DEBUG_LOG = ipc.HOME_DIR / "daemon.log"
+DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:
@@ -261,7 +261,7 @@ def run_client() -> int:
                 raise  # Can't recover from permission errors
             # Check if daemon is already running via PID file
             # (pattern from install.py:140-149, PID written by core.py:987-990)
-            lock_path = ipc.HOME_DIR / "daemon.lock"
+            lock_path = ipc.AUTORUN_LOCK_PATH
             daemon_alive = False
             if lock_path.exists():
                 try:

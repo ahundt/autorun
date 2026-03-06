@@ -27,8 +27,8 @@ import os
 import socket
 from pathlib import Path
 
-def _get_home_dir() -> Path:
-    """Get autorun home directory.
+def _get_autorun_config_dir() -> Path:
+    """Get autorun config/data directory (~/.autorun/).
 
     Default: ~/.autorun on all platforms (consistent, simple, discoverable).
     Override: set AUTORUN_HOME env var for testing or custom deployments.
@@ -39,9 +39,15 @@ def _get_home_dir() -> Path:
     return Path.home() / ".autorun"
 
 
-HOME_DIR = _get_home_dir()
-SOCKET_PATH = HOME_DIR / "daemon.sock"
-PORT_FILE = HOME_DIR / "daemon.port"
+AUTORUN_CONFIG_DIR = _get_autorun_config_dir()
+AUTORUN_SOCKET_PATH = AUTORUN_CONFIG_DIR / "daemon.sock"
+AUTORUN_PORT_FILE = AUTORUN_CONFIG_DIR / "daemon.port"
+AUTORUN_LOCK_PATH = AUTORUN_CONFIG_DIR / "daemon.lock"
+AUTORUN_LOG_FILE = AUTORUN_CONFIG_DIR / "daemon.log"
+
+# Backward-compatible aliases (used internally by ipc functions below)
+SOCKET_PATH = AUTORUN_SOCKET_PATH
+PORT_FILE = AUTORUN_PORT_FILE
 
 # Whether the platform supports Unix domain sockets in Python's asyncio.
 # Windows has kernel AF_UNIX support since Windows 10 1803, but CPython
@@ -81,7 +87,7 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
     Returns:
         asyncio.Server instance (caller manages lifecycle).
     """
-    HOME_DIR.mkdir(parents=True, exist_ok=True)
+    AUTORUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     if HAS_UNIX_SOCKETS:
         return await asyncio.start_unix_server(

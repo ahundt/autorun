@@ -37,7 +37,7 @@ def log_info(message: str) -> None:
 # CRITICAL: No stderr output to avoid breaking hooks
 if os.environ.get('AUTORUN_DEBUG') == '1':
     from . import ipc
-    log_file = ipc.HOME_DIR / "daemon.log"
+    log_file = ipc.AUTORUN_LOG_FILE
     logging.basicConfig(
         handlers=[logging.FileHandler(log_file)],
         level=logging.DEBUG,

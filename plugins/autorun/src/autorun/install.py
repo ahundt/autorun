@@ -158,7 +158,7 @@ def _restart_daemon_if_running() -> None:
     Imports restart_daemon() from autorun.restart_daemon.
     Non-fatal: installation succeeds even if daemon restart fails.
     """
-    lock_path = ipc.HOME_DIR / "daemon.lock"
+    lock_path = ipc.AUTORUN_LOCK_PATH
 
     # Quick check: skip entirely if no daemon is running
     if not lock_path.exists():
@@ -2102,7 +2102,7 @@ if __name__ == "__main__":
     import os
     if os.environ.get('AUTORUN_DEBUG') == '1':
         from pathlib import Path
-        log_file = ipc.HOME_DIR / "daemon.log"
+        log_file = ipc.AUTORUN_LOG_FILE
         logging.basicConfig(
             handlers=[logging.FileHandler(log_file)],
             level=logging.DEBUG,

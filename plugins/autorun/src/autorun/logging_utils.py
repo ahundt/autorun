@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import ipc
 
-LOG_FILE = ipc.HOME_DIR / "daemon.log"
+LOG_FILE = ipc.AUTORUN_LOG_FILE
 DEBUG_ENABLED = os.environ.get('AUTORUN_DEBUG') == '1'
 
 

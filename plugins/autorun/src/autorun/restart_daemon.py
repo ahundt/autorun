@@ -30,9 +30,8 @@ from filelock import FileLock, Timeout
 
 from . import ipc
 
-HOME_DIR = ipc.HOME_DIR
-LOCK_PATH = HOME_DIR / "daemon.lock"
-RESTART_LOCK_PATH = HOME_DIR / "daemon-restart.lock"
+LOCK_PATH = ipc.AUTORUN_LOCK_PATH
+RESTART_LOCK_PATH = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
 
 
 def get_daemon_pid() -> int | None:
@@ -245,7 +244,7 @@ def _start_daemon(src_dir: Path) -> bool:
     )
 
     # Redirect stdout/stderr to a log file for debug visibility
-    log_path = HOME_DIR / "daemon_startup.log"
+    log_path = ipc.AUTORUN_CONFIG_DIR / "daemon_startup.log"
     with open(log_path, "w") as startup_log:
         subprocess.Popen(
             [sys.executable, "-c", daemon_code],
