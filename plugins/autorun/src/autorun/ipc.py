@@ -40,6 +40,11 @@ def _get_autorun_config_dir() -> Path:
 
 
 AUTORUN_CONFIG_DIR = _get_autorun_config_dir()
+
+def ensure_config_dir():
+    """Create AUTORUN_CONFIG_DIR with owner-only permissions (0o700 on Unix)."""
+    AUTORUN_CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+
 AUTORUN_SOCKET_PATH = AUTORUN_CONFIG_DIR / "daemon.sock"
 AUTORUN_PORT_FILE = AUTORUN_CONFIG_DIR / "daemon.port"
 AUTORUN_LOCK_PATH = AUTORUN_CONFIG_DIR / "daemon.lock"
@@ -87,7 +92,7 @@ async def start_server(client_handler, *, limit: int = 2**16) -> asyncio.Abstrac
     Returns:
         asyncio.Server instance (caller manages lifecycle).
     """
-    AUTORUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_config_dir()
 
     if HAS_UNIX_SOCKETS:
         return await asyncio.start_unix_server(

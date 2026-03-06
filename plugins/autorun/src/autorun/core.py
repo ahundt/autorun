@@ -46,7 +46,7 @@ from .config import CONFIG
 from . import ipc
 
 # === CONFIGURATION ===
-ipc.AUTORUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+ipc.ensure_config_dir()
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 LOG_FILE = ipc.AUTORUN_LOG_FILE
 IDLE_TIMEOUT = 1800  # 30 minutes
