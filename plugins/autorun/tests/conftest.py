@@ -42,14 +42,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "e2e: marks end-to-end tests")
     config.addinivalue_line("markers", "serial: marks tests that must run serially")
 
-    # Disable pytest-timeout on Windows: thread-based timeout sends spurious
-    # KeyboardInterrupt during session teardown, causing exit code 1 even
-    # though all tests pass. This overrides pyproject.toml timeout=30.
-    if sys.platform == "win32":
-        try:
-            config.option.timeout = 0
-        except AttributeError:
-            pass
 
 
 # Test file groups for automatic serial/parallel assignment
@@ -386,14 +378,8 @@ def pytest_sessionstart(session):
 
 def pytest_sessionfinish(session, exitstatus):
     """Clean up test sessions and test-spawned daemons after pytest finishes."""
-    try:
-        cleanup_test_sessions()
-        DaemonManager.cleanup()
-    except KeyboardInterrupt:
-        # On Windows, pytest-timeout thread method can send spurious
-        # KeyboardInterrupt during session teardown. Suppress it since
-        # cleanup is best-effort.
-        pass
+    cleanup_test_sessions()
+    DaemonManager.cleanup()
 
 
 @pytest.fixture(scope="session")

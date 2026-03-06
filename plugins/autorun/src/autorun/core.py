@@ -1199,12 +1199,14 @@ class AutorunDaemon:
         self._cleanup_registered = False
 
     def _pid_exists(self, pid: int) -> bool:
-        """Check if process with given PID exists."""
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
+        """Check if process with given PID exists.
+
+        Uses psutil for cross-platform correctness. On Windows, os.kill(pid, 0)
+        sends CTRL_C_EVENT (signal 0 = CTRL_C_EVENT) instead of checking
+        existence, which causes a spurious KeyboardInterrupt.
+        """
+        import psutil
+        return psutil.pid_exists(pid)
 
     async def handle_client(self, reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter):
