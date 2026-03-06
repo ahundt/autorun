@@ -66,6 +66,10 @@ coverage.xml
 .tox/
 test_hook*.json
 test_*.json
+test_results*.xml
+
+# Local planning notes (not for distribution)
+notes/
 
 # Development artifacts
 test*.txt

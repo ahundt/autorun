@@ -1,0 +1,91 @@
+name: autorun CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.12", "3.13"]
+        exclude:
+          # macOS runners are expensive, so only test on latest Python
+          - os: macos-latest
+            python-version: "3.12"
+          # Windows: skip older Python (same cost-saving pattern as macos)
+          - os: windows-latest
+            python-version: "3.12"
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python
+        # setup-uv@v7 is the current recommended version per official uv docs.
+        # python-version here replaces actions/setup-python -- setup-uv handles both.
+        # enable-cache speeds up installs by caching the uv cache between runs.
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Verify Python version
+        run: |
+          uv run python --version
+          echo "Expected: Python ${{ matrix.python-version }}"
+
+      - name: Install dependencies
+        # UV workspace with committed uv.lock -- use --locked to reproduce exact environment.
+        # --dev installs [dependency-groups] dev from all workspace members (uv-native):
+        #   pytest>=8.4.2, pytest-asyncio>=1.2.0, pytest-cov>=7.0.0, pytest-mock>=3.15.1,
+        #   pytest-timeout>=2.1.0 (plugin pyproject.toml:165-172).
+        # --all-extras also installs [project.optional-dependencies] extras (compatible pins).
+        run: uv sync --locked --dev --all-extras
+
+      - name: Lint - critical errors only (blocking)
+        # E9: syntax errors, F63/F7/F82: undefined names/imports -- these always fail CI
+        run: uvx ruff check --select E9,F63,F7,F82 .
+
+      - name: Lint - format check (blocking)
+        # ruff format --check mirrors Makefile lint target; fails CI on unformatted code
+        run: uvx ruff format --check .
+
+      - name: Lint - full check (non-blocking)
+        # Style and other issues reported but do not fail CI
+        run: uvx ruff check --exit-zero .
+
+      - name: Run unit tests
+        # Safe subset: excludes tests requiring real tmux sessions, running daemon,
+        # subprocess spawning, external APIs, or >5s wall-clock time.
+        # --strict-markers is set in pyproject.toml; all markers are declared.
+        # No CLAUDE_CONFIG_DIR needed -- autorun tests don't use Claude session fixtures.
+        # Coverage threshold (fail_under=60) omitted -- calibrated for full suite,
+        # would fail on this safe CI subset.
+        # Note: single quotes in -m expression avoid shell issues on all platforms;
+        # matrix.os and matrix.python-version are workflow-defined values (not user input).
+        run: uv run pytest tests/ -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow" --tb=short -v --junitxml=test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
+
+      - name: Publish test results
+        # dorny/test-reporter: 1.1k stars, updated 2026, pure Node.js (no Docker).
+        # Works on Linux, macOS, and Windows (pure Node.js, no Docker required).
+        # reporter: java-junit parses the JUnit XML that pytest --junitxml generates.
+        # fail-on-error: false prevents publishing from independently failing the job.
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "autorun Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
+          path: test_results*.xml
+          reporter: java-junit
+          fail-on-error: false
