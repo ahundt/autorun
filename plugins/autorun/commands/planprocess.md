@@ -9,6 +9,19 @@ $ARGUMENTS
 
 ---
 
+## CRITICAL RULES — SURVIVE COMPACTION
+
+If this session was compacted, these rules STILL apply without exception:
+
+1. **Call ExitPlanMode when ALL planning tasks are complete** — this IS how you request user approval. Do NOT call ExitPlanMode before the plan is ready.
+2. **ALL plan steps require TaskCreate.** If you haven't called TaskCreate for each step yet, do that NOW.
+3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
+4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
+5. **After plan acceptance:** Create [TDD] and [EXEC] tasks for every implementation step before writing any code.
+6. **Keep tasks updated:** Before starting any step, `TaskUpdate(status="in_progress")`. When done, `TaskUpdate(status="completed")`.
+
+---
+
 ## 1. Foundation (Read First)
 
 ### 1.1 Key Principles
@@ -51,31 +64,35 @@ All outputs should include where applicable:
 
 **IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW.
 
-### 2.2 Planning Task Setup (MANDATORY FIRST)
+### 2.2 Planning Task Setup — STOP: MUST DO BEFORE ANY PLANNING
 
-Before any planning work, create ALL planning tasks:
+> **STOP. Before writing one word of plan content, complete ALL steps below. Do not skip. Do not defer.**
 
-1. **Quote User Request** at plan output top:
-   ```markdown
-   ## User Request
-   > [user's $ARGUMENTS text here]
-   ```
+**Step A — Enter Plan Mode:** Call `EnterPlanMode` tool NOW if not already in plan mode.
 
-2. **Create [PLANNING] Tasks** for EVERY step AND substep:
-   1. `TaskCreate(subject="[PLANNING] Step N: [name]", activeForm="Planning [name]...")`
-   2. `TaskCreate(subject="[PLANNING] Step N.M: [substep]", activeForm="Planning [substep]...")`
-   3. The `[PLANNING]` prefix distinguishes from execution tasks
+**Step B — Record ALL user instructions** as a numbered list at the top of the plan file.
+Every distinct message must appear with sub-items for context if necessary:
+```markdown
+## User Messages (exact quotes, in order)
 
-3. **Parse $ARGUMENTS** into fine-grained requirement tasks:
-   1. Identify each distinct requirement
-   2. `TaskCreate(subject="[PLANNING] Requirement: [item]")` for each
-   3. Example: "Plan feature with tests" → two tasks: feature planning, test planning
+1. "first message the user sent"
+   - Context: what prompted this; what was happening at the time
+2. "second message — a correction or clarification"
+   - Context: what changed from the previous message
+```
+Include EVERY distinct user message that shaped this plan. Do not summarize or merge messages.
 
-4. **Set Dependencies**: `TaskUpdate(taskId=N, addBlockedBy=[N-1])` for ordered steps
+**Step C — Create [PLANNING] tasks** for EVERY step AND substep via TaskCreate:
+1. `TaskCreate(subject="[PLANNING] Step N: [name]", activeForm="Planning [name]...")`
+2. `TaskCreate(subject="[PLANNING] Step N.M: [substep]", activeForm="Planning [substep]...")`
+3. `TaskCreate(subject="[PLANNING] Req: [distinct-requirement]")` for each requirement
+4. Wire dependencies: `TaskUpdate(taskId=N, addBlockedBy=[N-1])` for sequential steps
 
-5. **Track Progress**:
-   1. Start: `TaskUpdate(taskId, status="in_progress")`
-   2. Finish: `TaskUpdate(taskId, status="completed")`
+**Step D — Verify:** Call `TaskList` and confirm ALL [PLANNING] tasks visible before continuing.
+
+**Step E — Track Progress**:
+- Start each task: `TaskUpdate(taskId, status="in_progress")`
+- Finish each task: `TaskUpdate(taskId, status="completed")`
 
 ---
 

@@ -9,6 +9,18 @@ $ARGUMENTS
 
 ---
 
+## CRITICAL RULES — SURVIVE COMPACTION
+
+If this session was compacted, these rules STILL apply without exception:
+
+1. **Call ExitPlanMode when ALL planning tasks are complete** — this IS how you request user approval. Do NOT call ExitPlanMode before the plan is ready.
+2. **ALL plan steps require TaskCreate.** If you haven't called TaskCreate for each step yet, do that NOW.
+3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
+4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
+5. **Keep tasks updated:** Before starting any step, `TaskUpdate(status="in_progress")`. When done, `TaskUpdate(status="completed")`.
+
+---
+
 ## 1. Foundation (Reference)
 
 ### 1.1 Key Principles
@@ -36,21 +48,30 @@ Outputs include: File paths, line range references (`file.ts:42-56`), function n
 
 **IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW.
 
-### 2.2 Planning Task Setup (MANDATORY FIRST)
+### 2.2 Planning Task Setup — STOP: MUST DO BEFORE ANY PLANNING
 
-1. **Quote User Request**: In your plan output, include:
-   ```markdown
-   ## User Request
-   > $ARGUMENTS
-   ```
-   (Quote only the user's custom text from $ARGUMENTS, not this instruction file)
+> **STOP. Before writing one word of plan content, complete ALL steps below.**
 
-2. **Create [PLANNING] Tasks** for checklist items:
-   `TaskCreate(subject="[PLANNING] Status: [item]", activeForm="Checking [item]...")`
+**Step A — Enter Plan Mode:** Call `EnterPlanMode` tool NOW if not already in plan mode.
 
-3. **Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
+**Step B — Record ALL user instructions** as a numbered list at the top of the plan file.
+Every distinct message must appear with sub-items for context if necessary:
+```markdown
+## User Messages (exact quotes, in order)
 
-4. **Track Progress**: `TaskUpdate(taskId, status="in_progress")` → `TaskUpdate(taskId, status="completed")`
+1. "first message the user sent"
+   - Context: what prompted this
+2. "second message — a correction or follow-up"
+   - Context: what changed
+```
+Include EVERY distinct user message that shaped this plan update.
+
+**Step C — Create [PLANNING] tasks** for checklist items:
+`TaskCreate(subject="[PLANNING] Status: [item]", activeForm="Checking [item]...")`
+
+**Step D — Set Dependencies**: `TaskUpdate` with `addBlockedBy` for sequential steps
+
+**Step E — Track Progress**: `TaskUpdate(taskId, status="in_progress")` → `TaskUpdate(taskId, status="completed")`
 
 ---
 

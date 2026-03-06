@@ -13,7 +13,7 @@ $ARGUMENTS
 
 If this session was compacted, these rules STILL apply without exception:
 
-1. **NEVER call ExitPlanMode** without explicit user approval ("approve", "go ahead", "looks good", "execute").
+1. **Call ExitPlanMode when ALL planning tasks are complete** — this IS how you request user approval. Do NOT call ExitPlanMode before the plan is ready.
 2. **ALL plan steps require TaskCreate.** If you haven't called TaskCreate for each step yet, do that NOW.
 3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
 4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
