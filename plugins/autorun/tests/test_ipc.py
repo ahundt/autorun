@@ -206,7 +206,8 @@ class TestCleanup:
         test_sock = tmp_path / "test.sock"
         test_sock.touch()
 
-        with mock.patch.object(ipc, "SOCKET_PATH", test_sock):
+        with mock.patch.object(ipc, "SOCKET_PATH", test_sock), \
+             mock.patch.object(ipc, "HAS_UNIX_SOCKETS", True):
             ipc.cleanup_socket()
             assert not test_sock.exists()
 
@@ -226,7 +227,8 @@ class TestCleanup:
         """cleanup_socket() doesn't crash when file doesn't exist."""
         from autorun import ipc
 
-        with mock.patch.object(ipc, "SOCKET_PATH", tmp_path / "nonexistent.sock"):
+        with mock.patch.object(ipc, "SOCKET_PATH", tmp_path / "nonexistent.sock"), \
+             mock.patch.object(ipc, "HAS_UNIX_SOCKETS", True):
             ipc.cleanup_socket()  # Should not raise
 
 
