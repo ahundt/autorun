@@ -77,8 +77,16 @@ jobs:
         # Safe subset: excludes tests requiring real tmux sessions, running daemon,
         # subprocess spawning, external APIs, or >5s wall-clock time.
         # Coverage threshold (fail_under=60) omitted -- calibrated for full suite.
+        # --timeout=0 on Windows: pytest-timeout thread method sends spurious
+        # KeyboardInterrupt during session teardown on Windows (all tests pass
+        # but exit code is 1). Disable timeout on Windows CI as a workaround.
         working-directory: plugins/autorun
-        run: uv run pytest tests/ -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow" --tb=short -v --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
+        run: >-
+          uv run pytest tests/
+          -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow"
+          --tb=short -v
+          --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
+          ${{ runner.os == 'Windows' && '--timeout=0' || '' }}
 
       - name: Publish test results
         # dorny/test-reporter: 1.1k stars, updated 2026, pure Node.js (no Docker).
