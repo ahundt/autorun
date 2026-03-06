@@ -32,7 +32,7 @@ Architecture:
 - Dict-based storage: {task_id: TaskState} prevents duplicates
 - Per-session isolation: Each AI session tracks own tasks
 - Class-based design: Follows PlanExport pattern for consistency
-- Thread-safe: fcntl locks via session_state(), atomic operations
+- Thread-safe: filelock locks via session_state(), atomic operations
 - DRY: Reuses session_manager.py patterns, no custom shelve code
 """
 

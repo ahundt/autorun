@@ -11,14 +11,17 @@ import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 # Import conftest utilities for cleanup
 from conftest import should_keep_test_artifacts
 
+@pytest.mark.daemon
 def test_plugin_edge_cases():
-    """Test edge cases for claude_code_plugin.py"""
+    """Test edge cases for claude_code_plugin.py (calls main() which forwards to daemon via IPC)"""
     print("🔍 Testing Plugin Edge Cases...")
 
     from autorun.main import main

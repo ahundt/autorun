@@ -118,7 +118,7 @@ DESIGN:
 
 THREAD SAFETY & MULTIPROCESS CONCURRENCY:
     - All state access goes through session_state(GLOBAL_SESSION_ID)
-    - session_state() uses SessionLock with fcntl.flock() for cross-process exclusion
+    - session_state() uses filelock for cross-process exclusion
     - SessionLock supports reentrant locking (same thread can acquire multiple times)
     - atomic_update_*() methods ensure read-modify-write is atomic
     - shelve.sync() is called on context exit for durability
