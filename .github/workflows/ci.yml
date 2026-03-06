@@ -58,11 +58,12 @@ jobs:
         # E9: syntax errors, F63/F7/F82: undefined names/imports -- these always fail CI
         run: uvx ruff check --select E9,F63,F7,F82 .
 
-      - name: Lint - format check (non-blocking)
-        # ruff format --check is informational only: the codebase has not adopted ruff
-        # format uniformly yet (150 files need reformatting), so blocking CI would always
-        # fail. Reports which files need formatting without failing the job.
-        run: uvx ruff format --check . || true
+      # TODO: enable ruff format --check as a blocking step once the codebase has been
+      # uniformly formatted. The code was not written with ruff format -- 150 of 153
+      # files need reformatting. Run `uvx ruff format .` in a dedicated commit when ready.
+      # Suggested step to uncomment:
+      #   - name: Lint - format check (blocking)
+      #     run: uvx ruff format --check .
 
       - name: Lint - full check (non-blocking)
         # Style and other issues reported but do not fail CI

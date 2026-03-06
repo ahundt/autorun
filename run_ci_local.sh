@@ -76,11 +76,12 @@ step "Verify Python version" \
 step "Lint - critical errors (blocking)" \
     uvx ruff check --select E9,F63,F7,F82 .
 
-# Step 4: Lint - format check (non-blocking: codebase not uniformly formatted yet)
-step_nonblocking "Lint - format check (informational)" \
-    uvx ruff format --check .
+# TODO: enable ruff format --check once the codebase has been uniformly formatted.
+# The code was not written with ruff format -- 150 of 153 files need reformatting.
+# Run `uvx ruff format .` in a dedicated commit when ready, then uncomment:
+#   step "Lint - format check (blocking)" uvx ruff format --check .
 
-# Step 5: Lint - full check (non-blocking: style, imports, etc.)
+# Step 4 (renumbered): Lint - full check (non-blocking: style, imports, etc.)
 step_nonblocking "Lint - full check (informational)" \
     uvx ruff check .
 
