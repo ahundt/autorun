@@ -45,10 +45,10 @@ class _StateProxy:
         return self._data.get(self._k(key), default)
 
     def __getitem__(self, key: str):
-        v = self._data.get(self._k(key))
-        if v is None:
+        full_key = self._k(key)
+        if full_key not in self._data:
             raise KeyError(key)
-        return v
+        return self._data[full_key]
 
     def __setitem__(self, key: str, value):
         self._data[self._k(key)] = value
@@ -148,6 +148,25 @@ class _JSONStore:
         os.replace(tmp, self._state_file)
 
     @contextlib.contextmanager
+    def _persistent_filelock(self, timeout: float):
+        """Acquire FileLock and ensure the lock file persists after release.
+
+        filelock >= 3.20 deletes the lock file on release. This context manager
+        re-creates it so stale-lock detection and cross-process observability
+        work correctly. Encapsulates the acquire-use-release-persist lifecycle
+        as a single RAII unit.
+        """
+        file_lock = FileLock(self._lock_file, timeout=timeout)
+        try:
+            with file_lock:
+                yield
+        finally:
+            try:
+                Path(self._lock_file).touch(exist_ok=True)
+            except OSError:
+                pass  # Non-critical — locking still works without the file
+
+    @contextlib.contextmanager
     def session(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT):
         # Reentrant support: same thread already holds the lock — share _data, defer save
         if getattr(self._held_by, 'active', False):
@@ -156,8 +175,7 @@ class _JSONStore:
             return
 
         try:
-            file_lock = FileLock(self._lock_file, timeout=timeout)
-            with file_lock:
+            with self._persistent_filelock(timeout):
                 with self._rlock:
                     # Re-read inside lock: pick up any changes from other processes
                     self._data = self._load()
@@ -214,8 +232,6 @@ class SessionStateManager:
     @property
     def state_dir(self) -> "Path":
         """Path to the directory containing daemon_state.json."""
-        import os
-        from pathlib import Path
         return Path(os.path.dirname(self._store._state_file))
 
     @contextlib.contextmanager
@@ -231,27 +247,25 @@ class SessionStateManager:
             yield s
 
     def clear_test_session(self, session_id: str):
-        prefix = f"{session_id}/"
-        with self._store._rlock:
-            keys = [k for k in self._store._data if k.startswith(prefix)]
-            for k in keys:
-                del self._store._data[k]
-            if keys:
-                self._store._save()
+        with self._store.session(session_id) as s:
+            s.clear()
 
     def clear_test_sessions_batch(self, session_ids):
-        """Clear multiple test sessions in one save operation (O(1) disk writes)."""
-        any_deleted = False
-        with self._store._rlock:
-            for session_id in session_ids:
-                prefix = f"{session_id}/"
-                keys = [k for k in self._store._data if k.startswith(prefix)]
-                for k in keys:
-                    del self._store._data[k]
-                if keys:
-                    any_deleted = True
-            if any_deleted:
-                self._store._save()
+        """Clear multiple test sessions in one save operation (O(1) disk writes).
+
+        Uses a single session() context for cross-process safety. The first
+        session_id is used as the lock holder; all prefixes are cleared within
+        the same lock acquisition.
+        """
+        if not session_ids:
+            return
+        # Use any session_id to enter the lock; clear all prefixes inside
+        with self._store.session(session_ids[0]) as s:
+            s.clear()  # clear the first
+            for sid in session_ids[1:]:
+                # Reentrant: same thread already holds the lock
+                with self._store.session(sid) as s2:
+                    s2.clear()
 
 
 _manager: "SessionStateManager | None" = None

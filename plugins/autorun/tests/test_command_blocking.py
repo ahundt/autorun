@@ -635,6 +635,18 @@ class TestGitCommandTargeting:
     git restore IS in DEFAULT_INTEGRATIONS (as block action, not warn).
     """
 
+    @pytest.fixture(autouse=True)
+    def mock_git_has_unstaged_changes(self, monkeypatch):
+        """Simulate git repo with unstaged changes so 'when: _has_unstaged_changes' predicates fire.
+
+        git checkout . and git reset --hard have 'when: _has_unstaged_changes' — they only
+        block when there are actual unstaged changes to lose. In CI (clean checkout) and in
+        a clean working directory, git diff --quiet returns 0, making the predicate False
+        and causing the tests to fail. This fixture makes the predicate return True so the
+        tests exercise the blocking logic as intended.
+        """
+        monkeypatch.setitem(integ._WHEN_PREDICATES, "_has_unstaged_changes", lambda ctx: True)
+
     def _ctx(self, command: str) -> EventContext:
         store = ThreadSafeDB()
         return EventContext(
