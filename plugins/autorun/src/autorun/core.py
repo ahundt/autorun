@@ -1497,10 +1497,9 @@ class AutorunDaemon:
             return True
         import socket
         try:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(1.0)
-            sock.connect(str(SOCKET_PATH))
-            sock.close()
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1.0)
+                sock.connect(str(SOCKET_PATH))
             return False
         except (ConnectionRefusedError, FileNotFoundError, OSError):
             return True

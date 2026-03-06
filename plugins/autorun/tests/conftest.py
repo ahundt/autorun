@@ -28,6 +28,8 @@ import time
 import uuid
 from pathlib import Path
 
+import psutil
+
 import pytest
 
 
@@ -101,9 +103,11 @@ from autorun import CONFIG
 class DaemonManager:
     """Centralized daemon lifecycle management for tests.
 
+    Uses psutil for cross-platform process discovery and termination
+    (works on Linux, macOS, and Windows — replaces pgrep/kill).
+
     Tracks production daemon PIDs (recorded before tests) so tests never kill
-    daemons belonging to real coding sessions. All pgrep/pkill/kill calls for
-    daemon processes go through this class — no daemon management code elsewhere.
+    daemons belonging to real coding sessions.
 
     Usage:
         # In pytest_sessionstart: DaemonManager.snapshot_production_pids()
@@ -119,14 +123,21 @@ class DaemonManager:
 
     @classmethod
     def _get_all_daemon_pids(cls) -> list:
-        """Get all autorun daemon PIDs currently running."""
-        result = subprocess.run(
-            ["pgrep", "-f", "autorun.daemon"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            return []
-        return [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
+        """Get all autorun daemon PIDs currently running.
+
+        Uses psutil.process_iter() for cross-platform process discovery
+        (replaces Unix-only pgrep -f autorun.daemon).
+        """
+        pids = []
+        for proc in psutil.process_iter(['pid', 'cmdline']):
+            try:
+                cmdline = proc.info.get('cmdline') or []
+                cmdline_str = ' '.join(cmdline)
+                if 'autorun.daemon' in cmdline_str:
+                    pids.append(str(proc.info['pid']))
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        return pids
 
     @classmethod
     def snapshot_production_pids(cls):
@@ -146,17 +157,22 @@ class DaemonManager:
         return sorted(all_pids - cls._production_pids)
 
     @classmethod
+    def _kill_pid(cls, pid_str: str):
+        """Kill a process by PID string. Cross-platform via psutil."""
+        try:
+            proc = psutil.Process(int(pid_str))
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+            pass
+
+    @classmethod
     def kill_test_daemons(cls):
         """Kill only test-spawned daemon processes. Never touches production PIDs."""
         test_pids = cls.get_test_daemon_pids()
         for pid in test_pids:
-            try:
-                subprocess.run(["kill", pid], capture_output=True)
-            except Exception:
-                pass
+            cls._kill_pid(pid)
         if test_pids:
             time.sleep(0.3)
-            # Also remove from tracked set
             cls._test_spawned_pids -= set(test_pids)
 
     @classmethod
@@ -166,10 +182,13 @@ class DaemonManager:
         Returns the PID of the spawned daemon, or None on failure.
         """
         before = set(cls._get_all_daemon_pids())
-        subprocess.run(
-            ["autorun", "--restart-daemon"],
-            capture_output=True, timeout=30
-        )
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "autorun", "--restart-daemon"],
+                capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
         time.sleep(0.5)
         after = set(cls._get_all_daemon_pids())
         new_pids = after - before
@@ -207,7 +226,7 @@ class DaemonManager:
         test_pids = cls.get_test_daemon_pids()
         if len(test_pids) > max_test_daemons:
             for pid in test_pids[max_test_daemons:]:
-                subprocess.run(["kill", pid], capture_output=True)
+                cls._kill_pid(pid)
             time.sleep(0.3)
             test_pids = cls.get_test_daemon_pids()
 
@@ -216,8 +235,7 @@ class DaemonManager:
         if len(test_pids) > max_test_daemons:
             pytest.fail(
                 f"Too many test daemons ({len(test_pids)}): {test_pids}. "
-                f"Production daemons ({len(prod_pids)}): {prod_pids}. "
-                f"Run: pkill -f 'autorun.daemon'"
+                f"Production daemons ({len(prod_pids)}): {prod_pids}."
             )
         elif len(test_pids) > 0:
             warnings.warn(

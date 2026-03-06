@@ -25,7 +25,10 @@ import socket
 import subprocess
 import fcntl
 import errno
+from contextlib import contextmanager
 from pathlib import Path
+
+import psutil
 
 HOME_DIR = Path.home() / ".autorun"
 SOCKET_PATH = HOME_DIR / "daemon.sock"
@@ -51,10 +54,9 @@ def is_daemon_responding() -> bool:
     if not SOCKET_PATH.exists():
         return False
     try:
-        s = socket.socket(socket.AF_UNIX)
-        s.settimeout(1.0)
-        s.connect(str(SOCKET_PATH))
-        s.close()
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(1.0)
+            s.connect(str(SOCKET_PATH))
         return True
     except Exception:
         return False
@@ -114,11 +116,11 @@ def acquire_restart_lock():
 
     Returns:
         file descriptor if lock acquired, None otherwise
+
+    Prefer restart_lock() context manager for RAII-safe usage.
     """
     try:
-        # Create restart lock file
         lock_fd = open(RESTART_LOCK_PATH, 'w')
-        # Try to acquire exclusive, non-blocking lock
         fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         lock_fd.write(f"{os.getpid()}\n")
         lock_fd.flush()
@@ -141,6 +143,24 @@ def release_restart_lock(lock_fd) -> None:
             RESTART_LOCK_PATH.unlink()
         except OSError:
             pass
+
+
+@contextmanager
+def restart_lock():
+    """Context manager for the restart lock. Yields True if acquired, False otherwise.
+
+    Usage:
+        with restart_lock() as acquired:
+            if not acquired:
+                print("Another restart in progress")
+                return
+            # ... do restart work ...
+    """
+    lock_fd = acquire_restart_lock()
+    try:
+        yield lock_fd is not None
+    finally:
+        release_restart_lock(lock_fd)
 
 
 def _resolve_src_dir() -> Path | None:
@@ -349,12 +369,11 @@ def restart_daemon() -> int:
     print("=== Daemon Restart ===")
 
     # Step 0: Acquire restart lock (prevent concurrent restarts)
-    restart_lock = acquire_restart_lock()
-    if not restart_lock:
-        print("  ⚠️  Another restart already in progress")
-        return 1
+    with restart_lock() as acquired:
+        if not acquired:
+            print("  ⚠️  Another restart already in progress")
+            return 1
 
-    try:
         # Step 1: Current state
         pid = get_daemon_pid()
 
@@ -367,15 +386,22 @@ def restart_daemon() -> int:
 
         # Kill any remaining daemon processes (edge case: multiple daemons)
         # This handles daemons spawned from different code locations that don't
-        # own the daemon.lock file
-        remaining = subprocess.run(
-            ["pgrep", "-f", "from autorun.daemon import main"],
-            capture_output=True,
-            text=True
-        )
-        if remaining.stdout.strip():
-            print(f"  Killing {len(remaining.stdout.strip().splitlines())} remaining daemon(s)")
-            subprocess.run(["pkill", "-9", "-f", "from autorun.daemon import main"])
+        # own the daemon.lock file. Uses psutil for cross-platform process discovery.
+        remaining_pids = []
+        for proc in psutil.process_iter(['pid', 'cmdline']):
+            try:
+                cmdline_str = ' '.join(proc.info.get('cmdline') or [])
+                if 'from autorun.daemon import main' in cmdline_str:
+                    remaining_pids.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        if remaining_pids:
+            print(f"  Killing {len(remaining_pids)} remaining daemon(s)")
+            for proc in remaining_pids:
+                try:
+                    proc.kill()  # SIGKILL equivalent
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
             time.sleep(0.5)
 
         # Cleanup any stale files
@@ -436,10 +462,6 @@ def restart_daemon() -> int:
         print("cargo build 2>&1 | head -50  # Should be ALLOWED")
         print("head somefile.txt             # Should be BLOCKED")
         return 0
-
-    finally:
-        # Always release restart lock
-        release_restart_lock(restart_lock)
 
 
 def main() -> int:

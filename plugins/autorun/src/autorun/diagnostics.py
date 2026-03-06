@@ -119,6 +119,18 @@ class DiagnosticLogger:
         self.custom_log_file_path = log_file_path
         self._setup_log_file()
 
+    def close(self):
+        """Close log file if open. Safe to call multiple times."""
+        if self.log_file and not self.log_file.closed:
+            try:
+                self.log_file.close()
+            except OSError:
+                pass
+            self.log_file = None
+
+    def __del__(self):
+        self.close()
+
     def _setup_log_file(self):
         """Setup log file for persistent logging"""
         try:
