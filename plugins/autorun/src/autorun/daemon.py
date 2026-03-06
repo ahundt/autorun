@@ -43,7 +43,8 @@ import threading
 import time
 from pathlib import Path
 
-from .core import app, AutorunDaemon, SOCKET_PATH, LOCK_PATH, logger
+from .core import app, AutorunDaemon, LOCK_PATH, logger
+from . import ipc
 
 
 # =============================================================================
@@ -319,9 +320,7 @@ def main():
         # Safety cleanup - daemon.async_stop() should have already cleaned up,
         # but ensure files are removed if something went wrong
         try:
-            if SOCKET_PATH.exists():
-                SOCKET_PATH.unlink()
-                logger.debug("Final cleanup: removed socket")
+            ipc.cleanup_socket()
             if LOCK_PATH.exists():
                 LOCK_PATH.unlink()
                 logger.debug("Final cleanup: removed lock")

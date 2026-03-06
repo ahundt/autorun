@@ -21,7 +21,6 @@ Usage:
 import os
 import sys
 import time
-import socket
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,8 +28,9 @@ from pathlib import Path
 import psutil
 from filelock import FileLock, Timeout
 
+from . import ipc
+
 HOME_DIR = Path.home() / ".autorun"
-SOCKET_PATH = HOME_DIR / "daemon.sock"
 LOCK_PATH = HOME_DIR / "daemon.lock"
 RESTART_LOCK_PATH = HOME_DIR / "daemon-restart.lock"
 
@@ -50,16 +50,8 @@ def get_daemon_pid() -> int | None:
 
 
 def is_daemon_responding() -> bool:
-    """Test if daemon accepts connections."""
-    if not SOCKET_PATH.exists():
-        return False
-    try:
-        with socket.socket(socket.AF_UNIX) as s:
-            s.settimeout(1.0)
-            s.connect(str(SOCKET_PATH))
-        return True
-    except Exception:
-        return False
+    """Test if daemon accepts connections (delegates to ipc module)."""
+    return ipc.is_responding()
 
 
 def wait_for_shutdown(max_wait: float = 5.0) -> bool:
@@ -94,7 +86,10 @@ def cleanup_stale_files() -> None:
     Normal shutdown should NOT need this - daemon cleans up in async_stop().
     """
     removed = []
-    for path in [SOCKET_PATH, LOCK_PATH]:
+    # Clean up IPC socket/port file
+    ipc.cleanup_socket()
+    # Clean up lock file
+    for path in [LOCK_PATH]:
         if path.exists():
             path.unlink()
             removed.append(path.name)
@@ -325,7 +320,7 @@ def _stop_daemon(pid: int) -> None:
     else:
         # Daemon shut down cleanly - it cleaned up its own files
         # Only cleanup if files still exist (shouldn't happen)
-        if SOCKET_PATH.exists() or LOCK_PATH.exists():
+        if ipc.SOCKET_PATH.exists() or LOCK_PATH.exists():
             print("  ⚠️ Stale files remain after clean shutdown")
             cleanup_stale_files()
 
@@ -387,7 +382,7 @@ def restart_daemon() -> int:
             time.sleep(0.5)
 
         # Cleanup any stale files
-        if SOCKET_PATH.exists() or LOCK_PATH.exists():
+        if ipc.SOCKET_PATH.exists() or LOCK_PATH.exists():
             cleanup_stale_files()
 
         # Step 4: Start fresh daemon

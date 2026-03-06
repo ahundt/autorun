@@ -191,8 +191,8 @@ class TestPsutilProcessLifecycle:
         mock_proc = mock.MagicMock()
         with mock.patch('psutil.Process', return_value=mock_proc) as mock_cls:
             with mock.patch('autorun.restart_daemon.wait_for_shutdown', return_value=True):
-                with mock.patch('autorun.restart_daemon.SOCKET_PATH') as mock_sock:
-                    mock_sock.exists.return_value = False
+                with mock.patch('autorun.restart_daemon.ipc') as mock_ipc:
+                    mock_ipc.SOCKET_PATH.exists.return_value = False
                     with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
                         mock_lock.exists.return_value = False
                         _stop_daemon(12345)

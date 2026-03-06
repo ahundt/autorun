@@ -43,6 +43,7 @@ from functools import lru_cache
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
 from .session_manager import session_state
 from .config import CONFIG
+from . import ipc
 
 # === CONFIGURATION ===
 HOME_DIR = Path.home() / ".autorun"
@@ -1191,7 +1192,7 @@ class AutorunDaemon:
         self.last_activity = time.time()
         self.active_pids: Set[int] = set()
         self._server = None
-        self._lock_fd = None
+        self._daemon_lock = None
         self._watchdog_task: Optional[asyncio.Task] = None
         self._shutdown_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -1432,61 +1433,56 @@ class AutorunDaemon:
 
     def _cleanup_files(self):
         """
-        Cleanup socket and lock files.
+        Cleanup socket/port and lock files.
 
         Safe to call multiple times.
         """
-        # Remove socket file
-        try:
-            if SOCKET_PATH.exists():
-                SOCKET_PATH.unlink()
-                logger.debug(f"Removed socket: {SOCKET_PATH}")
-        except OSError as e:
-            logger.warning(f"Failed to remove socket: {e}")
+        # Remove IPC socket/port file
+        ipc.cleanup_socket()
 
-        # Release and remove lockfile
-        if self._lock_fd:
-            import fcntl
+        # Release daemon lock
+        if self._daemon_lock:
             try:
-                fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
-                self._lock_fd.close()
-            except (IOError, OSError):
+                self._daemon_lock.release()
+            except Exception:
                 pass
-            self._lock_fd = None
+            self._daemon_lock = None
 
-        # Remove lock file
-        try:
-            if LOCK_PATH.exists():
-                LOCK_PATH.unlink()
-                logger.debug(f"Removed lock: {LOCK_PATH}")
-        except OSError as e:
-            logger.warning(f"Failed to remove lock file: {e}")
+        # Remove lock and flock files
+        for lock_file in [LOCK_PATH, LOCK_PATH.with_suffix('.flock')]:
+            try:
+                if lock_file.exists():
+                    lock_file.unlink()
+                    logger.debug(f"Removed lock: {lock_file}")
+            except OSError as e:
+                logger.warning(f"Failed to remove lock file {lock_file}: {e}")
 
     def _acquire_daemon_lock(self) -> bool:
         """
-        Acquire exclusive daemon lock using lockfile.
+        Acquire exclusive daemon lock using filelock (cross-platform).
 
         Returns:
             bool: True if lock acquired, False if another daemon running
 
-        Uses fcntl.flock for atomic cross-process locking.
-        Falls back to socket connect test if flock unavailable (NFS).
+        Uses filelock on a dedicated lock file (daemon.flock) for cross-platform
+        atomic locking. PID is written to daemon.lock for consumer discovery
+        (restart_daemon.py, client.py, install.py all read daemon.lock for PID).
+        Falls back to socket connect test if lock unavailable (NFS).
         """
-        import fcntl
-        import errno
+        from filelock import FileLock, Timeout
+        flock_path = LOCK_PATH.with_suffix('.flock')
         try:
-            self._lock_fd = open(LOCK_PATH, 'w')
-            fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._lock_fd.write(str(os.getpid()))
-            self._lock_fd.flush()
+            self._daemon_lock = FileLock(str(flock_path), timeout=0)
+            self._daemon_lock.acquire()
+            # Write PID to daemon.lock for discovery by other processes
+            LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
             return True
-        except (IOError, OSError) as e:
-            if self._lock_fd:
-                self._lock_fd.close()
-                self._lock_fd = None
-            if getattr(e, 'errno', None) == errno.ENOLCK:
-                return self._socket_connect_test()
+        except Timeout:
+            self._daemon_lock = None
             return False
+        except OSError:
+            self._daemon_lock = None
+            return self._socket_connect_test()
 
     def _socket_connect_test(self) -> bool:
         """
@@ -1495,16 +1491,7 @@ class AutorunDaemon:
         Returns:
             bool: True if no daemon running (can proceed), False if daemon running
         """
-        if not SOCKET_PATH.exists():
-            return True
-        import socket
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(1.0)
-                sock.connect(str(SOCKET_PATH))
-            return False
-        except (ConnectionRefusedError, FileNotFoundError, OSError):
-            return True
+        return ipc.socket_connect_test()
 
     def _cleanup_stale_socket(self):
         """
@@ -1515,9 +1502,8 @@ class AutorunDaemon:
         """
         if not self._acquire_daemon_lock():
             raise RuntimeError("Another daemon is already running")
-        if SOCKET_PATH.exists():
-            logger.info("Removing stale socket")
-            SOCKET_PATH.unlink()
+        # Clean up any stale IPC socket/port file from a previous crash
+        ipc.cleanup_socket()
 
     def _register_atexit_cleanup(self):
         """Register atexit handler for cleanup on unexpected exit."""
@@ -1586,16 +1572,15 @@ class AutorunDaemon:
 
         # Start server with large buffer to accept full payloads before truncation
         # Default 64KB too small - client sends full transcript, we truncate after reading
-        self._server = await asyncio.start_unix_server(
-            self.handle_client, str(SOCKET_PATH),
-            limit=READ_BUFFER_LIMIT
+        self._server = await ipc.start_server(
+            self.handle_client, limit=READ_BUFFER_LIMIT
         )
         self.running = True
 
         # Start watchdog as tracked task
         self._watchdog_task = asyncio.create_task(self.watchdog())
 
-        logger.info(f"Daemon started on {SOCKET_PATH}")
+        logger.info(f"Daemon started on {ipc.get_address()}")
 
         try:
             async with self._server:

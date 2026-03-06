@@ -50,7 +50,8 @@ except ImportError:
     logger = logging.getLogger(__name__)
     DEBUG_ENABLED = False
 
-SOCKET_PATH = Path.home() / ".autorun" / "daemon.sock"
+from . import ipc
+
 DEBUG_LOG = Path.home() / ".autorun" / "daemon.log"
 
 
@@ -226,10 +227,7 @@ def run_client() -> int:
             raise RuntimeError("Daemon failed to start after 3 attempts")
         try:
             from .core import READ_BUFFER_LIMIT
-            reader, writer = await asyncio.open_unix_connection(
-                path=str(SOCKET_PATH),
-                limit=READ_BUFFER_LIMIT
-            )
+            reader, writer = await ipc.connect(limit=READ_BUFFER_LIMIT)
             writer.write(json.dumps(payload).encode() + b'\n')
             await writer.drain()
 
