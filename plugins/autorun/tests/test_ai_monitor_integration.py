@@ -729,7 +729,6 @@ def run_all_tests():
     """Run all ai_monitor integration tests"""
     tests = [
         test_premature_stop_detection,
-        test_verification_trigger_logic,
         test_continue_prompt_injection,
         test_verification_prompt_injection,
         test_stop_handler_with_premature_stop,

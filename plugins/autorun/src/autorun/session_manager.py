@@ -11,6 +11,7 @@ import contextlib
 import json
 import os
 import threading
+from pathlib import Path
 from filelock import FileLock, Timeout as FileLockTimeout
 
 DEFAULT_SESSION_TIMEOUT = 30.0

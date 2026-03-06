@@ -98,5 +98,6 @@ def generate_manifests(plugin_dir: Path):
                         print(f"   ✓ Ensured proxy: {skill_subdir.name}/SKILL.md -> {target_file.name}")
 
 if __name__ == "__main__":
-    # If run directly, assume we are in src/autorun plugin_root = Path(__file__).resolve().parent.parent.parent
+    # If run directly, assume we are in src/autorun
+    plugin_root = Path(__file__).resolve().parent.parent.parent
     generate_manifests(plugin_root)
