@@ -9,6 +9,19 @@ $ARGUMENTS
 
 ---
 
+## CRITICAL RULES — SURVIVE COMPACTION
+
+If this session was compacted, these rules STILL apply without exception:
+
+1. **NEVER call ExitPlanMode** without explicit user approval ("approve", "go ahead", "looks good", "execute").
+2. **ALL plan steps require TaskCreate.** If you haven't called TaskCreate for each step yet, do that NOW.
+3. **ALL user instructions must be directly quoted as a numbered list** at the top of the plan file. Every distinct message, with sub-items for context if needed.
+4. **NEVER delete content from plan files.** Only add or make micro-edits. Read before editing. Verify after.
+5. **All plan changes require before/after blocks** showing exact text being replaced with file:line-range.
+6. **Keep tasks updated:** Before starting any step, `TaskUpdate(status="in_progress")`. When done, `TaskUpdate(status="completed")`.
+
+---
+
 ## 1. Foundation (Read First)
 
 ### 1.1 Key Principles
@@ -51,31 +64,35 @@ All outputs should include where applicable:
 
 **IMPORTANT:** If not already in plan mode, use `EnterPlanMode` tool NOW.
 
-### 2.2 Planning Task Setup (MANDATORY FIRST)
+### 2.2 Planning Task Setup — STOP: MUST DO BEFORE ANY PLANNING
 
-Before any planning work, create ALL planning tasks:
+> **STOP. Before writing one word of plan content, complete ALL steps below. Do not skip. Do not defer.**
 
-1. **Quote User Request** at plan output top:
-   ```markdown
-   ## User Request
-   > [user's $ARGUMENTS text here]
-   ```
+**Step A — Enter Plan Mode:** Call `EnterPlanMode` tool NOW if not already in plan mode.
 
-2. **Create [PLANNING] Tasks** for EVERY step AND substep:
-   1. `TaskCreate(subject="[PLANNING] Step N: [name]", activeForm="Planning [name]...")`
-   2. `TaskCreate(subject="[PLANNING] Step N.M: [substep]", activeForm="Planning [substep]...")`
-   3. The `[PLANNING]` prefix distinguishes from execution tasks
+**Step B — Record ALL user instructions** as a numbered list at the top of the plan file.
+Every distinct message must appear with sub-items for context if necessary:
+```markdown
+## User Messages (exact quotes, in order)
 
-3. **Parse $ARGUMENTS** into fine-grained requirement tasks:
-   1. Identify each distinct requirement
-   2. `TaskCreate(subject="[PLANNING] Requirement: [item]")` for each
-   3. Example: "Refine auth with better error handling" → separate tasks per improvement
+1. "first message the user sent"
+   - Context: what prompted this; what was happening at the time
+2. "second message — a correction or clarification"
+   - Context: what changed from the previous message
+```
+Include EVERY distinct user message that shaped this plan. Do not summarize or merge messages.
 
-4. **Set Dependencies**: `TaskUpdate(taskId=N, addBlockedBy=[N-1])` for ordered steps
+**Step C — Create [PLANNING] tasks** for EVERY step AND substep via TaskCreate:
+1. `TaskCreate(subject="[PLANNING] Step N: [name]", activeForm="Planning [name]...")`
+2. `TaskCreate(subject="[PLANNING] Step N.M: [substep]", activeForm="Planning [substep]...")`
+3. `TaskCreate(subject="[PLANNING] Req: [distinct-requirement]")` for each requirement
+4. Wire dependencies: `TaskUpdate(taskId=N, addBlockedBy=[N-1])` for sequential steps
 
-5. **Track Progress**:
-   1. Start: `TaskUpdate(taskId, status="in_progress")`
-   2. Finish: `TaskUpdate(taskId, status="completed")`
+**Step D — Verify:** Call `TaskList` and confirm ALL [PLANNING] tasks visible before continuing.
+
+**Step E — Track Progress**:
+- Start each task: `TaskUpdate(taskId, status="in_progress")`
+- Finish each task: `TaskUpdate(taskId, status="completed")`
 
 ---
 
@@ -97,6 +114,32 @@ You are refining an EXISTING plan with deep critique and mandatory code verifica
 2. Verify code proposals against actual codebase
 3. Propose modifications with file:line-range evidence
 4. PRESERVE all existing sections unless explicitly asked to remove
+
+### Anti-Deletion Guard (Mandatory)
+
+When editing the plan file:
+1. **Read the full file first** using the Read tool before any Edit call
+2. **Use only micro-edits** — `old_string` must be ≤ 5 lines maximum
+3. **Verify after every Edit:** Read the file again and confirm nothing was deleted
+4. **If you need to reorganize:** Write the complete new version in one Write call with all existing content preserved — do not use Edit for large restructuring
+5. **Never use Edit to replace large sections** — if old_string > 5 lines, use Write for the full file instead
+
+After any plan file edit, output the verification line:
+`[Edit verified: was N lines, now M lines — no content lost]`
+
+### Before/After Block Requirement
+
+Every proposed change to any file MUST include:
+
+```
+**BEFORE** (`file.ext:line-start`–`line-end`):
+[exact current text from file — no paraphrasing]
+
+**AFTER:**
+[exact new text with change applied]
+
+**Justification:** [why this change is needed, with evidence]
+```
 
 ---
 
@@ -148,13 +191,20 @@ Actual at src/handler.ts:42-58: Function is `handleRequest`, not `processRequest
 Recommendation: Use correct function name, extend existing validation at :44-48
 ```
 
-### Step 6: Section-by-Section Critique (MINIMUM 3 PASSES)
+### Step 6: Section-by-Section Critique (MINIMUM 3 PASSES — REQUIRED)
+
 For each section, output headers "PASS 1:", "PASS 2:", "PASS 3:", evaluating:
-1. **Goal Alignment**: Does it achieve stated goal?
-2. **Code Feasibility**: Did you READ the actual files?
-3. **UX Excellence**: Is interface/API easy to use correctly and hard to use incorrectly?
+1. **Goal Alignment**: Does it achieve the stated goal?
+2. **Code Feasibility**: Did you READ the actual files at cited line ranges?
+3. **UX Excellence**: Easy to use correctly, hard to use incorrectly?
 4. **Code Excellence**: Meets TDD, DRY, KISS, YAGNI, SOLID per §1.1?
-5. Continue passes until no issues found.
+
+After completing each pass, you MUST output the completion marker (exactly this format):
+`[PASS N COMPLETE: found X issues, Y corrections made]`
+
+Only proceed to §7 after outputting `[PASS 3 COMPLETE: 0 new issues found]`.
+If Pass 3 finds issues, run Pass 4 and continue until a pass finds 0 new issues.
+Do NOT summarize or skip passes — each pass must produce output.
 
 ### Step 7: Launch Plan Subagent for Alternatives
 Use Task tool with Plan subagent to evaluate alternative approaches discovered during verification.

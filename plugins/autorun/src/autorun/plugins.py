@@ -918,6 +918,51 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     return ctx.allow(injection)  # FIX: allow, not block - AI continues with injected instructions
 
 
+@app.on("PostToolUse")
+def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
+    """Warn if a plan file loses substantial content during Write/Edit.
+
+    For Edit: detects when old_string has many more lines than new_string (content deletion).
+    For Write: detects when written content is suspiciously short for a plan file.
+
+    Does NOT block the tool — injects a warning message into AI context.
+    Only checks .md files under ~/.claude/plans/.
+    """
+    if ctx.tool_name not in ("Write", "Edit"):
+        return None
+
+    file_path = ctx.tool_input.get("file_path", "")
+    if not (file_path.endswith(".md") and "plans" in file_path):
+        return None
+
+    if ctx.tool_name == "Edit":
+        old_str = ctx.tool_input.get("old_string", "")
+        new_str = ctx.tool_input.get("new_string", "")
+        old_lines = len(old_str.splitlines())
+        new_lines = len(new_str.splitlines())
+        # Warn if: replacement removed >5 lines AND shrank by >60%
+        if old_lines > 5 and new_lines < old_lines * 0.4:
+            removed = old_lines - new_lines
+            return ctx.allow(
+                f"\n⚠️ PLAN CONTENT WARNING: Edit removed {removed} lines from "
+                f"{file_path} (old_string was {old_lines} lines, new_string is {new_lines} lines). "
+                f"Read the full plan file NOW and verify no content was accidentally deleted. "
+                f"Restore any missing content before continuing."
+            )
+
+    elif ctx.tool_name == "Write":
+        content = ctx.tool_input.get("content", "")
+        content_lines = len(content.splitlines())
+        if content_lines < 15:
+            return ctx.allow(
+                f"\n⚠️ PLAN CONTENT WARNING: Write produced only {content_lines} lines "
+                f"in {file_path}. Plan files should have substantial content. "
+                f"Verify this was intentional and no content was accidentally deleted."
+            )
+
+    return None
+
+
 # === STOP HOOK HANDLERS ===
 
 @app.on("Stop")
