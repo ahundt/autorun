@@ -117,12 +117,12 @@ class TestFilePolicyPlugin:
         assert result is not None
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
-    def test_enforce_file_policy_search_allows_existing_file(self):
+    def test_enforce_file_policy_search_allows_existing_file(self, tmp_path):
         """SEARCH policy should allow modifying existing files."""
         store = ThreadSafeDB()
         ctx = EventContext(
             session_id="test", event="PreToolUse", tool_name="Write",
-            tool_input={"file_path": "/tmp"}, store=store  # /tmp exists
+            tool_input={"file_path": str(tmp_path)}, store=store  # tmp_path always exists
         )
         ctx.file_policy = "SEARCH"
 

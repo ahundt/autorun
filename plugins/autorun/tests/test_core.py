@@ -349,11 +349,11 @@ class TestEventContext:
 
         assert ctx.has_justification is True
 
-    def test_file_exists_property_true(self):
+    def test_file_exists_property_true(self, tmp_path):
         """file_exists should return True for existing file."""
         ctx = EventContext(
             session_id="test", event="test",
-            tool_input={"file_path": "/tmp"}  # /tmp should exist
+            tool_input={"file_path": str(tmp_path)}  # tmp_path always exists
         )
 
         assert ctx.file_exists is True

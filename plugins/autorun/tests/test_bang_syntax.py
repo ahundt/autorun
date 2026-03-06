@@ -20,7 +20,7 @@ class TestBangOperatorSyntax:
     def test_tabs_md_uses_correct_bang_syntax(self):
         """Test tabs.md uses correct ! syntax (not backticks)"""
         tabs_md = Path(__file__).parent.parent / "commands" / "tabs.md"
-        content = tabs_md.read_text()
+        content = tabs_md.read_text(encoding="utf-8")
 
         # Should have ! operator
         assert "! tmux list-sessions" in content, \
@@ -34,7 +34,7 @@ class TestBangOperatorSyntax:
     def test_tabw_md_uses_correct_bang_syntax(self):
         """Test tabw.md uses correct ! syntax (not backticks)"""
         tabw_md = Path(__file__).parent.parent / "commands" / "tabw.md"
-        content = tabw_md.read_text()
+        content = tabw_md.read_text(encoding="utf-8")
 
         # Should have ! operator
         assert "! tmux list-sessions" in content, \
@@ -69,7 +69,7 @@ class TestBangOperatorSyntax:
             if md_file.name in multiline_execution_files:
                 continue
 
-            content = md_file.read_text()
+            content = md_file.read_text(encoding="utf-8")
             # Check for incorrect syntax (excluding markdown code blocks)
             lines = content.split('\n')
             for i, line in enumerate(lines, 1):
@@ -87,7 +87,7 @@ class TestBangOperatorSyntax:
     def test_bang_operator_documentation_exists(self):
         """Test bang operator is documented in plugin help"""
         help_md = Path(__file__).parent.parent / "commands" / "claude-code-plugin-help.md"
-        content = help_md.read_text()
+        content = help_md.read_text(encoding="utf-8")
 
         # Check for documentation sections
         assert "Embedded Execution" in content or "! Operator" in content, \
