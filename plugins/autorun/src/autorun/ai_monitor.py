@@ -21,6 +21,8 @@ import sys
 import signal
 import logging
 from pathlib import Path
+
+import psutil
 from contextlib import contextmanager
 
 # Import centralized tmux utilities for DRY compliance
@@ -108,10 +110,12 @@ def start_monitor(session_id, prompt="Continue working", stop_marker=None, max_c
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
     if pf.exists():
         try:
-            os.kill(int(pf.read_text()), 0)
-            return int(pf.read_text())  # Already running
-        except (OSError, ValueError):
+            pid = int(pf.read_text())
+            if psutil.pid_exists(pid):
+                return pid  # Already running
             pf.unlink()
+        except (OSError, ValueError):
+            pf.unlink(missing_ok=True)
 
     # Spawn monitor as subprocess
     script = Path(__file__)
@@ -128,10 +132,11 @@ def stop_monitor(session_id):
     pf = Path(f"/tmp/ai-monitor-{session_id}.pid")
     if pf.exists():
         try:
-            os.kill(int(pf.read_text()), signal.SIGTERM)
+            proc = psutil.Process(int(pf.read_text()))
+            proc.terminate()
             pf.unlink()
-        except (OSError, ValueError):
-            pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, ValueError):
+            pf.unlink(missing_ok=True)
 
 def check_monitor(session_id):
     """Check if monitor is running, return PID or None"""
@@ -139,10 +144,11 @@ def check_monitor(session_id):
     if pf.exists():
         try:
             pid = int(pf.read_text())
-            os.kill(pid, 0)
-            return pid
-        except (OSError, ValueError):
+            if psutil.pid_exists(pid):
+                return pid
             pf.unlink()
+        except (OSError, ValueError):
+            pf.unlink(missing_ok=True)
     return None
 
 # Core monitor loop

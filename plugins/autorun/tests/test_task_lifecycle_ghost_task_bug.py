@@ -408,7 +408,7 @@ class TestGhostTaskLogging:
         assert manager.tasks['55']['status'] == 'ignored'
 
         if manager.audit_log.exists():
-            log = manager.audit_log.read_text()
+            log = manager.audit_log.read_text(encoding="utf-8")
             assert 'GHOST_SKIP' in log
             assert '55' in log
             assert 'ghost task cannot become blocking' in log
@@ -472,7 +472,7 @@ class TestGarbageCollection:
         assert archive_file.exists()
 
         import json
-        data = json.loads(archive_file.read_text())
+        data = json.loads(archive_file.read_text(encoding="utf-8"))
         assert data['session_id'] == session_id
         assert '1' in data['tasks']
 

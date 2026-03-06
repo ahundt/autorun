@@ -387,7 +387,7 @@ class TestSameSessionMultiProcess:
 
             # Verify metadata was embedded
             exported_file = Path(result["destination"])
-            content = exported_file.read_text()
+            content = exported_file.read_text(encoding="utf-8")
 
             # Check for YAML frontmatter
             assert content.startswith("---"), "Metadata frontmatter not found"

@@ -526,7 +526,7 @@ class TestHookEntryDualPlatform:
         assert output.get("continue", True) is True
 
     def test_hook_entry_no_debug_logging(self):
-        content = HOOK_ENTRY_PY.read_text()
+        content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         assert "/tmp/autorun_hook_debug" not in content
 
 
@@ -544,7 +544,7 @@ class TestGeminiHookSwapLogic:
     """
 
     def test_install_py_references_both_hooks_files(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "claude-hooks.json" in content
         assert "hooks.json" in content
 
@@ -568,7 +568,7 @@ class TestGeminiHookSwapLogic:
 
     def test_no_swap_logic_in_installer(self):
         """Installer should not need swap logic since filenames are correct."""
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "hooks.json.claude-backup" not in content, \
             "Swap logic removed — hooks.json is always Gemini format"
 
@@ -587,19 +587,19 @@ class TestGeminiInstallPathway:
     """Test Gemini-specific installation code in install.py."""
 
     def test_install_for_gemini_function_exists(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "def _install_for_gemini(" in content
 
     def test_install_for_gemini_checks_cli(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert 'shutil.which("gemini")' in content
 
     def test_install_for_gemini_finds_all_plugins(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "gemini-extension.json" in content
 
     def test_install_for_gemini_uses_consent_flag(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert '"--consent"' in content
 
     def test_gemini_extension_json_has_required_fields(self):
@@ -618,34 +618,34 @@ class TestClaudeInstallPathway:
     """Test Claude Code-specific installation code in install.py."""
 
     def test_install_uses_marketplace_add(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert '"claude", "plugin", "marketplace", "add"' in content
 
     def test_install_uses_plugin_install(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert '"claude", "plugin", "install"' in content
 
     def test_install_uses_plugin_enable(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert '"claude", "plugin", "enable"' in content
 
     def test_install_tries_update_first(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         update_pos = content.find('"claude", "plugin", "update"')
         install_pos = content.find('"claude", "plugin", "install"')
         assert update_pos > 0 and install_pos > 0
         assert update_pos < install_pos
 
     def test_install_has_cache_fallback(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "_install_to_cache" in content
 
     def test_install_has_json_registration_fallback(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "_register_in_json" in content
 
     def test_install_substitutes_paths(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "_substitute_paths" in content
 
 
@@ -658,7 +658,7 @@ class TestDaemonContinueField:
     """Validate daemon path correctly sets continue=True for tool denial."""
 
     def test_core_py_pretooluse_deny_keeps_ai_working(self):
-        content = CORE_PY.read_text()
+        content = CORE_PY.read_text(encoding="utf-8")
         respond_block = _extract_function(content, "respond")
         assert respond_block, "Could not find def respond() in core.py"
         # Verify continue: True is used even on denial to keep AI loop running
@@ -668,13 +668,13 @@ class TestDaemonContinueField:
     def test_plugins_py_enforce_file_policy_deny_keeps_ai_working(self):
         """Verify enforce_file_policy in plugins.py keeps AI working on denial."""
         plugins_py = PLUGIN_ROOT / "src" / "autorun" / "plugins.py"
-        content = plugins_py.read_text()
+        content = plugins_py.read_text(encoding="utf-8")
         func_block = _extract_function(content, "enforce_file_policy")
         assert func_block, "Could not find def enforce_file_policy() in plugins.py"
         # Verify the function exists and delegates to ctx.deny() which uses continue: True
         assert "enforce_file_policy" in func_block
         # The response format (continue: True) is in core.py EventContext.respond()
-        core_content = CORE_PY.read_text()
+        core_content = CORE_PY.read_text(encoding="utf-8")
         respond_block = _extract_function(core_content, "respond")
         assert '"continue": True' in respond_block, \
             "core.py EventContext.respond() must use continue: True to keep AI working"
@@ -771,7 +771,7 @@ class TestBuildDirectorySync:
         build_entry = PLUGIN_ROOT / "build" / "hooks" / "hook_entry.py"
         if not build_entry.exists():
             pytest.skip("Build directory not present")
-        assert HOOK_ENTRY_PY.read_text() == build_entry.read_text()
+        assert HOOK_ENTRY_PY.read_text(encoding="utf-8") == build_entry.read_text(encoding="utf-8")
 
 
 # =============================================================================
@@ -783,28 +783,28 @@ class TestInstallPathwayDetection:
     """Test install.py correctly detects and routes to the right pathway."""
 
     def test_install_detects_claude_cli(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert 'shutil.which("claude")' in content
 
     def test_install_detects_gemini_cli(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert 'shutil.which("gemini")' in content
 
     def test_install_has_claude_only_flag(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "claude_only" in content
 
     def test_install_has_gemini_only_flag(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "gemini_only" in content
 
     def test_install_default_installs_both(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "_install_for_gemini" in content
         assert '"claude", "plugin"' in content
 
     def test_install_aix_detection(self):
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "aix" in content.lower()
 
 
@@ -817,19 +817,19 @@ class TestHookEntryBootstrap:
     """Verify hook_entry.py bootstrap logic is intact."""
 
     def test_can_bootstrap_checks_python_version(self):
-        content = HOOK_ENTRY_PY.read_text()
+        content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         assert "sys.version_info" in content
 
     def test_can_bootstrap_checks_uv_or_pip(self):
-        content = HOOK_ENTRY_PY.read_text()
+        content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         assert 'shutil.which("uv")' in content
 
     def test_bootstrap_uses_lockfile(self):
-        content = HOOK_ENTRY_PY.read_text()
+        content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         assert "BOOTSTRAP_LOCKFILE" in content
 
     def test_bootstrap_spawns_background(self):
-        content = HOOK_ENTRY_PY.read_text()
+        content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         assert "nohup" in content
         assert "start_new_session" in content
 
@@ -1002,7 +1002,7 @@ class TestInstallForGeminiMarketplaceResolution:
 
     def test_no_hardcoded_cr_pdf_extractor_in_success_message(self):
         """Verify the old hardcoded 'cr, pdf-extractor' string was removed."""
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "cr, pdf-extractor" not in content, (
             "Hardcoded 'cr, pdf-extractor' found in install.py — "
             "success message must use the actual plugins list"
@@ -1010,7 +1010,7 @@ class TestInstallForGeminiMarketplaceResolution:
 
     def test_success_message_uses_join(self):
         """Verify Gemini success message uses ', '.join(plugins) not a literal string."""
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "', '.join(plugins)" in content
 
     # ------------------------------------------------------------------
@@ -1019,17 +1019,17 @@ class TestInstallForGeminiMarketplaceResolution:
 
     def test_strategy_0_marketplace_source_map_built(self):
         """Source code contains marketplace_source_map construction."""
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert "marketplace_source_map" in content
 
     def test_strategy_0_reads_source_field(self):
         """Source code reads 'source' field from marketplace.json entries."""
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         assert '_entry.get("source", "")' in content
 
     def test_strategy_0_checks_gemini_extension_json(self):
         """Strategy 0 verifies gemini-extension.json exists before adding to map."""
-        content = INSTALL_PY.read_text()
+        content = INSTALL_PY.read_text(encoding="utf-8")
         func = _extract_function(content, "_install_for_gemini")
         # Both the marketplace_source_map building and the per-plugin loop check it
         assert func.count("gemini-extension.json") >= 2

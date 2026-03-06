@@ -328,7 +328,7 @@ class TestInstallPathwayRouting:
         # This is verified by imports in __main__.py
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
-        content = main_file.read_text()
+        content = main_file.read_text(encoding="utf-8")
 
         assert "from autorun.install import install_plugins" in content
         assert "install_plugins(" in content
@@ -338,7 +338,7 @@ class TestInstallPathwayRouting:
         """Verify __main__.py --uninstall flag routes to install.uninstall_plugins()."""
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
-        content = main_file.read_text()
+        content = main_file.read_text(encoding="utf-8")
 
         assert "from autorun.install import uninstall_plugins" in content
         assert "return uninstall_plugins()" in content
@@ -347,7 +347,7 @@ class TestInstallPathwayRouting:
         """Verify __main__.py --status flag routes to install.show_status()."""
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
-        content = main_file.read_text()
+        content = main_file.read_text(encoding="utf-8")
 
         assert "from autorun.install import show_status" in content
         assert "return show_status()" in content
@@ -356,7 +356,7 @@ class TestInstallPathwayRouting:
         """Verify --sync flag has been removed (was broken, replaced by --install --force)."""
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
-        content = main_file.read_text()
+        content = main_file.read_text(encoding="utf-8")
 
         assert "sync_to_cache" not in content, \
             "--sync was removed because it never worked (path construction bug). Use --install --force."
@@ -367,7 +367,7 @@ class TestInstallPathwayRouting:
         """Verify pyproject.toml autorun-install entry point."""
         plugin_root = get_plugin_root()
         pyproject = plugin_root / "pyproject.toml"
-        content = pyproject.read_text()
+        content = pyproject.read_text(encoding="utf-8")
 
         assert 'autorun-install = "autorun.install:install_main"' in content
 
@@ -394,7 +394,7 @@ class TestClaudeCommandIntegration:
         """Verify install_plugins() calls 'claude plugin marketplace add'."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert 'claude", "plugin", "marketplace", "add"' in content
 
@@ -402,7 +402,7 @@ class TestClaudeCommandIntegration:
         """Verify install_plugins() calls 'claude plugin install'."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert 'claude", "plugin", "install"' in content
 
@@ -410,7 +410,7 @@ class TestClaudeCommandIntegration:
         """Verify install_plugins() calls 'claude plugin enable'."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert 'claude", "plugin", "enable"' in content
 
@@ -418,7 +418,7 @@ class TestClaudeCommandIntegration:
         """Verify install_plugins() tries 'claude plugin update' first."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert 'claude", "plugin", "update"' in content
         # Should try update before install
@@ -430,7 +430,7 @@ class TestClaudeCommandIntegration:
         """Verify uninstall_plugins() calls 'claude plugin uninstall'."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert 'claude", "plugin", "uninstall"' in content
 
@@ -438,7 +438,7 @@ class TestClaudeCommandIntegration:
         """Verify show_status() calls 'claude plugin list'."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert 'claude", "plugin", "list"' in content
 
@@ -450,7 +450,7 @@ class TestBootstrapIntegration:
         """Verify hook_entry.py bootstrap calls 'autorun --install'."""
         plugin_root = get_plugin_root()
         hook_entry = plugin_root / "hooks" / "hook_entry.py"
-        content = hook_entry.read_text()
+        content = hook_entry.read_text(encoding="utf-8")
 
         assert "autorun --install" in content
 
@@ -458,7 +458,7 @@ class TestBootstrapIntegration:
         """Verify daemon.py bootstrap includes _install_pdf_deps()."""
         plugin_root = get_plugin_root()
         daemon_file = plugin_root / "src" / "autorun" / "daemon.py"
-        content = daemon_file.read_text()
+        content = daemon_file.read_text(encoding="utf-8")
 
         assert "_install_pdf_deps()" in content
 
@@ -466,7 +466,7 @@ class TestBootstrapIntegration:
         """Verify daemon bootstrap uses --python sys.executable."""
         plugin_root = get_plugin_root()
         daemon_file = plugin_root / "src" / "autorun" / "daemon.py"
-        content = daemon_file.read_text()
+        content = daemon_file.read_text(encoding="utf-8")
 
         assert "--python" in content and "sys.executable" in content
 
@@ -478,7 +478,7 @@ class TestDependencyInstallation:
         """Verify install_plugins() calls _sync_dependencies()."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert "_sync_dependencies()" in content
         # Verify the sync command includes required extras (as list elements)
@@ -489,7 +489,7 @@ class TestDependencyInstallation:
         """Verify install_plugins() calls _install_pdf_deps() when pdf-extractor selected."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert "_install_pdf_deps()" in content
         assert '"pdf-extractor" in plugins' in content
@@ -498,7 +498,7 @@ class TestDependencyInstallation:
         """Verify _install_pdf_deps() installs correct packages."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         # Should install all 5 core pdf deps
         required_deps = ["pdfplumber", "pdfminer.six", "PyPDF2", "markitdown", "tqdm"]
@@ -518,7 +518,7 @@ class TestCacheFallback:
         """Verify cache fallback is called when marketplace install fails."""
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         # Should call _install_to_cache when marketplace fails
         assert "if _install_to_cache(name):" in content
@@ -542,7 +542,7 @@ class TestEntryPointCompatibility:
         """Verify legacy subcommands are documented in __main__.py."""
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
-        content = main_file.read_text()
+        content = main_file.read_text(encoding="utf-8")
 
         # Legacy commands should still be mentioned in help
         assert "autorun install" in content.lower() or "legacy" in content.lower()

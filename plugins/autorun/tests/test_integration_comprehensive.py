@@ -415,7 +415,7 @@ def test_readme_stage_markers_match_config():
     Bug source: README.md had 9 wrong occurrences; CLAUDE.md had 6.
     """
     readme_path = Path(__file__).parent.parent.parent.parent / "README.md"
-    readme = readme_path.read_text()
+    readme = readme_path.read_text(encoding="utf-8")
     for wrong in ("AUTORUN_STAGE1_COMPLETE", "AUTORUN_STAGE2_COMPLETE", "AUTORUN_STAGE3_COMPLETE"):
         assert wrong not in readme, (
             f"README.md contains wrong stage marker '{wrong}'. "
@@ -433,7 +433,7 @@ def test_readme_stage_markers_match_config():
 def test_readme_emergency_stop_documented():
     """README.md must document the emergency stop marker."""
     readme_path = Path(__file__).parent.parent.parent.parent / "README.md"
-    readme = readme_path.read_text()
+    readme = readme_path.read_text(encoding="utf-8")
     assert CONFIG["emergency_stop"] in readme, (
         f"README.md missing emergency_stop marker: {CONFIG['emergency_stop']}"
     )
@@ -442,7 +442,7 @@ def test_readme_emergency_stop_documented():
 def test_claude_md_stage_markers_match_config():
     """CLAUDE.md (repo root) must not contain wrong AUTORUN_STAGE[123]_COMPLETE markers."""
     claude_md_path = Path(__file__).parent.parent.parent.parent / "CLAUDE.md"
-    claude_md = claude_md_path.read_text()
+    claude_md = claude_md_path.read_text(encoding="utf-8")
     for wrong in ("AUTORUN_STAGE1_COMPLETE", "AUTORUN_STAGE2_COMPLETE", "AUTORUN_STAGE3_COMPLETE"):
         assert wrong not in claude_md, (
             f"CLAUDE.md contains wrong stage marker '{wrong}'. "

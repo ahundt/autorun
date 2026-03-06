@@ -302,7 +302,7 @@ class TestHookEntryClean:
         """Read hook_entry.py source code."""
         path = plugin_root / "hooks" / "hook_entry.py"
         assert path.exists(), f"hook_entry.py not found at {path}"
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     def test_no_debug_log_file_references(self, hook_entry_source):
         """hook_entry.py must not reference debug log files.

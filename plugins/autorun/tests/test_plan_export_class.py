@@ -371,7 +371,7 @@ class TestExportLogic:
         exporter.export(temp_project["plan_file"])
 
         notes_files = list(temp_project["notes_dir"].glob("*.md"))
-        content = notes_files[0].read_text()
+        content = notes_files[0].read_text(encoding="utf-8")
 
         assert content.startswith("---")
         assert "session_id:" in content
@@ -1530,7 +1530,7 @@ class TestOption2ExportFlow:
         assert len(exported_files) == 1, (
             f"Expected 1 file in notes/, found {len(exported_files)}: {exported_files}"
         )
-        content = exported_files[0].read_text()
+        content = exported_files[0].read_text(encoding="utf-8")
         assert "Test Plan" in content, "Exported file must contain plan content"
 
     def test_rejected_plan_lands_in_rejected_dir(self, temp_project):
@@ -1561,7 +1561,7 @@ class TestOption2ExportFlow:
         assert len(rejected_files) == 1, (
             f"Expected 1 file in notes/rejected/, found {len(rejected_files)}: {rejected_files}"
         )
-        content = rejected_files[0].read_text()
+        content = rejected_files[0].read_text(encoding="utf-8")
         assert "Test Plan" in content
 
     def test_second_export_of_same_plan_is_skipped(self, temp_project):

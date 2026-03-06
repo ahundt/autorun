@@ -333,7 +333,7 @@ class TestHookTimeouts:
     def test_claude_hooks_timeout_adequate(self):
         """claude-hooks.json timeouts must be >= 5 seconds (Claude uses seconds)."""
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
-        hooks = json.loads(hooks_path.read_text())
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         for event, handler_groups in hooks["hooks"].items():
             for handler_group in handler_groups:
                 for hook in handler_group.get("hooks", []):
@@ -346,7 +346,7 @@ class TestHookTimeouts:
     def test_gemini_hooks_timeout_adequate(self):
         """hooks.json timeouts must be >= 5000ms (Gemini uses milliseconds)."""
         hooks_path = get_plugin_root() / "hooks" / "hooks.json"
-        hooks = json.loads(hooks_path.read_text())
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         for event, handler_groups in hooks["hooks"].items():
             for handler_group in handler_groups:
                 for hook in handler_group.get("hooks", []):
@@ -372,7 +372,7 @@ class TestGeminiHookMatchers:
         Fixed: added |exit_plan_mode to hooks/hooks.json BeforeTool matcher.
         """
         hooks_path = get_plugin_root() / "hooks" / "hooks.json"
-        hooks = json.loads(hooks_path.read_text())
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         before_tool_groups = hooks["hooks"]["BeforeTool"]
         assert len(before_tool_groups) > 0, "No BeforeTool hooks registered"
         matcher = before_tool_groups[0]["matcher"]
@@ -388,7 +388,7 @@ class TestGeminiHookMatchers:
         Each handler_group has "matcher" at the top level (not inside "hooks" items).
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
-        hooks = json.loads(hooks_path.read_text())
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
         matchers = [g.get("matcher", "") for g in pre_tool_groups]
         assert any("ExitPlanMode" in m for m in matchers), (
@@ -402,7 +402,7 @@ class TestGeminiHookMatchers:
         Each handler_group has "matcher" at the top level (not inside "hooks" items).
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
-        hooks = json.loads(hooks_path.read_text())
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         post_tool_groups = hooks["hooks"]["PostToolUse"]
         matchers = [g.get("matcher", "") for g in post_tool_groups]
         assert any("ExitPlanMode" in m for m in matchers), (

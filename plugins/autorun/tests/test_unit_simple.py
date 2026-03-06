@@ -507,7 +507,7 @@ class TestCodeQuality:
             if not filepath.exists():
                 continue
 
-            content = filepath.read_text()
+            content = filepath.read_text(encoding="utf-8")
             lines = content.split('\n')
 
             for i, line in enumerate(lines, 1):

@@ -162,8 +162,10 @@ def _restart_daemon_if_running() -> None:
     if not lock_path.exists():
         return
     try:
+        import psutil
         pid = int(lock_path.read_text().strip())
-        os.kill(pid, 0)
+        if not psutil.pid_exists(pid):
+            return
     except (ValueError, OSError):
         return
 

@@ -232,7 +232,7 @@ class TestBaselineFunctionality:
         assert exported_file.parent == test_session.export_dir
 
         # Verify content
-        content = exported_file.read_text()
+        content = exported_file.read_text(encoding="utf-8")
         assert "Single session test plan" in content
         assert session_id in content
 
@@ -454,7 +454,7 @@ class TestMultiSessionRaceConditions:
             assert len(exported_files) >= 1, f"Session {i} has no exported files"
 
             # Verify content matches expected
-            content = exported_files[0].read_text()
+            content = exported_files[0].read_text(encoding="utf-8")
             expected_content = plans[i][2]
             assert expected_content in content, f"Session {i} has wrong content!"
 
@@ -527,7 +527,7 @@ class TestMultiSessionRaceConditions:
         for i, test_session in enumerate(sessions):
             exported_files = list(test_session.export_dir.glob("*.md"))
             assert len(exported_files) >= 1
-            content = exported_files[0].read_text()
+            content = exported_files[0].read_text(encoding="utf-8")
             assert plans[i][2] in content
 
         # Cleanup
@@ -676,7 +676,7 @@ class TestStressScenarios:
             # Verify at least one file has correct content
             content_found = False
             for f in exported_files:
-                if plans[i][2] in f.read_text():
+                if plans[i][2] in f.read_text(encoding="utf-8"):
                     content_found = True
                     break
             assert content_found, f"Session {i} has corrupted content!"

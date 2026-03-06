@@ -257,7 +257,7 @@ def test_cli_export_json_format():
         assert output_path.exists(), "Export file should be created"
 
         # Verify JSON content
-        data = json.loads(output_path.read_text())
+        data = json.loads(output_path.read_text(encoding="utf-8"))
         assert 'session_id' in data, "Export should include session ID"
         assert 'tasks' in data, "Export should include tasks"
         assert '1' in data['tasks'], "Export should include pending task"
@@ -285,7 +285,7 @@ def test_cli_export_with_completed_tasks():
         assert exit_code == 0, "cli_export should succeed"
 
         # Verify all tasks included
-        data = json.loads(output_path.read_text())
+        data = json.loads(output_path.read_text(encoding="utf-8"))
         assert '3' in data['tasks'], "Export should include completed task when requested"
         assert '4' in data['tasks'], "Export should include deleted task when requested"
         assert len(data['tasks']) == 5, "Export should include all 5 tasks"
@@ -312,7 +312,7 @@ def test_cli_export_csv_format():
         assert output_path.exists(), "CSV file should be created"
 
         # Verify CSV content
-        csv_content = output_path.read_text()
+        csv_content = output_path.read_text(encoding="utf-8")
         assert "id,subject,status" in csv_content, "CSV should have headers"
         assert "Fix login bug" in csv_content, "CSV should include task subjects"
         assert "pending" in csv_content or "in_progress" in csv_content, "CSV should include statuses"
@@ -339,7 +339,7 @@ def test_cli_export_markdown_format():
         assert output_path.exists(), "Markdown file should be created"
 
         # Verify Markdown content
-        md_content = output_path.read_text()
+        md_content = output_path.read_text(encoding="utf-8")
         assert "# Task Export" in md_content or "## Session" in md_content, "Should have Markdown headers"
         assert "Fix login bug" in md_content, "Should include task subjects"
 
@@ -498,7 +498,7 @@ def test_cli_gc_archives_before_deletion():
     assert archive_path.exists(), f"Archive should be created at {archive_path}"
 
     # Verify archive content
-    archive_data = json.loads(archive_path.read_text())
+    archive_data = json.loads(archive_path.read_text(encoding="utf-8"))
     assert archive_data['session_id'] == session_id, "Archive should include session ID"
     assert '1' in archive_data['tasks'], "Archive should include tasks"
 

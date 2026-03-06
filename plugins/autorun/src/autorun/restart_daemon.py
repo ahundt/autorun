@@ -23,12 +23,11 @@ import sys
 import time
 import socket
 import subprocess
-import fcntl
-import errno
 from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
+from filelock import FileLock, Timeout
 
 HOME_DIR = Path.home() / ".autorun"
 SOCKET_PATH = HOME_DIR / "daemon.sock"
@@ -43,7 +42,8 @@ def get_daemon_pid() -> int | None:
     try:
         pid = int(LOCK_PATH.read_text().strip())
         # Verify process actually exists (not just a stale lock file)
-        os.kill(pid, 0)
+        if not psutil.pid_exists(pid):
+            return None
         return pid
     except (ValueError, OSError):
         return None
@@ -111,43 +111,12 @@ def verify_bashlex() -> bool:
         return False
 
 
-def acquire_restart_lock():
-    """Acquire exclusive restart lock to prevent concurrent restarts.
-
-    Returns:
-        file descriptor if lock acquired, None otherwise
-
-    Prefer restart_lock() context manager for RAII-safe usage.
-    """
-    try:
-        lock_fd = open(RESTART_LOCK_PATH, 'w')
-        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        lock_fd.write(f"{os.getpid()}\n")
-        lock_fd.flush()
-        return lock_fd
-    except (IOError, OSError) as e:
-        if hasattr(e, 'errno') and e.errno == errno.EAGAIN:
-            return None  # Another restart in progress
-        raise
-
-
-def release_restart_lock(lock_fd) -> None:
-    """Release restart lock and cleanup lock file."""
-    if lock_fd:
-        try:
-            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
-            lock_fd.close()
-        except (IOError, OSError):
-            pass
-        try:
-            RESTART_LOCK_PATH.unlink()
-        except OSError:
-            pass
-
-
 @contextmanager
 def restart_lock():
     """Context manager for the restart lock. Yields True if acquired, False otherwise.
+
+    Uses filelock for cross-platform file locking (works on Unix and Windows).
+    RAII: lock is only released if it was successfully acquired.
 
     Usage:
         with restart_lock() as acquired:
@@ -156,11 +125,19 @@ def restart_lock():
                 return
             # ... do restart work ...
     """
-    lock_fd = acquire_restart_lock()
+    lock = FileLock(str(RESTART_LOCK_PATH), timeout=0)
+    acquired = False
     try:
-        yield lock_fd is not None
+        lock.acquire()
+        acquired = True
+    except Timeout:
+        pass
+
+    try:
+        yield acquired
     finally:
-        release_restart_lock(lock_fd)
+        if acquired:
+            lock.release()
 
 
 def _resolve_src_dir() -> Path | None:
@@ -325,7 +302,11 @@ def _stop_daemon(pid: int) -> None:
     4. If clean but stale files remain: cleanup
     """
     print(f"  Sending SIGTERM to PID {pid}")
-    os.kill(pid, 15)  # SIGTERM
+    try:
+        proc = psutil.Process(pid)
+        proc.terminate()  # SIGTERM on Unix, TerminateProcess on Windows
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
 
     # Wait for FULL shutdown (PID gone AND socket closed)
     shutdown_clean = wait_for_shutdown(max_wait=5.0)
@@ -334,9 +315,10 @@ def _stop_daemon(pid: int) -> None:
         # Daemon didn't shut down cleanly - force it
         print("  ⚠️ Timeout, forcing shutdown")
         try:
-            os.kill(pid, 9)  # SIGKILL
+            proc = psutil.Process(pid)
+            proc.kill()  # SIGKILL on Unix, TerminateProcess on Windows
             time.sleep(0.5)
-        except OSError:
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
         # Only cleanup stale files if daemon failed to clean up
         cleanup_stale_files()

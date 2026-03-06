@@ -734,7 +734,7 @@ class TestClaudeHookEntryPoint:
             )
 
             # Verify exported content matches our plan
-            exported_content = exported[0].read_text()
+            exported_content = exported[0].read_text(encoding="utf-8")
             assert unique_marker in exported_content or "E2E Test Plan" in exported_content, (
                 f"Exported file does not contain expected plan content.\n"
                 f"Exported file: {exported[0]}\n"

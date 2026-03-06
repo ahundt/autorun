@@ -424,7 +424,7 @@ class TestSharedLockFileLifecycle:
             s["key"] = "jsonvalue"
             s["num"] = 42
 
-        content = setup["state_file"].read_text()
+        content = setup["state_file"].read_text(encoding="utf-8")
         data = json.loads(content)
         assert f"{sid}/key" in data
         assert data[f"{sid}/key"] == "jsonvalue"

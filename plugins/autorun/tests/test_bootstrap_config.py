@@ -169,7 +169,7 @@ class TestSetBootstrapConfig:
 
         # Verify hooks.json was modified
         hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
-        content = hooks_file.read_text()
+        content = hooks_file.read_text(encoding="utf-8")
 
         # All commands should now have --no-bootstrap
         assert "--no-bootstrap" in content
@@ -186,7 +186,7 @@ class TestSetBootstrapConfig:
 
         # Verify hooks.json was modified
         hooks_file = Path(temp_hooks_dir_disabled) / "hooks" / "claude-hooks.json"
-        content = hooks_file.read_text()
+        content = hooks_file.read_text(encoding="utf-8")
 
         # No commands should have --no-bootstrap
         assert "--no-bootstrap" not in content
@@ -232,13 +232,13 @@ class TestSetBootstrapConfig:
         from autorun.__main__ import set_bootstrap_config
 
         hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
-        original_data = json.loads(hooks_file.read_text())
+        original_data = json.loads(hooks_file.read_text(encoding="utf-8"))
 
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": temp_hooks_dir}):
             set_bootstrap_config(enabled=False)
 
         # Verify JSON is still valid
-        modified_content = hooks_file.read_text()
+        modified_content = hooks_file.read_text(encoding="utf-8")
         modified_data = json.loads(modified_content)
 
         # Structure should be preserved
@@ -415,7 +415,7 @@ class TestMainFunctionRouting:
 
         # Verify flag was added
         hooks_file = Path(temp_hooks_dir) / "hooks" / "claude-hooks.json"
-        assert "--no-bootstrap" in hooks_file.read_text()
+        assert "--no-bootstrap" in hooks_file.read_text(encoding="utf-8")
 
     def test_enable_bootstrap_calls_set_bootstrap_config_true(
         self, temp_hooks_dir_disabled
@@ -432,7 +432,7 @@ class TestMainFunctionRouting:
 
         # Verify flag was removed
         hooks_file = Path(temp_hooks_dir_disabled) / "hooks" / "claude-hooks.json"
-        assert "--no-bootstrap" not in hooks_file.read_text()
+        assert "--no-bootstrap" not in hooks_file.read_text(encoding="utf-8")
 
     def test_version_returns_zero(self, capsys):
         """Test that --version returns exit code 0."""

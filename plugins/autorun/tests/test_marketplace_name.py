@@ -64,7 +64,7 @@ class TestMarketplaceName:
 
         assert install_file.exists(), f"install.py not found at {install_file}"
 
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         # Should NOT contain autorun-dev
         assert "autorun-dev" not in content, (
@@ -118,7 +118,7 @@ class TestMarketplaceName:
 
         assert readme.exists(), f"README.md not found at {readme}"
 
-        content = readme.read_text()
+        content = readme.read_text(encoding="utf-8")
 
         # Should NOT contain autorun-dev
         matches = re.findall(r"autorun-dev", content)
@@ -143,7 +143,7 @@ class TestMarketplaceName:
             pytest.skip("Skills directory not found")
 
         for skill_file in skills_dir.glob("**/*.md"):
-            content = skill_file.read_text()
+            content = skill_file.read_text(encoding="utf-8")
 
             # Should NOT contain @autorun-dev
             if "@autorun-dev" in content:
@@ -177,7 +177,7 @@ class TestInstallPluginsExitCode:
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
 
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         # Should return 0 on success, not True
         assert "return 0 if" in content, (
@@ -196,7 +196,7 @@ class TestInstallPluginsExitCode:
         plugin_root = get_plugin_root()
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
 
-        content = main_file.read_text()
+        content = main_file.read_text(encoding="utf-8")
 
         # Should have return 0 and return 1 for exit codes
         assert "return 0" in content, (
@@ -212,7 +212,7 @@ class TestInstallPluginsPrintMessages:
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
 
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         # Check for correct print messages
         expected_patterns = [
@@ -247,7 +247,7 @@ class TestPluginNameEnum:
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
 
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         assert "class PluginName" in content, (
             "install.py should define PluginName enum"
@@ -258,7 +258,7 @@ class TestPluginNameEnum:
         plugin_root = get_plugin_root()
         install_file = plugin_root / "src" / "autorun" / "install.py"
 
-        content = install_file.read_text()
+        content = install_file.read_text(encoding="utf-8")
 
         # plan-export merged into autorun in v0.7.0
         expected_plugins = ["autorun", "pdf-extractor"]

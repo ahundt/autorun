@@ -311,7 +311,7 @@ class TestEmbedPlanMetadata:
 
         embed_plan_metadata(plan_file, "session123", export_dest)
 
-        content = export_dest.read_text()
+        content = export_dest.read_text(encoding="utf-8")
         assert "---" in content
         assert "session_id: session123" in content
 
@@ -327,7 +327,7 @@ class TestEmbedPlanMetadata:
 
         embed_plan_metadata(plan_file, "new-session", export_dest)
 
-        content = export_dest.read_text()
+        content = export_dest.read_text(encoding="utf-8")
         assert "title: Existing" in content
         assert content.startswith("---")
 
@@ -473,7 +473,7 @@ class TestExportPlan:
             result = export_plan(plan_file, project_dir, session_id="test-session")
 
         assert result["success"] is True
-        exported_content = Path(result["destination"]).read_text()
+        exported_content = Path(result["destination"]).read_text(encoding="utf-8")
         assert "session_id:" in exported_content
         assert "test-session" in exported_content
 
@@ -655,7 +655,7 @@ class TestFullExportFlow:
         assert result["success"] is True
         exported_path = Path(result["destination"])
         assert exported_path.exists()
-        assert "approved" in exported_path.read_text().lower()
+        assert "approved" in exported_path.read_text(encoding="utf-8").lower()
 
     def test_full_rejected_export_flow(self, plans_dir, project_dir):
         """Full flow: rejected plan -> export to rejected folder."""

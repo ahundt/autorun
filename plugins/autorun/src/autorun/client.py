@@ -268,8 +268,8 @@ def run_client() -> int:
             if lock_path.exists():
                 try:
                     pid = int(lock_path.read_text().strip())
-                    os.kill(pid, 0)  # Check if process is alive (signal 0)
-                    daemon_alive = True
+                    import psutil
+                    daemon_alive = psutil.pid_exists(pid)
                 except (ValueError, ProcessLookupError, PermissionError):
                     # PID invalid or process dead — safe to spawn new daemon
                     lock_path.unlink(missing_ok=True)

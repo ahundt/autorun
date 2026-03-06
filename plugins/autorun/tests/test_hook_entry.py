@@ -39,37 +39,37 @@ class TestHookEntryStructure:
 
     def test_has_shebang(self):
         """hook_entry.py has Python shebang."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert content.startswith("#!/usr/bin/env python3")
 
     def test_has_main_function(self):
         """hook_entry.py has main() function."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "def main()" in content
 
     def test_has_entry_point(self):
         """hook_entry.py has if __name__ == '__main__' block."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert 'if __name__ == "__main__":' in content
 
     def test_has_fail_open_function(self):
         """hook_entry.py has fail_open() for error handling."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "def fail_open(" in content
 
     def test_has_try_cli_function(self):
         """hook_entry.py has try_cli() for CLI-first execution."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "def try_cli(" in content
 
     def test_has_run_fallback_function(self):
         """hook_entry.py has run_fallback() for direct import fallback."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "def run_fallback(" in content
 
     def test_has_get_src_dir_fallback(self):
         """hook_entry.py has get_src_dir() for when PLUGIN_ROOT missing."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "def get_src_dir(" in content
 
 
@@ -83,19 +83,19 @@ class TestHookEntryExecutionPriority:
 
     def test_uses_shutil_which_for_cli(self):
         """hook_entry.py uses shutil.which to find CLI."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "shutil.which" in content
 
     def test_cli_checked_before_fallback(self):
         """main() tries CLI before fallback."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         # Check order: try_cli should be called first in main()
         main_idx = content.find("def main()")
         assert "try_cli(" in content[main_idx:]
 
     def test_has_timeout_constant(self):
         """hook_entry.py has HOOK_TIMEOUT constant."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "HOOK_TIMEOUT" in content
 
 
@@ -205,14 +205,14 @@ class TestTryCliRobustness:
 
     def test_try_cli_checks_return_code(self):
         """try_cli must check returncode — must not return True on failure."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "result.returncode" in content, \
             "try_cli must check subprocess return code. Without this, " \
             "a stale/broken CLI binary silently causes fail-open."
 
     def test_try_cli_requires_stdout(self):
         """try_cli must return False when stdout is empty."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         # After the returncode check, there should be a check for empty stdout
         try_cli_idx = content.find("def try_cli(")
         try_cli_end = content.find("\ndef ", try_cli_idx + 1)
@@ -222,7 +222,7 @@ class TestTryCliRobustness:
 
     def test_stdin_read_once_in_main(self):
         """stdin must be read once in main(), not inside try_cli."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         main_idx = content.find("def main()")
         main_body = content[main_idx:]
         # stdin should be read in main, not try_cli
@@ -231,14 +231,14 @@ class TestTryCliRobustness:
 
     def test_stdin_restored_for_fallback(self):
         """After try_cli fails, stdin must be restored for run_fallback."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "io.StringIO" in content, \
             "main() must use io.StringIO to restore stdin for fallback path. " \
             "Without this, run_client() gets empty stdin after try_cli consumes it."
 
     def test_try_cli_accepts_stdin_data_param(self):
         """try_cli must accept stdin_data parameter (not read stdin itself)."""
-        content = HOOK_ENTRY.read_text()
+        content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "def try_cli(bin_path" in content
         try_cli_idx = content.find("def try_cli(")
         sig_end = content.find(")", try_cli_idx) + 1
@@ -314,13 +314,13 @@ class TestHooksJson:
     def test_uses_hook_entry(self):
         """claude-hooks.json calls hook_entry.py."""
         hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
-        content = hooks_json.read_text()
+        content = hooks_json.read_text(encoding="utf-8")
         assert "hook_entry.py" in content
 
     def test_no_direct_cli_reference(self):
         """claude-hooks.json uses hook_entry.py, not direct CLI."""
         hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
-        data = json.loads(hooks_json.read_text())
+        data = json.loads(hooks_json.read_text(encoding="utf-8"))
 
         for event, matchers in data.get("hooks", {}).items():
             for matcher in matchers:
@@ -333,7 +333,7 @@ class TestHooksJson:
     def test_no_shell_script_reference(self):
         """claude-hooks.json does not reference old shell script."""
         hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
-        content = hooks_json.read_text()
+        content = hooks_json.read_text(encoding="utf-8")
         assert "autorun-hook.sh" not in content
 
 
@@ -347,33 +347,33 @@ class TestDaemonBootstrapStructure:
 
     def test_has_bootstrap_function(self):
         """daemon.py has _bootstrap_optional_deps function."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "_bootstrap_optional_deps" in content
 
     def test_has_get_pip_command_function(self):
         """daemon.py has _get_pip_command() helper (DRY)."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "def _get_pip_command(" in content
 
     def test_has_ensure_uv_function(self):
         """daemon.py has _ensure_uv() at module level (testable)."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         # Should be module-level, not nested
         assert "\ndef _ensure_uv(" in content
 
     def test_has_install_bashlex_function(self):
         """daemon.py has _install_bashlex() at module level (testable)."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "\ndef _install_bashlex(" in content
 
     def test_has_install_autorun_function(self):
         """daemon.py has _install_autorun() to enable fast CLI path."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "def _install_autorun(" in content
 
     def test_has_get_plugin_root_function(self):
         """daemon.py has _get_plugin_root() to find local install path."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "def _get_plugin_root(" in content
 
 
@@ -382,28 +382,28 @@ class TestDaemonBootstrapBehavior:
 
     def test_bootstrap_runs_in_background(self):
         """Bootstrap runs in background thread."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "threading.Thread" in content
         assert "daemon=True" in content
 
     def test_bootstrap_installs_uv_if_missing(self):
         """Bootstrap installs UV via pip if UV not available."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "pip" in content and "uv" in content
 
     def test_bootstrap_prefers_uv(self):
         """Bootstrap prefers UV over pip for package installs."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "shutil.which('uv')" in content
 
     def test_bootstrap_installs_bashlex(self):
         """Bootstrap installs bashlex for better command parsing."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "bashlex" in content
 
     def test_bootstrap_called_in_main(self):
         """Bootstrap is called in daemon main()."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "_bootstrap_optional_deps()" in content
 
 
@@ -412,12 +412,12 @@ class TestDaemonBootstrapAutorun:
 
     def test_checks_if_autorun_already_installed(self):
         """_install_autorun() skips if CLI already available."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "shutil.which('autorun')" in content
 
     def test_installs_from_local_path(self):
         """_install_autorun() uses local plugin path, not GitHub."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         # Should use _get_plugin_root() or similar for local path
         assert "_get_plugin_root" in content
         # Should NOT install from GitHub
@@ -425,12 +425,12 @@ class TestDaemonBootstrapAutorun:
 
     def test_uses_uv_tool_install(self):
         """_install_autorun() uses 'uv tool install' for global CLI."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         assert "uv" in content and "tool" in content and "install" in content
 
     def test_install_order_uv_then_autorun_then_bashlex(self):
         """Bootstrap order: UV -> autorun -> bashlex."""
-        content = DAEMON_PY.read_text()
+        content = DAEMON_PY.read_text(encoding="utf-8")
         # Find the _bootstrap_optional_deps function or install orchestration
         uv_idx = content.find("_ensure_uv")
         autorun_idx = content.find("_install_autorun")
@@ -988,7 +988,7 @@ class TestAllLocationsSync:
     def test_source_hooks_json_is_claude_format(self):
         """Source claude-hooks.json must have Claude Code format, not Gemini format."""
         hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
-        content = hooks_json.read_text()
+        content = hooks_json.read_text(encoding="utf-8")
 
         assert "unified daemon-based hook handler" in content, \
             "Source claude-hooks.json has wrong format. Should be Claude Code, not Gemini. " \
@@ -1013,10 +1013,10 @@ class TestAllLocationsSync:
         if not cache_versions:
             pytest.skip("Claude Code cache not installed")
 
-        source_content = (PLUGIN_ROOT / "hooks" / "hook_entry.py").read_text()
+        source_content = (PLUGIN_ROOT / "hooks" / "hook_entry.py").read_text(encoding="utf-8")
 
         for cache_file in cache_versions:
-            cache_content = cache_file.read_text()
+            cache_content = cache_file.read_text(encoding="utf-8")
             assert cache_content == source_content, \
                 f"Cache {cache_file} doesn't match source. " \
                 f"Run: uv run --project plugins/autorun python -m autorun --install --force"
@@ -1041,7 +1041,7 @@ class TestAllLocationsSync:
 
         # Verify it's actually editable
         import json
-        direct_url = json.loads(tool_paths[0].read_text())
+        direct_url = json.loads(tool_paths[0].read_text(encoding="utf-8"))
         assert direct_url.get("dir_info", {}).get("editable") is True, \
             f"UV tool has direct_url.json but editable=false. Reinstall with --editable."
 
