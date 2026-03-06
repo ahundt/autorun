@@ -30,7 +30,7 @@ from filelock import FileLock, Timeout
 
 from . import ipc
 
-HOME_DIR = Path.home() / ".autorun"
+HOME_DIR = ipc.HOME_DIR
 LOCK_PATH = HOME_DIR / "daemon.lock"
 RESTART_LOCK_PATH = HOME_DIR / "daemon-restart.lock"
 

@@ -46,9 +46,8 @@ from .config import CONFIG
 from . import ipc
 
 # === CONFIGURATION ===
-HOME_DIR = Path.home() / ".autorun"
-HOME_DIR.mkdir(mode=0o700, exist_ok=True)
-SOCKET_PATH = HOME_DIR / "daemon.sock"
+HOME_DIR = ipc.HOME_DIR
+HOME_DIR.mkdir(parents=True, exist_ok=True)
 LOCK_PATH = HOME_DIR / "daemon.lock"
 LOG_FILE = HOME_DIR / "daemon.log"
 IDLE_TIMEOUT = 1800  # 30 minutes

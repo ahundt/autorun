@@ -28,7 +28,25 @@ import socket
 import sys
 from pathlib import Path
 
-HOME_DIR = Path.home() / ".autorun"
+def _get_home_dir() -> Path:
+    """Get autorun home directory, platform-adaptive and configurable.
+
+    Priority:
+    1. AUTORUN_HOME env var (for testing and custom deployments)
+    2. Platform default: ~/.autorun (Unix) or %LOCALAPPDATA%/autorun (Windows)
+    """
+    env_home = os.environ.get("AUTORUN_HOME")
+    if env_home:
+        return Path(env_home)
+    if sys.platform == "win32":
+        # Use %LOCALAPPDATA% on Windows (e.g., C:\\Users\\name\\AppData\\Local\\autorun)
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "autorun"
+    return Path.home() / ".autorun"
+
+
+HOME_DIR = _get_home_dir()
 SOCKET_PATH = HOME_DIR / "daemon.sock"
 PORT_FILE = HOME_DIR / "daemon.port"
 

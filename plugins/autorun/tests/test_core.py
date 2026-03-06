@@ -1023,17 +1023,14 @@ class TestAutorunDaemon:
         """_socket_connect_test should return True if no socket."""
         daemon = AutorunDaemon(AutorunApp())
         # With no socket file, should return True (can proceed)
-        with patch.object(Path, 'exists', return_value=False):
-            from autorun.core import SOCKET_PATH
-            original_exists = SOCKET_PATH.exists
-
-            # Create temp path that doesn't exist
-            import tempfile
-            with tempfile.TemporaryDirectory() as tmpdir:
-                fake_socket = Path(tmpdir) / "nonexistent.sock"
-                with patch('autorun.core.SOCKET_PATH', fake_socket):
-                    result = daemon._socket_connect_test()
-                    assert result is True
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_socket = Path(tmpdir) / "nonexistent.sock"
+            fake_port = Path(tmpdir) / "nonexistent.port"
+            with patch('autorun.ipc.SOCKET_PATH', fake_socket), \
+                 patch('autorun.ipc.PORT_FILE', fake_port):
+                result = daemon._socket_connect_test()
+                assert result is True
 
     def test_shutdown_event_initialized_to_none(self):
         """Daemon should initialize with shutdown_event as None."""
