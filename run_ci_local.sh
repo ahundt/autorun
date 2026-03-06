@@ -96,16 +96,15 @@ else
 fi
 
 # Step 7: Safe unit test subset
-# Excludes tests requiring real tmux sessions, running daemon, subprocess spawning,
-# external APIs, or >5s wall-clock time. All excluded markers are declared in
-# plugins/autorun/pyproject.toml under [tool.pytest.ini_options] markers.
-# No CLAUDE_CONFIG_DIR needed -- autorun tests don't use Claude session fixtures.
+# Run from plugins/autorun/ so pytest discovers plugins/autorun/pyproject.toml
+# for asyncio_mode, markers, timeout config (not the workspace root pyproject.toml).
+# Tests live at plugins/autorun/tests/ -- running from repo root finds nothing.
 # Coverage threshold (fail_under=60) not applied -- run 'make test-all' for full coverage.
 step "Unit tests (safe CI subset)" \
-    uv run pytest tests/ \
-        -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow" \
+    bash -c "cd '$SCRIPT_DIR/plugins/autorun' && uv run pytest tests/ \
+        -m 'not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow' \
         --tb=short -v \
-        --junitxml=test_results_local.xml
+        --junitxml='$SCRIPT_DIR/test_results_local.xml'"
 
 # Summary
 echo ""

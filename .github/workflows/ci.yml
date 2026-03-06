@@ -70,15 +70,15 @@ jobs:
         run: uvx ruff check --exit-zero .
 
       - name: Run unit tests
+        # Run from plugins/autorun/ so pytest discovers plugins/autorun/pyproject.toml
+        # for asyncio_mode, markers, timeout config (not the workspace root pyproject.toml).
+        # Tests live at plugins/autorun/tests/ -- running from repo root finds nothing.
+        # --junitxml uses absolute workspace path so dorny/test-reporter finds the XML.
         # Safe subset: excludes tests requiring real tmux sessions, running daemon,
         # subprocess spawning, external APIs, or >5s wall-clock time.
-        # --strict-markers is set in pyproject.toml; all markers are declared.
-        # No CLAUDE_CONFIG_DIR needed -- autorun tests don't use Claude session fixtures.
-        # Coverage threshold (fail_under=60) omitted -- calibrated for full suite,
-        # would fail on this safe CI subset.
-        # Note: single quotes in -m expression avoid shell issues on all platforms;
-        # matrix.os and matrix.python-version are workflow-defined values (not user input).
-        run: uv run pytest tests/ -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow" --tb=short -v --junitxml=test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
+        # Coverage threshold (fail_under=60) omitted -- calibrated for full suite.
+        working-directory: plugins/autorun
+        run: uv run pytest tests/ -m "not tmux and not daemon and not subprocess and not e2e and not interactive and not stress and not race and not slow" --tb=short -v --junitxml=${{ github.workspace }}/test_results_${{ matrix.os }}_py${{ matrix.python-version }}.xml
 
       - name: Publish test results
         # dorny/test-reporter: 1.1k stars, updated 2026, pure Node.js (no Docker).
