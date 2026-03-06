@@ -132,6 +132,7 @@ def state_setup(tmp_path):
 # These verify that session_state() provides real exclusion across processes.
 # =============================================================================
 
+@pytest.mark.subprocess
 class TestCrossProcessContention:
     """Verify real cross-process mutual exclusion via filelock."""
 
