@@ -39,6 +39,9 @@ def create_mock_context(session_id='test-integration', **kwargs):
     ctx.tool_result = kwargs.get('tool_result', '')
     ctx.plan_active = kwargs.get('plan_active', False)
     ctx.plan_arguments = kwargs.get('plan_arguments', '')
+    # v0.9: task staleness defaults — STAGE_INACTIVE so stage-reset guard doesn't fire
+    ctx.autorun_stage = kwargs.get('autorun_stage', EventContext.STAGE_INACTIVE)
+    ctx.tool_calls_since_task_update = kwargs.get('tool_calls_since_task_update', 0)
 
     # Mock the allow and block methods
     def mock_allow(msg=''):
@@ -409,6 +412,81 @@ class TestTaskLifecycleIntegration:
         assert '/ar:task-ignore' in result['systemMessage']
 
         print("✅ Test passed: Stop always blocked - no auto-override")
+
+    # ── Regression tests: v0.9 autorun_stage access in handle_stop() ──────────
+
+    def test_11_handle_stop_mock_has_autorun_stage_attribute(self):
+        """Regression: create_mock_context must expose autorun_stage.
+
+        Before the v0.9 fix, create_mock_context() returned a MagicMock(spec=EventContext)
+        without setting autorun_stage, causing handle_stop() to raise:
+            AttributeError: Mock object has no attribute 'autorun_stage'
+
+        This test guards against that regression: if autorun_stage is missing from
+        the mock, handle_stop() will raise AttributeError and the test will fail.
+        """
+        print("\n=== Regression Test 11: mock ctx exposes autorun_stage ===")
+        self.manager.create_task(
+            '1', {'subject': 'Regression task', 'description': '', 'activeForm': ''}, 'Created'
+        )
+        ctx = create_mock_context(session_id=self.session_id)
+        # Must not raise AttributeError — autorun_stage must be accessible on mock
+        result = self.manager.handle_stop(ctx)
+        assert result is not None, "Stop should be blocked with incomplete task"
+        assert result['continue'] is False
+        print("✅ Regression Test 11 passed: autorun_stage accessible on mock")
+
+    def test_12_stage_reset_at_stage2_completed_with_incomplete_tasks(self):
+        """Regression/feature: handle_stop() resets STAGE_2_COMPLETED → STAGE_2 when tasks outstanding.
+
+        Guards the v0.9 three-stage integration: if a STAGE_2_COMPLETED stop is attempted
+        while tasks are outstanding, the stage must be reset so the AI re-enters Stage 2.
+        """
+        print("\n=== Test 12: Stage reset at STAGE_2_COMPLETED with outstanding tasks ===")
+        self.manager.create_task(
+            '1', {'subject': 'Outstanding task', 'description': '', 'activeForm': ''}, 'Created'
+        )
+        ctx = create_mock_context(
+            session_id=self.session_id,
+            autorun_stage=EventContext.STAGE_2_COMPLETED,
+        )
+        result = self.manager.handle_stop(ctx)
+        assert result is not None, "Stop should be blocked"
+        assert result['continue'] is False, "Stop should be blocked"
+        # Stage must be reset to STAGE_2
+        assert ctx.autorun_stage == EventContext.STAGE_2, (
+            f"Stage should be STAGE_2 after reset, got {ctx.autorun_stage}"
+        )
+        # Counter reset to prevent immediate re-trigger
+        assert (ctx.tool_calls_since_task_update or 0) == 0, (
+            "tool_calls_since_task_update should be reset to 0"
+        )
+        # Stage-reset message must appear in block injection
+        assert 'THREE-STAGE SYSTEM RESET' in result['systemMessage'], (
+            "Block message should include three-stage system reset notice"
+        )
+        print("✅ Test 12 passed: Stage reset correctly at STAGE_2_COMPLETED")
+
+    def test_13_no_stage_reset_when_stage_not_stage2_completed(self):
+        """handle_stop() must NOT reset stage when not at STAGE_2_COMPLETED.
+
+        Only STAGE_2_COMPLETED triggers the reset — other stages must be left unchanged.
+        """
+        print("\n=== Test 13: No stage reset when stage != STAGE_2_COMPLETED ===")
+        self.manager.create_task(
+            '1', {'subject': 'Outstanding task', 'description': '', 'activeForm': ''}, 'Created'
+        )
+        for stage in (EventContext.STAGE_INACTIVE, EventContext.STAGE_1, EventContext.STAGE_2):
+            ctx = create_mock_context(
+                session_id=self.session_id,
+                autorun_stage=stage,
+            )
+            self.manager.handle_stop(ctx)
+            assert ctx.autorun_stage == stage, (
+                f"Stage {stage} should be unchanged after handle_stop(), "
+                f"got {ctx.autorun_stage}"
+            )
+        print("✅ Test 13 passed: Stage not reset for non-STAGE_2_COMPLETED stages")
 
 
 def run_all_integration_tests():

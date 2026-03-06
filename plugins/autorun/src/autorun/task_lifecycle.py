@@ -49,6 +49,7 @@ from . import ipc
 from .core import EventContext, app, logger
 from .session_manager import session_state  # REUSE - no custom shelve code
 from .config import (
+    CONFIG,
     PLAN_TOOLS, TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS,
     TASK_LIST_TOOLS, TASK_GET_TOOLS
 )
@@ -812,6 +813,20 @@ Use TaskList or /task-status to see current state of all tasks.
         # Log warning
         self.log_event("STOP_WARNING", "session",
                       f"Block #{block_count}: {total} incomplete tasks", "blocked")
+
+        # Reset three-stage system if at STAGE_2_COMPLETED — tasks must resolve first.
+        # Chain ordering: prevent_premature_stop fires BEFORE autorun_injection
+        # (core.py:1094-1103 first-non-None wins). autorun_injection never runs when
+        # tasks are outstanding, so the stage reset must happen here.
+        if ctx.autorun_stage == EventContext.STAGE_2_COMPLETED:
+            ctx.autorun_stage = EventContext.STAGE_2
+            ctx.tool_calls_since_task_update = 0  # Prevent immediate re-trigger on re-entry
+            injection += CONFIG.get("task_outstanding_stage3_message", "").format(
+                count=total,
+                names=", ".join(
+                    t.get("subject", f"#{t.get('id', '?')}") for t in incomplete_tasks[:3]
+                ) + ("..." if total > 3 else ""),
+            )
 
         # BLOCK the stop - force AI to continue
         return ctx.block(injection)

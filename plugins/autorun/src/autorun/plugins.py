@@ -37,7 +37,8 @@ from typing import Optional, Dict
 from .core import app, EventContext, logger, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
-    BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS
+    BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
+    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS
 )
 from .session_manager import session_state
 from .command_detection import command_matches_pattern
@@ -961,6 +962,79 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
             )
 
     return None
+
+
+# === TASK STALENESS REMINDER (v0.9) ===
+
+@app.on("PostToolUse")
+def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
+    """Inject reminder when AI hasn't updated tasks recently (v0.9).
+
+    Counts tool calls per session. Resets on TaskCreate/TaskUpdate.
+    Injects reminder when count reaches the configured threshold.
+
+    Independent of task_lifecycle.is_enabled() — registered in plugins.py
+    directly to avoid coupling to task_lifecycle's global enable/disable.
+
+    Respects autorun_active=False (emergency stop, plan mode, pre-autorun).
+    """
+    if not ctx.autorun_active or not ctx.task_staleness_enabled:
+        return None
+
+    # Reset counter when AI actively manages tasks; skip increment.
+    if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS):
+        ctx.tool_calls_since_task_update = 0
+        return None
+
+    count = (ctx.tool_calls_since_task_update or 0) + 1
+    ctx.tool_calls_since_task_update = count
+
+    threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+    if count < threshold:
+        return None
+
+    ctx.tool_calls_since_task_update = 0
+    msg = CONFIG["task_staleness_message"].format(threshold=threshold)
+    return ctx.allow(msg)
+
+
+@app.command("/ar:tasks")
+def toggle_task_staleness(ctx: EventContext) -> str:
+    """Toggle task staleness reminder on/off or set threshold.
+
+    Usage:
+      /ar:tasks          — show status (enabled/disabled, count, threshold)
+      /ar:tasks on       — enable reminders
+      /ar:tasks off      — disable reminders
+      /ar:tasks <number> — set threshold (e.g. /ar:tasks 10)
+    """
+    parts = (ctx.activation_prompt or ctx.prompt or "").split()
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+
+    if arg == "on":
+        ctx.task_staleness_enabled = True
+        ctx.tool_calls_since_task_update = 0
+        threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+        return f"Task staleness reminders enabled (threshold: {threshold} tool calls)."
+    elif arg == "off":
+        ctx.task_staleness_enabled = False
+        return "Task staleness reminders disabled."
+    elif arg.isdigit() and int(arg) >= 1:
+        ctx.task_staleness_threshold = int(arg)
+        ctx.tool_calls_since_task_update = 0
+        return f"Task staleness threshold set to {arg} tool calls."
+    elif arg:
+        # Catches: "0", negative numbers like "-5", non-numeric strings
+        return f"Invalid threshold '{arg}'. Use a positive integer (e.g. /ar:tasks 10)."
+    else:
+        enabled = ctx.task_staleness_enabled
+        count = ctx.tool_calls_since_task_update or 0
+        threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+        return (
+            f"Task staleness reminders: {'on' if enabled else 'off'}\n"
+            f"Tool calls since last task update: {count}/{threshold}\n"
+            f"Usage: /ar:tasks on|off|<number>"
+        )
 
 
 # === STOP HOOK HANDLERS ===

@@ -577,4 +577,227 @@ class TestCodeQuality:
                     f"{'='*70}"
                 )
 
+
+# =============================================================================
+# Task Staleness Reminder + Three-Stage Stage-Reset Guard (v0.9)
+# =============================================================================
+# TDD: these tests are written FIRST. Run them before implementation to confirm
+# they fail, then implement Steps 1-5 until all pass.
+
+from typing import Optional as _Optional
+from autorun.task_lifecycle import TaskLifecycle as _TaskLifecycle
+
+
+def _make_post_tool_ctx(
+    tool_name: str,
+    session_id: str,
+    *,
+    autorun_active: bool = True,
+    task_staleness_enabled: bool = True,
+    tool_calls_since_task_update: int = 0,
+    task_staleness_threshold: _Optional[int] = None,
+) -> EventContext:
+    """Build PostToolUse EventContext for staleness tests."""
+    ctx = EventContext(
+        session_id=session_id,
+        event="PostToolUse",
+        prompt="",
+        tool_name=tool_name,
+        tool_input={},
+        tool_result="",
+        store=ThreadSafeDB(),
+    )
+    ctx.autorun_active = autorun_active
+    ctx.task_staleness_enabled = task_staleness_enabled
+    ctx.tool_calls_since_task_update = tool_calls_since_task_update
+    if task_staleness_threshold is not None:
+        ctx.task_staleness_threshold = task_staleness_threshold
+    return ctx
+
+
+def _make_pending_task(session_id: str, task_id: str = "1", subject: str = "test task") -> None:
+    """Create a pending task in the task lifecycle DB for the given session.
+
+    Uses TaskLifecycle.create_task() directly to avoid the regex-parsing
+    fragility of handle_task_create() which expects "Task #N created" format.
+    """
+    manager = _TaskLifecycle(session_id=session_id)
+    manager.create_task(task_id, {"subject": subject}, f"Task #{task_id} created successfully")
+
+
+# ── Staleness counter ──────────────────────────────────────────────────────
+
+def test_staleness_counter_increments_on_tool_call():
+    """Counter increments for non-task tool calls when autorun active."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-incr",
+                               tool_calls_since_task_update=0)
+    plugins.app.dispatch(ctx)
+    assert (ctx.tool_calls_since_task_update or 0) == 1
+
+
+def test_staleness_injection_at_threshold():
+    """Warning injected when counter reaches threshold."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-inject",
+                               tool_calls_since_task_update=2,
+                               task_staleness_threshold=3)
+    result = plugins.app.dispatch(ctx) or {}
+    additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "TASK LIST REMINDER" in additional
+
+
+def test_staleness_counter_resets_on_task_create():
+    """TaskCreate call resets the counter."""
+    ctx = _make_post_tool_ctx("TaskCreate", "test-stale-reset-create",
+                               tool_calls_since_task_update=20)
+    plugins.app.dispatch(ctx)
+    assert (ctx.tool_calls_since_task_update or 0) == 0
+
+
+def test_staleness_counter_resets_on_task_update():
+    """TaskUpdate call resets the counter."""
+    ctx = _make_post_tool_ctx("TaskUpdate", "test-stale-reset-update",
+                               tool_calls_since_task_update=20)
+    plugins.app.dispatch(ctx)
+    assert (ctx.tool_calls_since_task_update or 0) == 0
+
+
+def test_staleness_disabled_no_injection():
+    """Disabled reminder does not inject even over threshold."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-off",
+                               task_staleness_enabled=False,
+                               tool_calls_since_task_update=50)
+    result = plugins.app.dispatch(ctx) or {}
+    assert "TASK LIST REMINDER" not in str(result)
+
+
+def test_staleness_inactive_autorun_no_injection():
+    """Staleness reminder does not fire when autorun is inactive."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-inactive",
+                               autorun_active=False,
+                               tool_calls_since_task_update=50)
+    result = plugins.app.dispatch(ctx) or {}
+    assert "TASK LIST REMINDER" not in str(result)
+
+
+# ── /ar:tasks command ──────────────────────────────────────────────────────
+
+def test_tasks_command_on():
+    """/ar:tasks on enables staleness reminders and returns confirmation."""
+    result = _dispatch("/ar:tasks on", session_id="test-tasks-cmd-on")
+    assert "enabled" in str(result).lower()
+
+
+def test_tasks_command_off():
+    """/ar:tasks off disables staleness reminders."""
+    sid = "test-tasks-cmd-off"
+    _dispatch("/ar:tasks off", session_id=sid)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", store=ThreadSafeDB())
+    assert ctx.task_staleness_enabled is False
+
+
+def test_tasks_command_threshold_override():
+    """/ar:tasks 5 sets per-session threshold."""
+    sid = "test-tasks-thresh"
+    _dispatch("/ar:tasks 5", session_id=sid)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", store=ThreadSafeDB())
+    assert ctx.task_staleness_threshold == 5
+
+
+def test_tasks_command_status():
+    """/ar:tasks (no args) returns a status string."""
+    result = _dispatch("/ar:tasks", session_id="test-tasks-status")
+    text = str(result).lower()
+    assert "staleness" in text or "on" in text or "off" in text
+
+
+def test_staleness_threshold_zero_validation():
+    """Threshold 0 is rejected with an error message."""
+    result = _dispatch("/ar:tasks 0", session_id="test-thresh-zero")
+    text = str(result).lower()
+    assert "invalid" in text or "positive" in text or "at least" in text
+
+
+def test_staleness_threshold_negative_validation():
+    """Negative threshold is rejected with an error message (not silent fallthrough)."""
+    result = _dispatch("/ar:tasks -5", session_id="test-thresh-neg")
+    text = str(result).lower()
+    assert "invalid" in text or "positive" in text
+
+
+# ── Stage reset in handle_stop() ──────────────────────────────────────────
+
+def test_stage_reset_when_stage2_completed_and_tasks_outstanding():
+    """handle_stop() resets STAGE_2_COMPLETED -> STAGE_2 when tasks outstanding."""
+    sid = "test-stage-reset"
+    _make_pending_task(sid, task_id="1", subject="test outstanding task")
+
+    ctx = EventContext(
+        session_id=sid,
+        event="Stop",
+        prompt="",
+        store=ThreadSafeDB(),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert ctx.autorun_stage == EventContext.STAGE_2, (
+        f"Stage should be STAGE_2 after reset, got {ctx.autorun_stage}"
+    )
+    combined = str(result)
+    assert "CANNOT STOP" in combined or "THREE-STAGE" in combined
+
+
+def test_no_stage_reset_when_no_tasks_outstanding():
+    """handle_stop() does NOT reset stage when no tasks outstanding.
+
+    With no outstanding tasks, prevent_premature_stop returns None and
+    autorun_injection runs. autorun_injection at STAGE_2_COMPLETED injects
+    countdown messages (lines 1054-1061 of plugins.py) — result is not None.
+    The key assertion is: stage remains STAGE_2_COMPLETED (no reset), and
+    the THREE-STAGE SYSTEM RESET message is NOT injected.
+    """
+    sid = "test-stage-no-reset"
+    # No tasks created for this session_id
+    ctx = EventContext(
+        session_id=sid,
+        event="Stop",
+        prompt="",
+        store=ThreadSafeDB(),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
+
+    result = plugins.app.dispatch(ctx)
+    # Stage must remain STAGE_2_COMPLETED — no reset without outstanding tasks
+    assert ctx.autorun_stage == EventContext.STAGE_2_COMPLETED
+    # The stage-reset message must NOT appear
+    assert "THREE-STAGE SYSTEM RESET" not in str(result)
+
+
+def test_stage_reset_counter_also_reset():
+    """Stage reset also resets staleness counter to avoid immediate re-trigger."""
+    sid = "test-stage-counter-reset"
+    _make_pending_task(sid, task_id="1", subject="outstanding task")
+
+    ctx = EventContext(
+        session_id=sid,
+        event="Stop",
+        prompt="",
+        store=ThreadSafeDB(),
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
+    ctx.tool_calls_since_task_update = 24
+
+    plugins.app.dispatch(ctx)
+
+    # If stage was reset (tasks were found), counter must also be reset
+    if ctx.autorun_stage == EventContext.STAGE_2:
+        assert (ctx.tool_calls_since_task_update or 0) == 0, (
+            "Counter should be reset to 0 when stage is reset"
+        )
+
         

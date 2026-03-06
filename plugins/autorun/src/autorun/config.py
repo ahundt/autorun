@@ -269,6 +269,27 @@ CONFIG = {
     # It should describe WHAT the AI is doing, not just be a state variable name.
     "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
 
+    # ─── Task Staleness Reminder (v0.9) ───────────────────────────────────────
+    # Tool calls without TaskCreate/TaskUpdate before injecting reminder.
+    "task_staleness_threshold": 25,
+    # Injected when threshold crossed. {threshold} replaced at runtime.
+    "task_staleness_message": (
+        "\n\u26a0\ufe0f TASK LIST REMINDER: {threshold} tool calls have passed without a "
+        "TaskCreate or TaskUpdate. Please:\n"
+        "1. Call TaskList to review current task state\n"
+        "2. Mark in-progress tasks: TaskUpdate(taskId=N, status=\"in_progress\")\n"
+        "3. Mark completed tasks: TaskUpdate(taskId=N, status=\"completed\")\n"
+        "4. Add newly discovered tasks with TaskCreate\n"
+        "5. Update dependencies with addBlockedBy if order changed\n"
+        "Then continue your work autonomously \u2014 do NOT stop."
+    ),
+    # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
+    "task_outstanding_stage3_message": (
+        "\n\u26a0\ufe0f THREE-STAGE SYSTEM RESET: Stage 3 cannot complete while tasks are "
+        "outstanding ({count} task(s): {names}). Update task statuses with TaskUpdate, "
+        "then continue \u2014 Stage 2 is still active."
+    ),
+
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py

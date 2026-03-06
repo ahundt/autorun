@@ -623,7 +623,10 @@ class EventContext:
         'ai_monitor_pid': None,
         'plan_active': False,
         'plan_type': '',
-        'plan_arguments': '',  # v0.7: Store original user request from $ARGUMENTS
+        'plan_arguments': '',       # v0.7: Store original user request from $ARGUMENTS
+        'tool_calls_since_task_update': 0,   # v0.9: Counter for task staleness reminder
+        'task_staleness_enabled': True,      # v0.9: Enable/disable reminder injection
+        'task_staleness_threshold': None,    # v0.9: Session override (None = use CONFIG default)
     }
 
     def __init__(self, session_id: str, event: str, prompt: str = "",
