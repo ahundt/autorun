@@ -800,4 +800,621 @@ def test_stage_reset_counter_also_reset():
             "Counter should be reset to 0 when stage is reset"
         )
 
-        
+
+# ── Session isolation ─────────────────────────────────────────────────────
+# Use timestamp-based unique session IDs to avoid stale shelve state
+# from previous test runs contaminating assertions.
+
+def _iso_sid(label: str) -> str:
+    """Generate unique session ID for isolation tests."""
+    import time
+    return f"iso-{int(time.time() * 1000)}-{label}"
+
+
+def test_staleness_counter_session_isolation():
+    """Staleness counter for session A must not bleed into session B.
+
+    Regression guard: EventContext keys are {session_id}:{field}. If keying
+    were broken (e.g., global state), session B would see session A's counter.
+    """
+    shared_store = ThreadSafeDB()  # Single store like production daemon
+    sid_a = _iso_sid("counter-A")
+    sid_b = _iso_sid("counter-B")
+
+    # Session A: increment counter to 10
+    ctx_a = EventContext(
+        session_id=sid_a,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    ctx_a.autorun_active = True
+    ctx_a.task_staleness_enabled = True
+    ctx_a.tool_calls_since_task_update = 10
+
+    # Session B: fresh context on same store, different session_id
+    ctx_b = EventContext(
+        session_id=sid_b,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    ctx_b.autorun_active = True
+    ctx_b.task_staleness_enabled = True
+
+    # Session B's counter should be 0 (default), not 10 (session A's value)
+    assert (ctx_b.tool_calls_since_task_update or 0) == 0, (
+        f"Session B counter should be 0, got {ctx_b.tool_calls_since_task_update} "
+        f"(leaked from session A)"
+    )
+
+    # Dispatch on B — should increment to 1, not 11
+    plugins.app.dispatch(ctx_b)
+    assert (ctx_b.tool_calls_since_task_update or 0) == 1, (
+        f"Session B counter should be 1 after one tool call, "
+        f"got {ctx_b.tool_calls_since_task_update}"
+    )
+
+    # Session A's counter should still be 10 (untouched by B's dispatch)
+    ctx_a2 = EventContext(
+        session_id=sid_a,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    assert (ctx_a2.tool_calls_since_task_update or 0) == 10, (
+        f"Session A counter should still be 10, got {ctx_a2.tool_calls_since_task_update} "
+        f"(corrupted by session B)"
+    )
+
+
+def test_staleness_enabled_session_isolation():
+    """Disabling staleness in session A must not affect session B.
+
+    Guards against global state leaking the enabled/disabled flag.
+    """
+    shared_store = ThreadSafeDB()
+    sid_a = _iso_sid("enable-A")
+    sid_b = _iso_sid("enable-B")
+
+    # Session A: disable staleness
+    ctx_a = EventContext(
+        session_id=sid_a,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    ctx_a.task_staleness_enabled = False
+
+    # Session B: should still be enabled (default=True)
+    ctx_b = EventContext(
+        session_id=sid_b,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    assert ctx_b.task_staleness_enabled is True, (
+        f"Session B should have staleness enabled (default), "
+        f"got {ctx_b.task_staleness_enabled} (leaked from session A)"
+    )
+
+
+def test_staleness_threshold_session_isolation():
+    """Custom threshold in session A must not affect session B.
+
+    Session A sets threshold=5; session B should still see None (use CONFIG default).
+    """
+    shared_store = ThreadSafeDB()
+    sid_a = _iso_sid("thresh-A")
+    sid_b = _iso_sid("thresh-B")
+
+    # Session A: custom threshold
+    ctx_a = EventContext(
+        session_id=sid_a,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    ctx_a.task_staleness_threshold = 5
+
+    # Session B: should see None (CONFIG default, not 5)
+    ctx_b = EventContext(
+        session_id=sid_b,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=shared_store,
+    )
+    assert ctx_b.task_staleness_threshold is None, (
+        f"Session B threshold should be None (default), "
+        f"got {ctx_b.task_staleness_threshold} (leaked from session A)"
+    )
+
+
+# ── E2E: full dispatch pathway tests ─────────────────────────────────────
+
+def _e2e_post_tool(tool_name: str, session_id: str, store: ThreadSafeDB) -> dict:
+    """Dispatch a PostToolUse event through the full handler chain.
+
+    Uses a shared store to simulate the daemon's persistent ThreadSafeDB,
+    so state set by one dispatch persists to the next (same as production).
+
+    Only sets autorun_active=True (required for handler to fire).
+    Does NOT force task_staleness_enabled — lets store/defaults supply it,
+    so /ar:tasks off is respected across dispatches.
+    """
+    ctx = EventContext(
+        session_id=session_id,
+        event="PostToolUse",
+        prompt="",
+        tool_name=tool_name,
+        tool_input={},
+        tool_result="",
+        store=store,
+    )
+    ctx.autorun_active = True
+    return plugins.app.dispatch(ctx) or {}
+
+
+def _e2e_stop(session_id: str, store: ThreadSafeDB, autorun_stage: int = 0) -> dict:
+    """Dispatch a Stop event through the full handler chain."""
+    ctx = EventContext(
+        session_id=session_id,
+        event="Stop",
+        prompt="",
+        store=store,
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = autorun_stage
+    result = plugins.app.dispatch(ctx) or {}
+    return result, ctx
+
+
+def _e2e_command(prompt: str, session_id: str, store: ThreadSafeDB) -> dict:
+    """Dispatch a UserPromptSubmit (command) through the full handler chain."""
+    ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        tool_name="",
+        tool_input={},
+        store=store,
+    )
+    return plugins.app.dispatch(ctx) or {}
+
+
+class TestStalenessE2E:
+    """End-to-end tests exercising full dispatch chain with persistent store.
+
+    Uses unique session IDs per test run (timestamp prefix) to avoid stale
+    shelve state from previous runs contaminating assertions.
+    """
+
+    def setup_method(self):
+        import time
+        self.store = ThreadSafeDB()  # Shared store like production daemon
+        self._prefix = f"e2e-{int(time.time() * 1000)}"
+
+    def _sid(self, label: str) -> str:
+        """Generate unique session ID for this test run."""
+        return f"{self._prefix}-{label}"
+
+    # ── Counter lifecycle ──────────────────────────────────────────────
+
+    def test_counter_increments_across_dispatches(self):
+        """Counter persists and increments across separate dispatch calls."""
+        sid = self._sid("counter-persist")
+        for i in range(5):
+            _e2e_post_tool("Bash", sid, self.store)
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                           tool_name="Read", store=self.store)
+        assert (ctx.tool_calls_since_task_update or 0) == 5
+
+    def test_multiple_injection_cycles(self):
+        """Counter resets after injection and can trigger again."""
+        sid = self._sid("multi-cycle")
+        # Set threshold to 3 via command
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        injections = []
+        for i in range(9):
+            result = _e2e_post_tool("Bash", sid, self.store)
+            if "TASK LIST REMINDER" in str(result):
+                injections.append(i)
+
+        # Should inject at tool calls 3, 6, 9 → indices 2, 5, 8
+        assert len(injections) == 3, (
+            f"Expected 3 injections at threshold=3 over 9 calls, got {len(injections)} "
+            f"at indices {injections}"
+        )
+
+    def test_task_create_resets_counter_mid_cycle(self):
+        """TaskCreate mid-cycle resets counter; injection doesn't fire early."""
+        sid = self._sid("create-mid-cycle")
+        _e2e_command("/ar:tasks 5", sid, self.store)
+
+        # 3 tool calls, then TaskCreate, then 4 more — total 7 non-task calls
+        # but longest streak is 4, so no injection at threshold=5
+        for _ in range(3):
+            _e2e_post_tool("Bash", sid, self.store)
+        _e2e_post_tool("TaskCreate", sid, self.store)
+        results = []
+        for _ in range(4):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        assert all("TASK LIST REMINDER" not in str(r) for r in results), (
+            "No injection expected — longest streak is 4, threshold is 5"
+        )
+
+    def test_task_update_resets_counter_mid_cycle(self):
+        """TaskUpdate resets counter identically to TaskCreate."""
+        sid = self._sid("update-mid-cycle")
+        _e2e_command("/ar:tasks 5", sid, self.store)
+
+        for _ in range(3):
+            _e2e_post_tool("Bash", sid, self.store)
+        _e2e_post_tool("TaskUpdate", sid, self.store)
+        results = []
+        for _ in range(4):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        assert all("TASK LIST REMINDER" not in str(r) for r in results)
+
+    def test_task_list_does_not_reset_counter(self):
+        """TaskList should NOT reset the counter (only Create/Update do)."""
+        sid = self._sid("list-no-reset")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        _e2e_post_tool("Bash", sid, self.store)      # count=1
+        _e2e_post_tool("TaskList", sid, self.store)   # count=2 (NOT reset)
+        result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
+
+        assert "TASK LIST REMINDER" in str(result), (
+            "TaskList should not reset the counter — injection expected at count=3"
+        )
+
+    def test_task_get_does_not_reset_counter(self):
+        """TaskGet should NOT reset the counter."""
+        sid = self._sid("get-no-reset")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        _e2e_post_tool("Bash", sid, self.store)      # count=1
+        _e2e_post_tool("TaskGet", sid, self.store)    # count=2 (NOT reset)
+        result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
+
+        assert "TASK LIST REMINDER" in str(result), (
+            "TaskGet should not reset the counter — injection expected at count=3"
+        )
+
+    def test_lowercase_task_create_resets_counter(self):
+        """Gemini-style tool name 'task_create' should also reset counter."""
+        sid = self._sid("lowercase-create")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        _e2e_post_tool("Bash", sid, self.store)        # count=1
+        _e2e_post_tool("Bash", sid, self.store)        # count=2
+        _e2e_post_tool("task_create", sid, self.store)  # reset
+        result = _e2e_post_tool("Bash", sid, self.store)  # count=1
+
+        assert "TASK LIST REMINDER" not in str(result), (
+            "task_create should reset counter — no injection expected at count=1"
+        )
+
+    def test_lowercase_task_update_resets_counter(self):
+        """Gemini-style 'task_update' should also reset counter."""
+        sid = self._sid("lowercase-update")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        _e2e_post_tool("Bash", sid, self.store)
+        _e2e_post_tool("Bash", sid, self.store)
+        _e2e_post_tool("task_update", sid, self.store)  # reset
+        result = _e2e_post_tool("Bash", sid, self.store)
+
+        assert "TASK LIST REMINDER" not in str(result)
+
+    # ── /ar:tasks command → handler interaction ────────────────────────
+
+    def test_command_off_then_handler_silent(self):
+        """/ar:tasks off → PostToolUse handler does not inject even over threshold."""
+        sid = self._sid("off-silent")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+        _e2e_command("/ar:tasks off", sid, self.store)
+
+        results = []
+        for _ in range(10):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        assert all("TASK LIST REMINDER" not in str(r) for r in results), (
+            "No injection expected when staleness is disabled"
+        )
+
+    def test_command_on_after_off_resumes(self):
+        """/ar:tasks on after off → handler resumes injection."""
+        sid = self._sid("on-after-off")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+        _e2e_command("/ar:tasks off", sid, self.store)
+
+        # 5 silent calls
+        for _ in range(5):
+            _e2e_post_tool("Bash", sid, self.store)
+
+        # Re-enable
+        _e2e_command("/ar:tasks on", sid, self.store)
+
+        # Counter was reset by /ar:tasks on; 3 more calls should trigger
+        results = []
+        for _ in range(3):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        assert "TASK LIST REMINDER" in str(results[-1]), (
+            "Injection expected after re-enabling at call #3"
+        )
+
+    def test_command_threshold_change_takes_effect(self):
+        """/ar:tasks <n> changes threshold; handler uses new value."""
+        sid = self._sid("thresh-change")
+        _e2e_command("/ar:tasks 10", sid, self.store)
+
+        # 5 calls — should NOT inject at threshold=10
+        results = []
+        for _ in range(5):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+        assert all("TASK LIST REMINDER" not in str(r) for r in results)
+
+        # Lower threshold to 2 (counter was reset by the command)
+        _e2e_command("/ar:tasks 2", sid, self.store)
+
+        # 2 more calls should trigger
+        _e2e_post_tool("Bash", sid, self.store)
+        result = _e2e_post_tool("Bash", sid, self.store)
+        assert "TASK LIST REMINDER" in str(result)
+
+    def test_command_invalid_string_rejected(self):
+        """/ar:tasks abc returns error message."""
+        result = _e2e_command("/ar:tasks abc", self._sid("invalid-str"), self.store)
+        text = str(result).lower()
+        assert "invalid" in text
+
+    def test_command_float_rejected(self):
+        """/ar:tasks 2.5 is rejected (not a valid integer)."""
+        result = _e2e_command("/ar:tasks 2.5", self._sid("float"), self.store)
+        text = str(result).lower()
+        assert "invalid" in text
+
+    def test_command_status_shows_count(self):
+        """/ar:tasks (no args) shows current counter value."""
+        sid = self._sid("status-count")
+        # Increment counter by dispatching some tool calls
+        for _ in range(7):
+            _e2e_post_tool("Bash", sid, self.store)
+
+        result = _e2e_command("/ar:tasks", sid, self.store)
+        text = str(result)
+        # Should show 7/25 (or similar count/threshold)
+        assert "7" in text, f"Status should show count=7, got: {text}"
+
+    # ── Emergency stop / autorun_active=False ──────────────────────────
+
+    def test_inactive_autorun_no_injection_e2e(self):
+        """When autorun_active=False (emergency stop), handler is silent."""
+        sid = self._sid("emergency-stop")
+        store = self.store
+
+        # Set up active session with low threshold
+        _e2e_command("/ar:tasks 2", sid, store)
+
+        # Simulate emergency stop: set autorun_active=False
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                           tool_name="Bash", store=store)
+        ctx.autorun_active = False
+
+        # Now dispatch — handler should short-circuit at autorun_active check
+        results = []
+        for _ in range(5):
+            ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                               tool_name="Bash", store=store)
+            # autorun_active defaults to False from _DEFAULTS when not set
+            result = plugins.app.dispatch(ctx) or {}
+            results.append(result)
+
+        assert all("TASK LIST REMINDER" not in str(r) for r in results)
+
+    # ── Stage reset in Stop handler ────────────────────────────────────
+
+    def test_stage_reset_full_workflow(self):
+        """Full e2e: tools → threshold → inject → stop with tasks → stage reset."""
+        sid = self._sid("full-workflow")
+        store = self.store
+        _e2e_command("/ar:tasks 3", sid, store)
+
+        # Phase 1: 3 tool calls → injection
+        for _ in range(2):
+            _e2e_post_tool("Bash", sid, store)
+        result = _e2e_post_tool("Bash", sid, store)
+        assert "TASK LIST REMINDER" in str(result)
+
+        # Phase 2: TaskUpdate resets counter
+        _e2e_post_tool("TaskUpdate", sid, store)
+        ctx_check = EventContext(session_id=sid, event="PostToolUse",
+                                  prompt="", tool_name="Bash", store=store)
+        assert (ctx_check.tool_calls_since_task_update or 0) == 0
+
+        # Phase 3: Create outstanding task, attempt stop at STAGE_2_COMPLETED
+        _make_pending_task(sid, task_id="1", subject="e2e outstanding task")
+        result, ctx = _e2e_stop(sid, store, autorun_stage=EventContext.STAGE_2_COMPLETED)
+
+        assert ctx.autorun_stage == EventContext.STAGE_2, (
+            f"Stage should be reset to STAGE_2, got {ctx.autorun_stage}"
+        )
+        assert "THREE-STAGE SYSTEM RESET" in str(result)
+        assert (ctx.tool_calls_since_task_update or 0) == 0
+
+    def test_stop_stage3_not_reset(self):
+        """STAGE_3 with outstanding tasks does NOT trigger stage reset.
+
+        Only STAGE_2_COMPLETED triggers the reset — STAGE_3 is a terminal stage.
+        """
+        sid = self._sid("stage3-no-reset")
+        _make_pending_task(sid, task_id="1", subject="stage3 task")
+        result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_3)
+
+        # Stop is still blocked (tasks outstanding), but no THREE-STAGE RESET
+        assert "THREE-STAGE SYSTEM RESET" not in str(result)
+        assert ctx.autorun_stage == EventContext.STAGE_3
+
+    def test_stop_stage1_not_reset(self):
+        """STAGE_1 with outstanding tasks does NOT trigger stage reset."""
+        sid = self._sid("stage1-no-reset")
+        _make_pending_task(sid, task_id="1", subject="stage1 task")
+        result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_1)
+
+        assert "THREE-STAGE SYSTEM RESET" not in str(result)
+        assert ctx.autorun_stage == EventContext.STAGE_1
+
+    def test_stop_no_tasks_no_block(self):
+        """Stop with no outstanding tasks is allowed (not blocked)."""
+        sid = self._sid("stop-clean")
+        result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_2_COMPLETED)
+
+        # No tasks → prevent_premature_stop returns None → autorun_injection runs
+        # The key check: "CANNOT STOP" should NOT appear
+        assert "CANNOT STOP" not in str(result)
+
+    def test_stop_with_completed_tasks_not_blocked(self):
+        """Stop allowed when all tasks are completed (not outstanding)."""
+        sid = self._sid("stop-completed")
+        _make_pending_task(sid, task_id="1", subject="completed task")
+        # Mark it completed
+        from autorun.task_lifecycle import TaskLifecycle as _TL
+        mgr = _TL(session_id=sid)
+        mgr.update_task("1", {"status": "completed"}, "Completed")
+
+        result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_2_COMPLETED)
+        assert "CANNOT STOP" not in str(result)
+        assert "THREE-STAGE SYSTEM RESET" not in str(result)
+
+    # ── Resume / session lifecycle ─────────────────────────────────────
+
+    def test_counter_persists_across_resume(self):
+        """Counter survives session resume (same session_id, new EventContext).
+
+        Simulates: AI runs 15 tool calls → session closed → claude --resume
+        → new EventContext with same session_id → counter should be 15 (from shelve).
+        """
+        sid = self._sid("resume")
+
+        # Phase 1: active session, 15 tool calls
+        for _ in range(15):
+            _e2e_post_tool("Bash", sid, self.store)
+
+        # Phase 2: simulate resume — new ThreadSafeDB (daemon restart), same sid
+        resumed_store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", store=resumed_store,
+        )
+        assert (ctx.tool_calls_since_task_update or 0) == 15, (
+            f"Counter should persist across resume, expected 15, "
+            f"got {ctx.tool_calls_since_task_update}"
+        )
+
+    def test_enabled_flag_persists_across_resume(self):
+        """/ar:tasks off persists across session resume."""
+        sid = self._sid("resume-off")
+
+        # Disable in original session
+        _e2e_command("/ar:tasks off", sid, self.store)
+
+        # Resume: new store, same sid
+        resumed_store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", store=resumed_store,
+        )
+        assert ctx.task_staleness_enabled is False, (
+            "task_staleness_enabled=False should persist across resume"
+        )
+
+    def test_threshold_persists_across_resume(self):
+        """Custom threshold persists across session resume."""
+        sid = self._sid("resume-thresh")
+
+        _e2e_command("/ar:tasks 7", sid, self.store)
+
+        resumed_store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", store=resumed_store,
+        )
+        assert ctx.task_staleness_threshold == 7, (
+            f"Threshold should persist across resume, expected 7, "
+            f"got {ctx.task_staleness_threshold}"
+        )
+
+    def test_new_session_starts_clean(self):
+        """New session (different session_id) starts with default counter=0.
+
+        Simulates: session A ran with counter=20 → user starts fresh session B
+        → B should have counter=0, enabled=True, threshold=None.
+        """
+        sid_old = self._sid("old-session")
+        sid_new = self._sid("new-session")
+
+        # Old session: counter at 20, disabled, threshold=3
+        _e2e_command("/ar:tasks 3", sid_old, self.store)
+        _e2e_command("/ar:tasks off", sid_old, self.store)
+        for _ in range(20):
+            ctx = EventContext(
+                session_id=sid_old, event="PostToolUse", prompt="",
+                tool_name="Bash", store=self.store,
+            )
+            ctx.tool_calls_since_task_update = (ctx.tool_calls_since_task_update or 0) + 1
+
+        # New session: everything should be default
+        ctx_new = EventContext(
+            session_id=sid_new, event="PostToolUse", prompt="",
+            tool_name="Bash", store=self.store,
+        )
+        assert (ctx_new.tool_calls_since_task_update or 0) == 0, "New session counter should be 0"
+        assert ctx_new.task_staleness_enabled is True, "New session should have staleness enabled"
+        assert ctx_new.task_staleness_threshold is None, "New session threshold should be None"
+
+    def test_emergency_stop_prevents_staleness_after_resume(self):
+        """After emergency stop sets autorun_active=False, staleness doesn't fire.
+
+        Even if counter is high, the autorun_active=False guard prevents injection.
+        """
+        sid = self._sid("estop-resume")
+
+        # Build up counter
+        for _ in range(20):
+            _e2e_post_tool("Bash", sid, self.store)
+
+        # Emergency stop: set autorun_active=False (like autorun_injection does)
+        ctx_stop = EventContext(
+            session_id=sid, event="Stop", prompt="", store=self.store,
+        )
+        ctx_stop.autorun_active = False
+
+        # Resume: handler should not inject even though counter is high
+        _e2e_command("/ar:tasks 3", sid, self.store)  # low threshold
+
+        results = []
+        for _ in range(5):
+            ctx = EventContext(
+                session_id=sid, event="PostToolUse", prompt="",
+                tool_name="Bash", store=self.store,
+            )
+            # autorun_active reads False from shelve — no need to set it
+            result = plugins.app.dispatch(ctx) or {}
+            results.append(result)
+
+        assert all("TASK LIST REMINDER" not in str(r) for r in results), (
+            "No injection expected after emergency stop — autorun_active is False"
+        )
