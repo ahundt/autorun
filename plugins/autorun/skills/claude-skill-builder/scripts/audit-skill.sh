@@ -12,10 +12,14 @@
 #   bash audit-skill.sh ~/.claude/skills/my-skill
 #
 # Score guide:
-#   90-100%  Ready to publish
-#   70-89%   Good — address warnings before publishing
-#   50-69%   Needs work on quality issues
+#   90-100%  No structural problems detected
+#   70-89%   Minor warnings — review action items
+#   50-69%   Multiple issues found — address before distributing
 #   <50%     Critical structural problems — fix FAILs first
+#
+# Note: This is a smoke test of skill structure, not a comprehensive
+# quality or activation-rate review. A passing score means the file
+# structure follows conventions, not that the skill content is correct.
 ##############################################################################
 
 set -e
@@ -427,6 +431,37 @@ audit_skill() {
                 "Update to kebab-case: my-skill, skill-name"
         else
             print_pass "No underscore-style skill names outside ❌ teaching examples"
+        fi
+    fi
+
+    # ──────────────────────────────────────────────────────────
+    # 7. Activation Quality (based on community benchmarks)
+    # See: notes/2026_03_reliable_skill_usage_and_design.md
+    # Research: 250 sandboxed evals show keyword matching >> semantic matching
+    # ──────────────────────────────────────────────────────────
+    print_section "7. Activation Quality Hints"
+
+    if [ -f "$skill_path/SKILL.md" ] && [ "$has_frontmatter" -eq 1 ]; then
+        # Check description uses "Use this when" / "Contains" / "For" template
+        # Research: This structure maximizes relevance checks at the activation layer
+        local has_use_when=0
+        if echo "$frontmatter" | grep -qi "use this when\|use when\|should be used when"; then
+            has_use_when=1
+            print_pass "Description uses 'Use this when' pattern (improves activation matching)"
+        else
+            print_warn "Description lacks 'Use this when' / 'should be used when' pattern" \
+                "Research shows descriptions starting with 'This skill should be used when user wants to \"X\", \"Y\"' improve activation rates. See notes/2026_03_reliable_skill_usage_and_design.md"
+        fi
+
+        # Check for specific technical trigger words in description
+        # Research: Specific technical terms ($state, command(), *.ts) trigger 100% activation
+        # Conceptual queries ("How do X work?") fail 60-80% of the time
+        local trigger_word_count
+        trigger_word_count=$(echo "$frontmatter" | grep -cE '\*\.[a-z]+|[A-Z][a-z]+[A-Z]|`[a-z_]+`|\$[a-z]|command\(\)|function\(\)' || true)
+        if [ "$trigger_word_count" -gt 0 ]; then
+            print_pass "Description contains specific technical identifiers ($trigger_word_count found)"
+        else
+            print_info "Consider adding specific technical terms to description (file patterns like *.py, function names, technical keywords). Research: specific terms trigger activation more reliably than conceptual language."
         fi
     fi
 

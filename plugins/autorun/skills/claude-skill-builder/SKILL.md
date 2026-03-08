@@ -280,9 +280,10 @@ migration scenarios, before/after examples, and performance tracking:
 - **`references/troubleshooting.md`** — Fix guide: skill doesn't trigger, triggers too often,
   instructions not followed, context overload
 - **`references/changelog.md`** — Version history and improvement notes
+- **`notes/2026_03_reliable_skill_usage_and_design.md`** — Community research on skill activation rates (250 sandboxed evals): keyword matching vs semantic, naming conventions, forced-eval hooks, description template patterns
 
 ### Scripts (run directly — do not load into context)
-- **`scripts/audit-skill.sh`** — Automated skill structure validator with scored output (0-100%)
+- **`scripts/audit-skill.sh`** — Skill structure smoke test with scored output (0-100%)
   ```bash
   bash ~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
   ```
