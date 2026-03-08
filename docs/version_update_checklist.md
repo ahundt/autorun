@@ -6,7 +6,7 @@ When updating versions in the autorun marketplace, use this checklist to ensure 
 
 All plugins in this marketplace use the **same version number** for consistency. When releasing a new version, update ALL plugins to the same version.
 
-**Current Version: 0.9.0**
+**Current Version: 0.10.0**
 
 ### Total Files to Update: 13
 

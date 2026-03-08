@@ -526,16 +526,16 @@ def _read_plugin_version(plugin_dir: Path) -> str:
         plugin_dir: Path to plugin directory
 
     Returns:
-        Version string from plugin.json, or "0.9.0" as fallback
+        Version string from plugin.json, or "0.10.0" as fallback
     """
     manifest = plugin_dir / ".claude-plugin" / "plugin.json"
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-            return data.get("version", "0.9.0")
+            return data.get("version", "0.10.0")
         except (json.JSONDecodeError, OSError):
             pass
-    return "0.9.0"
+    return "0.10.0"
 
 
 def _check_hook_conflicts() -> None:
@@ -1347,7 +1347,7 @@ def _update_package_metadata(marketplace_root: Path) -> None:
             meta_file.parent.mkdir(parents=True, exist_ok=True)
             import json
             data = {
-                "version": "0.9.0",
+                "version": "0.10.0",
                 "commit": commit,
                 "build_time": build_time
             }
@@ -1491,7 +1491,7 @@ def install_plugins(
     try:
         from autorun import __version__
     except ImportError:
-        __version__ = "0.9.0"
+        __version__ = "0.10.0"
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")
@@ -1658,7 +1658,7 @@ def install_plugins(
         print("Installing ai-session-tools (aise)...")
         aise_result = run_cmd(
             ["uv", "tool", "install", "--force",
-             "git+https://github.com/ahundt/ai_session_tools.git@v0.2.0"],
+             "git+https://github.com/ahundt/ai_session_tools.git@v0.3.0"],
             timeout=120,
         )
         if aise_result.ok:
@@ -1898,8 +1898,14 @@ def check_for_updates() -> tuple[bool, str, str]:
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read())
             latest = data["tag_name"].lstrip("v")
-            # Simple string comparison (semantic versioning)
-            return (latest > current, current, latest)
+            # Semantic version comparison using integer tuples
+            def _parse_ver(v: str) -> tuple[int, ...]:
+                return tuple(int(x) for x in v.split("."))
+            try:
+                return (_parse_ver(latest) > _parse_ver(current), current, latest)
+            except (ValueError, TypeError):
+                # Unparseable version — don't risk a wrong comparison
+                return (False, current, latest)
     except (urllib.error.URLError, json.JSONDecodeError, KeyError):
         return (False, current, "unknown")
 

@@ -1,5 +1,5 @@
 {
-  "description": "autorun v0.9 - unified daemon-based hook handler",
+  "description": "autorun v0.10 - unified daemon-based hook handler",
   "hooks": {
     "UserPromptSubmit": [
       {

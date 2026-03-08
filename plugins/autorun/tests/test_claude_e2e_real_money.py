@@ -128,7 +128,7 @@ def find_hook_script() -> Path:
         # Git repo home location
         Path.home() / ".claude" / "autorun" / "plugins" / "autorun" / "hooks" / "hook_entry.py",
         # Claude plugin cache (installed via plugin system)
-        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.9.0" / "hooks" / "hook_entry.py",
+        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.10.0" / "hooks" / "hook_entry.py",
     ]
     for c in candidates:
         if c.exists():
@@ -143,7 +143,7 @@ def find_plugin_root() -> Path:
     candidates = [
         Path(__file__).parent.parent,
         Path.home() / ".claude" / "autorun" / "plugins" / "autorun",
-        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.9.0",
+        Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun" / "0.10.0",
     ]
     for c in candidates:
         if (c / "pyproject.toml").exists():

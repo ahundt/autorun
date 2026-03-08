@@ -35,7 +35,7 @@ def generate_manifests(plugin_dir: Path):
     # 1. Base Manifest Data
     manifest = {
         "name": "ar",
-        "version": pkg.get("version", "0.9.0"),
+        "version": pkg.get("version", "0.10.0"),
         "description": pkg.get("description", ""),
         "author": {
             "name": pkg.get("authors", ["autorun contributors"])[0],

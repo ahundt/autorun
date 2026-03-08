@@ -13,7 +13,7 @@
       "description": "Autonomous task automation with file creation policies and session persistence",
       "source": "./plugins/autorun",
       "category": "productivity",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"
@@ -24,7 +24,7 @@
       "description": "PDF data extraction with 9 backend support (markitdown, docling, marker, pdfplumber, pdfminer, pypdf2, pymupdf4llm, pdfbox, pdftotext)",
       "source": "./plugins/pdf-extractor",
       "category": "data-processing",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "author": {
         "name": "Andrew Hundt",
         "email": "ATHundt@gmail.com"
