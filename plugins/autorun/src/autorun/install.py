@@ -508,8 +508,13 @@ def find_marketplace_root() -> Path:
     # Works for: claude plugin install (copies to cache)
     claude_cache = Path.home() / ".claude" / "plugins" / "cache" / "autorun"
     if claude_cache.exists():
-        # Find the latest version directory
-        version_dirs = sorted(claude_cache.glob("autorun/*"), reverse=True)
+        # Find the latest version directory (semver-aware sort)
+        def _ver_key(p: Path) -> tuple:
+            try:
+                return tuple(int(x) for x in p.name.split("."))
+            except (ValueError, TypeError):
+                return (0,)
+        version_dirs = sorted(claude_cache.glob("autorun/*"), key=_ver_key, reverse=True)
         for version_dir in version_dirs:
             marker = version_dir / ".claude-plugin" / "marketplace.json"
             if marker.exists():

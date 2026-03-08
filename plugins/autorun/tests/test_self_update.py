@@ -95,6 +95,46 @@ class TestCheckForUpdates:
             assert latest == "unknown"
 
 
+class TestSemverComparison:
+    """Test semantic version comparison edge cases in check_for_updates()."""
+
+    @pytest.mark.parametrize("current,latest_tag,expected", [
+        ("0.9.0", "v0.10.0", True),    # multi-digit minor
+        ("0.10.0", "v0.10.1", True),    # patch bump
+        ("0.10.1", "v0.10.0", False),   # downgrade
+        ("0.10.0", "v0.10.0", False),   # same version
+        ("0.10.0", "v1.0.0", True),     # major bump
+        ("1.0.0", "v0.99.99", False),   # major > minor.patch
+        ("0.9.9", "v0.10.0", True),     # 9.9 < 10.0
+    ])
+    def test_semver_comparison(self, current, latest_tag, expected):
+        """Verify integer-tuple comparison, not lexicographic string comparison."""
+        mock_urlopen = MagicMock()
+        mock_urlopen.__enter__.return_value.read.return_value = json.dumps({
+            "tag_name": latest_tag
+        }).encode()
+
+        with patch("importlib.metadata.version", return_value=current):
+            with patch("urllib.request.urlopen", return_value=mock_urlopen):
+                from autorun.install import check_for_updates
+                update_available, cur, lat = check_for_updates()
+                assert update_available is expected, \
+                    f"{current} vs {latest_tag}: expected {expected}, got {update_available}"
+
+    def test_semver_unparseable_version_returns_false(self):
+        """Unparseable versions (e.g. pre-release) should not trigger update."""
+        mock_urlopen = MagicMock()
+        mock_urlopen.__enter__.return_value.read.return_value = json.dumps({
+            "tag_name": "v0.10.0-beta.1"
+        }).encode()
+
+        with patch("importlib.metadata.version", return_value="0.9.0"):
+            with patch("urllib.request.urlopen", return_value=mock_urlopen):
+                from autorun.install import check_for_updates
+                update_available, _, _ = check_for_updates()
+                assert update_available is False, "Pre-release tags should not trigger update"
+
+
 class TestUpdateStrategyDetection:
     """Test UpdateStrategy.detect() auto-detection logic."""
 

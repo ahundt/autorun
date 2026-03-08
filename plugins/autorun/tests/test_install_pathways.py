@@ -298,6 +298,47 @@ class TestReadPluginVersion:
         assert version == "0.10.0"  # Default fallback
 
 
+class TestCacheVersionSort:
+    """Test semver-aware sorting of cache version directories."""
+
+    def test_cache_version_sort_prefers_0_10_over_0_9(self, tmp_path):
+        """Verify 0.10.0 sorts higher than 0.9.0 (not lexicographic)."""
+        # Create fake cache dirs with version names
+        for ver in ["0.8.0", "0.9.0", "0.10.0", "0.10.1"]:
+            d = tmp_path / ver
+            d.mkdir()
+            (d / ".claude-plugin").mkdir()
+            (d / ".claude-plugin" / "marketplace.json").write_text("{}")
+
+        # Use the same sort key as install.py:_ver_key
+        def _ver_key(p):
+            try:
+                return tuple(int(x) for x in p.name.split("."))
+            except (ValueError, TypeError):
+                return (0,)
+
+        version_dirs = sorted(tmp_path.iterdir(), key=_ver_key, reverse=True)
+        names = [d.name for d in version_dirs]
+        assert names == ["0.10.1", "0.10.0", "0.9.0", "0.8.0"], f"Got {names}"
+
+    def test_cache_version_sort_handles_non_version_dirs(self, tmp_path):
+        """Verify non-version directories sort to the end."""
+        for name in ["0.10.0", "latest", "0.9.0", "dev"]:
+            (tmp_path / name).mkdir()
+
+        def _ver_key(p):
+            try:
+                return tuple(int(x) for x in p.name.split("."))
+            except (ValueError, TypeError):
+                return (0,)
+
+        version_dirs = sorted(tmp_path.iterdir(), key=_ver_key, reverse=True)
+        names = [d.name for d in version_dirs]
+        # 0.10.0 first, 0.9.0 second, non-version dirs last (both sort as (0,))
+        assert names[0] == "0.10.0"
+        assert names[1] == "0.9.0"
+
+
 class TestCheckUvEnv:
     """Test _check_uv_env() validation."""
 
