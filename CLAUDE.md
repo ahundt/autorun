@@ -173,7 +173,7 @@ See `plugins/autorun/src/autorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
 | `/ar:pe-rej` | `/ar:planexport-rejected` | Toggle rejected plan export |
 | `/ar:pe-rdir` | `/ar:planexport-rejected-dir` | Set rejected plan output directory |
 
-**Task Tracking** (v0.9):
+**Task Tracking** (v0.9+):
 
 | Command | Description |
 |---------|-------------|
