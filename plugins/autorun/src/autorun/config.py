@@ -186,15 +186,15 @@ DEFAULT_INTEGRATIONS = {
     # and affects all collaborators when pushed.
     "git filter-repo": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git filter-repo' permanently rewrites repository history.\n\nThis tool modifies commits, removes files from history, and changes commit hashes.\nAll collaborators must re-clone after a history rewrite.\n\n**Before proceeding:**\n1. Create a full backup: git clone --mirror . ../backup-$(date +%Y%m%d).git\n2. Ensure you have push access and team coordination\n3. All collaborators must re-clone after the rewrite\n\n**Common use cases:**\n- Remove secrets: git filter-repo --path-glob '*.env' --invert-paths\n- Extract subdirectory: git filter-repo --subdirectory-filter src/\n\nTo allow in this session: /ar:ok 'git filter-repo'",
+        "suggestion": "BLOCKED: 'git filter-repo' permanently rewrites repository history. User permission required.\n\nAll commit hashes change — collaborators must re-clone after rewrite.\n\nBackup first: git clone --mirror . ../backup-$(date +%Y%m%d).git\n\nTo allow in this session: /ar:ok 'git filter-repo'",
     },
     "git filter-branch": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git filter-branch' is a legacy history rewriter (deprecated by Git).\n\n**Use git-filter-repo instead** — it is faster, safer, and officially recommended:\n  pip install git-filter-repo\n  # or: brew install git-filter-repo\n\ngit filter-branch is slow, error-prone, and creates backup refs that clutter the repo.\n\n**Before any history rewriting:**\n1. Create a full backup: git clone --mirror . ../backup-$(date +%Y%m%d).git\n2. All collaborators must re-clone after the rewrite\n\nTo allow in this session: /ar:ok 'git filter-branch'",
+        "suggestion": "BLOCKED: 'git filter-branch' is deprecated. Use git-filter-repo instead:\n  pip install git-filter-repo\n\ngit filter-branch is slow, error-prone, and creates backup refs.\n\nTo allow in this session: /ar:ok 'git filter-branch'",
     },
     "bfg": {
         "action": "block",
-        "suggestion": "DANGEROUS: BFG Repo-Cleaner permanently rewrites git history.\n\nBFG removes large files, passwords, and other unwanted data from history.\nAll collaborators must re-clone after a history rewrite.\n\n**Before proceeding:**\n1. Create a full backup: git clone --mirror . ../backup-$(date +%Y%m%d).git\n2. Coordinate with team — all collaborators must re-clone\n\n**Alternative:** git-filter-repo (Python, no Java dependency):\n  pip install git-filter-repo\n\nTo allow in this session: /ar:ok bfg",
+        "suggestion": "BLOCKED: BFG Repo-Cleaner permanently rewrites git history.\n\nConsider git-filter-repo instead (Python, no Java dependency):\n  pip install git-filter-repo\n\nAll collaborators must re-clone after any history rewrite.\n\nTo allow in this session: /ar:ok bfg",
     },
     "git rebase -i": {
         "action": "block",
