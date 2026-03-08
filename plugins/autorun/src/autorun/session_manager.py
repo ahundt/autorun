@@ -217,7 +217,7 @@ def _get_store(state_dir: "str | None" = None) -> "_JSONStore":
     if _store is None:
         with _store_lock:
             if _store is None:
-                d = state_dir or os.path.expanduser("~/.claude/sessions")
+                d = state_dir or os.environ.get("AUTORUN_TEST_STATE_DIR") or os.path.expanduser("~/.claude/sessions")
                 _store = _JSONStore(
                     os.path.join(d, "daemon_state.json"),
                     os.path.join(d, "daemon_state.json.lock"),

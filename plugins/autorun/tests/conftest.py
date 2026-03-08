@@ -34,13 +34,22 @@ import pytest
 
 
 def pytest_configure(config):
-    """Configure pytest with custom markers."""
+    """Configure pytest with custom markers and DB isolation."""
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "stress: marks tests as stress tests")
     config.addinivalue_line("markers", "race: marks tests as race condition tests")
     config.addinivalue_line("markers", "daemon: marks tests that require a running daemon")
     config.addinivalue_line("markers", "e2e: marks end-to-end tests")
     config.addinivalue_line("markers", "serial: marks tests that must run serially")
+
+    # DB ISOLATION: Redirect session_manager to a temp directory BEFORE any
+    # test module imports trigger _get_store(). This prevents tests from
+    # reading/writing to the real user data at ~/.claude/sessions/.
+    # Must happen in pytest_configure (earliest hook) because module-level
+    # imports in test files can trigger _get_store() during collection.
+    _test_state_dir = tempfile.mkdtemp(prefix="autorun_test_state_")
+    config._autorun_test_state_dir = _test_state_dir
+    os.environ["AUTORUN_TEST_STATE_DIR"] = _test_state_dir
 
 
 
@@ -380,6 +389,20 @@ def pytest_sessionfinish(session, exitstatus):
     """Clean up test sessions and test-spawned daemons after pytest finishes."""
     cleanup_test_sessions()
     DaemonManager.cleanup()
+
+    # Clean up test state directory and reset session_manager
+    test_state_dir = getattr(session.config, '_autorun_test_state_dir', None)
+    if test_state_dir and os.path.isdir(test_state_dir):
+        if not should_keep_test_artifacts():
+            shutil.rmtree(test_state_dir, ignore_errors=True)
+        else:
+            print(f"\n[DEBUG] Keeping test state dir: {test_state_dir}")
+
+    # Remove env var and reset singletons so production code isn't affected
+    os.environ.pop("AUTORUN_TEST_STATE_DIR", None)
+    import autorun.session_manager as sm
+    sm._store = None
+    sm._manager = None
 
 
 @pytest.fixture(scope="session")
