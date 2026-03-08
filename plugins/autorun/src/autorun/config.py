@@ -181,6 +181,38 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow in this session: /ar:ok 'echo >'\n- Block globally: /ar:globalno 'echo >'",
     },
+    # Git history rewriting tools — permanently alter commit history (v0.10)
+    # These require explicit /ar:ok permission since history rewriting is irreversible
+    # and affects all collaborators when pushed.
+    "git filter-repo": {
+        "action": "block",
+        "suggestion": "DANGEROUS: 'git filter-repo' permanently rewrites repository history.\n\nThis tool modifies commits, removes files from history, and changes commit hashes.\nAll collaborators must re-clone after a history rewrite.\n\n**Before proceeding:**\n1. Create a full backup: git clone --mirror . ../backup-$(date +%Y%m%d).git\n2. Ensure you have push access and team coordination\n3. All collaborators must re-clone after the rewrite\n\n**Common use cases:**\n- Remove secrets: git filter-repo --path-glob '*.env' --invert-paths\n- Extract subdirectory: git filter-repo --subdirectory-filter src/\n\nTo allow in this session: /ar:ok 'git filter-repo'",
+    },
+    "git filter-branch": {
+        "action": "block",
+        "suggestion": "DANGEROUS: 'git filter-branch' is a legacy history rewriter (deprecated by Git).\n\n**Use git-filter-repo instead** — it is faster, safer, and officially recommended:\n  pip install git-filter-repo\n  # or: brew install git-filter-repo\n\ngit filter-branch is slow, error-prone, and creates backup refs that clutter the repo.\n\n**Before any history rewriting:**\n1. Create a full backup: git clone --mirror . ../backup-$(date +%Y%m%d).git\n2. All collaborators must re-clone after the rewrite\n\nTo allow in this session: /ar:ok 'git filter-branch'",
+    },
+    "bfg": {
+        "action": "block",
+        "suggestion": "DANGEROUS: BFG Repo-Cleaner permanently rewrites git history.\n\nBFG removes large files, passwords, and other unwanted data from history.\nAll collaborators must re-clone after a history rewrite.\n\n**Before proceeding:**\n1. Create a full backup: git clone --mirror . ../backup-$(date +%Y%m%d).git\n2. Coordinate with team — all collaborators must re-clone\n\n**Alternative:** git-filter-repo (Python, no Java dependency):\n  pip install git-filter-repo\n\nTo allow in this session: /ar:ok bfg",
+    },
+    "git rebase -i": {
+        "action": "block",
+        "suggestion": "CAUTION: 'git rebase -i' (interactive rebase) rewrites commit history.\n\n**Risks:**\n- Changes commit hashes for all rebased commits\n- If already pushed, requires force push (breaks collaborators)\n- Cannot be used with interactive terminal from AI tools\n\n**SAFER ALTERNATIVES:**\n\n1. **Squash on merge** (no history rewrite needed):\n   gh pr merge --squash\n\n2. **Fixup commit** (auto-squash later):\n   git commit --fixup <commit-hash>\n\n3. **Non-interactive rebase** (for branch updates):\n   git rebase main  # linear rebase without editing\n\nTo allow in this session: /ar:ok 'git rebase -i'",
+    },
+    "git rebase --interactive": {
+        "action": "block",
+        "suggestion": "CAUTION: 'git rebase --interactive' rewrites commit history.\n\nSee /ar:ok 'git rebase -i' for details and safer alternatives.\n\nTo allow in this session: /ar:ok 'git rebase --interactive'",
+    },
+    # Force push — more specific than generic "git push", must be defined first
+    "git push --force": {
+        "action": "block",
+        "suggestion": "DANGEROUS: 'git push --force' overwrites remote history, breaking all collaborators.\n\n**SAFER ALTERNATIVES:**\n\n1. **Force-with-lease** (rejects if remote has new commits):\n   git push --force-with-lease origin <branch>\n\n2. **Create a new branch instead** (preserves original):\n   git push origin HEAD:refs/heads/<new-branch-name>\n\n3. **Revert instead of rewriting** (adds new commit, preserves history):\n   git revert <commit>\n   git push origin <branch>\n\n**NEVER force push to main/master** — this can destroy team work.\n\nTo allow in this session: /ar:ok 'git push --force'",
+    },
+    "git push -f": {
+        "action": "block",
+        "suggestion": "DANGEROUS: 'git push -f' (short for --force) overwrites remote history.\n\nUse --force-with-lease instead for safety:\n   git push --force-with-lease origin <branch>\n\nSee /ar:ok 'git push --force' for full details and alternatives.\n\nTo allow in this session: /ar:ok 'git push -f'",
+    },
     # Remote write operations require explicit user permission
     "git push": {
         "action": "block",

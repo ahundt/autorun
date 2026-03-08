@@ -564,6 +564,94 @@ class TestClaudeHookEntryPoint:
         assert get_deny_decision(resp) != "deny"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Git history rewriting commands (blocked by default)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def test_pretooluse_bash_git_filter_repo_blocked(self, hook_resources):
+        """git filter-repo blocked (rewrites entire repository history)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("git-filter-repo"),
+            tool_name="Bash",
+            tool_input={"command": "git filter-repo --path src/ --force"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"git filter-repo must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+        reason = get_deny_reason(resp)
+        assert "history" in reason.lower() or "rewrite" in reason.lower(), \
+            f"Should mention history rewriting risk. reason={reason!r}"
+
+    def test_pretooluse_bash_git_filter_branch_blocked(self, hook_resources):
+        """git filter-branch blocked (legacy history rewriter, dangerous)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("git-filter-branch"),
+            tool_name="Bash",
+            tool_input={"command": "git filter-branch --tree-filter 'rm -f secrets.txt' HEAD"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"git filter-branch must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+        reason = get_deny_reason(resp)
+        assert "history" in reason.lower() or "rewrite" in reason.lower() or "filter-repo" in reason.lower(), \
+            f"Should mention history rewriting or suggest filter-repo. reason={reason!r}"
+
+    def test_pretooluse_bash_bfg_blocked(self, hook_resources):
+        """BFG Repo-Cleaner blocked (rewrites git history to remove large files/secrets)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("bfg"),
+            tool_name="Bash",
+            tool_input={"command": "bfg --delete-files '*.jar' my-repo.git"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"bfg must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+        reason = get_deny_reason(resp)
+        assert "history" in reason.lower() or "rewrite" in reason.lower(), \
+            f"Should mention history rewriting risk. reason={reason!r}"
+
+    def test_pretooluse_bash_git_rebase_interactive_blocked(self, hook_resources):
+        """git rebase -i blocked (interactive rebase rewrites commit history)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("git-rebase-i"),
+            tool_name="Bash",
+            tool_input={"command": "git rebase -i HEAD~5"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"git rebase -i must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+
+    def test_pretooluse_bash_git_push_force_blocked(self, hook_resources):
+        """git push --force blocked (overwrites remote history)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("git-push-force"),
+            tool_name="Bash",
+            tool_input={"command": "git push --force origin main"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"git push --force must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+        reason = get_deny_reason(resp)
+        assert "history" in reason.lower() or "force" in reason.lower() or "overwrite" in reason.lower(), \
+            f"Should mention force push risk. reason={reason!r}"
+
+    def test_pretooluse_bash_git_push_f_blocked(self, hook_resources):
+        """git push -f blocked (short form of --force)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("git-push-f"),
+            tool_name="Bash",
+            tool_input={"command": "git push -f origin feature-branch"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"git push -f must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+
+    # ─────────────────────────────────────────────────────────────────────────
     # AutoFile policy commands (UserPromptSubmit)
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -1329,7 +1417,7 @@ __doc__ += """
 ## Test Categories
 
 ### Free Tests (TestClaudeHookEntryPoint) — $0.000:
-Call hook_entry.py --cli claude directly. No Claude API calls. 25 tests.
+Call hook_entry.py --cli claude directly. No Claude API calls. 31 tests.
 
  1. test_sessionstart_returns_continue
  2. test_stop_without_autorun_passes_through
@@ -1355,6 +1443,12 @@ Call hook_entry.py --cli claude directly. No Claude API calls. 25 tests.
 22. test_exitplanmode_allowed_after_full_stage_progression         ← G1c three-stage e2e
 23. test_stop_blocked_when_autorun_active_with_incomplete_tasks    ← G5 stop+tasks
 24. test_task_staleness_reminder_through_hook_path                 ← G6 staleness e2e
+25. test_pretooluse_bash_git_filter_repo_blocked                   ← history rewrite block
+26. test_pretooluse_bash_git_filter_branch_blocked                 ← legacy history rewrite
+27. test_pretooluse_bash_bfg_blocked                               ← BFG Repo-Cleaner block
+28. test_pretooluse_bash_git_rebase_interactive_blocked             ← interactive rebase block
+29. test_pretooluse_bash_git_push_force_blocked                    ← force push block
+30. test_pretooluse_bash_git_push_f_blocked                        ← force push -f block
 
 ### Real Money Tests (TestClaudeE2ERealMoney) — < $0.015:
 Spawn actual `claude -p` sessions. 5 tests.
