@@ -460,14 +460,15 @@ audit_skill() {
     printf "]\n\n"
 
     if [ "$FAILED" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
-        echo -e "  ${GREEN}✨ Perfect — ready to publish.${NC}"
+        echo -e "  ${GREEN}✨ No structural problems detected.${NC}"
     elif [ "$FAILED" -eq 0 ] && [ "$score" -ge 90 ]; then
-        echo -e "  ${GREEN}✅ Excellent — minor warnings, safe to publish.${NC}"
+        echo -e "  ${GREEN}✅ No failures detected — minor warnings below.${NC}"
     elif [ "$FAILED" -eq 0 ]; then
-        echo -e "  ${YELLOW}⚠️  Good — address warnings before publishing.${NC}"
+        echo -e "  ${YELLOW}⚠️  No failures detected — review warnings below.${NC}"
     else
-        echo -e "  ${RED}❌ Not ready — fix FAILs first (skill may not activate or work correctly).${NC}"
+        echo -e "  ${RED}❌ Structural problems found — fix FAILs first (skill may not activate or work correctly).${NC}"
     fi
+    echo -e "  ${CYAN}Note: This is a smoke test of skill structure, not a comprehensive quality review.${NC}"
     echo ""
 
     # Actionable fix list
