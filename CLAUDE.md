@@ -141,8 +141,11 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 | `/ar:no <pattern>` | Add custom block (shows safer alternative) |
 | `/ar:ok <pattern>` | Allow blocked command in session |
 | `/ar:clear` | Clear session overrides |
+| `/ar:blocks` | Show active session-level blocks and allows |
 | `/ar:globalno <pattern>` | Block pattern globally |
 | `/ar:globalok <pattern>` | Allow pattern globally |
+| `/ar:globalstatus` | Show global blocks |
+| `/ar:globalclear` | Clear all global blocks |
 
 See `plugins/autorun/src/autorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
 
@@ -170,6 +173,25 @@ See `plugins/autorun/src/autorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
 | `/ar:pe-rej` | `/ar:planexport-rejected` | Toggle rejected plan export |
 | `/ar:pe-rdir` | `/ar:planexport-rejected-dir` | Set rejected plan output directory |
 
+**Task Tracking** (v0.9):
+
+| Command | Description |
+|---------|-------------|
+| `/ar:tasks` | Toggle task staleness reminders on/off or set threshold |
+| `/ar:task-status` | Show task lifecycle status and incomplete tasks |
+| `/ar:task-ignore <id>` | Mark task as ignored (user override to unblock stop) |
+
+**Developer/Admin**:
+
+| Command | Description |
+|---------|-------------|
+| `/ar:reload` | Force-reload all integration rules from config files |
+| `/ar:restart-daemon` | Restart autorun daemon to reload Python code changes |
+| `/ar:marketplace-test` | Run tests across installed marketplace plugins |
+| `/ar:test` | Test command guidelines |
+| `/ar:gemini` | Gemini CLI reference guide |
+| `/ar:tabw` | Cross-window session actions |
+
 ### Key Files
 
 | File | Purpose |
@@ -179,6 +201,9 @@ See `plugins/autorun/src/autorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
 | `plugins/autorun/src/autorun/plugins.py` | Command handlers and dispatch logic |
 | `plugins/autorun/src/autorun/plan_export.py` | Plan export logic, PlanExport class, daemon handlers |
 | `plugins/autorun/src/autorun/integrations.py` | Unified command integrations (superset of hookify) |
+| `plugins/autorun/src/autorun/task_lifecycle.py` | Task lifecycle tracking and stop-hook enforcement |
+| `plugins/autorun/src/autorun/session_manager.py` | filelock+JSON session state backend |
+| `plugins/autorun/src/autorun/client.py` | Hook response output and CLI detection |
 | `plugins/autorun/scripts/plan_export_config.py` | Plan export configuration CLI |
 | `plugins/autorun/.claude-plugin/plugin.json` | Plugin manifest |
 
@@ -220,7 +245,7 @@ autorun/                          # Git repository root
 ├── plugins/
 │   ├── autorun/                  # Main plugin
 │   │   ├── src/autorun/          # Python source
-│   │   ├── commands/               # Slash commands (50+ files)
+│   │   ├── commands/               # Slash commands (77 files)
 │   │   ├── agents/                 # Tmux automation agents
 │   │   ├── skills/                 # Claude Code skills
 │   │   └── hooks/                  # Event hooks

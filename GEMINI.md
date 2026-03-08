@@ -112,9 +112,20 @@ gemini --version  # Should show 0.28.0 or later
 /ar:f               # Find and modify existing files only (strictest)
 /ar:go <task>       # Start autonomous execution
 /ar:sos             # Emergency stop
+/ar:tasks           # Toggle task staleness reminders on/off or set threshold
+/ar:task-status     # Show task lifecycle status and incomplete tasks
+/ar:pn              # Create new structured plan
+/ar:pr              # Refine existing plan
+/ar:pe              # Show plan export status
+/ar:no <pattern>    # Block command pattern in session
+/ar:ok <pattern>    # Allow blocked command in session
 ```
 
-See `/ar:help` or [README.md](README.md) for complete command reference.
+See [README.md](README.md) for the complete command reference (77 slash commands).
+
+#### Task Staleness Reminders (v0.9)
+
+Task staleness reminders work identically in both CLIs. When 25+ tool calls pass without TaskCreate/TaskUpdate, autorun injects a reminder. Use `/ar:tasks` to configure.
 
 ### Gemini Vision + Autorun Safety
 

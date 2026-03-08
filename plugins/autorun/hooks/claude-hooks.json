@@ -1,5 +1,5 @@
 {
-  "description": "autorun v0.8 - unified daemon-based hook handler",
+  "description": "autorun v0.9 - unified daemon-based hook handler",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -15,7 +15,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "ExitPlanMode|Write|Edit",
+        "matcher": "ExitPlanMode|Write|Edit|Bash",
         "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       },
       {

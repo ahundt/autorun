@@ -506,6 +506,27 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:clear` | - | - | Clear session blocks |
 | `/ar:globalno <p>` | - | - | Block command pattern globally |
 | `/ar:globalok <p>` | - | - | Allow command pattern globally |
+| `/ar:blocks` | - | - | Show active session-level blocks and allows |
+| `/ar:globalstatus` | - | - | Show global blocks |
+| `/ar:globalclear` | - | - | Clear all global blocks |
+| `/ar:reload` | - | - | Reload integration rules from config files |
+| `/ar:restart-daemon` | - | - | Restart daemon to reload Python code changes |
+| `/ar:tasks` | - | - | Toggle task staleness reminders on/off or set threshold |
+| `/ar:task-status` | - | - | Show task lifecycle status and incomplete tasks |
+| `/ar:task-ignore <id>` | - | - | Mark task as ignored (unblock stop) |
+| `/ar:pe` | `/ar:planexport` | - | Show plan export status |
+| `/ar:pe-on` | `/ar:planexport-enable` | - | Enable auto-export |
+| `/ar:pe-off` | `/ar:planexport-disable` | - | Disable auto-export |
+| `/ar:pe-cfg` | `/ar:planexport-configure` | - | Interactive configuration |
+| `/ar:pe-dir` | `/ar:planexport-dir` | - | Set output directory |
+| `/ar:pe-fmt` | `/ar:planexport-pattern` | - | Set filename pattern |
+| `/ar:pe-reset` | `/ar:planexport-reset` | - | Reset to defaults |
+| `/ar:pe-rej` | `/ar:planexport-rejected` | - | Toggle rejected plan export |
+| `/ar:pe-rdir` | `/ar:planexport-rejected-dir` | - | Set rejected plan output directory |
+| `/ar:tabw` | - | - | Cross-window session actions |
+| `/ar:gemini` | - | - | Gemini CLI reference guide |
+| `/ar:test` | - | - | Test command guidelines |
+| `/ar:marketplace-test` | - | - | Run marketplace tests |
 
 ### AutoFile (File Creation Control)
 
@@ -676,6 +697,17 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 ```
 
 **Key features:** Stop hook enforcement, SessionStart resume detection, plan context injection, blockedBy/blocks dependency ordering, escape hatch, full audit trail.
+
+#### Task Staleness Reminders (v0.9)
+
+Injects a reminder when 25+ tool calls pass without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work.
+
+- **/ar:tasks** — Show staleness status (enabled/disabled, count, threshold)
+- **/ar:tasks on** — Enable reminders
+- **/ar:tasks off** — Disable reminders
+- **/ar:tasks \<number>** — Set custom threshold (default: 25)
+
+Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding, preventing premature completion.
 
 **Settings:**
 - `enabled`: Enable/disable task lifecycle tracking (default: true)
@@ -896,7 +928,7 @@ uv run --project plugins/autorun python -m autorun --install --force
 |-------|---------|---------|
 | `UserPromptSubmit` | `/afs\|/afa\|/afj\|/afst\|/autorun\|/autostop\|/estop\|/ar:` | Command dispatch |
 | `PreToolUse` | `Write\|Edit\|Bash\|ExitPlanMode` | File policy enforcement, command redirecting |
-| `PostToolUse` | `ExitPlanMode\|Write\|Edit\|TaskCreate\|TaskUpdate\|TaskGet\|TaskList` | Plan export, task tracking |
+| `PostToolUse` | `ExitPlanMode\|Write\|Edit\|Bash\|TaskCreate\|TaskUpdate\|TaskGet\|TaskList` | Plan export, task staleness, task tracking |
 | `SessionStart` | *(all)* | Resume detection, plan recovery |
 | `Stop` | *(all)* | Task lifecycle enforcement |
 | `SubagentStop` | *(all)* | Subagent completion tracking |
@@ -971,7 +1003,7 @@ autorun/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest and metadata
 ├── agents/                    # Tmux and CLI automation agents
-├── commands/
+├── commands/                  # 77 slash command .md files + autorun entry point
 │   └── autorun              # Plugin command script (JSON stdin/stdout)
 ├── hooks/
 │   ├── hook_entry.py          # Event handler (UserPromptSubmit, PreToolUse, Stop, SubagentStop)
