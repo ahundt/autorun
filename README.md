@@ -15,6 +15,7 @@
 5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
 6. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
 7. **80+ Slash Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
+8. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
 ![autorun Architecture](autorun-architecture.svg)
 
@@ -55,6 +56,14 @@ autorun --install
 ```
 
 > Works with both **Claude Code** and **Gemini CLI** — see [Dual CLI Support](#dual-cli-support-claude-code--gemini-cli).
+
+**Self-Improvement** (learn from past sessions):
+
+```bash
+aise messages corrections --since 30d   # Find recurring AI mistakes
+aise analyze                            # Full qualitative analysis
+# → Add findings to CLAUDE.md, skills, or hook blocks (see /ar:ai-session-tools Workflow 6)
+```
 
 ## Table of Contents
 

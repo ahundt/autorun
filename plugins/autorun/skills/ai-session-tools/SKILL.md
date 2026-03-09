@@ -144,7 +144,7 @@ aise messages get SESSION_ID
 ### 4. Turn recurring AI mistakes into permanent fixes in skills, prompts, and guidelines
 
 Use this to find what the AI gets wrong repeatedly, extract corrections, and turn them into
-skill rules, CLAUDE.md additions, or AGENT.md adjustments to prevent recurrence.
+skill rules, CLAUDE.md additions, or hook integrations to prevent recurrence (see Workflow 6).
 
 ```bash
 # Find messages where the user corrected the AI
@@ -170,7 +170,7 @@ aise messages planning --commands '/myteam:plan,/myteam:review'
 # Full qualitative analysis across all sessions:
 #   - technique taxonomy, error graph, project classification
 #   - use output to extract effective prompts, find recurring failure types,
-#     build new skills, update CLAUDE.md / AGENT.md stop-patterns
+#     build new skills, update CLAUDE.md rules, hook integrations, or skills (see Workflow 6)
 aise analyze --status                  # check which stages are stale before running
 aise analyze                           # run the full pipeline
 aise --provider claude analyze         # scope to one source only (--provider is a root flag)
@@ -238,7 +238,68 @@ Increase to weight corrected sessions more heavily when looking for improvement 
 
 ---
 
-### 6. Composable pipelines — pipe session IDs between commands
+### 6. Act on analysis — turn findings into permanent improvements
+
+After running `aise messages corrections` or `aise analyze`, apply what you found.
+The goal: each recurring failure becomes a rule that prevents it in future sessions.
+
+**Where to apply fixes (pick the right target):**
+
+| Finding | Target | Example |
+|---------|--------|---------|
+| AI uses wrong tool repeatedly | CLAUDE.md rule | "Always use Read tool, never cat" |
+| AI skips a step in workflow | Skill update | Add step to existing skill's workflow |
+| AI runs dangerous command | Hook integration | Add to DEFAULT_INTEGRATIONS in config.py |
+| AI misunderstands domain term | CLAUDE.md definition | "In this project, 'deploy' means..." |
+| AI pattern applies to many projects | New skill | Extract via /claude-skill-builder |
+
+**CLAUDE.md — add rules from corrections:**
+
+```bash
+# Find what you corrected the AI about most
+aise messages corrections --since 30d
+
+# Example output: 5x "you used cat instead of Read"
+# → Add to CLAUDE.md:
+#   "Never use cat/head/tail in Bash. Use the Read tool instead."
+
+# Example output: 3x "you forgot to run tests"
+# → Add to CLAUDE.md:
+#   "After every code change, run the test suite before committing."
+```
+
+Rules go in your project's `CLAUDE.md` (checked into git) or `~/.claude/CLAUDE.md` (global).
+One concrete sentence per rule. Avoid vague guidance — state exactly what to do or not do.
+
+**Hook integrations — block dangerous commands:**
+
+If corrections show repeated dangerous command usage, add a block:
+```bash
+/ar:globalno 'dangerous-command'   # block globally across sessions
+```
+
+**Skills — extract reusable workflows:**
+
+When corrections reveal a missing workflow (not just a single rule), create a skill:
+```bash
+/claude-skill-builder
+```
+
+**Verify the fix worked:**
+
+```bash
+# After adding a rule, check if the same correction reappears
+aise messages corrections --since 7d --pattern 'LABEL:the pattern you fixed'
+
+# Compare before/after counts
+aise messages corrections --since 30d   # before: 5 occurrences
+# ... wait a week of sessions ...
+aise messages corrections --since 7d    # after: 0 occurrences = success
+```
+
+---
+
+### 7. Composable pipelines — pipe session IDs between commands
 
 Use `--ids-only` to chain aise commands via xargs for multi-step analysis.
 
@@ -258,7 +319,7 @@ aise list --since 7d --ids-only | \
 
 ---
 
-### 7. Analyze slash command patterns across sessions
+### 8. Analyze slash command patterns across sessions
 
 Track slash command usage and post-invocation context with `commands list` and
 `commands context`.
