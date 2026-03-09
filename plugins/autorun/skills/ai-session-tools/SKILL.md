@@ -1,6 +1,6 @@
 ---
 name: ai-session-tools
-description: Search, recover, and analyze AI session histories across Claude Code, AI Studio, and Gemini CLI — restore lost context after compaction, recover files the AI wrote that are missing from disk, find what was discussed in any past session, understand exactly what the AI did and why, turn recurring AI mistakes into improvements to prompts, guidelines, code, hooks, workflows, and scripts, and preserve sessions as readable documents.
+description: Search, recover, and analyze AI session histories across Claude Code, AI Studio, and Gemini CLI. Use when user asks to "find that file from last week", "search sessions", "recover context after compaction", "what did the AI do", "export session to markdown", "find corrections", "analyze session quality", "improve CLAUDE.md from past mistakes", or "turn AI mistakes into rules". Contains session search, file recovery, correction detection, self-improvement workflow.
 version: "0.10.0"
 user-invocable: true
 disable-model-invocation: false
@@ -26,6 +26,7 @@ After a context compaction, a lost file, or a confusing session — `aise` finds
 1. **Find sessions** — `aise list` discovers sessions from `~/.claude/projects/` (Claude Code), AI Studio exports, and Gemini CLI. Filter by `--provider`, `--project`, `--since`.
 2. **Search and recover** — `aise messages search`, `aise files search`, `aise tools search` find content across all sessions. `aise files extract` recovers files missing from disk.
 3. **Analyze patterns** — `aise messages corrections` detects where users corrected the AI. `aise commands list/context` tracks slash command usage. `aise analyze` runs the full qualitative coding pipeline.
+4. **Improve from mistakes** — Turn recurring corrections into permanent CLAUDE.md rules, skill updates, or hook blocks. Compare before/after correction counts to verify fixes worked (see Workflow 6).
 
 ---
 
