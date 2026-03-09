@@ -651,6 +651,20 @@ class TestClaudeHookEntryPoint:
         assert rc == 2, f"git push -f must be denied. Got rc={rc}"
         assert get_deny_decision(resp) == "deny"
 
+    def test_pretooluse_bash_gh_pr_merge_squash_blocked(self, hook_resources):
+        """gh pr merge --squash blocked (destroys individual commit history)."""
+        payload = self._base_payload(
+            "PreToolUse", self._sid("gh-squash"),
+            tool_name="Bash",
+            tool_input={"command": "gh pr merge 42 --squash"},
+        )
+        rc, stdout, stderr, resp = self._run(hook_resources, payload)
+
+        assert rc == 2, f"gh pr merge --squash must be denied. Got rc={rc}"
+        assert get_deny_decision(resp) == "deny"
+        reason = get_deny_reason(resp)
+        assert "squash" in reason.lower() or "history" in reason.lower()
+
     # ─────────────────────────────────────────────────────────────────────────
     # AutoFile policy commands (UserPromptSubmit)
     # ─────────────────────────────────────────────────────────────────────────
@@ -1417,7 +1431,7 @@ __doc__ += """
 ## Test Categories
 
 ### Free Tests (TestClaudeHookEntryPoint) — $0.000:
-Call hook_entry.py --cli claude directly. No Claude API calls. 31 tests.
+Call hook_entry.py --cli claude directly. No Claude API calls. 32 tests.
 
  1. test_sessionstart_returns_continue
  2. test_stop_without_autorun_passes_through
@@ -1449,6 +1463,7 @@ Call hook_entry.py --cli claude directly. No Claude API calls. 31 tests.
 28. test_pretooluse_bash_git_rebase_interactive_blocked             ← interactive rebase block
 29. test_pretooluse_bash_git_push_force_blocked                    ← force push block
 30. test_pretooluse_bash_git_push_f_blocked                        ← force push -f block
+31. test_pretooluse_bash_gh_pr_merge_squash_blocked                ← squash merge block
 
 ### Real Money Tests (TestClaudeE2ERealMoney) — < $0.015:
 Spawn actual `claude -p` sessions. 5 tests.

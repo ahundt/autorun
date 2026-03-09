@@ -198,7 +198,7 @@ DEFAULT_INTEGRATIONS = {
     },
     "git rebase -i": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nSafer alternatives:\n- Squash on merge: gh pr merge --squash\n- Fixup commit: git commit --fixup <commit-hash>\n- Linear rebase: git rebase main  (non-interactive)\n\nIf history rewriting is needed, use git-filter-repo for bulk changes.\n\nTo allow in this session: /ar:ok 'git rebase -i'",
+        "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nAlternatives: git commit --fixup <hash>, git rebase main (non-interactive)\n\nTo allow in this session: /ar:ok 'git rebase -i'",
     },
     "git rebase --interactive": {
         "action": "block",
@@ -207,11 +207,11 @@ DEFAULT_INTEGRATIONS = {
     # Force push — more specific than generic "git push", must be defined first
     "git push --force": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git push --force' overwrites remote history, breaking all collaborators.\n\nSafer alternative — rejects if remote has new commits:\n  git push --force-with-lease origin <branch>\n\nNEVER force push to main/master.\n\nTo allow in this session: /ar:ok 'git push --force'",
+        "suggestion": "BLOCKED: 'git push --force' overwrites remote history. Use --force-with-lease instead.\n\nTo allow in this session: /ar:ok 'git push --force'",
     },
     "git push -f": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git push -f' (short for --force) overwrites remote history.\n\nUse --force-with-lease instead: git push --force-with-lease origin <branch>\n\nTo allow in this session: /ar:ok 'git push -f'",
+        "suggestion": "BLOCKED: 'git push -f' overwrites remote history. Use --force-with-lease instead.\n\nTo allow in this session: /ar:ok 'git push -f'",
     },
     # Remote write operations require explicit user permission
     "git push": {
@@ -222,9 +222,13 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Command blocked: gh pr create\n\nThe user requires explicit permission before creating pull requests or other remote write operations via gh.\n\n**Do NOT create PRs or other remote resources. Continue with local tasks only:**\n- Finish and commit all local changes\n- Run tests and validation locally\n- Summarize what would be in the PR and ask the user for permission\n\nTo allow in this session: /ar:ok 'gh pr create'",
     },
+    "gh pr merge --squash": {
+        "action": "block",
+        "suggestion": "BLOCKED: '--squash' destroys individual commit history by combining all commits into one.\n\nUse a regular merge to preserve commit history: gh pr merge\n\nTo allow in this session: /ar:ok 'gh pr merge --squash'",
+    },
     "gh pr merge": {
         "action": "block",
-        "suggestion": "Command blocked: gh pr merge\n\nThe user requires explicit permission before merging pull requests.\n\nInform the user the PR is ready to merge and ask for permission.\n\nTo allow in this session: /ar:ok 'gh pr merge'",
+        "suggestion": "BLOCKED: User permission required before merging pull requests.\n\nInform the user the PR is ready to merge and ask for permission.\n\nTo allow in this session: /ar:ok 'gh pr merge'",
     },
     "gh release create": {
         "action": "block",
