@@ -6,9 +6,12 @@ This test suite ensures:
 2. hooks.json uses Gemini CLI format
 3. Formats are mutually exclusive and correct
 4. All required hook events are present
+5. No cross-CLI event contamination (prevents hook loading failures)
+6. Claude Code plugin cache contains only Claude-compatible hooks files
 """
 
 import json
+import tempfile
 import pytest
 from pathlib import Path
 
@@ -408,6 +411,176 @@ class TestGeminiHookMatchers:
         assert any("ExitPlanMode" in m for m in matchers), (
             f"Claude PostToolUse must match ExitPlanMode. Matchers: {matchers}"
         )
+
+
+# --- Canonical valid event sets ---
+# Source: docs/claude-code-hooks-api.md, docs/gemini-cli-hooks-api.md,
+#         https://code.claude.com/docs/en/plugins-reference
+CLAUDE_CODE_VALID_EVENTS = {
+    "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
+    "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop",
+    "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest",
+    "Setup", "TeammateIdle", "TaskCompleted", "Elicitation",
+    "ElicitationResult", "ConfigChange", "WorktreeCreate",
+    "WorktreeRemove", "InstructionsLoaded",
+}
+
+GEMINI_CLI_VALID_EVENTS = {
+    "BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
+    "BeforeModel", "AfterModel", "BeforeToolSelection",
+    "SessionStart", "SessionEnd", "Notification", "PreCompress",
+}
+
+
+class TestCrossCliEventValidation:
+    """Validate hooks files contain only valid event names for their target CLI.
+
+    Bug: Claude Code scans entire hooks/ dir and rejects ALL hooks if any
+    .json file has unknown events. Having Gemini's hooks.json with BeforeAgent
+    in the Claude Code cache silently disables all plugin hooks.
+    """
+
+    def test_claude_hooks_only_valid_claude_events(self):
+        """claude-hooks.json must only use Claude Code event names."""
+        hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
+        with open(hooks_file) as f:
+            data = json.load(f)
+        for event in data.get("hooks", {}):
+            assert event in CLAUDE_CODE_VALID_EVENTS, (
+                f"'{event}' in claude-hooks.json is not a valid Claude Code event. "
+                f"Valid: {sorted(CLAUDE_CODE_VALID_EVENTS)}"
+            )
+
+    def test_gemini_hooks_only_valid_gemini_events(self):
+        """hooks.json must only use Gemini CLI event names."""
+        hooks_file = get_plugin_root() / "hooks" / "hooks.json"
+        with open(hooks_file) as f:
+            data = json.load(f)
+        for event in data.get("hooks", {}):
+            assert event in GEMINI_CLI_VALID_EVENTS, (
+                f"'{event}' in hooks.json is not a valid Gemini CLI event. "
+                f"Valid: {sorted(GEMINI_CLI_VALID_EVENTS)}"
+            )
+
+    def test_no_cross_cli_event_contamination(self):
+        """Neither hooks file should contain events exclusive to the other CLI."""
+        claude_only = CLAUDE_CODE_VALID_EVENTS - GEMINI_CLI_VALID_EVENTS
+        gemini_only = GEMINI_CLI_VALID_EVENTS - CLAUDE_CODE_VALID_EVENTS
+
+        claude_file = get_plugin_root() / "hooks" / "claude-hooks.json"
+        with open(claude_file) as f:
+            claude_events = set(json.load(f).get("hooks", {}).keys())
+        contamination = claude_events & gemini_only
+        assert not contamination, f"Claude hooks contains Gemini-only events: {contamination}"
+
+        gemini_file = get_plugin_root() / "hooks" / "hooks.json"
+        with open(gemini_file) as f:
+            gemini_events = set(json.load(f).get("hooks", {}).keys())
+        contamination = gemini_events & claude_only
+        assert not contamination, f"Gemini hooks contains Claude-only events: {contamination}"
+
+
+class TestCacheCleanup:
+    """Test that Claude Code plugin cache does not contain Gemini hooks."""
+
+    def test_claude_cache_has_no_gemini_hooks(self):
+        """Claude Code plugin cache must NOT contain hooks.json (Gemini format).
+
+        Bug: Claude Code scans entire hooks/ dir, rejects ALL hooks if any file
+        has invalid events. hooks.json has BeforeAgent/BeforeTool (Gemini-only).
+        """
+        cache_hooks_dir = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
+        if not cache_hooks_dir.exists():
+            pytest.skip("Plugin cache not installed")
+        version_dirs = sorted(d for d in cache_hooks_dir.iterdir() if d.is_dir())
+        if not version_dirs:
+            pytest.skip("No version directories in cache")
+        latest = version_dirs[-1]
+        gemini_hooks = latest / "hooks" / "hooks.json"
+        assert not gemini_hooks.exists(), (
+            f"Gemini hooks.json in Claude Code cache at {gemini_hooks}. "
+            "This causes ALL plugin hooks to fail. Run: "
+            "uv run --project plugins/autorun python -m autorun --install --force"
+        )
+        # Also verify claude-hooks.json IS present (not accidentally deleted)
+        claude_hooks = latest / "hooks" / "claude-hooks.json"
+        assert claude_hooks.exists(), (
+            f"claude-hooks.json missing from cache at {claude_hooks}. "
+            "Plugin hooks will not load without it."
+        )
+
+
+class TestCleanCrossCliHooks:
+    """Unit tests for _clean_cross_cli_hooks() function."""
+
+    def test_clean_claude_removes_gemini_file(self):
+        """_clean_cross_cli_hooks removes Gemini files from Claude cache."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            (hooks_dir / "claude-hooks.json").write_text("{}")
+            (hooks_dir / "hooks.json").write_text("{}")
+            (hooks_dir / "old.bak").write_text("")
+
+            from autorun.install import _clean_cross_cli_hooks
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="claude")
+
+            assert (hooks_dir / "claude-hooks.json").exists()
+            assert not (hooks_dir / "hooks.json").exists()
+            assert not (hooks_dir / "old.bak").exists()
+
+    def test_clean_gemini_removes_claude_file(self):
+        """_clean_cross_cli_hooks removes Claude files from Gemini cache."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            (hooks_dir / "claude-hooks.json").write_text("{}")
+            (hooks_dir / "hooks.json").write_text("{}")
+
+            from autorun.install import _clean_cross_cli_hooks
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="gemini")
+
+            assert not (hooks_dir / "claude-hooks.json").exists()
+            assert (hooks_dir / "hooks.json").exists()
+
+    def test_skips_symlinks(self):
+        """_clean_cross_cli_hooks must NOT delete symlinks (could delete source)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            real_file = Path(tmpdir) / "real_hooks.json"
+            real_file.write_text("{}")
+            (hooks_dir / "claude-hooks.json").write_text("{}")
+            (hooks_dir / "hooks.json").symlink_to(real_file)
+
+            from autorun.install import _clean_cross_cli_hooks
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="claude")
+
+            # Symlink should NOT be deleted; source file must survive
+            assert (hooks_dir / "hooks.json").is_symlink()
+            assert real_file.exists()
+            assert (hooks_dir / "claude-hooks.json").exists()
+
+    def test_no_hooks_dir(self):
+        """Handles missing hooks/ directory gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from autorun.install import _clean_cross_cli_hooks
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="claude")
+            # No error, no crash
+
+    def test_single_file_only_preserved(self):
+        """Don't delete hooks.json if claude-hooks.json doesn't exist (non-dual-CLI plugin)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            (hooks_dir / "hooks.json").write_text("{}")
+            # No claude-hooks.json — this is a single-CLI plugin
+
+            from autorun.install import _clean_cross_cli_hooks
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="claude")
+
+            # hooks.json should be preserved (safety guard)
+            assert (hooks_dir / "hooks.json").exists()
 
 
 if __name__ == "__main__":

@@ -1549,6 +1549,28 @@ class AutorunDaemon:
             # Windows doesn't support add_signal_handler
             logger.warning("Async signal handlers not supported on this platform")
 
+    def _self_heal_cache_hooks(self) -> None:
+        """One-time: remove Gemini hooks.json from Claude Code plugin cache.
+
+        Catches external installs (claude plugin install from GitHub) that
+        bypass our installer entirely. Runs once per daemon lifetime at startup.
+        Also cleans stale old version directories.
+        """
+        try:
+            from .install import _clean_cross_cli_hooks, MARKETPLACE
+            cache_root = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE
+            if not cache_root.exists():
+                return
+            for plugin_dir in cache_root.iterdir():
+                if not plugin_dir.is_dir():
+                    continue
+                for version_dir in plugin_dir.iterdir():
+                    if version_dir.is_dir():
+                        _clean_cross_cli_hooks(version_dir, target_cli="claude")
+            logger.debug("Cache self-healing complete")
+        except Exception as e:
+            logger.debug(f"Cache self-healing skipped: {e}")
+
     async def start(self):
         """
         Start daemon server with proper lifecycle management.
@@ -1577,6 +1599,10 @@ class AutorunDaemon:
             self.handle_client, limit=READ_BUFFER_LIMIT
         )
         self.running = True
+
+        # One-time: clean cross-CLI hooks from Claude Code cache.
+        # Catches external installs (claude plugin install) that bypass our installer.
+        self._self_heal_cache_hooks()
 
         # Start watchdog as tracked task
         self._watchdog_task = asyncio.create_task(self.watchdog())

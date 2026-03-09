@@ -819,6 +819,48 @@ def _install_pdf_deps() -> CmdResult:
     )
 
 
+def _clean_cross_cli_hooks(cache_dir: Path, target_cli: str = "claude") -> None:
+    """Remove hooks files that belong to the other CLI from a cache directory.
+
+    Claude Code scans all .json files in hooks/ and fails if any contain
+    invalid event names. Gemini CLI only reads its manifest-specified file
+    but having extra files is unnecessary.
+
+    Args:
+        cache_dir: Path to the plugin cache directory
+        target_cli: "claude" removes Gemini files, "gemini" removes Claude files
+    """
+    hooks_dir = cache_dir / "hooks"
+    if not hooks_dir.is_dir():
+        return
+
+    if target_cli == "claude":
+        # Only remove if both files exist (dual-CLI plugin indicator).
+        # A plugin with only hooks.json might use it for Claude legitimately.
+        if not (hooks_dir / "claude-hooks.json").exists():
+            return
+        remove_files = ["hooks.json"]
+    else:
+        if not (hooks_dir / "hooks.json").exists():
+            return
+        remove_files = ["claude-hooks.json"]
+
+    for filename in remove_files:
+        target = hooks_dir / filename
+        if target.is_symlink():
+            # NEVER delete symlinks — could delete source repo file.
+            # Gemini CLI 0.28.2 creates absolute symlinks during install.
+            logger.warning(f"Skipping symlink {target} (would delete source)")
+        elif target.exists():
+            target.unlink()
+            logger.debug(f"Removed cross-CLI hooks file {target}")
+
+    # Clean up backup files from either cache
+    for bak_file in hooks_dir.glob("*.bak"):
+        if not bak_file.is_symlink():
+            bak_file.unlink()
+
+
 def _install_to_cache(plugin_name: str) -> bool:
     """Fallback: copy plugin to ~/.claude/plugins/cache/ and register in JSON.
 
@@ -875,6 +917,12 @@ def _install_to_cache(plugin_name: str) -> bool:
     except OSError as e:
         logger.error(f"Failed to copy {plugin_name} to cache: {e}")
         return False
+
+    # Remove Gemini hooks from Claude Code cache.
+    # Claude Code scans the entire hooks/ directory and rejects ALL plugin hooks
+    # if any .json file contains invalid event names (BeforeAgent, BeforeTool, etc.).
+    # Only claude-hooks.json belongs in the Claude Code cache.
+    _clean_cross_cli_hooks(cache_dir, target_cli="claude")
 
     # Substitute ${CLAUDE_PLUGIN_ROOT} in copied files
     _substitute_paths(cache_dir)
@@ -938,11 +986,13 @@ def _substitute_paths(plugin_dir: Path) -> None:
     abs_path = str(plugin_dir.resolve())
     
     # 1. Manifests and Hooks (Fixed paths)
+    # NOTE: hooks/hooks.json excluded — it's Gemini format, removed from
+    # Claude Code cache by _clean_cross_cli_hooks(). Gemini uses
+    # ${extensionPath} resolved at runtime, not ${CLAUDE_PLUGIN_ROOT}.
     target_files = [
         ".claude-plugin/plugin.json",
         "gemini-extension.json",
         "hooks/claude-hooks.json",
-        "hooks/hooks.json"
     ]
     
     # 2. Commands and Skills (Recursive discovery)
@@ -1592,8 +1642,9 @@ def install_plugins(
                         version = _read_plugin_version(plugin_dir_src)
                         cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
                         if cache_path.exists():
+                            _clean_cross_cli_hooks(cache_path, target_cli="claude")
                             _substitute_paths(cache_path)
-                    
+
                     claude_succeeded.append(name)
                     continue
                 else:
@@ -1628,8 +1679,9 @@ def install_plugins(
                     version = _read_plugin_version(plugin_dir_src)
                     cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
                     if cache_path.exists():
+                        _clean_cross_cli_hooks(cache_path, target_cli="claude")
                         _substitute_paths(cache_path)
-                
+
                 claude_succeeded.append(name)
             else:
                 print(f"enable failed: {result.output}")
