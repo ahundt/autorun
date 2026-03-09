@@ -2,14 +2,15 @@
 
 **Official Documentation**: https://code.claude.com/docs/en/hooks
 
-**Last Updated**: 2026-02-15
+**Last Updated**: 2026-03-09
 
-## Event Names
+## Event Names (21 events as of Claude Code v2.1.71)
 
 | Event Name | When It Fires | Equivalent Gemini CLI Event |
 |------------|---------------|----------------------------|
 | PreToolUse | Before tool execution | BeforeTool |
 | PostToolUse | After tool execution | AfterTool |
+| PostToolUseFailure | After tool failure | (not in Gemini) |
 | UserPromptSubmit | User message submission | BeforeAgent |
 | Stop | Session/agent termination | AfterAgent |
 | SubagentStart | Subagent spawn | (not in Gemini) |
@@ -21,7 +22,13 @@
 | TaskCompleted | Task completion event | (not in Gemini) |
 | TeammateIdle | Teammate idle state | (not in Gemini) |
 | PreCompact | Before context compression | PreCompress |
-| PostToolUseFailure | After tool failure | (not in Gemini) |
+| Setup | Plugin setup/initialization | (not in Gemini) |
+| Elicitation | Claude asks user a question | (not in Gemini) |
+| ElicitationResult | User responds to elicitation | (not in Gemini) |
+| ConfigChange | Configuration change detected | (not in Gemini) |
+| WorktreeCreate | Git worktree created | (not in Gemini) |
+| WorktreeRemove | Git worktree removed | (not in Gemini) |
+| InstructionsLoaded | CLAUDE.md/instructions loaded | (not in Gemini) |
 
 ## Tool Names (PascalCase convention)
 
