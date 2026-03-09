@@ -66,6 +66,8 @@ All commands accept `--format json` for machine-readable output and `--full-uuid
 | Search with regex pattern | Complex pattern matching with \| for OR | `aise messages search "forgot\|missed" --regex` | |
 | Filter timeline events by pattern | Grep within a session timeline | `aise messages timeline SID --grep "error"` | `--regex` |
 | Identify recurring AI mistakes across all sessions | Qualitative analysis pipeline | `aise analyze` | `--step analyze\|graph` `--org-dir DIR` `--status` `--force` |
+| Turn recurring mistakes into permanent fixes | Apply corrections to CLAUDE.md, skills, or hooks | See Workflow 6 | Decision table: finding → target → example |
+| Verify a fix actually reduced a failure | Compare correction counts before/after | `aise messages corrections --since 7d` | Compare to `--since 30d` baseline |
 | Narrow analyze to one provider | Provider goes at root level | `aise --provider claude analyze` | `aise --provider aistudio analyze` |
 | Stop indexing sessions from a removed or unwanted directory | Deregister a session source | `aise source remove /path/to/dir` | `aise source disable claude` |
 | What date formats work with --since? | Date format examples and shorthands | `aise dates` | |
