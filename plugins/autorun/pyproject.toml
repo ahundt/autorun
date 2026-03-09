@@ -36,11 +36,10 @@ dependencies = [
 [project.optional-dependencies]
 bashlex = ["bashlex>=0.18"]
 # ai-session-tools: session search/recovery CLI (aise). Not imported at runtime
-# by autorun — installed as a separate UV tool. Listed here for dependency
-# declaration. Uses @main so uv lock always resolves; install.py pins to the
-# exact release tag (v0.3.0) when available, falling back to @main.
+# by autorun — installed as a separate UV tool via install.py. Listed here for
+# dependency declaration. install.py pins to the exact version with fallbacks.
 ai-session-tools = [
-    "ai-session-tools @ git+https://github.com/ahundt/ai_session_tools.git@main ; python_version >= '3.12'",
+    "ai-session-tools>=0.3.0 ; python_version >= '3.12'",
 ]
 dev = [
     "pytest>=7.0.0",

@@ -1421,8 +1421,8 @@ def _update_package_metadata(marketplace_root: Path) -> None:
 # ai-session-tools (aise) Installation
 # =============================================================================
 
-# Pinned release tag for ai-session-tools. Update when releasing a new version.
-_AISE_TAG = "v0.3.0"
+# Pinned version for ai-session-tools. Update when releasing a new version.
+_AISE_VERSION = "0.3.0"
 _AISE_REPO = "git+https://github.com/ahundt/ai_session_tools.git"
 
 
@@ -1435,8 +1435,9 @@ def _install_aise(force: bool = False) -> bool:
 
     Install order:
         1. If not --force: check if aise is already installed and working → skip
-        2. Try pinned release tag (_AISE_TAG) → preferred for reproducibility
-        3. Fall back to main branch → always available, latest code
+        2. Try PyPI release → fastest, most reliable
+        3. Try git tag → fallback if PyPI is behind
+        4. Fall back to git main branch → always available, latest code
 
     Args:
         force: Force reinstall even if already installed
@@ -1457,23 +1458,33 @@ def _install_aise(force: bool = False) -> bool:
                 return True
             logger.debug(f"aise found at {aise_path} but --version failed: {check.output}")
 
-    # Step 2: Try pinned release tag
+    # Step 2: Try PyPI release (fastest, most reliable)
     aise_result = run_cmd(
-        ["uv", "tool", "install", "--force", f"{_AISE_REPO}@{_AISE_TAG}"],
+        ["uv", "tool", "install", "--force", f"ai-session-tools=={_AISE_VERSION}"],
         timeout=120,
     )
     if aise_result.ok:
-        print(f"   aise: ok ({_AISE_TAG})")
+        print(f"   aise: ok (PyPI {_AISE_VERSION})")
         return True
 
-    # Step 3: Tag not found — fall back to main branch
-    logger.debug(f"aise {_AISE_TAG} tag not found, trying main: {aise_result.output}")
+    # Step 3: Try git tag (fallback if PyPI is behind or unavailable)
+    logger.debug(f"aise PyPI {_AISE_VERSION} failed, trying git tag: {aise_result.output}")
+    aise_result = run_cmd(
+        ["uv", "tool", "install", "--force", f"{_AISE_REPO}@v{_AISE_VERSION}"],
+        timeout=120,
+    )
+    if aise_result.ok:
+        print(f"   aise: ok (git v{_AISE_VERSION})")
+        return True
+
+    # Step 4: Fall back to git main branch (always available)
+    logger.debug(f"aise git tag v{_AISE_VERSION} failed, trying main: {aise_result.output}")
     aise_result = run_cmd(
         ["uv", "tool", "install", "--force", f"{_AISE_REPO}@main"],
         timeout=120,
     )
     if aise_result.ok:
-        print(f"   aise: ok (main branch, {_AISE_TAG} tag not yet available)")
+        print(f"   aise: ok (git main, v{_AISE_VERSION} not yet available)")
         return True
 
     # All attempts failed — non-fatal, autorun works without aise
