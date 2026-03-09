@@ -198,20 +198,20 @@ DEFAULT_INTEGRATIONS = {
     },
     "git rebase -i": {
         "action": "block",
-        "suggestion": "CAUTION: 'git rebase -i' (interactive rebase) rewrites commit history.\n\n**Risks:**\n- Changes commit hashes for all rebased commits\n- If already pushed, requires force push (breaks collaborators)\n- Cannot be used with interactive terminal from AI tools\n\n**SAFER ALTERNATIVES:**\n\n1. **Squash on merge** (no history rewrite needed):\n   gh pr merge --squash\n\n2. **Fixup commit** (auto-squash later):\n   git commit --fixup <commit-hash>\n\n3. **Non-interactive rebase** (for branch updates):\n   git rebase main  # linear rebase without editing\n\nTo allow in this session: /ar:ok 'git rebase -i'",
+        "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nSafer alternatives:\n- Squash on merge: gh pr merge --squash\n- Fixup commit: git commit --fixup <commit-hash>\n- Linear rebase: git rebase main  (non-interactive)\n\nIf history rewriting is needed, use git-filter-repo for bulk changes.\n\nTo allow in this session: /ar:ok 'git rebase -i'",
     },
     "git rebase --interactive": {
         "action": "block",
-        "suggestion": "CAUTION: 'git rebase --interactive' rewrites commit history.\n\nSee /ar:ok 'git rebase -i' for details and safer alternatives.\n\nTo allow in this session: /ar:ok 'git rebase --interactive'",
+        "suggestion": "BLOCKED: 'git rebase --interactive' rewrites commit history. See 'git rebase -i' for alternatives.\n\nTo allow in this session: /ar:ok 'git rebase --interactive'",
     },
     # Force push — more specific than generic "git push", must be defined first
     "git push --force": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git push --force' overwrites remote history, breaking all collaborators.\n\n**SAFER ALTERNATIVES:**\n\n1. **Force-with-lease** (rejects if remote has new commits):\n   git push --force-with-lease origin <branch>\n\n2. **Create a new branch instead** (preserves original):\n   git push origin HEAD:refs/heads/<new-branch-name>\n\n3. **Revert instead of rewriting** (adds new commit, preserves history):\n   git revert <commit>\n   git push origin <branch>\n\n**NEVER force push to main/master** — this can destroy team work.\n\nTo allow in this session: /ar:ok 'git push --force'",
+        "suggestion": "BLOCKED: 'git push --force' overwrites remote history, breaking all collaborators.\n\nSafer alternative — rejects if remote has new commits:\n  git push --force-with-lease origin <branch>\n\nNEVER force push to main/master.\n\nTo allow in this session: /ar:ok 'git push --force'",
     },
     "git push -f": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git push -f' (short for --force) overwrites remote history.\n\nUse --force-with-lease instead for safety:\n   git push --force-with-lease origin <branch>\n\nSee /ar:ok 'git push --force' for full details and alternatives.\n\nTo allow in this session: /ar:ok 'git push -f'",
+        "suggestion": "BLOCKED: 'git push -f' (short for --force) overwrites remote history.\n\nUse --force-with-lease instead: git push --force-with-lease origin <branch>\n\nTo allow in this session: /ar:ok 'git push -f'",
     },
     # Remote write operations require explicit user permission
     "git push": {
