@@ -1418,6 +1418,71 @@ def _update_package_metadata(marketplace_root: Path) -> None:
 
 
 # =============================================================================
+# ai-session-tools (aise) Installation
+# =============================================================================
+
+# Pinned release tag for ai-session-tools. Update when releasing a new version.
+_AISE_TAG = "v0.3.0"
+_AISE_REPO = "git+https://github.com/ahundt/ai_session_tools.git"
+
+
+def _install_aise(force: bool = False) -> bool:
+    """Install ai-session-tools (aise) as a global UV tool.
+
+    aise is a separate CLI for searching/recovering AI session history.
+    Autorun does not import it at runtime — it's installed alongside autorun
+    for user convenience.
+
+    Install order:
+        1. If not --force: check if aise is already installed and working → skip
+        2. Try pinned release tag (_AISE_TAG) → preferred for reproducibility
+        3. Fall back to main branch → always available, latest code
+
+    Args:
+        force: Force reinstall even if already installed
+
+    Returns:
+        True if aise is available after this call (installed or already present)
+    """
+    print("Installing ai-session-tools (aise)...")
+
+    # Step 1: Check if already installed (skip if not --force)
+    if not force:
+        aise_path = shutil.which("aise")
+        if aise_path:
+            # Verify it actually runs
+            check = run_cmd(["aise", "--version"], timeout=10)
+            if check.ok:
+                print(f"   aise: already installed ({aise_path})")
+                return True
+            logger.debug(f"aise found at {aise_path} but --version failed: {check.output}")
+
+    # Step 2: Try pinned release tag
+    aise_result = run_cmd(
+        ["uv", "tool", "install", "--force", f"{_AISE_REPO}@{_AISE_TAG}"],
+        timeout=120,
+    )
+    if aise_result.ok:
+        print(f"   aise: ok ({_AISE_TAG})")
+        return True
+
+    # Step 3: Tag not found — fall back to main branch
+    logger.debug(f"aise {_AISE_TAG} tag not found, trying main: {aise_result.output}")
+    aise_result = run_cmd(
+        ["uv", "tool", "install", "--force", f"{_AISE_REPO}@main"],
+        timeout=120,
+    )
+    if aise_result.ok:
+        print(f"   aise: ok (main branch, {_AISE_TAG} tag not yet available)")
+        return True
+
+    # All attempts failed — non-fatal, autorun works without aise
+    print(f"   aise: install failed (optional, continuing)")
+    logger.warning(f"aise install failed: {aise_result.output}")
+    return False
+
+
+# =============================================================================
 # Main Function - Installation
 # =============================================================================
 
@@ -1711,17 +1776,13 @@ def install_plugins(
         else:
             print(f"   uv tool: {result.output}")
 
-        # Install ai-session-tools (aise) as a global UV tool
-        print("Installing ai-session-tools (aise)...")
-        aise_result = run_cmd(
-            ["uv", "tool", "install", "--force",
-             "git+https://github.com/ahundt/ai_session_tools.git@v0.3.0"],
-            timeout=120,
-        )
-        if aise_result.ok:
-            print("   aise: ok")
-        else:
-            print(f"   aise: {aise_result.output}")
+        # Install ai-session-tools (aise) as a global UV tool.
+        # Autorun doesn't import aise at runtime — it's a separate CLI for
+        # searching/recovering AI session history. Install order:
+        #   1. Check if aise is already installed and working → skip if --force not given
+        #   2. Try pinned release tag (v0.3.0) → preferred for reproducibility
+        #   3. Fall back to main branch → always available, latest code
+        _install_aise(force=force)
 
     # Check for hook conflicts (warn if hookify or others might interfere)
     _check_hook_conflicts()
