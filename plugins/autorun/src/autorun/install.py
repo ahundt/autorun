@@ -840,10 +840,13 @@ def _clean_cross_cli_hooks(cache_dir: Path, target_cli: str = "claude") -> None:
         if not (hooks_dir / "claude-hooks.json").exists():
             return
         remove_files = ["hooks.json"]
-    else:
+    elif target_cli == "gemini":
         if not (hooks_dir / "hooks.json").exists():
             return
         remove_files = ["claude-hooks.json"]
+    else:
+        # Unknown target_cli — do nothing rather than accidentally deleting files
+        return
 
     for filename in remove_files:
         target = hooks_dir / filename
@@ -852,13 +855,19 @@ def _clean_cross_cli_hooks(cache_dir: Path, target_cli: str = "claude") -> None:
             # Gemini CLI 0.28.2 creates absolute symlinks during install.
             logger.warning(f"Skipping symlink {target} (would delete source)")
         elif target.exists():
-            target.unlink()
-            logger.debug(f"Removed cross-CLI hooks file {target}")
+            try:
+                target.unlink()
+                logger.debug(f"Removed cross-CLI hooks file {target}")
+            except PermissionError:
+                logger.warning(f"Permission denied removing {target}")
 
     # Clean up backup files from either cache
     for bak_file in hooks_dir.glob("*.bak"):
         if not bak_file.is_symlink():
-            bak_file.unlink()
+            try:
+                bak_file.unlink()
+            except PermissionError:
+                logger.warning(f"Permission denied removing {bak_file}")
 
 
 def _install_to_cache(plugin_name: str) -> bool:

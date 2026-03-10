@@ -492,10 +492,17 @@ class TestCacheCleanup:
         cache_hooks_dir = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
         if not cache_hooks_dir.exists():
             pytest.skip("Plugin cache not installed")
-        version_dirs = sorted(d for d in cache_hooks_dir.iterdir() if d.is_dir())
+        version_dirs = [d for d in cache_hooks_dir.iterdir() if d.is_dir()]
         if not version_dirs:
             pytest.skip("No version directories in cache")
-        latest = version_dirs[-1]
+        # Use semver-aware sort: split on '.' and compare as integers.
+        # Lexicographic sorted() puts "0.9.0" AFTER "0.10.0" which is wrong.
+        def _semver_key(p: Path):
+            try:
+                return tuple(int(x) for x in p.name.split("."))
+            except ValueError:
+                return (0,)
+        latest = max(version_dirs, key=_semver_key)
         gemini_hooks = latest / "hooks" / "hooks.json"
         assert not gemini_hooks.exists(), (
             f"Gemini hooks.json in Claude Code cache at {gemini_hooks}. "
@@ -581,6 +588,150 @@ class TestCleanCrossCliHooks:
 
             # hooks.json should be preserved (safety guard)
             assert (hooks_dir / "hooks.json").exists()
+
+
+    def test_read_only_file_does_not_crash(self):
+        """PermissionError on unlink() must not crash the installer."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            (hooks_dir / "claude-hooks.json").write_text("{}")
+            target = hooks_dir / "hooks.json"
+            target.write_text("{}")
+            # Make read-only
+            import os
+            os.chmod(str(target), 0o444)
+            # Also make parent read-only to prevent deletion
+            os.chmod(str(hooks_dir), 0o555)
+
+            from autorun.install import _clean_cross_cli_hooks
+            try:
+                # Should NOT raise — PermissionError is caught internally
+                _clean_cross_cli_hooks(Path(tmpdir), target_cli="claude")
+            finally:
+                # Restore permissions for cleanup
+                os.chmod(str(hooks_dir), 0o755)
+                os.chmod(str(target), 0o644)
+
+    def test_invalid_target_cli_is_noop(self):
+        """Invalid target_cli value should not crash or delete anything."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            (hooks_dir / "claude-hooks.json").write_text("{}")
+            (hooks_dir / "hooks.json").write_text("{}")
+
+            from autorun.install import _clean_cross_cli_hooks
+            # "invalid" doesn't match "claude" or "gemini" branches — falls through
+            # with no remove_files, so nothing is deleted. No error.
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="invalid")
+
+            assert (hooks_dir / "claude-hooks.json").exists()
+            assert (hooks_dir / "hooks.json").exists()
+
+    def test_bak_symlink_not_deleted(self):
+        """Backup symlinks should not be deleted (safety guard)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hooks_dir = Path(tmpdir) / "hooks"
+            hooks_dir.mkdir()
+            (hooks_dir / "claude-hooks.json").write_text("{}")
+            real_file = Path(tmpdir) / "real.bak"
+            real_file.write_text("important")
+            (hooks_dir / "backup.bak").symlink_to(real_file)
+
+            from autorun.install import _clean_cross_cli_hooks
+            _clean_cross_cli_hooks(Path(tmpdir), target_cli="claude")
+
+            # Symlink .bak should survive, source should survive
+            assert (hooks_dir / "backup.bak").is_symlink()
+            assert real_file.exists()
+
+
+class TestSemverSortInCacheTest:
+    """Verify the semver sort fix in test_claude_cache_has_no_gemini_hooks."""
+
+    def test_semver_key_sorts_correctly(self):
+        """0.10.0 must sort AFTER 0.9.0 (not lexicographically before)."""
+        from pathlib import PurePosixPath
+
+        def _semver_key(p):
+            try:
+                return tuple(int(x) for x in p.name.split("."))
+            except ValueError:
+                return (0,)
+
+        paths = [PurePosixPath("0.9.0"), PurePosixPath("0.10.0"), PurePosixPath("0.2.0")]
+        result = max(paths, key=_semver_key)
+        assert result.name == "0.10.0", f"Expected 0.10.0 as latest, got {result.name}"
+
+        # Verify lexicographic sort would get it WRONG
+        lex_sorted = sorted(paths)
+        assert lex_sorted[-1].name != "0.10.0", "Lexicographic sort should NOT work for semver"
+
+    def test_semver_key_handles_non_numeric(self):
+        """Non-numeric version dirs should not crash the sort."""
+        from pathlib import PurePosixPath
+
+        def _semver_key(p):
+            try:
+                return tuple(int(x) for x in p.name.split("."))
+            except ValueError:
+                return (0,)
+
+        paths = [PurePosixPath("latest"), PurePosixPath("0.10.0"), PurePosixPath("0.9.0")]
+        result = max(paths, key=_semver_key)
+        assert result.name == "0.10.0"
+
+
+class TestSelfHealCacheHooks:
+    """Edge case tests for _self_heal_cache_hooks in core.py."""
+
+    def test_nonexistent_cache_root(self):
+        """_self_heal_cache_hooks should silently skip if cache root doesn't exist."""
+        # This is tested implicitly by the code — cache_root.exists() returns False.
+        # Verify the function doesn't crash when called directly.
+        import types
+        from unittest.mock import patch, MagicMock
+
+        mock_daemon = MagicMock()
+        # Directly test the method body logic
+        with patch("autorun.install._clean_cross_cli_hooks") as mock_clean, \
+             patch("autorun.install.MARKETPLACE", "autorun"), \
+             patch("pathlib.Path.home") as mock_home:
+            fake_home = Path(tempfile.mkdtemp())
+            mock_home.return_value = fake_home
+            try:
+                # No cache dir exists — should return without error
+                from autorun.core import AutorunDaemon
+                daemon = AutorunDaemon.__new__(AutorunDaemon)
+                daemon._self_heal_cache_hooks()
+                mock_clean.assert_not_called()
+            finally:
+                import shutil
+                shutil.rmtree(fake_home, ignore_errors=True)
+
+    def test_permission_error_on_iterdir(self):
+        """PermissionError iterating cache dirs should be caught by broad except."""
+        from unittest.mock import patch, MagicMock
+
+        fake_home = Path(tempfile.mkdtemp())
+        try:
+            cache_root = fake_home / ".claude" / "plugins" / "cache" / "autorun"
+            cache_root.mkdir(parents=True)
+            # Make unreadable
+            import os
+            os.chmod(str(cache_root), 0o000)
+
+            with patch("pathlib.Path.home", return_value=fake_home):
+                from autorun.core import AutorunDaemon
+                daemon = AutorunDaemon.__new__(AutorunDaemon)
+                # Should NOT raise — caught by broad except
+                daemon._self_heal_cache_hooks()
+        finally:
+            import os
+            os.chmod(str(cache_root), 0o755)
+            import shutil
+            shutil.rmtree(fake_home, ignore_errors=True)
 
 
 if __name__ == "__main__":
