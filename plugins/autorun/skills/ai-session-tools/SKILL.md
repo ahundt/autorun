@@ -445,3 +445,5 @@ See `references/session-format.md` for the full format reference.
 ## Full Flag Reference
 
 `aise COMMAND --help` — every subcommand has a `--help` flag with full option descriptions.
+
+**`aise` not found?** Run `autorun --install --force` or `uv tool install ai-session-tools`.
