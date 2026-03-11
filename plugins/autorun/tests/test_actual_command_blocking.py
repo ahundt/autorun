@@ -298,6 +298,92 @@ class TestActualCommandBlocking:
             f"Safe command has top-level decision='{result.get('decision')}', expected 'allow'"
 
 
+class TestGhEditCommandBlocking:
+    """Verify gh edit commands are blocked since they modify public/shared resources."""
+
+    @pytest.mark.parametrize("command,keyword", [
+        ("gh issue edit 361 --repo rtk-ai/rtk --body-file /tmp/body.md", "issue"),
+        ("gh issue edit 42 --title 'New title'", "issue"),
+        ("gh pr edit 15 --body 'Updated description'", "pull request"),
+        ("gh pr edit 99 --add-label bug", "pull request"),
+        ("gh repo edit --description 'New desc'", "repository"),
+        ("gh repo edit --visibility public", "repository"),
+    ])
+    def test_gh_edit_commands_blocked(self, command, keyword):
+        """Verify gh issue/pr/repo edit commands are blocked."""
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+        )
+
+        result = _pretooluse(ctx)
+
+        hook_output = result.get("hookSpecificOutput", {})
+        permission_decision = hook_output.get("permissionDecision", "allow")
+
+        assert permission_decision == "deny", \
+            f"'{command}' was not blocked! permissionDecision={permission_decision}"
+
+        reason = hook_output.get("permissionDecisionReason", "")
+        assert "edit" in reason.lower() or "blocked" in reason.lower(), \
+            f"Blocking reason doesn't mention edit: {reason}"
+
+
+class TestArOkQuotingInSuggestions:
+    """Verify all /ar:ok instructions in DEFAULT_INTEGRATIONS use proper quoting.
+
+    Multi-word patterns like 'rm -rf' or 'gh issue edit' must be quoted
+    in /ar:ok suggestions so the user can copy-paste them correctly.
+    """
+
+    def test_all_multiword_ar_ok_are_quoted(self):
+        """Every /ar:ok with a multi-word pattern must use single quotes."""
+        import re
+        from autorun.config import DEFAULT_INTEGRATIONS
+
+        unquoted = []
+        for pattern, config in DEFAULT_INTEGRATIONS.items():
+            suggestion = config.get("suggestion", "")
+            # Find all /ar:ok references in the suggestion
+            for match in re.finditer(r"/ar:ok\s+(.+?)(?:\"|\\n|$)", suggestion):
+                ok_arg = match.group(1).strip()
+                # Single-word patterns don't need quotes (e.g., "/ar:ok rm", "/ar:ok sed")
+                if " " not in ok_arg:
+                    continue
+                # Multi-word patterns must be quoted
+                if not (ok_arg.startswith("'") and ok_arg.endswith("'")):
+                    unquoted.append(
+                        f"Pattern '{pattern}': /ar:ok {ok_arg} — needs quotes: /ar:ok '{ok_arg}'"
+                    )
+
+        assert not unquoted, (
+            f"Found {len(unquoted)} unquoted multi-word /ar:ok instructions:\n"
+            + "\n".join(f"  - {u}" for u in unquoted)
+        )
+
+    def test_all_multiword_ar_globalno_are_quoted(self):
+        """Every /ar:globalno with a multi-word pattern must use single quotes."""
+        import re
+        from autorun.config import DEFAULT_INTEGRATIONS
+
+        unquoted = []
+        for pattern, config in DEFAULT_INTEGRATIONS.items():
+            suggestion = config.get("suggestion", "")
+            for match in re.finditer(r"/ar:globalno\s+(.+?)(?:\"|\\n|$)", suggestion):
+                arg = match.group(1).strip()
+                if " " not in arg:
+                    continue
+                if not (arg.startswith("'") and arg.endswith("'")):
+                    unquoted.append(f"Pattern '{pattern}': /ar:globalno {arg}")
+
+        assert not unquoted, (
+            f"Found {len(unquoted)} unquoted multi-word /ar:globalno instructions:\n"
+            + "\n".join(f"  - {u}" for u in unquoted)
+        )
+
+
 class TestPipeDetectionRobustness:
     """Test pipe detection handles edge cases correctly."""
 

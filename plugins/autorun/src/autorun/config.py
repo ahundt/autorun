@@ -64,7 +64,7 @@ DEFAULT_INTEGRATIONS = {
     },
     "rm -rf": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /ar:ok rm -rf",
+        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow in this session: /ar:ok 'rm -rf'",
         "redirect": "trash {args}",
     },
     "git reset --hard": {
@@ -122,7 +122,7 @@ DEFAULT_INTEGRATIONS = {
     },
     "dd if=": {
         "action": "block",
-        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow in this session: /ar:ok dd if=",
+        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow in this session: /ar:ok 'dd if='",
     },
     "mkfs": {
         "action": "block",
@@ -237,6 +237,19 @@ DEFAULT_INTEGRATIONS = {
     "gh repo create": {
         "action": "block",
         "suggestion": "Command blocked: gh repo create\n\nThe user requires explicit permission before creating remote repositories.\n\nAsk the user for permission before proceeding.\n\nTo allow in this session: /ar:ok 'gh repo create'",
+    },
+    # GitHub edit commands — modify public/shared resources (v0.10)
+    "gh issue edit": {
+        "action": "block",
+        "suggestion": "BLOCKED: 'gh issue edit' modifies a public GitHub issue (title, body, labels, assignees).\n\nUser permission required before editing shared resources.\n\nTo allow in this session: /ar:ok 'gh issue edit'",
+    },
+    "gh pr edit": {
+        "action": "block",
+        "suggestion": "BLOCKED: 'gh pr edit' modifies a public pull request (title, body, labels, reviewers).\n\nUser permission required before editing shared resources.\n\nTo allow in this session: /ar:ok 'gh pr edit'",
+    },
+    "gh repo edit": {
+        "action": "block",
+        "suggestion": "BLOCKED: 'gh repo edit' modifies repository settings (description, visibility, homepage).\n\nUser permission required before editing shared resources.\n\nTo allow in this session: /ar:ok 'gh repo edit'",
     },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
