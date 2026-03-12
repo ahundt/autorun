@@ -1155,16 +1155,10 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
                         except ValueError:
                             export_msg = f"📋 Plan exported to {dest}"
 
-                # Check if plan was approved (detect_plan_approval will handle response)
-                tool_result_text = ctx.tool_result or ""
-                approval_indicators = ["approved your plan", "can now start coding"]
-                is_approval = any(ind in tool_result_text.lower() for ind in approval_indicators)
-
-                if is_approval:
-                    ctx.add_chain_notification(export_msg, channel="human")
-                    return None  # Let detect_plan_approval handle combined response
-                else:
-                    return ctx.respond("allow", export_msg, to_human=True)
+                # Always chain-notify for ExitPlanMode — never stop the chain.
+                # detect_plan_approval (downstream) handles approval-specific logic.
+                ctx.add_chain_notification(export_msg, channel="human")
+                return None
     except SessionTimeoutError:
         return ctx.respond("allow", "⚠️ Plan export skipped: lock timeout. Re-trigger ExitPlanMode to retry.", to_human=True)
     except Exception as e:
