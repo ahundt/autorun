@@ -585,3 +585,33 @@ class TestChainNotificationAccumulator:
         assert "Plan accepted" in sys_msg
         # Export notification comes first (chronological order)
         assert sys_msg.index("📋 Plan exported") < sys_msg.index("Plan accepted")
+
+    def test_execution_reminder_fires_after_plan_acceptance(self):
+        """After plan acceptance, next PostToolUse gets execution task reminder."""
+        sid = f"test-exec-reminder-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Step 1: Simulate plan acceptance via detect_plan_approval
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="ExitPlanMode", tool_input={},
+            tool_result="User has approved your plan. You can now start coding.",
+            store=store,
+        )
+        ctx.plan_arguments = "Build feature"
+        plugins.app.dispatch(ctx)
+
+        # Step 2: Verify execution flag was set
+        ctx2 = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", tool_input={}, tool_result="",
+            store=store,
+        )
+        assert ctx2.plan_awaiting_execution_tasks is True
+
+        # Step 3: Next PostToolUse should get execution task reminder
+        result = plugins.app.dispatch(ctx2) or {}
+        result_str = str(result)
+        assert "EXECUTION TASKS REQUIRED" in result_str, (
+            f"Expected execution task reminder on first PostToolUse after acceptance, got: {result_str[:200]}"
+        )
