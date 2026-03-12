@@ -371,6 +371,26 @@ CONFIG = {
         "3. Wire dependencies: each [EXEC] blocked by its [TDD]\n"
         "4. Update task list immediately\n"
     ),
+    # --- Task Creation Reminder Messages (v0.10) ---
+    "plan_planning_task_reminder": (
+        "\n⚠️ PLANNING TASKS REQUIRED: You started a plan command but have NOT "
+        "created any [PLANNING] tasks yet. You MUST call TaskCreate NOW:\n"
+        "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\", activeForm=\"Planning [name]...\")\n"
+        "2. TaskCreate(subject=\"[PLANNING] Req: [requirement]\")\n"
+        "3. Wire dependencies: TaskUpdate(taskId=N, addBlockedBy=[N-1])\n"
+        "4. Call TaskList to verify all tasks visible\n"
+        "Do NOT proceed with any other work until planning tasks are created.\n"
+    ),
+    "plan_execution_task_reminder": (
+        "\n⚠️ EXECUTION TASKS REQUIRED: Plan accepted but NO implementation tasks created. "
+        "You MUST call TaskCreate NOW before writing any code:\n"
+        "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\")\n"
+        "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\")\n"
+        "3. TaskCreate(subject=\"[VERIFY] Run full test suite\")\n"
+        "4. Wire: each [EXEC] blockedBy its [TDD]\n"
+        "5. Call TaskList to verify all tasks visible\n"
+        "Do NOT write implementation code until tasks are created.\n"
+    ),
 
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,

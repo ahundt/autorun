@@ -630,6 +630,8 @@ class EventContext:
         'tool_calls_since_task_update': 0,   # v0.9: Counter for task staleness reminder
         'task_staleness_enabled': True,      # v0.9: Enable/disable reminder injection
         'task_staleness_threshold': None,    # v0.9: Session override (None = use CONFIG default)
+        'plan_awaiting_planning_tasks': False,   # v0.10: Nag until [PLANNING] tasks created
+        'plan_awaiting_execution_tasks': False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
     }
 
     def __init__(self, session_id: str, event: str, prompt: str = "",

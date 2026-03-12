@@ -694,6 +694,142 @@ def test_staleness_no_injection_without_tasks():
     assert "TASK LIST REMINDER" not in str(result)
 
 
+# ── Task creation reminder (v0.10) ───────────────────────────────────────
+
+def test_plan_command_sets_planning_reminder_flag():
+    """Plan command sets plan_awaiting_planning_tasks flag."""
+    sid = "test-plan-cmd-flag"
+    _dispatch("/ar:plannew", session_id=sid)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", store=ThreadSafeDB())
+    assert ctx.plan_awaiting_planning_tasks is True
+    assert ctx.plan_active is True
+
+
+def test_planning_reminder_fires_on_every_post_tool_use():
+    """Reminder fires on every PostToolUse when planning flag is set."""
+    sid = "test-planning-reminder-fires"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store)
+    ctx.plan_awaiting_planning_tasks = True
+    results = []
+    for _ in range(3):
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                           tool_name="Bash", tool_input={}, tool_result="",
+                           store=store)
+        result = plugins.app.dispatch(ctx) or {}
+        results.append(result)
+    assert all("PLANNING TASKS REQUIRED" in str(r) for r in results)
+
+
+def test_planning_reminder_clears_on_task_create():
+    """TaskCreate clears the planning reminder flag."""
+    sid = "test-planning-clears"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store)
+    ctx.plan_awaiting_planning_tasks = True
+
+    # TaskCreate should clear the flag
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="TaskCreate", tool_input={}, tool_result="",
+                        store=store)
+    plugins.app.dispatch(ctx2)
+
+    # Next call should be silent
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    result = plugins.app.dispatch(ctx3) or {}
+    assert "PLANNING TASKS REQUIRED" not in str(result)
+
+
+def test_plan_acceptance_sets_execution_reminder_and_clears_planning():
+    """Plan acceptance sets execution flag and clears planning flag."""
+    sid = "test-acceptance-flags"
+    store = ThreadSafeDB()
+
+    # Simulate: plan command was invoked (planning flag set)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store)
+    ctx.plan_awaiting_planning_tasks = True
+    ctx.plan_arguments = "test plan"
+
+    # Simulate plan acceptance via detect_plan_approval
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="ExitPlanMode", tool_input={},
+                        tool_result="User has approved your plan. You can now start coding.",
+                        store=store)
+    plugins.app.dispatch(ctx2)
+
+    # Check flags
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    assert ctx3.plan_awaiting_planning_tasks is False
+    assert ctx3.plan_awaiting_execution_tasks is True
+
+
+def test_execution_reminder_fires_until_task_create():
+    """Execution reminder fires until TaskCreate is called."""
+    sid = "test-exec-reminder"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store)
+    ctx.plan_awaiting_execution_tasks = True
+
+    # Should fire
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    result = plugins.app.dispatch(ctx2) or {}
+    assert "EXECUTION TASKS REQUIRED" in str(result)
+
+    # TaskCreate clears
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="TaskCreate", tool_input={}, tool_result="",
+                        store=store)
+    plugins.app.dispatch(ctx3)
+
+    # Should be silent
+    ctx4 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    result2 = plugins.app.dispatch(ctx4) or {}
+    assert "EXECUTION TASKS REQUIRED" not in str(result2)
+
+
+def test_execution_reminder_references_tdd_exec():
+    """Execution reminder message contains [TDD] and [EXEC]."""
+    from autorun.config import CONFIG
+    msg = CONFIG["plan_execution_task_reminder"]
+    assert "[TDD]" in msg
+    assert "[EXEC]" in msg
+    assert "[VERIFY]" in msg
+
+
+def test_planning_reminder_references_planning_format():
+    """Planning reminder message contains [PLANNING]."""
+    from autorun.config import CONFIG
+    msg = CONFIG["plan_planning_task_reminder"]
+    assert "[PLANNING]" in msg
+
+
+def test_no_reminder_when_flags_not_set():
+    """No reminder fires when both flags are False (default)."""
+    ctx = EventContext(session_id="test-no-reminder", event="PostToolUse",
+                       prompt="", tool_name="Bash", tool_input={}, tool_result="",
+                       store=ThreadSafeDB())
+    result = plugins.app.dispatch(ctx) or {}
+    assert "PLANNING TASKS REQUIRED" not in str(result)
+    assert "EXECUTION TASKS REQUIRED" not in str(result)
+
+
 # ── /ar:tasks command ──────────────────────────────────────────────────────
 
 def test_tasks_command_on():

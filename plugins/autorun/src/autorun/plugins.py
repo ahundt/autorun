@@ -910,6 +910,8 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     ctx.autorun_mode = "standard"
     ctx.recheck_count = 0
     ctx.hook_call_count = 0
+    ctx.plan_awaiting_planning_tasks = False   # Planning phase done
+    ctx.plan_awaiting_execution_tasks = True   # Now need [TDD]/[EXEC] tasks
 
     injection = build_injection_prompt(ctx)
 
@@ -1030,6 +1032,41 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     ctx.tool_calls_since_task_update = 0
     msg = CONFIG["task_staleness_message"].format(threshold=threshold)
+    return ctx.allow(msg)
+
+
+# === TASK CREATION REMINDER (v0.10) ===
+
+@app.on("PostToolUse")
+def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
+    """Inject reminder until AI creates tasks after plan start or acceptance (v0.10).
+
+    Two independent flags (set by plan commands and detect_plan_approval):
+    - plan_awaiting_planning_tasks: cleared on first TaskCreate
+    - plan_awaiting_execution_tasks: cleared on first TaskCreate
+
+    Fires on EVERY PostToolUse until TaskCreate is detected.
+    """
+    awaiting_planning = ctx.plan_awaiting_planning_tasks
+    awaiting_execution = ctx.plan_awaiting_execution_tasks
+
+    if not awaiting_planning and not awaiting_execution:
+        return None
+
+    # TaskCreate clears the active flag
+    if ctx.tool_name in TASK_CREATE_TOOLS:
+        if awaiting_planning:
+            ctx.plan_awaiting_planning_tasks = False
+        if awaiting_execution:
+            ctx.plan_awaiting_execution_tasks = False
+        return None
+
+    # Execution reminder takes priority (more urgent, supersedes planning)
+    if awaiting_execution:
+        msg = CONFIG["plan_execution_task_reminder"]
+    else:
+        msg = CONFIG["plan_planning_task_reminder"]
+
     return ctx.allow(msg)
 
 
@@ -1197,9 +1234,9 @@ def _make_plan_handler(md_filename: str):
         commands_dir = Path(__file__).parent.parent.parent / "commands"
         md_path = commands_dir / md_filename
 
-        # Set plan_active for new plan commands
-        if md_filename == "plannew.md":
-            ctx.plan_active = True
+        # Set plan_active and task creation nag for all plan commands
+        ctx.plan_active = True
+        ctx.plan_awaiting_planning_tasks = True
 
         if not md_path.exists():
             return f"❌ Error: Plan command file not found: {md_filename}"
