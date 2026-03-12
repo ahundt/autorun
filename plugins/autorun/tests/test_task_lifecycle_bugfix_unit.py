@@ -1,4 +1,13 @@
-"""Tests for task system bug fixes (Fixes 1-10) and plan acceptance notification (Fixes 6-8).
+"""Unit tests for task lifecycle bug fixes and plan acceptance notification.
+
+Covers 10 task lifecycle bugs (see notes/2026_03_11_task_system_architecture_and_bugs.md):
+- Fix 1: NON_BLOCKING_STATUSES rename (was misleading BLOCKING_STATUSES)
+- Fix 2: Ghost task update_task() returns 'ghost_skip' sentinel
+- Fix 4: stop_block_count resets to 0 on task completion
+- Fix 5: is_premature_stop() docstring documents chain ordering mitigation
+- Fix 6: No standalone helper functions; get_plan_approval_injection() returns str
+- Fix 7: PlanNotifyConfig @dataclass load/save roundtrip
+- Fix 9: stage2_completion lowercase (was duplicate of ALL-CAPS stage2_message)
 
 TDD approach: tests written BEFORE implementation to verify failures, then fixes applied.
 """
