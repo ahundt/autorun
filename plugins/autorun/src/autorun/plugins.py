@@ -878,6 +878,19 @@ This system ensures thorough, high-quality work through a structured three-stage
 
 # === POSTTOOLUSE HOOK HANDLERS ===
 
+
+def _get_task_creation_reminder(ctx: EventContext) -> Optional[str]:
+    """Return task creation reminder message if flags are set, else None (DRY helper).
+
+    Used by both detect_plan_approval (inline append) and
+    remind_until_tasks_created (chain notification stacking).
+    """
+    if ctx.plan_awaiting_execution_tasks:
+        return CONFIG["plan_execution_task_reminder"]
+    elif ctx.plan_awaiting_planning_tasks:
+        return CONFIG["plan_planning_task_reminder"]
+    return None
+
 @app.on("PostToolUse")
 def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     """Detect plan approval via ExitPlanMode PostToolUse event.
@@ -937,6 +950,11 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if plan_cfg.task_update_enforcement:
         threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
         ctx.tool_calls_since_task_update = max(0, threshold - 2)
+
+    # v0.10: Append execution task reminder (DRY helper shared with remind_until_tasks_created)
+    reminder = _get_task_creation_reminder(ctx)
+    if reminder:
+        injection += reminder
 
     # Fix 7: Dual notification via ctx.respond (PATHWAY 2)
     user_lines = [f"Plan accepted - {task_count} task(s) linked"]
@@ -1032,7 +1050,8 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     ctx.tool_calls_since_task_update = 0
     msg = CONFIG["task_staleness_message"].format(threshold=threshold)
-    return ctx.allow(msg)
+    ctx.add_chain_notification(msg, channel="ai")
+    return None
 
 
 # === TASK CREATION REMINDER (v0.10) ===
@@ -1061,13 +1080,11 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
             ctx.plan_awaiting_execution_tasks = False
         return None
 
-    # Execution reminder takes priority (more urgent, supersedes planning)
-    if awaiting_execution:
-        msg = CONFIG["plan_execution_task_reminder"]
-    else:
-        msg = CONFIG["plan_planning_task_reminder"]
-
-    return ctx.allow(msg)
+    # DRY helper selects message based on flags (execution priority over planning)
+    msg = _get_task_creation_reminder(ctx)
+    if msg:
+        ctx.add_chain_notification(msg, channel="ai")
+    return None
 
 
 @app.command("/ar:tasks")

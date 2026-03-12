@@ -587,7 +587,7 @@ class TestChainNotificationAccumulator:
         assert sys_msg.index("📋 Plan exported") < sys_msg.index("Plan accepted")
 
     def test_execution_reminder_fires_after_plan_acceptance(self):
-        """After plan acceptance, next PostToolUse gets execution task reminder."""
+        """Plan acceptance response itself contains execution task reminder."""
         sid = f"test-exec-reminder-{time.time()}"
         store = ThreadSafeDB()
 
@@ -599,9 +599,15 @@ class TestChainNotificationAccumulator:
             store=store,
         )
         ctx.plan_arguments = "Build feature"
-        plugins.app.dispatch(ctx)
+        result = plugins.app.dispatch(ctx) or {}
 
-        # Step 2: Verify execution flag was set
+        # Step 2: ExitPlanMode response itself should contain execution reminder
+        result_str = str(result)
+        assert "EXECUTION TASKS REQUIRED" in result_str, (
+            f"Expected execution task reminder in ExitPlanMode response, got: {result_str[:300]}"
+        )
+
+        # Step 3: Flag still set for subsequent PostToolUse reminders
         ctx2 = EventContext(
             session_id=sid, event="PostToolUse", prompt="",
             tool_name="Bash", tool_input={}, tool_result="",
@@ -609,9 +615,6 @@ class TestChainNotificationAccumulator:
         )
         assert ctx2.plan_awaiting_execution_tasks is True
 
-        # Step 3: Next PostToolUse should get execution task reminder
-        result = plugins.app.dispatch(ctx2) or {}
-        result_str = str(result)
-        assert "EXECUTION TASKS REQUIRED" in result_str, (
-            f"Expected execution task reminder on first PostToolUse after acceptance, got: {result_str[:200]}"
-        )
+        # Step 4: Subsequent PostToolUse also gets reminder
+        result2 = plugins.app.dispatch(ctx2) or {}
+        assert "EXECUTION TASKS REQUIRED" in str(result2)
