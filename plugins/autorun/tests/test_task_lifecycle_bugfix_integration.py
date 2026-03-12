@@ -229,9 +229,9 @@ class TestPlanAcceptanceDualNotification:
 
 # === Test 3: Ghost task warning in hook chain ===
 
-class TestGhostTaskWarningIntegration:
-    def test_ghost_warning_via_track_task_operations(self, isolated_config, isolated_session_manager):
-        """Simulate TaskUpdate on unknown task ID through the hook handler."""
+class TestGhostTaskSkipIntegration:
+    def test_ghost_skip_via_track_task_operations(self, isolated_config, isolated_session_manager):
+        """Simulate TaskUpdate on unknown task ID — returns ghost_skip sentinel."""
         sid = f"test-ghost-hook-{time.time()}"
         manager = TaskLifecycle(session_id=sid, config=isolated_config)
 

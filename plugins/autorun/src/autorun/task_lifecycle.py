@@ -1604,11 +1604,15 @@ def register_hooks(app_instance) -> None:
             elif ctx.tool_name in TASK_UPDATE_TOOLS:
                 ghost_result = manager.handle_task_update(ctx)
                 if ghost_result == "ghost_skip":
-                    return ctx.allow(
-                        "\n**Ghost Task Protected**: This task was created before tracking "
-                        "started. Only terminal statuses accepted (completed/deleted/ignored). "
-                        "Requests for in_progress/pending are ignored to prevent permanent stop blocks."
-                    )
+                    if manager.config.debug_logging:
+                        task_id = ctx.tool_input.get('taskId', '?')
+                        status = ctx.tool_input.get('status', '?')
+                        tool_result_snippet = (ctx.tool_result or '')[:80]
+                        manager.log_event(
+                            "GHOST_SKIP_HOOK", task_id,
+                            f"requested_status={status} tool_result={tool_result_snippet!r}",
+                            status="ignored",
+                        )
             elif ctx.tool_name in TASK_LIST_TOOLS:
                 # Update last activity timestamp
                 def update_activity(metadata):
