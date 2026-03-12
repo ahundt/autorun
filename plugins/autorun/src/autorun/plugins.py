@@ -907,12 +907,20 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if ctx.tool_name not in PLAN_TOOLS:
         return None
 
-    if ctx.autorun_active:
-        return None
-
     tool_result = ctx.tool_result or ""
     approval_indicators = ["approved your plan", "can now start coding"]
     if not any(ind in tool_result.lower() for ind in approval_indicators):
+        return None
+
+    if ctx.autorun_active:
+        # Autorun already running (e.g. re-entering plan mode mid-session).
+        # Still set execution task reminder and notify, but don't re-initialize.
+        ctx.plan_awaiting_planning_tasks = False
+        ctx.plan_awaiting_execution_tasks = True
+        reminder = _get_task_creation_reminder(ctx)
+        if reminder:
+            ctx.add_chain_notification(reminder, channel="ai")
+        ctx.add_chain_notification("Plan accepted (autorun already active)", channel="human")
         return None
 
     # Activate autorun

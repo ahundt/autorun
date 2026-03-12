@@ -202,8 +202,8 @@ class TestPlanAcceptanceDualNotification:
         assert ctx.tool_calls_since_task_update == max(0, threshold - 2), \
             f"Staleness counter should be {max(0, threshold - 2)}, got {ctx.tool_calls_since_task_update}"
 
-    def test_plan_approval_skipped_when_already_active(self):
-        """Verify no double-activation if autorun already active."""
+    def test_plan_approval_when_already_active_adds_chain_notifications(self):
+        """When autorun already active, still set execution reminder via chain notification."""
         sid = f"test-already-active-{time.time()}"
         ctx = make_post_tool_ctx(
             session_id=sid,
@@ -212,7 +212,19 @@ class TestPlanAcceptanceDualNotification:
             autorun_active=True,  # Already active
         )
         result = plugins.detect_plan_approval(ctx)
+        # Returns None (doesn't stop chain), but adds chain notifications
         assert result is None, "Should return None when autorun already active"
+        # Execution task reminder flag should be set
+        assert ctx.plan_awaiting_execution_tasks is True
+        assert ctx.plan_awaiting_planning_tasks is False
+        # Chain notifications should be accumulated
+        assert len(ctx._chain_notifications) >= 2, \
+            f"Expected at least 2 chain notifications (reminder + acceptance), got {len(ctx._chain_notifications)}"
+        all_msgs = " ".join(m for m, c in ctx._chain_notifications)
+        assert "EXECUTION TASKS REQUIRED" in all_msgs, \
+            f"Execution task reminder should be in chain notifications: {all_msgs[:200]}"
+        assert "Plan accepted" in all_msgs, \
+            f"Plan acceptance should be in chain notifications: {all_msgs[:200]}"
 
     def test_plan_rejection_returns_none(self):
         """Verify rejected plans don't activate autorun."""
