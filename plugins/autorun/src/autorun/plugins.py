@@ -733,7 +733,13 @@ def handle_sos(ctx: EventContext) -> str:
 # === AUTORUN HELPERS ===
 
 def is_premature_stop(ctx: EventContext) -> bool:
-    """Check if this is a premature stop without completion markers."""
+    """Check if this is a premature stop without completion markers.
+
+    NOTE: Task checking is NOT done here -- it's handled by
+    prevent_premature_stop() in task_lifecycle.py, which fires earlier
+    in the Stop hook chain (first-non-None wins, core.py:1097-1107).
+    Adding task checks here would create a circular dependency.
+    """
     if not ctx.autorun_active:
         return False
 
@@ -874,40 +880,30 @@ This system ensures thorough, high-quality work through a structured three-stage
 
 @app.on("PostToolUse")
 def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
-    """Detect plan approval via ExitPlanMode tool PostToolUse event.
+    """Detect plan approval via ExitPlanMode PostToolUse event.
 
-    ExitPlanMode tool result contains approval message like:
-    "User has approved your plan. You can now start coding..."
-
-    This is more reliable than text matching for "PLAN ACCEPTED" because:
-    1. Hooks into the actual approval mechanism (ExitPlanMode tool)
-    2. Tool result confirms user interaction occurred
-    3. Avoids false positives from text in discussion
+    Merges three concerns into one handler (Fixes 6+7+8):
+    - Plan task injection (was lost to first-non-None chain ordering)
+    - User notification via systemMessage (PATHWAY 2)
+    - Configurable TDD scaffolding injection
 
     Sources:
     - https://github.com/Piebald-AI/claude-code-system-prompts
     - https://github.com/anthropics/claude-code/issues/9701
     """
-    # Only handle ExitPlanMode tool
     if ctx.tool_name not in PLAN_TOOLS:
         return None
 
-    # Skip if already in autorun
     if ctx.autorun_active:
         return None
 
-    # Check tool result for approval indicators
     tool_result = ctx.tool_result or ""
-
-    # ExitPlanMode returns "User has approved your plan..." on success
     approval_indicators = ["approved your plan", "can now start coding"]
     if not any(ind in tool_result.lower() for ind in approval_indicators):
-        return None  # Not approved or rejected
+        return None
 
-    # User approved - activate autorun with preserved context
+    # Activate autorun
     original_request = ctx.plan_arguments or "Execute the accepted plan"
-
-    # Same state setup as existing autorun_plan_acceptance()
     ctx.autorun_active = True
     ctx.autorun_task = original_request
     ctx.autorun_stage = EventContext.STAGE_1
@@ -916,7 +912,39 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     ctx.hook_call_count = 0
 
     injection = build_injection_prompt(ctx)
-    return ctx.allow(injection)  # FIX: allow, not block - AI continues with injected instructions
+
+    # Fix 6: Merge plan task injection (ONE TaskLifecycle instance)
+    task_count = 0
+    if task_lifecycle.is_enabled():
+        try:
+            manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+            task_injection = manager.get_plan_approval_injection(ctx)
+            if task_injection:
+                injection += "\n" + task_injection
+            plan_key = getattr(ctx, 'plan_arguments', '') or ''
+            if plan_key:
+                tasks = manager.get_plan_tasks(plan_key, incomplete_only=True)
+                task_count = len(tasks) if tasks else 0
+        except Exception as e:
+            logger.warning(f"Plan task injection error: {e}")
+
+    # Fix 8: Configurable TDD scaffolding
+    plan_cfg = task_lifecycle.PlanNotifyConfig.load()
+    if plan_cfg.tdd_scaffolding:
+        injection += CONFIG.get("tdd_scaffolding_message", "")
+    if plan_cfg.task_update_enforcement:
+        threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+        ctx.tool_calls_since_task_update = max(0, threshold - 2)
+
+    # Fix 7: Dual notification via ctx.respond (PATHWAY 2)
+    user_lines = [f"Plan accepted - {task_count} task(s) linked"]
+    if plan_cfg.tdd_scaffolding:
+        user_lines.append("  TDD scaffolding: enabled")
+    if plan_cfg.task_update_enforcement:
+        user_lines.append("  Task update enforcement: enabled")
+    user_msg = "\n".join(user_lines)
+
+    return ctx.respond("allow", "", to_human=user_msg, to_ai=injection)
 
 
 @app.on("PostToolUse")

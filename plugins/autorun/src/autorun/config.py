@@ -279,7 +279,7 @@ CONFIG = {
 
     # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
     # What we inject to AI (descriptive text - same as output for Stage 2)
-    "stage2_completion": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
+    "stage2_completion": "critically evaluating previous work and continuing tasks as needed",
     # What AI outputs when Stage 2 complete (same as completion for Stage 2)
     "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
 
@@ -343,6 +343,21 @@ CONFIG = {
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py
     "plan_accepted_marker": "PLAN ACCEPTED",
+
+    # --- Plan Acceptance Notification ---
+    "plan_acceptance_notify": {
+        "tdd_scaffolding": True,
+        "task_update_enforcement": True,
+        "dependency_wiring": True,
+    },
+    "tdd_scaffolding_message": (
+        "\n## Task Scaffolding Required\n\n"
+        "Before writing ANY implementation code:\n"
+        "1. Create [TDD] test task for each plan step\n"
+        "2. Create [EXEC] implementation task for each plan step\n"
+        "3. Wire dependencies: each [EXEC] blocked by its [TDD]\n"
+        "4. Update task list immediately\n"
+    ),
 
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,

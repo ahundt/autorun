@@ -97,6 +97,40 @@ class TaskLifecycleConfig:
         CONFIG_PATH.write_text(json.dumps(data, indent=2))
 
 
+# === Plan Acceptance Notification Config ===
+
+PLAN_NOTIFY_CONFIG_PATH = ipc.AUTORUN_CONFIG_DIR / "plan-notify.config.json"
+
+
+@dataclass
+class PlanNotifyConfig:
+    """Plan acceptance notification config (follows TaskLifecycleConfig pattern)."""
+    tdd_scaffolding: bool = True
+    task_update_enforcement: bool = True
+    dependency_wiring: bool = True
+
+    @classmethod
+    def load(cls) -> "PlanNotifyConfig":
+        """Load from config file with defaults."""
+        if PLAN_NOTIFY_CONFIG_PATH.exists():
+            try:
+                data = json.loads(PLAN_NOTIFY_CONFIG_PATH.read_text())
+                return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return cls()
+
+    def save(self) -> None:
+        """Save config to file."""
+        PLAN_NOTIFY_CONFIG_PATH.parent.mkdir(exist_ok=True)
+        data = {
+            "tdd_scaffolding": self.tdd_scaffolding,
+            "task_update_enforcement": self.task_update_enforcement,
+            "dependency_wiring": self.dependency_wiring,
+        }
+        PLAN_NOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2))
+
+
 # === TaskLifecycle Class ===
 
 
@@ -132,11 +166,9 @@ class TaskLifecycle:
     SCHEMA_VERSION = 2
 
     # Status constants (single source of truth - DRY)
-    # NOTE: BLOCKING_STATUSES is a misnomer from original code - it actually means
-    # "statuses that DON'T block stopping". Should be called NON_BLOCKING_STATUSES.
-    # Kept for backward compatibility with existing code.
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
-    BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
+    # Statuses that don't block stopping (task is "done" or "parked")
+    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
 
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
     PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
@@ -212,7 +244,7 @@ class TaskLifecycle:
             fixed_count = 0
             for task in tasks.values():
                 is_ghost = task.get("metadata", {}).get("ghost_task", False)
-                if is_ghost and task.get("status") not in self.BLOCKING_STATUSES:
+                if is_ghost and task.get("status") not in self.NON_BLOCKING_STATUSES:
                     # Reset blocking ghost to ignored
                     task["status"] = "ignored"
                     fixed_count += 1
@@ -305,7 +337,7 @@ class TaskLifecycle:
         """
         tasks = self.tasks
         if exclude_blocking:
-            return [t for t in tasks.values() if t["status"] not in self.BLOCKING_STATUSES]
+            return [t for t in tasks.values() if t["status"] not in self.NON_BLOCKING_STATUSES]
         else:
             return [t for t in tasks.values() if t["status"] not in self.COMPLETED_STATUSES]
 
@@ -384,8 +416,14 @@ class TaskLifecycle:
         self.atomic_update_tasks(updater)
         self.log_event("CREATE", task_id, input_data.get("subject", ""), "pending")
 
-    def update_task(self, task_id: str, updates: Dict, result: str) -> None:
-        """Update task metadata (handles all fields)."""
+    def update_task(self, task_id: str, updates: Dict, result: str) -> Optional[str]:
+        """Update task metadata (handles all fields).
+
+        Returns:
+            'ghost_skip' if ghost task protection triggered, None otherwise.
+        """
+        ghost_state = [False]  # Mutable container -- avoids nonlocal in updater closure
+
         def updater(tasks):
             # Get or create task entry
             if task_id not in tasks:
@@ -444,7 +482,7 @@ class TaskLifecycle:
                 # GHOST_SKIP but status stays "ignored". This prevents permanent blocking.
                 #
                 # WHY THIS WORKS:
-                # - get_incomplete_tasks() filters by BLOCKING_STATUSES (includes "ignored")
+                # - get_incomplete_tasks() filters by NON_BLOCKING_STATUSES (includes "ignored")
                 # - Ghost tasks with "ignored" never appear in incomplete list
                 # - Stop hook only blocks if incomplete tasks exist
                 # - Migration (v1→v2) automatically fixes old ghost tasks on first access
@@ -459,6 +497,7 @@ class TaskLifecycle:
                                    "requested_status": new_status,
                                    "maintained_status": "ignored"})
                     # Status stays "ignored" - do NOT update to blocking status
+                    ghost_state[0] = True
                 else:
                     # Normal status transition (non-ghost or terminal status)
                     task["status"] = new_status
@@ -478,6 +517,17 @@ class TaskLifecycle:
             task["tool_outputs"].append(result)
 
         self.atomic_update_tasks(updater)
+
+        # Fix 4: Reset stop_block_count when task reaches terminal status.
+        # Placed OUTSIDE updater closure to avoid nonlocal scoping issues.
+        if ("status" in updates
+                and updates["status"] in self.NON_BLOCKING_STATUSES
+                and not ghost_state[0]):
+            def reset_block_count(metadata):
+                metadata['stop_block_count'] = 0
+            self.atomic_update_metadata(reset_block_count)
+
+        return "ghost_skip" if ghost_state[0] else None
 
     def ignore_task(self, task_id: str, reason: str = "User ignored") -> bool:
         """Mark task as ignored (user override to unblock stop).
@@ -626,17 +676,20 @@ class TaskLifecycle:
             if plan_key:
                 self.link_task_to_plan(task_id, plan_key)
 
-    def handle_task_update(self, ctx: EventContext) -> None:
+    def handle_task_update(self, ctx: EventContext) -> Optional[str]:
         """Handle TaskUpdate tool (called from PostToolUse hook).
 
         Tracks status transitions AND updates full metadata.
+
+        Returns:
+            'ghost_skip' if ghost task protection triggered, None otherwise.
         """
         task_id = ctx.tool_input.get("taskId")
         if not task_id:
-            return  # Skip if no task ID
+            return None  # Skip if no task ID
 
         # Update task with all metadata
-        self.update_task(task_id, ctx.tool_input, ctx.tool_result or "")
+        return self.update_task(task_id, ctx.tool_input, ctx.tool_result or "")
 
     def handle_session_start(self, ctx: EventContext) -> Optional[Dict]:
         """Handle SessionStart (return injection if incomplete tasks).
@@ -831,55 +884,50 @@ Use TaskList or /task-status to see current state of all tasks.
         # BLOCK the stop - force AI to continue
         return ctx.block(injection)
 
-    def handle_plan_approval(self, ctx: EventContext) -> Optional[Dict]:
-        """Handle plan approval (inject plan tasks - survives Option 1).
+    def get_plan_approval_injection(self, ctx) -> Optional[str]:
+        """Get plan task context as injection string for plan acceptance.
 
-        When plan accepted, inject task context so AI knows what to work on
-        even after context clear (Option 1).
+        Returns string for caller to embed in ctx.respond(), avoiding
+        abstraction inversion (building dict then unpacking it).
+
+        Returns:
+            Injection string with task context, or None if no tasks linked.
         """
-        # Get task IDs linked to this plan
         plan_key = getattr(ctx, 'plan_arguments', '')
         if not plan_key:
             return None
 
         plan_tasks = self.get_plan_tasks(plan_key, incomplete_only=True)
-
         if not plan_tasks:
-            return None  # No tasks to inject
+            return None
 
-        # Build task list (only incomplete tasks)
         task_lines = []
         for task in plan_tasks[:self.config.max_resume_tasks]:
             status_icon = {
-                "in_progress": "🔄",
-                "pending": "⏸️",
-                "paused": "⏯️"
-            }.get(task["status"], "❓")
-
-            task_lines.append(f"  - Task #{task['id']}: {task['subject']} ({status_icon} {task['status']})")
+                "in_progress": "...", "pending": "o", "paused": "||"
+            }.get(task["status"], "?")
+            task_lines.append(
+                f"  - Task #{task['id']}: {task['subject']} ({status_icon} {task['status']})")
 
         if not task_lines:
-            return None  # All tasks already completed
+            return None
 
         remaining = len(plan_tasks) - len(task_lines)
         if remaining > 0:
-            task_lines.append(f"\n  ... and {remaining} more tasks (use /task-status to see all)")
+            task_lines.append(f"\n  ... and {remaining} more tasks")
 
         task_context = "\n".join(task_lines)
-        injection = f"""
-## Plan Accepted - Task Context
+        return (
+            f"\n## Plan Accepted - Task Context\n\n"
+            f"{len(plan_tasks)} task(s):\n\n{task_context}\n\n"
+            f"Use TaskList to see all tasks. You CANNOT stop until all tasks "
+            f"are completed or deleted.\n"
+        )
 
-Your plan has been approved. You created {len(plan_tasks)} task(s) during planning:
-
-{task_context}
-
-**PRIMARY GOAL**: Continue working until ALL tasks are completed.
-
-Use TaskList to see all current tasks, TaskUpdate to mark progress.
-You CANNOT stop until all tasks are marked completed or deleted.
-"""
-
-        return ctx.allow(injection)
+    def handle_plan_approval(self, ctx) -> Optional[Dict]:
+        """Handle plan approval. Delegates to get_plan_approval_injection()."""
+        injection = self.get_plan_approval_injection(ctx)
+        return ctx.allow(injection) if injection else None
 
     # === CLI Interface (Typer-like patterns - class methods) ===
 
@@ -943,7 +991,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
                 if verbose and incomplete:
                     print("\nIncomplete Tasks:")
                     for task in manager.get_prioritized_tasks():
-                        if task['status'] not in cls.BLOCKING_STATUSES:
+                        if task['status'] not in cls.NON_BLOCKING_STATUSES:
                             print(f"\n  Task #{task['id']}: {task['subject']}")
                             print(f"    Status: {task['status']}")
                             print(f"    Created: {datetime.fromtimestamp(task['created_at']).isoformat()}")
@@ -1294,7 +1342,7 @@ You CANNOT stop until all tasks are marked completed or deleted.
 
                         # Skip incomplete
                         incomplete = [t for t in tasks.values()
-                                      if t.get("status") not in cls.BLOCKING_STATUSES]
+                                      if t.get("status") not in cls.NON_BLOCKING_STATUSES]
                         if incomplete:
                             skip_incomplete += 1
                             if dry_run:
@@ -1554,7 +1602,13 @@ def register_hooks(app_instance) -> None:
             if ctx.tool_name in TASK_CREATE_TOOLS:
                 manager.handle_task_create(ctx)
             elif ctx.tool_name in TASK_UPDATE_TOOLS:
-                manager.handle_task_update(ctx)
+                ghost_result = manager.handle_task_update(ctx)
+                if ghost_result == "ghost_skip":
+                    return ctx.allow(
+                        "\n**Ghost Task Protected**: This task was created before tracking "
+                        "started. Only terminal statuses accepted (completed/deleted/ignored). "
+                        "Requests for in_progress/pending are ignored to prevent permanent stop blocks."
+                    )
             elif ctx.tool_name in TASK_LIST_TOOLS:
                 # Update last activity timestamp
                 def update_activity(metadata):
@@ -1593,22 +1647,6 @@ def register_hooks(app_instance) -> None:
             logger.warning(f"Stop hook error: {e}")
             return None  # Fail-open - allow stop on errors
 
-    @app_instance.on("PostToolUse")
-    def inject_plan_tasks(ctx: EventContext) -> Optional[Dict]:
-        """Inject plan tasks when plan approved (survives Option 1)."""
-        if ctx.tool_name not in PLAN_TOOLS:
-            return None
-
-        tool_result = ctx.tool_result or ""
-        if "approved your plan" not in tool_result.lower():
-            return None
-
-        if not is_enabled():
-            return None
-
-        try:
-            manager = TaskLifecycle(ctx=ctx)
-            return manager.handle_plan_approval(ctx)
-        except Exception as e:
-            logger.warning(f"Plan injection error: {e}")
-            return None  # Fail-open
+    # NOTE: inject_plan_tasks was removed -- plan task injection is now merged into
+    # detect_plan_approval() in plugins.py to avoid first-non-None chain ordering
+    # issues (core.py:1097-1107). See Fixes 6-8.

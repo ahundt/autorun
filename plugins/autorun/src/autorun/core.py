@@ -605,7 +605,9 @@ class EventContext:
     STAGE_INACTIVE = 0
     STAGE_1 = 1
     STAGE_2 = 2
-    STAGE_2_COMPLETED = 3
+    # Stage 2 complete, now counting down to Stage 3 (NOT a terminal state).
+    # AI must pass stage3_countdown_calls more Stop cycles before Stage 3 instructions appear.
+    STAGE_2_COMPLETED = 3  # Better name: STAGE_3_COUNTDOWN, kept for compatibility
     STAGE_3 = 4
 
     # Default values for magic state (used when key not in shelve)
