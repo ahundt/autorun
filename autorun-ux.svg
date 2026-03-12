@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4512.200000000001 940" width="4512.200000000001" height="940" style="--bg:#1a1b26;--fg:#a9b1d6;--line:#3d59a1;--accent:#7aa2f7;--muted:#565f89;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 30%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="4.8" refX="8" refY="2.4" orient="auto">
+    <polygon points="0 0, 8 2.4, 0 4.8" fill="var(--_arrow)" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="4.8" refX="0" refY="2.4" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.4, 8 4.8" fill="var(--_arrow)" />
+  </marker>
+</defs>
+<rect x="430.8499999999999" y="358" width="800.45" height="172" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="430.8499999999999" y="358" width="800.45" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="442.8499999999999" y="372" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">🛠️ CONFIGURATION LAYER</text>
+<rect x="1255.3000000000004" y="352" width="2813.2000000000003" height="160" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="1255.3000000000004" y="352" width="2813.2000000000003" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="1267.3000000000004" y="366" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">🛡️ ACTIVE SAFETY STATE</text>
+<rect x="1271.3000000000006" y="388" width="1503.6000000000001" height="112" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="1271.3000000000006" y="388" width="1503.6000000000001" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="1283.3000000000006" y="402" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">File Policy - Mutually Exclusive</text>
+<rect x="2794.9000000000005" y="388" width="1217.6000000000001" height="112" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="2794.9000000000005" y="388" width="1217.6000000000001" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="2806.9000000000005" y="402" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">Command Guard - Block &amp; Redirect</text>
+<rect x="4092.5000000000005" y="40" width="379.70000000000005" height="784" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="4092.5000000000005" y="40" width="379.70000000000005" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="4104.5" y="54" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">🚀 ACTION WORKFLOW</text>
+<rect x="4108.5" y="76" width="347.70000000000005" height="424" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="4108.5" y="76" width="347.70000000000005" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="4120.5" y="90" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">1. Planning</text>
+<rect x="4112.075000000001" y="544" width="340.55" height="268" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="4112.075000000001" y="544" width="340.55" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="4124.075000000001" y="558" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">2. Execution</text>
+<polyline points="688.675,500 688.675,844 772.6874999999999,844 772.6874999999999,864" fill="none" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="4 4" marker-end="url(#arrowhead)" />
+<polyline points="973.4749999999999,500 973.4749999999999,844 889.4624999999999,844 889.4624999999999,864" fill="none" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="4 4" marker-end="url(#arrowhead)" />
+<polyline points="831.0749999999999,442 831.0749999999999,462 688.675,462 688.675,482" fill="none" stroke="var(--_line)" stroke-width="0.75" />
+<polyline points="831.0749999999999,442 831.0749999999999,462 973.4749999999999,462 973.4749999999999,482" fill="none" stroke="var(--_line)" stroke-width="0.75" />
+<polyline points="4282.35,168 4282.35,288" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="4282.35,324 4282.35,444" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="4282.35,636 4282.35,756" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="4282.35,480 4282.35,600" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<rect x="39.999999999999986" y="444" width="246.50000000000003" height="36" rx="6" ry="6" fill="#000" stroke="#ff0000" stroke-width="2px" />
+<rect x="310.49999999999983" y="444" width="96.35000000000001" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="446.8499999999999" y="406" width="768.45" height="36" rx="0" ry="0" fill="#fffbe6" stroke="#faad14" stroke-width="1px" />
+<rect x="561.8499999999999" y="482" width="253.65" height="36" rx="0" ry="0" fill="#fffbe6" stroke="#faad14" stroke-width="1px" />
+<rect x="839.4999999999999" y="482" width="267.95000000000005" height="36" rx="0" ry="0" fill="#fffbe6" stroke="#faad14" stroke-width="1px" />
+<rect x="1293.3000000000006" y="444" width="489.6" height="36" rx="6" ry="6" fill="#f6ffed" stroke="#52c41a" stroke-width="2px" />
+<rect x="1806.9000000000005" y="444" width="482.45000000000005" height="36" rx="6" ry="6" fill="#f6ffed" stroke="#52c41a" stroke-width="2px" />
+<rect x="2313.3500000000004" y="444" width="439.55" height="36" rx="6" ry="6" fill="#f6ffed" stroke="#52c41a" stroke-width="2px" />
+<rect x="2816.9000000000005" y="444" width="353.75" height="36" rx="6" ry="6" fill="#fff1f0" stroke="#ff4d4f" stroke-width="2px" />
+<rect x="3194.6500000000005" y="444" width="461.00000000000006" height="36" rx="6" ry="6" fill="#fff1f0" stroke="#ff4d4f" stroke-width="2px" />
+<rect x="3679.6500000000005" y="444" width="310.85" height="36" rx="6" ry="6" fill="#f6ffed" stroke="#52c41a" stroke-width="2px" />
+<rect x="4155.525000000001" y="132" width="253.65" height="36" rx="6" ry="6" fill="#e6f7ff" stroke="#1890ff" stroke-width="2px" />
+<rect x="4130.5" y="288" width="303.70000000000005" height="36" rx="6" ry="6" fill="#e6f7ff" stroke="#1890ff" stroke-width="2px" />
+<rect x="4191.275000000001" y="444" width="182.15" height="36" rx="0" ry="0" fill="#fffbe6" stroke="#faad14" stroke-width="1px" />
+<line x1="4199.275000000001" y1="444" x2="4199.275000000001" y2="480" stroke="#faad14" stroke-width="1px" />
+<line x1="4365.425" y1="444" x2="4365.425" y2="480" stroke="#faad14" stroke-width="1px" />
+<rect x="4134.075000000001" y="600" width="296.55" height="36" rx="6" ry="6" fill="#e6f7ff" stroke="#1890ff" stroke-width="2px" />
+<rect x="4187.700000000001" y="756" width="189.3" height="36" rx="6" ry="6" fill="#f6ffed" stroke="#52c41a" stroke-width="2px" />
+<text x="163.25" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#fff">⛔ /ar:estop&lt;br/&gt;Emergency Stop</text>
+<text x="358.67499999999984" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">linkStyle</text>
+<text x="831.0749999999999" y="424" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#614700">User Customization:&lt;br/&gt;Create/Remove .md files in commands/&lt;br/&gt;to add capabilities or adjust policies</text>
+<text x="688.675" y="500" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#614700">commands/f.md&lt;br/&gt;commands/a.md</text>
+<text x="973.4749999999999" y="500" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#614700">commands/no.md&lt;br/&gt;commands/go.md</text>
+<text x="1538.1000000000006" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#135200">State: SEARCH&lt;br/&gt;Cmd: /ar:f / /ar:find&lt;br/&gt;Modify existing only</text>
+<text x="2048.1250000000005" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#135200">State: JUSTIFY&lt;br/&gt;Cmd: /ar:j / /ar:justify&lt;br/&gt;Explain changes</text>
+<text x="2533.1250000000005" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#135200">State: ALLOW&lt;br/&gt;Cmd: /ar:a / /ar:allow&lt;br/&gt;Create freely</text>
+<text x="2993.7750000000005" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#5c0011">&quot;/ar:no &lt;pattern&gt; [desc]&lt;br/&gt;Stops execution&quot;</text>
+<text x="3425.1500000000005" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#5c0011">&quot;Auto-Redirects:&lt;br/&gt;rm -&gt; trash&lt;br/&gt;git reset -&gt; git stash&quot;</text>
+<text x="3835.0750000000007" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#135200">&quot;/ar:ok &lt;pattern&gt;&lt;br/&gt;Override a block&quot;</text>
+<text x="4282.35" y="150" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#002766">/ar:pn &#39;task&#39;&lt;br/&gt;-&gt; plannew.md</text>
+<text x="4282.35" y="306" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#002766">/ar:pr &#39;feedback&#39;&lt;br/&gt;-&gt; planrefine.md</text>
+<text x="4282.35" y="462" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#614700">Auto-Export to notes/</text>
+<text x="4282.35" y="618" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#002766">/ar:pp / /ar:go&lt;br/&gt;-&gt; planprocess.md</text>
+<text x="4282.35" y="774" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="#135200">AI Implementation Loop</text>
+</svg>
