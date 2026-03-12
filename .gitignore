@@ -204,12 +204,15 @@ settings.local.json
 # Rendered diagram images (regenerate from .mmd source files)
 *.png
 
-# Demo recording outputs (regenerate with: python tests/test_demo.py --record)
+# Demo recording outputs (regenerate with cli-demo-recorder skill or test_demo.py)
 *.gif
 *.cast
 *.mp4
 *.webm
 autorun_demo.*
+
+# Static assets not suitable for git (PDFs, large binaries)
+*.pdf
 
 # Symlink artifacts (root level only)
 /autorun
