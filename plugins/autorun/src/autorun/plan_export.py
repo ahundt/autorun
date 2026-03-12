@@ -1144,18 +1144,27 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
             result = exporter.export(plan)
             logger.info(f"export_on_exit_plan_mode: export result={result}")
             if result["success"] and config.notify_claude:
+                # Build export notification message
+                export_msg = f"📋 {result['message']}"
                 if result.get("skipped"):
-                    # Plan already exported (dedup). Notify with where it was sent rather
-                    # than silently returning nothing — the user needs to know where to find it.
                     dest = result.get("destination", "")
                     if dest:
                         try:
                             rel = Path(dest).relative_to(exporter.project_dir)
-                            return ctx.respond("allow", f"📋 Plan exported to {rel}", to_human=True)
+                            export_msg = f"📋 Plan exported to {rel}"
                         except ValueError:
-                            return ctx.respond("allow", f"📋 Plan exported to {dest}", to_human=True)
+                            export_msg = f"📋 Plan exported to {dest}"
+
+                # Check if plan was approved (detect_plan_approval will handle response)
+                tool_result_text = ctx.tool_result or ""
+                approval_indicators = ["approved your plan", "can now start coding"]
+                is_approval = any(ind in tool_result_text.lower() for ind in approval_indicators)
+
+                if is_approval:
+                    ctx.add_chain_notification(export_msg, channel="human")
+                    return None  # Let detect_plan_approval handle combined response
                 else:
-                    return ctx.respond("allow", f"📋 {result['message']}", to_human=True)
+                    return ctx.respond("allow", export_msg, to_human=True)
     except SessionTimeoutError:
         return ctx.respond("allow", "⚠️ Plan export skipped: lock timeout. Re-trigger ExitPlanMode to retry.", to_human=True)
     except Exception as e:

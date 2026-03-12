@@ -400,3 +400,188 @@ class TestResponseFormat:
         deserialized = json.loads(serialized)
         assert deserialized["decision"] == "approve"
         assert "systemMessage" in deserialized
+
+
+# === Test 7: Root cause — chain ordering bug (Bug #11) ===
+
+class TestChainOrderingBugFix:
+    """Verify the root cause of Bug #11: export_on_exit_plan_mode returning non-None
+    blocked detect_plan_approval from ever executing in _run_chain's first-non-None loop.
+
+    This is an end-to-end test of the PostToolUse chain for ExitPlanMode with approval.
+    """
+
+    def test_detect_plan_approval_fires_after_export(self):
+        """Root cause test: detect_plan_approval must execute even when
+        export_on_exit_plan_mode runs first in the PostToolUse chain.
+
+        BEFORE fix: export handler returned ctx.respond(...) → non-None →
+        _run_chain stopped → detect_plan_approval NEVER fired → autorun NOT activated.
+
+        AFTER fix: export handler uses ctx.add_chain_notification() → returns None →
+        chain continues → detect_plan_approval fires → autorun activated.
+        """
+        sid = f"test-chain-order-{time.time()}"
+        ctx = make_post_tool_ctx(
+            session_id=sid,
+            tool_name="ExitPlanMode",
+            tool_result="User has approved your plan. You can now start coding.",
+            autorun_active=False,
+            plan_arguments="Fix chain ordering bug",
+        )
+
+        # Call detect_plan_approval directly (it's what was blocked before)
+        result = plugins.detect_plan_approval(ctx)
+
+        # The critical assertion: detect_plan_approval MUST fire and activate autorun
+        assert result is not None, \
+            "detect_plan_approval must return non-None on approval (was blocked by Bug #11)"
+        assert ctx.autorun_active is True, \
+            "autorun must be activated after plan approval (root cause of Bug #11)"
+        assert ctx.autorun_stage == EventContext.STAGE_1, \
+            "autorun stage must be STAGE_1 after approval"
+
+    def test_export_handler_returns_none_on_approval(self):
+        """Verify export handler returns None (not non-None) when approval detected.
+
+        This is the direct fix for Bug #11: export_on_exit_plan_mode must NOT
+        return a response when the plan was approved, because that blocks
+        detect_plan_approval in the first-non-None chain.
+        """
+        from autorun.plan_export import export_on_exit_plan_mode
+
+        sid = f"test-export-none-{time.time()}"
+        ctx = make_post_tool_ctx(
+            session_id=sid,
+            tool_name="ExitPlanMode",
+            tool_result="User has approved your plan. You can now start coding.",
+        )
+
+        result = export_on_exit_plan_mode(ctx)
+        # If plan found and exported, result must be None (not a response dict)
+        # If plan not found, result is also None (no export to do)
+        # Either way: MUST NOT return non-None on approval
+        assert result is None, \
+            f"export_on_exit_plan_mode must return None on approval, got: {result}"
+
+    def test_export_handler_returns_response_on_rejection(self):
+        """Verify export handler returns response (non-None) when plan rejected.
+
+        Rejected plans don't need detect_plan_approval, so blocking the chain is fine.
+        """
+        from autorun.plan_export import export_on_exit_plan_mode
+
+        sid = f"test-export-reject-{time.time()}"
+        ctx = make_post_tool_ctx(
+            session_id=sid,
+            tool_name="ExitPlanMode",
+            # Rejection text — does NOT contain approval indicators
+            tool_result="User has rejected your plan.",
+        )
+
+        # This may return None (no plan found) or non-None (plan exported)
+        # The key is: it does NOT use add_chain_notification for rejections
+        result = export_on_exit_plan_mode(ctx)
+        # No notifications should be accumulated for rejections
+        assert len(ctx._chain_notifications) == 0, \
+            "Rejected plans should not accumulate chain notifications"
+
+    def test_run_chain_flush_catches_orphan_notifications(self):
+        """If all handlers return None but notifications accumulated, _run_chain flushes them."""
+        from autorun.core import AutorunApp
+
+        app_test = AutorunApp()
+
+        def handler_that_accumulates(ctx):
+            ctx.add_chain_notification("Orphan notification", channel="human")
+            return None
+
+        app_test.chains["PostToolUse"] = [handler_that_accumulates]
+
+        ctx = make_post_tool_ctx(
+            session_id=f"test-flush-{time.time()}",
+            tool_name="SomeTool",
+            tool_result="",
+        )
+
+        result = app_test._run_chain(ctx, "PostToolUse")
+        assert result is not None, "_run_chain must flush orphan notifications"
+        assert "Orphan notification" in result.get("systemMessage", "")
+
+
+# === Test 8: Chain Notification Accumulator ===
+
+class TestChainNotificationAccumulator:
+    def test_notifications_merged_into_respond(self):
+        """Accumulated notifications appear in respond() output."""
+        ctx = make_post_tool_ctx(
+            session_id=f"test-accum-merge-{time.time()}",
+            tool_name="ExitPlanMode",
+            tool_result="some result",
+        )
+        ctx.add_chain_notification("Notification A", channel="human")
+        ctx.add_chain_notification("Notification B", channel="human")
+
+        result = ctx.respond("allow", "", to_human="Handler message", to_ai=False)
+        assert "Notification A" in result["systemMessage"]
+        assert "Notification B" in result["systemMessage"]
+        assert "Handler message" in result["systemMessage"]
+        # Notifications should be cleared after merge
+        assert len(ctx._chain_notifications) == 0
+
+    def test_ai_channel_notifications_in_additional_context(self):
+        """AI-channel notifications appear in additionalContext, not systemMessage."""
+        ctx = make_post_tool_ctx(
+            session_id=f"test-accum-ai-{time.time()}",
+            tool_name="ExitPlanMode",
+            tool_result="some result",
+        )
+        ctx.add_chain_notification("AI-only note", channel="ai")
+
+        result = ctx.respond("allow", "", to_human="Human msg", to_ai="AI context")
+        assert "AI-only note" in result["hookSpecificOutput"]["additionalContext"]
+        assert "AI-only note" not in result["systemMessage"]
+
+    def test_both_channel_notifications(self):
+        """Channel 'both' appears in both systemMessage and additionalContext."""
+        ctx = make_post_tool_ctx(
+            session_id=f"test-accum-both-{time.time()}",
+            tool_name="ExitPlanMode",
+            tool_result="some result",
+        )
+        ctx.add_chain_notification("Dual note", channel="both")
+
+        result = ctx.respond("allow", "", to_human="Human", to_ai="AI")
+        assert "Dual note" in result["systemMessage"]
+        assert "Dual note" in result["hookSpecificOutput"]["additionalContext"]
+
+    def test_no_notifications_no_change(self):
+        """respond() unchanged when no notifications accumulated."""
+        ctx = make_post_tool_ctx(
+            session_id=f"test-no-accum-{time.time()}",
+            tool_name="ExitPlanMode",
+            tool_result="some result",
+        )
+        result = ctx.respond("allow", "", to_human="Just handler", to_ai=False)
+        assert result["systemMessage"] == "Just handler"
+
+    def test_plan_export_plus_approval_combined(self):
+        """ExitPlanMode produces both export and acceptance in systemMessage."""
+        ctx = make_post_tool_ctx(
+            session_id=f"test-combined-{time.time()}",
+            tool_name="ExitPlanMode",
+            tool_result="User has approved your plan. You can now start coding.",
+            autorun_active=False,
+            plan_arguments="Build feature",
+        )
+        # Simulate what export_on_exit_plan_mode does on approval
+        ctx.add_chain_notification("📋 Plan exported to notes/test.md", channel="human")
+
+        # Now simulate detect_plan_approval's respond call
+        result = ctx.respond("allow", "", to_human="Plan accepted - 2 task(s) linked", to_ai="injection")
+
+        sys_msg = result["systemMessage"]
+        assert "📋 Plan exported" in sys_msg
+        assert "Plan accepted" in sys_msg
+        # Export notification comes first (chronological order)
+        assert sys_msg.index("📋 Plan exported") < sys_msg.index("Plan accepted")

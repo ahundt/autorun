@@ -2619,6 +2619,42 @@ class TestHumanVisibleNotifications:
         assert "stopReason" in response
         assert "suppressOutput" in response
 
+    def test_export_on_approval_returns_none_and_accumulates(self, temp_project):
+        """On approved plan, export_on_exit_plan_mode returns None and accumulates notification."""
+        from autorun.plan_export import export_on_exit_plan_mode, PlanExport
+
+        store = ThreadSafeDB()
+        project_dir = temp_project["project_dir"]
+        plan_file = temp_project["plan_file"]
+
+        # Register plan in active_plans so get_current_plan finds it via fallback
+        ctx_setup = EventContext(
+            session_id="test-approval-accum",
+            event="PostToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(plan_file), "cwd": str(project_dir)},
+            tool_result="",
+            store=store,
+        )
+        config = PlanExportConfig.load()
+        PlanExport(ctx_setup, config).record_write(str(plan_file))
+
+        # Now fire ExitPlanMode with approval text (no filePath JSON)
+        ctx = EventContext(
+            session_id="test-approval-accum",
+            event="PostToolUse",
+            tool_name="ExitPlanMode",
+            tool_input={"cwd": str(project_dir)},
+            tool_result="User has approved your plan. You can now start coding.",
+            store=store,
+        )
+        response = export_on_exit_plan_mode(ctx)
+        assert response is None, "Should return None on approval (let detect_plan_approval handle)"
+        assert len(ctx._chain_notifications) == 1
+        msg, channel = ctx._chain_notifications[0]
+        assert "📋" in msg
+        assert channel == "human"
+
 
 # =============================================================================
 # TEST: Accepted/Rejected Plan Routing

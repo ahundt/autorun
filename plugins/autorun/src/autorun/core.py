@@ -599,7 +599,8 @@ class EventContext:
     # Reserved attributes (not persisted)
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
                  '_tool_result', '_session_transcript', '_state', '_transcript',
-                 '_store', '_cli_type', '_cwd', '_permission_mode', '_source')
+                 '_store', '_cli_type', '_cwd', '_permission_mode', '_source',
+                 '_chain_notifications')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -654,6 +655,7 @@ class EventContext:
         object.__setattr__(self, '_permission_mode', permission_mode)
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, '_source', source)
+        object.__setattr__(self, '_chain_notifications', [])
 
     # === Read-only accessors for payload data ===
     @property
@@ -805,6 +807,19 @@ class EventContext:
             return param
         return None  # False, empty string, or unsupported type → skip
 
+    def add_chain_notification(self, message: str, channel: str = "human"):
+        """Accumulate a notification for the eventual chain response.
+
+        Handlers that need to notify (export confirmations, audit records, etc.)
+        without blocking the chain should call this and return None.
+        Accumulated notifications are auto-merged into the next respond() call.
+
+        Args:
+            message: Notification text
+            channel: "human" (systemMessage), "ai" (additionalContext), or "both"
+        """
+        self._chain_notifications.append((message, channel))
+
     # === UNIFIED RESPONSE BUILDER (DRY: single method handles all events) ===
     def respond(self, decision: str = "allow", reason: str = "", *,
                 to_human: Union[bool, str] = True, to_ai: Union[bool, str] = True) -> dict:
@@ -927,6 +942,18 @@ class EventContext:
         if self._event in ("UserPromptSubmit", "PostToolUse"):
             human_text = self._resolve_channel(to_human, msg_reason)
             ai_text = self._resolve_channel(to_ai, msg_reason)
+
+            # Merge accumulated chain notifications
+            if self._chain_notifications:
+                human_notifs = [m for m, c in self._chain_notifications if c in ("human", "both")]
+                ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both")]
+                if human_notifs:
+                    prefix = "\n".join(human_notifs)
+                    human_text = f"{prefix}\n{human_text}" if human_text else prefix
+                if ai_notifs:
+                    prefix = "\n".join(ai_notifs)
+                    ai_text = f"{prefix}\n{ai_text}" if ai_text else prefix
+                self._chain_notifications.clear()
 
             # systemMessage: prefer human_text, fall back to ai_text for backwards compat.
             # reason="": prevents double-print when systemMessage is set
@@ -1106,6 +1133,9 @@ class AutorunApp:
             result = handler(ctx)
             if result is not None:
                 return result
+        # Flush accumulated notifications if no handler returned a response
+        if ctx._chain_notifications:
+            return ctx.respond("allow", "")
         return None
 
     def _find_command(self, prompt: str) -> Optional[tuple]:
