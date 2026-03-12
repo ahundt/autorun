@@ -636,8 +636,10 @@ def test_staleness_counter_increments_on_tool_call():
 
 
 def test_staleness_injection_at_threshold():
-    """Warning injected when counter reaches threshold."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-inject",
+    """Warning injected when counter reaches threshold and incomplete tasks exist."""
+    sid = "test-stale-inject"
+    _make_pending_task(sid, "1", "incomplete task")
+    ctx = _make_post_tool_ctx("Bash", sid,
                                tool_calls_since_task_update=2,
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
@@ -670,11 +672,24 @@ def test_staleness_disabled_no_injection():
     assert "TASK LIST REMINDER" not in str(result)
 
 
-def test_staleness_inactive_autorun_no_injection():
-    """Staleness reminder does not fire when autorun is inactive."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-inactive",
+def test_staleness_fires_without_autorun_when_tasks_exist():
+    """Staleness reminder fires even when autorun_active=False if incomplete tasks exist."""
+    sid = "test-stale-no-autorun-with-tasks"
+    _make_pending_task(sid, "1", "incomplete task")
+    ctx = _make_post_tool_ctx("Bash", sid,
                                autorun_active=False,
-                               tool_calls_since_task_update=50)
+                               tool_calls_since_task_update=50,
+                               task_staleness_threshold=3)
+    result = plugins.app.dispatch(ctx) or {}
+    additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "TASK LIST REMINDER" in additional
+
+
+def test_staleness_no_injection_without_tasks():
+    """Staleness reminder does not fire when no incomplete tasks exist."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-no-tasks",
+                               tool_calls_since_task_update=50,
+                               task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     assert "TASK LIST REMINDER" not in str(result)
 
@@ -945,7 +960,7 @@ def _e2e_post_tool(tool_name: str, session_id: str, store: ThreadSafeDB) -> dict
     Uses a shared store to simulate the daemon's persistent ThreadSafeDB,
     so state set by one dispatch persists to the next (same as production).
 
-    Only sets autorun_active=True (required for handler to fire).
+    Sets autorun_active=True (for 3-stage pipeline tests).
     Does NOT force task_staleness_enabled — lets store/defaults supply it,
     so /ar:tasks off is respected across dispatches.
     """
@@ -1019,6 +1034,7 @@ class TestStalenessE2E:
     def test_multiple_injection_cycles(self):
         """Counter resets after injection and can trigger again."""
         sid = self._sid("multi-cycle")
+        _make_pending_task(sid, "1", "incomplete task")
         # Set threshold to 3 via command
         _e2e_command("/ar:tasks 3", sid, self.store)
 
@@ -1069,6 +1085,7 @@ class TestStalenessE2E:
     def test_task_list_does_not_reset_counter(self):
         """TaskList should NOT reset the counter (only Create/Update do)."""
         sid = self._sid("list-no-reset")
+        _make_pending_task(sid, "1", "incomplete task")
         _e2e_command("/ar:tasks 3", sid, self.store)
 
         _e2e_post_tool("Bash", sid, self.store)      # count=1
@@ -1082,6 +1099,7 @@ class TestStalenessE2E:
     def test_task_get_does_not_reset_counter(self):
         """TaskGet should NOT reset the counter."""
         sid = self._sid("get-no-reset")
+        _make_pending_task(sid, "1", "incomplete task")
         _e2e_command("/ar:tasks 3", sid, self.store)
 
         _e2e_post_tool("Bash", sid, self.store)      # count=1
@@ -1137,6 +1155,7 @@ class TestStalenessE2E:
     def test_command_on_after_off_resumes(self):
         """/ar:tasks on after off → handler resumes injection."""
         sid = self._sid("on-after-off")
+        _make_pending_task(sid, "1", "incomplete task")
         _e2e_command("/ar:tasks 3", sid, self.store)
         _e2e_command("/ar:tasks off", sid, self.store)
 
@@ -1159,6 +1178,7 @@ class TestStalenessE2E:
     def test_command_threshold_change_takes_effect(self):
         """/ar:tasks <n> changes threshold; handler uses new value."""
         sid = self._sid("thresh-change")
+        _make_pending_task(sid, "1", "incomplete task")
         _e2e_command("/ar:tasks 10", sid, self.store)
 
         # 5 calls — should NOT inject at threshold=10
@@ -1201,29 +1221,40 @@ class TestStalenessE2E:
 
     # ── Emergency stop / autorun_active=False ──────────────────────────
 
-    def test_inactive_autorun_no_injection_e2e(self):
-        """When autorun_active=False (emergency stop), handler is silent."""
-        sid = self._sid("emergency-stop")
+    def test_no_tasks_no_injection_e2e(self):
+        """When no incomplete tasks exist, handler is silent even over threshold."""
+        sid = self._sid("no-tasks-silent")
         store = self.store
 
-        # Set up active session with low threshold
         _e2e_command("/ar:tasks 2", sid, store)
 
-        # Simulate emergency stop: set autorun_active=False
-        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                           tool_name="Bash", store=store)
-        ctx.autorun_active = False
-
-        # Now dispatch — handler should short-circuit at autorun_active check
         results = []
         for _ in range(5):
+            results.append(_e2e_post_tool("Bash", sid, store))
+
+        assert all("TASK LIST REMINDER" not in str(r) for r in results)
+
+    def test_fires_without_autorun_e2e(self):
+        """Reminder fires when autorun_active=False but incomplete tasks exist."""
+        sid = self._sid("no-autorun-with-tasks")
+        store = self.store
+        _make_pending_task(sid, "1", "incomplete task")
+
+        _e2e_command("/ar:tasks 2", sid, store)
+
+        # Dispatch with autorun_active=False — injection at 2nd call (threshold=2)
+        results = []
+        for _ in range(2):
             ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                               tool_name="Bash", store=store)
-            # autorun_active defaults to False from _DEFAULTS when not set
+                               tool_name="Bash", tool_input={}, tool_result="",
+                               store=store)
+            ctx.autorun_active = False
             result = plugins.app.dispatch(ctx) or {}
             results.append(result)
 
-        assert all("TASK LIST REMINDER" not in str(r) for r in results)
+        assert any("TASK LIST REMINDER" in str(r) for r in results), (
+            "Reminder should fire with incomplete tasks even when autorun_active=False"
+        )
 
     # ── Stage reset in Stop handler ────────────────────────────────────
 
@@ -1231,9 +1262,10 @@ class TestStalenessE2E:
         """Full e2e: tools → threshold → inject → stop with tasks → stage reset."""
         sid = self._sid("full-workflow")
         store = self.store
+        _make_pending_task(sid, task_id="1", subject="e2e outstanding task")
         _e2e_command("/ar:tasks 3", sid, store)
 
-        # Phase 1: 3 tool calls → injection
+        # Phase 1: 3 tool calls → injection (task exists so reminder fires)
         for _ in range(2):
             _e2e_post_tool("Bash", sid, store)
         result = _e2e_post_tool("Bash", sid, store)
@@ -1245,8 +1277,7 @@ class TestStalenessE2E:
                                   prompt="", tool_name="Bash", store=store)
         assert (ctx_check.tool_calls_since_task_update or 0) == 0
 
-        # Phase 3: Create outstanding task, attempt stop at STAGE_2_COMPLETED
-        _make_pending_task(sid, task_id="1", subject="e2e outstanding task")
+        # Phase 3: Outstanding task exists, attempt stop at STAGE_2_COMPLETED
         result, ctx = _e2e_stop(sid, store, autorun_stage=EventContext.STAGE_2_COMPLETED)
 
         assert ctx.autorun_stage == EventContext.STAGE_2, (
@@ -1385,36 +1416,25 @@ class TestStalenessE2E:
         assert ctx_new.task_staleness_enabled is True, "New session should have staleness enabled"
         assert ctx_new.task_staleness_threshold is None, "New session threshold should be None"
 
-    def test_emergency_stop_prevents_staleness_after_resume(self):
-        """After emergency stop sets autorun_active=False, staleness doesn't fire.
+    def test_no_tasks_no_injection_after_resume(self):
+        """Without incomplete tasks, staleness doesn't fire even with high counter.
 
-        Even if counter is high, the autorun_active=False guard prevents injection.
+        Counter may be high from previous work, but if all tasks are done,
+        no reminder is needed.
         """
-        sid = self._sid("estop-resume")
+        sid = self._sid("no-tasks-resume")
 
         # Build up counter
         for _ in range(20):
             _e2e_post_tool("Bash", sid, self.store)
 
-        # Emergency stop: set autorun_active=False (like autorun_injection does)
-        ctx_stop = EventContext(
-            session_id=sid, event="Stop", prompt="", store=self.store,
-        )
-        ctx_stop.autorun_active = False
-
-        # Resume: handler should not inject even though counter is high
-        _e2e_command("/ar:tasks 3", sid, self.store)  # low threshold
+        # Low threshold, but no tasks
+        _e2e_command("/ar:tasks 3", sid, self.store)
 
         results = []
         for _ in range(5):
-            ctx = EventContext(
-                session_id=sid, event="PostToolUse", prompt="",
-                tool_name="Bash", store=self.store,
-            )
-            # autorun_active reads False from shelve — no need to set it
-            result = plugins.app.dispatch(ctx) or {}
-            results.append(result)
+            results.append(_e2e_post_tool("Bash", sid, self.store))
 
         assert all("TASK LIST REMINDER" not in str(r) for r in results), (
-            "No injection expected after emergency stop — autorun_active is False"
+            "No injection expected — no incomplete tasks exist"
         )

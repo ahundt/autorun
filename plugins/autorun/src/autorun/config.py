@@ -251,6 +251,19 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "BLOCKED: 'gh repo edit' modifies repository settings (description, visibility, homepage).\n\nUser permission required before editing shared resources.\n\nTo allow in this session: /ar:ok 'gh repo edit'",
     },
+    # GitHub comment/create commands — post publicly visible content (v0.10)
+    "gh pr comment": {
+        "action": "block",
+        "suggestion": "BLOCKED: 'gh pr comment' posts a publicly visible comment on a pull request.\n\nUser permission required before posting public comments.\n\nTo allow in this session: /ar:ok 'gh pr comment'",
+    },
+    "gh issue comment": {
+        "action": "block",
+        "suggestion": "BLOCKED: 'gh issue comment' posts a publicly visible comment on a GitHub issue.\n\nUser permission required before posting public comments.\n\nTo allow in this session: /ar:ok 'gh issue comment'",
+    },
+    "gh issue create": {
+        "action": "block",
+        "suggestion": "BLOCKED: 'gh issue create' creates a new public GitHub issue.\n\nUser permission required before creating public issues.\n\nTo allow in this session: /ar:ok 'gh issue create'",
+    },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",

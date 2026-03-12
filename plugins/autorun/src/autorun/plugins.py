@@ -999,14 +999,11 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """Inject reminder when AI hasn't updated tasks recently (v0.9).
 
     Counts tool calls per session. Resets on TaskCreate/TaskUpdate.
-    Injects reminder when count reaches the configured threshold.
+    Injects reminder when count reaches threshold AND incomplete tasks exist.
 
-    Independent of task_lifecycle.is_enabled() — registered in plugins.py
-    directly to avoid coupling to task_lifecycle's global enable/disable.
-
-    Respects autorun_active=False (emergency stop, plan mode, pre-autorun).
+    Fires in any session (not just autorun). Disable with /ar:tasks off.
     """
-    if not ctx.autorun_active or not ctx.task_staleness_enabled:
+    if not ctx.task_staleness_enabled:
         return None
 
     # Reset counter when AI actively manages tasks; skip increment.
@@ -1020,6 +1017,16 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
     if count < threshold:
         return None
+
+    # Only fire reminder if there are actually incomplete tasks
+    if task_lifecycle.is_enabled():
+        try:
+            manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+            if not manager.get_incomplete_tasks(exclude_blocking=True):
+                ctx.tool_calls_since_task_update = 0
+                return None  # No incomplete tasks — nothing to remind about
+        except Exception:
+            pass  # Fail-open — skip reminder on error
 
     ctx.tool_calls_since_task_update = 0
     msg = CONFIG["task_staleness_message"].format(threshold=threshold)

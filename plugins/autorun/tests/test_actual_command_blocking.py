@@ -331,6 +331,39 @@ class TestGhEditCommandBlocking:
             f"Blocking reason doesn't mention edit: {reason}"
 
 
+class TestGhCommentCreateCommandBlocking:
+    """Verify gh comment/create commands are blocked since they post publicly visible content."""
+
+    @pytest.mark.parametrize("command,keyword", [
+        ("gh pr comment 968 --body 'Looks good!'", "comment"),
+        ("gh pr comment 42 --body-file /tmp/review.md", "comment"),
+        ("gh issue comment 123 --body 'I can reproduce this'", "comment"),
+        ("gh issue comment 99 --body-file /tmp/response.md", "comment"),
+        ("gh issue create --title 'Bug report' --body 'Steps to reproduce'", "create"),
+        ("gh issue create --title 'Feature request'", "create"),
+    ])
+    def test_gh_comment_create_commands_blocked(self, command, keyword):
+        """Verify gh pr/issue comment and gh issue create commands are blocked."""
+        ctx = EventContext(
+            session_id="test-session",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+        )
+
+        result = _pretooluse(ctx)
+
+        hook_output = result.get("hookSpecificOutput", {})
+        permission_decision = hook_output.get("permissionDecision", "allow")
+
+        assert permission_decision == "deny", \
+            f"'{command}' was not blocked! permissionDecision={permission_decision}"
+
+        reason = hook_output.get("permissionDecisionReason", "")
+        assert keyword in reason.lower() or "blocked" in reason.lower(), \
+            f"Blocking reason doesn't mention {keyword}: {reason}"
+
+
 class TestArOkQuotingInSuggestions:
     """Verify all /ar:ok instructions in DEFAULT_INTEGRATIONS use proper quoting.
 
