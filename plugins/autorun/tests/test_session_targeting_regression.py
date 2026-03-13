@@ -122,11 +122,16 @@ class TestSessionTargetingRegression:
             assert cmd not in current_content, f"Command '{cmd}' should NOT appear in current session"
 
     def test_tmux_environment_detection(self):
-        """Test that we can detect the current tmux environment"""
+        """Test that we can detect the current tmux environment when inside tmux."""
         from autorun.tmux_utils import TmuxUtilities
 
         tmux_utils = TmuxUtilities()
         env_info = tmux_utils.detect_tmux_environment()
+
+        if not os.environ.get("TMUX"):
+            # Not running inside a tmux session — detection legitimately returns None.
+            # Skip rather than fail, since the feature only works inside tmux.
+            pytest.skip("Not running inside tmux — detect_tmux_environment() correctly returns None")
 
         assert env_info is not None, "Should detect tmux environment when running inside tmux"
         assert 'session' in env_info, "Environment info should include session"
@@ -314,34 +319,54 @@ class TestSessionTargetingRegression:
             subprocess.run(['tmux', 'kill-session', '-t', session2], capture_output=True, timeout=5)
 
     def test_no_target_leakage_in_current_session(self):
-        """Test that targeted commands don't leak into current session"""
-        # Get current session content before test
-        subprocess.run(['tmux', 'capture-pane', '-p'],
-                                       capture_output=True, text=True, timeout=5)
+        """Test that targeted commands don't leak into current session.
 
-        # Send multiple commands to test session
+        Uses UUID-based markers so test source code in the pane buffer can't
+        cause false positives.  Compares new content (after − before) rather
+        than scanning the full buffer which may contain prior test output.
+        """
+        import uuid
+
+        # Unique markers that can't appear in existing pane history
+        uid = uuid.uuid4().hex[:12]
         test_commands = [
-            "echo test-command-1",
-            "echo test-command-2",
-            "echo test-command-3"
+            f"echo leakage-probe-{uid}-1",
+            f"echo leakage-probe-{uid}-2",
+            f"echo leakage-probe-{uid}-3",
         ]
 
+        # Snapshot current pane BEFORE sending anything
+        before_capture = subprocess.run(
+            ['tmux', 'capture-pane', '-p'],
+            capture_output=True, text=True, timeout=5,
+        )
+        before_content = before_capture.stdout
+
+        # Send commands to the *target* session (NOT the current pane)
         for cmd in test_commands:
             self.tmux.send_keys(cmd, self.test_session)
             self.tmux.send_keys('C-m', self.test_session)
             time.sleep(0.1)
 
-        # Check current session content after test
-        after_capture = subprocess.run(['tmux', 'capture-pane', '-p'],
-                                      capture_output=True, text=True, timeout=5)
+        time.sleep(0.3)  # let commands execute in target session
+
+        # Snapshot current pane AFTER
+        after_capture = subprocess.run(
+            ['tmux', 'capture-pane', '-p'],
+            capture_output=True, text=True, timeout=5,
+        )
         after_content = after_capture.stdout
 
-        # None of the test commands should appear in current session
-        for cmd in test_commands:
-            assert cmd not in after_content, f"Command '{cmd}' should NOT appear in current session"
+        # Only check content that is NEW (appeared after the test started).
+        # This avoids false positives from prior test output still in the
+        # scrollback or from pytest itself printing source code.
+        new_content = after_content[len(before_content):] if after_content.startswith(before_content) else after_content
 
-        # The content should be essentially the same (allowing for minor prompt changes)
-        # This ensures no leakage occurred
+        for cmd in test_commands:
+            assert cmd not in new_content, (
+                f"Command '{cmd}' leaked into current session pane (new content). "
+                f"New content: {new_content!r:.200}"
+            )
 
     def test_session_targeting_with_window_and_pane(self):
         """Test session targeting with specific window and pane specifications"""

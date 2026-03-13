@@ -101,8 +101,8 @@ class TestDaemonImportChain:
 # === Test 2: Plan acceptance dual notification via ctx.respond ===
 
 class TestPlanAcceptanceDualNotification:
-    def test_plan_approval_returns_respond_format(self):
-        """Verify detect_plan_approval uses ctx.respond with to_human + to_ai."""
+    def test_plan_approval_returns_none_with_chain_notifications(self):
+        """Verify detect_plan_approval uses chain notifications (returns None)."""
         sid = f"test-plan-respond-{time.time()}"
         ctx = make_post_tool_ctx(
             session_id=sid,
@@ -113,20 +113,19 @@ class TestPlanAcceptanceDualNotification:
         )
         result = plugins.detect_plan_approval(ctx)
 
-        assert result is not None, "detect_plan_approval should return non-None on approval"
-        assert result.get("decision") == "approve", \
-            f"Expected 'approve' decision, got {result.get('decision')}"
+        assert result is None, "detect_plan_approval should return None (chain notifications)"
+        assert len(ctx._chain_notifications) >= 2, \
+            f"Should have at least 2 chain notifications (human + ai), got {len(ctx._chain_notifications)}"
 
-        # PATHWAY 2: systemMessage should contain user notification
-        sys_msg = result.get("systemMessage", "")
-        assert "Plan accepted" in sys_msg, \
-            f"systemMessage should contain 'Plan accepted', got: {sys_msg}"
+        # Check human channel has "Plan accepted"
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        assert any("Plan accepted" in m for m in human_msgs), \
+            f"Human notification should contain 'Plan accepted', got: {human_msgs}"
 
-        # PATHWAY 2: hookSpecificOutput.additionalContext should contain AI injection
-        hso = result.get("hookSpecificOutput", {})
-        ai_context = hso.get("additionalContext", "")
-        assert "UNINTERRUPTED" in ai_context or "autonomous" in ai_context.lower(), \
-            f"additionalContext should contain injection prompt, got: {ai_context[:100]}"
+        # Check ai channel has injection prompt
+        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "ai"]
+        assert any("UNINTERRUPTED" in m or "autonomous" in m.lower() for m in ai_msgs), \
+            f"AI notification should contain injection prompt, got: {[m[:100] for m in ai_msgs]}"
 
     def test_plan_approval_includes_tdd_scaffolding(self, monkeypatch, tmp_path):
         """Verify TDD scaffolding message is injected when enabled."""
@@ -144,16 +143,17 @@ class TestPlanAcceptanceDualNotification:
             plan_arguments="Build tests",
         )
         result = plugins.detect_plan_approval(ctx)
-        assert result is not None
+        assert result is None, "Should return None (chain notifications)"
 
-        hso = result.get("hookSpecificOutput", {})
-        ai_context = hso.get("additionalContext", "")
+        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "ai"]
+        ai_context = "\n".join(ai_msgs)
         assert "Task Scaffolding Required" in ai_context, \
-            f"TDD scaffolding message should be in AI context, got: {ai_context[:200]}"
+            f"TDD scaffolding message should be in AI notifications, got: {ai_context[:200]}"
 
-        sys_msg = result.get("systemMessage", "")
-        assert "TDD scaffolding: enabled" in sys_msg, \
-            f"User notification should mention TDD, got: {sys_msg}"
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        human_text = "\n".join(human_msgs)
+        assert "TDD scaffolding: enabled" in human_text, \
+            f"User notification should mention TDD, got: {human_text}"
 
     def test_plan_approval_tdd_disabled(self, monkeypatch, tmp_path):
         """Verify TDD scaffolding is NOT injected when disabled."""
@@ -170,14 +170,15 @@ class TestPlanAcceptanceDualNotification:
             plan_arguments="Quick fix",
         )
         result = plugins.detect_plan_approval(ctx)
-        assert result is not None
+        assert result is None, "Should return None (chain notifications)"
 
-        hso = result.get("hookSpecificOutput", {})
-        ai_context = hso.get("additionalContext", "")
+        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "ai"]
+        ai_context = "\n".join(ai_msgs)
         assert "Task Scaffolding Required" not in ai_context
 
-        sys_msg = result.get("systemMessage", "")
-        assert "TDD scaffolding" not in sys_msg
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        human_text = "\n".join(human_msgs)
+        assert "TDD scaffolding" not in human_text
 
     def test_plan_approval_sets_staleness_counter(self, monkeypatch, tmp_path):
         """Fix 8: task_update_enforcement pre-sets staleness counter."""
@@ -194,9 +195,9 @@ class TestPlanAcceptanceDualNotification:
             plan_arguments="Task enforcement test",
         )
         result = plugins.detect_plan_approval(ctx)
-        assert result is not None
+        assert result is None, "Should return None (chain notifications)"
 
-        # Counter should be pre-set to threshold - 2
+        # Counter should be pre-set to threshold - 2 (side effect still works)
         from autorun.config import CONFIG
         threshold = CONFIG.get("task_staleness_threshold", 25)
         assert ctx.tool_calls_since_task_update == max(0, threshold - 2), \
@@ -394,8 +395,8 @@ class TestPlanNotifyConfigRealPath:
 # === Test 6: Response format validation ===
 
 class TestResponseFormat:
-    def test_plan_approval_response_valid_json(self):
-        """Verify the response dict is JSON-serializable (daemon requirement)."""
+    def test_plan_approval_chain_notifications_present(self):
+        """Verify chain notifications are accumulated (replaces JSON response test)."""
         sid = f"test-json-{time.time()}"
         ctx = make_post_tool_ctx(
             session_id=sid,
@@ -405,13 +406,13 @@ class TestResponseFormat:
             plan_arguments="Test plan",
         )
         result = plugins.detect_plan_approval(ctx)
-        assert result is not None
+        assert result is None, "Should return None (chain notifications)"
 
-        # Must be JSON-serializable
-        serialized = json.dumps(result)
-        deserialized = json.loads(serialized)
-        assert deserialized["decision"] == "approve"
-        assert "systemMessage" in deserialized
+        # Verify notifications accumulated
+        assert len(ctx._chain_notifications) >= 2, \
+            "Should have human and ai channel notifications"
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        assert len(human_msgs) >= 1, "Should have at least one human notification"
 
 
 # === Test 7: Root cause — chain ordering bug (Bug #11) ===
@@ -430,8 +431,8 @@ class TestChainOrderingBugFix:
         BEFORE fix: export handler returned ctx.respond(...) → non-None →
         _run_chain stopped → detect_plan_approval NEVER fired → autorun NOT activated.
 
-        AFTER fix: export handler uses ctx.add_chain_notification() → returns None →
-        chain continues → detect_plan_approval fires → autorun activated.
+        AFTER fix: Both handlers use ctx.add_chain_notification() → return None →
+        chain continues → all handlers fire → autorun activated → notifications flush.
         """
         sid = f"test-chain-order-{time.time()}"
         ctx = make_post_tool_ctx(
@@ -442,12 +443,12 @@ class TestChainOrderingBugFix:
             plan_arguments="Fix chain ordering bug",
         )
 
-        # Call detect_plan_approval directly (it's what was blocked before)
+        # Call detect_plan_approval directly
         result = plugins.detect_plan_approval(ctx)
 
-        # The critical assertion: detect_plan_approval MUST fire and activate autorun
-        assert result is not None, \
-            "detect_plan_approval must return non-None on approval (was blocked by Bug #11)"
+        # Now returns None with chain notifications instead of non-None
+        assert result is None, \
+            "detect_plan_approval should return None (chain notifications)"
         assert ctx.autorun_active is True, \
             "autorun must be activated after plan approval (root cause of Bug #11)"
         assert ctx.autorun_stage == EventContext.STAGE_1, \
@@ -476,10 +477,11 @@ class TestChainOrderingBugFix:
         assert result is None, \
             f"export_on_exit_plan_mode must return None on approval, got: {result}"
 
-    def test_export_handler_returns_response_on_rejection(self):
-        """Verify export handler returns response (non-None) when plan rejected.
+    def test_export_handler_diagnostic_on_rejection(self):
+        """Verify export handler adds diagnostic notification when no plan found.
 
-        Rejected plans don't need detect_plan_approval, so blocking the chain is fine.
+        Rejected plans have no plan content to export, so a diagnostic notification
+        informs the user that export was skipped.
         """
         from autorun.plan_export import export_on_exit_plan_mode
 
@@ -491,12 +493,12 @@ class TestChainOrderingBugFix:
             tool_result="User has rejected your plan.",
         )
 
-        # This may return None (no plan found) or non-None (plan exported)
-        # The key is: it does NOT use add_chain_notification for rejections
         result = export_on_exit_plan_mode(ctx)
-        # No notifications should be accumulated for rejections
-        assert len(ctx._chain_notifications) == 0, \
-            "Rejected plans should not accumulate chain notifications"
+        assert result is None, "Should return None (chain notifications)"
+        # Diagnostic notification about no plan content found
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        assert any("no plan content" in m for m in human_msgs), \
+            f"Should have diagnostic about no plan content, got: {human_msgs}"
 
     def test_run_chain_flush_catches_orphan_notifications(self):
         """If all handlers return None but notifications accumulated, _run_chain flushes them."""

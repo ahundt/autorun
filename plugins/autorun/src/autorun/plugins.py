@@ -41,6 +41,7 @@ from .config import (
     TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS
 )
 from .session_manager import session_state
+from .scoped_allow import ScopedAllow, parse_scope_args
 from .command_detection import command_matches_pattern
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
 
@@ -103,7 +104,7 @@ def handle_status(ctx: EventContext) -> str:
         scope_title = scope.title()
         section = (
             _format_pattern_list(accessor.get(), f"{scope_title} blocks", "🚫") +
-            _format_pattern_list(accessor.get_allowed(), f"{scope_title} allows", "✅")
+            _format_pattern_list(accessor.get_allowed(), f"{scope_title} allows", "✅", show_scope=True)
         )
         if section:
             if control_lines:
@@ -332,13 +333,14 @@ def _get_suggestion(pattern: str) -> str:
     return f"Blocked: {pattern}\n\nTo allow: /ar:ok {pattern}"
 
 
-def _format_pattern_list(patterns: list, label: str, icon: str) -> list:
+def _format_pattern_list(patterns: list, label: str, icon: str, show_scope: bool = False) -> list:
     """Format a list of pattern dicts into display lines.
 
     Args:
         patterns: List of dicts with 'pattern' and optional 'pattern_type' keys.
         label:    Section label, e.g. "Session blocks".
         icon:     Emoji prefix for the header line, e.g. "🚫" or "✅".
+        show_scope: If True, show ScopedAllow status_label for allow entries.
 
     Returns:
         Empty list when patterns is empty; otherwise [header_line, *item_lines].
@@ -348,7 +350,11 @@ def _format_pattern_list(patterns: list, label: str, icon: str) -> list:
     lines = [f"{icon} {label} ({len(patterns)}):"]
     for p in patterns:
         ptype = f" ({p.get('pattern_type', 'literal')})" if p.get('pattern_type') != 'literal' else ""
-        lines.append(f"  • {p['pattern']}{ptype}")
+        scope_info = ""
+        if show_scope:
+            sa = ScopedAllow.from_dict(p)
+            scope_info = f" ({sa.status_label()})"
+        lines.append(f"  • {p['pattern']}{ptype}{scope_info}")
     return lines
 
 
@@ -394,6 +400,20 @@ class ScopeAccessor:
         else:
             with session_state("__global__") as st:
                 st[self._allowed_key] = allows
+
+    def consume_allowed(self, index: int, consumed_dict: dict) -> None:
+        """Atomic update of a single allow entry (safe for global scope)."""
+        if self.scope == "session":
+            allows = list(self.ctx.session_allowed_patterns or [])
+            if index < len(allows):
+                allows[index] = consumed_dict
+                self.ctx.session_allowed_patterns = allows
+        else:
+            with session_state("__global__") as st:
+                allows = list(st.get(self._allowed_key, []))
+                if index < len(allows):
+                    allows[index] = consumed_dict
+                    st[self._allowed_key] = allows
 
 
 # MEGA DRY: Single factory for ALL block operations
@@ -441,23 +461,25 @@ def _make_block_op(scope: str, op: str):
         if op == "allow":
             if not args:
                 prefix = "global" if scope == "global" else ""
-                return f"❌ Usage: /ar:{prefix}ok <pattern>"
+                return f"❌ Usage: /ar:{prefix}ok <pattern> [count] [duration] [permanent|perm|p]"
             try:
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:
                 return f"❌ Error: {e}"
+            import time as _time
+            ttl, uses, explicit_permanent = parse_scope_args(desc)
+            if not explicit_permanent and ttl is None and uses is None:
+                uses = 1  # Safe default: 1 use
+            sa = ScopedAllow(
+                pattern=pattern, pattern_type=ptype,
+                granted_at=_time.time(), ttl_seconds=ttl, remaining_uses=uses,
+            )
             allows = accessor.get_allowed()
-            # Check if already in allowed list
-            if any(a["pattern"] == pattern for a in allows):
-                return f"ℹ️ Already allowed: {pattern}"
-            # Add to allowed patterns
-            allows.append({
-                "pattern": pattern,
-                "pattern_type": ptype
-            })
+            # Replace existing entry for same pattern (update scope)
+            allows = [a for a in allows if a["pattern"] != pattern]
+            allows.append(sa.to_dict())
             accessor.set_allowed(allows)
-            prefix = "global" if scope == "global" else ""
-            return f"✅ Allowed: '{pattern}' (to block: /ar:{prefix}no '{pattern}')"
+            return f"✅ Allowed: '{pattern}' ({sa.status_label()})"
 
         if op == "clear":
             accessor.set([])
@@ -468,7 +490,7 @@ def _make_block_op(scope: str, op: str):
             allows = accessor.get_allowed()
             lines = (
                 _format_pattern_list(blocks, f"{scope.title()} Blocks", "🚫") +
-                _format_pattern_list(allows, f"{scope.title()} Allows", "✅")
+                _format_pattern_list(allows, f"{scope.title()} Allows", "✅", show_scope=True)
             )
             return "\n".join(lines) if lines else f"ℹ️ No {scope} blocks or allows"
 
@@ -560,12 +582,24 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         return ctx.allow()
 
     # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
-    for a in ScopeAccessor(ctx, "session").get_allowed():
-        if _match(cmd, a["pattern"], a.get("pattern_type", "literal")):
-            return ctx.allow()
-    for a in ScopeAccessor(ctx, "global").get_allowed():
-        if _match(cmd, a["pattern"], a.get("pattern_type", "literal")):
-            return ctx.allow()
+    for scope_name in ("session", "global"):
+        accessor = ScopeAccessor(ctx, scope_name)
+        allows = accessor.get_allowed()
+        for i, a in enumerate(allows):
+            sa = ScopedAllow.from_dict(a)
+            if not sa.is_valid():
+                continue  # Expired/exhausted — skip (lazy cleanup)
+            if _match(cmd, sa.pattern, sa.pattern_type):
+                consumed = sa.consume()
+                accessor.consume_allowed(i, consumed.to_dict())
+                label = consumed.status_label()
+                if label != "permanent":
+                    return ctx.respond("allow", f"Allowed '{sa.pattern}' ({label})")
+                return ctx.allow()
+        # Lazy cleanup: remove expired entries on pass-through
+        cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
+        if len(cleaned) != len(allows):
+            accessor.set_allowed(cleaned)
 
     # TIER 2: Collect ALL matching blocks + warns (stacking: deny wins over warn)
     deny_parts: list = []
@@ -964,7 +998,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if reminder:
         injection += reminder
 
-    # Fix 7: Dual notification via ctx.respond (PATHWAY 2)
+    # Fix 7: Chain notifications (PATHWAY 2) — don't stop chain
     user_lines = [f"Plan accepted - {task_count} task(s) linked"]
     if plan_cfg.tdd_scaffolding:
         user_lines.append("  TDD scaffolding: enabled")
@@ -972,7 +1006,9 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
         user_lines.append("  Task update enforcement: enabled")
     user_msg = "\n".join(user_lines)
 
-    return ctx.respond("allow", "", to_human=user_msg, to_ai=injection)
+    ctx.add_chain_notification(user_msg, channel="human")
+    ctx.add_chain_notification(injection, channel="ai")
+    return None  # Don't stop chain — let all PostToolUse handlers contribute
 
 
 @app.on("PostToolUse")
@@ -1000,21 +1036,23 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
         # Warn if: replacement removed >5 lines AND shrank by >60%
         if old_lines > 5 and new_lines < old_lines * 0.4:
             removed = old_lines - new_lines
-            return ctx.allow(
+            ctx.add_chain_notification(
                 f"\n⚠️ PLAN CONTENT WARNING: Edit removed {removed} lines from "
                 f"{file_path} (old_string was {old_lines} lines, new_string is {new_lines} lines). "
                 f"Read the full plan file NOW and verify no content was accidentally deleted. "
-                f"Restore any missing content before continuing."
+                f"Restore any missing content before continuing.",
+                channel="ai"
             )
 
     elif ctx.tool_name == "Write":
         content = ctx.tool_input.get("content", "")
         content_lines = len(content.splitlines())
         if content_lines < 15:
-            return ctx.allow(
+            ctx.add_chain_notification(
                 f"\n⚠️ PLAN CONTENT WARNING: Write produced only {content_lines} lines "
                 f"in {file_path}. Plan files should have substantial content. "
-                f"Verify this was intentional and no content was accidentally deleted."
+                f"Verify this was intentional and no content was accidentally deleted.",
+                channel="ai"
             )
 
     return None
@@ -1234,6 +1272,20 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
     # Fallback
     ctx.recheck_count = (ctx.recheck_count or 0) + 1
     return inject(build_injection_prompt(ctx))
+
+
+# === SCOPED ALLOW CLEANUP (SessionStart) ===
+
+@app.on("SessionStart")
+def cleanup_expired_allows(ctx: EventContext) -> None:
+    """Purge expired scoped allows on session start (lazy GC)."""
+    for scope_name in ("session", "global"):
+        accessor = ScopeAccessor(ctx, scope_name)
+        allows = accessor.get_allowed()
+        cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
+        if len(cleaned) != len(allows):
+            accessor.set_allowed(cleaned)
+    return None
 
 
 # ============================================================================

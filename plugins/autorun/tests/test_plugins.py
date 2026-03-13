@@ -814,8 +814,8 @@ class TestAllowPatternsSystem:
         allows = ctx.session_allowed_patterns or []
         assert any(a["pattern"] == "git push" for a in allows)
 
-    def test_ar_ok_success_message_includes_revert_hint(self):
-        """/ar:ok success message includes 'To block:' hint on same line, no newlines."""
+    def test_ar_ok_success_message_includes_scope_label(self):
+        """/ar:ok success message includes scope label (e.g. '1 use remaining')."""
         import uuid
         store = ThreadSafeDB()
         ctx = EventContext(session_id=f"test-ok-hint-{uuid.uuid4().hex[:8]}", event="UserPromptSubmit",
@@ -825,8 +825,7 @@ class TestAllowPatternsSystem:
         result = app.command_handlers["/ar:ok"](ctx)
 
         assert "\n" not in result
-        assert "(to block:" in result
-        assert "/ar:no" in result
+        assert "1 use remaining" in result
         assert "'git push'" in result
 
     def test_ar_no_removes_pattern_from_allows(self):
@@ -861,8 +860,8 @@ class TestAllowPatternsSystem:
             f"Expected 'git push' (no quotes) in allows, got: {allows}"
         assert "git push" in result
 
-    def test_ar_ok_idempotent_returns_already_allowed(self):
-        """Running /ar:ok twice on same pattern returns ℹ️ Already allowed."""
+    def test_ar_ok_replaces_existing_pattern_with_new_scope(self):
+        """Running /ar:ok twice on same pattern replaces with new scoped allow."""
         store = ThreadSafeDB()
         ctx = EventContext(session_id="test-ok-dup", event="UserPromptSubmit",
                            prompt="/ar:ok 'git push'", store=store)
@@ -872,9 +871,11 @@ class TestAllowPatternsSystem:
         handler = app.command_handlers.get("/ar:ok")
         result = handler(ctx)
 
-        assert "Already allowed" in result
-        # Count should not change
+        assert "Allowed" in result
+        # Should replace (not duplicate) — count stays at 1
         assert len(ctx.session_allowed_patterns) == 1
+        # New entry should have remaining_uses=1 (scoped default)
+        assert ctx.session_allowed_patterns[0].get("remaining_uses") == 1
 
     def test_session_allow_overrides_default_integration_block(self):
         """Session allow overrides DEFAULT_INTEGRATIONS block (e.g. 'git push')."""

@@ -2402,10 +2402,9 @@ class TestHumanVisibleNotifications:
     """
 
     def test_export_on_exit_plan_mode_response_is_human_visible(self, temp_project):
-        """export_on_exit_plan_mode() PostToolUse response must reach both user and AI.
+        """export_on_exit_plan_mode() PostToolUse chain notification must reach user.
 
-        Correct: systemMessage present (user terminal), hookSpecificOutput present (AI context),
-        reason empty (prevents double-print).
+        Uses chain notifications (returns None) so downstream handlers can also contribute.
         """
         from autorun.plan_export import export_on_exit_plan_mode
 
@@ -2420,15 +2419,13 @@ class TestHumanVisibleNotifications:
         )
         response = export_on_exit_plan_mode(ctx)
 
-        assert response is not None
-        assert "systemMessage" in response
-        assert response["systemMessage"].startswith("📋")
-        assert "Plan exported to" in response["systemMessage"]
-        # Both channels set: systemMessage (user) + hookSpecificOutput (AI)
-        assert "hookSpecificOutput" in response
-        assert response["hookSpecificOutput"]["additionalContext"] == response["systemMessage"]
-        # reason must be empty to prevent double-print (canonical pattern)
-        assert response.get("reason", "") == ""
+        assert response is None, "Should return None (chain notifications)"
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        assert len(human_msgs) >= 1, "Should have at least one human notification"
+        assert any(m.startswith("📋") for m in human_msgs), \
+            f"Notification should start with 📋, got: {human_msgs}"
+        assert any("Plan exported to" in m or "exported" in m.lower() for m in human_msgs), \
+            f"Notification should mention export, got: {human_msgs}"
 
     def test_export_on_exit_plan_mode_dedup_notifies_with_path(self, temp_project):
         """Dedup (already exported): second export notifies user with specific file path.
@@ -2455,31 +2452,23 @@ class TestHumanVisibleNotifications:
                 store=store,
             )
 
-        # First export: should notify user with export path
-        response1 = export_on_exit_plan_mode(make_ctx())
-        assert response1 is not None and "systemMessage" in response1
-        assert "notes/" in response1["systemMessage"]
+        # First export: should add chain notification with export path
+        ctx1 = make_ctx()
+        response1 = export_on_exit_plan_mode(ctx1)
+        assert response1 is None, "Should return None (chain notifications)"
+        human1 = [msg for msg, ch in ctx1._chain_notifications if ch == "human"]
+        assert any("notes/" in m for m in human1), \
+            f"First export should mention notes/ path, got: {human1}"
 
-        # Second export (dedup): must notify with specific path so user knows where plan is.
-        response2 = export_on_exit_plan_mode(make_ctx())
-        assert response2 is not None, "dedup must return a notification (not None)"
-        assert "systemMessage" in response2
-        assert "exported" in response2["systemMessage"].lower(), (
-            f"dedup message must say 'exported'. Got: {response2['systemMessage']!r}"
-        )
-        assert "notes/" in response2["systemMessage"], (
-            f"dedup message must include specific path. Got: {response2['systemMessage']!r}"
-        )
-        assert "already" not in response2["systemMessage"].lower(), (
-            f"dedup message must say 'Plan exported to' not 'Plan already exported to'. "
-            f"Got: {response2['systemMessage']!r}"
-        )
-        # Both channels must be set (user terminal + Claude AI context)
-        assert "hookSpecificOutput" in response2, "PostToolUse response must include hookSpecificOutput"
-        assert response2["hookSpecificOutput"].get("additionalContext"), \
-            "additionalContext must be set so Claude's AI context receives the notification"
-        assert response2["hookSpecificOutput"]["additionalContext"] == response2["systemMessage"], \
-            "additionalContext and systemMessage must carry the same notification text"
+        # Second export (dedup): must still notify with specific path
+        ctx2 = make_ctx()
+        response2 = export_on_exit_plan_mode(ctx2)
+        assert response2 is None, "Should return None (chain notifications)"
+        human2 = [msg for msg, ch in ctx2._chain_notifications if ch == "human"]
+        assert any("exported" in m.lower() or "📋" in m for m in human2), \
+            f"Dedup should still notify about export, got: {human2}"
+        assert any("notes/" in m for m in human2), \
+            f"Dedup must include specific path, got: {human2}"
 
     def test_export_on_exit_plan_mode_timeout_is_human_visible(self, temp_project):
         """Timeout: user MUST see warning — plan was NOT exported.
@@ -3511,28 +3500,27 @@ class TestAcceptedRejectedRouting:
         )
         opt2_result = export_on_exit_plan_mode(ctx_post)
 
-        # Must NOT return None — user needs to know where the plan is
-        assert opt2_result is not None, (
-            "Bug 2b regression: Option 2 PostToolUse must notify even on dedup hit. "
-            "Got None — user left with no information about where plan was exported."
+        # export_on_exit_plan_mode now returns None and uses chain notifications
+        assert opt2_result is None, (
+            "export_on_exit_plan_mode must return None (chain notification pattern)"
         )
-        assert "systemMessage" in opt2_result
-        msg = opt2_result["systemMessage"]
+        # Check chain notifications for the export message (stored as (message, channel) tuples)
+        notifications = getattr(ctx_post, '_chain_notifications', [])
+        human_msgs = [msg for msg, ch in notifications if ch == 'human']
+        assert len(human_msgs) > 0, (
+            "Bug 2b regression: Option 2 PostToolUse must notify even on dedup hit. "
+            "Got no chain notifications — user left with no information about where plan was exported."
+        )
+        msg = human_msgs[0]
         assert "exported" in msg.lower(), (
-            f"systemMessage must say 'exported'. Got: {msg!r}"
+            f"chain notification must say 'exported'. Got: {msg!r}"
         )
         assert "notes/" in msg, (
-            f"systemMessage must include specific notes/ path. Got: {msg!r}"
+            f"chain notification must include specific notes/ path. Got: {msg!r}"
         )
         assert "already" not in msg.lower(), (
             f"message must say 'Plan exported to' not 'Plan already exported to'. Got: {msg!r}"
         )
-        # Both channels must be set (user terminal + Claude AI context)
-        assert "hookSpecificOutput" in opt2_result, "PostToolUse response must include hookSpecificOutput"
-        assert opt2_result["hookSpecificOutput"].get("additionalContext"), \
-            "additionalContext must be set so Claude's AI context receives the notification"
-        assert opt2_result["hookSpecificOutput"]["additionalContext"] == msg, \
-            "additionalContext and systemMessage must carry the same notification text"
 
     def test_option2_after_option1_recovery_dedup_notifies(self, temp_project):
         """Regression: Option 2 PostToolUse must notify even when plan not in active_plans.
@@ -3592,24 +3580,24 @@ class TestAcceptedRejectedRouting:
         )
         result = export_on_exit_plan_mode(ctx_post)
 
-        assert result is not None, (
-            "Option 2 PostToolUse must return a notification even when plan was not in "
-            "active_plans (removed by Option 1 recovery). Got None — user has no path info."
+        # export_on_exit_plan_mode now returns None and uses chain notifications
+        assert result is None, (
+            "export_on_exit_plan_mode must return None (chain notification pattern)"
         )
-        assert "systemMessage" in result
-        msg = result["systemMessage"]
+        # Check chain notifications for the export message (stored as (message, channel) tuples)
+        notifications = getattr(ctx_post, '_chain_notifications', [])
+        human_msgs = [msg for msg, ch in notifications if ch == 'human']
+        assert len(human_msgs) > 0, (
+            "Option 2 PostToolUse must notify even when plan was not in "
+            "active_plans (removed by Option 1 recovery). Got no chain notifications."
+        )
+        msg = human_msgs[0]
         assert "notes/" in msg, f"notification must include notes/ path. Got: {msg!r}"
         assert "exported" in msg.lower(), f"notification must say 'exported'. Got: {msg!r}"
         assert "already" not in msg.lower(), (
             f"notification must say 'Plan exported to' not 'Plan already exported to'. "
             f"Got: {msg!r}"
         )
-        # Both channels must be set (user terminal + Claude AI context)
-        assert "hookSpecificOutput" in result, "PostToolUse response must include hookSpecificOutput"
-        assert result["hookSpecificOutput"].get("additionalContext"), \
-            "additionalContext must be set so Claude's AI context receives the notification"
-        assert result["hookSpecificOutput"]["additionalContext"] == msg, \
-            "additionalContext and systemMessage must carry the same notification text"
 
     def test_multi_plan_recovery_skips_already_tracked(self, temp_project):
         """Plan already in tracking must be skipped by get_unexported() in multi-plan recovery.

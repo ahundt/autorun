@@ -1159,6 +1159,11 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
                 # detect_plan_approval (downstream) handles approval-specific logic.
                 ctx.add_chain_notification(export_msg, channel="human")
                 return None
+        else:
+            ctx.add_chain_notification(
+                "⚠️ Plan export: no plan content found for export",
+                channel="human"
+            )
     except SessionTimeoutError:
         return ctx.respond("allow", "⚠️ Plan export skipped: lock timeout. Re-trigger ExitPlanMode to retry.", to_human=True)
     except Exception as e:

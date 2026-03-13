@@ -621,6 +621,7 @@ class EventContext:
         'autorun_mode': 'standard',
         'activation_prompt': '',
         'session_blocked_patterns': [],
+        'session_allowed_patterns': [],
         'recheck_count': 0,
         'hook_call_count': 0,
         'ai_monitor_pid': None,
