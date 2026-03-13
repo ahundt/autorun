@@ -1648,7 +1648,11 @@ def register_hooks(app_instance) -> None:
             manager = TaskLifecycle(ctx=ctx)
             return manager.handle_stop(ctx)
         except Exception as e:
-            logger.warning(f"Stop hook error: {e}")
+            logger.warning(
+                f"Stop hook error (fail-open: allowing stop): {e}. "
+                f"Session: {getattr(ctx, 'session_id', '?')}. "
+                f"If tasks exist but stop was allowed, this exception is the cause."
+            )
             return None  # Fail-open - allow stop on errors
 
     # NOTE: inject_plan_tasks was removed -- plan task injection is now merged into
