@@ -863,6 +863,53 @@ def test_tasks_command_status():
     assert "staleness" in text or "on" in text or "off" in text
 
 
+def test_tasks_command_shows_task_summary():
+    """/ar:tasks (no args) shows task counts and incomplete task subjects when lifecycle is enabled."""
+    from unittest.mock import patch, MagicMock
+
+    fake_tasks = {
+        "1": {"id": "1", "subject": "Implement login", "status": "completed"},
+        "2": {"id": "2", "subject": "Add tests", "status": "in_progress"},
+        "3": {"id": "3", "subject": "Write docs", "status": "pending"},
+    }
+    fake_incomplete = [
+        {"id": "2", "subject": "Add tests", "status": "in_progress"},
+        {"id": "3", "subject": "Write docs", "status": "pending"},
+    ]
+
+    mock_manager = MagicMock()
+    mock_manager.tasks = fake_tasks
+    mock_manager.get_incomplete_tasks.return_value = fake_incomplete
+
+    with patch("autorun.plugins.task_lifecycle.is_enabled", return_value=True), \
+         patch("autorun.plugins.task_lifecycle.TaskLifecycle", return_value=mock_manager):
+        result = _dispatch("/ar:tasks", session_id="test-tasks-summary")
+
+    text = str(result)
+    assert "3 total" in text, f"Should show total task count, got: {text}"
+    assert "1 done" in text, f"Should show completed count, got: {text}"
+    assert "1 active" in text, f"Should show in_progress count, got: {text}"
+    assert "1 pending" in text, f"Should show pending count, got: {text}"
+    assert "Add tests" in text, f"Should show incomplete task subject, got: {text}"
+    assert "Write docs" in text, f"Should show incomplete task subject, got: {text}"
+    assert "Staleness" in text or "staleness" in text, f"Should still show staleness info, got: {text}"
+
+
+def test_tasks_command_no_tasks_shows_none_tracked():
+    """/ar:tasks (no args) shows 'none tracked' when lifecycle enabled but no tasks."""
+    from unittest.mock import patch, MagicMock
+
+    mock_manager = MagicMock()
+    mock_manager.tasks = {}
+
+    with patch("autorun.plugins.task_lifecycle.is_enabled", return_value=True), \
+         patch("autorun.plugins.task_lifecycle.TaskLifecycle", return_value=mock_manager):
+        result = _dispatch("/ar:tasks", session_id="test-tasks-none")
+
+    text = str(result)
+    assert "none tracked" in text, f"Should show 'none tracked', got: {text}"
+
+
 def test_staleness_threshold_zero_validation():
     """Threshold 0 is rejected with an error message."""
     result = _dispatch("/ar:tasks 0", session_id="test-thresh-zero")

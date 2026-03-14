@@ -1165,11 +1165,53 @@ def toggle_task_staleness(ctx: EventContext) -> str:
         enabled = ctx.task_staleness_enabled
         count = ctx.tool_calls_since_task_update or 0
         threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
-        return (
-            f"Task staleness reminders: {'on' if enabled else 'off'}\n"
-            f"Tool calls since last task update: {count}/{threshold}\n"
-            f"Usage: /ar:tasks on|off|<number>"
-        )
+
+        lines = []
+
+        # Show actual task summary if task lifecycle is enabled
+        if task_lifecycle.is_enabled():
+            try:
+                manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+                tasks = manager.tasks
+                if tasks:
+                    by_status = {}
+                    for t in tasks.values():
+                        s = t["status"]
+                        by_status[s] = by_status.get(s, 0) + 1
+
+                    status_icons = {
+                        "completed": "done", "in_progress": "active",
+                        "pending": "pending", "paused": "paused",
+                        "deleted": "deleted", "ignored": "ignored",
+                    }
+                    status_parts = []
+                    for s in ["in_progress", "pending", "completed", "paused", "deleted", "ignored"]:
+                        c = by_status.get(s, 0)
+                        if c > 0:
+                            status_parts.append(f"{c} {status_icons.get(s, s)}")
+
+                    lines.append(f"Tasks: {len(tasks)} total ({', '.join(status_parts)})")
+
+                    incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
+                    if incomplete:
+                        for t in incomplete[:5]:
+                            tid = t["id"]
+                            subj = t["subject"]
+                            st = t["status"]
+                            icon = {"in_progress": ">>", "pending": ".."}.get(st, "??")
+                            lines.append(f"  {icon} #{tid}: {subj} ({st})")
+                        if len(incomplete) > 5:
+                            lines.append(f"  ... and {len(incomplete) - 5} more (/ar:task-status for full list)")
+                    else:
+                        lines.append("  All tasks completed!")
+                else:
+                    lines.append("Tasks: none tracked")
+            except Exception:
+                lines.append("Tasks: unavailable (lifecycle error)")
+
+        lines.append(f"Staleness reminders: {'on' if enabled else 'off'} ({count}/{threshold} tool calls)")
+        lines.append("Usage: /ar:tasks on|off|<number> | /ar:task-status for full details")
+        return "\n".join(lines)
 
 
 # === STOP HOOK HANDLERS ===
