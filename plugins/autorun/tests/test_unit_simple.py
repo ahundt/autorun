@@ -894,6 +894,21 @@ def test_tasks_command_status():
     assert "staleness" in text or "on" in text or "off" in text
 
 
+def test_command_response_sends_to_both_channels():
+    """command_response() sends to both systemMessage (user) and additionalContext (AI)."""
+    result = _dispatch("/ar:tasks", session_id="test-cmd-resp-channels")
+    assert result is not None
+    # User channel
+    assert "systemMessage" in result
+    assert result["systemMessage"]  # Non-empty
+    # AI channel
+    hso = result.get("hookSpecificOutput", {})
+    assert "additionalContext" in hso
+    assert hso["additionalContext"]  # Non-empty
+    # Both should contain the same content
+    assert result["systemMessage"] == hso["additionalContext"]
+
+
 def test_tasks_command_shows_task_summary():
     """/ar:tasks (no args) shows task counts and incomplete task subjects when lifecycle is enabled."""
     from unittest.mock import patch, MagicMock
