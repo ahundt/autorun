@@ -685,12 +685,43 @@ def test_staleness_fires_without_autorun_when_tasks_exist():
     assert "TASK LIST STALE" in additional
 
 
-def test_staleness_no_injection_without_tasks():
-    """Staleness reminder does not fire when no incomplete tasks exist."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-no-tasks",
+def test_staleness_no_injection_when_all_tasks_complete():
+    """Staleness reminder does not fire when tasks exist but all are complete."""
+    sid = "test-stale-all-complete"
+    _make_pending_task(sid, "1", "done task")
+    # Mark it complete
+    from autorun.session_manager import session_state
+    key = f"__task_lifecycle__{sid}"
+    with session_state(key) as st:
+        tasks = st.get("tasks", {})
+        if "1" in tasks:
+            tasks["1"]["status"] = "completed"
+            st["tasks"] = tasks
+    ctx = _make_post_tool_ctx("Bash", sid,
                                tool_calls_since_task_update=50,
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
+    assert "TASK LIST STALE" not in str(result)
+    assert "NO TASKS EXIST" not in str(result)
+
+
+def test_staleness_fires_when_zero_tasks_exist():
+    """Staleness reminder fires with lower threshold when zero tasks exist."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-tasks",
+                               tool_calls_since_task_update=10,
+                               task_staleness_threshold=25)
+    result = plugins.app.dispatch(ctx) or {}
+    additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "NO TASKS EXIST" in additional
+
+
+def test_staleness_no_fire_below_zero_tasks_threshold():
+    """Staleness reminder does NOT fire below the no_tasks_threshold (default 5)."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-below-thresh",
+                               tool_calls_since_task_update=3,
+                               task_staleness_threshold=25)
+    result = plugins.app.dispatch(ctx) or {}
+    assert "NO TASKS EXIST" not in str(result)
     assert "TASK LIST STALE" not in str(result)
 
 

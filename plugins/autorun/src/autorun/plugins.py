@@ -1096,18 +1096,33 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     ctx.tool_calls_since_task_update = count
 
     threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
-    if count < threshold:
-        return None
+    no_tasks_threshold = CONFIG.get("task_staleness_no_tasks_threshold", 5)
 
-    # Only fire reminder if there are actually incomplete tasks
+    # Check task state to select threshold and message
     if task_lifecycle.is_enabled():
         try:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
-            if not manager.get_incomplete_tasks(exclude_blocking=True):
+            total_tasks = len(manager.tasks)
+            incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
+            if total_tasks == 0:
+                # Zero tasks: use lower threshold to prompt task creation quickly
+                if count < no_tasks_threshold:
+                    return None
                 ctx.tool_calls_since_task_update = 0
-                return None  # No incomplete tasks — nothing to remind about
+                msg = CONFIG["task_staleness_no_tasks_message"].format(
+                    threshold=no_tasks_threshold
+                )
+                ctx.add_chain_notification(msg, channel="ai")
+                return None
+            elif not incomplete:
+                # Tasks exist but all complete — nothing to remind about
+                ctx.tool_calls_since_task_update = 0
+                return None
         except Exception:
-            pass  # Fail-open — skip reminder on error
+            pass  # Fail-open — skip lifecycle check on error
+
+    if count < threshold:
+        return None
 
     ctx.tool_calls_since_task_update = 0
     msg = CONFIG["task_staleness_message"].format(threshold=threshold)

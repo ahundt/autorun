@@ -334,6 +334,8 @@ CONFIG = {
     # ─── Task Staleness Reminder (v0.9) ───────────────────────────────────────
     # Tool calls without TaskCreate/TaskUpdate before injecting reminder.
     "task_staleness_threshold": 25,
+    # Lower threshold when zero tasks exist (AI should create tasks quickly).
+    "task_staleness_no_tasks_threshold": 5,
     # Injected when threshold crossed. {threshold} replaced at runtime.
     "task_staleness_message": (
         "\n\u26a0\ufe0f TASK LIST STALE: {threshold} tool calls without a TaskCreate or "
@@ -344,6 +346,14 @@ CONFIG = {
         "4. TaskCreate(subject=\"...\") \u2014 add any new work discovered since last update\n"
         "5. TaskUpdate(taskId=N, addBlockedBy=[M]) \u2014 update dependencies if order changed\n"
         "Do NOT skip this. Do NOT stop. Update tasks, then continue."
+    ),
+    # Injected when zero tasks exist and no_tasks_threshold crossed.
+    "task_staleness_no_tasks_message": (
+        "\n\u26a0\ufe0f NO TASKS EXIST: {threshold} tool calls and you have ZERO tasks. "
+        "You MUST create tasks NOW to track your work:\n"
+        "1. TaskCreate(subject=\"...\", description=\"...\") \u2014 create tasks for current work\n"
+        "2. TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark the task you are starting\n"
+        "Do NOT skip this. Do NOT stop. Create tasks, then continue."
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
     "task_outstanding_stage3_message": (
