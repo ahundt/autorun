@@ -323,6 +323,83 @@ class TestGrantPermanentKeyword:
             assert "permanent" in msg, f"Keyword '{keyword}' should create permanent allow, got: {msg}"
 
 
+class TestFlexibleArgOrdering:
+    """Test that scope keywords can appear before or after the pattern."""
+
+    def test_permanent_before_pattern(self):
+        """'/ar:ok p 'git push'' works (permanent keyword before pattern)."""
+        sid = f"test-flex-perm-before-{time.time()}"
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="UserPromptSubmit",
+            prompt="/ar:ok p 'git push'", store=store
+        )
+        result = plugins.app.dispatch(ctx)
+        msg = result.get("systemMessage", "")
+        assert "permanent" in msg, f"Should be permanent, got: {msg}"
+        allows = ctx.session_allowed_patterns or []
+        assert len(allows) == 1
+        assert allows[0]["pattern"] == "git push", f"Pattern should be 'git push', got: {allows[0]['pattern']}"
+
+    def test_permanent_after_pattern(self):
+        """'/ar:ok 'git push' p' works (permanent keyword after pattern)."""
+        sid = f"test-flex-perm-after-{time.time()}"
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="UserPromptSubmit",
+            prompt="/ar:ok 'git push' p", store=store
+        )
+        result = plugins.app.dispatch(ctx)
+        msg = result.get("systemMessage", "")
+        assert "permanent" in msg, f"Should be permanent, got: {msg}"
+        allows = ctx.session_allowed_patterns or []
+        assert len(allows) == 1
+        assert allows[0]["pattern"] == "git push"
+
+    def test_count_before_pattern(self):
+        """'/ar:ok 3 rm' works (count before pattern)."""
+        sid = f"test-flex-count-before-{time.time()}"
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="UserPromptSubmit",
+            prompt="/ar:ok 3 rm", store=store
+        )
+        result = plugins.app.dispatch(ctx)
+        msg = result.get("systemMessage", "")
+        assert "3 uses" in msg, f"Should have 3 uses, got: {msg}"
+        allows = ctx.session_allowed_patterns or []
+        assert len(allows) == 1
+        assert allows[0]["pattern"] == "rm"
+
+    def test_duration_before_pattern(self):
+        """'/ar:ok 5m rm' works (duration before pattern)."""
+        sid = f"test-flex-dur-before-{time.time()}"
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="UserPromptSubmit",
+            prompt="/ar:ok 5m rm", store=store
+        )
+        result = plugins.app.dispatch(ctx)
+        msg = result.get("systemMessage", "")
+        allows = ctx.session_allowed_patterns or []
+        assert len(allows) == 1
+        assert allows[0]["pattern"] == "rm"
+        assert allows[0].get("ttl_seconds") == 300.0
+
+    def test_plain_pattern_no_swap(self):
+        """'/ar:ok rm' still works (no false swap for normal patterns)."""
+        sid = f"test-flex-nosw-{time.time()}"
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=sid, event="UserPromptSubmit",
+            prompt="/ar:ok rm", store=store
+        )
+        result = plugins.app.dispatch(ctx)
+        allows = ctx.session_allowed_patterns or []
+        assert len(allows) == 1
+        assert allows[0]["pattern"] == "rm"
+
+
 class TestGlobalScopedAllow:
     def test_global_scoped_allow(self):
         """'/ar:globalok rm 3' creates global allow with 3 uses."""

@@ -216,11 +216,11 @@ DEFAULT_INTEGRATIONS = {
     # Remote write operations require explicit user permission
     "git push": {
         "action": "block",
-        "suggestion": "Command blocked: git push\n\nThe user requires explicit permission before pushing code to a remote repository.\n\n**Do NOT push. Continue with local tasks only:**\n- Commit changes locally with 'git commit'\n- Run tests, linting, or other local validation\n- Make further code changes as needed\n\nWhen you have completed all local tasks, inform the user and ask if they would like to push.\n\nTo allow in this session: /ar:ok 'git push'",
+        "suggestion": "Blocked: git push requires explicit user permission.\nContinue with local tasks. Ask the user when ready to push.\n\nTo allow: /ar:ok 'git push'",
     },
     "gh pr create": {
         "action": "block",
-        "suggestion": "Command blocked: gh pr create\n\nThe user requires explicit permission before creating pull requests or other remote write operations via gh.\n\n**Do NOT create PRs or other remote resources. Continue with local tasks only:**\n- Finish and commit all local changes\n- Run tests and validation locally\n- Summarize what would be in the PR and ask the user for permission\n\nTo allow in this session: /ar:ok 'gh pr create'",
+        "suggestion": "Blocked: gh pr create requires explicit user permission.\nContinue with local tasks. Ask the user when ready to create PR.\n\nTo allow: /ar:ok 'gh pr create'",
     },
     "gh pr merge --squash": {
         "action": "block",
@@ -267,7 +267,7 @@ DEFAULT_INTEGRATIONS = {
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",
-        "suggestion": "📋 Check CLAUDE.md for git command requirements.\n\nKey rules:\n1. Use concrete terms (specific file paths, exact error messages)\n2. No vague language ('improve', 'enhance', 'update')\n3. Include technical details (line numbers, function names, test results)\n4. Reference specific sources when making claims",
+        "suggestion": "Follow CLAUDE.md git commit requirements: concrete terms, specific file paths, no vague language.",
     },
 }
 

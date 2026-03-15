@@ -41,7 +41,7 @@ from .config import (
     TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS
 )
 from .session_manager import session_state
-from .scoped_allow import ScopedAllow, parse_scope_args
+from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
 from .command_detection import command_matches_pattern
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
 
@@ -466,6 +466,14 @@ def _make_block_op(scope: str, op: str):
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:
                 return f"❌ Error: {e}"
+            # Flexible ordering: if pattern is a scope keyword and desc is the real pattern, swap
+            # e.g. "/ar:ok p 'git push'" → pattern="p", desc="git push" → swap to pattern="git push"
+            if (
+                pattern.lower() in _PERMANENT_KEYWORDS
+                or pattern.isdigit()
+                or parse_duration(pattern) is not None
+            ) and desc and not desc.strip().lower() in _PERMANENT_KEYWORDS:
+                pattern, desc = desc, pattern
             import time as _time
             ttl, uses, explicit_permanent = parse_scope_args(desc)
             if not explicit_permanent and ttl is None and uses is None:
@@ -617,7 +625,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if key not in seen:
                 seen.add(key)
                 suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                deny_parts.append(f"{suggestion}\n\nTo allow: /ar:ok {b['pattern']}")
+                allow_hint = f"\n\nTo allow: /ar:ok {b['pattern']}"
+                if "To allow:" not in suggestion:
+                    suggestion += allow_hint
+                deny_parts.append(suggestion)
 
     # Global blocks (always deny)
     for b in ScopeAccessor(ctx, "global").get():
@@ -626,7 +637,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if key not in seen:
                 seen.add(key)
                 suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                deny_parts.append(f"{suggestion}\n\nTo allow: /ar:globalok {b['pattern']}")
+                allow_hint = f"\n\nTo allow: /ar:globalok {b['pattern']}"
+                if "To allow:" not in suggestion:
+                    suggestion += allow_hint
+                deny_parts.append(suggestion)
 
     # User files + Python defaults (deny or warn per action field)
     try:
