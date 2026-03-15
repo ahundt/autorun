@@ -267,7 +267,7 @@ DEFAULT_INTEGRATIONS = {
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",
-        "suggestion": "Follow CLAUDE.md git commit requirements: concrete terms, specific file paths, no vague language.",
+        "suggestion": "Git commit rules: 1) Concrete terms (specific file paths, exact error messages) 2) No vague language ('improve', 'enhance', 'update') 3) Include technical details (line numbers, function names, test results) 4) Reference specific sources when making claims",
     },
 }
 
