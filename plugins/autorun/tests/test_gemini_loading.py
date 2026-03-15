@@ -131,5 +131,103 @@ class TestGeminiEnvironmentSimulation:
         assert matches_head, f"Failed to detect 'head' in piped command: {piped_cmd}"
 
 
+class TestGeminiHookResponseFormat:
+    """Verify hook responses use Gemini-compatible fields.
+
+    Gemini CLI reads top-level 'decision' field for permission control.
+    References:
+        - Gemini hooks API: https://geminicli.com/docs/hooks/reference/
+        - Hook support in extensions: https://github.com/google-gemini/gemini-cli/issues/14449
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_gemini_env(self):
+        original = {
+            "GEMINI_SESSION_ID": os.environ.get("GEMINI_SESSION_ID"),
+            "GEMINI_PROJECT_DIR": os.environ.get("GEMINI_PROJECT_DIR"),
+        }
+        os.environ["GEMINI_SESSION_ID"] = "test-gemini-hook-resp"
+        os.environ["GEMINI_PROJECT_DIR"] = str(Path.cwd())
+        os.environ.pop("CLAUDE_SESSION_ID", None)
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        yield
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_deny_response_has_decision_field(self):
+        """Gemini deny response must include top-level 'decision: deny' field."""
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun import plugins as _plugins
+
+        ctx = EventContext(
+            session_id="test-gemini-deny",
+            event="PreToolUse",
+            tool_name="run_shell_command",
+            tool_input={"command": "rm -rf /"},
+            store=ThreadSafeDB(),
+            cli_type="gemini",
+        )
+        result = _plugins.check_blocked_commands(ctx)
+        assert result is not None, "rm -rf should be blocked"
+        assert result.get("decision") == "deny", \
+            f"Gemini deny must have top-level decision field, got: {result.get('decision')}"
+
+    def test_deny_response_has_reason_field(self):
+        """Gemini deny must include 'reason' field with block message."""
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun import plugins as _plugins
+
+        ctx = EventContext(
+            session_id="test-gemini-reason",
+            event="PreToolUse",
+            tool_name="run_shell_command",
+            tool_input={"command": "rm file.txt"},
+            store=ThreadSafeDB(),
+            cli_type="gemini",
+        )
+        result = _plugins.check_blocked_commands(ctx)
+        assert result is not None
+        reason = result.get("reason", "")
+        assert "trash" in reason.lower(), f"Should suggest 'trash' alternative, got: {reason}"
+
+    def test_allow_returns_none(self):
+        """Safe commands should return None (no hook interference)."""
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun import plugins as _plugins
+
+        ctx = EventContext(
+            session_id="test-gemini-allow",
+            event="PreToolUse",
+            tool_name="run_shell_command",
+            tool_input={"command": "echo hello"},
+            store=ThreadSafeDB(),
+            cli_type="gemini",
+        )
+        result = _plugins.check_blocked_commands(ctx)
+        assert result is None, f"echo should not trigger hook, got: {result}"
+
+    def test_response_validated_for_gemini_schema(self):
+        """validate_hook_response must preserve Gemini fields (decision, reason)."""
+        from autorun.core import validate_hook_response
+
+        response = {
+            "decision": "deny",
+            "reason": "Blocked",
+            "continue": True,
+            "systemMessage": "test",
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Blocked",
+            },
+        }
+        validated = validate_hook_response("PreToolUse", response, cli_type="gemini")
+        assert validated.get("decision") == "deny"
+        assert validated.get("reason") == "Blocked"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

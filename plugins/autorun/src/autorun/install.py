@@ -1034,6 +1034,74 @@ def _substitute_paths(plugin_dir: Path) -> None:
             logger.warning(f"Failed to substitute paths in {rel_path}: {e}")
 
 
+def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
+    """Convert .md command files to .toml format for Gemini CLI.
+
+    Gemini CLI reads commands from commands/<ext_name>/<cmd>.toml files (TOML format),
+    while Claude Code reads commands from commands/<cmd>.md files (Markdown format).
+    This function generates TOML equivalents so both CLIs work from the same source.
+
+    Directory structure: commands/ar/status.toml -> /ar:status
+    TOML format: description + prompt fields (see conductor extension for reference)
+
+    References:
+        - Extension commands (TOML format): https://geminicli.com/docs/extensions/reference/
+        - Writing extensions: https://geminicli.com/docs/extensions/writing-extensions/
+        - Hook support in extensions: https://github.com/google-gemini/gemini-cli/issues/14449
+        - Conductor extension (reference implementation): https://github.com/gemini-cli-extensions/conductor
+
+    Args:
+        ext_dir: Installed extension directory (e.g., ~/.gemini/extensions/ar/)
+        ext_name: Extension name (e.g., "ar") used for command namespace
+
+    Returns:
+        Number of TOML files generated
+    """
+    commands_dir = ext_dir / "commands"
+    if not commands_dir.is_dir():
+        return 0
+
+    # Create namespaced directory: commands/ar/
+    toml_dir = commands_dir / ext_name
+    toml_dir.mkdir(exist_ok=True)
+
+    count = 0
+    for md_file in sorted(commands_dir.glob("*.md")):
+        try:
+            content = md_file.read_text(encoding="utf-8")
+
+            # Parse YAML frontmatter (between --- delimiters)
+            description = ""
+            body = content
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    # Extract description from frontmatter
+                    for line in parts[1].strip().splitlines():
+                        if line.startswith("description:"):
+                            description = line.split(":", 1)[1].strip().strip("'\"")
+                            break
+                    body = parts[2].strip()
+
+            # Convert $ARGUMENTS to {{args}} (Gemini convention)
+            body = body.replace("$ARGUMENTS", "{{args}}")
+
+            # Escape triple quotes in body if present
+            safe_body = body.replace('"""', '\\"\\"\\"')
+
+            # Write TOML file
+            toml_content = f'description = "{description}"\n'
+            toml_content += f'prompt = """\n{safe_body}\n"""\n'
+
+            toml_path = toml_dir / f"{md_file.stem}.toml"
+            toml_path.write_text(toml_content, encoding="utf-8")
+            count += 1
+        except Exception as e:
+            logger.warning(f"Failed to convert {md_file.name} to TOML: {e}")
+
+    return count
+
+
 def _install_for_gemini(
     marketplace_root: Path,
     plugins: list[str],
@@ -1158,6 +1226,12 @@ def _install_for_gemini(
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
+            # Generate TOML command files for Gemini CLI
+            installed_dir = gemini_dir / "extensions" / ext_name
+            if installed_dir.is_dir():
+                n = _generate_gemini_toml_commands(installed_dir, ext_name)
+                if n > 0:
+                    print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
             success_count += 1
         else:
             print(f"   ✗ {ext_name} installation failed:")

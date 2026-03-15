@@ -589,5 +589,107 @@ class TestEntryPointCompatibility:
         assert "autorun install" in content.lower() or "legacy" in content.lower()
 
 
+class TestGenerateGeminiTomlCommands:
+    """Test _generate_gemini_toml_commands() for Gemini CLI command conversion.
+
+    Gemini CLI reads commands as TOML files (commands/ar/status.toml -> /ar:status),
+    while Claude Code reads .md files (commands/status.md -> /ar:status).
+
+    References:
+        - Extension commands: https://geminicli.com/docs/extensions/reference/
+        - Writing extensions: https://geminicli.com/docs/extensions/writing-extensions/
+    """
+
+    def test_converts_md_to_toml(self, tmp_path):
+        """Verify .md file with frontmatter is converted to valid TOML."""
+        install = get_install_module()
+        commands_dir = tmp_path / "commands"
+        commands_dir.mkdir()
+        (commands_dir / "status.md").write_text(
+            '---\ndescription: Show current status\n---\n\n# Status\n\nShows status.'
+        )
+
+        count = install._generate_gemini_toml_commands(tmp_path, "ar")
+        assert count == 1
+
+        toml_path = commands_dir / "ar" / "status.toml"
+        assert toml_path.exists()
+        content = toml_path.read_text()
+        assert 'description = "Show current status"' in content
+        assert "# Status" in content
+        assert "Shows status." in content
+
+    def test_converts_arguments_placeholder(self, tmp_path):
+        """Verify $ARGUMENTS is converted to {{args}} (Gemini convention)."""
+        install = get_install_module()
+        commands_dir = tmp_path / "commands"
+        commands_dir.mkdir()
+        (commands_dir / "run.md").write_text(
+            '---\ndescription: Start run\n---\n\n$ARGUMENTS\n\nRun task.'
+        )
+
+        install._generate_gemini_toml_commands(tmp_path, "ar")
+        content = (commands_dir / "ar" / "run.toml").read_text()
+        assert "{{args}}" in content
+        assert "$ARGUMENTS" not in content
+
+    def test_creates_namespaced_directory(self, tmp_path):
+        """Verify TOML files are in commands/<ext_name>/ directory."""
+        install = get_install_module()
+        commands_dir = tmp_path / "commands"
+        commands_dir.mkdir()
+        (commands_dir / "test.md").write_text(
+            '---\ndescription: Test cmd\n---\n\nContent.'
+        )
+
+        install._generate_gemini_toml_commands(tmp_path, "myext")
+        assert (commands_dir / "myext" / "test.toml").exists()
+
+    def test_handles_missing_frontmatter(self, tmp_path):
+        """Verify .md files without frontmatter get empty description."""
+        install = get_install_module()
+        commands_dir = tmp_path / "commands"
+        commands_dir.mkdir()
+        (commands_dir / "bare.md").write_text("# Just Content\n\nNo frontmatter.")
+
+        count = install._generate_gemini_toml_commands(tmp_path, "ar")
+        assert count == 1
+        content = (commands_dir / "ar" / "bare.toml").read_text()
+        assert 'description = ""' in content
+        assert "# Just Content" in content
+
+    def test_returns_correct_count(self, tmp_path):
+        """Verify returned count matches number of .md files."""
+        install = get_install_module()
+        commands_dir = tmp_path / "commands"
+        commands_dir.mkdir()
+        for i in range(5):
+            (commands_dir / f"cmd{i}.md").write_text(
+                f'---\ndescription: Cmd {i}\n---\n\nContent {i}.'
+            )
+
+        count = install._generate_gemini_toml_commands(tmp_path, "ar")
+        assert count == 5
+        assert len(list((commands_dir / "ar").glob("*.toml"))) == 5
+
+    def test_no_commands_dir_returns_zero(self, tmp_path):
+        """Verify returns 0 when no commands directory exists."""
+        install = get_install_module()
+        count = install._generate_gemini_toml_commands(tmp_path, "ar")
+        assert count == 0
+
+    def test_ignores_non_md_files(self, tmp_path):
+        """Verify only .md files are converted, not .toml or other files."""
+        install = get_install_module()
+        commands_dir = tmp_path / "commands"
+        commands_dir.mkdir()
+        (commands_dir / "cmd.md").write_text('---\ndescription: Cmd\n---\n\nContent.')
+        (commands_dir / "existing.toml").write_text('description = "existing"')
+        (commands_dir / "script.py").write_text("print('hello')")
+
+        count = install._generate_gemini_toml_commands(tmp_path, "ar")
+        assert count == 1  # Only .md file converted
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
