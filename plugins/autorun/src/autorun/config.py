@@ -336,14 +336,14 @@ CONFIG = {
     "task_staleness_threshold": 25,
     # Injected when threshold crossed. {threshold} replaced at runtime.
     "task_staleness_message": (
-        "\n\u26a0\ufe0f TASK LIST REMINDER: {threshold} tool calls have passed without a "
-        "TaskCreate or TaskUpdate. Please:\n"
-        "1. Call TaskList to review current task state\n"
-        "2. Mark in-progress tasks: TaskUpdate(taskId=N, status=\"in_progress\")\n"
-        "3. Mark completed tasks: TaskUpdate(taskId=N, status=\"completed\")\n"
-        "4. Add newly discovered tasks with TaskCreate\n"
-        "5. Update dependencies with addBlockedBy if order changed\n"
-        "Then continue your work autonomously \u2014 do NOT stop."
+        "\n\u26a0\ufe0f TASK LIST STALE: {threshold} tool calls without a TaskCreate or "
+        "TaskUpdate. You MUST update your task list NOW:\n"
+        "1. TaskList \u2014 review current tasks\n"
+        "2. TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark tasks you are working on\n"
+        "3. TaskUpdate(taskId=N, status=\"completed\") \u2014 mark finished tasks\n"
+        "4. TaskCreate(subject=\"...\") \u2014 add any new work discovered since last update\n"
+        "5. TaskUpdate(taskId=N, addBlockedBy=[M]) \u2014 update dependencies if order changed\n"
+        "Do NOT skip this. Do NOT stop. Update tasks, then continue."
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
     "task_outstanding_stage3_message": (
