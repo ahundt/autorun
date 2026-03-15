@@ -1047,6 +1047,10 @@ class EventContext:
         """
         Response for locally-handled commands (UserPromptSubmit).
 
+        Sends response_text to BOTH user (systemMessage) and AI (additionalContext).
+        This ensures command output like /ar:tasks status is visible to the AI,
+        not just displayed in the user's terminal.
+
         Args:
             response_text: The command output message
             continue_loop: True (default) keeps AI running. False for estop/stop.
@@ -1060,6 +1064,10 @@ class EventContext:
             "stopReason": "",
             "suppressOutput": False,
             "systemMessage": response_text,
+            "hookSpecificOutput": {
+                "hookEventName": self._event,
+                "additionalContext": response_text,
+            },
         }
         return validate_hook_response(self._event, resp, cli_type=self.cli_type)
 
