@@ -1521,14 +1521,30 @@ class AutorunDaemon:
         except Timeout:
             self._daemon_lock = None
             return False
-        except OSError:
+        except OSError as e:
+            logger.warning(f"FileLock.acquire() raised OSError (NFS?): {e}")
             self._daemon_lock = None
             return self._socket_connect_test()
-        # Write PID to daemon.lock for discovery by other processes
-        # Separate from flock acquisition so write failure doesn't release the lock
+        # Write PID to daemon.lock for discovery by other processes.
+        # Separate from flock acquisition so write failure doesn't release the lock.
+        # Pre-validate: ensure parent dir exists and is writable (the flock file lives
+        # in the same dir, so this should always succeed, but guards against edge cases
+        # like dir deleted between flock acquire and PID write).
+        pid = os.getpid()
         try:
-            LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
-            logger.info(f"Wrote PID {os.getpid()} to {LOCK_PATH}")
+            lock_dir = LOCK_PATH.parent
+            if not lock_dir.is_dir():
+                lock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+                logger.info(f"Created missing daemon dir: {lock_dir}")
+            LOCK_PATH.write_text(str(pid), encoding="utf-8")
+            # Verify the write succeeded (guards against silent truncation or wrong inode)
+            written = LOCK_PATH.read_text(encoding="utf-8").strip()
+            if written != str(pid):
+                logger.error(
+                    f"PID file verification failed: wrote {pid}, read back '{written}'"
+                )
+            else:
+                logger.info(f"Wrote PID {pid} to {LOCK_PATH}")
         except OSError as e:
             logger.warning(f"Failed to write PID to {LOCK_PATH}: {e}")
         return True

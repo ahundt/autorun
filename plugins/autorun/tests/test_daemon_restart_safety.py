@@ -198,6 +198,42 @@ class TestAcquireDaemonLock:
         # Cleanup
         daemon._daemon_lock.release()
 
+    def test_acquire_verifies_pid_readback(self, tmp_path):
+        """_acquire_daemon_lock reads back PID after write to verify correctness."""
+        from autorun.core import AutorunDaemon
+        lock_path = tmp_path / "daemon.lock"
+
+        daemon = AutorunDaemon.__new__(AutorunDaemon)
+        daemon._daemon_lock = None
+
+        with mock.patch('autorun.core.LOCK_PATH', lock_path):
+            result = daemon._acquire_daemon_lock()
+
+        assert result is True
+        # Verify the written PID matches current process
+        written_pid = int(lock_path.read_text().strip())
+        assert written_pid == os.getpid()
+        daemon._daemon_lock.release()
+
+    def test_acquire_creates_parent_dir_if_missing(self, tmp_path):
+        """_acquire_daemon_lock creates parent directory if it doesn't exist."""
+        from autorun.core import AutorunDaemon
+        # Use a nested path where parent doesn't exist
+        lock_path = tmp_path / "subdir" / "daemon.lock"
+        assert not lock_path.parent.exists()
+
+        daemon = AutorunDaemon.__new__(AutorunDaemon)
+        daemon._daemon_lock = None
+
+        with mock.patch('autorun.core.LOCK_PATH', lock_path):
+            result = daemon._acquire_daemon_lock()
+
+        assert result is True
+        assert lock_path.parent.exists()
+        assert lock_path.exists()
+        assert lock_path.read_text().strip() == str(os.getpid())
+        daemon._daemon_lock.release()
+
     def test_acquire_returns_false_when_flock_held(self, tmp_path):
         """_acquire_daemon_lock returns False when another process holds flock."""
         from autorun.core import AutorunDaemon

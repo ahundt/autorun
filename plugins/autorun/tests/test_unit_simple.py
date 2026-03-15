@@ -1254,6 +1254,8 @@ class TestStalenessE2E:
     def test_counter_increments_across_dispatches(self):
         """Counter persists and increments across separate dispatch calls."""
         sid = self._sid("counter-persist")
+        # Create an incomplete task so zero-tasks path doesn't reset counter
+        _make_pending_task(sid, "1", "keep counter alive")
         for i in range(5):
             _e2e_post_tool("Bash", sid, self.store)
         ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
@@ -1439,6 +1441,8 @@ class TestStalenessE2E:
     def test_command_status_shows_count(self):
         """/ar:tasks (no args) shows current counter value."""
         sid = self._sid("status-count")
+        # Create an incomplete task so zero-tasks path doesn't reset counter at threshold 5
+        _make_pending_task(sid, "1", "keep counter alive")
         # Increment counter by dispatching some tool calls
         for _ in range(7):
             _e2e_post_tool("Bash", sid, self.store)
@@ -1568,6 +1572,8 @@ class TestStalenessE2E:
         → new EventContext with same session_id → counter should be 15 (from shelve).
         """
         sid = self._sid("resume")
+        # Create an incomplete task so zero-tasks path doesn't reset counter at threshold 5
+        _make_pending_task(sid, "1", "keep counter alive across resume")
 
         # Phase 1: active session, 15 tool calls
         for _ in range(15):
