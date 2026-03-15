@@ -30,6 +30,7 @@ Plugins:
 import re
 import fnmatch
 import shlex
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Dict
@@ -466,21 +467,21 @@ def _make_block_op(scope: str, op: str):
                 pattern, desc, ptype = _parse_args(args)
             except ValueError as e:
                 return f"❌ Error: {e}"
-            # Flexible ordering: if pattern is a scope keyword and desc is the real pattern, swap
-            # e.g. "/ar:ok p 'git push'" → pattern="p", desc="git push" → swap to pattern="git push"
-            if (
-                pattern.lower() in _PERMANENT_KEYWORDS
-                or pattern.isdigit()
+            # Flexible ordering: if first token is a scope modifier and second is the pattern, swap.
+            # O(1) checks first (isdigit, frozenset lookup), regex only if needed.
+            if desc and (
+                pattern.isdigit()
+                or pattern.lower() in _PERMANENT_KEYWORDS
                 or parse_duration(pattern) is not None
-            ) and desc and not desc.strip().lower() in _PERMANENT_KEYWORDS:
+            ) and desc.strip().lower() not in _PERMANENT_KEYWORDS:
                 pattern, desc = desc, pattern
-            import time as _time
+
             ttl, uses, explicit_permanent = parse_scope_args(desc)
             if not explicit_permanent and ttl is None and uses is None:
                 uses = 1  # Safe default: 1 use
             sa = ScopedAllow(
                 pattern=pattern, pattern_type=ptype,
-                granted_at=_time.time(), ttl_seconds=ttl, remaining_uses=uses,
+                granted_at=time.time(), ttl_seconds=ttl, remaining_uses=uses,
             )
             allows = accessor.get_allowed()
             # Replace existing entry for same pattern (update scope)

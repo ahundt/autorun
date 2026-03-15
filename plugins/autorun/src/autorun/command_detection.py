@@ -318,7 +318,11 @@ if BASHLEX_AVAILABLE:
             self.depth = depth
 
         def visitcommand(self, node, parts) -> bool:
-            words = [p.word for p in parts if p.kind == "word"]
+            # Filter out words containing newlines — these are heredoc bodies
+            # or command substitutions with embedded content, not real arguments.
+            # Prevents false positives like "git restore" matching inside a
+            # commit message heredoc: git commit -m "$(cat <<EOF\n...restore...\nEOF)"
+            words = [p.word for p in parts if p.kind == "word" and "\n" not in p.word]
             name, string, pot = _extract_from_tokens(words)
 
             if name:

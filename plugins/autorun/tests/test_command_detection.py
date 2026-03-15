@@ -337,3 +337,39 @@ class TestBug2SubstringFix:
     def test_dangerous_commands_blocked(self, dangerous_cmd: str) -> None:
         """Actual rm commands SHOULD be blocked."""
         assert command_matches_pattern(dangerous_cmd, "rm") is True
+
+
+class TestHeredocFalsePositives:
+    """Heredoc body content must not trigger command pattern matches."""
+
+    def test_git_restore_in_commit_heredoc(self) -> None:
+        """'git restore' inside a commit message heredoc must not match 'git restore' pattern."""
+        cmd = (
+            'git commit -m "$(cat <<\'EOF\'\n'
+            'config.py: restore 4 key git commit rules\n'
+            'EOF\n'
+            ')"'
+        )
+        assert command_matches_pattern(cmd, "git restore") is False
+        assert command_matches_pattern(cmd, "git commit") is True
+
+    def test_rm_in_commit_heredoc(self) -> None:
+        """'rm' mentioned in heredoc text must not match 'rm' pattern."""
+        cmd = (
+            'git commit -m "$(cat <<\'EOF\'\n'
+            'fix: rm command now uses trash by default\n'
+            'EOF\n'
+            ')"'
+        )
+        assert command_matches_pattern(cmd, "rm") is False
+        assert command_matches_pattern(cmd, "git commit") is True
+
+    def test_git_push_in_heredoc(self) -> None:
+        """'git push' inside heredoc must not match 'git push' pattern."""
+        cmd = (
+            'git commit -F /dev/stdin <<\'EOF\'\n'
+            'docs: add git push safety instructions\n'
+            'EOF'
+        )
+        assert command_matches_pattern(cmd, "git push") is False
+        assert command_matches_pattern(cmd, "git commit") is True
