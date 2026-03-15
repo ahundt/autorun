@@ -157,6 +157,69 @@ class TestRestartLockFilelock:
         assert r2 == "blocked", "Second process should be blocked"
 
 
+class TestAcquireDaemonLock:
+    """Test _acquire_daemon_lock() PID file creation and error handling."""
+
+    def test_acquire_writes_pid_to_lock_file(self, tmp_path):
+        """_acquire_daemon_lock writes PID to daemon.lock after acquiring flock."""
+        from autorun.core import AutorunDaemon
+        lock_path = tmp_path / "daemon.lock"
+        flock_path = tmp_path / "daemon.flock"
+
+        daemon = AutorunDaemon.__new__(AutorunDaemon)
+        daemon._daemon_lock = None
+
+        with mock.patch('autorun.core.LOCK_PATH', lock_path):
+            result = daemon._acquire_daemon_lock()
+
+        assert result is True
+        assert lock_path.exists()
+        assert lock_path.read_text().strip() == str(os.getpid())
+        # Cleanup
+        if daemon._daemon_lock:
+            daemon._daemon_lock.release()
+
+    def test_acquire_pid_write_failure_keeps_flock(self, tmp_path):
+        """If daemon.lock write fails, flock is still held (not released)."""
+        from autorun.core import AutorunDaemon
+        lock_path = tmp_path / "daemon.lock"
+
+        daemon = AutorunDaemon.__new__(AutorunDaemon)
+        daemon._daemon_lock = None
+
+        # Make write_text fail by making lock_path a directory
+        lock_path.mkdir()
+
+        with mock.patch('autorun.core.LOCK_PATH', lock_path):
+            result = daemon._acquire_daemon_lock()
+
+        assert result is True  # Lock acquired despite write failure
+        assert daemon._daemon_lock is not None  # Flock still held
+        # Cleanup
+        daemon._daemon_lock.release()
+
+    def test_acquire_returns_false_when_flock_held(self, tmp_path):
+        """_acquire_daemon_lock returns False when another process holds flock."""
+        from autorun.core import AutorunDaemon
+        from filelock import FileLock
+        lock_path = tmp_path / "daemon.lock"
+        flock_path = tmp_path / "daemon.flock"
+
+        # Hold the flock
+        held_lock = FileLock(str(flock_path), timeout=0)
+        held_lock.acquire()
+
+        daemon = AutorunDaemon.__new__(AutorunDaemon)
+        daemon._daemon_lock = None
+
+        with mock.patch('autorun.core.LOCK_PATH', lock_path):
+            result = daemon._acquire_daemon_lock()
+
+        assert result is False
+        assert daemon._daemon_lock is None
+        held_lock.release()
+
+
 class TestPsutilProcessLifecycle:
     """Test that restart_daemon uses psutil for cross-platform process management."""
 
@@ -180,6 +243,9 @@ class TestPsutilProcessLifecycle:
         with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_path:
             mock_path.exists.return_value = True
             mock_path.read_text.return_value = "99999"
+            # Also mock flock fallback path so it doesn't find the real daemon
+            mock_flock = mock.MagicMock(exists=mock.MagicMock(return_value=False))
+            mock_path.with_suffix.return_value = mock_flock
 
             with mock.patch('psutil.pid_exists', return_value=False):
                 assert get_daemon_pid() is None
@@ -212,6 +278,48 @@ class TestPsutilProcessLifecycle:
 
             mock_proc.terminate.assert_called_once()
             mock_proc.kill.assert_called_once()
+
+    def test_get_daemon_pid_fallback_process_discovery(self):
+        """get_daemon_pid() discovers daemon by cmdline when daemon.lock is missing."""
+        from autorun.restart_daemon import get_daemon_pid
+
+        # daemon.lock doesn't exist but daemon.flock does
+        with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
+            mock_lock.exists.return_value = False
+            mock_lock.with_suffix.return_value = mock.MagicMock(exists=mock.MagicMock(return_value=True))
+
+            mock_proc = mock.MagicMock()
+            mock_proc.info = {
+                'pid': 12345,
+                'cmdline': ['python', '-c', 'from autorun.daemon import main; main()'],
+            }
+            with mock.patch('psutil.process_iter', return_value=[mock_proc]):
+                result = get_daemon_pid()
+                assert result == 12345
+
+    def test_get_daemon_pid_no_fallback_when_no_flock(self):
+        """get_daemon_pid() returns None when both daemon.lock and daemon.flock are missing."""
+        from autorun.restart_daemon import get_daemon_pid
+
+        with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
+            mock_lock.exists.return_value = False
+            mock_lock.with_suffix.return_value = mock.MagicMock(exists=mock.MagicMock(return_value=False))
+
+            result = get_daemon_pid()
+            assert result is None
+
+    def test_get_daemon_pid_prefers_lock_file_over_process_scan(self):
+        """get_daemon_pid() uses daemon.lock PID when file exists (no process scan)."""
+        from autorun.restart_daemon import get_daemon_pid
+
+        with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
+            mock_lock.exists.return_value = True
+            mock_lock.read_text.return_value = str(os.getpid())
+            with mock.patch('psutil.pid_exists', return_value=True):
+                with mock.patch('psutil.process_iter') as mock_iter:
+                    result = get_daemon_pid()
+                    assert result == os.getpid()
+                    mock_iter.assert_not_called()
 
     def test_no_os_kill_in_restart_daemon(self):
         """Verify restart_daemon.py contains no os.kill calls (all replaced by psutil)."""

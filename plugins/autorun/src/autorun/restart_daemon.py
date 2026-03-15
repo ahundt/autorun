@@ -35,17 +35,34 @@ RESTART_LOCK_PATH = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
 
 
 def get_daemon_pid() -> int | None:
-    """Get daemon PID from lock file (None if not running)."""
-    if not LOCK_PATH.exists():
-        return None
-    try:
-        pid = int(LOCK_PATH.read_text().strip())
-        # Verify process actually exists (not just a stale lock file)
-        if not psutil.pid_exists(pid):
-            return None
-        return pid
-    except (ValueError, OSError):
-        return None
+    """Get daemon PID from lock file, with process discovery fallback.
+
+    Primary: Read PID from daemon.lock (written by _acquire_daemon_lock).
+    Fallback: If daemon.lock missing but daemon.flock exists, search for
+    daemon process by cmdline pattern. This handles the case where the
+    daemon acquired the flock but failed to write daemon.lock (OSError,
+    race condition, or Gemini extension venv mismatch).
+    """
+    if LOCK_PATH.exists():
+        try:
+            pid = int(LOCK_PATH.read_text().strip())
+            if psutil.pid_exists(pid):
+                return pid
+        except (ValueError, OSError):
+            pass
+
+    # Fallback: daemon.flock exists but daemon.lock missing — find by cmdline
+    flock_path = LOCK_PATH.with_suffix('.flock')
+    if flock_path.exists():
+        for proc in psutil.process_iter(['pid', 'cmdline']):
+            try:
+                cmdline_str = ' '.join(proc.info.get('cmdline') or [])
+                if 'from autorun.daemon import main' in cmdline_str:
+                    return proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+
+    return None
 
 
 def is_daemon_responding() -> bool:

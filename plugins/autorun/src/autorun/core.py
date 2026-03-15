@@ -1518,15 +1518,20 @@ class AutorunDaemon:
         try:
             self._daemon_lock = FileLock(str(flock_path), timeout=0)
             self._daemon_lock.acquire()
-            # Write PID to daemon.lock for discovery by other processes
-            LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
-            return True
         except Timeout:
             self._daemon_lock = None
             return False
         except OSError:
             self._daemon_lock = None
             return self._socket_connect_test()
+        # Write PID to daemon.lock for discovery by other processes
+        # Separate from flock acquisition so write failure doesn't release the lock
+        try:
+            LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
+            logger.info(f"Wrote PID {os.getpid()} to {LOCK_PATH}")
+        except OSError as e:
+            logger.warning(f"Failed to write PID to {LOCK_PATH}: {e}")
+        return True
 
     def _socket_connect_test(self) -> bool:
         """
