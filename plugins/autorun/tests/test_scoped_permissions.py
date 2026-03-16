@@ -48,8 +48,13 @@ class TestScopedAllowIsValid:
     def test_count_after_consume(self):
         sa = ScopedAllow(pattern="rm", remaining_uses=1)
         consumed = sa.consume()
-        assert consumed.is_valid() is False
         assert consumed.remaining_uses == 0
+        # Grace period: still valid immediately after consume (parallel hook safety)
+        assert consumed.is_valid() is True
+        # After grace period expires, invalid
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = consumed.consumed_at + 10.0
+            assert consumed.is_valid() is False
 
     def test_ttl_valid(self):
         sa = ScopedAllow(pattern="rm", granted_at=time.time(), ttl_seconds=300.0)
@@ -63,7 +68,12 @@ class TestScopedAllowIsValid:
         sa = ScopedAllow(pattern="rm", granted_at=time.time(), ttl_seconds=300.0, remaining_uses=1)
         assert sa.is_valid() is True
         consumed = sa.consume()
-        assert consumed.is_valid() is False  # Count exhausted, TTL still valid
+        # Grace period: valid immediately after consume (parallel hook safety)
+        assert consumed.is_valid() is True
+        # After grace period expires, count exhausted wins over still-valid TTL
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = consumed.consumed_at + 10.0
+            assert consumed.is_valid() is False  # Count exhausted, TTL still valid but grace gone
 
     def test_hybrid_ttl_expires_first(self):
         sa = ScopedAllow(pattern="rm", granted_at=time.time() - 400, ttl_seconds=300.0, remaining_uses=5)

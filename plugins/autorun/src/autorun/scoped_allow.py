@@ -76,6 +76,14 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
     return (ttl, uses, False)
 
 
+# Seconds after last consumption that a count=0 allow still passes is_valid().
+# Covers parallel hook invocations (multiple plugin versions or parallel hook
+# configs) all firing for the same Bash tool call. Each invocation arrives within
+# milliseconds; 5 s is more than enough without letting a second intentional
+# invocation slip through.
+_PARALLEL_GRACE_SECONDS: float = 5.0
+
+
 @dataclass(frozen=True)
 class ScopedAllow:
     """Composable capability for temporary permission grants.
@@ -83,6 +91,12 @@ class ScopedAllow:
     Immutable — consume() returns a new instance. JSON-serializable via
     to_dict()/from_dict(). Backwards-compatible with legacy entries
     (dicts without temporal fields are treated as permanent).
+
+    Parallel-hook safety: when remaining_uses reaches 0, consumed_at is stamped
+    and is_valid() returns True for _PARALLEL_GRACE_SECONDS more seconds. This
+    lets multiple autorun hook invocations for the same tool call (from stale
+    old plugin versions in the cache, or multiple hook configs) all pass TIER 1
+    instead of the second invocation falling through to TIER 2 blocks.
     """
     pattern: str
     pattern_type: str = "literal"
@@ -90,22 +104,40 @@ class ScopedAllow:
     granted_at: float = 0.0
     ttl_seconds: float | None = None
     remaining_uses: int | None = None
+    consumed_at: float = 0.0   # Timestamp of last consume(); enables grace period
 
     def is_valid(self) -> bool:
-        """Check if this allow is still active (not expired/exhausted)."""
+        """Check if this allow is still active (not expired/exhausted).
+
+        Grace period: when remaining_uses hits 0, stays valid for
+        _PARALLEL_GRACE_SECONDS after the last consume() so parallel hook
+        invocations from the same tool call all receive allow (not a block).
+        """
         if self.ttl_seconds is not None and self.granted_at > 0:
             if (time.time() - self.granted_at) > self.ttl_seconds:
                 return False
         if self.remaining_uses is not None:
             if self.remaining_uses <= 0:
+                # Grace period: let parallel invocations through if recently consumed
+                if self.consumed_at > 0 and (time.time() - self.consumed_at) < _PARALLEL_GRACE_SECONDS:
+                    return True
                 return False
         return True
 
     def consume(self) -> ScopedAllow:
-        """Return new ScopedAllow with one use consumed (immutable)."""
+        """Return new ScopedAllow with one use consumed (immutable).
+
+        Sets consumed_at to now when remaining_uses hits 0, enabling the
+        grace period for parallel hook invocations.
+        """
         if self.remaining_uses is None:
             return self
-        return dataclasses.replace(self, remaining_uses=self.remaining_uses - 1)
+        new_count = self.remaining_uses - 1
+        # Stamp consumed_at when count hits 0 (first exhaustion) or refresh it
+        # if already 0 (subsequent parallel invocations refresh the grace window).
+        new_consumed_at = time.time() if new_count <= 0 else self.consumed_at
+        return dataclasses.replace(self, remaining_uses=max(0, new_count),
+                                   consumed_at=new_consumed_at)
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict (for session_manager storage)."""
@@ -118,6 +150,8 @@ class ScopedAllow:
             d["ttl_seconds"] = self.ttl_seconds
         if self.remaining_uses is not None:
             d["remaining_uses"] = self.remaining_uses
+        if self.consumed_at > 0:
+            d["consumed_at"] = self.consumed_at
         return d
 
     @classmethod
@@ -130,6 +164,7 @@ class ScopedAllow:
             granted_at=d.get("granted_at", 0.0),
             ttl_seconds=d.get("ttl_seconds"),
             remaining_uses=d.get("remaining_uses"),
+            consumed_at=d.get("consumed_at", 0.0),
         )
 
     def status_label(self) -> str:
