@@ -43,7 +43,7 @@ def _source_path(module_name: str) -> str:
 
 
 def _source_text(module_name: str) -> str:
-    with open(_source_path(module_name)) as f:
+    with open(_source_path(module_name), encoding="utf-8") as f:
         return f.read()
 
 
@@ -498,7 +498,7 @@ class TestLogRotationConfiguration:
     indefinitely (observed at 29MB+ before this change).
     """
 
-    def test_get_logger_uses_rotating_file_handler(self, monkeypatch):
+    def test_get_logger_uses_rotating_file_handler(self, monkeypatch, tmp_path):
         """When debug logging is enabled, get_logger() must configure a
         RotatingFileHandler with maxBytes=5MB and backupCount=3.
         """
@@ -508,7 +508,7 @@ class TestLogRotationConfiguration:
         monkeypatch.setattr("autorun.logging_utils.DEBUG_ENABLED", True)
         monkeypatch.setattr(
             "autorun.logging_utils.LOG_FILE",
-            "/tmp/test_autorun_rotation.log",
+            str(tmp_path / "test_autorun_rotation.log"),
         )
 
         import autorun.logging_utils as lu
