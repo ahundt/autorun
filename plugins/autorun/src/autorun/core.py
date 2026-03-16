@@ -633,6 +633,7 @@ class EventContext:
         'task_staleness_threshold': None,    # v0.9: Session override (None = use CONFIG default)
         'plan_awaiting_planning_tasks': False,   # v0.10: Nag until [PLANNING] tasks created
         'plan_awaiting_execution_tasks': False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
+        'pending_stop_injection': None,          # v0.10: Stop-hook msg deferred to next PostToolUse
     }
 
     def __init__(self, session_id: str, event: str, prompt: str = "",

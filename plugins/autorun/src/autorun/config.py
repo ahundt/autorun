@@ -351,8 +351,14 @@ CONFIG = {
     "task_staleness_no_tasks_message": (
         "\n\u26a0\ufe0f NO TASKS EXIST: {threshold} tool calls and you have ZERO tasks. "
         "You MUST create tasks NOW to track your work:\n"
-        "1. TaskCreate(subject=\"...\", description=\"...\") \u2014 create tasks for current work\n"
-        "2. TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark the task you are starting\n"
+        "1. TaskCreate(subject=\"...\", description=\"...\") \u2014 create tasks for ALL current work\n"
+        "2. TaskCreate(subject=\"...\") \u2014 add a task for each distinct goal or deliverable\n"
+        "3. TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark the task you are starting\n"
+        "4. TaskUpdate(taskId=N, addBlockedBy=[M]) \u2014 wire dependencies if tasks have order\n"
+        "5. TaskList \u2014 verify all tasks are visible\n"
+        "If a task is no longer needed: TaskUpdate(taskId=N, status=\"deleted\")\n"
+        "If a task is blocked externally: TaskUpdate(taskId=N, status=\"paused\")\n"
+        "Use /ar:task-status to see current state. "
         "Do NOT skip this. Do NOT stop. Create tasks, then continue."
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.

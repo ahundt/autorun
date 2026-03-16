@@ -881,7 +881,17 @@ Use TaskList or /task-status to see current state of all tasks.
                 ) + ("..." if total > 3 else ""),
             )
 
-        # BLOCK the stop - force AI to continue
+        # BLOCK the stop and store injection for AI delivery on next PostToolUse.
+        #
+        # PATHWAY 3 (Stop events) only supports systemMessage → user terminal.
+        # hookSpecificOutput.additionalContext (AI context) is NOT available for Stop
+        # events (HOOK_SCHEMAS hso:{} for Stop). So systemMessage reaches the user
+        # but NOT the AI — the AI gets continue:true with zero context about why.
+        #
+        # Fix: store injection in session state (persists across events) so the
+        # deliver_pending_stop_injection PostToolUse handler picks it up on the
+        # AI's next tool call and injects it via additionalContext.
+        ctx.pending_stop_injection = injection
         return ctx.block(injection)
 
     def get_plan_approval_injection(self, ctx) -> Optional[str]:
@@ -1588,6 +1598,22 @@ def register_hooks(app_instance) -> None:
     """
     if not is_enabled():
         return
+
+    @app_instance.on("PostToolUse")
+    def deliver_pending_stop_injection(ctx: EventContext) -> Optional[Dict]:
+        """Deliver deferred Stop-hook injection to AI via additionalContext.
+
+        Stop events cannot use hookSpecificOutput.additionalContext (HOOK_SCHEMAS
+        hso:{} for Stop). handle_stop() stores the injection in session state so
+        this handler can deliver it on the AI's next tool call via PATHWAY 2
+        (PostToolUse → hookSpecificOutput.additionalContext → AI context window).
+        """
+        injection = ctx.pending_stop_injection
+        if not injection:
+            return None
+        ctx.pending_stop_injection = None  # Clear so it fires only once per Stop
+        ctx.add_chain_notification(injection, channel="ai")
+        return None  # Flushed by _run_chain → ctx.respond("allow","") → additionalContext
 
     @app_instance.on("PostToolUse")
     def track_task_operations(ctx: EventContext) -> Optional[Dict]:

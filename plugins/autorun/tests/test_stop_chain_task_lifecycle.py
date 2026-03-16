@@ -560,3 +560,92 @@ class TestTaskCreateRegexCoverage:
             f"Task ID {expected_id} not found after parsing '{result_text}'. "
             f"Tasks: {list(tasks.keys())}"
         )
+
+
+# === Test 9: pending_stop_injection — Stop-hook AI delivery fix ===
+
+class TestPendingStopInjection:
+    """Verify Stop-hook injection reaches AI via PostToolUse deferred delivery.
+
+    Root bug: Stop events lack hookSpecificOutput support (HOOK_SCHEMAS hso:{}).
+    ctx.block(injection) → systemMessage only → user terminal, NOT AI context.
+    Fix: handle_stop() stores injection in ctx.pending_stop_injection (session
+    state) so deliver_pending_stop_injection PostToolUse handler can deliver it
+    via additionalContext on the AI's next tool call.
+    """
+
+    def test_handle_stop_sets_pending_injection(
+        self, isolated_task_config, isolated_session
+    ):
+        """handle_stop() must store injection in pending_stop_injection."""
+        sid = f"test-pending-stop-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        manager.create_task("1", {"subject": "Unfinished work"}, "Task #1 created successfully")
+
+        ctx = make_stop_ctx(session_id=sid, store=store)
+        result = manager.handle_stop(ctx)
+
+        assert result is not None, "handle_stop must block with incomplete task"
+        assert result.get("continue") is True, "continue must be True to keep AI working"
+
+        # Core assertion: injection stored in session state for PostToolUse delivery
+        pending = ctx.pending_stop_injection
+        assert pending is not None, (
+            "handle_stop() must store injection in ctx.pending_stop_injection. "
+            "Stop events have no hookSpecificOutput, so systemMessage only reaches "
+            "the user terminal. pending_stop_injection defers AI delivery to PostToolUse."
+        )
+        assert "CANNOT STOP" in pending, (
+            f"pending_stop_injection must contain stop message. Got: {pending[:100]}"
+        )
+        assert "Unfinished work" in pending, (
+            "pending_stop_injection must include the task subject in the task list"
+        )
+
+    def test_pending_injection_cleared_after_delivery(
+        self, isolated_task_config, isolated_session
+    ):
+        """deliver_pending_stop_injection handler must clear pending after delivery."""
+        sid = f"test-pending-clear-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        manager.create_task("1", {"subject": "Task to clear"}, "Task #1 created successfully")
+
+        # Set pending injection via Stop (real path)
+        stop_ctx = make_stop_ctx(session_id=sid, store=store)
+        manager.handle_stop(stop_ctx)
+        assert stop_ctx.pending_stop_injection is not None, "Setup: injection must be set"
+
+        # Simulate PostToolUse: create ctx with same session_id and store
+        post_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="Read",
+            tool_input={"file_path": "/tmp/test.txt"},
+            store=store,
+        )
+
+        # Find and call deliver_pending_stop_injection from the PostToolUse chain
+        post_chain = plugins.app.chains.get("PostToolUse", [])
+        handler_names = [h.__name__ for h in post_chain]
+        assert "deliver_pending_stop_injection" in handler_names, (
+            f"deliver_pending_stop_injection not in PostToolUse chain: {handler_names}"
+        )
+
+        deliver_idx = handler_names.index("deliver_pending_stop_injection")
+        deliver_fn = post_chain[deliver_idx]
+        result = deliver_fn(post_ctx)
+
+        assert result is None, "deliver_pending_stop_injection must return None (chain continues)"
+        assert post_ctx.pending_stop_injection is None, (
+            "pending_stop_injection must be cleared after delivery to avoid repeat injection"
+        )
+        # Chain notification must contain the injection text
+        assert any("CANNOT STOP" in msg for msg, _ in post_ctx._chain_notifications), (
+            "deliver_pending_stop_injection must add Stop injection as chain notification"
+        )
+        # Notification must use 'ai' channel so it reaches additionalContext
+        assert any(ch == "ai" for _, ch in post_ctx._chain_notifications), (
+            "pending_stop_injection must be delivered on 'ai' channel → additionalContext"
+        )
