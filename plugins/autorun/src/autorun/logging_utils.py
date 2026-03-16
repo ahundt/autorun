@@ -47,7 +47,8 @@ def get_logger(name: str) -> logging.Logger:
     if not logger.handlers:
         if DEBUG_ENABLED:
             # Debug enabled - log to file
-            handler = logging.FileHandler(LOG_FILE)
+            from logging.handlers import RotatingFileHandler
+            handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3)
             handler.setFormatter(
                 logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
             )

@@ -112,7 +112,7 @@ DESIGN:
     2. PostToolUse(ExitPlanMode) - Export immediately (Option 2 - regular accept)
     3. SessionStart - Recover unexported plans (Option 1 - fresh context workaround)
 
-    State stored in GLOBAL_SESSION_ID shelve (not session-scoped):
+    State stored in GLOBAL_SESSION_ID JSON store (not session-scoped):
     - active_plans: {plan_path: {cwd, session_id, recorded_at}}
     - tracking: {content_hash: {exported_to, exported_at}}
 
@@ -121,11 +121,11 @@ THREAD SAFETY & MULTIPROCESS CONCURRENCY:
     - session_state() uses filelock for cross-process exclusion
     - SessionLock supports reentrant locking (same thread can acquire multiple times)
     - atomic_update_*() methods ensure read-modify-write is atomic
-    - shelve.sync() is called on context exit for durability
+    - JSON save is called on context exit for durability
     - No additional FileLock needed - autorun's SessionLock is sufficient
 
 STATE PERSISTENCE:
-    State is stored in ~/.claude/sessions/plugin___plan_export__.db (shelve format):
+    State is stored in daemon_state.json (filelock+JSON format):
     - Uses GLOBAL_SESSION_ID = "__plan_export__" (NOT session-scoped)
     - Survives: daemon restarts, Option 1 session clears, VS Code restarts, reboots
     - Two state dictionaries:
@@ -138,15 +138,15 @@ STATE PERSISTENCE:
 
 LIFECYCLE:
     Short-term (within session):
-        Write plan → ThreadSafeDB cache + shelve → survives
-        Edit plan → updates cache + shelve → survives
+        Write plan → ThreadSafeDB cache + JSON store → survives
+        Edit plan → updates cache + JSON store → survives
         ExitPlanMode (Option 2) → export immediately → survives
 
     Long-term (across sessions):
-        Daemon restart → shelve persists, cache rebuilds → survives
+        Daemon restart → JSON persists, cache rebuilds → survives
         Option 1 (fresh context) → NEW session_id, but GLOBAL store survives
-        VS Code restart → shelve persists → survives
-        Machine reboot → shelve persists → survives
+        VS Code restart → JSON persists → survives
+        Machine reboot → JSON persists → survives
 
 HOOK FLOW:
     PLAN MODE:
@@ -154,14 +154,14 @@ HOOK FLOW:
            ↓
       PostToolUse(Write) → record_write() → atomic_update_active_plans()
            ↓
-      shelve[__plan_export__:active_plans][foo.md] = {cwd, session_id}
+      store[__plan_export__:active_plans][foo.md] = {cwd, session_id}
 
     OPTION 1 (fresh context - BUG WORKAROUND):
       ExitPlanMode NOT fired (Claude Code bug)
            ↓
       NEW session starts (different session_id)
            ↓
-      SessionStart → get_unexported() reads from GLOBAL shelve
+      SessionStart → get_unexported() reads from GLOBAL JSON store
            ↓
       Finds foo.md, exports, clears from active_plans
 

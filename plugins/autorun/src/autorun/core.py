@@ -330,16 +330,16 @@ class ThreadSafeDB:
     Architecture (3 layers for optimal performance):
         1. EventContext: Magic syntax (ctx.file_policy)
         2. ThreadSafeDB: In-memory cache (daemon lifetime, fast reads)
-        3. session_state(): Persistent shelve with RAII locks (survives daemon restart)
+        3. session_state(): Persistent filelock+JSON with RAII locks (survives daemon restart)
 
     Attributes:
         _lock: RLock for thread-safe access
         _cache: In-memory dict cache
 
     Benefits:
-        - First access: Reads from shelve (~7-17ms)
+        - First access: Reads from JSON (~7-17ms)
         - Subsequent: Reads from memory cache (<1ms)
-        - Daemon restart: Cache rebuilds from persistent shelve
+        - Daemon restart: Cache rebuilds from persistent JSON
     """
 
     def __init__(self):
@@ -347,13 +347,13 @@ class ThreadSafeDB:
         self._cache: Dict[str, Any] = {}
 
     def get(self, key: str, default=None) -> Any:
-        """Get value with two-tier lookup: memory cache -> persistent shelve."""
+        """Get value with two-tier lookup: memory cache -> persistent JSON store."""
         with self._lock:
             # Fast path: Check memory cache first
             if key in self._cache:
                 return self._cache[key]
 
-            # Slow path: Load from persistent shelve
+            # Slow path: Load from persistent JSON store
             try:
                 # Use rsplit to handle session_ids containing ":"
                 parts = key.rsplit(":", 1)
@@ -370,7 +370,7 @@ class ThreadSafeDB:
                 return default
 
     def set(self, key: str, value: Any):
-        """Set value in both memory cache and persistent shelve."""
+        """Set value in both memory cache and persistent JSON store."""
         # Deep copy only mutable types for clean serialization
         if isinstance(value, (list, dict, set)):
             value = copy.deepcopy(value)
@@ -379,7 +379,7 @@ class ThreadSafeDB:
             # Update memory cache
             self._cache[key] = value
 
-            # Persist to shelve via session_state() RAII wrapper
+            # Persist to JSON via session_state() RAII wrapper
             try:
                 # Use rsplit to handle session_ids containing ":"
                 parts = key.rsplit(":", 1)
@@ -588,7 +588,7 @@ class EventContext:
     """
     Rich context with MAGIC STATE PERSISTENCE.
 
-    Any attribute access transparently reads/writes to Shelve via session_manager.py.
+    Any attribute access transparently reads/writes to persistent store via session_manager.py.
     ZERO boilerplate per field - just use ctx.file_policy = "SEARCH" and it persists!
 
     Usage:
@@ -611,7 +611,7 @@ class EventContext:
     STAGE_2_COMPLETED = 3  # Better name: STAGE_3_COUNTDOWN, kept for compatibility
     STAGE_3 = 4
 
-    # Default values for magic state (used when key not in shelve)
+    # Default values for magic state (used when key not in persistent store)
     _DEFAULTS = {
         'file_policy': 'ALLOW',
         'session_status': '',
@@ -725,16 +725,49 @@ class EventContext:
     # === MAGIC STATE: __getattr__ / __setattr__ ===
     def __getattr__(self, name: str):
         """
-        Magic getter - reads from Shelve automatically.
+        Magic getter - reads from persistent store automatically.
 
-        ctx.file_policy  ->  shelve[session_id:file_policy] or default
+        ctx.file_policy  ->  store[session_id:file_policy] or default
+
+        ATOMICITY WARNING: __getattr__ and __setattr__ are NOT atomic for
+        read-modify-write. ``ctx.counter = ctx.counter + 1`` does separate
+        ThreadSafeDB.get() then ThreadSafeDB.set() — the RLock is released
+        between calls, so concurrent threads can interleave and lose updates.
+
+        Concurrency scenarios (single daemon serves all CLIs):
+        - Multiple Claude Code sessions in same directory: CONCURRENT
+        - Multiple Gemini CLI sessions in same directory: CONCURRENT
+        - Mixed Claude + Gemini sessions: CONCURRENT
+        - Same session, rapid hooks dispatched to thread pool: CONCURRENT
+
+        What is safe despite non-atomic read-modify-write:
+        - Different sessions have different session_id keys, so session-scoped
+          state (ctx.file_policy, ctx.autorun_stage) cannot collide across
+          sessions even under concurrent access.
+        - Global scope (__global__ key): all existing code uses session_state()
+          context manager for atomic read-modify-write (e.g.,
+          ScopeAccessor.consume_allowed() at plugins.py:405-418).
+
+        What is at risk:
+        - Same-session counters (ctx.tool_calls_since_task_update,
+          ctx.hook_call_count) could lose increments if two hooks from the
+          same session execute simultaneously in the thread pool. This is
+          unlikely (CLIs typically serialize hook calls) but not guaranteed.
+        - Impact is low: counter imprecision may delay a staleness reminder
+          by one cycle, not cause data corruption or security bypass.
+
+        Rule for new handlers:
+        - Session-scoped simple writes (ctx.x = value): safe, last-writer-wins
+        - Session-scoped read-modify-write (ctx.x = ctx.x + 1): acceptable
+          for advisory counters, NOT acceptable for security-critical state
+        - Global-scoped read-modify-write: MUST use session_state() directly
         """
         # Check local cache first (for this request)
         state = object.__getattribute__(self, '_state')
         if name in state:
             return state[name]
 
-        # Load from Shelve
+        # Load from persistent store
         store = object.__getattribute__(self, '_store')
         session_id = object.__getattribute__(self, '_session_id')
         if store:
@@ -750,9 +783,9 @@ class EventContext:
 
     def __setattr__(self, name: str, value):
         """
-        Magic setter - writes to Shelve automatically.
+        Magic setter - writes to persistent store automatically.
 
-        ctx.file_policy = "SEARCH"  ->  shelve[session_id:file_policy] = "SEARCH"
+        ctx.file_policy = "SEARCH"  ->  store[session_id:file_policy] = "SEARCH"
 
         Handles list/dict with deep copy for clean serialization.
         """
@@ -764,7 +797,7 @@ class EventContext:
         state = object.__getattribute__(self, '_state')
         state[name] = value
 
-        # Persist to Shelve
+        # Persist to store
         store = object.__getattribute__(self, '_store')
         session_id = object.__getattribute__(self, '_session_id')
         if store:

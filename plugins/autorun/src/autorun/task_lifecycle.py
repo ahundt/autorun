@@ -33,7 +33,7 @@ Architecture:
 - Per-session isolation: Each AI session tracks own tasks
 - Class-based design: Follows PlanExport pattern for consistency
 - Thread-safe: filelock locks via session_state(), atomic operations
-- DRY: Reuses session_manager.py patterns, no custom shelve code
+- DRY: Reuses session_manager.py patterns, no custom persistence code
 """
 
 from typing import Optional, Dict, List, Callable
@@ -47,7 +47,7 @@ from datetime import datetime
 
 from . import ipc
 from .core import EventContext, app, logger
-from .session_manager import session_state  # REUSE - no custom shelve code
+from .session_manager import session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
     PLAN_TOOLS, TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS,
@@ -138,24 +138,24 @@ class TaskLifecycle:
     """Task lifecycle manager (follows PlanExport pattern).
 
     DRY REUSE:
-    - session_state() for persistence (no custom shelve code)
+    - session_state() for persistence (no custom persistence code)
     - @property + atomic_update_*() pattern from PlanExport
     - Simple append logging (no RotatingFileHandler)
     - Frozenset constants for status checks (single source of truth)
 
     Per-Session Isolation:
     - Each AI session uses unique global key: "__task_lifecycle__{session_id}"
-    - State stored in shared shelve but keyed per session
+    - State stored in shared JSON store but keyed per session
     - Audit logs are per-session files
     """
 
-    # Schema version for task lifecycle data stored in shelve files
-    # (~/.claude/sessions/plugin___task_lifecycle__{session_id}.db).
+    # Schema version for task lifecycle data stored in JSON files
+    # (via session_state() in daemon_state.json).
     # Bump when the task dict structure or status transition rules change.
     # Migration runs automatically on first access via _migrate_if_needed().
     #
     # Version history:
-    #   v1: Initial task schema. No version field stored in shelve. Ghost tasks
+    #   v1: Initial task schema. No version field stored in JSON. Ghost tasks
     #       (tasks first seen via TaskUpdate, not TaskCreate) could transition
     #       to in_progress/pending, causing them to block Stop hook permanently
     #       if the completed update was lost (e.g., session end, context compaction).
@@ -208,7 +208,7 @@ class TaskLifecycle:
     # === State Access (REUSES session_state() - DRY) ===
 
     def _migrate_if_needed(self, state: Dict) -> None:
-        """Migrate shelve state to current schema version (lazy self-healing).
+        """Migrate stored state to current schema version (lazy self-healing).
 
         LIFECYCLE: Called automatically on every .tasks access and atomic_update_tasks().
         This ensures old data gets fixed when accessed, no manual intervention needed.
@@ -220,7 +220,7 @@ class TaskLifecycle:
         4. Each version bump preserves backward compatibility
 
         WHY LAZY MIGRATION:
-        - Daemon restarts don't trigger migration (shelve just sits on disk)
+        - Daemon restarts don't trigger migration (JSON just sits on disk)
         - Session resume/continuation triggers migration via first .tasks access
         - Failed sessions get fixed when next session accesses their data
         - No need for batch migration scripts or manual database edits
@@ -1171,7 +1171,7 @@ Use TaskList or /task-status to see current state of all tasks.
         1. Protects current active session (CLAUDE_SESSION_ID) - NEVER deleted
         2. Skips sessions with incomplete tasks (in_progress/pending work)
         3. Respects TTL - only cleans sessions older than ttl_days
-        4. Uses session_state() for SessionLock protection (never direct shelve.open())
+        4. Uses session_state() for lock protection (never bypasses locking)
         5. Archives non-empty data to JSON before deletion (restorable backup)
         6. dry_run=True preview mode - reports without modifications
         7. Atomic archive-then-clear within single SessionLock (no data loss window)
@@ -1179,7 +1179,7 @@ Use TaskList or /task-status to see current state of all tasks.
 
         LIFECYCLE & USAGE:
         - GC is manual-only (never automatic) - user controls when to clean
-        - Daemon doesn't auto-GC - shelves persist until user runs this
+        - Daemon doesn't auto-GC - state files persist until user runs this
         - Recommended: Run with dry_run=True first to preview
         - Safe to run anytime - protections prevent active session damage
         - ALWAYS archives before deletion unless archive=False (NOT recommended)
@@ -1192,9 +1192,9 @@ Use TaskList or /task-status to see current state of all tasks.
            c. Read tasks, check incomplete → skip if found
            d. Check age against TTL → skip if too recent
            e. Archive to JSON (if archive=True) - within lock
-           f. Clear shelve content (state.clear()) - within lock
+           f. Clear state content (state.clear()) - within lock
            g. Release lock (exit session_state context)
-           h. Delete shelve files from disk
+           h. Delete state files from disk
            i. Clean empty audit directories
         3. Report summary with skip reasons and error guidance
 
@@ -1333,8 +1333,8 @@ Use TaskList or /task-status to see current state of all tasks.
 
                 try:
                     # CRITICAL LOCKING: Use session_state() for SessionLock coordination.
-                    # This prevents race conditions with daemon writing to same shelve.
-                    # Direct shelve.open() would bypass locking and corrupt data.
+                    # This prevents race conditions with daemon writing to same store.
+                    # Direct file access would bypass locking and corrupt data.
                     #
                     # Timeout 2s = fail fast if daemon holds lock (indicates session active).
                     with session_state(global_key, timeout=2.0) as state:
@@ -1435,7 +1435,7 @@ Use TaskList or /task-status to see current state of all tasks.
                 print("     → Daemon actively using session (wait or refine pattern)")
                 print("     → Check: ps aux | grep autorun")
                 print("  3. db type errors:")
-                print("     → Backend detection failed (corrupted shelve)")
+                print("     → Backend detection failed (corrupted state)")
                 print("     → Try: pattern='*' to see all, or delete manually")
 
             # Archive location

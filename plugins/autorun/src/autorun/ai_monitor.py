@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import subprocess as sp
-import shelve
 import time
 import os
 import sys
@@ -27,6 +26,7 @@ from contextlib import contextmanager
 
 # Import centralized tmux utilities for DRY compliance
 from .tmux_utils import get_tmux_utilities
+from .session_manager import session_state
 
 STATE_DIR = Path.home() / ".claude" / "sessions"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,23 +40,20 @@ def setup_autorun_logging():
     # Setup logging to file with autorun prefix
     # CRITICAL: No stderr handler - breaks Claude Code hooks (any stderr = "hook error")
     log_file = log_dir / "autorun_ai_monitor.log"
+    from logging.handlers import RotatingFileHandler
     logging.basicConfig(
         level=logging.INFO,
         format='[%(asctime)s] %(process)d: %(message)s',
         handlers=[
-            logging.FileHandler(log_file)  # File-only logging
+            RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
         ]
     )
 
-# Monitor state using shelve for persistence
+# Monitor state using filelock+JSON persistence (via session_manager)
 @contextmanager
 def monitor_state(session_id):
-    s = shelve.open(str(STATE_DIR / f"monitor-{session_id}.db"), writeback=False)
-    try:
-        yield s
-    finally:
-        s.sync()
-        s.close()
+    with session_state(f"monitor_{session_id}") as state:
+        yield state
 
 # Global tmux utilities instance
 _tmux_utils = None
@@ -206,7 +203,7 @@ def run_monitor(session_id, config):
                         time.time() - state["start_time"] > config["max_runtime"] * 60):
                     break
 
-                # Scan windows (explicit reassignment for writeback=False shelve)
+                # Scan windows (explicit reassignment for state persistence)
                 changed = []
                 all_content = ""
                 windows_copy = dict(state.get("windows", {}))
