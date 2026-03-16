@@ -56,12 +56,12 @@ def generate_manifests(plugin_dir: Path):
     # 2. Write Claude Manifest
     claude_dir = plugin_dir / ".claude-plugin"
     claude_dir.mkdir(exist_ok=True)
-    with open(claude_dir / "plugin.json", "w") as f:
+    with open(claude_dir / "plugin.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     print(f"   ✓ Generated .claude-plugin/plugin.json")
 
     # 3. Write Gemini Manifest
-    with open(plugin_dir / "gemini-extension.json", "w") as f:
+    with open(plugin_dir / "gemini-extension.json", "w", encoding="utf-8") as f:
         gemini_manifest = manifest.copy()
         gemini_manifest["contextFileName"] = "GEMINI.md"
         gemini_manifest["hooks"] = "./hooks/hooks.json"

@@ -66,7 +66,7 @@ def discover_plugin_commands() -> Dict[str, Dict]:
                     plugin_manifest = plugin_dir / ".claude-plugin" / "plugin.json"
                     if plugin_manifest.exists():
                         try:
-                            with open(plugin_manifest, 'r') as f:
+                            with open(plugin_manifest, 'r', encoding="utf-8") as f:
                                 manifest = json.load(f)
                                 plugin_name = manifest.get('name', plugin_dir.name)
                         except (json.JSONDecodeError, IOError):

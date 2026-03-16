@@ -329,7 +329,7 @@ def test_data_persistence_edge_cases():
         data_file = monitor.storage_dir / "injection_data.json"
 
         # Write corrupted JSON
-        with open(data_file, 'w') as f:
+        with open(data_file, 'w', encoding="utf-8") as f:
             f.write('{"invalid": json content}')
 
         try:
@@ -340,7 +340,7 @@ def test_data_persistence_edge_cases():
             print(f"⚠️ Corrupted JSON file: {e}")
 
         # Test truncated data file
-        with open(data_file, 'w') as f:
+        with open(data_file, 'w', encoding="utf-8") as f:
             f.write('{"attempts": [{"incomplete":')
 
         try:
@@ -350,7 +350,7 @@ def test_data_persistence_edge_cases():
             print(f"⚠️ Truncated JSON file: {e}")
 
         # Test data file with wrong structure
-        with open(data_file, 'w') as f:
+        with open(data_file, 'w', encoding="utf-8") as f:
             json.dump({"wrong_structure": {"data": "here"}}, f)
 
         try:

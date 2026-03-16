@@ -904,7 +904,7 @@ class InjectionEffectivenessMonitor:
 
         if data_file.exists():
             try:
-                with open(data_file, 'r') as f:
+                with open(data_file, 'r', encoding="utf-8") as f:
                     data = json.load(f)
 
                 # Load attempts (convert back to dataclass objects)
@@ -982,7 +982,7 @@ class InjectionEffectivenessMonitor:
 
                 # Atomic write
                 temp_file = data_file.with_suffix(".tmp")
-                with open(temp_file, 'w') as f:
+                with open(temp_file, 'w', encoding="utf-8") as f:
                     json.dump(data, f, indent=2, default=str)
 
                 temp_file.replace(data_file)

@@ -729,7 +729,7 @@ class DiagnosticManager:
         }
 
         try:
-            with open(output_file, 'w') as f:
+            with open(output_file, 'w', encoding="utf-8") as f:
                 json.dump(diagnostic_data, f, indent=2)
 
             self.logger.info("diagnostic", f"Diagnostic report exported to {output_file}")

@@ -31,7 +31,7 @@ def test_source_hooks_json_is_claude_format():
     hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
     assert hooks_file.exists(), "hooks.json not found"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     # Check description mentions Claude or daemon
@@ -51,7 +51,7 @@ def test_source_hooks_json_has_claude_events():
     """Test that source hooks.json uses Claude Code event names."""
     hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_section = hooks_data.get("hooks", {})
@@ -85,7 +85,7 @@ def test_source_hooks_json_has_claude_tool_names():
     """Test that source hooks.json uses Claude Code tool names."""
     hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_json_str = json.dumps(hooks_data)
@@ -110,7 +110,7 @@ def test_gemini_hooks_json_is_gemini_format():
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
     assert hooks_file.exists(), "hooks.json not found"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     # Check description mentions Gemini
@@ -130,7 +130,7 @@ def test_gemini_hooks_json_has_gemini_events():
     """Test that hooks.json uses Gemini CLI event names."""
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_section = hooks_data.get("hooks", {})
@@ -157,7 +157,7 @@ def test_gemini_hooks_json_has_gemini_tool_names():
     """Test that hooks.json uses Gemini CLI tool names."""
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_json_str = json.dumps(hooks_data)
@@ -181,7 +181,7 @@ def test_gemini_hooks_have_type_field():
     """Test that Gemini hooks include 'type' field (required by Gemini CLI)."""
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_section = hooks_data.get("hooks", {})
@@ -204,7 +204,7 @@ def test_gemini_hooks_have_timeout():
     """Test that Gemini hooks include timeout (recommended for Gemini CLI)."""
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_section = hooks_data.get("hooks", {})
@@ -231,7 +231,7 @@ def test_claude_hooks_timeout_is_seconds():
     """Test that Claude hooks use seconds for timeout (not milliseconds)."""
     hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_section = hooks_data.get("hooks", {})
@@ -256,7 +256,7 @@ def test_no_environment_variable_assignment_in_gemini_hooks():
     """
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
     hooks_json_str = json.dumps(hooks_data)
@@ -283,7 +283,7 @@ def test_both_hooks_files_are_valid_json():
     for hooks_file in hooks_files:
         assert hooks_file.exists(), f"{hooks_file.name} not found"
 
-        with open(hooks_file) as f:
+        with open(hooks_file, encoding="utf-8") as f:
             try:
                 data = json.load(f)
                 assert isinstance(data, dict), f"{hooks_file.name} should be a JSON object"
@@ -305,7 +305,7 @@ def test_plugin_json_references_hooks():
     plugin_json = get_plugin_root() / ".claude-plugin" / "plugin.json"
     assert plugin_json.exists(), ".claude-plugin/plugin.json not found"
 
-    with open(plugin_json) as f:
+    with open(plugin_json, encoding="utf-8") as f:
         manifest = json.load(f)
 
     assert "hooks" in manifest, \
@@ -443,7 +443,7 @@ class TestCrossCliEventValidation:
     def test_claude_hooks_only_valid_claude_events(self):
         """claude-hooks.json must only use Claude Code event names."""
         hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
-        with open(hooks_file) as f:
+        with open(hooks_file, encoding="utf-8") as f:
             data = json.load(f)
         for event in data.get("hooks", {}):
             assert event in CLAUDE_CODE_VALID_EVENTS, (
@@ -454,7 +454,7 @@ class TestCrossCliEventValidation:
     def test_gemini_hooks_only_valid_gemini_events(self):
         """hooks.json must only use Gemini CLI event names."""
         hooks_file = get_plugin_root() / "hooks" / "hooks.json"
-        with open(hooks_file) as f:
+        with open(hooks_file, encoding="utf-8") as f:
             data = json.load(f)
         for event in data.get("hooks", {}):
             assert event in GEMINI_CLI_VALID_EVENTS, (
@@ -468,13 +468,13 @@ class TestCrossCliEventValidation:
         gemini_only = GEMINI_CLI_VALID_EVENTS - CLAUDE_CODE_VALID_EVENTS
 
         claude_file = get_plugin_root() / "hooks" / "claude-hooks.json"
-        with open(claude_file) as f:
+        with open(claude_file, encoding="utf-8") as f:
             claude_events = set(json.load(f).get("hooks", {}).keys())
         contamination = claude_events & gemini_only
         assert not contamination, f"Claude hooks contains Gemini-only events: {contamination}"
 
         gemini_file = get_plugin_root() / "hooks" / "hooks.json"
-        with open(gemini_file) as f:
+        with open(gemini_file, encoding="utf-8") as f:
             gemini_events = set(json.load(f).get("hooks", {}).keys())
         contamination = gemini_events & claude_only
         assert not contamination, f"Gemini hooks contains Claude-only events: {contamination}"

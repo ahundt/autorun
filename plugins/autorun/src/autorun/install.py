@@ -612,7 +612,7 @@ def _parse_selection(selection: str) -> list[str]:
         manifest = root / ".claude-plugin" / "marketplace.json"
         if manifest.exists():
             import json
-            with open(manifest) as f:
+            with open(manifest, encoding="utf-8") as f:
                 data = json.load(f)
                 valid_plugins = [p["name"] for p in data.get("plugins", [])]
     except Exception as e:
@@ -1144,7 +1144,7 @@ def _install_for_gemini(
     if marketplace_json.exists():
         try:
             import json as _json
-            with open(marketplace_json) as _f:
+            with open(marketplace_json, encoding="utf-8") as _f:
                 _mdata = _json.load(_f)
             for _entry in _mdata.get("plugins", []):
                 _entry_name = _entry.get("name", "")
@@ -1195,7 +1195,7 @@ def _install_for_gemini(
         # Read gemini-extension.json to get the extension name
         try:
             import json
-            with open(plugin_dir / "gemini-extension.json") as f:
+            with open(plugin_dir / "gemini-extension.json", encoding="utf-8") as f:
                 ext_config = json.load(f)
                 ext_name = ext_config.get("name", plugin_name)
         except Exception:
@@ -1396,7 +1396,7 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                 if hooks_path.exists():
                     import json
                     try:
-                        with open(hooks_path) as f:
+                        with open(hooks_path, encoding="utf-8") as f:
                             hooks_data = json.load(f)
                         # Check if autorun hooks are present
                         has_hooks = any("autorun" in str(hook) for hook in hooks_data.get("hooks", []))
@@ -1418,7 +1418,7 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                 if gemini_config.exists():
                     import json
                     try:
-                        with open(gemini_config) as f:
+                        with open(gemini_config, encoding="utf-8") as f:
                             config_data = json.load(f)
                         # Check if autorun hooks are present
                         has_hooks = any("autorun" in str(ext) for ext in config_data.get("extensions", []))

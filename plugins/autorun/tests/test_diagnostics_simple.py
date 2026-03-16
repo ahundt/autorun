@@ -139,7 +139,7 @@ class TestDiagnosticLoggerSimple:
             temp_file.flush()
 
         # Read back the file (reopened for reading)
-        with open(temp_path, 'r') as f:
+        with open(temp_path, 'r', encoding="utf-8") as f:
             content = f.read()
             assert "Test file logging" in content
 

@@ -359,7 +359,7 @@ def test_commands_autorun_fallback_config():
 
     # Read the commands/autorun file
     commands_path = Path(__file__).parent.parent / "commands" / "autorun"
-    with open(commands_path, 'r') as f:
+    with open(commands_path, 'r', encoding="utf-8") as f:
         content = f.read()
 
     # Find the fallback CONFIG in the except ImportError block

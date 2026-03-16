@@ -133,7 +133,7 @@ class _JSONStore:
 
     def _load(self) -> dict:
         try:
-            with open(self._state_file, "r") as f:
+            with open(self._state_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
@@ -141,7 +141,7 @@ class _JSONStore:
     def _save(self):
         os.makedirs(os.path.dirname(self._state_file), exist_ok=True)
         tmp = self._state_file + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._data, f)
             f.flush()
             os.fsync(f.fileno())

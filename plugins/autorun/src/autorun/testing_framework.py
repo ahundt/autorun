@@ -261,7 +261,7 @@ class EnvironmentController:
         }
 
         settings_file = target_dir / "test_settings.json"
-        with open(settings_file, 'w') as f:
+        with open(settings_file, 'w', encoding="utf-8") as f:
             json.dump(test_settings, f, indent=2)
 
     def _backup_current_state(self) -> Dict:

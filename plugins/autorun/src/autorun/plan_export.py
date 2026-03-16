@@ -237,7 +237,7 @@ def log_warning(message: str, config: "PlanExportConfig" = None) -> None:
         config = PlanExportConfig.load()
     if config.debug_logging:
         try:
-            with open(DEBUG_LOG_PATH, "a") as f:
+            with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.now()}] {message}\n")
         except IOError:
             pass

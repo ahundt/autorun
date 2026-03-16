@@ -108,7 +108,7 @@ GEMINI_PATH_VAR = "${extensionPath}"
 def load_hooks_json(path: Path) -> dict:
     """Load and parse a hooks JSON file."""
     assert path.exists(), f"Hooks file not found: {path}"
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -384,14 +384,14 @@ class TestManifestFiles:
     """Validate plugin.json and gemini-extension.json are correct."""
 
     def test_plugin_json_has_hooks_field(self):
-        with open(PLUGIN_JSON) as f:
+        with open(PLUGIN_JSON, encoding="utf-8") as f:
             manifest = json.load(f)
         assert "hooks" in manifest, \
             "plugin.json MUST have 'hooks' field for Claude Code hook discovery"
         assert "claude-hooks.json" in manifest["hooks"]
 
     def test_plugin_json_hooks_file_exists(self):
-        with open(PLUGIN_JSON) as f:
+        with open(PLUGIN_JSON, encoding="utf-8") as f:
             manifest = json.load(f)
         hooks_ref = manifest.get("hooks", "")
         hooks_path = PLUGIN_ROOT / hooks_ref.lstrip("./")
@@ -401,14 +401,14 @@ class TestManifestFiles:
         assert GEMINI_EXT_JSON.exists()
 
     def test_gemini_extension_json_has_context_file(self):
-        with open(GEMINI_EXT_JSON) as f:
+        with open(GEMINI_EXT_JSON, encoding="utf-8") as f:
             manifest = json.load(f)
         assert manifest.get("contextFileName") == "GEMINI.md"
 
     def test_version_consistency(self):
-        with open(PLUGIN_JSON) as f:
+        with open(PLUGIN_JSON, encoding="utf-8") as f:
             claude_manifest = json.load(f)
-        with open(GEMINI_EXT_JSON) as f:
+        with open(GEMINI_EXT_JSON, encoding="utf-8") as f:
             gemini_manifest = json.load(f)
         assert claude_manifest.get("version") == gemini_manifest.get("version"), \
             f"Version mismatch: Claude={claude_manifest.get('version')}, " \
@@ -551,7 +551,7 @@ class TestGeminiHookSwapLogic:
     def test_hooks_json_is_gemini_format(self):
         """hooks.json must be Gemini format since Gemini CLI hardcodes this filename."""
         hooks_file = HOOKS_DIR / "hooks.json"
-        with open(hooks_file) as f:
+        with open(hooks_file, encoding="utf-8") as f:
             data = json.load(f)
         hooks = data.get("hooks", {})
         assert "BeforeTool" in hooks, "hooks.json should use Gemini event name BeforeTool"
@@ -560,7 +560,7 @@ class TestGeminiHookSwapLogic:
     def test_claude_hooks_json_is_claude_format(self):
         """claude-hooks.json must be Claude format."""
         hooks_file = HOOKS_DIR / "claude-hooks.json"
-        with open(hooks_file) as f:
+        with open(hooks_file, encoding="utf-8") as f:
             data = json.load(f)
         hooks = data.get("hooks", {})
         assert "PreToolUse" in hooks, "claude-hooks.json should use Claude event name PreToolUse"
@@ -603,7 +603,7 @@ class TestGeminiInstallPathway:
         assert '"--consent"' in content
 
     def test_gemini_extension_json_has_required_fields(self):
-        with open(GEMINI_EXT_JSON) as f:
+        with open(GEMINI_EXT_JSON, encoding="utf-8") as f:
             manifest = json.load(f)
         for field in ["name", "version", "description"]:
             assert field in manifest

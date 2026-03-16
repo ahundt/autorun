@@ -61,7 +61,7 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
         return
     try:
         DEBUG_LOG.parent.mkdir(exist_ok=True)
-        with open(DEBUG_LOG, 'a') as f:
+        with open(DEBUG_LOG, 'a', encoding="utf-8") as f:
             f.write(f"[{datetime.datetime.now()}] {message}\n")
             for key, value in kwargs.items():
                 f.write(f"{key}: {value}\n")

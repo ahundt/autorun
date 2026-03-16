@@ -319,7 +319,7 @@ class TaskLifecycle:
             return
 
         try:
-            with open(self.audit_log, "a") as f:
+            with open(self.audit_log, "a", encoding="utf-8") as f:
                 timestamp = datetime.now().isoformat()
                 extra_str = f" {json.dumps(extra)}" if extra else ""
                 f.write(f"{timestamp} [{event_type}] Task #{task_id} ({status}): {subject}{extra_str}\n")
@@ -1040,7 +1040,7 @@ Use TaskList or /task-status to see current state of all tasks.
 
             elif format == 'csv':
                 import csv
-                with open(output_file, 'w', newline='') as f:
+                with open(output_file, 'w', newline='', encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=['id', 'subject', 'status', 'created_at', 'blockedBy'])
                     writer.writeheader()
                     for task in tasks.values():

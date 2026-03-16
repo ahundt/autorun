@@ -341,7 +341,7 @@ class TestMultiProcessConcurrentAccess:
         )
 
         import json
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             raw_data = json.load(f)
 
         session_manager._store = None

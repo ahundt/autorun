@@ -235,7 +235,7 @@ class TestHooksJsonUVCentric:
         """Load hooks.json from source."""
         hooks_path = plugin_root / "hooks" / "claude-hooks.json"
         assert hooks_path.exists(), f"hooks.json not found at {hooks_path}"
-        with open(hooks_path) as f:
+        with open(hooks_path, encoding="utf-8") as f:
             return json.load(f)
 
     def test_no_bare_python3_in_hook_commands(self, hooks_json):

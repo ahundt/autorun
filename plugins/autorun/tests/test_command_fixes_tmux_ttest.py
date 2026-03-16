@@ -426,16 +426,16 @@ class TestSymlinkInheritance:
         assert tt_target == 'ttest.md', f"tt.md should link to ttest.md, got {tt_target}"
 
         # Verify content is correct (should be same as targets)
-        with open(tm_path, 'r') as f:
+        with open(tm_path, 'r', encoding="utf-8") as f:
             tm_content = f.read()
-        with open(os.path.join(commands_dir, 'tmux.md'), 'r') as f:
+        with open(os.path.join(commands_dir, 'tmux.md'), 'r', encoding="utf-8") as f:
             tmux_content = f.read()
 
         assert tm_content == tmux_content, "tm.md should have same content as tmux.md"
 
-        with open(tt_path, 'r') as f:
+        with open(tt_path, 'r', encoding="utf-8") as f:
             tt_content = f.read()
-        with open(os.path.join(commands_dir, 'ttest.md'), 'r') as f:
+        with open(os.path.join(commands_dir, 'ttest.md'), 'r', encoding="utf-8") as f:
             ttest_content = f.read()
 
         assert tt_content == ttest_content, "tt.md should have same content as ttest.md"

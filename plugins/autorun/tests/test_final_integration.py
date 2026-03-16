@@ -601,7 +601,7 @@ class FinalIntegrationTest:
 
         # Export results to file
         report_file = self.temp_dir / "integration_test_report.json"
-        with open(report_file, 'w') as f:
+        with open(report_file, 'w', encoding="utf-8") as f:
             json.dump({
                 "timestamp": time.time(),
                 "summary": {

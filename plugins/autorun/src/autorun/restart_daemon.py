@@ -262,7 +262,7 @@ def _start_daemon(src_dir: Path) -> bool:
 
     # Redirect stdout/stderr to a log file for debug visibility
     log_path = ipc.AUTORUN_CONFIG_DIR / "daemon_startup.log"
-    with open(log_path, "w") as startup_log:
+    with open(log_path, "w", encoding="utf-8") as startup_log:
         subprocess.Popen(
             [sys.executable, "-c", daemon_code],
             stdout=startup_log,
@@ -276,7 +276,7 @@ def _start_daemon(src_dir: Path) -> bool:
     # Read and display diagnostics
     print("\n=== Daemon Diagnostics ===")
     try:
-        with open(log_path) as log:
+        with open(log_path, encoding="utf-8") as log:
             lines = log.readlines()
             # Show first 10 lines (diagnostics section)
             for line in lines[:10]:

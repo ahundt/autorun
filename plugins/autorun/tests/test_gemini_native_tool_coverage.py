@@ -7,7 +7,7 @@ def test_gemini_native_tool_matcher_coverage():
     """Verify that BeforeTool matcher includes Gemini native tools."""
     hooks_file = Path(__file__).parent.parent / "hooks" / "hooks.json"
     
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
     
     before_tool_hooks = hooks_data.get("hooks", {}).get("BeforeTool", [])
@@ -31,7 +31,7 @@ def test_after_agent_hook_exists():
     """Verify that AfterAgent hook is configured."""
     hooks_file = Path(__file__).parent.parent / "hooks" / "hooks.json"
     
-    with open(hooks_file) as f:
+    with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
     
     after_agent_hooks = hooks_data.get("hooks", {}).get("AfterAgent", [])

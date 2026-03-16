@@ -594,7 +594,7 @@ def set_bootstrap_config(enabled: bool) -> int:
         return 1
 
     # Read current claude-hooks.json
-    with open(hooks_path) as f:
+    with open(hooks_path, encoding="utf-8") as f:
         content = f.read()
 
     if enabled:
@@ -603,7 +603,7 @@ def set_bootstrap_config(enabled: bool) -> int:
         if new_content == content:
             print("Bootstrap already enabled")
         else:
-            with open(hooks_path, "w") as f:
+            with open(hooks_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
             print(f"Bootstrap enabled (removed --no-bootstrap from {hooks_path})")
     else:
@@ -614,7 +614,7 @@ def set_bootstrap_config(enabled: bool) -> int:
             new_content = re.sub(
                 r'(hook_entry\.py)(["\\s])', r"\1 --no-bootstrap\2", content
             )
-            with open(hooks_path, "w") as f:
+            with open(hooks_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
             print(f"Bootstrap disabled (added --no-bootstrap to {hooks_path})")
 

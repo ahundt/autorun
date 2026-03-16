@@ -342,7 +342,7 @@ class TestCommandWorkflowIntegration:
         command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'tmux-test-workflow.md')
         assert os.path.exists(command_file)
 
-        with open(command_file, 'r') as f:
+        with open(command_file, 'r', encoding="utf-8") as f:
             content = f.read()
 
         # Check for required YAML frontmatter
@@ -360,7 +360,7 @@ class TestCommandWorkflowIntegration:
         command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'tmux-session-management.md')
         assert os.path.exists(command_file)
 
-        with open(command_file, 'r') as f:
+        with open(command_file, 'r', encoding="utf-8") as f:
             content = f.read()
 
         # Check for required YAML frontmatter
@@ -384,7 +384,7 @@ class TestCommandWorkflowIntegration:
             file_path = os.path.join(os.path.dirname(__file__), '..', agent_file)
             assert os.path.exists(file_path), f"Agent file {agent_file} should exist"
 
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding="utf-8") as f:
                 content = f.read()
 
             # Check for required agent structure
@@ -399,7 +399,7 @@ class TestCommandWorkflowIntegration:
         plugin_file = os.path.join(os.path.dirname(__file__), '..', '.claude-plugin', 'plugin.json')
         assert os.path.exists(plugin_file)
 
-        with open(plugin_file, 'r') as f:
+        with open(plugin_file, 'r', encoding="utf-8") as f:
             manifest = json.load(f)
 
         # Check required manifest fields

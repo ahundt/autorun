@@ -46,7 +46,7 @@ class TestMarketplaceName:
 
         assert marketplace_json.exists(), f"marketplace.json not found at {marketplace_json}"
 
-        with open(marketplace_json) as f:
+        with open(marketplace_json, encoding="utf-8") as f:
             data = json.load(f)
 
         name = data.get("name")
@@ -95,7 +95,7 @@ class TestMarketplaceName:
 
         assert known_marketplaces.exists(), f"known_marketplaces.json not found at {known_marketplaces}"
 
-        with open(known_marketplaces) as f:
+        with open(known_marketplaces, encoding="utf-8") as f:
             data = json.load(f)
 
         # Check all marketplace entries

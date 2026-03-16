@@ -43,7 +43,7 @@ path = "plugins/autorun/skills/test-skill/SKILL.md"
         # 4. Verify Claude Manifest
         claude_manifest_path = plugin_dir / ".claude-plugin" / "plugin.json"
         assert claude_manifest_path.exists()
-        with open(claude_manifest_path) as f:
+        with open(claude_manifest_path, encoding="utf-8") as f:
             data = json.load(f)
             assert data["version"] == "0.9.9"
             assert data["description"] == "Test Description"
@@ -52,7 +52,7 @@ path = "plugins/autorun/skills/test-skill/SKILL.md"
         # 5. Verify Gemini Manifest
         gemini_manifest_path = plugin_dir / "gemini-extension.json"
         assert gemini_manifest_path.exists()
-        with open(gemini_manifest_path) as f:
+        with open(gemini_manifest_path, encoding="utf-8") as f:
             data = json.load(f)
             assert data["contextFileName"] == "GEMINI.md"
             assert data["version"] == "0.9.9"

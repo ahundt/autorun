@@ -501,7 +501,7 @@ class TestDiagnosticManager:
 
             # Verify file exists and has content
             assert Path(temp_path).exists()
-            with open(temp_path, 'r') as f:
+            with open(temp_path, 'r', encoding="utf-8") as f:
                 data = json.load(f)
 
             # Check exported data structure

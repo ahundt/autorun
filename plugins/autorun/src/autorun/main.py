@@ -141,7 +141,7 @@ def log_info(message):
         safe_message = sanitize_log_message(message)
 
         # Log to main autorun log
-        with open(STATE_DIR / "autorun.log", "a") as f:
+        with open(STATE_DIR / "autorun.log", "a", encoding="utf-8") as f:
             log_time = time.strftime('%Y-%m-%d %H:%M:%S')
             pid = os.getpid()
             f.write(f"[{log_time}] {pid}: {safe_message}\n")
@@ -149,7 +149,7 @@ def log_info(message):
 
         # Separate log for PreToolUse debugging
         if "PreToolUse" in message:
-            with open(STATE_DIR / "pretooluse_debug.log", "a") as debug_f:
+            with open(STATE_DIR / "pretooluse_debug.log", "a", encoding="utf-8") as debug_f:
                 debug_f.write(f"[{log_time}] {pid}: {safe_message}\n")
                 debug_f.flush()
 
