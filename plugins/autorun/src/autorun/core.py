@@ -749,17 +749,21 @@ class EventContext:
           ScopeAccessor.consume_allowed() at plugins.py:405-418).
 
         What is at risk:
-        - Same-session counters (ctx.tool_calls_since_task_update,
-          ctx.hook_call_count) could lose increments if two hooks from the
-          same session execute simultaneously in the thread pool. This is
-          unlikely (CLIs typically serialize hook calls) but not guaranteed.
-        - Impact is low: counter imprecision may delay a staleness reminder
-          by one cycle, not cause data corruption or security bypass.
+        - PostToolUse counters (ctx.tool_calls_since_task_update) could lose
+          increments if two PostToolUse hooks from the same session execute
+          simultaneously in the thread pool. Impact is low: staleness reminder
+          delayed by one cycle, no data corruption or security bypass.
+        - Stop counters (ctx.hook_call_count, ctx.recheck_count) are safe
+          because Stop events are inherently serial per session — the CLI
+          must wait for the hook response before deciding to stop or continue,
+          so two Stop hooks from the same session cannot race.
 
         Rule for new handlers:
         - Session-scoped simple writes (ctx.x = value): safe, last-writer-wins
         - Session-scoped read-modify-write (ctx.x = ctx.x + 1): acceptable
-          for advisory counters, NOT acceptable for security-critical state
+          for advisory counters in PostToolUse; safe in Stop (serial per session)
+        - Security-critical counters: MUST NOT use ctx magic attributes.
+          Use session_state() context manager for atomic read-modify-write
         - Global-scoped read-modify-write: MUST use session_state() directly
         """
         # Check local cache first (for this request)
