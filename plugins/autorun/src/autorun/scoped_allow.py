@@ -77,11 +77,28 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
 
 
 # Seconds after last consumption that a count=0 allow still passes is_valid().
-# Covers parallel hook invocations (multiple plugin versions or parallel hook
-# configs) all firing for the same Bash tool call. Each invocation arrives within
-# milliseconds; 5 s is more than enough without letting a second intentional
-# invocation slip through.
-_PARALLEL_GRACE_SECONDS: float = 5.0
+#
+# Root cause: autorun runs twice per Bash command — once via the plugin's own
+# PreToolUse hook, and once via `rtk hook claude` (settings.json PreToolUse hook),
+# which internally spawns the autorun subprocess. Both invocations connect to
+# the same daemon. The session_manager re-reads from disk inside every lock
+# acquisition, so the second invocation may read remaining_uses=0 after the
+# first has already written the consumed state.
+#
+# The race window is the time between first hook's write and second hook's read.
+# Both Python hooks start within ~50ms of each other; their state reads happen
+# within ~200ms of start. With Python startup jitter, the window is 0–200ms.
+#
+# 1.0 s is safely above the race window while safely below the minimum time
+# for a genuine second command (tool execution + Claude response ≥ 3 s):
+#   - git push network call: ≥ 1 s even on fast failure
+#   - Claude processes response: ≥ 1 s
+#   - Total before second tool call: ≥ 2 s
+#
+# The last_call_id fingerprint (hash of session_id:tool_name:cmd) further
+# restricts the grace to parallel invocations of the exact same call in the
+# same session, preventing global allows from bleeding into concurrent sessions.
+_PARALLEL_GRACE_SECONDS: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -93,10 +110,14 @@ class ScopedAllow:
     (dicts without temporal fields are treated as permanent).
 
     Parallel-hook safety: when remaining_uses reaches 0, consumed_at is stamped
-    and is_valid() returns True for _PARALLEL_GRACE_SECONDS more seconds. This
-    lets multiple autorun hook invocations for the same tool call (from stale
-    old plugin versions in the cache, or multiple hook configs) all pass TIER 1
-    instead of the second invocation falling through to TIER 2 blocks.
+    and last_call_id is set. is_valid(call_id) returns True for
+    _PARALLEL_GRACE_SECONDS if the call_id matches, allowing the second autorun
+    invocation (RTK-spawned subprocess) for the same Bash tool call to pass
+    TIER 1 instead of falling through to TIER 2 blocks.
+
+    Session isolation: last_call_id includes session_id in its hash, so a
+    global allow consumed by session A will not grant grace to session B even
+    if session B runs the same command within the grace window.
     """
     pattern: str
     pattern_type: str = "literal"
@@ -104,40 +125,62 @@ class ScopedAllow:
     granted_at: float = 0.0
     ttl_seconds: float | None = None
     remaining_uses: int | None = None
-    consumed_at: float = 0.0   # Timestamp of last consume(); enables grace period
+    consumed_at: float = 0.0     # Timestamp of last consume(); enables grace period
+    last_call_id: str = ""       # Fingerprint of the call that consumed this allow
 
-    def is_valid(self) -> bool:
+    def is_valid(self, call_id: str = "") -> bool:
         """Check if this allow is still active (not expired/exhausted).
 
+        Args:
+            call_id: Fingerprint of the current hook invocation
+                     (hash of session_id:tool_name:cmd, from check_integration).
+                     When provided, the grace period requires both time-within-window
+                     AND fingerprint-match, preventing global allows from granting
+                     grace to concurrent different sessions.
+
         Grace period: when remaining_uses hits 0, stays valid for
-        _PARALLEL_GRACE_SECONDS after the last consume() so parallel hook
-        invocations from the same tool call all receive allow (not a block).
+        _PARALLEL_GRACE_SECONDS if the call_id matches the consuming call.
+        This lets the second autorun invocation (RTK-spawned) for the same
+        Bash tool call pass TIER 1 instead of falling to TIER 2 blocks.
         """
         if self.ttl_seconds is not None and self.granted_at > 0:
             if (time.time() - self.granted_at) > self.ttl_seconds:
                 return False
         if self.remaining_uses is not None:
             if self.remaining_uses <= 0:
-                # Grace period: let parallel invocations through if recently consumed
                 if self.consumed_at > 0 and (time.time() - self.consumed_at) < _PARALLEL_GRACE_SECONDS:
+                    # If we have a stored fingerprint and a caller fingerprint, they must match.
+                    # This prevents a global allow's grace from being claimed by a different session.
+                    # Falls back to time-only if either fingerprint is absent (legacy state).
+                    if self.last_call_id and call_id and self.last_call_id != call_id:
+                        return False
                     return True
                 return False
         return True
 
-    def consume(self) -> ScopedAllow:
+    def consume(self, call_id: str = "") -> ScopedAllow:
         """Return new ScopedAllow with one use consumed (immutable).
 
-        Sets consumed_at to now when remaining_uses hits 0, enabling the
-        grace period for parallel hook invocations.
+        Args:
+            call_id: Fingerprint of the current hook invocation. Stored as
+                     last_call_id so subsequent parallel invocations with the
+                     same fingerprint can use the grace period.
+
+        Sets consumed_at and last_call_id when remaining_uses hits 0, enabling
+        the grace period. Refreshes both if already 0 (subsequent parallel
+        invocations extend the grace window).
         """
         if self.remaining_uses is None:
             return self
         new_count = self.remaining_uses - 1
-        # Stamp consumed_at when count hits 0 (first exhaustion) or refresh it
-        # if already 0 (subsequent parallel invocations refresh the grace window).
-        new_consumed_at = time.time() if new_count <= 0 else self.consumed_at
-        return dataclasses.replace(self, remaining_uses=max(0, new_count),
-                                   consumed_at=new_consumed_at)
+        if new_count <= 0:
+            return dataclasses.replace(
+                self,
+                remaining_uses=max(0, new_count),
+                consumed_at=time.time(),
+                last_call_id=call_id,
+            )
+        return dataclasses.replace(self, remaining_uses=new_count)
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict (for session_manager storage)."""
@@ -152,6 +195,8 @@ class ScopedAllow:
             d["remaining_uses"] = self.remaining_uses
         if self.consumed_at > 0:
             d["consumed_at"] = self.consumed_at
+        if self.last_call_id:
+            d["last_call_id"] = self.last_call_id
         return d
 
     @classmethod
@@ -165,6 +210,7 @@ class ScopedAllow:
             ttl_seconds=d.get("ttl_seconds"),
             remaining_uses=d.get("remaining_uses"),
             consumed_at=d.get("consumed_at", 0.0),
+            last_call_id=d.get("last_call_id", ""),
         )
 
     def status_label(self) -> str:

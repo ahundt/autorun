@@ -27,6 +27,7 @@ Plugins:
 - Plan Management: New/refine/update/process plan commands
 - AI Monitor Integration: External tmux observer (optional)
 """
+import hashlib
 import re
 import fnmatch
 import shlex
@@ -590,16 +591,23 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if cmd.strip().startswith("/ar:"):
         return ctx.allow()
 
+    # Fingerprint for this hook invocation: identifies parallel invocations of the
+    # same tool call in the same session. Used by ScopedAllow.is_valid()/consume()
+    # to restrict the grace period to parallel hooks, not concurrent other sessions.
+    call_id = hashlib.md5(
+        f"{ctx.session_id}:{ctx.tool_name}:{cmd}".encode()
+    ).hexdigest()[:16]
+
     # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
     for scope_name in ("session", "global"):
         accessor = ScopeAccessor(ctx, scope_name)
         allows = accessor.get_allowed()
         for i, a in enumerate(allows):
             sa = ScopedAllow.from_dict(a)
-            if not sa.is_valid():
+            if not sa.is_valid(call_id):
                 continue  # Expired/exhausted — skip (lazy cleanup)
             if _match(cmd, sa.pattern, sa.pattern_type):
-                consumed = sa.consume()
+                consumed = sa.consume(call_id)
                 accessor.consume_allowed(i, consumed.to_dict())
                 label = consumed.status_label()
                 if label != "permanent":

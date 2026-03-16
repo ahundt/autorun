@@ -134,74 +134,118 @@ class TestParallelHookGracePeriod:
     """Tests for the parallel hook invocation grace period.
 
     Root cause of the /ar:ok 'git push' double-block bug:
-    Multiple cached plugin versions (ar/0.9.0, ar/0.10.0, temp_local_...)
-    each register PreToolUse hooks. One Bash tool call spawns N parallel
-    autorun hook invocations. Hook A consumes a 1-use allow (remaining_uses
-    1→0). Hook B finds remaining_uses=0 and without the grace period would
-    fall through to TIER 2 blocking rules, causing the command to be blocked
-    despite the user having granted permission.
+    autorun runs twice per Bash command — once via the plugin's own PreToolUse
+    hook, and once via `rtk hook claude` (settings.json) which internally spawns
+    the autorun subprocess. Both invocations connect to the same daemon via
+    ~/.autorun/daemon.sock. session_manager re-reads from disk inside every lock
+    acquisition (fully serialized), so the second invocation may read
+    remaining_uses=0 after the first has already written the consumed state.
+
+    The race window is ~0–200ms (startup jitter between the two Python processes).
+    _PARALLEL_GRACE_SECONDS=1.0 safely covers this while being below the minimum
+    time for a genuine second tool call (tool execution + Claude response ≥ 3s).
+
+    The last_call_id fingerprint (hash of session_id:tool_name:cmd) ensures the
+    grace period only applies to parallel invocations of the same call in the same
+    session, preventing global allows from leaking to concurrent different sessions.
     """
 
-    def test_parallel_hook_b_passes_after_hook_a_consumes(self):
-        """Hook B sees allow as valid immediately after Hook A exhausts it.
+    CALL_ID = "abc123def456abcd"   # Simulated fingerprint for session+cmd
 
-        Simulates the exact race: both hooks receive the same original allow
-        object, Hook A consumes it first, Hook B checks is_valid() on the
-        consumed copy within milliseconds.
+    def test_parallel_hook_b_passes_after_hook_a_consumes(self):
+        """Hook B (RTK-spawned) passes immediately after Hook A (direct) exhausts allow.
+
+        Simulates the exact race: Hook A writes consumed state to daemon store,
+        Hook B reads that state (remaining_uses=0) and checks is_valid() — must
+        pass since both are handling the same tool call.
         """
         original = ScopedAllow(pattern="git push", remaining_uses=1)
-        assert original.is_valid() is True
+        assert original.is_valid(self.CALL_ID) is True
 
-        # Hook A: consume the allow
-        hook_a_result = original.consume()
+        # Hook A (direct plugin hook): consume the allow, stamps fingerprint
+        hook_a_result = original.consume(self.CALL_ID)
         assert hook_a_result.remaining_uses == 0
+        assert hook_a_result.last_call_id == self.CALL_ID
 
-        # Hook B: check is_valid() immediately (parallel invocation)
+        # Hook B (RTK-spawned): reads already-consumed state, same call_id
         # Without grace period this would be False → falls to TIER 2 → blocked
-        assert hook_a_result.is_valid() is True
+        assert hook_a_result.is_valid(self.CALL_ID) is True
 
     def test_parallel_hook_blocked_after_grace_period_expires(self):
-        """A genuine second invocation (>5s later) is correctly blocked."""
+        """A genuine second command (arriving >1s after consume) is correctly blocked."""
         original = ScopedAllow(pattern="git push", remaining_uses=1)
-        consumed = original.consume()
+        consumed = original.consume(self.CALL_ID)
         assert consumed.remaining_uses == 0
         assert consumed.consumed_at > 0
 
         with patch("autorun.scoped_allow.time") as mock_time:
-            mock_time.time.return_value = consumed.consumed_at + 6.0
-            assert consumed.is_valid() is False  # Grace expired
+            mock_time.time.return_value = consumed.consumed_at + 2.0
+            assert consumed.is_valid(self.CALL_ID) is False  # Grace (1s) expired
 
-    def test_grace_period_boundary_at_exactly_5s(self):
-        """At exactly 5s grace period, allow should be invalid (boundary is exclusive)."""
+    def test_grace_period_boundary_at_exactly_1s(self):
+        """At exactly 1s, allow is invalid (boundary is exclusive: time < 1.0)."""
         original = ScopedAllow(pattern="git push", remaining_uses=1)
-        consumed = original.consume()
+        consumed = original.consume(self.CALL_ID)
 
         with patch("autorun.scoped_allow.time") as mock_time:
-            mock_time.time.return_value = consumed.consumed_at + 5.0
-            assert consumed.is_valid() is False  # 5.0 is not < 5.0
+            mock_time.time.return_value = consumed.consumed_at + 1.0
+            assert consumed.is_valid(self.CALL_ID) is False  # 1.0 is not < 1.0
 
     def test_grace_period_just_inside_boundary(self):
-        """Just inside 5s grace period, allow is still valid."""
+        """Just inside 1s grace period, allow is still valid."""
         original = ScopedAllow(pattern="git push", remaining_uses=1)
-        consumed = original.consume()
+        consumed = original.consume(self.CALL_ID)
 
         with patch("autorun.scoped_allow.time") as mock_time:
-            mock_time.time.return_value = consumed.consumed_at + 4.999
-            assert consumed.is_valid() is True
+            mock_time.time.return_value = consumed.consumed_at + 0.999
+            assert consumed.is_valid(self.CALL_ID) is True
 
     def test_no_grace_period_without_consumed_at(self):
-        """consumed_at=0 (pre-grace-period serialized state) means no grace — expired immediately."""
-        # Simulates a ScopedAllow deserialized from state written before this feature
+        """consumed_at=0 (pre-feature serialized state) means no grace — expired immediately."""
         sa = ScopedAllow(pattern="rm", remaining_uses=0, consumed_at=0.0)
-        assert sa.is_valid() is False  # No grace period without consumed_at
+        assert sa.is_valid(self.CALL_ID) is False  # No grace period without consumed_at
 
     def test_multi_use_allow_no_grace_until_exhausted(self):
         """Grace period only activates when remaining_uses hits 0, not before."""
         sa = ScopedAllow(pattern="rm", remaining_uses=3)
-        after_one = sa.consume()
+        after_one = sa.consume(self.CALL_ID)
         assert after_one.remaining_uses == 2
         assert after_one.consumed_at == 0.0  # Not exhausted yet
-        assert after_one.is_valid() is True  # Valid normally, not via grace
+        assert after_one.last_call_id == ""  # Fingerprint not stamped yet
+        assert after_one.is_valid(self.CALL_ID) is True  # Valid normally, not via grace
+
+    def test_different_call_id_blocked_within_grace_window(self):
+        """Different session's fingerprint is blocked even within the 1s grace window.
+
+        This prevents a global allow from granting grace to a concurrent
+        different session that runs the same command within 1s.
+        Session A's call_id = hash("sessionA:Bash:git push")
+        Session B's call_id = hash("sessionB:Bash:git push") ≠ session A's
+        """
+        session_a_call_id = "aaaa1111aaaa1111"
+        session_b_call_id = "bbbb2222bbbb2222"
+
+        original = ScopedAllow(pattern="git push", remaining_uses=1)
+        consumed_by_a = original.consume(session_a_call_id)
+
+        # Session A's parallel hook → same fingerprint → allowed ✓
+        assert consumed_by_a.is_valid(session_a_call_id) is True
+
+        # Session B's hook → different fingerprint → blocked ✓
+        assert consumed_by_a.is_valid(session_b_call_id) is False
+
+    def test_no_call_id_falls_back_to_time_only(self):
+        """Legacy callers that pass no call_id fall back to time-only check."""
+        original = ScopedAllow(pattern="git push", remaining_uses=1)
+        consumed = original.consume(self.CALL_ID)  # Stamped with fingerprint
+
+        # Legacy is_valid() call (no call_id) → time-only check → passes within window
+        assert consumed.is_valid() is True
+
+        # After grace expires, still blocked even with no call_id
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = consumed.consumed_at + 2.0
+            assert consumed.is_valid() is False
 
 
 class TestScopedAllowSerialization:
