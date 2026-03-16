@@ -1173,10 +1173,30 @@ class AutorunApp:
         return decorator
 
     def _run_chain(self, ctx: EventContext, chain_name: str) -> Optional[Dict]:
-        """
-        Run a handler chain, return first non-None result (DRY: single chain runner).
+        """Run a handler chain, return first non-None result ("first-wins" semantics).
 
-        Used by all event types - eliminates duplicate chain execution code.
+        CHAIN RETURN VALUE CONTRACT
+        ───────────────────────────
+        Every handler registered with @app.on() must return one of:
+
+          None   — "I don't apply here." Chain continues to the next handler.
+                   Use when the handler's preconditions are not met (wrong tool,
+                   policy allows, pattern didn't match, etc.).
+
+          dict   — "I made a decision." Chain stops immediately; this dict is
+                   returned as the daemon's response to the CLI.
+                   Build via ctx.allow(), ctx.deny(), ctx.respond(), etc.
+
+        _run_chain() itself returns:
+          None   — No handler in the chain returned a dict (pass-through).
+                   dispatch() will send {} to the daemon client, which exits 0
+                   without printing anything, allowing the CLI to proceed normally.
+          dict   — The first handler's decision dict.
+
+        NOTE: deny-wins accumulation (TIER 2 in check_blocked_commands) is an
+        internal pattern *within* a single handler, not part of the chain mechanism.
+        That handler collects all matching rules, picks deny>warn, then returns
+        a single dict (or None if nothing matched). The chain sees only one result.
         """
         for handler in self.chains.get(chain_name, []):
             result = handler(ctx)

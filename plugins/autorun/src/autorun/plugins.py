@@ -592,8 +592,17 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         return ctx.allow()
 
     # Fingerprint for this hook invocation: identifies parallel invocations of the
-    # same tool call in the same session. Used by ScopedAllow.is_valid()/consume()
-    # to restrict the grace period to parallel hooks, not concurrent other sessions.
+    # same tool call in the same session. Constructed from session_id+tool+cmd so
+    # that different sessions (or different commands) produce different fingerprints.
+    #
+    # How the two-invocation race works (see scoped_allow.py:_PARALLEL_GRACE_SECONDS):
+    #   Hook A (direct plugin)  → is_valid(call_id) True (uses still > 0)
+    #                           → consume(call_id)   stamps consumed_at + last_call_id
+    #   Hook B (rtk-spawned)    → is_valid(call_id) True (grace: time < 1s AND fingerprint matches)
+    #                           → consume(call_id)   refreshes consumed_at (no double-count)
+    #
+    # is_valid uses the stored last_call_id to verify fingerprint-match before granting grace.
+    # consume stores call_id so the next parallel invocation can verify it.
     call_id = hashlib.md5(
         f"{ctx.session_id}:{ctx.tool_name}:{cmd}".encode()
     ).hexdigest()[:16]
