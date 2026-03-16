@@ -101,6 +101,108 @@ class TestScopedAllowConsume:
         consumed = sa.consume()
         assert consumed is sa  # Same object returned
 
+    def test_consumed_at_not_set_until_exhausted(self):
+        """consumed_at stays 0 while uses remain — only set when count hits 0."""
+        sa = ScopedAllow(pattern="rm", remaining_uses=2)
+        after_one = sa.consume()
+        assert after_one.remaining_uses == 1
+        assert after_one.consumed_at == 0.0  # Not yet exhausted
+        after_two = after_one.consume()
+        assert after_two.remaining_uses == 0
+        assert after_two.consumed_at > 0.0  # Stamped on exhaustion
+
+    def test_consume_when_already_zero_refreshes_grace_window(self):
+        """A third parallel hook invocation (consume on already-0) refreshes consumed_at.
+
+        Scenario: Hook A consumes 1→0 (stamps consumed_at=T1).
+        Hook B calls consume() on the same original allow (1→0, stamps T2 ≈ T1).
+        Hook C, arriving slightly later, calls consume() on 0→0 again (stamps T3).
+        All three should remain valid within the grace window.
+        """
+        sa = ScopedAllow(pattern="rm", remaining_uses=1)
+        hook_a = sa.consume()  # 1→0, consumed_at stamped
+        assert hook_a.remaining_uses == 0
+        assert hook_a.consumed_at > 0
+
+        hook_c = hook_a.consume()  # 0→0, consumed_at refreshed
+        assert hook_c.remaining_uses == 0
+        assert hook_c.consumed_at >= hook_a.consumed_at
+        assert hook_c.is_valid() is True  # Still in grace window
+
+
+class TestParallelHookGracePeriod:
+    """Tests for the parallel hook invocation grace period.
+
+    Root cause of the /ar:ok 'git push' double-block bug:
+    Multiple cached plugin versions (ar/0.9.0, ar/0.10.0, temp_local_...)
+    each register PreToolUse hooks. One Bash tool call spawns N parallel
+    autorun hook invocations. Hook A consumes a 1-use allow (remaining_uses
+    1→0). Hook B finds remaining_uses=0 and without the grace period would
+    fall through to TIER 2 blocking rules, causing the command to be blocked
+    despite the user having granted permission.
+    """
+
+    def test_parallel_hook_b_passes_after_hook_a_consumes(self):
+        """Hook B sees allow as valid immediately after Hook A exhausts it.
+
+        Simulates the exact race: both hooks receive the same original allow
+        object, Hook A consumes it first, Hook B checks is_valid() on the
+        consumed copy within milliseconds.
+        """
+        original = ScopedAllow(pattern="git push", remaining_uses=1)
+        assert original.is_valid() is True
+
+        # Hook A: consume the allow
+        hook_a_result = original.consume()
+        assert hook_a_result.remaining_uses == 0
+
+        # Hook B: check is_valid() immediately (parallel invocation)
+        # Without grace period this would be False → falls to TIER 2 → blocked
+        assert hook_a_result.is_valid() is True
+
+    def test_parallel_hook_blocked_after_grace_period_expires(self):
+        """A genuine second invocation (>5s later) is correctly blocked."""
+        original = ScopedAllow(pattern="git push", remaining_uses=1)
+        consumed = original.consume()
+        assert consumed.remaining_uses == 0
+        assert consumed.consumed_at > 0
+
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = consumed.consumed_at + 6.0
+            assert consumed.is_valid() is False  # Grace expired
+
+    def test_grace_period_boundary_at_exactly_5s(self):
+        """At exactly 5s grace period, allow should be invalid (boundary is exclusive)."""
+        original = ScopedAllow(pattern="git push", remaining_uses=1)
+        consumed = original.consume()
+
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = consumed.consumed_at + 5.0
+            assert consumed.is_valid() is False  # 5.0 is not < 5.0
+
+    def test_grace_period_just_inside_boundary(self):
+        """Just inside 5s grace period, allow is still valid."""
+        original = ScopedAllow(pattern="git push", remaining_uses=1)
+        consumed = original.consume()
+
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = consumed.consumed_at + 4.999
+            assert consumed.is_valid() is True
+
+    def test_no_grace_period_without_consumed_at(self):
+        """consumed_at=0 (pre-grace-period serialized state) means no grace — expired immediately."""
+        # Simulates a ScopedAllow deserialized from state written before this feature
+        sa = ScopedAllow(pattern="rm", remaining_uses=0, consumed_at=0.0)
+        assert sa.is_valid() is False  # No grace period without consumed_at
+
+    def test_multi_use_allow_no_grace_until_exhausted(self):
+        """Grace period only activates when remaining_uses hits 0, not before."""
+        sa = ScopedAllow(pattern="rm", remaining_uses=3)
+        after_one = sa.consume()
+        assert after_one.remaining_uses == 2
+        assert after_one.consumed_at == 0.0  # Not exhausted yet
+        assert after_one.is_valid() is True  # Valid normally, not via grace
+
 
 class TestScopedAllowSerialization:
     def test_roundtrip(self):
@@ -132,6 +234,33 @@ class TestScopedAllowSerialization:
         sa = ScopedAllow(pattern="rm")
         d = sa.to_dict()
         assert d == {"pattern": "rm", "pattern_type": "literal"}
+
+    def test_consumed_at_serialization_roundtrip(self):
+        """consumed_at is persisted so grace period survives session state reads."""
+        sa = ScopedAllow(pattern="git push", remaining_uses=1)
+        consumed = sa.consume()
+        assert consumed.consumed_at > 0.0
+
+        d = consumed.to_dict()
+        assert "consumed_at" in d
+        assert d["consumed_at"] == consumed.consumed_at
+
+        restored = ScopedAllow.from_dict(d)
+        assert restored.consumed_at == consumed.consumed_at
+        assert restored.is_valid() is True  # Grace period intact after roundtrip
+
+    def test_consumed_at_not_in_dict_when_zero(self):
+        """consumed_at=0 should not be serialized (keeps dict minimal)."""
+        sa = ScopedAllow(pattern="rm", remaining_uses=2)
+        d = sa.to_dict()
+        assert "consumed_at" not in d
+
+    def test_from_dict_without_consumed_at_defaults_zero(self):
+        """Legacy dicts without consumed_at default to 0 → no grace period."""
+        d = {"pattern": "rm", "pattern_type": "literal", "remaining_uses": 0}
+        sa = ScopedAllow.from_dict(d)
+        assert sa.consumed_at == 0.0
+        assert sa.is_valid() is False  # Exhausted, no grace
 
 
 class TestScopedAllowStatusLabel:
