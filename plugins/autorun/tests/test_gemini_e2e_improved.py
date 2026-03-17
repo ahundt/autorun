@@ -1100,18 +1100,17 @@ class TestGeminiExtensionVerification:
             assert hook_name in config["hooks"], \
                 f"Missing required hook: {hook_name}"
 
-        # Verify BeforeTool hook has correct matchers
+        # Verify BeforeTool hook is configured
         before_tool = config["hooks"]["BeforeTool"]
-        assert len(before_tool) > 0, "BeforeTool hook has no matchers"
+        assert len(before_tool) > 0, "BeforeTool hook has no configs"
 
-        # Check for Gemini tool names in matchers
-        first_matcher = before_tool[0]
-        assert "matcher" in first_matcher, "BeforeTool missing matcher"
-
-        matcher_str = first_matcher["matcher"]
-        gemini_tools = ["write_file", "bash_command", "run_shell_command", "exit_plan_mode"]
-        assert any(tool in matcher_str for tool in gemini_tools), \
-            f"Matcher doesn't include Gemini tool names: {matcher_str}"
+        # Catch-all (no matcher) covers all tools; explicit matcher must include Gemini tools
+        first_config = before_tool[0]
+        if "matcher" in first_config:
+            matcher_str = first_config["matcher"]
+            gemini_tools = ["write_file", "bash_command", "run_shell_command", "exit_plan_mode"]
+            assert any(tool in matcher_str for tool in gemini_tools), \
+                f"Matcher doesn't include Gemini tool names: {matcher_str}"
 
 
 # Documentation

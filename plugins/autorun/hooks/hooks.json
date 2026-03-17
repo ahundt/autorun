@@ -1,5 +1,5 @@
 {
-  "description": "autorun v0.8 - Gemini CLI native compatibility hooks",
+  "description": "autorun v0.10 - Gemini CLI native compatibility hooks",
   "hooks": {
     "SessionStart": [
       {
@@ -24,7 +24,6 @@
     ],
     "BeforeTool": [
       {
-        "matcher": "write_file|run_shell_command|replace|read_file|glob|grep_search|exit_plan_mode",
         "hooks": [{
           "name": "autorun-pretool",
           "type": "command",
@@ -56,18 +55,8 @@
     ],
     "AfterTool": [
       {
-        "matcher": "write_file|replace|read_file|exit_plan_mode",
         "hooks": [{
-          "name": "autorun-posttool-plan",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
-      },
-      {
-        "matcher": "write_todos",
-        "hooks": [{
-          "name": "autorun-posttool-task",
+          "name": "autorun-posttool",
           "type": "command",
           "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
           "timeout": 5000

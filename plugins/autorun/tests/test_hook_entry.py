@@ -998,8 +998,8 @@ class TestAllLocationsSync:
             "Must have Claude Code event names (not Gemini's BeforeTool)"
         assert "${CLAUDE_PLUGIN_ROOT}" in content, \
             "Must use Claude Code variables (not Gemini's ${extensionPath})"
-        assert "Bash" in content, \
-            "Must use Claude Code tool names (not Gemini's run_shell_command)"
+        assert "run_shell_command" not in content, \
+            "Must NOT use Gemini tool names (run_shell_command) in Claude hooks"
 
     def test_cache_matches_source_hook_entry(self):
         """Location 4: Claude Code cache hook_entry.py must match source."""

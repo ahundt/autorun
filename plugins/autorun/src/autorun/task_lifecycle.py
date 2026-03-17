@@ -51,7 +51,7 @@ from .session_manager import session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
     PLAN_TOOLS, TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS,
-    TASK_LIST_TOOLS, TASK_GET_TOOLS
+    TASK_LIST_TOOLS, TASK_GET_TOOLS, TASK_COMBINED_TOOLS
 )
 
 
@@ -1618,14 +1618,22 @@ def register_hooks(app_instance) -> None:
     @app_instance.on("PostToolUse")
     def track_task_operations(ctx: EventContext) -> Optional[Dict]:
         """Track Task tool usage for AI continuation (PostToolUse hook)."""
-        if ctx.tool_name not in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS):
+        if ctx.tool_name not in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS):
             return None
 
         try:
             # Instantiate class with auto-detected session ID
             manager = TaskLifecycle(ctx=ctx)
 
-            if ctx.tool_name in TASK_CREATE_TOOLS:
+            if ctx.tool_name in TASK_COMBINED_TOOLS:
+                # Gemini CLI uses write_todos for all task operations.
+                # Route based on content: taskId in input → update, else create.
+                if ctx.tool_input.get("taskId"):
+                    manager.handle_task_update(ctx)
+                elif "created" in (ctx.tool_result or "").lower():
+                    manager.handle_task_create(ctx)
+                # else: list/get — just update activity below
+            elif ctx.tool_name in TASK_CREATE_TOOLS:
                 manager.handle_task_create(ctx)
             elif ctx.tool_name in TASK_UPDATE_TOOLS:
                 ghost_result = manager.handle_task_update(ctx)

@@ -82,7 +82,12 @@ def test_source_hooks_json_has_claude_events():
 
 
 def test_source_hooks_json_has_claude_tool_names():
-    """Test that source hooks.json uses Claude Code tool names."""
+    """Test that source claude-hooks.json uses Claude Code conventions.
+
+    With catch-all matchers (no matcher field), tool names may not appear
+    in the JSON itself. Instead verify: no Gemini tool names present,
+    and uses ${CLAUDE_PLUGIN_ROOT} (not ${extensionPath}).
+    """
     hooks_file = get_plugin_root() / "hooks" / "claude-hooks.json"
 
     with open(hooks_file, encoding="utf-8") as f:
@@ -90,19 +95,18 @@ def test_source_hooks_json_has_claude_tool_names():
 
     hooks_json_str = json.dumps(hooks_data)
 
-    # Claude Code tool names should be present
-    claude_tools = ["Write", "Bash", "Edit", "ExitPlanMode", "TaskCreate"]
-    found_claude_tools = [tool for tool in claude_tools if tool in hooks_json_str]
-
-    assert len(found_claude_tools) > 0, \
-        f"Should find Claude tool names like {claude_tools}"
-
-    # Gemini CLI tool names should NOT be present
+    # Any matchers that DO exist should use Claude tool names, not Gemini
     gemini_tools = ["write_file", "run_shell_command", "replace"]
     found_gemini_tools = [tool for tool in gemini_tools if tool in hooks_json_str]
 
     assert len(found_gemini_tools) == 0, \
         f"Should NOT find Gemini tool names {gemini_tools}, found: {found_gemini_tools}"
+
+    # Must use Claude Code variable, not Gemini
+    assert "${CLAUDE_PLUGIN_ROOT}" in hooks_json_str, \
+        "Claude hooks must use ${CLAUDE_PLUGIN_ROOT}"
+    assert "${extensionPath}" not in hooks_json_str, \
+        "Claude hooks must NOT use Gemini's ${extensionPath}"
 
 
 def test_gemini_hooks_json_is_gemini_format():
@@ -154,7 +158,12 @@ def test_gemini_hooks_json_has_gemini_events():
 
 
 def test_gemini_hooks_json_has_gemini_tool_names():
-    """Test that hooks.json uses Gemini CLI tool names."""
+    """Test that hooks.json uses Gemini CLI conventions.
+
+    With catch-all matchers (no matcher field), tool names may not appear
+    in the JSON itself. Instead verify: no Claude-only tool names present,
+    and uses ${extensionPath} (not ${CLAUDE_PLUGIN_ROOT}).
+    """
     hooks_file = get_plugin_root() / "hooks" / "hooks.json"
 
     with open(hooks_file, encoding="utf-8") as f:
@@ -162,19 +171,17 @@ def test_gemini_hooks_json_has_gemini_tool_names():
 
     hooks_json_str = json.dumps(hooks_data)
 
-    # Gemini CLI tool names should be present
-    gemini_tools = ["write_file", "run_shell_command", "replace"]
-    found_gemini_tools = [tool for tool in gemini_tools if tool in hooks_json_str]
-
-    assert len(found_gemini_tools) >= 2, \
-        f"Should find Gemini tool names like {gemini_tools}, found: {found_gemini_tools}"
-
-    # Claude Code tool names should NOT be present (except common ones)
+    # Any matchers that DO exist should use Gemini tool names, not Claude
     claude_only_tools = ["Bash", "Write|Edit", "TaskCreate|TaskUpdate"]
-
     for tool_pattern in claude_only_tools:
         assert tool_pattern not in hooks_json_str, \
             f"Claude-only tool pattern '{tool_pattern}' should NOT be in Gemini hooks"
+
+    # Must use Gemini variable, not Claude
+    assert "${extensionPath}" in hooks_json_str, \
+        "Gemini hooks must use ${extensionPath}"
+    assert "${CLAUDE_PLUGIN_ROOT}" not in hooks_json_str, \
+        "Gemini hooks must NOT use Claude's ${CLAUDE_PLUGIN_ROOT}"
 
 
 def test_gemini_hooks_have_type_field():
@@ -367,35 +374,42 @@ class TestGeminiHookMatchers:
     in a matcher means the hook never fires for that tool.
     """
 
-    def test_gemini_before_tool_matcher_includes_exit_plan_mode(self):
-        """Gemini BeforeTool matcher must include exit_plan_mode.
+    def test_gemini_before_tool_covers_exit_plan_mode(self):
+        """Gemini BeforeTool must fire for exit_plan_mode (needed by backup export).
 
-        Without this, track_and_export_plans_early() (PreToolUse backup)
-        never fires for Gemini ExitPlanMode. Only the AfterTool path works.
-        Fixed: added |exit_plan_mode to hooks/hooks.json BeforeTool matcher.
+        With catch-all (no matcher), all tools including exit_plan_mode are covered.
+        If a selective matcher is used, exit_plan_mode must be included.
         """
         hooks_path = get_plugin_root() / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         before_tool_groups = hooks["hooks"]["BeforeTool"]
         assert len(before_tool_groups) > 0, "No BeforeTool hooks registered"
-        matcher = before_tool_groups[0]["matcher"]
-        assert "exit_plan_mode" in matcher, (
-            f"Gemini BeforeTool matcher missing exit_plan_mode. "
-            f"Current matcher: {matcher}"
+        covers_exit = any(
+            "matcher" not in g or "exit_plan_mode" in g.get("matcher", "")
+            for g in before_tool_groups
+        )
+        assert covers_exit, (
+            f"Gemini BeforeTool must cover exit_plan_mode (catch-all or in matcher). "
+            f"Groups: {before_tool_groups}"
         )
 
-    def test_claude_hooks_exit_plan_mode_in_pre_tool_use(self):
-        """Claude PreToolUse matcher must include ExitPlanMode for backup export.
+    def test_claude_hooks_pre_tool_use_covers_exit_plan_mode(self):
+        """Claude PreToolUse must fire for ExitPlanMode (needed by backup export).
 
-        Structure: hooks["hooks"]["PreToolUse"] is a list of handler_groups.
-        Each handler_group has "matcher" at the top level (not inside "hooks" items).
+        With catch-all (no matcher), all tools including ExitPlanMode are covered.
+        If a selective matcher is used, ExitPlanMode must be included.
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
-        matchers = [g.get("matcher", "") for g in pre_tool_groups]
-        assert any("ExitPlanMode" in m for m in matchers), (
-            f"Claude PreToolUse must match ExitPlanMode. Matchers: {matchers}"
+        # Either catch-all (no matcher) or explicit ExitPlanMode in matcher
+        covers_exit = any(
+            "matcher" not in g or "ExitPlanMode" in g.get("matcher", "")
+            for g in pre_tool_groups
+        )
+        assert covers_exit, (
+            f"Claude PreToolUse must cover ExitPlanMode (catch-all or in matcher). "
+            f"Groups: {pre_tool_groups}"
         )
 
     def test_claude_hooks_post_tool_use_catches_all_tools(self):
@@ -414,6 +428,55 @@ class TestGeminiHookMatchers:
         assert has_catch_all, (
             f"Claude PostToolUse must have a catch-all group (no matcher). "
             f"Groups: {post_tool_groups}"
+        )
+
+    def test_gemini_hooks_after_tool_catches_all_tools(self):
+        """Gemini AfterTool must fire for ALL tools (no matcher = catch-all).
+
+        Same requirement as Claude PostToolUse: deliver_pending_stop_injection,
+        check_task_staleness, and remind_until_tasks_created need ALL tools.
+        Previously had selective matchers that excluded run_shell_command,
+        glob, grep_search, task tools — silently breaking 3 handlers.
+        """
+        hooks_path = get_plugin_root() / "hooks" / "hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        after_tool_groups = hooks["hooks"]["AfterTool"]
+        has_catch_all = any("matcher" not in g for g in after_tool_groups)
+        assert has_catch_all, (
+            f"Gemini AfterTool must have a catch-all group (no matcher). "
+            f"Groups: {after_tool_groups}"
+        )
+
+    def test_gemini_before_tool_catches_all_tools(self):
+        """Gemini BeforeTool must fire for ALL tools (no matcher = catch-all).
+
+        WOLOG: Consistent with AfterTool/PostToolUse catch-all pattern.
+        All PreToolUse handlers self-filter by tool name, so no incorrect
+        processing occurs. Catch-all future-proofs new handlers.
+        """
+        hooks_path = get_plugin_root() / "hooks" / "hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        before_tool_groups = hooks["hooks"]["BeforeTool"]
+        has_catch_all = any("matcher" not in g for g in before_tool_groups)
+        assert has_catch_all, (
+            f"Gemini BeforeTool must have a catch-all group (no matcher). "
+            f"Groups: {before_tool_groups}"
+        )
+
+    def test_claude_hooks_pre_tool_use_catches_all_tools(self):
+        """Claude PreToolUse must fire for ALL tools (no matcher = catch-all).
+
+        WOLOG: Consistent with PostToolUse catch-all pattern.
+        All PreToolUse handlers self-filter by tool name, so no incorrect
+        processing occurs. Catch-all future-proofs new handlers.
+        """
+        hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        pre_tool_groups = hooks["hooks"]["PreToolUse"]
+        has_catch_all = any("matcher" not in g for g in pre_tool_groups)
+        assert has_catch_all, (
+            f"Claude PreToolUse must have a catch-all group (no matcher). "
+            f"Groups: {pre_tool_groups}"
         )
 
 

@@ -192,19 +192,23 @@ class TestClaudeHooksJson:
             assert event not in hooks_section, \
                 f"Gemini-only event '{event}' in Claude hooks"
 
-    def test_pretooluse_matcher_includes_bash(self):
+    def test_pretooluse_covers_bash(self):
         data = load_hooks_json(HOOKS_JSON)
         pretool = data["hooks"].get("PreToolUse", [])
         assert len(pretool) > 0
+        # Catch-all (no matcher) covers all tools including Bash
+        has_catch_all = any("matcher" not in g for g in pretool)
         matchers_str = "|".join(c.get("matcher", "") for c in pretool)
-        assert "Bash" in matchers_str, \
-            f"PreToolUse must match 'Bash'. Matchers: {matchers_str}"
+        assert has_catch_all or "Bash" in matchers_str, \
+            f"PreToolUse must cover 'Bash' (catch-all or in matcher). Matchers: {matchers_str}"
 
-    def test_pretooluse_matcher_includes_write(self):
+    def test_pretooluse_covers_write(self):
         data = load_hooks_json(HOOKS_JSON)
         pretool = data["hooks"].get("PreToolUse", [])
+        has_catch_all = any("matcher" not in g for g in pretool)
         matchers_str = "|".join(c.get("matcher", "") for c in pretool)
-        assert "Write" in matchers_str
+        assert has_catch_all or "Write" in matchers_str, \
+            f"PreToolUse must cover 'Write' (catch-all or in matcher). Matchers: {matchers_str}"
 
     def test_timeout_is_seconds(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -281,18 +285,22 @@ class TestGeminiHooksJson:
             assert event not in hooks_section, \
                 f"Claude-only event '{event}' in Gemini hooks"
 
-    def test_beforetool_matcher_includes_run_shell_command(self):
+    def test_beforetool_covers_run_shell_command(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         beforetool = data["hooks"].get("BeforeTool", [])
         assert len(beforetool) > 0
+        has_catch_all = any("matcher" not in g for g in beforetool)
         matchers_str = "|".join(c.get("matcher", "") for c in beforetool)
-        assert "run_shell_command" in matchers_str
+        assert has_catch_all or "run_shell_command" in matchers_str, \
+            f"BeforeTool must cover run_shell_command (catch-all or in matcher). Matchers: {matchers_str}"
 
-    def test_beforetool_matcher_includes_write_file(self):
+    def test_beforetool_covers_write_file(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         beforetool = data["hooks"].get("BeforeTool", [])
+        has_catch_all = any("matcher" not in g for g in beforetool)
         matchers_str = "|".join(c.get("matcher", "") for c in beforetool)
-        assert "write_file" in matchers_str
+        assert has_catch_all or "write_file" in matchers_str, \
+            f"BeforeTool must cover write_file (catch-all or in matcher). Matchers: {matchers_str}"
 
     def test_timeout_is_milliseconds(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)

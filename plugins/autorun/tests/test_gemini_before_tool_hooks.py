@@ -320,15 +320,13 @@ def test_gemini_before_tool_hook_structure(
     assert len(before_tool_configs) > 0, \
         "No BeforeTool hooks configured"
 
-    # Check first config has matcher
+    # Check first config covers write_file (catch-all or explicit matcher)
     first_config = before_tool_configs[0]
-    assert "matcher" in first_config, \
-        "BeforeTool config missing matcher"
-
-    # Check matcher includes write_file
-    matcher = first_config["matcher"]
-    assert "write_file" in matcher, \
-        f"BeforeTool matcher should include write_file, got: {matcher}"
+    has_catch_all = "matcher" not in first_config
+    if not has_catch_all:
+        matcher = first_config["matcher"]
+        assert "write_file" in matcher, \
+            f"BeforeTool matcher should include write_file, got: {matcher}"
 
     # Check hooks list exists
     assert "hooks" in first_config, \
@@ -399,11 +397,11 @@ def test_gemini_session_start_hook_fires(
         )
 
 
-def test_gemini_before_tool_hook_matcher_includes_run_shell_command(
+def test_gemini_before_tool_hook_covers_run_shell_command(
     gemini_extension_installed
 ):
     """
-    Test that BeforeTool hooks matcher includes run_shell_command.
+    Test that BeforeTool hooks cover run_shell_command (catch-all or matcher).
 
     This verifies the hook will fire for shell command execution.
     """
@@ -416,24 +414,19 @@ def test_gemini_before_tool_hook_matcher_includes_run_shell_command(
     hooks_section = hooks_data.get("hooks", {})
     before_tool_configs = hooks_section.get("BeforeTool", [])
 
-    # Find config that matches run_shell_command
-    has_run_shell_command = False
+    # Catch-all (no matcher) covers all tools
+    has_catch_all = any("matcher" not in c for c in before_tool_configs)
+    has_explicit = any("run_shell_command" in c.get("matcher", "") for c in before_tool_configs)
 
-    for config in before_tool_configs:
-        matcher = config.get("matcher", "")
-        if "run_shell_command" in matcher:
-            has_run_shell_command = True
-            break
-
-    assert has_run_shell_command, \
-        "BeforeTool matcher should include run_shell_command for command blocking"
+    assert has_catch_all or has_explicit, \
+        "BeforeTool must cover run_shell_command (catch-all or in matcher)"
 
 
-def test_gemini_before_tool_hook_matcher_includes_replace(
+def test_gemini_before_tool_hook_covers_replace(
     gemini_extension_installed
 ):
     """
-    Test that BeforeTool hooks matcher includes replace tool.
+    Test that BeforeTool hooks cover replace tool (catch-all or matcher).
 
     This verifies the hook will fire for file editing.
     """
@@ -446,17 +439,12 @@ def test_gemini_before_tool_hook_matcher_includes_replace(
     hooks_section = hooks_data.get("hooks", {})
     before_tool_configs = hooks_section.get("BeforeTool", [])
 
-    # Find config that matches replace
-    has_replace = False
+    # Catch-all (no matcher) covers all tools
+    has_catch_all = any("matcher" not in c for c in before_tool_configs)
+    has_explicit = any("replace" in c.get("matcher", "") for c in before_tool_configs)
 
-    for config in before_tool_configs:
-        matcher = config.get("matcher", "")
-        if "replace" in matcher:
-            has_replace = True
-            break
-
-    assert has_replace, \
-        "BeforeTool matcher should include replace for file modification control"
+    assert has_catch_all or has_explicit, \
+        "BeforeTool must cover replace (catch-all or in matcher)"
 
 
 @pytest.mark.integration

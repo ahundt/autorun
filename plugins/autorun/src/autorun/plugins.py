@@ -40,7 +40,7 @@ from .core import app, EventContext, logger, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
-    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS
+    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_COMBINED_TOOLS
 )
 from .session_manager import session_state
 from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
@@ -1105,7 +1105,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
 
     # Reset counter when AI actively manages tasks; skip increment.
-    if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS):
+    if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_COMBINED_TOOLS):
         ctx.tool_calls_since_task_update = 0
         return None
 

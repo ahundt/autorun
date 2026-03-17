@@ -38,7 +38,10 @@ TASK_CREATE_TOOLS = {"TaskCreate", "task_create"}
 TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update"}
 TASK_LIST_TOOLS = {"TaskList", "task_list"}
 TASK_GET_TOOLS = {"TaskGet", "task_get"}
-ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS
+# Gemini CLI uses "write_todos" for ALL task operations (create, update, list).
+# Routing is handled in track_task_operations by inspecting tool_input.
+TASK_COMBINED_TOOLS = {"write_todos"}
+ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS
 
 
 # =============================================================================
