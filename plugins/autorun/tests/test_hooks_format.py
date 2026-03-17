@@ -398,18 +398,22 @@ class TestGeminiHookMatchers:
             f"Claude PreToolUse must match ExitPlanMode. Matchers: {matchers}"
         )
 
-    def test_claude_hooks_exit_plan_mode_in_post_tool_use(self):
-        """Claude PostToolUse matcher must include ExitPlanMode for primary export.
+    def test_claude_hooks_post_tool_use_catches_all_tools(self):
+        """Claude PostToolUse must fire for ALL tools (no matcher = catch-all).
 
-        Structure: hooks["hooks"]["PostToolUse"] is a list of handler_groups.
-        Each handler_group has "matcher" at the top level (not inside "hooks" items).
+        Required by: check_task_staleness (counts all tool calls),
+        detect_plan_approval (ExitPlanMode), task lifecycle tracking.
+        Previously had per-tool matchers that missed Read/Grep/Glob/Agent,
+        causing staleness counter to never reach threshold.
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         post_tool_groups = hooks["hooks"]["PostToolUse"]
-        matchers = [g.get("matcher", "") for g in post_tool_groups]
-        assert any("ExitPlanMode" in m for m in matchers), (
-            f"Claude PostToolUse must match ExitPlanMode. Matchers: {matchers}"
+        # At least one group must have no matcher (catch-all)
+        has_catch_all = any("matcher" not in g for g in post_tool_groups)
+        assert has_catch_all, (
+            f"Claude PostToolUse must have a catch-all group (no matcher). "
+            f"Groups: {post_tool_groups}"
         )
 
 

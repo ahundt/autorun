@@ -2,7 +2,7 @@
 """Unit tests for tmux injector system
 
 Tests are designed to:
-1. Use real tmux execution in the 'autorun' session where possible
+1. Use real tmux execution in a test-specific session (never production 'autorun')
 2. Only mock time.sleep to avoid delays
 3. Test real behavior against actual tmux
 """
@@ -21,6 +21,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from autorun.tmux_injector import TmuxInjector, DualChannelInjector
 
+# Test-only session name — NEVER use production 'autorun' name
+_TEST_SESSION = "autorun-test-injector"
+
 
 def is_tmux_available():
     """Check if tmux is available on the system"""
@@ -31,23 +34,29 @@ def is_tmux_available():
         return False
 
 
-def ensure_autorun_session():
-    """Ensure 'autorun' test session exists"""
+def ensure_test_session():
+    """Ensure test session exists (test-specific, never production)"""
     try:
-        # Check if session exists
         result = subprocess.run(
-            ['tmux', 'has-session', '-t', 'autorun'],
+            ['tmux', 'has-session', '-t', _TEST_SESSION],
             capture_output=True, text=True
         )
         if result.returncode != 0:
-            # Create the session
             subprocess.run(
-                ['tmux', 'new-session', '-d', '-s', 'autorun'],
+                ['tmux', 'new-session', '-d', '-s', _TEST_SESSION],
                 capture_output=True, text=True
             )
         return True
     except Exception:
         return False
+
+
+def kill_test_session():
+    """Kill test session (only our test-specific session, never production)"""
+    subprocess.run(
+        ['tmux', 'kill-session', '-t', _TEST_SESSION],
+        capture_output=True, timeout=5
+    )
 
 
 # Skip all tests if tmux is not available
@@ -57,19 +66,27 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def manage_test_session():
+    """Create test session before each test, kill after."""
+    ensure_test_session()
+    yield
+    kill_test_session()
+
+
 class TestTmuxInjector:
     """Test suite for tmux injector functionality"""
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        """Set up test environment with 'autorun' session"""
-        ensure_autorun_session()
-        self.injector = TmuxInjector("autorun")
+        """Set up test environment with test session"""
+        ensure_test_session()
+        self.injector = TmuxInjector(_TEST_SESSION)
 
     def test_tmux_injector_initialization(self):
         """Test tmux injector initialization"""
-        injector = TmuxInjector("autorun")
-        assert injector.session_id == "autorun"
+        injector = TmuxInjector(_TEST_SESSION)
+        assert injector.session_id == _TEST_SESSION
         assert injector.tmux_session is None  # Not detected yet
         assert injector.tmux_window is None
         assert injector.tmux_pane is None
@@ -81,37 +98,37 @@ class TestTmuxInjector:
 
     def test_detect_tmux_environment_success(self):
         """Test successful tmux environment detection with real tmux"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
-        # Should detect an environment (either current or create autorun session)
+        # Should detect an environment (either current or create session)
         assert result is not None
         assert "session" in result
         assert "window" in result
         assert "pane" in result
 
     def test_detect_tmux_environment_creates_session(self):
-        """Test that detect_tmux_environment returns an environment even when autorun is killed"""
-        # Kill autorun session if it exists
-        subprocess.run(['tmux', 'kill-session', '-t', 'autorun'], capture_output=True)
+        """Test that detect_tmux_environment returns an environment even when session is killed"""
+        # Kill test session (safe — only our test session)
+        kill_test_session()
 
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
         # When running inside tmux, detect_tmux_environment() returns the current session
-        # If not in tmux, it creates/returns the 'autorun' session
+        # If not in tmux, it creates/returns the session
         # Either way, we should get a valid environment
         assert result is not None
         assert "session" in result
         assert "window" in result
         assert "pane" in result
 
-        # Clean up - recreate session for other tests
-        ensure_autorun_session()
+        # Recreate for other tests
+        ensure_test_session()
 
     def test_capture_current_input_no_session_detected(self):
         """Test capturing input when no tmux session is detected yet"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # tmux_session is None (not detected yet)
 
         input_text = injector.capture_current_input()
@@ -119,7 +136,7 @@ class TestTmuxInjector:
 
     def test_capture_current_input_with_session(self):
         """Test capturing input from detected tmux session"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
         if result:
@@ -131,7 +148,7 @@ class TestTmuxInjector:
     @patch('time.sleep')
     def test_is_user_typing_no_session(self, mock_sleep):
         """Test user typing detection when no session is detected"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # tmux_session is None
 
         result = injector.is_user_typing()
@@ -142,7 +159,7 @@ class TestTmuxInjector:
         """Test user typing detection with a real session"""
         mock_sleep.return_value = None  # Don't actually sleep
 
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         injector.detect_tmux_environment()
 
         if injector.tmux_session:
@@ -152,7 +169,7 @@ class TestTmuxInjector:
 
     def test_clear_command_line_no_session(self):
         """Test command line clearing when no session is detected"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # tmux_session is None
 
         result = injector.clear_command_line()
@@ -160,7 +177,7 @@ class TestTmuxInjector:
 
     def test_clear_command_line_with_session(self):
         """Test command line clearing with real session"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
         if result and injector.tmux_session:
@@ -169,7 +186,7 @@ class TestTmuxInjector:
 
     def test_send_command_no_session(self):
         """Test command sending when no session is detected"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # tmux_session is None
 
         result = injector.send_command("echo test")
@@ -177,7 +194,7 @@ class TestTmuxInjector:
 
     def test_send_command_with_session(self):
         """Test command sending to real session"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
         if result and injector.tmux_session:
@@ -187,7 +204,7 @@ class TestTmuxInjector:
 
     def test_restore_input_no_session(self):
         """Test input restoration when no session is detected"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # tmux_session is None
 
         result = injector.restore_input("some text")
@@ -195,7 +212,7 @@ class TestTmuxInjector:
 
     def test_restore_input_empty_text(self):
         """Test input restoration with empty text"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         injector.detect_tmux_environment()
 
         result = injector.restore_input("")
@@ -216,7 +233,7 @@ class TestTmuxInjector:
 
     def test_verify_tmux_session_health_no_session(self):
         """Test session health verification when no session is detected"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # tmux_session is None
 
         result = injector.verify_tmux_session_health()
@@ -224,7 +241,7 @@ class TestTmuxInjector:
 
     def test_verify_tmux_session_health_with_session(self):
         """Test session health verification with real session"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
         if result and injector.tmux_session:
@@ -233,7 +250,7 @@ class TestTmuxInjector:
 
     def test_get_tmux_session_info_no_detection(self):
         """Test getting session info - auto-detects when tmux_session is None"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         # Note: get_tmux_session_info() calls detect_tmux_environment() internally
         # when tmux_session is None, so it auto-detects the environment
 
@@ -250,7 +267,7 @@ class TestTmuxInjector:
 
     def test_get_tmux_session_info_after_detection(self):
         """Test getting session info after detection"""
-        injector = TmuxInjector("autorun")
+        injector = TmuxInjector(_TEST_SESSION)
         result = injector.detect_tmux_environment()
 
         if result:
@@ -267,13 +284,13 @@ class TestDualChannelInjector:
     @pytest.fixture(autouse=True)
     def setup(self):
         """Set up test environment"""
-        ensure_autorun_session()
-        self.injector = DualChannelInjector("autorun")
+        ensure_test_session()
+        self.injector = DualChannelInjector(_TEST_SESSION)
 
     def test_dual_channel_injector_initialization(self):
         """Test dual channel injector initialization"""
-        injector = DualChannelInjector("autorun")
-        assert injector.session_id == "autorun"
+        injector = DualChannelInjector(_TEST_SESSION)
+        assert injector.session_id == _TEST_SESSION
         assert isinstance(injector.tmux_injector, TmuxInjector)
         assert injector.injection_history == []
 
@@ -315,7 +332,7 @@ class TestDualChannelInjector:
         self.injector.injection_history = [
             {
                 "timestamp": time.time(),
-                "session_id": "autorun",
+                "session_id": _TEST_SESSION,
                 "prompt_length": 10,
                 "preferred_channel": "api",
                 "channel_used": "api",
@@ -324,7 +341,7 @@ class TestDualChannelInjector:
             },
             {
                 "timestamp": time.time(),
-                "session_id": "autorun",
+                "session_id": _TEST_SESSION,
                 "prompt_length": 15,
                 "preferred_channel": "tmux",
                 "channel_used": "tmux",
@@ -333,7 +350,7 @@ class TestDualChannelInjector:
             },
             {
                 "timestamp": time.time(),
-                "session_id": "autorun",
+                "session_id": _TEST_SESSION,
                 "prompt_length": 8,
                 "preferred_channel": "api",
                 "channel_used": "none",

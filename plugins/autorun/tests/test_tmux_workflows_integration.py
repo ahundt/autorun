@@ -19,6 +19,42 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from autorun.tmux_utils import get_tmux_utilities
 
+# Test session name prefixes for cleanup
+_TEST_PREFIXES = (
+    "lifecycle-test", "recovery-test", "backup-test", "restore-test",
+    "cli-discovery", "error-testing", "multi-window", "interactive",
+    "batch-test", "byobu-test", "env-test", "debug-test",
+    "perf-monitoring", "template-", "health-monitor",
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_tmux_test_sessions():
+    """Kill stale test sessions before and after each test.
+
+    Root cause of inter-test failures: previous tests leave sessions that
+    conflict with auto-creation in execute_tmux_command (line 391-393).
+    """
+    def _cleanup():
+        try:
+            result = subprocess.run(
+                ["tmux", "list-sessions", "-F", "#{session_name}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                for name in result.stdout.strip().split("\n"):
+                    if name and any(name.startswith(p) for p in _TEST_PREFIXES):
+                        subprocess.run(
+                            ["tmux", "kill-session", "-t", name],
+                            capture_output=True, timeout=5,
+                        )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    _cleanup()
+    yield
+    _cleanup()
+
 
 class TestSessionAutomationWorkflows:
     """Integration tests for session automation workflows"""
