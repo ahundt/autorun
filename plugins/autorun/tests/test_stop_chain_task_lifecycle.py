@@ -649,3 +649,176 @@ class TestPendingStopInjection:
         assert any(ch == "ai" for _, ch in post_ctx._chain_notifications), (
             "pending_stop_injection must be delivered on 'ai' channel → additionalContext"
         )
+
+
+# === Test 10: End-to-end PostToolUse TaskCreate → Stop blocked ===
+
+class TestPostToolUseTaskCreateBlocksStop:
+    """Verify that tasks created via PostToolUse chain (real Claude Code path)
+    are tracked in TaskLifecycle and block Stop.
+
+    Bug reproduction (commit c5aface):
+    claude-hooks.json had PostToolUse matcher "ExitPlanMode|Write|Edit|Bash".
+    TaskCreate/TaskUpdate PostToolUse events NEVER fired, so task_lifecycle
+    never tracked tasks. handle_stop() found 0 incomplete tasks and allowed stop.
+    All tasks became ghost tasks (first seen via TaskUpdate, not TaskCreate).
+    Ghost tasks default to "ignored" status which is NON_BLOCKING.
+
+    Fix: PostToolUse now has no matcher (catch-all), so TaskCreate fires.
+    This test verifies the full chain: PostToolUse(TaskCreate) → tracked → Stop blocked.
+    """
+
+    def test_task_created_via_post_tool_use_blocks_stop(
+        self, isolated_task_config, isolated_session
+    ):
+        """Full E2E: PostToolUse(TaskCreate) → task tracked → Stop blocked.
+
+        Simulates the exact sequence Claude Code sends:
+        1. AI calls TaskCreate → Claude Code runs tool → PostToolUse fires
+        2. track_task_operations catches it → handle_task_create stores task
+        3. AI finishes work → Stop fires → prevent_premature_stop blocks
+        """
+        sid = f"test-e2e-posttool-stop-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Step 1: Simulate PostToolUse for TaskCreate
+        create_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="TaskCreate",
+            tool_input={"subject": "Fix login bug", "description": "Users can't log in"},
+            tool_result="Task #1 created successfully: Fix login bug",
+            store=store,
+        )
+
+        # Run through full PostToolUse chain
+        post_result = plugins.app._run_chain(create_ctx, "PostToolUse")
+        # PostToolUse handlers return None (allow tool to complete)
+
+        # Step 2: Verify task was tracked in lifecycle store
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        tasks = manager.tasks
+        assert "1" in tasks, (
+            f"Task #1 must be tracked after PostToolUse(TaskCreate). "
+            f"Tracked tasks: {list(tasks.keys())}. "
+            f"If empty, track_task_operations didn't fire — check PostToolUse matcher."
+        )
+        assert tasks["1"]["status"] == "pending", (
+            f"Newly created task must be 'pending', not '{tasks['1']['status']}'"
+        )
+        assert tasks["1"]["subject"] == "Fix login bug", (
+            f"Task subject must match. Got: {tasks['1']['subject']}"
+        )
+        # Must NOT be a ghost task
+        is_ghost = tasks["1"].get("metadata", {}).get("ghost_task", False)
+        assert not is_ghost, (
+            "Task created via PostToolUse(TaskCreate) must NOT be a ghost task. "
+            "Ghost tasks are NON_BLOCKING and won't prevent Stop."
+        )
+
+        # Step 3: Simulate Stop — must be blocked
+        stop_ctx = make_stop_ctx(session_id=sid, store=store, autorun_active=False)
+        stop_result = plugins.app._run_chain(stop_ctx, "Stop")
+
+        assert stop_result is not None, (
+            "Stop chain must block when task created via PostToolUse is pending. "
+            "If this fails, PostToolUse(TaskCreate) didn't track the task — "
+            "check claude-hooks.json PostToolUse matcher includes TaskCreate."
+        )
+        assert stop_result.get("continue") is True, (
+            "continue must be True to keep AI working (block stop)"
+        )
+        assert "Fix login bug" in stop_result.get("systemMessage", ""), (
+            "Stop message must include the task subject"
+        )
+
+    def test_task_updated_via_post_tool_use_unblocks_stop(
+        self, isolated_task_config, isolated_session
+    ):
+        """After marking task completed via PostToolUse(TaskUpdate), Stop is allowed."""
+        sid = f"test-e2e-update-unblock-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Create task
+        create_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="TaskCreate",
+            tool_input={"subject": "Quick fix", "description": ""},
+            tool_result="Task #1 created successfully: Quick fix",
+            store=store,
+        )
+        plugins.app._run_chain(create_ctx, "PostToolUse")
+
+        # Complete task
+        update_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="TaskUpdate",
+            tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status",
+            store=store,
+        )
+        plugins.app._run_chain(update_ctx, "PostToolUse")
+
+        # Stop should now be allowed
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
+        assert len(incomplete) == 0, (
+            f"All tasks completed, but {len(incomplete)} still incomplete"
+        )
+
+        stop_ctx = make_stop_ctx(session_id=sid, store=store)
+        stop_result = plugins.app._run_chain(stop_ctx, "Stop")
+        # Stop should be allowed (result is None or no CANNOT STOP message)
+        if stop_result is not None:
+            assert "CANNOT STOP" not in stop_result.get("systemMessage", ""), (
+                "Stop should be allowed when all tasks are completed"
+            )
+
+    def test_multiple_tasks_some_pending_blocks_stop(
+        self, isolated_task_config, isolated_session
+    ):
+        """Stop blocked when some tasks completed but others still pending."""
+        sid = f"test-e2e-partial-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Create 3 tasks
+        for i in range(1, 4):
+            ctx = EventContext(
+                session_id=sid,
+                event="PostToolUse",
+                tool_name="TaskCreate",
+                tool_input={"subject": f"Task {i}", "description": ""},
+                tool_result=f"Task #{i} created successfully: Task {i}",
+                store=store,
+            )
+            plugins.app._run_chain(ctx, "PostToolUse")
+
+        # Complete tasks 1 and 2, leave 3 pending
+        for tid in ["1", "2"]:
+            ctx = EventContext(
+                session_id=sid,
+                event="PostToolUse",
+                tool_name="TaskUpdate",
+                tool_input={"taskId": tid, "status": "completed"},
+                tool_result=f"Updated task #{tid} status",
+                store=store,
+            )
+            plugins.app._run_chain(ctx, "PostToolUse")
+
+        # Stop must be blocked (task 3 still pending)
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
+        assert len(incomplete) == 1, f"Expected 1 incomplete, got {len(incomplete)}"
+
+        stop_ctx = make_stop_ctx(session_id=sid, store=store)
+        stop_result = plugins.app._run_chain(stop_ctx, "Stop")
+
+        assert stop_result is not None, (
+            "Stop must be blocked with 1 pending task (Task 3)"
+        )
+        assert stop_result.get("continue") is True
+        assert "Task 3" in stop_result.get("systemMessage", ""), (
+            "Stop message must list the pending task"
+        )
