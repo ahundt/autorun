@@ -290,7 +290,7 @@ def test_error_handling_robustness():
         results.append(f"short_timeout_expected_error: {type(e).__name__}")
 
     print(f"Error handling test: {len(results)} test cases")
-    return len(results) > 0  # Should have some expected errors
+    assert len(results) > 0, "Should have some expected errors"
 
 def test_dry_principles():
     """Test DRY principles and avoid code duplication"""

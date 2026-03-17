@@ -79,6 +79,25 @@ class TestScopedAllowIsValid:
         sa = ScopedAllow(pattern="rm", granted_at=time.time() - 400, ttl_seconds=300.0, remaining_uses=5)
         assert sa.is_valid() is False  # TTL expired, count still valid
 
+    def test_hybrid_ttl_expires_during_grace_window(self):
+        """TTL expiry takes precedence over grace period.
+
+        Scenario: allow with ttl_seconds=1 AND remaining_uses=1. Hook A consumes
+        at T0 (within TTL). By T0+1.5s, TTL has expired — grace period should NOT
+        override TTL expiry. scoped_allow.py checks TTL before grace logic.
+        """
+        t0 = time.time()
+        sa = ScopedAllow(
+            pattern="git push", granted_at=t0, ttl_seconds=1.0, remaining_uses=1
+        )
+        consumed = sa.consume("call123")
+        # Immediately: both TTL valid and grace active
+        assert consumed.is_valid("call123") is True
+        # After TTL expires (even if within grace window timing):
+        with patch("autorun.scoped_allow.time") as mock_time:
+            mock_time.time.return_value = t0 + 1.5  # TTL expired (1.5 > 1.0)
+            assert consumed.is_valid("call123") is False  # TTL wins over grace
+
     def test_no_limits_permanent(self):
         sa = ScopedAllow(pattern="rm")
         assert sa.is_valid() is True
@@ -650,6 +669,34 @@ class TestBackwardsCompatExistingAllows:
 
 
 class TestEnforcementLazyCleanup:
+    def test_grace_period_allow_not_cleaned_during_pass_through(self):
+        """Allows in their grace period survive lazy cleanup.
+
+        plugins.py:625-628 calls is_valid() without call_id during cleanup.
+        An allow with remaining_uses=0 and recent consumed_at should NOT be
+        removed — the parallel hook (RTK-spawned) may still need it.
+        is_valid() without call_id uses time-only check, which preserves grace.
+        """
+        sid = f"test-grace-cleanup-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Create an allow that was just consumed (in grace period)
+        in_grace = ScopedAllow(
+            pattern="git push", remaining_uses=0,
+            consumed_at=time.time(), last_call_id="abc123"
+        )
+        ctx = EventContext(
+            session_id=sid, event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "echo unrelated"}, store=store
+        )
+        ctx.session_allowed_patterns = [in_grace.to_dict()]
+
+        plugins.app.dispatch(ctx)
+
+        # Allow in grace period should survive cleanup
+        allows = ctx.session_allowed_patterns or []
+        assert len(allows) == 1, "Grace-period allow was incorrectly cleaned up"
+
     def test_expired_entries_cleaned_on_pass_through(self):
         """Expired entries get cleaned up when TIER 1 loop runs."""
         sid = f"test-lazy-{time.time()}"
