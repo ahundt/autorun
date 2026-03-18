@@ -784,26 +784,59 @@ class TestRmBlockingBothPaths:
 # =============================================================================
 
 
-class TestBuildDirectorySync:
-    """Verify build directory hooks match source hooks."""
+class TestDeployedCopiesMatchSource:
+    """Verify deployed copies (Claude cache, Gemini extension) match source."""
 
-    def test_build_hooks_json_matches_source(self):
-        build_hooks = PLUGIN_ROOT / "build" / "hooks" / "claude-hooks.json"
-        if not build_hooks.exists():
-            pytest.skip("Build directory not present")
-        assert load_hooks_json(HOOKS_JSON) == load_hooks_json(build_hooks)
+    def test_claude_cache_hooks_match_source(self):
+        """Claude plugin cache hooks must match source after install."""
+        cache_hooks = Path.home() / ".claude/plugins/cache/autorun/ar"
+        if not cache_hooks.exists():
+            pytest.skip("Claude plugin cache not installed")
+        # Find highest version
+        versions = sorted(
+            [d for d in cache_hooks.iterdir() if d.is_dir()],
+            key=lambda p: p.name,
+            reverse=True,
+        )
+        if not versions:
+            pytest.skip("No version directories in cache")
+        cached = versions[0] / "hooks" / "claude-hooks.json"
+        if not cached.exists():
+            pytest.skip("No claude-hooks.json in cache")
+        # Cache may be RTK-patched (Bash removed from matcher), so compare
+        # structure rather than exact content. Verify all events present.
+        import json
+        source = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        cache = json.loads(cached.read_text(encoding="utf-8"))
+        assert set(source["hooks"].keys()) == set(cache["hooks"].keys()), (
+            f"Cache events don't match source. "
+            f"Source: {set(source['hooks'].keys())} "
+            f"Cache: {set(cache['hooks'].keys())}"
+        )
 
-    def test_build_gemini_hooks_matches_source(self):
-        build_gemini = PLUGIN_ROOT / "build" / "hooks" / "hooks.json"
-        if not build_gemini.exists():
-            pytest.skip("Build directory not present")
-        assert load_hooks_json(GEMINI_HOOKS_JSON) == load_hooks_json(build_gemini)
+    def test_gemini_extension_hooks_match_source(self):
+        """Gemini extension hooks.json must match source after install."""
+        ext_hooks = Path.home() / ".gemini/extensions/ar/hooks/hooks.json"
+        if not ext_hooks.exists():
+            pytest.skip("Gemini extension not installed")
+        source_content = GEMINI_HOOKS_JSON.read_text(encoding="utf-8")
+        ext_content = ext_hooks.read_text(encoding="utf-8")
+        assert source_content == ext_content, (
+            f"Gemini extension hooks.json doesn't match source. "
+            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+        )
 
-    def test_build_hook_entry_matches_source(self):
-        build_entry = PLUGIN_ROOT / "build" / "hooks" / "hook_entry.py"
-        if not build_entry.exists():
-            pytest.skip("Build directory not present")
-        assert HOOK_ENTRY_PY.read_text(encoding="utf-8") == build_entry.read_text(encoding="utf-8")
+    def test_gemini_extension_hook_entry_matches_source(self):
+        """Gemini extension hook_entry.py must match source after install."""
+        ext_entry = Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py"
+        if not ext_entry.exists():
+            pytest.skip("Gemini extension not installed")
+        source_content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
+        ext_content = ext_entry.read_text(encoding="utf-8")
+        assert source_content == ext_content, (
+            f"Gemini extension hook_entry.py doesn't match source. "
+            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+        )
 
 
 # =============================================================================
