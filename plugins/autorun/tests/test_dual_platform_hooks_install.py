@@ -362,13 +362,37 @@ class TestCrossPlatformConsistency:
                     f"Claude has {claude_event} but Gemini missing {gemini_event}"
 
     def test_tool_name_mapping_complete(self):
+        """Verify Claude tool names in matchers have Gemini equivalents.
+
+        Gemini BeforeTool/AfterTool are catch-all (no matcher), which covers
+        all tools. When Gemini uses catch-all, the mapping check is satisfied
+        because catch-all covers everything.
+        """
         tool_mapping = {"Bash": "run_shell_command", "Write": "write_file", "Edit": "replace"}
         claude_matchers = " ".join(extract_all_matchers(load_hooks_json(HOOKS_JSON)))
-        gemini_matchers = " ".join(extract_all_matchers(load_hooks_json(GEMINI_HOOKS_JSON)))
+        gemini_data = load_hooks_json(GEMINI_HOOKS_JSON)
+        gemini_matchers = " ".join(extract_all_matchers(gemini_data))
+        # Check if Gemini has catch-all BeforeTool/AfterTool (covers all tools)
+        gemini_hooks = gemini_data.get("hooks", {})
+        gemini_has_catch_all_pretool = any(
+            "matcher" not in g
+            for g in gemini_hooks.get("BeforeTool", [])
+        )
+        gemini_has_catch_all_posttool = any(
+            "matcher" not in g
+            for g in gemini_hooks.get("AfterTool", [])
+        )
         for claude_tool, gemini_tool in tool_mapping.items():
             if claude_tool in claude_matchers:
-                assert gemini_tool in gemini_matchers, \
-                    f"Claude matches '{claude_tool}' but Gemini missing '{gemini_tool}'"
+                # Gemini catch-all covers all tools implicitly
+                covered = (
+                    gemini_tool in gemini_matchers
+                    or gemini_has_catch_all_pretool
+                    or gemini_has_catch_all_posttool
+                )
+                assert covered, \
+                    f"Claude matches '{claude_tool}' but Gemini missing '{gemini_tool}' " \
+                    f"(and no catch-all BeforeTool/AfterTool)"
 
     def test_both_use_uv_run(self):
         for cmd in extract_all_commands(load_hooks_json(HOOKS_JSON)):

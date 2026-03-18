@@ -725,7 +725,7 @@ class TestGrepFalsePositiveProtection:
 
     Background: User reported "grep block fires on Read tool" (Task #6).
     Root cause analysis confirmed current code is correct:
-    - Claude Code claude-hooks.json PreToolUse: catch-all (fires for all tools).
+    - Claude Code claude-hooks.json PreToolUse: explicit Write|Edit|Bash|ExitPlanMode matcher.
     - check_blocked_commands() returns None early for any tool_name not in
       BASH_TOOLS = {"Bash", "bash_command", "run_shell_command"} or
       FILE_TOOLS = {"Write", "write_file", "Edit", "edit_file", "replace"}.

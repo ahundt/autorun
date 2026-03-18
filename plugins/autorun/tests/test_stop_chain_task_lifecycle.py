@@ -822,3 +822,346 @@ class TestPostToolUseTaskCreateBlocksStop:
         assert "Task 3" in stop_result.get("systemMessage", ""), (
             "Stop message must list the pending task"
         )
+
+
+# === Test 11: Gemini write_todos routing (TASK_COMBINED_TOOLS) ===
+
+class TestWriteTodosRouting:
+    """Verify write_todos (Gemini CLI) is routed correctly in track_task_operations.
+
+    Gemini CLI uses a single 'write_todos' tool for all task operations.
+    Routing is based on content inspection:
+    - taskId in tool_input → TaskUpdate
+    - "created" in tool_result → TaskCreate
+    - Otherwise → list/get (activity update only)
+
+    Added: commit 10d3b72 (TASK_COMBINED_TOOLS), commit 72291c3 (defensive guard)
+    """
+
+    def test_write_todos_create_tracks_task(
+        self, isolated_task_config, isolated_session
+    ):
+        """write_todos with 'created' in result → handle_task_create."""
+        sid = f"test-write-todos-create-{time.time()}"
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"subject": "Fix Gemini bug", "description": "desc"},
+            tool_result="Task #1 created successfully: Fix Gemini bug",
+            store=store,
+        )
+        plugins.app._run_chain(ctx, "PostToolUse")
+
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        tasks = manager.tasks
+        assert "1" in tasks, (
+            f"write_todos with 'created' in result must track task. "
+            f"Tracked: {list(tasks.keys())}"
+        )
+        assert tasks["1"]["subject"] == "Fix Gemini bug"
+
+    def test_write_todos_update_changes_status(
+        self, isolated_task_config, isolated_session
+    ):
+        """write_todos with taskId in input → handle_task_update."""
+        sid = f"test-write-todos-update-{time.time()}"
+        store = ThreadSafeDB()
+
+        # First create the task
+        create_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"subject": "Fix it", "description": ""},
+            tool_result="Task #1 created successfully: Fix it",
+            store=store,
+        )
+        plugins.app._run_chain(create_ctx, "PostToolUse")
+
+        # Now update it via write_todos with taskId
+        update_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status to completed",
+            store=store,
+        )
+        plugins.app._run_chain(update_ctx, "PostToolUse")
+
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        assert manager.tasks["1"]["status"] == "completed", (
+            "write_todos with taskId must route to handle_task_update"
+        )
+
+    def test_write_todos_list_does_not_create(
+        self, isolated_task_config, isolated_session
+    ):
+        """write_todos without taskId or 'created' → no task creation."""
+        sid = f"test-write-todos-list-{time.time()}"
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={},
+            tool_result="Tasks listed: 0 items",
+            store=store,
+        )
+        plugins.app._run_chain(ctx, "PostToolUse")
+
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        assert len(manager.tasks) == 0, (
+            "write_todos list/get must NOT create tasks"
+        )
+
+    def test_write_todos_none_tool_input(
+        self, isolated_task_config, isolated_session
+    ):
+        """write_todos with tool_input=None must not crash (defensive guard).
+
+        Regression test for commit 72291c3: tool_input = ctx.tool_input or {}
+        Without this guard, None.get("taskId") raises AttributeError.
+        """
+        sid = f"test-write-todos-none-input-{time.time()}"
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input=None,
+            tool_result="Task #1 created successfully",
+            store=store,
+        )
+        # Must not raise AttributeError
+        result = plugins.app._run_chain(ctx, "PostToolUse")
+        # Should proceed without crash — task created via result parsing
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        assert "1" in manager.tasks, (
+            "write_todos with None tool_input should still create via result parsing"
+        )
+
+    def test_write_todos_blocks_stop(
+        self, isolated_task_config, isolated_session
+    ):
+        """Full E2E: write_todos creates task → Stop blocked."""
+        sid = f"test-write-todos-stop-{time.time()}"
+        store = ThreadSafeDB()
+
+        ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"subject": "Gemini task"},
+            tool_result="Task #1 created successfully: Gemini task",
+            store=store,
+        )
+        plugins.app._run_chain(ctx, "PostToolUse")
+
+        stop_ctx = make_stop_ctx(session_id=sid, store=store, autorun_active=False)
+        stop_result = plugins.app._run_chain(stop_ctx, "Stop")
+
+        assert stop_result is not None, (
+            "Stop must be blocked when write_todos created a pending task"
+        )
+        assert stop_result.get("continue") is True
+
+    def test_write_todos_update_then_stop_allowed(
+        self, isolated_task_config, isolated_session
+    ):
+        """Full E2E: write_todos create → write_todos complete → Stop allowed."""
+        sid = f"test-write-todos-complete-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Create
+        create_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"subject": "Quick task"},
+            tool_result="Task #1 created successfully: Quick task",
+            store=store,
+        )
+        plugins.app._run_chain(create_ctx, "PostToolUse")
+
+        # Complete
+        update_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status to completed",
+            store=store,
+        )
+        plugins.app._run_chain(update_ctx, "PostToolUse")
+
+        # Stop should be allowed
+        stop_ctx = make_stop_ctx(session_id=sid, store=store)
+        stop_result = plugins.app._run_chain(stop_ctx, "Stop")
+        if stop_result is not None:
+            assert "CANNOT STOP" not in stop_result.get("systemMessage", ""), (
+                "Stop should be allowed after write_todos completed all tasks"
+            )
+
+
+# === Test 12: Staleness counter reset for TASK_COMBINED_TOOLS ===
+
+class TestStalenessCounterWriteTodos:
+    """Verify check_task_staleness resets counter on write_todos events.
+
+    Added in commit 10d3b72: TASK_COMBINED_TOOLS added to reset condition.
+    Without this, write_todos wouldn't reset the staleness counter, causing
+    false staleness reminders on Gemini CLI.
+    """
+
+    def test_write_todos_resets_staleness_counter(
+        self, isolated_task_config, isolated_session
+    ):
+        """write_todos must reset tool_calls_since_task_update to 0."""
+        sid = f"test-staleness-reset-{time.time()}"
+        store = ThreadSafeDB()
+
+        # Create a pending task so staleness checking is active
+        create_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="TaskCreate",
+            tool_input={"subject": "Pending task"},
+            tool_result="Task #1 created successfully: Pending task",
+            store=store,
+        )
+        plugins.app._run_chain(create_ctx, "PostToolUse")
+
+        # Simulate 10 non-task tool calls to build up counter
+        for i in range(10):
+            ctx = EventContext(
+                session_id=sid,
+                event="PostToolUse",
+                tool_name="Read",
+                tool_input={"file_path": f"/tmp/test{i}.txt"},
+                tool_result="file contents",
+                store=store,
+            )
+            ctx.task_staleness_enabled = True
+            plugins.app._run_chain(ctx, "PostToolUse")
+
+        # Counter should be at 10
+        check_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="Read",
+            tool_input={"file_path": "/tmp/check.txt"},
+            tool_result="contents",
+            store=store,
+        )
+        check_ctx.task_staleness_enabled = True
+        # Read the counter value before write_todos
+        counter_before = check_ctx.tool_calls_since_task_update or 0
+
+        # Now fire write_todos — should reset counter
+        todos_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"taskId": "1", "status": "in_progress"},
+            tool_result="Updated task #1",
+            store=store,
+        )
+        todos_ctx.task_staleness_enabled = True
+        plugins.app._run_chain(todos_ctx, "PostToolUse")
+
+        # After write_todos, counter must be 0
+        after_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="Read",
+            tool_input={"file_path": "/tmp/after.txt"},
+            tool_result="contents",
+            store=store,
+        )
+        after_ctx.task_staleness_enabled = True
+        assert after_ctx.tool_calls_since_task_update == 0, (
+            f"write_todos must reset staleness counter to 0. "
+            f"Got: {after_ctx.tool_calls_since_task_update}"
+        )
+
+
+# === Test 13: PreToolUse matcher RTK compatibility ===
+
+class TestPreToolUseMatcherRTKCompat:
+    """Verify PreToolUse has explicit matcher, not catch-all.
+
+    Catch-all PreToolUse causes parallel-hook updatedInput drop with RTK
+    (hook-pr-comparison.md:130). PreToolUse must use explicit matcher so
+    RTK can patch out Bash and coordinate via manifest fallthrough.
+
+    PostToolUse catch-all is correct (no updatedInput conflict).
+    """
+
+    def test_pretooluse_has_explicit_matcher(self):
+        """PreToolUse must have a matcher field (not catch-all)."""
+        import json
+        from pathlib import Path
+        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        pre_tool_groups = hooks["hooks"]["PreToolUse"]
+        for group in pre_tool_groups:
+            assert "matcher" in group, (
+                "PreToolUse must have explicit matcher (catch-all breaks RTK). "
+                f"Group: {group}"
+            )
+
+    def test_pretooluse_includes_bash(self):
+        """PreToolUse matcher must include Bash for command blocking."""
+        import json
+        from pathlib import Path
+        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        matchers = "|".join(
+            g.get("matcher", "") for g in hooks["hooks"]["PreToolUse"]
+        )
+        assert "Bash" in matchers, (
+            f"PreToolUse must include Bash for check_blocked_commands. "
+            f"Matchers: {matchers}"
+        )
+
+    def test_posttooluse_is_catch_all(self):
+        """PostToolUse must be catch-all (3 handlers need ALL tools)."""
+        import json
+        from pathlib import Path
+        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        post_tool_groups = hooks["hooks"]["PostToolUse"]
+        has_catch_all = any("matcher" not in g for g in post_tool_groups)
+        assert has_catch_all, (
+            "PostToolUse must be catch-all (no updatedInput conflict, "
+            "3 handlers need ALL tools). "
+            f"Groups: {post_tool_groups}"
+        )
+
+    def test_pretooluse_not_overly_broad(self):
+        """PreToolUse must NOT match tools it doesn't handle.
+
+        Only 4 tools needed: Write, Edit, Bash, ExitPlanMode.
+        Matching Read, Grep, Glob, Agent etc. wastes daemon calls (~5-10ms each)
+        and could cause future parallel-hook conflicts with other plugins.
+        """
+        import json
+        from pathlib import Path
+        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        matchers = "|".join(
+            g.get("matcher", "") for g in hooks["hooks"]["PreToolUse"]
+        )
+        unnecessary_tools = ["Read", "Grep", "Glob", "Agent", "TaskCreate",
+                             "TaskUpdate", "TaskList", "TaskGet"]
+        found = [t for t in unnecessary_tools if t in matchers.split("|")]
+        assert not found, (
+            f"PreToolUse matcher includes unnecessary tools: {found}. "
+            f"Only Write|Edit|Bash|ExitPlanMode needed. Matcher: {matchers}"
+        )

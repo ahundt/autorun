@@ -463,21 +463,44 @@ class TestGeminiHookMatchers:
             f"Groups: {before_tool_groups}"
         )
 
-    def test_claude_hooks_pre_tool_use_catches_all_tools(self):
-        """Claude PreToolUse must fire for ALL tools (no matcher = catch-all).
+    def test_claude_pretooluse_must_not_be_catch_all(self):
+        """Claude PreToolUse must NOT be catch-all — explicit matcher required.
 
-        WOLOG: Consistent with PostToolUse catch-all pattern.
-        All PreToolUse handlers self-filter by tool name, so no incorrect
-        processing occurs. Catch-all future-proofs new handlers.
+        Catch-all PreToolUse causes parallel-hook updatedInput drop with RTK:
+        when autorun fires in parallel with RTK for Bash events, Claude Code
+        drops updatedInput from both responses (hook-pr-comparison.md:130),
+        silently breaking RTK command rewrites (0% token savings).
+
+        Fix: explicit Write|Edit|Bash|ExitPlanMode matcher so RTK can patch
+        out Bash and coordinate via manifest fallthrough.
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
         has_catch_all = any("matcher" not in g for g in pre_tool_groups)
-        assert has_catch_all, (
-            f"Claude PreToolUse must have a catch-all group (no matcher). "
+        assert not has_catch_all, (
+            f"Claude PreToolUse must NOT be catch-all (breaks RTK rewrites). "
+            f"Use explicit matcher like Write|Edit|Bash|ExitPlanMode. "
             f"Groups: {pre_tool_groups}"
         )
+
+    def test_claude_pretooluse_covers_required_tools(self):
+        """Claude PreToolUse must cover Write, Edit, Bash, and ExitPlanMode.
+
+        These are the 4 tools that PreToolUse handlers actually need:
+        - enforce_file_policy: Write
+        - gate_exit_plan_mode: ExitPlanMode
+        - check_blocked_commands: Bash, Write, Edit
+        - track_and_export_plans_early: Write, Edit, ExitPlanMode
+        """
+        hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        pre_tool_groups = hooks["hooks"]["PreToolUse"]
+        matchers = "|".join(g.get("matcher", "") for g in pre_tool_groups)
+        for tool in ["Write", "Edit", "Bash", "ExitPlanMode"]:
+            assert tool in matchers, (
+                f"Claude PreToolUse must cover '{tool}'. Matchers: {matchers}"
+            )
 
 
 # --- Canonical valid event sets ---
