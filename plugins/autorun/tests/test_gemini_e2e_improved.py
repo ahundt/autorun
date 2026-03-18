@@ -50,7 +50,7 @@ def find_hook_script() -> Path:
         FileNotFoundError: If hook script not found
     """
     possible_locations = [
-        Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
+        Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
         Path(__file__).parent.parent / "hooks/hook_entry.py",
         Path.home() / ".claude/autorun/plugins/autorun/hooks/hook_entry.py",
     ]
@@ -435,7 +435,7 @@ class TestGeminiCLIRealMoney:
 
         # Verify hooks file exists (installed extension or source)
         hooks_candidates = [
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hooks.json",
+            Path.home() / ".gemini/extensions/ar/hooks/hooks.json",
             Path(__file__).parent.parent / "hooks/hooks.json",
         ]
         hooks_file = None
@@ -467,7 +467,7 @@ class TestGeminiExtensionInstalledHook:
 
     NO API COST - invokes the hook_entry.py directly with subprocess,
     exactly as Gemini CLI would. Uses the extension's installed copy at
-    ~/.gemini/extensions/autorun-workspace/ to verify that the deployed
+    ~/.gemini/extensions/ar/ to verify that the deployed
     code correctly blocks dangerous commands and permits safe ones.
 
     This is the closest E2E validation to real Gemini CLI behavior without
@@ -478,7 +478,7 @@ class TestGeminiExtensionInstalledHook:
     def extension_hook(self):
         """Get path to hook_entry.py (installed extension or source fallback)."""
         candidates = [
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         for hook_path in candidates:
@@ -700,7 +700,7 @@ class TestGeminiWriteFileBlocking:
     def extension_hook(self):
         """Get path to hook_entry.py (installed extension or source fallback)."""
         candidates = [
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         for hook_path in candidates:
@@ -1052,7 +1052,7 @@ class TestGeminiExtensionVerification:
     def _find_plugin_dir(self) -> Path:
         """Find plugin directory (installed extension or source fallback)."""
         candidates = [
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun",
+            Path.home() / ".gemini/extensions/ar",
             Path(__file__).parent.parent,  # Source dir
         ]
         for candidate in candidates:

@@ -176,7 +176,7 @@ class TestUpdateStrategyDetection:
         # Arrange
         mock_result = MagicMock()
         mock_result.ok = True
-        mock_result.output = "autorun-workspace@0.10.0"
+        mock_result.output = "ar@0.10.0 - autorun extension"
 
         with patch("autorun.install.detect_aix_installed", return_value=False):
             with patch("shutil.which", side_effect=lambda x: "/usr/bin/gemini" if x == "gemini" else None):

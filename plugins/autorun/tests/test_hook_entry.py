@@ -667,7 +667,7 @@ class TestCacheSync:
     where a developer fixes the source but forgets to update the cache.
     """
 
-    CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "autorun"
+    CACHE_ROOT = Path.home() / ".claude" / "plugins" / "cache" / "autorun" / "ar"
 
     def _get_cache_versions(self):
         """Find installed cache versions."""
@@ -971,12 +971,9 @@ class TestAllLocationsSync:
     1. Source: plugins/autorun/src/autorun/
     2. Dev venv: plugins/autorun/.venv/.../autorun/
     3. Build: plugins/autorun/build/lib/autorun/
-    4. Claude cache: ~/.claude/plugins/cache/autorun/autorun/0.10.0/
+    4. Claude cache: ~/.claude/plugins/cache/autorun/ar/0.10.0/
     5. UV tool: ~/.local/share/uv/tools/autorun/.../autorun/
-    6. Gemini source: ~/.gemini/extensions/autorun-workspace/plugins/autorun/src/
-    7. Gemini plugin venv: ~/.gemini/extensions/autorun-workspace/plugins/autorun/.venv/
-    8. Gemini workspace venv: ~/.gemini/extensions/autorun-workspace/.venv/
-    9. Gemini build: ~/.gemini/extensions/autorun-workspace/plugins/autorun/build/
+    6. Gemini extension: ~/.gemini/extensions/ar/
 
     Target state (after symlink migration):
     - Source: 1 location (authoritative)
@@ -992,7 +989,7 @@ class TestAllLocationsSync:
 
         assert "unified daemon-based hook handler" in content, \
             "Source claude-hooks.json has wrong format. Should be Claude Code, not Gemini. " \
-            "Restore from: ~/.claude/plugins/cache/autorun/autorun/0.10.0/hooks/claude-hooks.json"
+            "Restore from: ~/.claude/plugins/cache/autorun/ar/0.10.0/hooks/claude-hooks.json"
 
         assert "PreToolUse" in content, \
             "Must have Claude Code event names (not Gemini's BeforeTool)"
@@ -1005,7 +1002,7 @@ class TestAllLocationsSync:
         """Location 4: Claude Code cache hook_entry.py must match source."""
         cache_versions = [
             p for p in Path.home().glob(
-                ".claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py"
+                ".claude/plugins/cache/autorun/ar/*/hooks/hook_entry.py"
             )
             if not p.parts[-3].endswith(".backup")  # Ignore install-time rollback backups
         ]
@@ -1045,24 +1042,35 @@ class TestAllLocationsSync:
         assert direct_url.get("dir_info", {}).get("editable") is True, \
             f"UV tool has direct_url.json but editable=false. Reinstall with --editable."
 
-    def test_gemini_extension_is_symlink_not_copy(self):
-        """Locations 6-9: Gemini extension should be symlink, not copy."""
-        gemini_ext = Path.home() / ".gemini/extensions/autorun-workspace"
+    def test_gemini_extension_hooks_match_source(self):
+        """Gemini extension hooks.json must match source."""
+        gemini_ext = Path.home() / ".gemini/extensions/ar"
 
         if not gemini_ext.exists():
             pytest.skip("Gemini extension not installed")
 
-        assert gemini_ext.is_symlink(), \
-            "Gemini extension is a COPY which will desync from source. " \
-            "This creates 4 separate code locations that must be manually synced. " \
-            "Run: gemini extensions uninstall autorun-workspace && " \
-            f"gemini extensions link {PLUGIN_ROOT.parent.parent}"
+        source_hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
+        ext_hooks = gemini_ext / "hooks" / "hooks.json"
+
+        assert ext_hooks.exists(), (
+            f"Gemini extension missing hooks.json at {ext_hooks}. "
+            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+        )
+
+        source_content = source_hooks.read_text(encoding="utf-8")
+        ext_content = ext_hooks.read_text(encoding="utf-8")
+        assert source_content == ext_content, (
+            f"Gemini extension hooks.json doesn't match source. "
+            f"Source: {source_hooks}\n"
+            f"Extension: {ext_hooks}\n"
+            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+        )
 
     def test_build_artifacts_do_not_exist(self):
         """Locations 3, 9: Build artifacts should be deleted."""
         build_dirs = [
             PLUGIN_ROOT / "build",
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/build"
+            Path.home() / ".gemini/extensions/ar/build"
         ]
 
         for build_dir in build_dirs:

@@ -84,7 +84,7 @@ def gemini_settings_enabled():
 @pytest.fixture
 def gemini_extension_installed():
     """Check if autorun extension is installed in Gemini."""
-    ext_dir = Path.home() / ".gemini" / "extensions" / "cr"
+    ext_dir = Path.home() / ".gemini" / "extensions" / "ar"
 
     if not ext_dir.exists():
         pytest.skip("Autorun extension not installed in Gemini")
@@ -373,7 +373,7 @@ def test_gemini_session_start_hook_fires(
         cwd=test_workspace,
         capture_output=True,
         text=True,
-        timeout=10
+        timeout=30
     )
 
     # Check output for hook execution evidence

@@ -495,7 +495,7 @@ def find_marketplace_root() -> Path:
     # Strategy 5: Check known Gemini extension paths
     # Works for: gemini extensions install or gemini extensions link
     gemini_home = Path.home() / ".gemini" / "extensions"
-    for ext_name in ["autorun-workspace", "autorun"]:
+    for ext_name in ["ar", "autorun-workspace", "autorun"]:
         ext_dir = gemini_home / ext_name
         if ext_dir.exists():
             # Could be at workspace root or in plugins/autorun/
@@ -1298,7 +1298,13 @@ def _verify_gemini_installation() -> bool:
         True if autorun-workspace is installed
     """
     result = run_cmd(["gemini", "extensions", "list"])
-    return result.ok and "autorun-workspace" in result.output
+    # Check by directory existence (more reliable than parsing CLI output)
+    gemini_ext = Path.home() / ".gemini" / "extensions"
+    for name in ["ar", "autorun-workspace", "autorun"]:
+        if (gemini_ext / name / "hooks" / "hooks.json").exists():
+            return True
+    # Fallback: check CLI output
+    return result.ok and ("autorun" in result.output)
 
 
 def _verify_conductor_installation() -> bool:
@@ -2162,8 +2168,13 @@ class UpdateStrategy:
 
         if shutil.which("gemini"):
             result = run_cmd(["gemini", "extensions", "list"], timeout=10)
-            if result.ok and "autorun-workspace" in result.output:
+            if result.ok and "autorun" in result.output:
                 return UpdateStrategy("plugin", "gemini")
+            # Also check directory directly
+            gemini_ext = Path.home() / ".gemini" / "extensions"
+            for name in ["ar", "autorun-workspace", "autorun"]:
+                if (gemini_ext / name / "hooks" / "hooks.json").exists():
+                    return UpdateStrategy("plugin", "gemini")
 
         # Fall back to package manager
         return UpdateStrategy("uv" if has_uv() else "pip", None)
@@ -2211,7 +2222,14 @@ def perform_self_update(method: str = "auto") -> CmdResult:
                 return result
 
         if shutil.which("gemini"):
-            result = run_cmd(["gemini", "extensions", "update", "autorun-workspace"], timeout=60)
+            # Try current name first, then legacy names
+            gemini_ext = Path.home() / ".gemini" / "extensions"
+            ext_name = "ar"  # current default
+            for name in ["ar", "autorun-workspace", "autorun"]:
+                if (gemini_ext / name).exists():
+                    ext_name = name
+                    break
+            result = run_cmd(["gemini", "extensions", "update", ext_name], timeout=60)
             if result.ok:
                 return result
 

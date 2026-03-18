@@ -177,7 +177,7 @@ class TestGeminiHookEntryPoint:
 
         # Get hook script path (installed extension or source fallback)
         candidates = [
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         hook_script = None
@@ -219,7 +219,7 @@ class TestGeminiHookEntryPoint:
 
         # Get hook script path (installed extension or source fallback)
         candidates = [
-            Path.home() / ".gemini/extensions/autorun-workspace/plugins/autorun/hooks/hook_entry.py",
+            Path.home() / ".gemini/extensions/ar/hooks/hook_entry.py",
             Path(__file__).parent.parent / "hooks/hook_entry.py",
         ]
         hook_script = None
