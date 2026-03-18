@@ -1628,7 +1628,8 @@ def register_hooks(app_instance) -> None:
             if ctx.tool_name in TASK_COMBINED_TOOLS:
                 # Gemini CLI uses write_todos for all task operations.
                 # Route based on content: taskId in input → update, else create.
-                if ctx.tool_input.get("taskId"):
+                tool_input = ctx.tool_input or {}
+                if tool_input.get("taskId"):
                     manager.handle_task_update(ctx)
                 elif "created" in (ctx.tool_result or "").lower():
                     manager.handle_task_create(ctx)
