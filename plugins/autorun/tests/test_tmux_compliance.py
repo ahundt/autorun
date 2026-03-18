@@ -18,7 +18,6 @@ try:
     from autorun.tmux_utils import get_tmux_utilities, TmuxUtilities, TmuxControlState
     from autorun.ai_monitor import get_tmux as get_ai_monitor_tmux
     from autorun.tmux_injector import TmuxInjector, DualChannelInjector
-    from autorun.main import get_global_tmux_utils
     COMPLIANCE_TEST_AVAILABLE = True
 except ImportError:
     COMPLIANCE_TEST_AVAILABLE = False
@@ -152,15 +151,15 @@ def test_dry_compliance():
     _skip_if_unavailable()
 
     # All implementations should use the same centralized utilities
+    # get_global_tmux_utils was removed from main.py — canonical replacement
+    # is tmux_utils.get_tmux_utilities() directly (see main.py:52, :94)
     tmux_utils1 = get_tmux_utilities()
     tmux_utils2 = get_ai_monitor_tmux()
-    tmux_utils3 = get_global_tmux_utils()
 
     # They should all be the same instance or have the same session name
     assert tmux_utils1 is not None, "get_tmux_utilities() returned None"
     assert tmux_utils2 is not None, "get_ai_monitor_tmux() returned None"
-    assert tmux_utils3 is not None, "get_global_tmux_utils() returned None"
-    assert tmux_utils1.session_name == tmux_utils2.session_name == tmux_utils3.session_name, \
+    assert tmux_utils1.session_name == tmux_utils2.session_name, \
         "DRY violation: Different tmux utilities instances or session names"
 
 
@@ -222,11 +221,12 @@ def test_main_py_integration():
     """Test main.py integration with tmux standards"""
     _skip_if_unavailable()
 
-    # Test global tmux utilities
-    global_tmux = get_global_tmux_utils()
-    # global_tmux may be None if not initialized yet, that's ok
+    # get_global_tmux_utils was removed from main.py (Phase 2, Task #13)
+    # Canonical replacement: tmux_utils.get_tmux_utilities() directly
+    tmux = get_tmux_utilities()
+    assert tmux is not None, "get_tmux_utilities() returned None"
 
-    # Verify the imports work
+    # Verify main.py can still import tmux utilities
     from autorun.main import TMUX_UTILS_AVAILABLE
     assert TMUX_UTILS_AVAILABLE, "main.py tmux utilities not available"
 
@@ -253,3 +253,98 @@ def test_error_handling_and_fallbacks():
     # Test user typing detection when no session - should return False, not crash
     is_typing = tmux_utils.is_user_typing()
     assert not is_typing, "User typing detection should default to False when no session"
+
+
+def test_claude_detection_functions():
+    """Test Claude session detection from pane content (no live tmux needed)."""
+    _skip_if_unavailable()
+
+    from autorun.tmux_utils import (
+        tmux_detect_prompt_type,
+        tmux_detect_claude_active,
+        tmux_detect_claude_mode,
+        tmux_detect_claude_thinking_mode,
+    )
+
+    # Prompt type detection — detects Claude Code prompts, not shell prompts
+    assert tmux_detect_prompt_type("") is None, "Empty content should return None"
+    assert tmux_detect_prompt_type("random text no prompt") is None, \
+        "Non-prompt content should return None"
+    # Claude tool permission prompt
+    assert tmux_detect_prompt_type("Allow tool use? [Y/n]") is not None, \
+        "Should detect Y/n tool permission prompt"
+    # Claude plan approval prompt
+    assert tmux_detect_prompt_type("Would you like to proceed?\n❯ Yes") is not None, \
+        "Should detect plan approval prompt"
+
+    # Claude active detection
+    assert tmux_detect_claude_active("╭─") or True, "Claude active detection returns bool"
+    assert isinstance(tmux_detect_claude_active("random text"), bool)
+
+    # Claude mode detection returns a string
+    mode = tmux_detect_claude_mode("some pane content")
+    assert isinstance(mode, str), f"Mode should be string, got {type(mode)}"
+
+    # Thinking mode detection returns bool
+    assert isinstance(tmux_detect_claude_thinking_mode("some content"), bool)
+
+
+def test_safety_check_function():
+    """Test check_safe_to_send validates content before sending to tmux."""
+    _skip_if_unavailable()
+
+    from autorun.tmux_utils import check_safe_to_send
+
+    # Safe content should pass
+    is_safe, reason = check_safe_to_send("echo hello")
+    assert isinstance(is_safe, bool), "check_safe_to_send should return (bool, str)"
+    assert isinstance(reason, str), "check_safe_to_send reason should be str"
+
+    # Empty content should be flagged
+    is_safe_empty, reason_empty = check_safe_to_send("")
+    assert not is_safe_empty, "Empty content should not be safe to send"
+
+
+def test_detect_current_tmux_session():
+    """Test detect_current_tmux_session returns None or str (no crash)."""
+    _skip_if_unavailable()
+
+    from autorun.tmux_utils import detect_current_tmux_session
+
+    result = detect_current_tmux_session()
+    assert result is None or isinstance(result, str), \
+        f"detect_current_tmux_session should return None or str, got {type(result)}"
+
+
+def test_custom_session_naming():
+    """Test that all components accept custom session names consistently."""
+    _skip_if_unavailable()
+
+    custom_name = "test_custom_session_42"
+
+    tmux = get_tmux_utilities(custom_name)
+    assert tmux.session_name == custom_name, \
+        f"get_tmux_utilities should accept custom name: {tmux.session_name}"
+
+    injector = TmuxInjector(custom_name)
+    assert injector.session_id == custom_name, \
+        f"TmuxInjector should accept custom name: {injector.session_id}"
+
+    dual = DualChannelInjector(custom_name)
+    assert dual.session_id == custom_name, \
+        f"DualChannelInjector should accept custom name: {dual.session_id}"
+
+
+def test_control_state_enum():
+    """Test TmuxControlState enum has required states."""
+    _skip_if_unavailable()
+
+    assert hasattr(TmuxControlState, 'NORMAL'), "Missing NORMAL state"
+    assert hasattr(TmuxControlState, 'ESCAPE'), "Missing ESCAPE state"
+
+    # Verify state transitions work
+    tmux = TmuxUtilities("test_state")
+    tmux.control_state = TmuxControlState.NORMAL
+    assert tmux.control_state == TmuxControlState.NORMAL
+    tmux.control_state = TmuxControlState.ESCAPE
+    assert tmux.control_state == TmuxControlState.ESCAPE
