@@ -223,8 +223,8 @@ def run_client() -> int:
     logger.debug(f"Forwarding hook to daemon: event={hook_event}, cli={cli_type}, tool={tool_name}")
 
     async def forward(depth: int = 0):
-        if depth > 2:
-            raise RuntimeError("Daemon failed to start after 3 attempts")
+        if depth > 5:
+            raise RuntimeError("Daemon failed to start after 6 attempts")
         try:
             from .core import READ_BUFFER_LIMIT
             reader, writer = await ipc.connect(limit=READ_BUFFER_LIMIT)
@@ -233,7 +233,7 @@ def run_client() -> int:
 
             resp = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=5.0)
             resp_text = resp.decode().strip()
-            
+
             _log_hook_lifecycle("DAEMON→CLIENT RAW RESPONSE", FullResponse=resp_text)
 
             # Parse response and route through unified output handler
@@ -243,9 +243,6 @@ def run_client() -> int:
             except json.JSONDecodeError:
                 # Not valid JSON, output as-is
                 return output_hook_response(resp_text, event=hook_event, cli_type=cli_type, source="daemon-raw")
-
-            writer.close()
-            await writer.wait_closed()
 
         except asyncio.LimitOverrunError as e:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
@@ -259,36 +256,81 @@ def run_client() -> int:
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
-            # Check if daemon is already running via PID file
-            # (pattern from install.py:140-149, PID written by core.py:987-990)
-            lock_path = ipc.AUTORUN_LOCK_PATH
-            daemon_alive = False
-            if lock_path.exists():
-                try:
-                    pid = int(lock_path.read_text().strip())
-                    import psutil
-                    daemon_alive = psutil.pid_exists(pid)
-                except (ValueError, ProcessLookupError, PermissionError):
-                    # PID invalid or process dead — safe to spawn new daemon
-                    lock_path.unlink(missing_ok=True)
 
-            if not daemon_alive:
-                # Auto-start daemon - use -c to run directly (works with editable installs)
+            should_spawn = False
+
+            # === RESTART-AWARE SPAWN DECISION ===
+            # Check two locks before deciding to spawn:
+            #   1. restart_lock — is a restart in progress?
+            #   2. daemon flock — is a daemon alive?
+            # If either is held, do NOT spawn — just wait and retry.
+            # Advisory locks are kernel-managed: released on process death (POSIX guarantee).
+
+            # Check 1: Is a restart in progress?
+            restart_in_progress = False
+            try:
+                from filelock import FileLock, Timeout as FlockTimeout
+                restart_lock_path = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
+                restart_probe = FileLock(str(restart_lock_path), timeout=0)
+                restart_probe.acquire()
+                restart_probe.release()
+                # restart_lock is free — no restart in progress
+            except FlockTimeout:
+                restart_in_progress = True
+                logger.debug(f"Restart in progress, waiting (depth={depth})")
+            except (FileNotFoundError, OSError):
+                pass  # Lock file dir doesn't exist — no restart in progress
+
+            if not restart_in_progress:
+                # Check 2: Is a daemon alive (holding flock)?
+                try:
+                    flock_path = ipc.AUTORUN_LOCK_PATH.with_suffix('.flock')
+                    daemon_probe = FileLock(str(flock_path), timeout=0)
+                    daemon_probe.acquire()
+                    daemon_probe.release()
+                    # Flock is free — no daemon holds it
+                    # Check PID file for process that hasn't cleaned up
+                    lock_path = ipc.AUTORUN_LOCK_PATH
+                    if lock_path.exists():
+                        try:
+                            pid = int(lock_path.read_text().strip())
+                            import psutil
+                            if psutil.pid_exists(pid):
+                                pass  # PID alive but socket not ready — wait
+                            else:
+                                lock_path.unlink(missing_ok=True)
+                                should_spawn = True
+                        except (ValueError, OSError):
+                            lock_path.unlink(missing_ok=True)
+                            should_spawn = True
+                    else:
+                        should_spawn = True
+                except FlockTimeout:
+                    # Daemon flock held — daemon is alive, socket may be starting
+                    logger.debug(f"Daemon flock held, waiting (depth={depth})")
+                except (FileNotFoundError, OSError):
+                    # Config dir doesn't exist (first run) — spawn daemon
+                    should_spawn = True
+
+            if should_spawn:
                 logger.info("Daemon not running, auto-starting...")
                 src_dir = Path(__file__).parent.parent
-                daemon_code = "import sys; sys.path.insert(0, '{0}'); from autorun.daemon import main; main()".format(
-                    str(src_dir)
-                )
+                daemon_code = (
+                    "import sys; sys.path.insert(0, '{0}'); "
+                    "from autorun.daemon import main; main()"
+                ).format(str(src_dir))
                 subprocess.Popen(
                     [sys.executable, "-c", daemon_code],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    start_new_session=True
+                    start_new_session=True,
                 )
             else:
-                logger.debug(f"Daemon alive (PID in lock file), retrying connection (depth={depth})")
-            await asyncio.sleep(0.5)
-            return await forward(depth + 1)  # Retry with incremented depth
+                logger.debug(f"Waiting for daemon (depth={depth})")
+
+            # Capped exponential backoff: 0.3, 0.6, 1.2, 2.0, 2.0, 2.0s
+            await asyncio.sleep(min(0.3 * (2 ** depth), 2.0))
+            return await forward(depth + 1)
 
     try:
         return asyncio.run(forward())

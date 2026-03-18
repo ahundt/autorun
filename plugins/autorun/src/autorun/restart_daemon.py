@@ -424,11 +424,11 @@ def restart_daemon() -> int:
         # Poll for socket readiness (designs-intended indicator)
         start = time.time()
         ready = False
-        while time.time() - start < 3.0:
+        while time.time() - start < 5.0:
             if is_daemon_responding():
                 ready = True
                 break
-            time.sleep(0.1)
+            time.sleep(0.2)
 
         # Step 5: Verify new daemon started
         new_pid = get_daemon_pid()
