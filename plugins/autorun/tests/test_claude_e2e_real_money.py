@@ -1120,6 +1120,149 @@ class TestClaudeHookEntryPoint:
         )
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Task reminder delivery and escalation (v0.11)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _create_task_via_hook(self, hook_resources, session_id, task_id="1", subject="test task"):
+        """Create a task via PostToolUse hook so task_lifecycle tracks it.
+
+        Without an incomplete task, check_task_staleness uses the
+        no_tasks_threshold (default 5) path instead of the user-set threshold.
+        """
+        self._run(hook_resources, self._base_payload(
+            "PostToolUse", session_id,
+            tool_name="TaskCreate",
+            tool_input={"subject": subject, "description": "test"},
+            tool_result=f"Task #{task_id} created successfully: {subject}",
+            session_transcript=[],
+        ))
+
+    def _send_post_tool_calls(self, hook_resources, session_id, count):
+        """Send N PostToolUse Read events, return list of (resp, sys_msg) tuples."""
+        results = []
+        for _ in range(count):
+            rc, stdout, stderr, resp = self._run(hook_resources, self._base_payload(
+                "PostToolUse", session_id,
+                tool_name="Read",
+                tool_input={"file_path": "/tmp/test.txt"},
+                tool_result={"content": "contents"},
+                session_transcript=[],
+            ))
+            sys_msg = resp.get("systemMessage", "") if resp else ""
+            results.append((resp, sys_msg))
+        return results
+
+    def test_staleness_reminder_in_system_message(self, hook_resources):
+        """Verify staleness reminder appears in systemMessage (not just additionalContext).
+
+        After the channel="ai" → channel="both" fix, systemMessage must contain
+        the reminder. This is the ONLY working delivery path per Claude Code SDK
+        issue #18534 (additionalContext is documented but not implemented).
+        """
+        session_id = self._sid("sysmsg-staleness")
+        self._activate_autorun(hook_resources, session_id)
+        self._create_task_via_hook(hook_resources, session_id)
+
+        # Set low threshold
+        self._run(hook_resources, self._base_payload(
+            "UserPromptSubmit", session_id,
+            prompt="/ar:tasks 3", session_transcript=[],
+        ))
+
+        # Send 4 PostToolUse events (threshold=3, fires on 3rd)
+        results = self._send_post_tool_calls(hook_resources, session_id, 4)
+
+        # Find the reminder message
+        reminder_msgs = [msg for _, msg in results if "MANDATORY TASK UPDATE" in msg]
+        assert reminder_msgs, (
+            f"Staleness reminder must appear in systemMessage for AI visibility. "
+            f"Got messages: {[msg[:60] for _, msg in results]}. "
+            f"If only in additionalContext, the AI never sees it (Claude Code SDK issue #18534)."
+        )
+
+    def test_staleness_reminder_resets_on_task_create(self, hook_resources):
+        """Verify staleness counter and escalation reset after TaskCreate event."""
+        session_id = self._sid("reset-on-create")
+        self._activate_autorun(hook_resources, session_id)
+        self._create_task_via_hook(hook_resources, session_id)
+
+        # Set low threshold
+        self._run(hook_resources, self._base_payload(
+            "UserPromptSubmit", session_id,
+            prompt="/ar:tasks 3", session_transcript=[],
+        ))
+
+        # Trigger staleness reminder (3 calls)
+        self._send_post_tool_calls(hook_resources, session_id, 3)
+
+        # Send TaskCreate — should reset counter
+        self._create_task_via_hook(hook_resources, session_id, "2", "another task")
+
+        # Next 2 calls should NOT trigger reminder (threshold=3, only 2 calls)
+        results = self._send_post_tool_calls(hook_resources, session_id, 2)
+        last_msg = results[-1][1]
+        assert "MANDATORY TASK UPDATE" not in last_msg and "SECOND REMINDER" not in last_msg, (
+            f"After TaskCreate reset, 2 calls should not trigger reminder at threshold=3. "
+            f"Got systemMessage={last_msg!r}"
+        )
+
+    def test_remind_until_tasks_created_fires_every_call(self, hook_resources):
+        """Verify remind_until_tasks_created fires on every PostToolUse until TaskCreate.
+
+        When plan_awaiting_planning_tasks is True, every PostToolUse should
+        include the planning task reminder in systemMessage.
+        """
+        session_id = self._sid("remind-every-call")
+
+        # Activate with /ar:pn (sets plan_awaiting_planning_tasks=True)
+        self._run(hook_resources, self._base_payload(
+            "UserPromptSubmit", session_id,
+            prompt="/ar:pn test plan", session_transcript=[],
+        ))
+
+        # Send 3 PostToolUse events — each should contain planning reminder
+        results = self._send_post_tool_calls(hook_resources, session_id, 3)
+        reminders_seen = sum(1 for _, msg in results if "PLANNING TASKS REQUIRED" in msg)
+
+        assert reminders_seen == 3, (
+            f"remind_until_tasks_created should fire on EVERY PostToolUse call. "
+            f"Expected 3 reminders, got {reminders_seen}. "
+            f"Messages: {[msg[:60] for _, msg in results]}"
+        )
+
+    def test_escalation_ladder_progresses(self, hook_resources):
+        """Verify reminder escalates: 1st=MANDATORY, 2nd=SECOND REMINDER, 3rd=FINAL WARNING.
+
+        The escalation ladder tracks task_staleness_reminder_count across
+        threshold cycles. Each cycle fires a progressively stronger message.
+        Requires an incomplete task so the main threshold path is used
+        (not the no_tasks_threshold path which uses a fixed threshold of 5).
+        """
+        session_id = self._sid("escalation-ladder")
+        self._activate_autorun(hook_resources, session_id)
+        self._create_task_via_hook(hook_resources, session_id)
+
+        # Set very low threshold for quick escalation
+        self._run(hook_resources, self._base_payload(
+            "UserPromptSubmit", session_id,
+            prompt="/ar:tasks 2", session_transcript=[],
+        ))
+
+        # 6 calls = 3 threshold cycles at threshold=2
+        results = self._send_post_tool_calls(hook_resources, session_id, 6)
+        escalation_msgs = [msg for _, msg in results
+                          if "MANDATORY" in msg or "SECOND" in msg or "FINAL" in msg]
+
+        assert len(escalation_msgs) >= 3, (
+            f"Expected 3 escalating reminders over 6 calls at threshold=2. "
+            f"Got {len(escalation_msgs)}: {[m[:50] for m in escalation_msgs]}"
+        )
+        # Verify escalation order
+        assert "MANDATORY" in escalation_msgs[0], f"1st should be MANDATORY, got: {escalation_msgs[0][:60]}"
+        assert "SECOND" in escalation_msgs[1], f"2nd should be SECOND REMINDER, got: {escalation_msgs[1][:60]}"
+        assert "FINAL" in escalation_msgs[2], f"3rd should be FINAL WARNING, got: {escalation_msgs[2][:60]}"
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Response format correctness
     # ─────────────────────────────────────────────────────────────────────────
 
