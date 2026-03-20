@@ -1511,7 +1511,7 @@ def _update_package_metadata(marketplace_root: Path) -> None:
 # =============================================================================
 
 # Pinned version for ai-session-tools. Update when releasing a new version.
-_AISE_VERSION = "0.3.0"
+_AISE_VERSION = "0.3.1"
 _AISE_REPO = "git+https://github.com/ahundt/ai_session_tools.git"
 
 
@@ -1880,7 +1880,7 @@ def install_plugins(
         # Autorun doesn't import aise at runtime — it's a separate CLI for
         # searching/recovering AI session history. Install order:
         #   1. Check if aise is already installed and working → skip if --force not given
-        #   2. Try pinned release tag (v0.3.0) → preferred for reproducibility
+        #   2. Try pinned release tag (v0.3.1) → preferred for reproducibility
         #   3. Fall back to main branch → always available, latest code
         _install_aise(force=force)
 

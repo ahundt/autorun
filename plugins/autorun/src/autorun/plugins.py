@@ -40,7 +40,8 @@ from .core import app, EventContext, logger, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
-    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_COMBINED_TOOLS
+    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_COMBINED_TOOLS,
+    ALL_TASK_TOOLS
 )
 from .session_manager import session_state
 from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
@@ -985,7 +986,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
         ctx.plan_awaiting_execution_tasks = True
         reminder = _get_task_creation_reminder(ctx)
         if reminder:
-            ctx.add_chain_notification(reminder, channel="ai")
+            ctx.add_chain_notification(reminder, channel="both")
         ctx.add_chain_notification("Plan accepted (autorun already active)", channel="human")
         return None
 
@@ -1039,7 +1040,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     user_msg = "\n".join(user_lines)
 
     ctx.add_chain_notification(user_msg, channel="human")
-    ctx.add_chain_notification(injection, channel="ai")
+    ctx.add_chain_notification(injection, channel="both")
     return None  # Don't stop chain — let all PostToolUse handlers contribute
 
 
@@ -1073,7 +1074,7 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
                 f"{file_path} (old_string was {old_lines} lines, new_string is {new_lines} lines). "
                 f"Read the full plan file NOW and verify no content was accidentally deleted. "
                 f"Restore any missing content before continuing.",
-                channel="ai"
+                channel="both"
             )
 
     elif ctx.tool_name == "Write":
@@ -1084,10 +1085,34 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
                 f"\n⚠️ PLAN CONTENT WARNING: Write produced only {content_lines} lines "
                 f"in {file_path}. Plan files should have substantial content. "
                 f"Verify this was intentional and no content was accidentally deleted.",
-                channel="ai"
+                channel="both"
             )
 
     return None
+
+
+# === TASK STALENESS ENFORCEMENT (v0.11) ===
+
+@app.on("PreToolUse")
+def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
+    """LAST RESORT: Block non-Task tools after 3+ ignored staleness reminders (v0.11).
+
+    Only fires when task_staleness_enforce_next is True (set by 3rd staleness
+    reminder or after 10 ignored remind_until_tasks_created calls).
+    One-shot block then reset — prevents infinite deny loops.
+    """
+    if not ctx.task_staleness_enforce_next:
+        return None
+    if ctx.tool_name in ALL_TASK_TOOLS:
+        ctx.task_staleness_enforce_next = False
+        ctx.task_staleness_reminder_count = 0
+        ctx.plan_task_reminder_count = 0
+        return None
+    ctx.task_staleness_enforce_next = False  # One-shot
+    return ctx.deny(
+        "\u26d4 Task list update required \u2014 multiple reminders ignored. "
+        "Call TaskList, TaskCreate, or TaskUpdate, then continue your work."
+    )
 
 
 # === TASK STALENESS REMINDER (v0.9) ===
@@ -1107,6 +1132,8 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     # Reset counter when AI actively manages tasks; skip increment.
     if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_COMBINED_TOOLS):
         ctx.tool_calls_since_task_update = 0
+        ctx.task_staleness_reminder_count = 0
+        ctx.task_staleness_enforce_next = False
         return None
 
     count = (ctx.tool_calls_since_task_update or 0) + 1
@@ -1129,7 +1156,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
                 msg = CONFIG["task_staleness_no_tasks_message"].format(
                     threshold=no_tasks_threshold
                 )
-                ctx.add_chain_notification(msg, channel="ai")
+                ctx.add_chain_notification(msg, channel="both")
                 return None
             elif not incomplete:
                 # Tasks exist but all complete — nothing to remind about
@@ -1142,8 +1169,18 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
 
     ctx.tool_calls_since_task_update = 0
-    msg = CONFIG["task_staleness_message"].format(threshold=threshold)
-    ctx.add_chain_notification(msg, channel="ai")
+    reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
+    ctx.task_staleness_reminder_count = reminder_count
+
+    if reminder_count >= 3:
+        msg = CONFIG["task_staleness_message_final"].format(threshold=threshold)
+        ctx.task_staleness_enforce_next = True
+    elif reminder_count == 2:
+        msg = CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
+    else:
+        msg = CONFIG["task_staleness_message"].format(threshold=threshold)
+
+    ctx.add_chain_notification(msg, channel="both")
     return None
 
 
@@ -1165,18 +1202,24 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     if not awaiting_planning and not awaiting_execution:
         return None
 
-    # TaskCreate clears the active flag
+    # TaskCreate clears the active flag and resets escalation
     if ctx.tool_name in TASK_CREATE_TOOLS:
         if awaiting_planning:
             ctx.plan_awaiting_planning_tasks = False
         if awaiting_execution:
             ctx.plan_awaiting_execution_tasks = False
+        ctx.plan_task_reminder_count = 0
+        ctx.task_staleness_enforce_next = False
         return None
 
     # DRY helper selects message based on flags (execution priority over planning)
     msg = _get_task_creation_reminder(ctx)
     if msg:
-        ctx.add_chain_notification(msg, channel="ai")
+        count = (ctx.plan_task_reminder_count or 0) + 1
+        ctx.plan_task_reminder_count = count
+        if count >= 10:
+            ctx.task_staleness_enforce_next = True
+        ctx.add_chain_notification(msg, channel="both")
     return None
 
 
@@ -1402,7 +1445,15 @@ def _make_plan_handler(md_filename: str):
 
         # Set plan_active and task creation nag for all plan commands
         ctx.plan_active = True
-        ctx.plan_awaiting_planning_tasks = True
+        # Only nag for planning tasks if none exist yet (prevents false positives
+        # when /ar:planrefine runs after tasks were already created)
+        has_tasks = False
+        if task_lifecycle.is_enabled():
+            try:
+                has_tasks = len(task_lifecycle.TaskLifecycle(ctx=ctx).tasks) > 0
+            except Exception:
+                pass
+        ctx.plan_awaiting_planning_tasks = not has_tasks
 
         if not md_path.exists():
             return f"❌ Error: Plan command file not found: {md_filename}"

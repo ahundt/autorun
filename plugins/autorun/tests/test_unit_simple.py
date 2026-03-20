@@ -644,7 +644,7 @@ def test_staleness_injection_at_threshold():
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "TASK LIST STALE" in additional
+    assert "MANDATORY TASK UPDATE" in additional
 
 
 def test_staleness_counter_resets_on_task_create():
@@ -669,7 +669,7 @@ def test_staleness_disabled_no_injection():
                                task_staleness_enabled=False,
                                tool_calls_since_task_update=50)
     result = plugins.app.dispatch(ctx) or {}
-    assert "TASK LIST STALE" not in str(result)
+    assert "MANDATORY TASK UPDATE" not in str(result)
 
 
 def test_staleness_fires_without_autorun_when_tasks_exist():
@@ -682,7 +682,7 @@ def test_staleness_fires_without_autorun_when_tasks_exist():
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "TASK LIST STALE" in additional
+    assert "MANDATORY TASK UPDATE" in additional
 
 
 def test_staleness_no_injection_when_all_tasks_complete():
@@ -701,7 +701,7 @@ def test_staleness_no_injection_when_all_tasks_complete():
                                tool_calls_since_task_update=50,
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
-    assert "TASK LIST STALE" not in str(result)
+    assert "MANDATORY TASK UPDATE" not in str(result)
     assert "NO TASKS EXIST" not in str(result)
 
 
@@ -722,7 +722,7 @@ def test_staleness_no_fire_below_zero_tasks_threshold():
                                task_staleness_threshold=25)
     result = plugins.app.dispatch(ctx) or {}
     assert "NO TASKS EXIST" not in str(result)
-    assert "TASK LIST STALE" not in str(result)
+    assert "MANDATORY TASK UPDATE" not in str(result)
 
 
 # ── Task creation reminder (v0.10) ───────────────────────────────────────
@@ -841,7 +841,6 @@ def test_execution_reminder_references_tdd_exec():
     msg = CONFIG["plan_execution_task_reminder"]
     assert "[TDD]" in msg
     assert "[EXEC]" in msg
-    assert "[VERIFY]" in msg
 
 
 def test_planning_reminder_references_planning_format():
@@ -1272,10 +1271,13 @@ class TestStalenessE2E:
         injections = []
         for i in range(9):
             result = _e2e_post_tool("Bash", sid, self.store)
-            if "TASK LIST STALE" in str(result):
+            s = str(result)
+            # All escalation levels contain "TaskCreate" — detect any reminder
+            if "MANDATORY TASK UPDATE" in s or "SECOND REMINDER" in s or "FINAL WARNING" in s:
                 injections.append(i)
 
         # Should inject at tool calls 3, 6, 9 → indices 2, 5, 8
+        # With escalation: 1st=MANDATORY, 2nd=SECOND REMINDER, 3rd=FINAL WARNING
         assert len(injections) == 3, (
             f"Expected 3 injections at threshold=3 over 9 calls, got {len(injections)} "
             f"at indices {injections}"
@@ -1295,7 +1297,7 @@ class TestStalenessE2E:
         for _ in range(4):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK LIST STALE" not in str(r) for r in results), (
+        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results), (
             "No injection expected — longest streak is 4, threshold is 5"
         )
 
@@ -1311,7 +1313,7 @@ class TestStalenessE2E:
         for _ in range(4):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK LIST STALE" not in str(r) for r in results)
+        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results)
 
     def test_task_list_does_not_reset_counter(self):
         """TaskList should NOT reset the counter (only Create/Update do)."""
@@ -1323,7 +1325,7 @@ class TestStalenessE2E:
         _e2e_post_tool("TaskList", sid, self.store)   # count=2 (NOT reset)
         result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
 
-        assert "TASK LIST STALE" in str(result), (
+        assert "MANDATORY TASK UPDATE" in str(result), (
             "TaskList should not reset the counter — injection expected at count=3"
         )
 
@@ -1337,7 +1339,7 @@ class TestStalenessE2E:
         _e2e_post_tool("TaskGet", sid, self.store)    # count=2 (NOT reset)
         result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
 
-        assert "TASK LIST STALE" in str(result), (
+        assert "MANDATORY TASK UPDATE" in str(result), (
             "TaskGet should not reset the counter — injection expected at count=3"
         )
 
@@ -1351,7 +1353,7 @@ class TestStalenessE2E:
         _e2e_post_tool("task_create", sid, self.store)  # reset
         result = _e2e_post_tool("Bash", sid, self.store)  # count=1
 
-        assert "TASK LIST STALE" not in str(result), (
+        assert "MANDATORY TASK UPDATE" not in str(result), (
             "task_create should reset counter — no injection expected at count=1"
         )
 
@@ -1365,7 +1367,7 @@ class TestStalenessE2E:
         _e2e_post_tool("task_update", sid, self.store)  # reset
         result = _e2e_post_tool("Bash", sid, self.store)
 
-        assert "TASK LIST STALE" not in str(result)
+        assert "MANDATORY TASK UPDATE" not in str(result)
 
     # ── /ar:tasks command → handler interaction ────────────────────────
 
@@ -1379,7 +1381,7 @@ class TestStalenessE2E:
         for _ in range(10):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK LIST STALE" not in str(r) for r in results), (
+        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results), (
             "No injection expected when staleness is disabled"
         )
 
@@ -1402,7 +1404,7 @@ class TestStalenessE2E:
         for _ in range(3):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert "TASK LIST STALE" in str(results[-1]), (
+        assert "MANDATORY TASK UPDATE" in str(results[-1]), (
             "Injection expected after re-enabling at call #3"
         )
 
@@ -1416,7 +1418,7 @@ class TestStalenessE2E:
         results = []
         for _ in range(5):
             results.append(_e2e_post_tool("Bash", sid, self.store))
-        assert all("TASK LIST STALE" not in str(r) for r in results)
+        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results)
 
         # Lower threshold to 2 (counter was reset by the command)
         _e2e_command("/ar:tasks 2", sid, self.store)
@@ -1424,7 +1426,7 @@ class TestStalenessE2E:
         # 2 more calls should trigger
         _e2e_post_tool("Bash", sid, self.store)
         result = _e2e_post_tool("Bash", sid, self.store)
-        assert "TASK LIST STALE" in str(result)
+        assert "MANDATORY TASK UPDATE" in str(result)
 
     def test_command_invalid_string_rejected(self):
         """/ar:tasks abc returns error message."""
@@ -1465,7 +1467,7 @@ class TestStalenessE2E:
         for _ in range(5):
             results.append(_e2e_post_tool("Bash", sid, store))
 
-        assert all("TASK LIST STALE" not in str(r) for r in results)
+        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results)
 
     def test_fires_without_autorun_e2e(self):
         """Reminder fires when autorun_active=False but incomplete tasks exist."""
@@ -1485,7 +1487,7 @@ class TestStalenessE2E:
             result = plugins.app.dispatch(ctx) or {}
             results.append(result)
 
-        assert any("TASK LIST STALE" in str(r) for r in results), (
+        assert any("MANDATORY TASK UPDATE" in str(r) for r in results), (
             "Reminder should fire with incomplete tasks even when autorun_active=False"
         )
 
@@ -1502,7 +1504,7 @@ class TestStalenessE2E:
         for _ in range(2):
             _e2e_post_tool("Bash", sid, store)
         result = _e2e_post_tool("Bash", sid, store)
-        assert "TASK LIST STALE" in str(result)
+        assert "MANDATORY TASK UPDATE" in str(result)
 
         # Phase 2: TaskUpdate resets counter
         _e2e_post_tool("TaskUpdate", sid, store)
@@ -1670,6 +1672,6 @@ class TestStalenessE2E:
         for _ in range(5):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK LIST STALE" not in str(r) for r in results), (
+        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results), (
             "No injection expected — no incomplete tasks exist"
         )

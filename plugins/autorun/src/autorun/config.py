@@ -42,6 +42,7 @@ TASK_GET_TOOLS = {"TaskGet", "task_get"}
 # Routing is handled in track_task_operations by inspecting tool_input.
 TASK_COMBINED_TOOLS = {"write_todos"}
 ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS
+ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS
 
 
 # =============================================================================
@@ -341,28 +342,32 @@ CONFIG = {
     "task_staleness_no_tasks_threshold": 5,
     # Injected when threshold crossed. {threshold} replaced at runtime.
     "task_staleness_message": (
-        "\n\u26a0\ufe0f TASK LIST STALE: {threshold} tool calls without a TaskCreate or "
-        "TaskUpdate. You MUST update your task list NOW:\n"
-        "1. TaskList \u2014 review current tasks\n"
-        "2. TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark tasks you are working on\n"
-        "3. TaskUpdate(taskId=N, status=\"completed\") \u2014 mark finished tasks\n"
-        "4. TaskCreate(subject=\"...\") \u2014 add any new work discovered since last update\n"
-        "5. TaskUpdate(taskId=N, addBlockedBy=[M]) \u2014 update dependencies if order changed\n"
-        "Do NOT skip this. Do NOT stop. Update tasks, then continue."
+        "\n\U0001f6a8 MANDATORY TASK UPDATE REQUIRED \u2014 {threshold} tool calls without TaskCreate "
+        "or TaskUpdate. Your VERY NEXT action must be one of these Task tools:\n"
+        "\u2022 TaskList \u2014 then update each task's status\n"
+        "\u2022 TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") \u2014 update status\n"
+        "\u2022 TaskCreate(subject=\"...\") \u2014 add newly discovered work\n"
+        "\u26d4 DO NOT call any other tool (Read, Write, Bash, Edit, Grep, Glob) until you "
+        "have called at least one Task tool. This is not optional."
+    ),
+    "task_staleness_message_2nd": (
+        "\n\u26d4 SECOND REMINDER \u2014 {threshold} more tool calls without TaskCreate or TaskUpdate. "
+        "Your VERY NEXT action MUST be a Task tool. DO NOT call Read, Write, Bash, Edit, "
+        "Grep, or Glob. Call TaskList or TaskUpdate NOW."
+    ),
+    "task_staleness_message_final": (
+        "\n\U0001f6a8 FINAL WARNING \u2014 This is your THIRD reminder. {threshold} tool calls ignored. "
+        "If you do not call a Task tool IMMEDIATELY, your next non-Task tool call will be BLOCKED. "
+        "Call TaskList, TaskCreate, or TaskUpdate RIGHT NOW."
     ),
     # Injected when zero tasks exist and no_tasks_threshold crossed.
     "task_staleness_no_tasks_message": (
-        "\n\u26a0\ufe0f NO TASKS EXIST: {threshold} tool calls and you have ZERO tasks. "
-        "You MUST create tasks NOW to track your work:\n"
-        "1. TaskCreate(subject=\"...\", description=\"...\") \u2014 create tasks for ALL current work\n"
-        "2. TaskCreate(subject=\"...\") \u2014 add a task for each distinct goal or deliverable\n"
-        "3. TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark the task you are starting\n"
-        "4. TaskUpdate(taskId=N, addBlockedBy=[M]) \u2014 wire dependencies if tasks have order\n"
-        "5. TaskList \u2014 verify all tasks are visible\n"
-        "If a task is no longer needed: TaskUpdate(taskId=N, status=\"deleted\")\n"
-        "If a task is blocked externally: TaskUpdate(taskId=N, status=\"paused\")\n"
-        "Use /ar:task-status to see current state. "
-        "Do NOT skip this. Do NOT stop. Create tasks, then continue."
+        "\n\U0001f6a8 NO TASKS EXIST \u2014 {threshold} tool calls and you have ZERO tasks. "
+        "Your VERY NEXT action must be TaskCreate:\n"
+        "\u2022 TaskCreate(subject=\"...\", description=\"...\") \u2014 one task per distinct goal\n"
+        "\u2022 TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark what you are starting\n"
+        "\u26d4 DO NOT call any other tool until you have created at least one task. "
+        "This is not optional."
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
     "task_outstanding_stage3_message": (
@@ -392,23 +397,21 @@ CONFIG = {
     ),
     # --- Task Creation Reminder Messages (v0.10) ---
     "plan_planning_task_reminder": (
-        "\n⚠️ PLANNING TASKS REQUIRED: You started a plan command but have NOT "
-        "created any [PLANNING] tasks yet. You MUST call TaskCreate NOW:\n"
-        "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\", activeForm=\"Planning [name]...\")\n"
-        "2. TaskCreate(subject=\"[PLANNING] Req: [requirement]\")\n"
-        "3. Wire dependencies: TaskUpdate(taskId=N, addBlockedBy=[N-1])\n"
-        "4. Call TaskList to verify all tasks visible\n"
-        "Do NOT proceed with any other work until planning tasks are created.\n"
+        "\n\U0001f6a8 PLANNING TASKS REQUIRED: Your VERY NEXT action must be TaskCreate. "
+        "You started a plan command but have NOT created any [PLANNING] tasks yet.\n"
+        "\u2022 TaskCreate(subject=\"[PLANNING] Step N: [name]\")\n"
+        "\u2022 TaskUpdate(taskId=N, addBlockedBy=[N-1]) \u2014 wire dependencies\n"
+        "\u2022 TaskList \u2014 verify all tasks visible\n"
+        "\u26d4 DO NOT call Read, Write, Bash, Edit, Grep, Glob, or any other tool "
+        "until planning tasks are created. This is not optional.\n"
     ),
     "plan_execution_task_reminder": (
-        "\n⚠️ EXECUTION TASKS REQUIRED: Plan accepted but NO implementation tasks created. "
-        "You MUST call TaskCreate NOW before writing any code:\n"
-        "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\")\n"
-        "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\")\n"
-        "3. TaskCreate(subject=\"[VERIFY] Run full test suite\")\n"
-        "4. Wire: each [EXEC] blockedBy its [TDD]\n"
-        "5. Call TaskList to verify all tasks visible\n"
-        "Do NOT write implementation code until tasks are created.\n"
+        "\n\U0001f6a8 EXECUTION TASKS REQUIRED: Your VERY NEXT action must be TaskCreate. "
+        "Plan accepted but NO implementation tasks created.\n"
+        "\u2022 TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\")\n"
+        "\u2022 TaskCreate(subject=\"[EXEC] Step N: [step description]\")\n"
+        "\u2022 Wire: each [EXEC] blockedBy its [TDD]\n"
+        "\u26d4 DO NOT write any code until tasks are created. This is not optional.\n"
     ),
 
     # ─── Timing ───────────────────────────────────────────────────────────────
