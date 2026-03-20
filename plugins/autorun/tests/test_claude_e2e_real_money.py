@@ -1796,6 +1796,59 @@ class TestClaudeE2ERealMoney:
     # no_tasks_threshold (default 5) fires after 5 tool calls with 0 tasks.
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _write_test_codebase(self, tmp_path):
+        """Write a small Python codebase to tmp_path for AI analysis tasks.
+
+        Returns enough files (4) to require 5+ tool calls (Glob + 4× Read),
+        triggering the no_tasks_threshold (default 5).
+        """
+        (tmp_path / "main.py").write_text(
+            "def greet(name):\n"
+            "    return f'Hello, {name}!'\n\n"
+            "def add(a, b):\n"
+            "    return a + b\n\n"
+            "if __name__ == '__main__':\n"
+            "    print(greet('World'))\n"
+        )
+        (tmp_path / "utils.py").write_text(
+            "import os\n\n"
+            "def list_files(directory):\n"
+            "    return os.listdir(directory)\n\n"
+            "def read_config(path):\n"
+            "    with open(path) as f:\n"
+            "        return f.read()\n"
+        )
+        (tmp_path / "test_main.py").write_text(
+            "from main import greet, add\n\n"
+            "def test_greet():\n"
+            "    assert greet('Alice') == 'Hello, Alice!'\n\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        )
+        (tmp_path / "README.md").write_text(
+            "# Sample Project\n\n"
+            "A small Python project with greeting and math utilities.\n"
+        )
+
+    def _detect_task_activity(self, combined: str) -> dict:
+        """Detect task-related tool calls in combined stdout+stderr output.
+
+        Returns dict with booleans for each type of task activity detected.
+        Checks for tool-use markers (Task #N, TaskCreate, TaskUpdate, TaskList)
+        not just prose mentions of 'task'.
+        """
+        lower = combined.lower()
+        return {
+            "task_created": "task #" in lower or "task created" in lower,
+            "taskcreate_tool": "taskcreate" in lower,
+            "taskupdate_tool": "taskupdate" in lower,
+            "tasklist_tool": "tasklist" in lower,
+            "any_task_tool": any(t in lower for t in [
+                "taskcreate", "taskupdate", "tasklist", "task #",
+                "task created", "task updated",
+            ]),
+        }
+
     def test_haiku_creates_tasks_unprompted_after_reminder(
         self, tmp_path, claude_cli_check
     ):
@@ -1803,8 +1856,8 @@ class TestClaudeE2ERealMoney:
 
         The prompt is a NORMAL WORK TASK — no mention of tasks, TaskCreate,
         or task management. The AI should do several Read/Glob calls to analyze
-        the files, then the no-tasks reminder fires (threshold=5), and the AI
-        should spontaneously call TaskCreate before continuing.
+        the files, then the no-tasks reminder fires (no_tasks_threshold=5),
+        and the AI should spontaneously call TaskCreate before continuing.
 
         This is the definitive test of the reminder delivery system:
         - If the AI never creates tasks → reminder didn't reach it (SDK bug)
@@ -1812,36 +1865,9 @@ class TestClaudeE2ERealMoney:
 
         COSTS REAL MONEY: < $0.01 (haiku, ~10 tool calls)
         """
-        # Set up a small codebase for the AI to analyze
-        (tmp_path / "main.py").write_text(
-            "def greet(name):\\n"
-            "    return f'Hello, {name}!'\\n\\n"
-            "def add(a, b):\\n"
-            "    return a + b\\n\\n"
-            "if __name__ == '__main__':\\n"
-            "    print(greet('World'))\\n"
-        )
-        (tmp_path / "utils.py").write_text(
-            "import os\\n\\n"
-            "def list_files(directory):\\n"
-            "    return os.listdir(directory)\\n\\n"
-            "def read_config(path):\\n"
-            "    with open(path) as f:\\n"
-            "        return f.read()\\n"
-        )
-        (tmp_path / "test_main.py").write_text(
-            "from main import greet, add\\n\\n"
-            "def test_greet():\\n"
-            "    assert greet('Alice') == 'Hello, Alice!'\\n\\n"
-            "def test_add():\\n"
-            "    assert add(1, 2) == 3\\n"
-        )
-        (tmp_path / "README.md").write_text(
-            "# Sample Project\\n\\n"
-            "A small Python project with greeting and math utilities.\\n"
-        )
+        self._write_test_codebase(tmp_path)
 
-        # Work prompt — deliberately does NOT mention tasks
+        # Work prompt — deliberately does NOT mention tasks, TaskCreate, etc.
         result = subprocess.run(
             [
                 "claude", "-p", "--model", "haiku",
@@ -1862,35 +1888,36 @@ class TestClaudeE2ERealMoney:
             f"Full output in: {log_path}\nstderr:\n{result.stderr}"
         )
 
-        # The AI should have:
-        # 1. Done the work (read files, listed functions)
-        # 2. Received the no-tasks reminder after 5 tool calls
-        # 3. Spontaneously created tasks
-        output = result.stdout.lower()
-        did_work = "greet" in output or "add" in output or "function" in output
-        created_tasks = (
-            "task" in output and ("created" in output or "#" in output)
-        )
+        # Check both stdout and stderr (hook messages may appear in either)
+        combined = result.stdout + result.stderr
 
+        # Verify the AI actually did the work (proves enough tool calls fired)
+        combined_lower = combined.lower()
+        did_work = "greet" in combined_lower or "add" in combined_lower or "function" in combined_lower
         assert did_work, (
             f"Haiku should have analyzed the Python files. "
             f"Expected 'greet', 'add', or 'function' in output.\n"
             f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
         )
 
-        # This is the key assertion: did the reminder cause task creation?
-        # If this fails, the reminder delivery is broken (AI never saw it).
-        # Note: This may fail if systemMessage doesn't reach the AI (SDK #25987).
-        # Track pass rate across runs to measure delivery effectiveness.
-        if not created_tasks:
-            # Soft failure — log but don't block CI. The reminder may not
-            # be reaching the AI yet. Use this to track compliance rates.
+        # Key test: did the AI spontaneously create tasks?
+        # The no-tasks reminder fires after 5 tool calls via:
+        #   PostToolUse systemMessage (channel="both") AND
+        #   PreToolUse allow(reason) (enforce_task_staleness)
+        task_info = self._detect_task_activity(combined)
+
+        if not task_info["any_task_tool"]:
+            # Soft failure — the reminder may not be reaching the AI.
+            # Track pass rate across runs to measure delivery effectiveness.
             import warnings
             warnings.warn(
-                f"TASK REMINDER COMPLIANCE: Haiku did NOT create tasks unprompted. "
-                f"The no-tasks reminder (threshold=5) may not be reaching the AI. "
+                f"TASK REMINDER COMPLIANCE FAILURE: Haiku did NOT create tasks "
+                f"unprompted after no-tasks reminder (threshold=5). "
+                f"The reminder may not be reaching the AI model. "
+                f"Check SDK issues #18534 (additionalContext) and #25987 (systemMessage). "
+                f"Task detection: {task_info}\n"
                 f"Full output in: {log_path}\n"
-                f"stdout (first 500 chars):\n{result.stdout[:500]}",
+                f"stdout (first 1000 chars):\n{result.stdout[:1000]}",
                 UserWarning,
                 stacklevel=1,
             )
@@ -1900,38 +1927,63 @@ class TestClaudeE2ERealMoney:
     ):
         """E2E: Haiku spontaneously updates task list after staleness reminder.
 
-        Similar to the unprompted test above, but starts with a pre-existing
-        task to test the staleness path (threshold=25 by default, too many
-        calls for a cheap test). Instead, we use /ar:tasks to set threshold=5.
+        Uses a multi-file code review task that naturally requires 5+ tool calls.
+        The no_tasks_threshold (default 5) fires the "NO TASKS EXIST" reminder.
+        We check if the AI spontaneously calls any Task tool.
 
-        Flow: /ar:tasks 5 → work prompt → 5 tool calls → staleness fires
-              → AI should call TaskList or TaskUpdate
+        NOTE: We do NOT try to set /ar:tasks via the prompt — slash commands
+        are processed by the UserPromptSubmit hook, not embedded in claude -p
+        prompts. Instead we rely on the default no_tasks_threshold=5.
 
         COSTS REAL MONEY: < $0.01 (haiku, ~8 tool calls)
         """
-        # Create files for the AI to work on
+        # Create a slightly different codebase to avoid caching
         (tmp_path / "app.py").write_text(
-            "class Calculator:\\n"
-            "    def add(self, a, b): return a + b\\n"
-            "    def subtract(self, a, b): return a - b\\n"
-            "    def multiply(self, a, b): return a * b\\n"
-            "    def divide(self, a, b):\\n"
-            "        if b == 0: raise ValueError('division by zero')\\n"
-            "        return a / b\\n"
+            "class Calculator:\n"
+            "    def add(self, a, b): return a + b\n"
+            "    def subtract(self, a, b): return a - b\n"
+            "    def multiply(self, a, b): return a * b\n"
+            "    def divide(self, a, b):\n"
+            "        if b == 0: raise ValueError('division by zero')\n"
+            "        return a / b\n"
+        )
+        (tmp_path / "models.py").write_text(
+            "from dataclasses import dataclass\n\n"
+            "@dataclass\n"
+            "class User:\n"
+            "    name: str\n"
+            "    email: str\n"
+            "    active: bool = True\n\n"
+            "@dataclass\n"
+            "class Product:\n"
+            "    name: str\n"
+            "    price: float\n"
+            "    stock: int = 0\n"
         )
         (tmp_path / "config.json").write_text(
-            '{"debug": true, "log_level": "INFO", "max_retries": 3}\\n'
+            '{"debug": true, "log_level": "INFO", "max_retries": 3}\n'
+        )
+        (tmp_path / "test_app.py").write_text(
+            "from app import Calculator\n\n"
+            "def test_add():\n"
+            "    c = Calculator()\n"
+            "    assert c.add(1, 2) == 3\n\n"
+            "def test_divide_by_zero():\n"
+            "    c = Calculator()\n"
+            "    try:\n"
+            "        c.divide(1, 0)\n"
+            "        assert False, 'Should have raised'\n"
+            "    except ValueError:\n"
+            "        pass\n"
         )
 
-        # Two-prompt approach: first set threshold, then give work
-        # Note: claude -p runs a single prompt, so we combine them
+        # Work prompt — no mention of tasks
         result = subprocess.run(
             [
                 "claude", "-p", "--model", "haiku",
-                "First run /ar:tasks 5 to configure task tracking. "
-                "Then read all files in this directory and write a brief "
-                "code review noting any issues, missing error handling, "
-                "or potential improvements. Be thorough — read each file.",
+                "Do a thorough code review of all files in this directory. "
+                "Read each file, identify any bugs, missing error handling, "
+                "or code quality issues. Suggest specific fixes for each issue found.",
             ],
             capture_output=True, text=True, timeout=180,
             cwd=str(tmp_path),
@@ -1945,29 +1997,26 @@ class TestClaudeE2ERealMoney:
             f"Full output in: {log_path}\nstderr:\n{result.stderr}"
         )
 
-        output = result.stdout.lower()
-        did_work = "calculator" in output or "divide" in output or "error" in output
+        combined = result.stdout + result.stderr
+        combined_lower = combined.lower()
+        did_work = "calculator" in combined_lower or "divide" in combined_lower or "user" in combined_lower
 
         assert did_work, (
             f"Haiku should have reviewed the code. "
-            f"Expected 'calculator', 'divide', or 'error' in output.\n"
+            f"Expected 'calculator', 'divide', or 'user' in output.\n"
             f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
         )
 
-        # Check for any task-related activity (created, updated, or listed)
-        task_activity = (
-            ("task" in output and ("created" in output or "#" in output))
-            or "tasklist" in output
-            or "taskupdate" in output
-            or "task_staleness" in output
-        )
+        task_info = self._detect_task_activity(combined)
 
-        if not task_activity:
+        if not task_info["any_task_tool"]:
             import warnings
             warnings.warn(
-                f"STALENESS COMPLIANCE: Haiku did NOT update tasks after staleness reminder. "
+                f"STALENESS COMPLIANCE FAILURE: Haiku did NOT use any Task tools "
+                f"unprompted after no-tasks reminder (threshold=5). "
+                f"Task detection: {task_info}\n"
                 f"Full output in: {log_path}\n"
-                f"stdout (first 500 chars):\n{result.stdout[:500]}",
+                f"stdout (first 1000 chars):\n{result.stdout[:1000]}",
                 UserWarning,
                 stacklevel=1,
             )
