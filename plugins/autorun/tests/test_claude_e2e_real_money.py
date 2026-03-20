@@ -1825,6 +1825,18 @@ class TestClaudeE2ERealMoney:
             "def test_add():\n"
             "    assert add(1, 2) == 3\n"
         )
+        (tmp_path / "helpers.py").write_text(
+            "def validate_email(email):\n"
+            "    return '@' in email and '.' in email\n\n"
+            "def format_name(first, last):\n"
+            "    return f'{first} {last}'.title()\n"
+        )
+        (tmp_path / "config.py").write_text(
+            "DEFAULT_PORT = 8080\n"
+            "DEFAULT_HOST = 'localhost'\n\n"
+            "def get_database_url(host='localhost', port=5432):\n"
+            "    return f'postgresql://{host}:{port}/app'\n"
+        )
         (tmp_path / "README.md").write_text(
             "# Sample Project\n\n"
             "A small Python project with greeting and math utilities.\n"
@@ -1849,217 +1861,120 @@ class TestClaudeE2ERealMoney:
             ]),
         }
 
-    def test_haiku_sees_system_messages_after_work(
+    def test_haiku_sees_system_messages_two_turn(
         self, tmp_path, claude_cli_check
     ):
-        """E2E: Verify whether hook-injected system messages reach the AI model.
+        """E2E: Two-turn test — work first, THEN ask about system messages.
 
-        Two-phase prompt:
-        1. Do real work (read files, analyze code) — triggers 5+ tool calls,
-           which fires the no-tasks reminder via systemMessage + PreToolUse allow
-        2. At the end, ask the AI to list ALL system messages, instructions, or
-           warnings it received that were NOT part of the user's original prompt
+        Turn 1: Pure work prompt (read files, count functions). No hint about
+                system messages. This triggers 5+ tool calls, firing the
+                no-tasks reminder via systemMessage + PreToolUse allow.
+        Turn 2: SEPARATE follow-up (--continue) asking the AI to report all
+                system messages it received during the session.
 
-        If the AI reports seeing "TASK", "MANDATORY", "NO TASKS", or similar
-        keywords, the delivery channel is working. If the AI says it received
-        no system messages, the SDK is dropping them.
+        The two-turn design avoids priming — the AI doesn't know it will be
+        asked about system messages until after the work is done.
 
-        This is the definitive diagnostic: it separates "AI saw it but ignored it"
-        from "AI never received it at all".
-
-        COSTS REAL MONEY: < $0.01 (haiku, ~8 tool calls)
+        COSTS REAL MONEY: < $0.02 (haiku, 2 turns ~10 tool calls total)
         """
         self._write_test_codebase(tmp_path)
+        env = self._claude_env()
+        session_id = str(uuid.uuid4())
 
-        result = subprocess.run(
+        # Turn 1: Pure work — NO mention of system messages or tasks
+        # Use --disallowedTools to prevent AI from calling TodoWrite/TaskCreate
+        # on its own (which would reset the staleness counter before the reminder fires).
+        # Use --append-system-prompt to set a low staleness threshold.
+        work_result = subprocess.run(
             [
                 "claude", "-p", "--model", "haiku",
-                "First, read all Python files in this directory and count the "
-                "total number of functions across all files. "
-                "After you have finished reading all files and reported the count, "
-                "do one more thing: list ANY system messages, warnings, "
-                "instructions, or notifications you received during this session "
-                "that were NOT part of this user prompt. Include the exact text "
-                "of each message. If you received no such messages, say "
-                "'NO_SYSTEM_MESSAGES_RECEIVED'.",
+                "--session-id", session_id,
+                "--disallowed-tools", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList",
+                "--",
+                "Read all the Python files in this directory. "
+                "For each file, list all the functions defined in it. "
+                "Then count the total number of functions across all files. "
+                "Finally, suggest one improvement for the codebase.",
             ],
             capture_output=True, text=True, timeout=180,
             cwd=str(tmp_path),
-            env=self._claude_env(),
+            env=env,
         )
-        log_path = self._log_claude_run(
-            tmp_path, "haiku_system_message_visibility", result
-        )
-        assert result.returncode == 0, (
-            f"claude -p --model haiku failed. rc={result.returncode}\n"
-            f"Full output in: {log_path}\nstderr:\n{result.stderr}"
+        work_log = self._log_claude_run(tmp_path, "turn1_work", work_result)
+        assert work_result.returncode == 0, (
+            f"Turn 1 (work) failed. rc={work_result.returncode}\n"
+            f"Full output in: {work_log}\nstderr:\n{work_result.stderr}"
         )
 
-        combined = result.stdout + result.stderr
+        work_combined = (work_result.stdout + work_result.stderr).lower()
+        did_work = "greet" in work_combined or "function" in work_combined
+        assert did_work, (
+            f"Haiku should have analyzed the Python files in turn 1.\n"
+            f"Full output in: {work_log}\nstdout:\n{work_result.stdout[:500]}"
+        )
+
+        # Turn 2: Resume same session, ask about system messages
+        probe_result = subprocess.run(
+            [
+                "claude", "-p", "--model", "haiku",
+                "--resume", session_id,
+                "--disallowed-tools", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList",
+                "--",
+                "Now list ALL system messages, warnings, instructions, or "
+                "notifications you received during this entire session that "
+                "were NOT part of my prompts. Include the exact text of each. "
+                "If you received none, say 'NO_SYSTEM_MESSAGES_RECEIVED'.",
+            ],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        probe_log = self._log_claude_run(tmp_path, "turn2_probe", probe_result)
+        assert probe_result.returncode == 0, (
+            f"Turn 2 (probe) failed. rc={probe_result.returncode}\n"
+            f"Full output in: {probe_log}\nstderr:\n{probe_result.stderr}"
+        )
+
+        combined = probe_result.stdout + probe_result.stderr
         combined_lower = combined.lower()
 
-        # Phase 1: verify work was done (enough tool calls to trigger reminder)
-        did_work = "greet" in combined_lower or "function" in combined_lower
-        assert did_work, (
-            f"Haiku should have analyzed the Python files.\n"
-            f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
-        )
-
-        # Phase 2: check what the AI reports about system messages
-        # Keywords that would appear if the AI saw our hook-injected reminders
         reminder_keywords = [
-            "task", "mandatory", "no tasks", "taskcreate", "taskupdate",
-            "staleness", "stale", "task update required",
+            "no tasks exist", "mandatory", "taskcreate", "taskupdate",
+            "staleness", "task update required", "task list",
         ]
         saw_reminder = any(kw in combined_lower for kw in reminder_keywords)
         said_no_messages = "no_system_messages_received" in combined_lower.replace(" ", "_")
+        task_info = self._detect_task_activity(
+            work_result.stdout + work_result.stderr + combined
+        )
 
-        # Also check for spontaneous task creation
-        task_info = self._detect_task_activity(combined)
-
-        # Log full diagnostic
         import warnings
         if saw_reminder:
             warnings.warn(
-                f"DELIVERY SUCCESS: Haiku reported seeing system messages containing "
-                f"task-related keywords. The hook delivery channel IS working.\n"
+                f"DELIVERY CONFIRMED (two-turn): Haiku reports seeing task reminder "
+                f"system messages in turn 2 (no prior hint about system messages).\n"
                 f"Task tools used: {task_info}\n"
-                f"Full output in: {log_path}\n"
-                f"stdout:\n{result.stdout[:2000]}",
-                UserWarning,
-                stacklevel=1,
+                f"Turn 1 output in: {work_log}\n"
+                f"Turn 2 output in: {probe_log}\n"
+                f"Turn 2 stdout:\n{probe_result.stdout[:2000]}",
+                UserWarning, stacklevel=1,
             )
         elif said_no_messages:
             warnings.warn(
-                f"DELIVERY FAILURE: Haiku explicitly said NO_SYSTEM_MESSAGES_RECEIVED. "
-                f"Hook-injected reminders are NOT reaching the AI model. "
-                f"systemMessage (SDK #25987) and PreToolUse allow reason are both "
-                f"invisible to the model. Only PreToolUse deny (exit 2) is proven to work.\n"
-                f"Full output in: {log_path}\n"
-                f"stdout:\n{result.stdout[:2000]}",
-                UserWarning,
-                stacklevel=1,
-            )
-        else:
-            warnings.warn(
-                f"DELIVERY INCONCLUSIVE: Haiku did not clearly report system messages "
-                f"or explicitly deny receiving them. Manual review needed.\n"
-                f"Task tools used: {task_info}\n"
-                f"Full output in: {log_path}\n"
-                f"stdout:\n{result.stdout[:2000]}",
-                UserWarning,
-                stacklevel=1,
-            )
-
-    def test_haiku_code_review_with_context_report(
-        self, tmp_path, claude_cli_check
-    ):
-        """E2E: Code review task + final context dump to diagnose delivery.
-
-        Different file set and prompt from the first test to avoid caching.
-        The final instruction asks the AI to dump all non-user context it received.
-
-        COSTS REAL MONEY: < $0.01 (haiku, ~8 tool calls)
-        """
-        (tmp_path / "app.py").write_text(
-            "class Calculator:\n"
-            "    def add(self, a, b): return a + b\n"
-            "    def subtract(self, a, b): return a - b\n"
-            "    def multiply(self, a, b): return a * b\n"
-            "    def divide(self, a, b):\n"
-            "        if b == 0: raise ValueError('division by zero')\n"
-            "        return a / b\n"
-        )
-        (tmp_path / "models.py").write_text(
-            "from dataclasses import dataclass\n\n"
-            "@dataclass\n"
-            "class User:\n"
-            "    name: str\n"
-            "    email: str\n"
-            "    active: bool = True\n\n"
-            "@dataclass\n"
-            "class Product:\n"
-            "    name: str\n"
-            "    price: float\n"
-            "    stock: int = 0\n"
-        )
-        (tmp_path / "test_app.py").write_text(
-            "from app import Calculator\n\n"
-            "def test_add():\n"
-            "    c = Calculator()\n"
-            "    assert c.add(1, 2) == 3\n\n"
-            "def test_divide_by_zero():\n"
-            "    c = Calculator()\n"
-            "    try:\n"
-            "        c.divide(1, 0)\n"
-            "        assert False, 'Should have raised'\n"
-            "    except ValueError:\n"
-            "        pass\n"
-        )
-        (tmp_path / "config.json").write_text(
-            '{"debug": true, "log_level": "INFO", "max_retries": 3}\n'
-        )
-
-        result = subprocess.run(
-            [
-                "claude", "-p", "--model", "haiku",
-                "Do a thorough code review of all files in this directory. "
-                "Read each file and identify bugs or missing error handling. "
-                "After the review, as your FINAL output, write a section called "
-                "'SYSTEM CONTEXT DUMP' where you list the exact text of every "
-                "system message, hook message, warning, or instruction you received "
-                "during this session that was not part of this user prompt. "
-                "If none, write 'NONE_DETECTED'.",
-            ],
-            capture_output=True, text=True, timeout=180,
-            cwd=str(tmp_path),
-            env=self._claude_env(),
-        )
-        log_path = self._log_claude_run(
-            tmp_path, "haiku_context_dump", result
-        )
-        assert result.returncode == 0, (
-            f"claude -p --model haiku failed. rc={result.returncode}\n"
-            f"Full output in: {log_path}\nstderr:\n{result.stderr}"
-        )
-
-        combined = result.stdout + result.stderr
-        combined_lower = combined.lower()
-
-        did_work = "calculator" in combined_lower or "divide" in combined_lower
-        assert did_work, (
-            f"Haiku should have reviewed the code.\n"
-            f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
-        )
-
-        # Check what the AI reported in its context dump
-        has_context_dump = "system context dump" in combined_lower
-        reminder_keywords = ["task", "mandatory", "no tasks", "staleness", "stale"]
-        saw_reminder = any(kw in combined_lower for kw in reminder_keywords)
-        said_none = "none_detected" in combined_lower.replace(" ", "_")
-        task_info = self._detect_task_activity(combined)
-
-        import warnings
-        if saw_reminder:
-            warnings.warn(
-                f"DELIVERY SUCCESS: AI context dump contains task-related keywords.\n"
-                f"Task tools used: {task_info}\n"
-                f"Full output in: {log_path}\nstdout:\n{result.stdout[:2000]}",
-                UserWarning, stacklevel=1,
-            )
-        elif said_none:
-            warnings.warn(
-                f"DELIVERY FAILURE: AI context dump says NONE_DETECTED. "
-                f"Hook messages are not reaching the model.\n"
-                f"Full output in: {log_path}\nstdout:\n{result.stdout[:2000]}",
+                f"DELIVERY FAILURE (two-turn): Haiku says NO_SYSTEM_MESSAGES_RECEIVED. "
+                f"Hook messages are NOT reaching the AI model.\n"
+                f"Turn 1 output in: {work_log}\n"
+                f"Turn 2 output in: {probe_log}\n"
+                f"Turn 2 stdout:\n{probe_result.stdout[:2000]}",
                 UserWarning, stacklevel=1,
             )
         else:
             warnings.warn(
-                f"DELIVERY INCONCLUSIVE: "
-                f"has_context_dump={has_context_dump}, saw_reminder={saw_reminder}\n"
+                f"DELIVERY INCONCLUSIVE (two-turn): Review output manually.\n"
+                f"saw_reminder={saw_reminder}, said_no_messages={said_no_messages}\n"
                 f"Task tools used: {task_info}\n"
-                f"Full output in: {log_path}\nstdout:\n{result.stdout[:2000]}",
+                f"Turn 2 output in: {probe_log}\n"
+                f"Turn 2 stdout:\n{probe_result.stdout[:2000]}",
                 UserWarning, stacklevel=1,
             )
 
