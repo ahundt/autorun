@@ -180,13 +180,6 @@ def run_hook(
     if env is None:
         env = os.environ.copy()
 
-    # ISOLATION: Run in-process (no daemon) so tests use AUTORUN_TEST_STATE_DIR
-    # (set by conftest.py) instead of the real ~/.autorun/daemon_state.json.
-    # Without this, the subprocess connects to the live daemon which reads/writes
-    # real user session state.
-    # See: __main__.py:run_direct() — same pipeline as daemon but in-process.
-    env["AUTORUN_USE_DAEMON"] = "0"
-
     result = subprocess.run(
         [
             "uv", "run", "--no-sync", "--quiet", "--project", str(plugin_root),
@@ -1130,13 +1123,35 @@ class TestClaudeHookEntryPoint:
     # Task reminder delivery and escalation (v0.11)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _create_task_via_hook(self, hook_resources, session_id, task_id="1", subject="test task"):
-        """Create a task via PostToolUse hook so task_lifecycle tracks it.
+    def _isolated_env(self):
+        """Return env with AUTORUN_USE_DAEMON=0 for test isolation.
+
+        Tests that verify message content (not daemon connectivity) should use
+        this to avoid reading/writing real user state at ~/.claude/sessions/.
+        AUTORUN_TEST_STATE_DIR is set by conftest.py to a temp dir.
+        See __main__.py:run_direct() for the in-process dispatch path.
+        """
+        env = os.environ.copy()
+        env["AUTORUN_USE_DAEMON"] = "0"
+        return env
+
+    def _run_isolated(self, hook_resources, payload, timeout=15):
+        """Run hook in isolated mode (no daemon, temp state dir)."""
+        return run_hook(
+            hook_resources["hook_script"],
+            hook_resources["plugin_root"],
+            payload,
+            env=self._isolated_env(),
+            timeout=timeout,
+        )
+
+    def _create_task_isolated(self, hook_resources, session_id, task_id="1", subject="test task"):
+        """Create a task via isolated PostToolUse (no daemon, temp state dir).
 
         Without an incomplete task, check_task_staleness uses the
         no_tasks_threshold (default 5) path instead of the user-set threshold.
         """
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "PostToolUse", session_id,
             tool_name="TaskCreate",
             tool_input={"subject": subject, "description": "test"},
@@ -1144,11 +1159,11 @@ class TestClaudeHookEntryPoint:
             session_transcript=[],
         ))
 
-    def _send_post_tool_calls(self, hook_resources, session_id, count):
-        """Send N PostToolUse Read events, return list of (resp, sys_msg) tuples."""
+    def _send_post_tool_calls_isolated(self, hook_resources, session_id, count):
+        """Send N isolated PostToolUse Read events, return list of (resp, sys_msg)."""
         results = []
         for _ in range(count):
-            rc, stdout, stderr, resp = self._run(hook_resources, self._base_payload(
+            rc, stdout, stderr, resp = self._run_isolated(hook_resources, self._base_payload(
                 "PostToolUse", session_id,
                 tool_name="Read",
                 tool_input={"file_path": "/tmp/test.txt"},
@@ -1159,9 +1174,9 @@ class TestClaudeHookEntryPoint:
             results.append((resp, sys_msg))
         return results
 
-    def _send_pretool_call(self, hook_resources, session_id, tool_name="Read"):
-        """Send a PreToolUse event, return (resp, sys_msg, reason)."""
-        rc, stdout, stderr, resp = self._run(hook_resources, self._base_payload(
+    def _send_pretool_call_isolated(self, hook_resources, session_id, tool_name="Read"):
+        """Send isolated PreToolUse event, return (resp, sys_msg, reason)."""
+        rc, stdout, stderr, resp = self._run_isolated(hook_resources, self._base_payload(
             "PreToolUse", session_id,
             tool_name=tool_name,
             tool_input={"file_path": "/tmp/test.txt"},
@@ -1172,6 +1187,14 @@ class TestClaudeHookEntryPoint:
             return resp, sys_msg, reason
         return resp, "", ""
 
+    def _activate_autorun_isolated(self, hook_resources, session_id, task="test task"):
+        """Activate autorun in isolated mode (no daemon)."""
+        return self._run_isolated(hook_resources, self._base_payload(
+            "UserPromptSubmit", session_id,
+            prompt=f"/ar:go {task}",
+            session_transcript=[],
+        ))
+
     def test_staleness_reminder_in_system_message_posttooluse(self, hook_resources):
         """Verify staleness reminder appears in PostToolUse systemMessage.
 
@@ -1180,15 +1203,15 @@ class TestClaudeHookEntryPoint:
         is the only field the user sees. Whether the AI sees it depends on #25987.
         """
         session_id = self._sid("sysmsg-staleness")
-        self._activate_autorun(hook_resources, session_id)
-        self._create_task_via_hook(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
 
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
         ))
 
-        results = self._send_post_tool_calls(hook_resources, session_id, 4)
+        results = self._send_post_tool_calls_isolated(hook_resources, session_id, 4)
 
         reminder_msgs = [msg for _, msg in results if "MANDATORY TASK UPDATE" in msg]
         assert reminder_msgs, (
@@ -1209,19 +1232,19 @@ class TestClaudeHookEntryPoint:
                  → AI sees msg in reason + systemMessage (core.py:960-962)
         """
         session_id = self._sid("pretool-allow")
-        self._activate_autorun(hook_resources, session_id)
-        self._create_task_via_hook(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
 
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
         ))
 
         # Cross threshold — this sets enforce_next=True
-        self._send_post_tool_calls(hook_resources, session_id, 3)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
 
         # NOW send a PreToolUse — enforce_task_staleness should fire
-        resp, sys_msg, reason = self._send_pretool_call(hook_resources, session_id, "Read")
+        resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
 
         assert resp is not None, "PreToolUse must return a response"
         # Tool must NOT be blocked (allow, not deny)
@@ -1243,19 +1266,19 @@ class TestClaudeHookEntryPoint:
         pass through cleanly (no reminder injected) and reset the counter.
         """
         session_id = self._sid("pretool-task-passthru")
-        self._activate_autorun(hook_resources, session_id)
-        self._create_task_via_hook(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
 
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
         ))
 
         # Cross threshold — sets enforce_next=True
-        self._send_post_tool_calls(hook_resources, session_id, 3)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
 
         # Send PreToolUse with TaskList — should pass through clean
-        resp, sys_msg, reason = self._send_pretool_call(hook_resources, session_id, "TaskList")
+        resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "TaskList")
 
         # No reminder should be injected for Task tools
         assert "TASK UPDATE" not in reason, (
@@ -1272,25 +1295,25 @@ class TestClaudeHookEntryPoint:
         4. Next PreToolUse → no enforcement (enforce_next was cleared)
         """
         session_id = self._sid("reset-on-create")
-        self._activate_autorun(hook_resources, session_id)
-        self._create_task_via_hook(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
 
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 3", session_transcript=[],
         ))
 
         # Cross threshold
-        self._send_post_tool_calls(hook_resources, session_id, 3)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
 
         # TaskCreate resets everything
-        self._create_task_via_hook(hook_resources, session_id, "2", "another task")
+        self._create_task_isolated(hook_resources, session_id, "2", "another task")
 
         # Verify counter was at least partially reset: needs more calls to fire again.
         # Each subprocess in AUTORUN_USE_DAEMON=0 mode has isolated module state,
         # so the counter may not reset to exactly 0 (write-back timing across processes).
         # The key verification is: reminder_count was reset (escalation restarts from 1st level).
-        results = self._send_post_tool_calls(hook_resources, session_id, 4)
+        results = self._send_post_tool_calls_isolated(hook_resources, session_id, 4)
         reminder_msgs = [
             msg for _, msg in results
             if "MANDATORY TASK UPDATE" in msg or "SECOND REMINDER" in msg or "FINAL" in msg
@@ -1316,13 +1339,13 @@ class TestClaudeHookEntryPoint:
         """
         session_id = self._sid("remind-every-call")
 
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:pn test plan", session_transcript=[],
         ))
 
         # Send 3 PostToolUse events — each should contain planning reminder
-        results = self._send_post_tool_calls(hook_resources, session_id, 3)
+        results = self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
         reminders_seen = sum(1 for _, msg in results if "PLANNING TASKS REQUIRED" in msg)
 
         assert reminders_seen == 3, (
@@ -1341,10 +1364,10 @@ class TestClaudeHookEntryPoint:
           PreToolUse → enforce_task_staleness returns allow(msg) → resets flag
         """
         session_id = self._sid("escalation-full")
-        self._activate_autorun(hook_resources, session_id)
-        self._create_task_via_hook(hook_resources, session_id)
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
 
-        self._run(hook_resources, self._base_payload(
+        self._run_isolated(hook_resources, self._base_payload(
             "UserPromptSubmit", session_id,
             prompt="/ar:tasks 2", session_transcript=[],
         ))
@@ -1355,13 +1378,13 @@ class TestClaudeHookEntryPoint:
         # 3 cycles: PostToolUse × 2 → PreToolUse × 1, repeated 3 times
         for cycle in range(3):
             # PostToolUse calls to cross threshold
-            results = self._send_post_tool_calls(hook_resources, session_id, 2)
+            results = self._send_post_tool_calls_isolated(hook_resources, session_id, 2)
             for _, msg in results:
                 if msg:
                     post_msgs.append(msg)
 
             # PreToolUse — enforce_task_staleness should fire
-            resp, sys_msg, reason = self._send_pretool_call(hook_resources, session_id, "Read")
+            resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
             if reason:
                 pre_msgs.append(reason)
 
