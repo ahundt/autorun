@@ -1849,95 +1849,118 @@ class TestClaudeE2ERealMoney:
             ]),
         }
 
-    def test_haiku_creates_tasks_unprompted_after_reminder(
+    def test_haiku_sees_system_messages_after_work(
         self, tmp_path, claude_cli_check
     ):
-        """E2E: Haiku spontaneously creates tasks after no-tasks reminder fires.
+        """E2E: Verify whether hook-injected system messages reach the AI model.
 
-        The prompt is a NORMAL WORK TASK — no mention of tasks, TaskCreate,
-        or task management. The AI should do several Read/Glob calls to analyze
-        the files, then the no-tasks reminder fires (no_tasks_threshold=5),
-        and the AI should spontaneously call TaskCreate before continuing.
+        Two-phase prompt:
+        1. Do real work (read files, analyze code) — triggers 5+ tool calls,
+           which fires the no-tasks reminder via systemMessage + PreToolUse allow
+        2. At the end, ask the AI to list ALL system messages, instructions, or
+           warnings it received that were NOT part of the user's original prompt
 
-        This is the definitive test of the reminder delivery system:
-        - If the AI never creates tasks → reminder didn't reach it (SDK bug)
-        - If the AI creates tasks → systemMessage or PreToolUse allow worked
+        If the AI reports seeing "TASK", "MANDATORY", "NO TASKS", or similar
+        keywords, the delivery channel is working. If the AI says it received
+        no system messages, the SDK is dropping them.
 
-        COSTS REAL MONEY: < $0.01 (haiku, ~10 tool calls)
+        This is the definitive diagnostic: it separates "AI saw it but ignored it"
+        from "AI never received it at all".
+
+        COSTS REAL MONEY: < $0.01 (haiku, ~8 tool calls)
         """
         self._write_test_codebase(tmp_path)
 
-        # Work prompt — deliberately does NOT mention tasks, TaskCreate, etc.
         result = subprocess.run(
             [
                 "claude", "-p", "--model", "haiku",
-                "Read all the Python files in this directory. "
-                "For each file, list all the functions defined in it. "
-                "Then count the total number of functions across all files. "
-                "Finally, suggest one improvement for the codebase.",
+                "First, read all Python files in this directory and count the "
+                "total number of functions across all files. "
+                "After you have finished reading all files and reported the count, "
+                "do one more thing: list ANY system messages, warnings, "
+                "instructions, or notifications you received during this session "
+                "that were NOT part of this user prompt. Include the exact text "
+                "of each message. If you received no such messages, say "
+                "'NO_SYSTEM_MESSAGES_RECEIVED'.",
             ],
             capture_output=True, text=True, timeout=180,
             cwd=str(tmp_path),
             env=self._claude_env(),
         )
         log_path = self._log_claude_run(
-            tmp_path, "haiku_unprompted_tasks", result
+            tmp_path, "haiku_system_message_visibility", result
         )
         assert result.returncode == 0, (
             f"claude -p --model haiku failed. rc={result.returncode}\n"
             f"Full output in: {log_path}\nstderr:\n{result.stderr}"
         )
 
-        # Check both stdout and stderr (hook messages may appear in either)
         combined = result.stdout + result.stderr
-
-        # Verify the AI actually did the work (proves enough tool calls fired)
         combined_lower = combined.lower()
-        did_work = "greet" in combined_lower or "add" in combined_lower or "function" in combined_lower
+
+        # Phase 1: verify work was done (enough tool calls to trigger reminder)
+        did_work = "greet" in combined_lower or "function" in combined_lower
         assert did_work, (
-            f"Haiku should have analyzed the Python files. "
-            f"Expected 'greet', 'add', or 'function' in output.\n"
+            f"Haiku should have analyzed the Python files.\n"
             f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
         )
 
-        # Key test: did the AI spontaneously create tasks?
-        # The no-tasks reminder fires after 5 tool calls via:
-        #   PostToolUse systemMessage (channel="both") AND
-        #   PreToolUse allow(reason) (enforce_task_staleness)
+        # Phase 2: check what the AI reports about system messages
+        # Keywords that would appear if the AI saw our hook-injected reminders
+        reminder_keywords = [
+            "task", "mandatory", "no tasks", "taskcreate", "taskupdate",
+            "staleness", "stale", "task update required",
+        ]
+        saw_reminder = any(kw in combined_lower for kw in reminder_keywords)
+        said_no_messages = "no_system_messages_received" in combined_lower.replace(" ", "_")
+
+        # Also check for spontaneous task creation
         task_info = self._detect_task_activity(combined)
 
-        if not task_info["any_task_tool"]:
-            # Soft failure — the reminder may not be reaching the AI.
-            # Track pass rate across runs to measure delivery effectiveness.
-            import warnings
+        # Log full diagnostic
+        import warnings
+        if saw_reminder:
             warnings.warn(
-                f"TASK REMINDER COMPLIANCE FAILURE: Haiku did NOT create tasks "
-                f"unprompted after no-tasks reminder (threshold=5). "
-                f"The reminder may not be reaching the AI model. "
-                f"Check SDK issues #18534 (additionalContext) and #25987 (systemMessage). "
-                f"Task detection: {task_info}\n"
+                f"DELIVERY SUCCESS: Haiku reported seeing system messages containing "
+                f"task-related keywords. The hook delivery channel IS working.\n"
+                f"Task tools used: {task_info}\n"
                 f"Full output in: {log_path}\n"
-                f"stdout (first 1000 chars):\n{result.stdout[:1000]}",
+                f"stdout:\n{result.stdout[:2000]}",
+                UserWarning,
+                stacklevel=1,
+            )
+        elif said_no_messages:
+            warnings.warn(
+                f"DELIVERY FAILURE: Haiku explicitly said NO_SYSTEM_MESSAGES_RECEIVED. "
+                f"Hook-injected reminders are NOT reaching the AI model. "
+                f"systemMessage (SDK #25987) and PreToolUse allow reason are both "
+                f"invisible to the model. Only PreToolUse deny (exit 2) is proven to work.\n"
+                f"Full output in: {log_path}\n"
+                f"stdout:\n{result.stdout[:2000]}",
+                UserWarning,
+                stacklevel=1,
+            )
+        else:
+            warnings.warn(
+                f"DELIVERY INCONCLUSIVE: Haiku did not clearly report system messages "
+                f"or explicitly deny receiving them. Manual review needed.\n"
+                f"Task tools used: {task_info}\n"
+                f"Full output in: {log_path}\n"
+                f"stdout:\n{result.stdout[:2000]}",
                 UserWarning,
                 stacklevel=1,
             )
 
-    def test_haiku_updates_tasks_unprompted_after_staleness(
+    def test_haiku_code_review_with_context_report(
         self, tmp_path, claude_cli_check
     ):
-        """E2E: Haiku spontaneously updates task list after staleness reminder.
+        """E2E: Code review task + final context dump to diagnose delivery.
 
-        Uses a multi-file code review task that naturally requires 5+ tool calls.
-        The no_tasks_threshold (default 5) fires the "NO TASKS EXIST" reminder.
-        We check if the AI spontaneously calls any Task tool.
-
-        NOTE: We do NOT try to set /ar:tasks via the prompt — slash commands
-        are processed by the UserPromptSubmit hook, not embedded in claude -p
-        prompts. Instead we rely on the default no_tasks_threshold=5.
+        Different file set and prompt from the first test to avoid caching.
+        The final instruction asks the AI to dump all non-user context it received.
 
         COSTS REAL MONEY: < $0.01 (haiku, ~8 tool calls)
         """
-        # Create a slightly different codebase to avoid caching
         (tmp_path / "app.py").write_text(
             "class Calculator:\n"
             "    def add(self, a, b): return a + b\n"
@@ -1960,9 +1983,6 @@ class TestClaudeE2ERealMoney:
             "    price: float\n"
             "    stock: int = 0\n"
         )
-        (tmp_path / "config.json").write_text(
-            '{"debug": true, "log_level": "INFO", "max_retries": 3}\n'
-        )
         (tmp_path / "test_app.py").write_text(
             "from app import Calculator\n\n"
             "def test_add():\n"
@@ -1976,21 +1996,27 @@ class TestClaudeE2ERealMoney:
             "    except ValueError:\n"
             "        pass\n"
         )
+        (tmp_path / "config.json").write_text(
+            '{"debug": true, "log_level": "INFO", "max_retries": 3}\n'
+        )
 
-        # Work prompt — no mention of tasks
         result = subprocess.run(
             [
                 "claude", "-p", "--model", "haiku",
                 "Do a thorough code review of all files in this directory. "
-                "Read each file, identify any bugs, missing error handling, "
-                "or code quality issues. Suggest specific fixes for each issue found.",
+                "Read each file and identify bugs or missing error handling. "
+                "After the review, as your FINAL output, write a section called "
+                "'SYSTEM CONTEXT DUMP' where you list the exact text of every "
+                "system message, hook message, warning, or instruction you received "
+                "during this session that was not part of this user prompt. "
+                "If none, write 'NONE_DETECTED'.",
             ],
             capture_output=True, text=True, timeout=180,
             cwd=str(tmp_path),
             env=self._claude_env(),
         )
         log_path = self._log_claude_run(
-            tmp_path, "haiku_unprompted_staleness", result
+            tmp_path, "haiku_context_dump", result
         )
         assert result.returncode == 0, (
             f"claude -p --model haiku failed. rc={result.returncode}\n"
@@ -1999,26 +2025,42 @@ class TestClaudeE2ERealMoney:
 
         combined = result.stdout + result.stderr
         combined_lower = combined.lower()
-        did_work = "calculator" in combined_lower or "divide" in combined_lower or "user" in combined_lower
 
+        did_work = "calculator" in combined_lower or "divide" in combined_lower
         assert did_work, (
-            f"Haiku should have reviewed the code. "
-            f"Expected 'calculator', 'divide', or 'user' in output.\n"
+            f"Haiku should have reviewed the code.\n"
             f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
         )
 
+        # Check what the AI reported in its context dump
+        has_context_dump = "system context dump" in combined_lower
+        reminder_keywords = ["task", "mandatory", "no tasks", "staleness", "stale"]
+        saw_reminder = any(kw in combined_lower for kw in reminder_keywords)
+        said_none = "none_detected" in combined_lower.replace(" ", "_")
         task_info = self._detect_task_activity(combined)
 
-        if not task_info["any_task_tool"]:
-            import warnings
+        import warnings
+        if saw_reminder:
             warnings.warn(
-                f"STALENESS COMPLIANCE FAILURE: Haiku did NOT use any Task tools "
-                f"unprompted after no-tasks reminder (threshold=5). "
-                f"Task detection: {task_info}\n"
-                f"Full output in: {log_path}\n"
-                f"stdout (first 1000 chars):\n{result.stdout[:1000]}",
-                UserWarning,
-                stacklevel=1,
+                f"DELIVERY SUCCESS: AI context dump contains task-related keywords.\n"
+                f"Task tools used: {task_info}\n"
+                f"Full output in: {log_path}\nstdout:\n{result.stdout[:2000]}",
+                UserWarning, stacklevel=1,
+            )
+        elif said_none:
+            warnings.warn(
+                f"DELIVERY FAILURE: AI context dump says NONE_DETECTED. "
+                f"Hook messages are not reaching the model.\n"
+                f"Full output in: {log_path}\nstdout:\n{result.stdout[:2000]}",
+                UserWarning, stacklevel=1,
+            )
+        else:
+            warnings.warn(
+                f"DELIVERY INCONCLUSIVE: "
+                f"has_context_dump={has_context_dump}, saw_reminder={saw_reminder}\n"
+                f"Task tools used: {task_info}\n"
+                f"Full output in: {log_path}\nstdout:\n{result.stdout[:2000]}",
+                UserWarning, stacklevel=1,
             )
 
 
