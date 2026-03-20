@@ -1565,6 +1565,77 @@ class TestClaudeE2ERealMoney:
         # end-to-end with a real Claude session.
 
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Task reminder compliance — Haiku model (v0.11)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def test_ai_creates_tasks_when_reminded_haiku(self, tmp_path, claude_cli_check):
+        """E2E: Haiku creates tasks when explicitly asked via systemMessage.
+
+        Spawns claude -p --model haiku with a task-creation prompt.
+        Verifies AI calls TaskCreate within the session output.
+        Estimated cost: < $0.005 (haiku is cheapest model).
+
+        Empirically validates the channel="both" fix (SDK issue #18534).
+        """
+        result = subprocess.run(
+            [
+                "claude", "-p", "--model", "haiku",
+                "Create 3 tasks for the following work items using TaskCreate: "
+                "1) Fix login bug 2) Add unit tests 3) Update docs. "
+                "Create each task now with TaskCreate.",
+            ],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(tmp_path),
+            env=self._claude_env(),
+        )
+        log_path = self._log_claude_run(tmp_path, "haiku_creates_tasks", result)
+        assert result.returncode == 0, (
+            f"claude -p --model haiku failed. rc={result.returncode}\n"
+            f"Full output in: {log_path}\nstderr:\n{result.stderr}"
+        )
+        output = result.stdout.lower()
+        has_task = ("task" in output and ("created" in output or "#" in output))
+        assert has_task, (
+            f"Haiku should create tasks when explicitly asked. "
+            f"Expected 'task' + 'created' or '#' in output.\n"
+            f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
+        )
+
+    def test_ai_creates_planning_tasks_after_plan_start_haiku(
+        self, tmp_path, claude_cli_check
+    ):
+        """E2E: Haiku creates [PLANNING] tasks when asked.
+
+        Tests AI compliance with task creation requests delivered
+        via systemMessage (channel="both" fix for SDK issue #18534).
+        Estimated cost: < $0.005 (haiku is cheapest model).
+        """
+        result = subprocess.run(
+            [
+                "claude", "-p", "--model", "haiku",
+                "Create a plan with 3 steps to add error handling to a Python "
+                "web server. For each step, create a [PLANNING] task using "
+                "TaskCreate with subject starting with '[PLANNING]'.",
+            ],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(tmp_path),
+            env=self._claude_env(),
+        )
+        log_path = self._log_claude_run(tmp_path, "haiku_planning_tasks", result)
+        assert result.returncode == 0, (
+            f"claude -p --model haiku failed. rc={result.returncode}\n"
+            f"Full output in: {log_path}\nstderr:\n{result.stderr}"
+        )
+        output = result.stdout
+        has_planning = "PLANNING" in output or "planning" in output.lower()
+        has_task = "task" in output.lower() and ("created" in output.lower() or "#" in output)
+        assert has_planning or has_task, (
+            f"Haiku should create [PLANNING] tasks when asked.\n"
+            f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
+        )
+
+
 # =============================================================================
 # Module documentation
 # =============================================================================
