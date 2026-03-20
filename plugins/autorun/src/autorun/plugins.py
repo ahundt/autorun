@@ -1092,14 +1092,35 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
 
 
 # === TASK STALENESS ENFORCEMENT (v0.11) ===
+#
+# WORKAROUND for Claude Code SDK bug where PostToolUse additionalContext is
+# silently dropped (documented but not implemented):
+#   - https://github.com/anthropics/claude-code/issues/18534
+#     "additionalContext in PostToolUse hooks: documented but not implemented"
+#   - https://github.com/anthropics/claude-code/issues/18427
+#     "PostToolUse hooks cannot inject context visible to Claude"
+#   - https://github.com/anthropics/claude-code/issues/25987
+#     "systemMessage content not injected into model context" (marked completed)
+#
+# PreToolUse allow(reason) sets BOTH reason AND systemMessage fields in the
+# response (core.py:960-962), providing a secondary delivery path that is
+# more likely to reach the AI than PostToolUse additionalContext. The tool
+# is NOT blocked — allow lets it execute while injecting the reminder.
 
 @app.on("PreToolUse")
 def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
-    """LAST RESORT: Block non-Task tools after 3+ ignored staleness reminders (v0.11).
+    """Inject task reminder via PreToolUse allow (non-blocking) when overdue (v0.11).
 
-    Only fires when task_staleness_enforce_next is True (set by 3rd staleness
-    reminder or after 10 ignored remind_until_tasks_created calls).
-    One-shot block then reset — prevents infinite deny loops.
+    Uses PreToolUse allow(reason) instead of PostToolUse additionalContext
+    because additionalContext is silently dropped by Claude Code SDK
+    (https://github.com/anthropics/claude-code/issues/18534).
+
+    PreToolUse allow sets reason + systemMessage without blocking the tool,
+    giving the AI a stronger signal than PostToolUse chain notifications.
+
+    Fires when task_staleness_enforce_next is True (set by check_task_staleness
+    when threshold crossed, or by remind_until_tasks_created after 10 calls).
+    One-shot then reset — prevents flooding every PreToolUse call.
     """
     if not ctx.task_staleness_enforce_next:
         return None
@@ -1108,14 +1129,32 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         ctx.task_staleness_reminder_count = 0
         ctx.plan_task_reminder_count = 0
         return None
-    ctx.task_staleness_enforce_next = False  # One-shot
-    return ctx.deny(
-        "\u26d4 Task list update required \u2014 multiple reminders ignored. "
-        "Call TaskList, TaskCreate, or TaskUpdate, then continue your work."
-    )
+    ctx.task_staleness_enforce_next = False  # One-shot: fire once, then allow normally
+    reminder_count = ctx.task_staleness_reminder_count or 0
+    if reminder_count >= 3:
+        msg = (
+            "\U0001f6a8 TASK UPDATE OVERDUE (reminder #3+): "
+            "Call TaskList, TaskCreate, or TaskUpdate after this tool completes."
+        )
+    else:
+        msg = (
+            "\U0001f6a8 TASK UPDATE REQUIRED: Your task list is stale. "
+            "Call TaskList, TaskCreate, or TaskUpdate after this tool completes."
+        )
+    # allow() lets the tool execute while injecting the message into
+    # reason + systemMessage (core.py:960-962, PATHWAY 1 PreToolUse allow path)
+    return ctx.allow(msg)
 
 
-# === TASK STALENESS REMINDER (v0.9) ===
+# === TASK STALENESS REMINDER (v0.9, delivery fix v0.11) ===
+#
+# Uses channel="both" because PostToolUse additionalContext is broken:
+#   https://github.com/anthropics/claude-code/issues/18534
+# channel="both" sends to systemMessage (visible to user, may reach AI per
+# https://github.com/anthropics/claude-code/issues/25987 fix) AND
+# additionalContext (for when Anthropic implements it).
+# Additionally sets enforce_next flag to deliver via PreToolUse allow()
+# which puts the message in reason + systemMessage (core.py:960-962).
 
 @app.on("PostToolUse")
 def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
@@ -1123,6 +1162,11 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     Counts tool calls per session. Resets on TaskCreate/TaskUpdate.
     Injects reminder when count reaches threshold AND incomplete tasks exist.
+
+    Delivery: channel="both" (PostToolUse) + enforce_next flag (PreToolUse allow).
+    PostToolUse additionalContext is broken in Claude Code SDK (issue #18534),
+    so we use dual delivery: systemMessage via channel="both" AND PreToolUse
+    allow(reason) via enforce_task_staleness.
 
     Fires in any session (not just autorun). Disable with /ar:tasks off.
     """
@@ -1172,19 +1216,28 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
     ctx.task_staleness_reminder_count = reminder_count
 
+    # Set enforce flag on EVERY threshold crossing so the next PreToolUse
+    # injects the reminder via allow(reason) — a secondary delivery path.
+    # PostToolUse additionalContext is broken (https://github.com/anthropics/claude-code/issues/18534)
+    # so we also deliver via PreToolUse allow which sets reason + systemMessage.
+    ctx.task_staleness_enforce_next = True
+
     if reminder_count >= 3:
         msg = CONFIG["task_staleness_message_final"].format(threshold=threshold)
-        ctx.task_staleness_enforce_next = True
     elif reminder_count == 2:
         msg = CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
     else:
         msg = CONFIG["task_staleness_message"].format(threshold=threshold)
 
+    # Also send via systemMessage as secondary channel (may reach AI if #25987 is fixed)
     ctx.add_chain_notification(msg, channel="both")
     return None
 
 
-# === TASK CREATION REMINDER (v0.10) ===
+# === TASK CREATION REMINDER (v0.10, delivery fix v0.11) ===
+#
+# Same dual delivery as check_task_staleness: channel="both" (PostToolUse) +
+# enforce_next flag (PreToolUse allow). See SDK bug references above.
 
 @app.on("PostToolUse")
 def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
@@ -1193,6 +1246,10 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     Two independent flags (set by plan commands and detect_plan_approval):
     - plan_awaiting_planning_tasks: cleared on first TaskCreate
     - plan_awaiting_execution_tasks: cleared on first TaskCreate
+
+    Delivery: channel="both" (PostToolUse) + enforce_next (PreToolUse allow).
+    PostToolUse additionalContext is broken in Claude Code SDK:
+    https://github.com/anthropics/claude-code/issues/18534
 
     Fires on EVERY PostToolUse until TaskCreate is detected.
     """
@@ -1218,7 +1275,10 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
         count = (ctx.plan_task_reminder_count or 0) + 1
         ctx.plan_task_reminder_count = count
         if count >= 10:
+            # After 10 ignored calls, also deliver via PreToolUse allow(reason)
+            # because PostToolUse additionalContext is broken (SDK issue #18534)
             ctx.task_staleness_enforce_next = True
+        # channel="both": systemMessage + additionalContext (SDK #18534 workaround)
         ctx.add_chain_notification(msg, channel="both")
     return None
 
