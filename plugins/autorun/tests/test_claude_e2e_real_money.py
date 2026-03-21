@@ -1213,7 +1213,7 @@ class TestClaudeHookEntryPoint:
 
         results = self._send_post_tool_calls_isolated(hook_resources, session_id, 4)
 
-        reminder_msgs = [msg for _, msg in results if "MANDATORY TASK UPDATE" in msg]
+        reminder_msgs = [msg for _, msg in results if "TASK UPDATE REQUIRED" in msg]
         assert reminder_msgs, (
             f"PostToolUse systemMessage must contain staleness reminder. "
             f"Got messages: {[msg[:60] for _, msg in results]}. "
@@ -1333,13 +1333,13 @@ class TestClaudeHookEntryPoint:
         results = self._send_post_tool_calls_isolated(hook_resources, session_id, 4)
         reminder_msgs = [
             msg for _, msg in results
-            if "MANDATORY TASK UPDATE" in msg or "SECOND REMINDER" in msg or "FINAL" in msg
+            if "TASK UPDATE REQUIRED" in msg or "TASK UPDATE OVERDUE" in msg
         ]
         if reminder_msgs:
-            # The FIRST reminder after TaskCreate should be MANDATORY (level 1),
-            # NOT SECOND or FINAL — proving reminder_count was reset.
-            assert "MANDATORY" in reminder_msgs[0], (
-                f"After TaskCreate, escalation should restart from level 1 (MANDATORY). "
+            # The FIRST reminder after TaskCreate should be REQUIRED (level 1),
+            # NOT OVERDUE — proving reminder_count was reset.
+            assert "REQUIRED" in reminder_msgs[0], (
+                f"After TaskCreate, escalation should restart from level 1 (REQUIRED). "
                 f"Got: {reminder_msgs[0][:80]}"
             )
 
@@ -1373,16 +1373,16 @@ class TestClaudeHookEntryPoint:
     def test_escalation_ladder_warn_then_deny_full_lifecycle(self, hook_resources):
         """Verify full warn-then-deny lifecycle through PostToolUse + PreToolUse.
 
-        PostToolUse: escalating messages (MANDATORY → SECOND → FINAL)
+        V4: 2-level PostToolUse escalation (REQUIRED → OVERDUE)
         PreToolUse: 1st crossing → allow(warning), 2nd crossing → deny(block)
 
         Full lifecycle:
           Cycle 1: PostToolUse × 2 (threshold) → reminder_count=1
                    PreToolUse → allow(WARNING) — tool executes
           Cycle 2: PostToolUse × 2 (threshold) → reminder_count=2
-                   PreToolUse → deny(REQUIRED) — tool BLOCKED
+                   PreToolUse → deny(BLOCKED) — tool BLOCKED
           Cycle 3: PostToolUse × 2 (threshold) → reminder_count=3
-                   PreToolUse → deny(REQUIRED) — tool BLOCKED again
+                   PreToolUse → deny(BLOCKED) — tool BLOCKED again
         """
         session_id = self._sid("escalation-full")
         self._activate_autorun_isolated(hook_resources, session_id)
@@ -1408,14 +1408,15 @@ class TestClaudeHookEntryPoint:
             pre_results.append((cycle, perm, reason))
 
         # PostToolUse should have 3 escalating messages
-        post_escalation = [m for m in post_msgs if "MANDATORY" in m or "SECOND" in m or "FINAL" in m]
+        # V4: 2-level escalation (REQUIRED then OVERDUE), no FINAL
+        post_escalation = [m for m in post_msgs if "TASK UPDATE REQUIRED" in m or "OVERDUE" in m]
         assert len(post_escalation) >= 3, (
-            f"Expected 3 PostToolUse escalating reminders. "
+            f"Expected 3 PostToolUse reminders (1st=REQUIRED, 2nd+=OVERDUE). "
             f"Got {len(post_escalation)}: {[m[:50] for m in post_escalation]}"
         )
-        assert "MANDATORY" in post_escalation[0], f"1st PostToolUse should be MANDATORY"
-        assert "SECOND" in post_escalation[1], f"2nd PostToolUse should be SECOND REMINDER"
-        assert "FINAL" in post_escalation[2], f"3rd PostToolUse should be FINAL WARNING"
+        assert "REQUIRED" in post_escalation[0], f"1st PostToolUse should be REQUIRED"
+        assert "OVERDUE" in post_escalation[1], f"2nd PostToolUse should be OVERDUE"
+        assert "OVERDUE" in post_escalation[2], f"3rd PostToolUse should be OVERDUE (no FINAL in V4)"
 
         # Verify at least one allow and at least one deny across the 3 cycles
         # (exact cycle depends on cross-process counter offset in AUTORUN_USE_DAEMON=0)
