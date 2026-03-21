@@ -19,4 +19,4 @@ Add a command pattern to the global block list. Persists across all Claude Code 
 
 See also: `/ar:globalstatus` to view global blocks, `/ar:globalclear` to remove all.
 
-UserPromptSubmit hook processes this command and updates global state (shelve DB).
+UserPromptSubmit hook processes this command and updates global state (daemon_state.json).

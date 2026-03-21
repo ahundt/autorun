@@ -511,13 +511,13 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:tt` | `/ar:ttest` | - | Tmux test workflow |
 | `/ar:tabs` | - | - | Discover and manage Claude sessions across tmux |
 | `/ar:no <p>` | - | - | Block command pattern in session |
-| `/ar:ok <p>` | - | - | Allow command pattern in session |
-| `/ar:clear` | - | - | Clear session blocks |
-| `/ar:globalno <p>` | - | - | Block command pattern globally |
-| `/ar:globalok <p>` | - | - | Allow command pattern globally |
+| `/ar:ok <p> [N\|5m\|perm]` | - | - | Allow pattern — `3` uses, `5m` duration, or `perm` (rest of session); default 1 use then auto-revokes |
+| `/ar:clear` | - | - | Clear all session blocks and allows |
+| `/ar:globalno <p>` | - | - | Block command pattern globally (persists across sessions) |
+| `/ar:globalok <p> [N\|5m\|perm]` | - | - | Allow pattern globally — `3` uses, `5m` duration, or `perm` (until cleared); default 1 use then auto-revokes |
 | `/ar:blocks` | - | - | Show active session-level blocks and allows |
-| `/ar:globalstatus` | - | - | Show global blocks |
-| `/ar:globalclear` | - | - | Clear all global blocks |
+| `/ar:globalstatus` | - | - | Show global blocks and allows |
+| `/ar:globalclear` | - | - | Clear all global blocks and allows |
 | `/ar:reload` | - | - | Reload integration rules from config files |
 | `/ar:restart-daemon` | - | - | Restart daemon to reload Python code changes |
 | `/ar:tasks` | - | - | Toggle task staleness reminders on/off or set threshold |
@@ -550,14 +550,14 @@ Three-tier policy system enforced via PreToolUse hooks:
 
 **Session Commands:**
 - **/ar:no \<pattern> [description]** - Block pattern in this session
-- **/ar:ok \<pattern>** - Allow pattern in this session
-- **/ar:clear [pattern]** - Clear session blocks (or specific pattern)
+- **/ar:ok \<pattern> [N|5m|permanent]** - Allow pattern — `3` uses, `5m` duration, or `permanent` (rest of session); default 1 use then auto-revokes
+- **/ar:clear** - Clear all session blocks and allows
 - **/ar:blocks** - Show active session-level pattern blocks and allows
-- **/ar:status** - Show blocked patterns
+- **/ar:status** - Show AutoFile policy, session and global blocks/allows
 
 **Global Commands:**
 - **/ar:globalno \<pattern> [description]** - Block pattern globally (all sessions)
-- **/ar:globalok \<pattern>** - Allow pattern globally
+- **/ar:globalok \<pattern> [N|5m|permanent]** - Allow pattern globally — `3` uses, `5m` duration, or `permanent` (until cleared); default 1 use then auto-revokes
 - **/ar:globalstatus** - Show global blocks
 - **/ar:globalclear** - Clear all global pattern blocks and allows
 
@@ -601,7 +601,7 @@ Three-tier policy system enforced via PreToolUse hooks:
 | Glob | `glob:` | Glob pattern matching | `glob:*.tmp` | `file.tmp` |
 | Auto | `/.../` | Auto-detects regex | `/eval\(./` | `eval(...` |
 
-**Default Integrations (21 entries):**
+**Default Integrations (43 entries):**
 - `rm` → Suggests 'trash' CLI (safe file deletion with recovery)
 - `rm -rf` → Dangerous, suggests trash CLI alternatives
 - `git reset --hard` → CRITICAL: Permanently discards uncommitted changes, suggests safer git alternatives
@@ -629,10 +629,12 @@ Three-tier policy system enforced via PreToolUse hooks:
 - Linux: `go install github.com/andraschume/trash-cli@latest`
 - Restores files from: `trash-restore` or system trash
 
-**State Hierarchy:**
-1. Session blocks (highest priority)
-2. Global blocks (fallback)
-3. Default integrations (built-in suggestions)
+**Priority (evaluated top-to-bottom, first match wins):**
+1. **Session/global allows** — `/ar:ok` and `/ar:globalok` (TIER 1, short-circuits all blocks)
+2. **Session blocks** — `/ar:no` (TIER 2, deny wins over warn)
+3. **Global blocks** — `/ar:globalno` (TIER 2)
+4. **User integration files** — `~/.claude/hookify.*.local.md` (TIER 2)
+5. **Default integrations** — built-in safety guards in `config.py` (TIER 2)
 
 **Backward Compatibility:**
 All existing patterns without type prefixes default to literal matching. Existing blocks continue to work as before.

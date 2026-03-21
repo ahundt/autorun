@@ -1,5 +1,5 @@
 ---
-description: Block a command pattern in this session (short for /ar:block)
+description: Block a command pattern in this session
 ---
 
 # Session Block Pattern

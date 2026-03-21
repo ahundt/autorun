@@ -12,4 +12,4 @@ After clearing, only default safety guards and session-level blocks apply.
 
 See also: `/ar:globalstatus` to view global blocks before clearing.
 
-UserPromptSubmit hook processes this command and clears global state (shelve DB).
+UserPromptSubmit hook processes this command and clears global state (daemon_state.json).

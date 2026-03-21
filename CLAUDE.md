@@ -138,16 +138,16 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 
 | Command | Description |
 |---------|-------------|
-| `/ar:no <pattern>` | Add custom block (shows safer alternative) |
-| `/ar:ok <pattern>` | Allow blocked command in session |
-| `/ar:clear` | Clear session overrides |
+| `/ar:no <pattern>` | Block command pattern in this session |
+| `/ar:ok <pattern> [N\|5m\|perm]` | Allow pattern — `3` uses, `5m` duration, or `perm` (rest of session); default 1 use then auto-revokes |
+| `/ar:clear` | Clear all session blocks and allows |
 | `/ar:blocks` | Show active session-level blocks and allows |
-| `/ar:globalno <pattern>` | Block pattern globally |
-| `/ar:globalok <pattern>` | Allow pattern globally |
-| `/ar:globalstatus` | Show global blocks |
-| `/ar:globalclear` | Clear all global blocks |
+| `/ar:globalno <pattern>` | Block command pattern globally (persists across sessions) |
+| `/ar:globalok <pattern> [N\|5m\|perm]` | Allow pattern globally — `3` uses, `5m` duration, or `perm` (until cleared); default 1 use then auto-revokes |
+| `/ar:globalstatus` | Show global blocks and allows |
+| `/ar:globalclear` | Clear all global blocks and allows |
 
-See `plugins/autorun/src/autorun/config.py:38-93` for DEFAULT_INTEGRATIONS list.
+See `plugins/autorun/src/autorun/config.py:63-276` for DEFAULT_INTEGRATIONS list.
 
 **Hook Error Prevention**: See `plugins/autorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
 

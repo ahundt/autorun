@@ -333,7 +333,7 @@ def _get_suggestion(pattern: str) -> str:
     for k, v in DEFAULT_INTEGRATIONS.items():
         if k in pattern:
             return v["suggestion"]
-    return f"Blocked: {pattern}\n\nTo allow: /ar:ok {pattern}"
+    return f"Blocked: {pattern}\n\nTo allow (default 1 use): /ar:ok {pattern} [N|5m|permanent]"
 
 
 def _format_pattern_list(patterns: list, label: str, icon: str, show_scope: bool = False) -> list:
@@ -644,7 +644,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if key not in seen:
                 seen.add(key)
                 suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                allow_hint = f"\n\nTo allow: /ar:ok {b['pattern']}"
+                allow_hint = f"\n\nTo allow (default 1 use): /ar:ok {b['pattern']} [N|5m|permanent]"
                 if "To allow:" not in suggestion:
                     suggestion += allow_hint
                 deny_parts.append(suggestion)
@@ -656,7 +656,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if key not in seen:
                 seen.add(key)
                 suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                allow_hint = f"\n\nTo allow: /ar:globalok {b['pattern']}"
+                allow_hint = f"\n\nTo allow (default 1 use): /ar:globalok {b['pattern']} [N|5m|permanent]"
                 if "To allow:" not in suggestion:
                     suggestion += allow_hint
                 deny_parts.append(suggestion)
@@ -736,6 +736,12 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # Apply deny-wins: combine all messages, deny takes precedence over warn
     if deny_parts or warn_parts:
         combined = "\n\n".join(p for p in (deny_parts + warn_parts) if p)
+        # Deduplicate "To allow" lines — keep only the last occurrence
+        lines = combined.split("\n")
+        to_allow_idx = [i for i, l in enumerate(lines) if l.strip().startswith("To allow")]
+        if len(to_allow_idx) > 1:
+            lines = [l for i, l in enumerate(lines) if i not in set(to_allow_idx[:-1])]
+            combined = "\n".join(lines)
         if deny_parts:
             return ctx.deny(combined)
         else:
