@@ -644,7 +644,7 @@ def test_staleness_injection_at_threshold():
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "MANDATORY TASK UPDATE" in additional
+    assert "TASK UPDATE REQUIRED" in additional
 
 
 def test_staleness_counter_resets_on_task_create():
@@ -669,7 +669,7 @@ def test_staleness_disabled_no_injection():
                                task_staleness_enabled=False,
                                tool_calls_since_task_update=50)
     result = plugins.app.dispatch(ctx) or {}
-    assert "MANDATORY TASK UPDATE" not in str(result)
+    assert "TASK UPDATE" not in str(result)
 
 
 def test_staleness_fires_without_autorun_when_tasks_exist():
@@ -682,7 +682,7 @@ def test_staleness_fires_without_autorun_when_tasks_exist():
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "MANDATORY TASK UPDATE" in additional
+    assert "TASK UPDATE REQUIRED" in additional
 
 
 def test_staleness_no_injection_when_all_tasks_complete():
@@ -701,7 +701,7 @@ def test_staleness_no_injection_when_all_tasks_complete():
                                tool_calls_since_task_update=50,
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
-    assert "MANDATORY TASK UPDATE" not in str(result)
+    assert "TASK UPDATE" not in str(result)
     assert "NO TASKS EXIST" not in str(result)
 
 
@@ -722,7 +722,7 @@ def test_staleness_no_fire_below_zero_tasks_threshold():
                                task_staleness_threshold=25)
     result = plugins.app.dispatch(ctx) or {}
     assert "NO TASKS EXIST" not in str(result)
-    assert "MANDATORY TASK UPDATE" not in str(result)
+    assert "TASK UPDATE" not in str(result)
 
 
 # ── PreToolUse warn-then-deny enforcement (v0.11) ─────────────────────────
@@ -907,6 +907,165 @@ def test_enforce_staleness_full_lifecycle():
         assert perm4 != "deny", (
             f"After TaskList reset, Read should not be denied. Got: {perm4}"
         )
+
+
+# ── V4 TDD tests: context-aware warn/deny, 2-level escalation, zero-tasks ──
+
+
+def test_enforce_deny_context_aware_planning():
+    """Deny message includes [PLANNING] prefix and addBlockedBy when planning flag set."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-deny-planning",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+    )
+    ctx.plan_awaiting_planning_tasks = True
+    result = plugins.app.dispatch(ctx)
+    assert result is not None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "deny"
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "[PLANNING]" in reason, f"Planning deny should include [PLANNING] prefix. Got: {reason!r}"
+    assert "addBlockedBy" in reason, f"Planning deny should include dependency wiring. Got: {reason!r}"
+
+
+def test_enforce_deny_context_aware_execution():
+    """Deny message includes [TDD]/[EXEC] prefixes and cross-wiring when execution flag set."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-deny-execution",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+    )
+    ctx.plan_awaiting_execution_tasks = True
+    result = plugins.app.dispatch(ctx)
+    assert result is not None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "deny"
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "[TDD]" in reason, f"Execution deny should include [TDD] prefix. Got: {reason!r}"
+    assert "[EXEC]" in reason, f"Execution deny should include [EXEC] prefix. Got: {reason!r}"
+    assert "addBlockedBy" in reason or "blockedBy" in reason.lower(), (
+        f"Execution deny should include dependency wiring. Got: {reason!r}"
+    )
+
+
+def test_enforce_deny_context_aware_general():
+    """Deny message includes general task instructions when no planning/execution flags."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-deny-general",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+    )
+    result = plugins.app.dispatch(ctx)
+    assert result is not None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "deny"
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "BLOCKED" in reason or "blocked" in reason.lower(), (
+        f"General deny should mention BLOCKED. Got: {reason!r}"
+    )
+    assert "TaskList" in reason, f"General deny should mention TaskList. Got: {reason!r}"
+    assert "addBlockedBy" in reason, f"General deny should include dependency wiring. Got: {reason!r}"
+
+
+def test_enforce_deny_includes_tool_name():
+    """Deny message includes the name of the blocked tool."""
+    ctx = _make_pre_tool_ctx(
+        "WebSearch", "test-deny-toolname",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+    )
+    result = plugins.app.dispatch(ctx)
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "WebSearch" in reason, f"Deny should name the blocked tool. Got: {reason!r}"
+
+
+def test_enforce_warn_context_aware_planning():
+    """Warn message includes [PLANNING] prefix when planning flag set."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-warn-planning",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=1,
+    )
+    ctx.plan_awaiting_planning_tasks = True
+    result = plugins.app.dispatch(ctx)
+    assert result is not None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "allow"
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "[PLANNING]" in reason, f"Planning warn should include [PLANNING] prefix. Got: {reason!r}"
+    assert "addBlockedBy" in reason, f"Planning warn should include dependency wiring. Got: {reason!r}"
+
+
+def test_enforce_warn_context_aware_execution():
+    """Warn message includes [TDD]/[EXEC] when execution flag set."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-warn-execution",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=1,
+    )
+    ctx.plan_awaiting_execution_tasks = True
+    result = plugins.app.dispatch(ctx)
+    assert result is not None
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "allow"
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "[TDD]" in reason, f"Execution warn should include [TDD] prefix. Got: {reason!r}"
+    assert "[EXEC]" in reason, f"Execution warn should include [EXEC] prefix. Got: {reason!r}"
+
+
+def test_zero_tasks_sets_enforce_next():
+    """Zero-tasks path should set enforce_next=True for PreToolUse escalation."""
+    sid = "test-zero-enforce"
+    store = ThreadSafeDB()
+    # No tasks created — zero_tasks path should fire at threshold 5
+    for i in range(5):
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Read", tool_input={}, tool_result="", store=store,
+        )
+        ctx.task_staleness_enabled = True
+        plugins.app.dispatch(ctx)
+    # After 5 calls with zero tasks, enforce_next should be True
+    check_ctx = EventContext(
+        session_id=sid, event="PostToolUse", prompt="",
+        tool_name="Read", tool_input={}, tool_result="", store=store,
+    )
+    assert check_ctx.task_staleness_enforce_next is True, (
+        "Zero-tasks should set enforce_next after threshold"
+    )
+
+
+def test_two_level_escalation_no_third():
+    """PostToolUse escalation has only 2 levels (REQUIRED then OVERDUE), no 3rd."""
+    sid = "test-two-level"
+    store = ThreadSafeDB()
+    _make_pending_task(sid, "1", "keep alive")
+
+    messages = []
+    # Run 3 cycles of threshold=3 to trigger 3 escalation firings
+    for cycle in range(9):
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", tool_input={}, tool_result="", store=store,
+        )
+        ctx.task_staleness_enabled = True
+        ctx.task_staleness_threshold = 3
+        result = plugins.app.dispatch(ctx) or {}
+        additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+        if additional:
+            messages.append(additional)
+
+    # Should see REQUIRED (1st) and OVERDUE (2nd+), never FINAL
+    assert any("REQUIRED" in m for m in messages), (
+        f"Should see TASK UPDATE REQUIRED. Got: {messages}"
+    )
+    assert any("OVERDUE" in m for m in messages), (
+        f"Should see TASK UPDATE OVERDUE. Got: {messages}"
+    )
+    assert not any("FINAL" in m for m in messages), (
+        f"Should NOT see FINAL (removed in V4). Got: {messages}"
+    )
 
 
 # ── Task creation reminder (v0.10) ───────────────────────────────────────
@@ -1457,11 +1616,11 @@ class TestStalenessE2E:
             result = _e2e_post_tool("Bash", sid, self.store)
             s = str(result)
             # All escalation levels contain "TaskCreate" — detect any reminder
-            if "MANDATORY TASK UPDATE" in s or "SECOND REMINDER" in s or "FINAL WARNING" in s:
+            if "TASK UPDATE" in s or "OVERDUE" in s:
                 injections.append(i)
 
         # Should inject at tool calls 3, 6, 9 → indices 2, 5, 8
-        # With escalation: 1st=MANDATORY, 2nd=SECOND REMINDER, 3rd=FINAL WARNING
+        # V4 escalation: 1st=TASK UPDATE REQUIRED, 2nd+=TASK UPDATE OVERDUE
         assert len(injections) == 3, (
             f"Expected 3 injections at threshold=3 over 9 calls, got {len(injections)} "
             f"at indices {injections}"
@@ -1481,7 +1640,7 @@ class TestStalenessE2E:
         for _ in range(4):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results), (
+        assert all("TASK UPDATE" not in str(r) for r in results), (
             "No injection expected — longest streak is 4, threshold is 5"
         )
 
@@ -1497,7 +1656,7 @@ class TestStalenessE2E:
         for _ in range(4):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results)
+        assert all("TASK UPDATE" not in str(r) for r in results)
 
     def test_task_list_does_not_reset_counter(self):
         """TaskList should NOT reset the counter (only Create/Update do)."""
@@ -1509,7 +1668,7 @@ class TestStalenessE2E:
         _e2e_post_tool("TaskList", sid, self.store)   # count=2 (NOT reset)
         result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
 
-        assert "MANDATORY TASK UPDATE" in str(result), (
+        assert "TASK UPDATE" in str(result), (
             "TaskList should not reset the counter — injection expected at count=3"
         )
 
@@ -1523,7 +1682,7 @@ class TestStalenessE2E:
         _e2e_post_tool("TaskGet", sid, self.store)    # count=2 (NOT reset)
         result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
 
-        assert "MANDATORY TASK UPDATE" in str(result), (
+        assert "TASK UPDATE" in str(result), (
             "TaskGet should not reset the counter — injection expected at count=3"
         )
 
@@ -1537,7 +1696,7 @@ class TestStalenessE2E:
         _e2e_post_tool("task_create", sid, self.store)  # reset
         result = _e2e_post_tool("Bash", sid, self.store)  # count=1
 
-        assert "MANDATORY TASK UPDATE" not in str(result), (
+        assert "TASK UPDATE" not in str(result), (
             "task_create should reset counter — no injection expected at count=1"
         )
 
@@ -1551,7 +1710,7 @@ class TestStalenessE2E:
         _e2e_post_tool("task_update", sid, self.store)  # reset
         result = _e2e_post_tool("Bash", sid, self.store)
 
-        assert "MANDATORY TASK UPDATE" not in str(result)
+        assert "TASK UPDATE" not in str(result)
 
     # ── /ar:tasks command → handler interaction ────────────────────────
 
@@ -1565,7 +1724,7 @@ class TestStalenessE2E:
         for _ in range(10):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results), (
+        assert all("TASK UPDATE" not in str(r) for r in results), (
             "No injection expected when staleness is disabled"
         )
 
@@ -1588,7 +1747,7 @@ class TestStalenessE2E:
         for _ in range(3):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert "MANDATORY TASK UPDATE" in str(results[-1]), (
+        assert "TASK UPDATE" in str(results[-1]), (
             "Injection expected after re-enabling at call #3"
         )
 
@@ -1602,7 +1761,7 @@ class TestStalenessE2E:
         results = []
         for _ in range(5):
             results.append(_e2e_post_tool("Bash", sid, self.store))
-        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results)
+        assert all("TASK UPDATE" not in str(r) for r in results)
 
         # Lower threshold to 2 (counter was reset by the command)
         _e2e_command("/ar:tasks 2", sid, self.store)
@@ -1610,7 +1769,7 @@ class TestStalenessE2E:
         # 2 more calls should trigger
         _e2e_post_tool("Bash", sid, self.store)
         result = _e2e_post_tool("Bash", sid, self.store)
-        assert "MANDATORY TASK UPDATE" in str(result)
+        assert "TASK UPDATE" in str(result)
 
     def test_command_invalid_string_rejected(self):
         """/ar:tasks abc returns error message."""
@@ -1651,7 +1810,7 @@ class TestStalenessE2E:
         for _ in range(5):
             results.append(_e2e_post_tool("Bash", sid, store))
 
-        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results)
+        assert all("TASK UPDATE" not in str(r) for r in results)
 
     def test_fires_without_autorun_e2e(self):
         """Reminder fires when autorun_active=False but incomplete tasks exist."""
@@ -1671,7 +1830,7 @@ class TestStalenessE2E:
             result = plugins.app.dispatch(ctx) or {}
             results.append(result)
 
-        assert any("MANDATORY TASK UPDATE" in str(r) for r in results), (
+        assert any("TASK UPDATE" in str(r) for r in results), (
             "Reminder should fire with incomplete tasks even when autorun_active=False"
         )
 
@@ -1688,7 +1847,7 @@ class TestStalenessE2E:
         for _ in range(2):
             _e2e_post_tool("Bash", sid, store)
         result = _e2e_post_tool("Bash", sid, store)
-        assert "MANDATORY TASK UPDATE" in str(result)
+        assert "TASK UPDATE" in str(result)
 
         # Phase 2: TaskUpdate resets counter
         _e2e_post_tool("TaskUpdate", sid, store)
@@ -1856,6 +2015,6 @@ class TestStalenessE2E:
         for _ in range(5):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("MANDATORY TASK UPDATE" not in str(r) for r in results), (
+        assert all("TASK UPDATE" not in str(r) for r in results), (
             "No injection expected — no incomplete tasks exist"
         )

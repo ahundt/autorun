@@ -1143,23 +1143,57 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     ctx.task_staleness_enforce_next = False  # One-shot per threshold crossing
     reminder_count = ctx.task_staleness_reminder_count or 0
 
-    if reminder_count <= 1:
-        # First offense: WARN — allow the tool but inject reminder via
-        # reason + systemMessage (core.py:960-962 PATHWAY 1 allow path)
-        return ctx.allow(
-            "\u26a0\ufe0f TASK UPDATE WARNING: Your task list is stale. "
-            "Call TaskList, TaskCreate, or TaskUpdate soon. "
-            "If you do not update tasks, your next non-Task tool call will be blocked."
+    threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+
+    # Build context-aware instructions based on active planning/execution flags.
+    # The AI needs to know exactly what to do, with the right prefixes and wiring.
+    if ctx.plan_awaiting_planning_tasks:
+        instructions = (
+            "You must create planning tasks: "
+            "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\") "
+            "2. TaskUpdate(taskId=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
+            "3. TaskList -- verify all tasks visible. "
+            "Do not call any other tool until planning tasks exist."
         )
+    elif ctx.plan_awaiting_execution_tasks:
+        instructions = (
+            "You must create execution tasks: "
+            "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\") "
+            "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\") "
+            "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
+            "4. TaskList -- verify all tasks visible. "
+            "Do not write code until execution tasks are created and wired."
+        )
+    else:
+        instructions = (
+            "Call one of these Task tools: "
+            "1. TaskList -- review current tasks "
+            "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
+            "3. TaskCreate(subject=\"...\") -- add newly discovered work "
+            "4. TaskUpdate(taskId=N, addBlockedBy=[M]) -- update dependencies if order changed."
+        )
+
+    if reminder_count <= 1:
+        # First offense: WARN — allow the tool but inject context-aware reminder
+        # via reason + systemMessage (core.py:960-962 PATHWAY 1 allow path)
+        warn_msg = (
+            f"TASK UPDATE WARNING -- {threshold}+ tool calls without a task update. "
+            "Your next action after this must be a Task tool. "
+            + instructions + " "
+            "If you do not comply, your next non-Task tool call will be blocked."
+        )
+        return ctx.allow(warn_msg)
     else:
         # Second+ offense: DENY — block the tool, AI must call a Task tool first.
         # deny(reason) creates a durable transcript event the AI cannot ignore.
-        # The tool is NOT executed. The AI sees the deny reason and must respond.
-        return ctx.deny(
-            "\u26d4 TASK UPDATE REQUIRED — tool blocked. Your task list has not been "
-            "updated despite a previous warning. Call TaskList, TaskCreate, or "
-            "TaskUpdate now, then retry this tool. This tool call was not executed."
+        deny_msg = (
+            f"BLOCKED -- your {ctx.tool_name} call was not executed because your task list "
+            "has not been updated despite a previous warning. "
+            + instructions
         )
+        if not ctx.plan_awaiting_planning_tasks and not ctx.plan_awaiting_execution_tasks:
+            deny_msg += " Then continue your work."
+        return ctx.deny(deny_msg)
 
 
 # === TASK STALENESS REMINDER (v0.9, delivery fix v0.11) ===
@@ -1213,6 +1247,10 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
                 if count < no_tasks_threshold:
                     return None
                 ctx.tool_calls_since_task_update = 0
+                # Escalate to PreToolUse enforcement (was missing — bug fix)
+                reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
+                ctx.task_staleness_reminder_count = reminder_count
+                ctx.task_staleness_enforce_next = True
                 msg = CONFIG["task_staleness_no_tasks_message"].format(
                     threshold=no_tasks_threshold
                 )
@@ -1238,9 +1276,9 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     # so we also deliver via PreToolUse allow which sets reason + systemMessage.
     ctx.task_staleness_enforce_next = True
 
-    if reminder_count >= 3:
-        msg = CONFIG["task_staleness_message_final"].format(threshold=threshold)
-    elif reminder_count == 2:
+    # 2-level escalation: REQUIRED (1st) then OVERDUE (2nd+). No 3rd level —
+    # the PreToolUse deny at step 2 IS the enforcement (warn-then-deny).
+    if reminder_count >= 2:
         msg = CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
     else:
         msg = CONFIG["task_staleness_message"].format(threshold=threshold)

@@ -341,33 +341,36 @@ CONFIG = {
     # Lower threshold when zero tasks exist (AI should create tasks quickly).
     "task_staleness_no_tasks_threshold": 5,
     # Injected when threshold crossed. {threshold} replaced at runtime.
+    # V4 strings: no emoji, complete tool syntax, dependency wiring, disable instruction.
+    # Warn-then-deny enforcement: 2 PostToolUse levels only (1st + 2nd).
     "task_staleness_message": (
-        "\n\U0001f6a8 MANDATORY TASK UPDATE REQUIRED \u2014 {threshold} tool calls without TaskCreate "
-        "or TaskUpdate. Your VERY NEXT action must be one of these Task tools:\n"
-        "\u2022 TaskList \u2014 then update each task's status\n"
-        "\u2022 TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") \u2014 update status\n"
-        "\u2022 TaskCreate(subject=\"...\") \u2014 add newly discovered work\n"
-        "\u26d4 DO NOT call any other tool (Read, Write, Bash, Edit, Grep, Glob) until you "
-        "have called at least one Task tool. This is not optional."
+        "\nTASK UPDATE REQUIRED -- {threshold} tool calls without TaskCreate or TaskUpdate. "
+        "Your next action must be one of these Task tools: "
+        "1. TaskList -- review current tasks and their status "
+        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
+        "3. TaskCreate(subject=\"...\") -- add newly discovered work "
+        "4. TaskUpdate(taskId=N, addBlockedBy=[M]) -- update dependencies if order changed. "
+        "Do not call any tool except these until you have updated your task list. "
+        "Your next non-Task tool call will be blocked. Disable: /ar:tasks off"
     ),
     "task_staleness_message_2nd": (
-        "\n\u26d4 SECOND REMINDER \u2014 {threshold} more tool calls without TaskCreate or TaskUpdate. "
-        "Your VERY NEXT action MUST be a Task tool. DO NOT call Read, Write, Bash, Edit, "
-        "Grep, or Glob. Call TaskList or TaskUpdate NOW."
-    ),
-    "task_staleness_message_final": (
-        "\n\U0001f6a8 FINAL WARNING \u2014 This is your THIRD reminder. {threshold} tool calls ignored. "
-        "If you do not call a Task tool IMMEDIATELY, your next non-Task tool call will be BLOCKED. "
-        "Call TaskList, TaskCreate, or TaskUpdate RIGHT NOW."
+        "\nTASK UPDATE OVERDUE -- {threshold} more tool calls without a Task tool. "
+        "Your next action must be one of these Task tools: "
+        "1. TaskList -- review current tasks "
+        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
+        "3. TaskCreate(subject=\"...\") -- add newly discovered work. "
+        "Do not call any other tool. Your next non-Task tool call will be blocked. "
+        "Disable: /ar:tasks off"
     ),
     # Injected when zero tasks exist and no_tasks_threshold crossed.
     "task_staleness_no_tasks_message": (
-        "\n\U0001f6a8 NO TASKS EXIST \u2014 {threshold} tool calls and you have ZERO tasks. "
-        "Your VERY NEXT action must be TaskCreate:\n"
-        "\u2022 TaskCreate(subject=\"...\", description=\"...\") \u2014 one task per distinct goal\n"
-        "\u2022 TaskUpdate(taskId=N, status=\"in_progress\") \u2014 mark what you are starting\n"
-        "\u26d4 DO NOT call any other tool until you have created at least one task. "
-        "This is not optional."
+        "\nNO TASKS EXIST -- {threshold} tool calls with zero tasks tracking your work. "
+        "Your next action must be TaskCreate: "
+        "1. TaskCreate(subject=\"...\", description=\"...\") -- one per distinct goal "
+        "2. TaskUpdate(taskId=N, status=\"in_progress\") -- mark the task you are starting "
+        "3. TaskUpdate(taskId=N, addBlockedBy=[M]) -- wire dependencies if tasks have order. "
+        "Do not call any other tool until you have created at least one task. "
+        "Disable: /ar:tasks off"
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
     "task_outstanding_stage3_message": (
@@ -397,21 +400,21 @@ CONFIG = {
     ),
     # --- Task Creation Reminder Messages (v0.10) ---
     "plan_planning_task_reminder": (
-        "\n\U0001f6a8 PLANNING TASKS REQUIRED: Your VERY NEXT action must be TaskCreate. "
-        "You started a plan command but have NOT created any [PLANNING] tasks yet.\n"
-        "\u2022 TaskCreate(subject=\"[PLANNING] Step N: [name]\")\n"
-        "\u2022 TaskUpdate(taskId=N, addBlockedBy=[N-1]) \u2014 wire dependencies\n"
-        "\u2022 TaskList \u2014 verify all tasks visible\n"
-        "\u26d4 DO NOT call Read, Write, Bash, Edit, Grep, Glob, or any other tool "
-        "until planning tasks are created. This is not optional.\n"
+        "\nPLANNING TASKS REQUIRED -- a plan is active with no tasks tracking it. "
+        "Your next action must be TaskCreate: "
+        "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\") "
+        "2. TaskUpdate(taskId=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
+        "3. TaskList -- verify all tasks visible. "
+        "Do not call any other tool until planning tasks exist."
     ),
     "plan_execution_task_reminder": (
-        "\n\U0001f6a8 EXECUTION TASKS REQUIRED: Your VERY NEXT action must be TaskCreate. "
-        "Plan accepted but NO implementation tasks created.\n"
-        "\u2022 TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\")\n"
-        "\u2022 TaskCreate(subject=\"[EXEC] Step N: [step description]\")\n"
-        "\u2022 Wire: each [EXEC] blockedBy its [TDD]\n"
-        "\u26d4 DO NOT write any code until tasks are created. This is not optional.\n"
+        "\nEXECUTION TASKS REQUIRED -- plan accepted, no implementation tasks created. "
+        "Your next action must be TaskCreate: "
+        "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\") "
+        "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\") "
+        "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
+        "4. TaskList -- verify all tasks visible. "
+        "Do not write code until execution tasks are created and wired."
     ),
 
     # ─── Timing ───────────────────────────────────────────────────────────────
