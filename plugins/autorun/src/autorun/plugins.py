@@ -1093,57 +1093,73 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
 
 # === TASK STALENESS ENFORCEMENT (v0.11) ===
 #
-# WORKAROUND for Claude Code SDK bug where PostToolUse additionalContext is
-# silently dropped (documented but not implemented):
+# Warn-then-deny strategy for task reminder compliance:
+#
+# PostToolUse systemMessage is ephemeral — the AI sees it in the moment but
+# it doesn't persist in the conversation transcript and the AI ignores it.
+# Empirically tested 2026-03-20: Haiku quotes the reminder verbatim when
+# asked but never complies with it.
+#
+# Only PreToolUse deny creates a durable event that the AI must respond to
+# (it blocks tool execution, which the AI cannot ignore).
+#
+# Strategy:
+#   1st threshold crossing → allow(warning) — tool executes, AI sees warning
+#   2nd threshold crossing → deny(instruction) — tool BLOCKED, AI must comply
+#
+# References:
 #   - https://github.com/anthropics/claude-code/issues/18534
 #     "additionalContext in PostToolUse hooks: documented but not implemented"
 #   - https://github.com/anthropics/claude-code/issues/18427
 #     "PostToolUse hooks cannot inject context visible to Claude"
 #   - https://github.com/anthropics/claude-code/issues/25987
 #     "systemMessage content not injected into model context" (marked completed)
-#
-# PreToolUse allow(reason) sets BOTH reason AND systemMessage fields in the
-# response (core.py:960-962), providing a secondary delivery path that is
-# more likely to reach the AI than PostToolUse additionalContext. The tool
-# is NOT blocked — allow lets it execute while injecting the reminder.
+#   - notes/2026_03_20_task_reminder_delivery_and_compliance_investigation.md
 
 @app.on("PreToolUse")
 def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
-    """Inject task reminder via PreToolUse allow (non-blocking) when overdue (v0.11).
+    """Warn-then-deny: allow with warning first, deny on second offense (v0.11).
 
-    Uses PreToolUse allow(reason) instead of PostToolUse additionalContext
-    because additionalContext is silently dropped by Claude Code SDK
-    (https://github.com/anthropics/claude-code/issues/18534).
+    Escalation:
+      reminder_count == 1 → allow(warning) — tool executes, AI sees warning
+      reminder_count >= 2 → deny(instruction) — tool BLOCKED until Task tool called
 
-    PreToolUse allow sets reason + systemMessage without blocking the tool,
-    giving the AI a stronger signal than PostToolUse chain notifications.
+    Only deny creates a durable transcript event that the AI cannot ignore.
+    allow(reason) is ephemeral — visible in the moment but the AI deprioritizes
+    it vs the user's task instruction. See investigation notes for evidence.
 
     Fires when task_staleness_enforce_next is True (set by check_task_staleness
-    when threshold crossed, or by remind_until_tasks_created after 10 calls).
-    One-shot then reset — prevents flooding every PreToolUse call.
+    or remind_until_tasks_created). One-shot per crossing then resets.
     """
     if not ctx.task_staleness_enforce_next:
         return None
+    # Always let Task tools through and reset all counters
     if ctx.tool_name in ALL_TASK_TOOLS:
         ctx.task_staleness_enforce_next = False
         ctx.task_staleness_reminder_count = 0
         ctx.plan_task_reminder_count = 0
         return None
-    ctx.task_staleness_enforce_next = False  # One-shot: fire once, then allow normally
+
+    ctx.task_staleness_enforce_next = False  # One-shot per threshold crossing
     reminder_count = ctx.task_staleness_reminder_count or 0
-    if reminder_count >= 3:
-        msg = (
-            "\U0001f6a8 TASK UPDATE OVERDUE (reminder #3+): "
-            "Call TaskList, TaskCreate, or TaskUpdate after this tool completes."
+
+    if reminder_count <= 1:
+        # First offense: WARN — allow the tool but inject reminder via
+        # reason + systemMessage (core.py:960-962 PATHWAY 1 allow path)
+        return ctx.allow(
+            "\u26a0\ufe0f TASK UPDATE WARNING: Your task list is stale. "
+            "Call TaskList, TaskCreate, or TaskUpdate soon. "
+            "If you do not update tasks, your next non-Task tool call will be blocked."
         )
     else:
-        msg = (
-            "\U0001f6a8 TASK UPDATE REQUIRED: Your task list is stale. "
-            "Call TaskList, TaskCreate, or TaskUpdate after this tool completes."
+        # Second+ offense: DENY — block the tool, AI must call a Task tool first.
+        # deny(reason) creates a durable transcript event the AI cannot ignore.
+        # The tool is NOT executed. The AI sees the deny reason and must respond.
+        return ctx.deny(
+            "\u26d4 TASK UPDATE REQUIRED — tool blocked. Your task list has not been "
+            "updated despite a previous warning. Call TaskList, TaskCreate, or "
+            "TaskUpdate now, then retry this tool. This tool call was not executed."
         )
-    # allow() lets the tool execute while injecting the message into
-    # reason + systemMessage (core.py:960-962, PATHWAY 1 PreToolUse allow path)
-    return ctx.allow(msg)
 
 
 # === TASK STALENESS REMINDER (v0.9, delivery fix v0.11) ===

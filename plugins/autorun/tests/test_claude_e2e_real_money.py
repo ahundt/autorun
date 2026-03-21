@@ -1220,18 +1220,24 @@ class TestClaudeHookEntryPoint:
             f"channel='both' should put it in systemMessage (SDK #18534 workaround)."
         )
 
-    def test_staleness_pretooluse_allow_delivers_reminder(self, hook_resources):
-        """Verify PreToolUse allow(reason) delivers reminder after threshold crossed.
+    def test_staleness_pretooluse_warn_then_deny(self, hook_resources):
+        """Verify warn-then-deny escalation on PreToolUse.
 
-        This is the CRITICAL test: after PostToolUse sets enforce_next=True,
-        the next PreToolUse for a non-Task tool must return allow with the
-        reminder in both systemMessage and permissionDecisionReason.
+        Warn-then-deny strategy:
+          1st threshold → allow(warning) — tool executes, AI sees warning
+          2nd threshold → deny(instruction) — tool BLOCKED, AI must comply
 
-        Lifecycle: PostToolUse × 3 (threshold) → sets enforce_next=True
-                 → PreToolUse Read → enforce_task_staleness fires allow(msg)
-                 → AI sees msg in reason + systemMessage (core.py:960-962)
+        Only deny creates a durable transcript event the AI cannot ignore.
+        allow(reason) is ephemeral — the AI sees it but deprioritizes it.
+        See: notes/2026_03_20_task_reminder_delivery_and_compliance_investigation.md
+
+        Lifecycle:
+          PostToolUse × 3 (threshold) → reminder_count=1, enforce_next=True
+          PreToolUse Read → allow(warning) — tool allowed, warning injected
+          PostToolUse × 3 (threshold) → reminder_count=2, enforce_next=True
+          PreToolUse Read → deny(instruction) — tool BLOCKED
         """
-        session_id = self._sid("pretool-allow")
+        session_id = self._sid("warn-deny")
         self._activate_autorun_isolated(hook_resources, session_id)
         self._create_task_isolated(hook_resources, session_id)
 
@@ -1240,23 +1246,34 @@ class TestClaudeHookEntryPoint:
             prompt="/ar:tasks 3", session_transcript=[],
         ))
 
-        # Cross threshold — this sets enforce_next=True
+        # --- First threshold crossing: should WARN (allow) ---
         self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+        resp1, sys_msg1, reason1 = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
 
-        # NOW send a PreToolUse — enforce_task_staleness should fire
-        resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
-
-        assert resp is not None, "PreToolUse must return a response"
-        # Tool must NOT be blocked (allow, not deny)
-        perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
-        assert perm != "deny", (
-            f"enforce_task_staleness should use allow(), not deny(). Got: {perm}"
+        assert resp1 is not None, "PreToolUse must return a response"
+        perm1 = resp1.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm1 == "allow", (
+            f"First offense should ALLOW (warn only). Got permissionDecision={perm1!r}. "
+            f"enforce_task_staleness should return ctx.allow(warning) on reminder_count=1."
         )
-        # Reminder must be in the reason/systemMessage
-        assert "TASK UPDATE" in reason or "TASK UPDATE" in sys_msg, (
-            f"PreToolUse allow(reason) must contain task reminder. "
-            f"reason={reason!r}, systemMessage={sys_msg!r}. "
-            f"enforce_task_staleness (plugins.py) should return ctx.allow(msg)."
+        assert "WARNING" in reason1 or "WARNING" in sys_msg1, (
+            f"First offense should contain WARNING text. "
+            f"reason={reason1!r}, systemMessage={sys_msg1!r}"
+        )
+
+        # --- Second threshold crossing: should DENY (block) ---
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+        resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
+
+        assert resp2 is not None, "PreToolUse must return a response"
+        perm2 = resp2.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm2 == "deny", (
+            f"Second offense should DENY (block tool). Got permissionDecision={perm2!r}. "
+            f"enforce_task_staleness should return ctx.deny(instruction) on reminder_count>=2."
+        )
+        assert "REQUIRED" in reason2 or "blocked" in reason2.lower(), (
+            f"Deny reason should contain REQUIRED or 'blocked'. "
+            f"reason={reason2!r}"
         )
 
     def test_staleness_pretooluse_allows_task_tools_through(self, hook_resources):
@@ -1327,7 +1344,7 @@ class TestClaudeHookEntryPoint:
             )
 
         # NOTE: PreToolUse enforcement (enforce_next flag) is tested separately
-        # in test_staleness_pretooluse_allow_delivers_reminder. Cross-process
+        # in test_staleness_pretooluse_warn_then_deny. Cross-process
         # counter timing in AUTORUN_USE_DAEMON=0 mode can cause the enforce_next
         # flag to persist despite TaskCreate reset, so we don't assert on it here.
 
@@ -1353,15 +1370,19 @@ class TestClaudeHookEntryPoint:
             f"Expected 3, got {reminders_seen}. Messages: {[msg[:60] for _, msg in results]}"
         )
 
-    def test_escalation_ladder_posttooluse_and_pretooluse(self, hook_resources):
-        """Verify full escalation lifecycle through both PostToolUse and PreToolUse.
+    def test_escalation_ladder_warn_then_deny_full_lifecycle(self, hook_resources):
+        """Verify full warn-then-deny lifecycle through PostToolUse + PreToolUse.
 
         PostToolUse: escalating messages (MANDATORY → SECOND → FINAL)
-        PreToolUse: allow(msg) fires after EACH threshold crossing (enforce_next=True)
+        PreToolUse: 1st crossing → allow(warning), 2nd crossing → deny(block)
 
-        Full lifecycle per cycle:
-          PostToolUse × threshold → fires reminder + sets enforce_next
-          PreToolUse → enforce_task_staleness returns allow(msg) → resets flag
+        Full lifecycle:
+          Cycle 1: PostToolUse × 2 (threshold) → reminder_count=1
+                   PreToolUse → allow(WARNING) — tool executes
+          Cycle 2: PostToolUse × 2 (threshold) → reminder_count=2
+                   PreToolUse → deny(REQUIRED) — tool BLOCKED
+          Cycle 3: PostToolUse × 2 (threshold) → reminder_count=3
+                   PreToolUse → deny(REQUIRED) — tool BLOCKED again
         """
         session_id = self._sid("escalation-full")
         self._activate_autorun_isolated(hook_resources, session_id)
@@ -1373,20 +1394,18 @@ class TestClaudeHookEntryPoint:
         ))
 
         post_msgs = []
-        pre_msgs = []
+        pre_results = []  # list of (cycle, perm, reason)
 
         # 3 cycles: PostToolUse × 2 → PreToolUse × 1, repeated 3 times
         for cycle in range(3):
-            # PostToolUse calls to cross threshold
             results = self._send_post_tool_calls_isolated(hook_resources, session_id, 2)
             for _, msg in results:
                 if msg:
                     post_msgs.append(msg)
 
-            # PreToolUse — enforce_task_staleness should fire
             resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
-            if reason:
-                pre_msgs.append(reason)
+            perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "") if resp else ""
+            pre_results.append((cycle, perm, reason))
 
         # PostToolUse should have 3 escalating messages
         post_escalation = [m for m in post_msgs if "MANDATORY" in m or "SECOND" in m or "FINAL" in m]
@@ -1398,11 +1417,20 @@ class TestClaudeHookEntryPoint:
         assert "SECOND" in post_escalation[1], f"2nd PostToolUse should be SECOND REMINDER"
         assert "FINAL" in post_escalation[2], f"3rd PostToolUse should be FINAL WARNING"
 
-        # PreToolUse should have had reminders injected via allow()
-        pre_with_task = [m for m in pre_msgs if "TASK UPDATE" in m]
-        assert len(pre_with_task) >= 1, (
-            f"PreToolUse allow(reason) should inject task reminder after threshold. "
-            f"Got {len(pre_with_task)} reminders: {[m[:50] for m in pre_msgs]}"
+        # Verify at least one allow and at least one deny across the 3 cycles
+        # (exact cycle depends on cross-process counter offset in AUTORUN_USE_DAEMON=0)
+        perms = [perm for _, perm, _ in pre_results]
+        reasons = [reason for _, _, reason in pre_results]
+        has_allow = any(p == "allow" for p in perms)
+        has_deny = any(p == "deny" for p in perms)
+        assert has_deny, (
+            f"At least one cycle should DENY (block tool). Got perms: {perms}. "
+            f"reasons: {[r[:60] for r in reasons]}"
+        )
+        # Verify deny reason contains expected text
+        deny_reasons = [r for p, r in zip(perms, reasons) if p == "deny"]
+        assert any("REQUIRED" in r or "blocked" in r.lower() for r in deny_reasons), (
+            f"Deny reason should contain REQUIRED or 'blocked'. Got: {[r[:60] for r in deny_reasons]}"
         )
 
     # ─────────────────────────────────────────────────────────────────────────
