@@ -122,8 +122,8 @@ class TestPlanAcceptanceDualNotification:
         assert any("Plan accepted" in m for m in human_msgs), \
             f"Human notification should contain 'Plan accepted', got: {human_msgs}"
 
-        # Check ai channel has injection prompt
-        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "ai"]
+        # Check ai/both channel has injection prompt (channel="both" since V2 SDK bug workaround)
+        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch in ("ai", "both")]
         assert any("UNINTERRUPTED" in m or "autonomous" in m.lower() for m in ai_msgs), \
             f"AI notification should contain injection prompt, got: {[m[:100] for m in ai_msgs]}"
 
@@ -145,7 +145,7 @@ class TestPlanAcceptanceDualNotification:
         result = plugins.detect_plan_approval(ctx)
         assert result is None, "Should return None (chain notifications)"
 
-        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "ai"]
+        ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch in ("ai", "both")]
         ai_context = "\n".join(ai_msgs)
         assert "Task Scaffolding Required" in ai_context, \
             f"TDD scaffolding message should be in AI notifications, got: {ai_context[:200]}"
