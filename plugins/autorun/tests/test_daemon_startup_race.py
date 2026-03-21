@@ -143,12 +143,19 @@ class TestDaemonFlockBlocksSpawn:
 class TestFirstRunSpawn:
     """First run: no config dir, no lock files → should spawn."""
 
-    def test_flock_probe_fails_when_no_dir(self):
-        """FileLock on non-existent dir → FileNotFoundError → falls through to spawn."""
-        nonexistent = Path("/nonexistent_autorun_test_dir_12345/daemon.flock")
-        with pytest.raises((FileNotFoundError, OSError)):
-            fl = FileLock(str(nonexistent), timeout=0)
-            fl.acquire()
+    def test_flock_creates_parent_dirs_on_first_run(self, tmp_path):
+        """FileLock on non-existent dir creates parent dirs (first-run behavior).
+
+        Modern filelock creates parent directories automatically on acquire.
+        This is the first-run code path: daemon config dir doesn't exist yet,
+        FileLock.acquire() creates it. Cross-platform (Unix + Windows).
+        """
+        nonexistent = tmp_path / "does_not_exist" / "nested" / "daemon.flock"
+        assert not nonexistent.parent.exists()
+        fl = FileLock(str(nonexistent), timeout=0)
+        fl.acquire()
+        assert nonexistent.parent.exists(), "FileLock should create parent dirs on acquire"
+        fl.release()
 
     def test_restart_lock_probe_tolerates_missing_file(self, tmp_path):
         """restart_lock on non-existent file creates it (filelock behavior)."""

@@ -542,10 +542,17 @@ class TmuxUtilities:
             True if user is typing, False otherwise
         """
         target = session or self.session_name
-        # Return False immediately if session doesn't exist; don't rely on auto-creation
-        # since a freshly created session produces spurious content changes.
-        exists = self.execute_tmux_command(['has-session', '-t', target], target)
-        if not exists or exists.get('returncode') != 0:
+        # Check session existence WITHOUT auto-creation. execute_tmux_command
+        # auto-creates sessions for targeted commands (line 391), which would make
+        # has-session always succeed and cause spurious typing detection.
+        try:
+            result = subprocess.run(
+                ['tmux', 'has-session', '-t', target],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return False
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return False
 
         initial_input = self.capture_current_input(session, window, pane)
