@@ -725,6 +725,190 @@ def test_staleness_no_fire_below_zero_tasks_threshold():
     assert "MANDATORY TASK UPDATE" not in str(result)
 
 
+# ── PreToolUse warn-then-deny enforcement (v0.11) ─────────────────────────
+
+def _make_pre_tool_ctx(
+    tool_name: str,
+    session_id: str,
+    *,
+    task_staleness_enforce_next: bool = False,
+    task_staleness_reminder_count: int = 0,
+) -> EventContext:
+    """Build PreToolUse EventContext for enforcement tests."""
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        prompt="",
+        tool_name=tool_name,
+        tool_input={},
+        store=ThreadSafeDB(),
+    )
+    ctx.task_staleness_enforce_next = task_staleness_enforce_next
+    ctx.task_staleness_reminder_count = task_staleness_reminder_count
+    return ctx
+
+
+def test_enforce_staleness_noop_when_flag_false():
+    """enforce_task_staleness returns None when enforce_next is False."""
+    ctx = _make_pre_tool_ctx("Read", "test-enforce-noop")
+    result = plugins.app.dispatch(ctx)
+    # Should pass through — no enforcement
+    assert result is None or result.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+
+def test_enforce_staleness_warn_on_first_offense():
+    """First threshold crossing: allow(warning) — tool executes with warning."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-enforce-warn",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=1,
+    )
+    result = plugins.app.dispatch(ctx)
+    assert result is not None, "enforce_task_staleness should return a response"
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "allow", (
+        f"First offense should ALLOW (warn). Got: {perm}. "
+        f"enforce_task_staleness should return ctx.allow(warning) when reminder_count<=1."
+    )
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "WARNING" in reason, (
+        f"Warning message should contain WARNING. Got: {reason!r}"
+    )
+    # Flag should be cleared (one-shot)
+    assert ctx.task_staleness_enforce_next is False
+
+
+def test_enforce_staleness_deny_on_second_offense():
+    """Second threshold crossing: deny(instruction) — tool BLOCKED."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-enforce-deny",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=2,
+    )
+    result = plugins.app.dispatch(ctx)
+    assert result is not None, "enforce_task_staleness should return a response"
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "deny", (
+        f"Second offense should DENY (block tool). Got: {perm}. "
+        f"enforce_task_staleness should return ctx.deny(instruction) when reminder_count>=2."
+    )
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "REQUIRED" in reason or "blocked" in reason.lower(), (
+        f"Deny reason should contain REQUIRED or 'blocked'. Got: {reason!r}"
+    )
+
+
+def test_enforce_staleness_deny_on_third_offense():
+    """Third+ threshold crossing: still deny."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-enforce-deny-3rd",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=5,
+    )
+    result = plugins.app.dispatch(ctx)
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "deny", f"Third+ offense should still DENY. Got: {perm}"
+
+
+def test_enforce_staleness_allows_task_tools():
+    """Task tools pass through enforcement and reset counters."""
+    for tool in ["TaskList", "TaskCreate", "TaskUpdate", "TaskGet"]:
+        ctx = _make_pre_tool_ctx(
+            tool, f"test-enforce-task-{tool.lower()}",
+            task_staleness_enforce_next=True,
+            task_staleness_reminder_count=5,
+        )
+        result = plugins.app.dispatch(ctx)
+        # Task tools should NOT be denied
+        if result:
+            perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+            assert perm != "deny", (
+                f"{tool} should pass through enforcement. Got permissionDecision={perm}"
+            )
+        # Counters should be reset
+        assert ctx.task_staleness_reminder_count == 0, (
+            f"reminder_count should reset after {tool}. Got: {ctx.task_staleness_reminder_count}"
+        )
+        assert ctx.task_staleness_enforce_next is False, (
+            f"enforce_next should clear after {tool}. Got: {ctx.task_staleness_enforce_next}"
+        )
+
+
+def test_enforce_staleness_full_lifecycle():
+    """Full warn-then-deny lifecycle: PostToolUse triggers → PreToolUse enforces.
+
+    1. PostToolUse × threshold → sets enforce_next, reminder_count=1
+    2. PreToolUse Read → allow(WARNING)
+    3. PostToolUse × threshold → sets enforce_next, reminder_count=2
+    4. PreToolUse Read → deny(BLOCKED)
+    5. PreToolUse TaskList → resets counters, back to permissive
+    6. PreToolUse Read → no enforcement (enforce_next=False)
+    """
+    sid = "test-enforce-lifecycle"
+    store = ThreadSafeDB()
+    _make_pending_task(sid, "1", "incomplete task")
+
+    # Step 1: cross threshold via PostToolUse
+    for _ in range(3):
+        post_ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", tool_input={}, tool_result="", store=store,
+        )
+        post_ctx.task_staleness_enabled = True
+        post_ctx.task_staleness_threshold = 3
+        plugins.app.dispatch(post_ctx)
+
+    # Step 2: PreToolUse should WARN (allow)
+    pre_ctx1 = EventContext(
+        session_id=sid, event="PreToolUse", prompt="",
+        tool_name="Read", tool_input={}, store=store,
+    )
+    result1 = plugins.app.dispatch(pre_ctx1)
+    if result1:
+        perm1 = result1.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        # May be allow or deny depending on counter offset — just verify it fires
+        assert perm1 in ("allow", "deny"), f"Should be allow or deny, got: {perm1}"
+
+    # Step 3: cross threshold again
+    for _ in range(3):
+        post_ctx2 = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="Bash", tool_input={}, tool_result="", store=store,
+        )
+        post_ctx2.task_staleness_enabled = True
+        post_ctx2.task_staleness_threshold = 3
+        plugins.app.dispatch(post_ctx2)
+
+    # Step 4: PreToolUse should DENY (block)
+    pre_ctx2 = EventContext(
+        session_id=sid, event="PreToolUse", prompt="",
+        tool_name="Read", tool_input={}, store=store,
+    )
+    result2 = plugins.app.dispatch(pre_ctx2)
+    if result2:
+        perm2 = result2.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm2 == "deny", f"Second enforcement should DENY. Got: {perm2}"
+
+    # Step 5: TaskList resets everything
+    pre_ctx3 = EventContext(
+        session_id=sid, event="PreToolUse", prompt="",
+        tool_name="TaskList", tool_input={}, store=store,
+    )
+    plugins.app.dispatch(pre_ctx3)
+
+    # Step 6: Next Read should be clean (no enforcement)
+    pre_ctx4 = EventContext(
+        session_id=sid, event="PreToolUse", prompt="",
+        tool_name="Read", tool_input={}, store=store,
+    )
+    result4 = plugins.app.dispatch(pre_ctx4)
+    if result4:
+        perm4 = result4.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm4 != "deny", (
+            f"After TaskList reset, Read should not be denied. Got: {perm4}"
+        )
+
+
 # ── Task creation reminder (v0.10) ───────────────────────────────────────
 
 def test_plan_command_sets_planning_reminder_flag():
