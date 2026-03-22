@@ -63,78 +63,78 @@ ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow (default 1 use): /ar:ok rm [N|5m|permanent]",
+        "suggestion": "Use the 'trash' CLI command instead for safe file deletion.\n\nExample:\n  Instead of: rm /path/to/file\n  Use: trash /path/to/file\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow (default 1 use): /ar:ok rm\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "trash {args}",
     },
     "rm -rf": {
         "action": "block",
-        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow (default 1 use): /ar:ok 'rm -rf' [N|5m|permanent]",
+        "suggestion": "Use the 'trash' CLI command instead - rm -rf is permanently destructive.\n\nExample:\n  Instead of: rm -rf /path/to/dir\n  Use: trash /path/to/dir\n\nThe 'trash' command safely moves files to the trash instead of permanently deleting them.\n\nInstall: brew install trash (macOS) or go install github.com/andraschume/trash-cli@latest (Linux)\n\nTo allow (default 1 use): /ar:ok 'rm -rf'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "trash {args}",
     },
     "git reset --hard": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective stash** (to save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow (default 1 use): /ar:ok 'git reset --hard' [N|5m|permanent]",
+        "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective stash** (to save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow (default 1 use): /ar:ok 'git reset --hard'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push -m 'WIP: {args}'",
         "when": "_has_unstaged_changes",
     },
     "git checkout .": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective stash** (save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff\n\nTo allow (default 1 use): /ar:ok 'git checkout .' [N|5m|permanent]",
+        "suggestion": "DANGEROUS: 'git checkout .' discards ALL uncommitted changes in working directory.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push -m \"WIP: saving changes before checkout\"\n\n2. **Create backup branch**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint\"\n   git checkout -\n\n3. **Selective stash** (save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff\n\nTo allow (default 1 use): /ar:ok 'git checkout .'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push -m 'WIP: {args}'",
         "when": "_has_unstaged_changes",
     },
     "git checkout --": {
         "action": "block",
-        "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git checkout --' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git checkout -- <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVE:**\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git checkout --'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_file_has_unstaged_changes",
     },
     "git checkout": {  # Catch modern syntax: git checkout path/to/file (without --)
         "action": "block",
-        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow (default 1 use): /ar:ok 'git checkout' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git checkout <file>' discards unstaged changes to specific file.\n\n**SAFER ALTERNATIVES:**\n\n1. **Stash changes** (RECOMMENDED):\n   git stash push <file> -m 'WIP: <file>'\n\n2. **Switch branches** (if not targeting a file):\n   git switch <branch>  # switch branches (Git 2.23+)\n\n**View what would be lost:**\n   git diff <file>\n\nNote: 'git checkout <branch>' to switch branches is allowed when no files would be affected.\n\nTo allow (default 1 use): /ar:ok 'git checkout'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_file_has_unstaged_changes",
     },
     "git restore": {
         "action": "block",
-        "suggestion": "CAUTION: 'git restore <file>' permanently discards unstaged changes with no recovery.\n\n**SAFER ALTERNATIVE (RECOMMENDED):**\n   git stash push <file> -m 'WIP: <file>'\n\nNote: 'git restore --staged <file>' (unstage only) is safe and allowed.\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git restore' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git restore <file>' permanently discards unstaged changes with no recovery.\n\n**SAFER ALTERNATIVE (RECOMMENDED):**\n   git stash push <file> -m 'WIP: <file>'\n\nNote: 'git restore --staged <file>' (unstage only) is safe and allowed.\n\n**View what would be lost:**\n   git diff <file>\n\nTo allow (default 1 use): /ar:ok 'git restore'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push {file} -m 'WIP: {file}'",
         "when": "_restore_is_destructive",
     },
     "git stash drop": {
         "action": "block",
-        "suggestion": "CAUTION: 'git stash drop' permanently deletes stashed changes.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply stash instead** (keeps changes):\n   git stash pop    # apply and remove from stash\n   git stash apply  # apply and keep in stash\n\n2. **View stash contents first**:\n   git stash show -p  # see what's in the stash\n\nTo allow (default 1 use): /ar:ok 'git stash drop' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git stash drop' permanently deletes stashed changes.\n\n**SAFER ALTERNATIVES:**\n\n1. **Apply stash instead** (keeps changes):\n   git stash pop    # apply and remove from stash\n   git stash apply  # apply and keep in stash\n\n2. **View stash contents first**:\n   git stash show -p  # see what's in the stash\n\nTo allow (default 1 use): /ar:ok 'git stash drop'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash pop",
         "when": "_stash_exists",
     },
     "git clean -f": {
         "action": "block",
-        "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow (default 1 use): /ar:ok 'git clean -f' [N|5m|permanent]",
+        "suggestion": "DANGEROUS: 'git clean -f' permanently deletes untracked files.\n\n**SAFER ALTERNATIVES:**\n\n1. **Preview first** (ALWAYS do this):\n   git clean -n   # dry-run, shows what would be deleted\n\n2. **Stash untracked files**:\n   git stash push -u -m \"WIP: stashing untracked files\"\n\n3. **Move to backup** (manual safety):\n   mkdir -p ../backup-untracked && git clean -n | xargs -I{} mv {} ../backup-untracked/\n\n4. **Interactive mode**:\n   git clean -i  # prompts for each file\n\nTo allow (default 1 use): /ar:ok 'git clean -f'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git clean -n",
     },
     "git reset HEAD~": {
         "action": "block",
-        "suggestion": "CAUTION: 'git reset HEAD~' undoes commits (mixed reset by default).\n\n**SAFER ALTERNATIVES:**\n\n1. **Soft reset** (keeps all changes staged):\n   git reset --soft HEAD~1\n\n2. **Create backup branch first**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-before-reset\n   git checkout -\n   git reset HEAD~1\n\n3. **Revert instead** (creates new commit, preserves history):\n   git revert HEAD\n\n**Recovery if you already reset:**\n   git reflog  # find the commit hash\n   git reset --hard <hash>  # restore to that point\n\nTo allow (default 1 use): /ar:ok 'git reset HEAD~' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git reset HEAD~' undoes commits (mixed reset by default).\n\n**SAFER ALTERNATIVES:**\n\n1. **Soft reset** (keeps all changes staged):\n   git reset --soft HEAD~1\n\n2. **Create backup branch first**:\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-before-reset\n   git checkout -\n   git reset HEAD~1\n\n3. **Revert instead** (creates new commit, preserves history):\n   git revert HEAD\n\n**Recovery if you already reset:**\n   git reflog  # find the commit hash\n   git reset --hard <hash>  # restore to that point\n\nTo allow (default 1 use): /ar:ok 'git reset HEAD~'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "git add -A": {
         "action": "block",
-        "suggestion": "CAUTION: 'git add -A' stages ALL changes including untracked files, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add -A' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git add -A' stages ALL changes including untracked files, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add -A'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "git add .": {
         "action": "block",
-        "suggestion": "CAUTION: 'git add .' stages ALL changes in the current directory, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add .' [N|5m|permanent]",
+        "suggestion": "CAUTION: 'git add .' stages ALL changes in the current directory, which may accidentally include sensitive files (.env, credentials) or large binaries.\n\n**SAFER ALTERNATIVE:**\n   git add <file1> <file2> ...  # stage specific files by name\n\n**Preview what would be staged:**\n   git status  # review untracked and modified files first\n\nTo allow (default 1 use): /ar:ok 'git add .'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "dd if=": {
         "action": "block",
-        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow (default 1 use): /ar:ok 'dd if=' [N|5m|permanent]",
+        "suggestion": "Avoid direct disk writes - use proper backup tools. Consider rsync, ddrescue, or backup utilities instead.\n\nTo allow (default 1 use): /ar:ok 'dd if='\nScope: [N|5m|permanent] (default 1 use)",
     },
     "mkfs": {
         "action": "block",
-        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted.\n\nTo allow (default 1 use): /ar:ok mkfs [N|5m|permanent]",
+        "suggestion": "Filesystem creation is dangerous - backup data first and use partition managers like GNOME Disks or gparted.\n\nTo allow (default 1 use): /ar:ok mkfs\nScope: [N|5m|permanent] (default 1 use)",
     },
     "fdisk": {
         "action": "block",
-        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow (default 1 use): /ar:ok fdisk [N|5m|permanent]",
+        "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow (default 1 use): /ar:ok fdisk\nScope: [N|5m|permanent] (default 1 use)",
     },
     # Command-line tools that should use dedicated AI tools instead (v0.8.0)
     # These block the BASH COMMAND (e.g. "grep") and suggest the AI TOOL (e.g. {grep}).
@@ -150,123 +150,123 @@ DEFAULT_INTEGRATIONS = {
     #                               "write_file|run_shell_command|replace|read_file|glob|grep_search"
     "sed": {
         "action": "block",
-        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed [N|5m|permanent]\n- Block globally: /ar:globalno sed",
+        "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno sed",
     },
     "awk": {
         "action": "block",
-        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk [N|5m|permanent]\n- Block globally: /ar:globalno awk",
+        "suggestion": "Use Python or the {read} tool instead of awk for text processing.\n\n**Why:**\n- {read} tool loads file contents directly\n- Python provides more robust text processing\n- Better error handling and debugging\n\n**Example:**\nInstead of: awk '{print $1}' file.txt\nUse: {read} tool + Python string processing\n\n**Commands:**\n- Allow (default 1 use): /ar:ok awk\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno awk",
     },
     "grep": {
         "action": "block",
-        "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok grep [N|5m|permanent]\n- Block globally: /ar:globalno grep",
+        "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok grep\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno grep",
         "when": "_not_in_pipe",
     },
     "find": {
         "action": "block",
-        "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok find [N|5m|permanent]\n- Block globally: /ar:globalno find",
+        "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok find\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno find",
         "when": "_not_in_pipe",
     },
     "cat": {
         "action": "block",
-        "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok cat [N|5m|permanent]\n- Block globally: /ar:globalno cat",
+        "suggestion": "Command blocked: cat\nUse the {read} tool instead of cat command.\n\n**Why:**\n- {read} tool handles large files better (pagination with offset/limit)\n- Shows line numbers automatically (cat -n format)\n- Better error handling for binary files\n- Can read images, PDFs, and Jupyter notebooks\n\n**Example:**\nInstead of: cat file.txt\nUse: {read} tool with file_path='file.txt'\n\nInstead of: cat file.txt | head -20\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** cat in pipes IS allowed (e.g., `cat file.txt | grep pattern`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok cat\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno cat",
         "when": "_not_in_pipe",
     },
     "head": {
         "action": "block",
-        "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok head [N|5m|permanent]\n- Block globally: /ar:globalno head",
+        "suggestion": "Command blocked: head\nUse the {read} tool with limit parameter instead of head.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- More flexible (can combine with offset)\n\n**Example:**\nInstead of: head -20 file.txt\nUse: {read} tool with file_path='file.txt' and limit=20\n\n**Note:** head in pipes IS allowed (e.g., `git diff | head -50`, `ls -la | head -20`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok head\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno head",
         "when": "_not_in_pipe",
     },
     "tail": {
         "action": "block",
-        "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok tail [N|5m|permanent]\n- Block globally: /ar:globalno tail",
+        "suggestion": "Command blocked: tail\nUse the {read} tool with offset parameter instead of tail.\n\n**Why:**\n- {read} tool shows line numbers\n- Better error handling\n- Can specify exact line range\n\n**Example:**\nInstead of: tail -20 file.txt\nUse: {read} tool - first get total lines, then read with offset\n\n**Note:** tail in pipes IS allowed (e.g., `git log | tail -20`, `cargo test 2>&1 | tail -100`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok tail\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno tail",
         "when": "_not_in_pipe",
     },
     "echo >": {
         "action": "block",
-        "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok 'echo >' [N|5m|permanent]\n- Block globally: /ar:globalno 'echo >'",
+        "suggestion": "Use the {write} tool instead of echo redirection.\n\n**Why:**\n- {write} tool validates file paths\n- Better error handling\n- Integrates with your AI coding assistant's file tracking\n- Prevents accidental overwrites\n\n**Example:**\nInstead of: echo 'content' > file.txt\nUse: {write} tool with content='content' and file_path='file.txt'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok 'echo >'\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno 'echo >'",
     },
     # Git history rewriting tools — permanently alter commit history (v0.10)
     # These require explicit /ar:ok permission since history rewriting is irreversible
     # and affects all collaborators when pushed.
     "git filter-repo": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git filter-repo' permanently rewrites repository history. User permission required.\n\nAll commit hashes change — collaborators must re-clone after rewrite.\n\nBackup first: git clone --mirror . ../backup-$(date +%Y%m%d).git\n\nTo allow (default 1 use): /ar:ok 'git filter-repo' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'git filter-repo' permanently rewrites repository history. User permission required.\n\nAll commit hashes change — collaborators must re-clone after rewrite.\n\nBackup first: git clone --mirror . ../backup-$(date +%Y%m%d).git\n\nTo allow (default 1 use): /ar:ok 'git filter-repo'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "git filter-branch": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git filter-branch' is deprecated. Use git-filter-repo instead:\n  pip install git-filter-repo\n\ngit filter-branch is slow, error-prone, and creates backup refs.\n\nTo allow (default 1 use): /ar:ok 'git filter-branch' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'git filter-branch' is deprecated. Use git-filter-repo instead:\n  pip install git-filter-repo\n\ngit filter-branch is slow, error-prone, and creates backup refs.\n\nTo allow (default 1 use): /ar:ok 'git filter-branch'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "bfg": {
         "action": "block",
-        "suggestion": "BLOCKED: BFG Repo-Cleaner permanently rewrites git history.\n\nConsider git-filter-repo instead (Python, no Java dependency):\n  pip install git-filter-repo\n\nAll collaborators must re-clone after any history rewrite.\n\nTo allow (default 1 use): /ar:ok bfg [N|5m|permanent]",
+        "suggestion": "BLOCKED: BFG Repo-Cleaner permanently rewrites git history.\n\nConsider git-filter-repo instead (Python, no Java dependency):\n  pip install git-filter-repo\n\nAll collaborators must re-clone after any history rewrite.\n\nTo allow (default 1 use): /ar:ok bfg\nScope: [N|5m|permanent] (default 1 use)",
     },
     "git rebase -i": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nAlternatives: git commit --fixup <hash>, git rebase main (non-interactive)\n\nTo allow (default 1 use): /ar:ok 'git rebase -i' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'git rebase -i' rewrites commit history and requires an interactive terminal.\n\nAlternatives: git commit --fixup <hash>, git rebase main (non-interactive)\n\nTo allow (default 1 use): /ar:ok 'git rebase -i'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "git rebase --interactive": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git rebase --interactive' rewrites commit history. See 'git rebase -i' for alternatives.\n\nTo allow (default 1 use): /ar:ok 'git rebase --interactive' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'git rebase --interactive' rewrites commit history. See 'git rebase -i' for alternatives.\n\nTo allow (default 1 use): /ar:ok 'git rebase --interactive'\nScope: [N|5m|permanent] (default 1 use)",
     },
     # Force push — more specific than generic "git push", must be defined first
     "git push --force": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git push --force' overwrites remote history. Use --force-with-lease instead.\n\nTo allow (default 1 use): /ar:ok 'git push --force' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'git push --force' overwrites remote history. Use --force-with-lease instead.\n\nTo allow (default 1 use): /ar:ok 'git push --force'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "git push -f": {
         "action": "block",
-        "suggestion": "BLOCKED: 'git push -f' overwrites remote history. Use --force-with-lease instead.\n\nTo allow (default 1 use): /ar:ok 'git push -f' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'git push -f' overwrites remote history. Use --force-with-lease instead.\n\nTo allow (default 1 use): /ar:ok 'git push -f'\nScope: [N|5m|permanent] (default 1 use)",
     },
     # Remote write operations require explicit user permission
     "git push": {
         "action": "block",
-        "suggestion": "Blocked: git push requires explicit user permission.\nContinue with local tasks. Ask the user when ready to push.\n\nTo allow (default 1 use): /ar:ok 'git push' [N|5m|permanent]",
+        "suggestion": "Blocked: git push requires explicit user permission.\nContinue with local tasks. Ask the user when ready to push.\n\nTo allow (default 1 use): /ar:ok 'git push'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh pr create": {
         "action": "block",
-        "suggestion": "Blocked: gh pr create requires explicit user permission.\nContinue with local tasks. Ask the user when ready to create PR.\n\nTo allow (default 1 use): /ar:ok 'gh pr create' [N|5m|permanent]",
+        "suggestion": "Blocked: gh pr create requires explicit user permission.\nContinue with local tasks. Ask the user when ready to create PR.\n\nTo allow (default 1 use): /ar:ok 'gh pr create'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh pr merge --squash": {
         "action": "block",
-        "suggestion": "BLOCKED: '--squash' destroys individual commit history by combining all commits into one.\n\nUse a regular merge to preserve commit history: gh pr merge\n\nTo allow (default 1 use): /ar:ok 'gh pr merge --squash' [N|5m|permanent]",
+        "suggestion": "BLOCKED: '--squash' destroys individual commit history by combining all commits into one.\n\nUse a regular merge to preserve commit history: gh pr merge\n\nTo allow (default 1 use): /ar:ok 'gh pr merge --squash'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh pr merge": {
         "action": "block",
-        "suggestion": "BLOCKED: User permission required before merging pull requests.\n\nInform the user the PR is ready to merge and ask for permission.\n\nTo allow (default 1 use): /ar:ok 'gh pr merge' [N|5m|permanent]",
+        "suggestion": "BLOCKED: User permission required before merging pull requests.\n\nInform the user the PR is ready to merge and ask for permission.\n\nTo allow (default 1 use): /ar:ok 'gh pr merge'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh release create": {
         "action": "block",
-        "suggestion": "Command blocked: gh release create\n\nThe user requires explicit permission before creating releases.\n\nInform the user the release is ready and ask for permission.\n\nTo allow (default 1 use): /ar:ok 'gh release create' [N|5m|permanent]",
+        "suggestion": "Command blocked: gh release create\n\nThe user requires explicit permission before creating releases.\n\nInform the user the release is ready and ask for permission.\n\nTo allow (default 1 use): /ar:ok 'gh release create'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh repo create": {
         "action": "block",
-        "suggestion": "Command blocked: gh repo create\n\nThe user requires explicit permission before creating remote repositories.\n\nAsk the user for permission before proceeding.\n\nTo allow (default 1 use): /ar:ok 'gh repo create' [N|5m|permanent]",
+        "suggestion": "Command blocked: gh repo create\n\nThe user requires explicit permission before creating remote repositories.\n\nAsk the user for permission before proceeding.\n\nTo allow (default 1 use): /ar:ok 'gh repo create'\nScope: [N|5m|permanent] (default 1 use)",
     },
     # GitHub edit commands — modify public/shared resources (v0.10)
     "gh issue edit": {
         "action": "block",
-        "suggestion": "BLOCKED: 'gh issue edit' modifies a public GitHub issue (title, body, labels, assignees).\n\nUser permission required before editing shared resources.\n\nTo allow (default 1 use): /ar:ok 'gh issue edit' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'gh issue edit' modifies a public GitHub issue (title, body, labels, assignees).\n\nUser permission required before editing shared resources.\n\nTo allow (default 1 use): /ar:ok 'gh issue edit'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh pr edit": {
         "action": "block",
-        "suggestion": "BLOCKED: 'gh pr edit' modifies a public pull request (title, body, labels, reviewers).\n\nUser permission required before editing shared resources.\n\nTo allow (default 1 use): /ar:ok 'gh pr edit' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'gh pr edit' modifies a public pull request (title, body, labels, reviewers).\n\nUser permission required before editing shared resources.\n\nTo allow (default 1 use): /ar:ok 'gh pr edit'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh repo edit": {
         "action": "block",
-        "suggestion": "BLOCKED: 'gh repo edit' modifies repository settings (description, visibility, homepage).\n\nUser permission required before editing shared resources.\n\nTo allow (default 1 use): /ar:ok 'gh repo edit' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'gh repo edit' modifies repository settings (description, visibility, homepage).\n\nUser permission required before editing shared resources.\n\nTo allow (default 1 use): /ar:ok 'gh repo edit'\nScope: [N|5m|permanent] (default 1 use)",
     },
     # GitHub comment/create commands — post publicly visible content (v0.10)
     "gh pr comment": {
         "action": "block",
-        "suggestion": "BLOCKED: 'gh pr comment' posts a publicly visible comment on a pull request.\n\nUser permission required before posting public comments.\n\nTo allow (default 1 use): /ar:ok 'gh pr comment' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'gh pr comment' posts a publicly visible comment on a pull request.\n\nUser permission required before posting public comments.\n\nTo allow (default 1 use): /ar:ok 'gh pr comment'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh issue comment": {
         "action": "block",
-        "suggestion": "BLOCKED: 'gh issue comment' posts a publicly visible comment on a GitHub issue.\n\nUser permission required before posting public comments.\n\nTo allow (default 1 use): /ar:ok 'gh issue comment' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'gh issue comment' posts a publicly visible comment on a GitHub issue.\n\nUser permission required before posting public comments.\n\nTo allow (default 1 use): /ar:ok 'gh issue comment'\nScope: [N|5m|permanent] (default 1 use)",
     },
     "gh issue create": {
         "action": "block",
-        "suggestion": "BLOCKED: 'gh issue create' creates a new public GitHub issue.\n\nUser permission required before creating public issues.\n\nTo allow (default 1 use): /ar:ok 'gh issue create' [N|5m|permanent]",
+        "suggestion": "BLOCKED: 'gh issue create' creates a new public GitHub issue.\n\nUser permission required before creating public issues.\n\nTo allow (default 1 use): /ar:ok 'gh issue create'\nScope: [N|5m|permanent] (default 1 use)",
     },
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {

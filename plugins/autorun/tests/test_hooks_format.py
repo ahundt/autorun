@@ -586,7 +586,7 @@ class TestCacheCleanup:
         if not version_dirs:
             pytest.skip("No version directories in cache")
         # Use semver-aware sort: split on '.' and compare as integers.
-        # Lexicographic sorted() puts "0.9.0" AFTER "0.10.0" which is wrong.
+        # Lexicographic sorted() puts "0.9.0" AFTER "0.10.1" which is wrong.
         def _semver_key(p: Path):
             try:
                 return tuple(int(x) for x in p.name.split("."))
@@ -741,7 +741,7 @@ class TestSemverSortInCacheTest:
     """Verify the semver sort fix in test_claude_cache_has_no_gemini_hooks."""
 
     def test_semver_key_sorts_correctly(self):
-        """0.10.0 must sort AFTER 0.9.0 (not lexicographically before)."""
+        """0.10.1 must sort AFTER 0.9.0 (not lexicographically before)."""
         from pathlib import PurePosixPath
 
         def _semver_key(p):
@@ -750,13 +750,13 @@ class TestSemverSortInCacheTest:
             except ValueError:
                 return (0,)
 
-        paths = [PurePosixPath("0.9.0"), PurePosixPath("0.10.0"), PurePosixPath("0.2.0")]
+        paths = [PurePosixPath("0.9.0"), PurePosixPath("0.10.1"), PurePosixPath("0.2.0")]
         result = max(paths, key=_semver_key)
-        assert result.name == "0.10.0", f"Expected 0.10.0 as latest, got {result.name}"
+        assert result.name == "0.10.1", f"Expected 0.10.1 as latest, got {result.name}"
 
         # Verify lexicographic sort would get it WRONG
         lex_sorted = sorted(paths)
-        assert lex_sorted[-1].name != "0.10.0", "Lexicographic sort should NOT work for semver"
+        assert lex_sorted[-1].name != "0.10.1", "Lexicographic sort should NOT work for semver"
 
     def test_semver_key_handles_non_numeric(self):
         """Non-numeric version dirs should not crash the sort."""
@@ -768,9 +768,9 @@ class TestSemverSortInCacheTest:
             except ValueError:
                 return (0,)
 
-        paths = [PurePosixPath("latest"), PurePosixPath("0.10.0"), PurePosixPath("0.9.0")]
+        paths = [PurePosixPath("latest"), PurePosixPath("0.10.1"), PurePosixPath("0.9.0")]
         result = max(paths, key=_semver_key)
-        assert result.name == "0.10.0"
+        assert result.name == "0.10.1"
 
 
 class TestSelfHealCacheHooks:

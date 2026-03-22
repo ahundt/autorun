@@ -30,7 +30,7 @@ class TestCheckForUpdates:
         # Arrange
         mock_urlopen = MagicMock()
         mock_urlopen.__enter__.return_value.read.return_value = json.dumps({
-            "tag_name": "v0.10.0"
+            "tag_name": "v0.10.1"
         }).encode()
 
         with patch("importlib.metadata.version", return_value="0.8.0"):
@@ -41,26 +41,26 @@ class TestCheckForUpdates:
 
                 # Assert
                 assert current == "0.8.0"
-                assert latest == "0.10.0"
-                assert update_available is True  # 0.10.0 > 0.8.0
+                assert latest == "0.10.1"
+                assert update_available is True  # 0.10.1 > 0.8.0
 
     def test_check_for_updates_when_already_latest(self):
         """Test: check_for_updates() returns False when already on latest version."""
         # Arrange
         mock_urlopen = MagicMock()
         mock_urlopen.__enter__.return_value.read.return_value = json.dumps({
-            "tag_name": "v0.10.0"
+            "tag_name": "v0.10.1"
         }).encode()
 
-        with patch("importlib.metadata.version", return_value="0.10.0"):
+        with patch("importlib.metadata.version", return_value="0.10.1"):
             with patch("urllib.request.urlopen", return_value=mock_urlopen):
                 # Act
                 from autorun.install import check_for_updates
                 update_available, current, latest = check_for_updates()
 
                 # Assert
-                assert current == "0.10.0"
-                assert latest == "0.10.0"
+                assert current == "0.10.1"
+                assert latest == "0.10.1"
                 assert update_available is False
 
     def test_check_for_updates_handles_network_failure(self):
@@ -68,7 +68,7 @@ class TestCheckForUpdates:
         # Arrange
         import urllib.error
 
-        with patch("importlib.metadata.version", return_value="0.10.0"):
+        with patch("importlib.metadata.version", return_value="0.10.1"):
             with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Network error")):
                 # Act
                 from autorun.install import check_for_updates
@@ -76,7 +76,7 @@ class TestCheckForUpdates:
 
                 # Assert
                 assert update_available is False
-                assert current == "0.10.0"
+                assert current == "0.10.1"
                 assert latest == "unknown"
 
     def test_check_for_updates_handles_missing_package(self):
@@ -99,13 +99,13 @@ class TestSemverComparison:
     """Test semantic version comparison edge cases in check_for_updates()."""
 
     @pytest.mark.parametrize("current,latest_tag,expected", [
-        ("0.9.0", "v0.10.0", True),    # multi-digit minor
-        ("0.10.0", "v0.10.1", True),    # patch bump
-        ("0.10.1", "v0.10.0", False),   # downgrade
-        ("0.10.0", "v0.10.0", False),   # same version
-        ("0.10.0", "v1.0.0", True),     # major bump
-        ("1.0.0", "v0.99.99", False),   # major > minor.patch
-        ("0.9.9", "v0.10.0", True),     # 9.9 < 10.0
+        ("0.9.0", "v0.10.1", True),    # multi-digit minor
+        ("0.10.0", "v0.10.1", True),   # patch bump
+        ("0.10.2", "v0.10.1", False),  # downgrade
+        ("0.10.1", "v0.10.1", False),  # same version
+        ("0.10.1", "v1.0.0", True),    # major bump
+        ("1.0.0", "v0.99.99", False),  # major > minor.patch
+        ("0.9.9", "v0.10.1", True),    # 9.9 < 10.0
     ])
     def test_semver_comparison(self, current, latest_tag, expected):
         """Verify integer-tuple comparison, not lexicographic string comparison."""
@@ -125,7 +125,7 @@ class TestSemverComparison:
         """Unparseable versions (e.g. pre-release) should not trigger update."""
         mock_urlopen = MagicMock()
         mock_urlopen.__enter__.return_value.read.return_value = json.dumps({
-            "tag_name": "v0.10.0-beta.1"
+            "tag_name": "v0.10.1-beta.1"
         }).encode()
 
         with patch("importlib.metadata.version", return_value="0.9.0"):
@@ -176,7 +176,7 @@ class TestUpdateStrategyDetection:
         # Arrange
         mock_result = MagicMock()
         mock_result.ok = True
-        mock_result.output = "ar@0.10.0 - autorun extension"
+        mock_result.output = "ar@0.10.1 - autorun extension"
 
         with patch("autorun.install.detect_aix_installed", return_value=False):
             with patch("shutil.which", side_effect=lambda x: "/usr/bin/gemini" if x == "gemini" else None):
@@ -224,7 +224,7 @@ class TestPerformSelfUpdate:
     def test_perform_self_update_skips_when_already_latest(self):
         """Test: perform_self_update() returns early when already on latest version."""
         # Arrange
-        with patch("autorun.install.check_for_updates", return_value=(False, "0.10.0", "0.10.0")):
+        with patch("autorun.install.check_for_updates", return_value=(False, "0.10.1", "0.10.1")):
             # Act
             from autorun.install import perform_self_update
             result = perform_self_update(method="auto")
@@ -232,7 +232,7 @@ class TestPerformSelfUpdate:
             # Assert
             assert result.ok is True
             assert "Already on latest version" in result.output
-            assert "0.10.0" in result.output
+            assert "0.10.1" in result.output
 
     def test_perform_self_update_via_aix(self):
         """Test: perform_self_update() executes aix skills update."""
@@ -241,7 +241,7 @@ class TestPerformSelfUpdate:
         mock_result.ok = True
         mock_result.output = "Updated autorun to 0.11.0"
 
-        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.0", "0.11.0")):
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.1", "0.11.0")):
             with patch("autorun.install.run_cmd", return_value=mock_result) as mock_run:
                 # Act
                 from autorun.install import perform_self_update
@@ -265,7 +265,7 @@ class TestPerformSelfUpdate:
         mock_register_result.ok = True
         mock_register_result.output = "Registered plugins"
 
-        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.0", "0.11.0")):
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.1", "0.11.0")):
             with patch("autorun.install.run_cmd", side_effect=[mock_install_result, mock_register_result]) as mock_run:
                 with patch("autorun.install.get_python_runner", return_value=["uv", "run", "python"]):
                     # Act
@@ -286,7 +286,7 @@ class TestPerformSelfUpdate:
         mock_register_result = MagicMock()
         mock_register_result.ok = True
 
-        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.0", "0.11.0")):
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.1", "0.11.0")):
             with patch("autorun.install.run_cmd", side_effect=[mock_install_result, mock_register_result]) as mock_run:
                 # Act
                 from autorun.install import perform_self_update
@@ -307,7 +307,7 @@ class TestPerformSelfUpdate:
         mock_result = MagicMock()
         mock_result.ok = True
 
-        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.0", "0.11.0")):
+        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.1", "0.11.0")):
             with patch("autorun.install.UpdateStrategy.detect", return_value=mock_strategy):
                 with patch("autorun.install.run_cmd", return_value=mock_result):
                     # Act

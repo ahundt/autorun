@@ -333,7 +333,7 @@ def _get_suggestion(pattern: str) -> str:
     for k, v in DEFAULT_INTEGRATIONS.items():
         if k in pattern:
             return v["suggestion"]
-    return f"Blocked: {pattern}\n\nTo allow (default 1 use): /ar:ok {pattern} [N|5m|permanent]"
+    return f"Blocked: {pattern}\n\nTo allow (default 1 use): /ar:ok {pattern}\nScope: [N|5m|permanent] (default 1 use)"
 
 
 def _format_pattern_list(patterns: list, label: str, icon: str, show_scope: bool = False) -> list:
@@ -644,7 +644,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if key not in seen:
                 seen.add(key)
                 suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                allow_hint = f"\n\nTo allow (default 1 use): /ar:ok {b['pattern']} [N|5m|permanent]"
+                allow_hint = f"\n\nTo allow (default 1 use): /ar:ok {b['pattern']}\nScope: [N|5m|permanent] (default 1 use)"
                 if "To allow:" not in suggestion:
                     suggestion += allow_hint
                 deny_parts.append(suggestion)
@@ -656,7 +656,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             if key not in seen:
                 seen.add(key)
                 suggestion = b.get("suggestion", f"Pattern '{b['pattern']}' is blocked")
-                allow_hint = f"\n\nTo allow (default 1 use): /ar:globalok {b['pattern']} [N|5m|permanent]"
+                allow_hint = f"\n\nTo allow (default 1 use): /ar:globalok {b['pattern']}\nScope: [N|5m|permanent] (default 1 use)"
                 if "To allow:" not in suggestion:
                     suggestion += allow_hint
                 deny_parts.append(suggestion)

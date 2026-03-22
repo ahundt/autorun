@@ -287,7 +287,7 @@ class TestReadPluginVersion:
         plugin_root = get_plugin_root()
 
         version = install._read_plugin_version(plugin_root)
-        assert version == "0.10.0"
+        assert version == "0.10.1"
 
     def test_read_plugin_version_fallback(self):
         """Verify fallback version when plugin.json missing."""
@@ -295,14 +295,14 @@ class TestReadPluginVersion:
         nonexistent = Path("/tmp/nonexistent-plugin")
 
         version = install._read_plugin_version(nonexistent)
-        assert version == "0.10.0"  # Default fallback
+        assert version == "0.10.1"  # Default fallback
 
 
 class TestCacheVersionSort:
     """Test semver-aware sorting of cache version directories."""
 
     def test_cache_version_sort_prefers_0_10_over_0_9(self, tmp_path):
-        """Verify 0.10.0 sorts higher than 0.9.0 (not lexicographic)."""
+        """Verify 0.10.1 sorts higher than 0.9.0 (not lexicographic)."""
         # Create fake cache dirs with version names
         for ver in ["0.8.0", "0.9.0", "0.10.0", "0.10.1"]:
             d = tmp_path / ver
@@ -323,7 +323,7 @@ class TestCacheVersionSort:
 
     def test_cache_version_sort_handles_non_version_dirs(self, tmp_path):
         """Verify non-version directories sort to the end."""
-        for name in ["0.10.0", "latest", "0.9.0", "dev"]:
+        for name in ["0.10.1", "latest", "0.9.0", "dev"]:
             (tmp_path / name).mkdir()
 
         def _ver_key(p):
@@ -334,8 +334,8 @@ class TestCacheVersionSort:
 
         version_dirs = sorted(tmp_path.iterdir(), key=_ver_key, reverse=True)
         names = [d.name for d in version_dirs]
-        # 0.10.0 first, 0.9.0 second, non-version dirs last (both sort as (0,))
-        assert names[0] == "0.10.0"
+        # 0.10.1 first, 0.9.0 second, non-version dirs last (both sort as (0,))
+        assert names[0] == "0.10.1"
         assert names[1] == "0.9.0"
 
 

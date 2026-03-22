@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autorun-workspace"
-version = "0.10.0"
+version = "0.10.1"
 description = "UV workspace for autorun plugins: autorun, pdf-extractor"
 readme = "README.md"
 requires-python = ">=3.10"
