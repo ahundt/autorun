@@ -41,7 +41,8 @@ from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
     TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_COMBINED_TOOLS,
-    ALL_TASK_TOOLS
+    ALL_TASK_TOOLS,
+    PATTERN_DISPLAY_MAX_LEN,
 )
 from .session_manager import session_state
 from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
@@ -238,7 +239,7 @@ def _compile_pattern(pattern: str, ptype: str):
     """
     if ptype == "regex":
         if not _is_safe_regex(pattern):
-            raise ValueError(f"Unsafe regex (ReDoS): {pattern[:50]}")
+            raise ValueError(f"Unsafe regex (ReDoS): {pattern[:PATTERN_DISPLAY_MAX_LEN]}")
         try:
             return re.compile(pattern)
         except re.error as e:

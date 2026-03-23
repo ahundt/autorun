@@ -69,7 +69,8 @@ except ImportError:
 
 # Import centralized configuration (DRY principle)
 from .config import (
-    CONFIG, BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS
+    CONFIG, BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
+    PATTERN_DISPLAY_MAX_LEN,
 )
 
 # Import robust command detection (fixes substring matching bug)
@@ -349,7 +350,7 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
     if pattern_type == "regex":
         # Validate pattern safety before execution
         if not is_safe_regex_pattern(pattern):
-            log_info(f"Unsafe regex pattern rejected (ReDoS protection): {pattern[:50]}")
+            log_info(f"Unsafe regex pattern rejected (ReDoS protection): {pattern[:PATTERN_DISPLAY_MAX_LEN]}")
             # Fall back to literal matching for safety
             return pattern in command
         try:

@@ -30,6 +30,8 @@ import os
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
+from .config import LOG_SNIPPET_MAX_LEN
+
 try:
     from .diagnostics import DiagnosticLogger, LogLevel
     from .transcript_analyzer import TranscriptAnalyzer, ConfidenceLevel
@@ -734,7 +736,7 @@ class InjectionEffectivenessMonitor:
         if error_messages:
             most_common_error = max(set(error_messages), key=error_messages.count)
             if error_messages.count(most_common_error) > len(failures) * 0.3:
-                patterns.append(f"Common error pattern: {most_common_error[:100]}...")
+                patterns.append(f"Common error pattern: {most_common_error[:LOG_SNIPPET_MAX_LEN]}...")
 
         return "; ".join(patterns) if patterns else "No clear failure patterns identified"
 
@@ -793,7 +795,7 @@ class InjectionEffectivenessMonitor:
             if common_errors:
                 top_error = common_errors[0][0]
                 recommendations.append(
-                    f"Most common error: {top_error[:100]}... Address this root cause."
+                    f"Most common error: {top_error[:LOG_SNIPPET_MAX_LEN]}... Address this root cause."
                 )
 
         # General recommendations

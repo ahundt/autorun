@@ -51,7 +51,8 @@ from .session_manager import session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
     PLAN_TOOLS, TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS,
-    TASK_LIST_TOOLS, TASK_GET_TOOLS, TASK_COMBINED_TOOLS
+    TASK_LIST_TOOLS, TASK_GET_TOOLS, TASK_COMBINED_TOOLS,
+    LOG_SNIPPET_MAX_LEN,
 )
 
 
@@ -1420,11 +1421,11 @@ Use TaskList or /task-status to see current state of all tasks.
 
                 except PermissionError as e:
                     errors += 1
-                    error_details.append((sid, "Permission", str(e)[:60]))
+                    error_details.append((sid, "Permission", str(e)[:LOG_SNIPPET_MAX_LEN]))
                     print(f"  ERROR   {sid[:12]}... Permission denied")
                 except Exception as e:
                     errors += 1
-                    error_details.append((sid, type(e).__name__, str(e)[:60]))
+                    error_details.append((sid, type(e).__name__, str(e)[:LOG_SNIPPET_MAX_LEN]))
                     print(f"  ERROR   {sid[:12]}... {type(e).__name__}: {e}")
 
             # Step 8: Summary with actionable guidance
@@ -1667,7 +1668,7 @@ def register_hooks(app_instance) -> None:
                     if manager.config.debug_logging:
                         task_id = ctx.tool_input.get('taskId', '?')
                         status = ctx.tool_input.get('status', '?')
-                        tool_result_snippet = _coerce_tool_result_to_str(ctx.tool_result)[:80]
+                        tool_result_snippet = _coerce_tool_result_to_str(ctx.tool_result)
                         manager.log_event(
                             "GHOST_SKIP_HOOK", task_id,
                             f"requested_status={status} tool_result={tool_result_snippet!r}",

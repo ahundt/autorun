@@ -42,7 +42,10 @@ TASK_GET_TOOLS = {"TaskGet", "task_get"}
 # Routing is handled in track_task_operations by inspecting tool_input.
 TASK_COMBINED_TOOLS = {"write_todos"}
 ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS
-ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS
+
+# Truncation limits for log/debug output (avoid magic numbers across codebase)
+LOG_SNIPPET_MAX_LEN = 120     # tool results, error messages, evidence in log output
+PATTERN_DISPLAY_MAX_LEN = 50  # regex/command patterns in error messages (security)
 
 
 # =============================================================================

@@ -22,7 +22,7 @@ from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from .config import CONFIG
+from .config import CONFIG, LOG_SNIPPET_MAX_LEN
 from .session_manager import session_state
 from .logging_utils import get_logger as _get_logger
 _log = _get_logger(__name__)
@@ -532,7 +532,7 @@ class TranscriptAnalyzer:
             if evidence_list:
                 lines.append(f"  {evidence_type.value.title()}: {len(evidence_list)} items")
                 for evidence in evidence_list[:5]:  # Show first 5 items
-                    lines.append(f"    - {evidence.content[:80]}...")
+                    lines.append(f"    - {evidence.content[:LOG_SNIPPET_MAX_LEN]}...")
                 if len(evidence_list) > 5:
                     lines.append(f"    ... and {len(evidence_list) - 5} more")
 
