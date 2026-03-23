@@ -56,19 +56,6 @@ from .config import (
 )
 
 
-def _coerce_tool_result_to_str(tool_result) -> str:
-    """Coerce tool_result to string for regex extraction.
-
-    Claude Code sends tool_result as dict/list for Task tools (PostToolUse).
-    plan_export.py:106 documents this: "tool_result may be string or dict".
-    Without coercion, re.search(pattern, dict) raises TypeError.
-    """
-    if isinstance(tool_result, str):
-        return tool_result
-    if isinstance(tool_result, (dict, list)):
-        return json.dumps(tool_result)
-    return str(tool_result) if tool_result else ""
-
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
 
@@ -183,7 +170,9 @@ class TaskLifecycle:
     # Status constants (single source of truth - DRY)
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
     # Statuses that don't block stopping (task is "done" or "parked")
-    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
+    # Note: "paused" is NOT included — Claude Code's TaskUpdate tool only accepts
+    # pending|in_progress|completed|deleted, so "paused" can never be set by the AI.
+    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "ignored"])
 
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
     PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
@@ -679,7 +668,7 @@ class TaskLifecycle:
 
         # Fallback: regex on string/JSON representation
         if not task_id:
-            result_text = _coerce_tool_result_to_str(raw_result)
+            result_text = ctx.tool_result_str
             patterns = [
                 r'"taskId"\s*:\s*"(\d+)"',   # JSON taskId field
                 r'Task #(\d+) created successfully',
@@ -698,7 +687,7 @@ class TaskLifecycle:
             return  # Fail-open
 
         # Create task with full metadata
-        self.create_task(task_id, ctx.tool_input, _coerce_tool_result_to_str(raw_result))
+        self.create_task(task_id, ctx.tool_input, ctx.tool_result_str)
 
         # If active plan, link this task to the plan for context injection
         if hasattr(ctx, 'plan_active') and ctx.plan_active:
@@ -719,7 +708,7 @@ class TaskLifecycle:
             return None  # Skip if no task ID
 
         # Update task with all metadata
-        return self.update_task(task_id, ctx.tool_input, _coerce_tool_result_to_str(ctx.tool_result))
+        return self.update_task(task_id, ctx.tool_input, ctx.tool_result_str)
 
     def handle_session_start(self, ctx: EventContext) -> Optional[Dict]:
         """Handle SessionStart (return injection if incomplete tasks).
@@ -805,10 +794,9 @@ Your previous session ended with {total} incomplete task(s):
 **Resume Options:**
 1. **Continue**: Use TaskUpdate(taskId="X", status="in_progress") to start working
 2. **Reassess**: Review with TaskList, mark completed if already done
-3. **Pause**: Use TaskUpdate(taskId="X", status="paused") for tasks blocked externally
-4. **Abandon**: Use TaskUpdate(taskId="X", status="deleted") for irrelevant tasks
+3. **Abandon**: Use TaskUpdate(taskId="X", status="deleted") for irrelevant tasks
 
-⚠️ You CANNOT stop until all tasks are marked completed, paused, or deleted.
+⚠️ You CANNOT stop until all tasks are marked completed or deleted.
 
 Use /task-status to see full task list and plan linkage.
 """
@@ -890,7 +878,6 @@ You have {total} incomplete task(s):
 
 **Alternatives:**
 - Task no longer needed: TaskUpdate(taskId="X", status="deleted")
-- Task blocked externally: TaskUpdate(taskId="X", status="paused")
 
 Use TaskList or /task-status to see current state of all tasks.
 
@@ -1672,7 +1659,7 @@ def register_hooks(app_instance) -> None:
                 tool_input = ctx.tool_input or {}
                 if tool_input.get("taskId"):
                     manager.handle_task_update(ctx)
-                elif "created" in _coerce_tool_result_to_str(ctx.tool_result).lower():
+                elif "created" in ctx.tool_result_str.lower():
                     manager.handle_task_create(ctx)
                 # else: list/get — just update activity below
             elif ctx.tool_name in TASK_CREATE_TOOLS:
@@ -1683,7 +1670,7 @@ def register_hooks(app_instance) -> None:
                     if manager.config.debug_logging:
                         task_id = ctx.tool_input.get('taskId', '?')
                         status = ctx.tool_input.get('status', '?')
-                        tool_result_snippet = _coerce_tool_result_to_str(ctx.tool_result)
+                        tool_result_snippet = ctx.tool_result_str
                         manager.log_event(
                             "GHOST_SKIP_HOOK", task_id,
                             f"requested_status={status} tool_result={tool_result_snippet!r}",

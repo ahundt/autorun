@@ -2417,28 +2417,38 @@ def test_enforce_stop_injection_clears_flag_after_deny():
 # Root cause: ctx.tool_result is dict/list from Claude Code PostToolUse,
 # but handle_task_create used `ctx.tool_result or ""` which passes dict
 # through to re.search() → TypeError → swallowed → task never stored.
-# Fix: _coerce_tool_result_to_str() helper at 4 sites in task_lifecycle.py
+# Fix: EventContext.tool_result_str property (core.py) normalizes at boundary.
 # ============================================================================
+from autorun.core import coerce_tool_result_to_str
+
+
+class _FakeCtxBase:
+    """Shared base for FakeCtx test helpers — provides tool_result_str property."""
+    tool_result = None
+
+    @property
+    def tool_result_str(self):
+        return coerce_tool_result_to_str(self.tool_result)
 
 
 def test_coerce_tool_result_to_str_all_types():
-    """_coerce_tool_result_to_str handles dict, list, str, None, int."""
-    from autorun.task_lifecycle import _coerce_tool_result_to_str
+    """coerce_tool_result_to_str (core.py) handles dict, list, str, None, int."""
+    from autorun.core import coerce_tool_result_to_str
 
     # dict → json.dumps
-    assert _coerce_tool_result_to_str({"content": "Task #42 created"}) == '{"content": "Task #42 created"}'
+    assert coerce_tool_result_to_str({"content": "Task #42 created"}) == '{"content": "Task #42 created"}'
     # list → json.dumps
-    assert _coerce_tool_result_to_str(["Task #7 created successfully"]) == '["Task #7 created successfully"]'
+    assert coerce_tool_result_to_str(["Task #7 created successfully"]) == '["Task #7 created successfully"]'
     # str → passthrough
-    assert _coerce_tool_result_to_str("plain string") == "plain string"
+    assert coerce_tool_result_to_str("plain string") == "plain string"
     # None → empty string
-    assert _coerce_tool_result_to_str(None) == ""
+    assert coerce_tool_result_to_str(None) == ""
     # int (truthy) → str()
-    assert _coerce_tool_result_to_str(42) == "42"
+    assert coerce_tool_result_to_str(42) == "42"
     # int (falsy) → empty string
-    assert _coerce_tool_result_to_str(0) == ""
+    assert coerce_tool_result_to_str(0) == ""
     # empty dict → json.dumps (not falsy path)
-    assert _coerce_tool_result_to_str({}) == "{}"
+    assert coerce_tool_result_to_str({}) == "{}"
 
 
 def test_handle_task_create_claude_code_tool_response(tmp_path, monkeypatch):
@@ -2453,7 +2463,7 @@ def test_handle_task_create_claude_code_tool_response(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-claude-tool-response")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         # Real Claude Code tool_response format (from daemon log evidence)
         tool_result = {"task": {"id": "42", "subject": "Test task"}}
         tool_input = {"subject": "Test task", "description": "desc"}
@@ -2473,7 +2483,7 @@ def test_handle_task_create_flat_taskId_format(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-flat-taskid")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = {"success": True, "taskId": "42"}
         tool_input = {"subject": "Flat task", "description": ""}
         plan_active = False
@@ -2490,7 +2500,7 @@ def test_handle_task_create_dict_result_creates_task(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-dict-result")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = {"content": "Task #42 created successfully: Test task"}
         tool_input = {"subject": "Test task", "description": "desc"}
         plan_active = False
@@ -2509,7 +2519,7 @@ def test_handle_task_create_list_tool_result(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-list-result")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = ["Task #7 created successfully: Another task"]
         tool_input = {"subject": "Another task", "description": ""}
         plan_active = False
@@ -2526,7 +2536,7 @@ def test_handle_task_create_none_tool_result(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-none-result")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = None
         tool_input = {"subject": "No result task", "description": ""}
         plan_active = False
@@ -2538,11 +2548,11 @@ def test_handle_task_create_none_tool_result(tmp_path, monkeypatch):
 
 def test_gemini_combined_tools_dict_result():
     """Gemini combined tools path handles dict tool_result without AttributeError."""
-    from autorun.task_lifecycle import _coerce_tool_result_to_str
+    from autorun.core import coerce_tool_result_to_str
 
-    # Line 1645: "created" in (ctx.tool_result or "").lower()
+    # ctx.tool_result_str.lower() — dict arrives from Claude Code PostToolUse
     # With dict: .lower() → AttributeError. With fix: json.dumps().lower() → works
-    result = _coerce_tool_result_to_str({"content": "Task created successfully"})
+    result = coerce_tool_result_to_str({"content": "Task created successfully"})
     assert "created" in result.lower()
 
 
@@ -2554,7 +2564,7 @@ def test_handle_task_update_dict_result_no_crash(tmp_path, monkeypatch):
     manager = TaskLifecycle(session_id="test-update-dict")
     manager.create_task("1", {"subject": "Test", "description": ""}, "created")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = {"content": "Updated task #1 successfully"}
         tool_input = {"taskId": "1", "status": "in_progress"}
 
@@ -2570,7 +2580,7 @@ def test_string_tool_result_still_works(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-str-regression")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = "Task #99 created successfully: String task"
         tool_input = {"subject": "String task", "description": ""}
         plan_active = False
@@ -2587,7 +2597,7 @@ def test_deeply_nested_dict_tool_result(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-nested-dict")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = {"result": {"content": "Task #55 created successfully: Nested"}}
         tool_input = {"subject": "Nested", "description": ""}
         plan_active = False
@@ -2603,7 +2613,7 @@ def test_empty_dict_tool_result_no_crash(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-empty-dict")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = {}
         tool_input = {"subject": "Empty", "description": ""}
         plan_active = False
@@ -2619,7 +2629,7 @@ def test_task_create_then_staleness_finds_task(tmp_path, monkeypatch):
 
     manager = TaskLifecycle(session_id="test-staleness-integration")
 
-    class FakeCtx:
+    class FakeCtx(_FakeCtxBase):
         tool_result = {"content": "Task #1 created successfully: Real task"}
         tool_input = {"subject": "Real task", "description": "desc"}
         plan_active = False
@@ -2651,7 +2661,7 @@ def test_concurrent_sessions_isolated_task_create(tmp_path, monkeypatch):
     for i, sid in enumerate(["session-alpha", "session-beta", "session-gamma"]):
         manager = TaskLifecycle(session_id=sid)
 
-        class FakeCtx:
+        class FakeCtx(_FakeCtxBase):
             tool_result = {"content": f"Task #{i+1} created successfully: Task for {sid}"}
             tool_input = {"subject": f"Task for {sid}", "description": f"session {sid}"}
             plan_active = False
@@ -2690,7 +2700,7 @@ def test_concurrent_threads_task_create(tmp_path, monkeypatch):
         try:
             manager = TaskLifecycle(session_id=sid)
 
-            class FakeCtx:
+            class FakeCtx(_FakeCtxBase):
                 tool_result = {"content": f"Task #{task_num} created successfully: Thread task {task_num}"}
                 tool_input = {"subject": f"Thread task {task_num}", "description": ""}
                 plan_active = False

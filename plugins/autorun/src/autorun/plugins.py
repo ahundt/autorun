@@ -981,9 +981,8 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if ctx.tool_name not in PLAN_TOOLS:
         return None
 
-    tool_result = ctx.tool_result or ""
     approval_indicators = ["approved your plan", "can now start coding"]
-    if not any(ind in tool_result.lower() for ind in approval_indicators):
+    if not any(ind in ctx.tool_result_str.lower() for ind in approval_indicators):
         return None
 
     if ctx.autorun_active:

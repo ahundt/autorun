@@ -363,6 +363,20 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     }
 
 
+def coerce_tool_result_to_str(tool_result) -> str:
+    """Coerce tool_result to string for text search / regex extraction.
+
+    Claude Code sends tool_result as dict/list for Task tools (PostToolUse).
+    plan_export.py:106 documents this: "tool_result may be string or dict".
+    Without coercion, re.search(pattern, dict) or str.lower() raises TypeError.
+    """
+    if isinstance(tool_result, str):
+        return tool_result
+    if isinstance(tool_result, (dict, list)):
+        return json.dumps(tool_result)
+    return str(tool_result) if tool_result else ""
+
+
 # === THREAD-SAFE DB WRAPPER (In-memory cache layer for daemon performance) ===
 class ThreadSafeDB:
     """
@@ -737,6 +751,16 @@ class EventContext:
     @property
     def tool_result(self) -> str:
         return self._tool_result
+
+    @property
+    def tool_result_str(self) -> str:
+        """tool_result coerced to str — safe for .lower(), re.search(), str ops.
+
+        Claude Code sends tool_result as dict/list for Task/Plan tools (PostToolUse).
+        Use this property everywhere text search is needed; use tool_result directly
+        only when structured dict/list access is required (e.g. extracting task IDs).
+        """
+        return coerce_tool_result_to_str(self._tool_result)
 
     @property
     def cwd(self) -> Optional[str]:
