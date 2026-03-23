@@ -1211,6 +1211,90 @@ def test_no_reminder_when_flags_not_set():
     assert "EXECUTION TASKS REQUIRED" not in str(result)
 
 
+def test_plan_acceptance_sets_enforce_next_immediately():
+    """Plan acceptance sets enforce_next so first non-Task tool gets enforcement.
+
+    Without this, the AI can do 10+ tool calls ignoring "EXECUTION TASKS REQUIRED"
+    before any PreToolUse enforcement kicks in.
+    """
+    sid = "test-acceptance-enforce"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store)
+    ctx.plan_awaiting_planning_tasks = True
+    ctx.plan_arguments = "test plan"
+
+    # Plan accepted → sets execution flag
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="ExitPlanMode", tool_input={},
+                        tool_result="User has approved your plan. You can now start coding.",
+                        store=store)
+    plugins.app.dispatch(ctx2)
+
+    # enforce_next should be set immediately after plan acceptance
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    assert ctx3.task_staleness_enforce_next is True, (
+        "Plan acceptance must set enforce_next=True immediately so "
+        "the first non-Task PreToolUse gets enforcement"
+    )
+
+
+def test_remind_until_tasks_sets_enforce_after_first_call():
+    """remind_until_tasks_created sets enforce_next after 1st PostToolUse (not 10th).
+
+    The AI ignores PostToolUse systemMessage (ephemeral). PreToolUse enforcement
+    must kick in immediately, not after 10 ignored calls.
+    """
+    sid = "test-remind-enforce-1st"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store)
+    ctx.plan_awaiting_execution_tasks = True
+
+    # First PostToolUse with execution flag → reminder fires
+    plugins.app.dispatch(ctx)
+
+    # Check enforce_next is set after 1st call
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    assert ctx2.task_staleness_enforce_next is True, (
+        "remind_until_tasks_created must set enforce_next after 1st call "
+        f"(was: count >= 10). plan_task_reminder_count={ctx2.plan_task_reminder_count}"
+    )
+
+
+def test_session_resume_sets_enforce_next_for_incomplete_tasks():
+    """SessionStart with incomplete tasks sets enforce_next for immediate enforcement.
+
+    The AI's first non-Task tool call after resume should be enforced (deny),
+    forcing task acknowledgment before any work proceeds.
+    """
+    sid = "test-resume-enforce"
+    store = ThreadSafeDB()
+
+    # Create an incomplete task in the lifecycle DB
+    _make_pending_task(sid, "1", "unfinished work")
+
+    # Simulate SessionStart (resume)
+    ctx = EventContext(session_id=sid, event="SessionStart", prompt="",
+                       store=store)
+    plugins.app.dispatch(ctx)
+
+    # enforce_next should be set
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store)
+    assert ctx2.task_staleness_enforce_next is True, (
+        "SessionStart with incomplete tasks must set enforce_next=True "
+        "so the AI's first non-Task tool call gets denied"
+    )
+
+
 # ── /ar:tasks command ──────────────────────────────────────────────────────
 
 def test_tasks_command_on():

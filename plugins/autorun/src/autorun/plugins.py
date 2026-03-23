@@ -1363,9 +1363,10 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     if msg:
         count = (ctx.plan_task_reminder_count or 0) + 1
         ctx.plan_task_reminder_count = count
-        if count >= 10:
-            # After 10 ignored calls, also deliver via PreToolUse allow(reason)
-            # because PostToolUse additionalContext is broken (SDK issue #18534)
+        if count >= 1:
+            # Deliver via PreToolUse on the very next tool call.
+            # PostToolUse systemMessage is ephemeral — AI ignores it.
+            # PreToolUse allow(reason) or deny(reason) is the only reliable path.
             ctx.task_staleness_enforce_next = True
         # channel="both": systemMessage + additionalContext (SDK #18534 workaround)
         ctx.add_chain_notification(msg, channel="both")

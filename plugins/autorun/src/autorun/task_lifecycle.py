@@ -786,6 +786,12 @@ Use /task-status to see full task list and plan linkage.
         # Log resume event
         self.log_event("RESUME", "session", f"{total} incomplete tasks", "multiple")
 
+        # Set enforce_next so the AI's first non-Task tool call gets PreToolUse
+        # enforcement (deny). SessionStart block() only sets systemMessage which
+        # the AI may ignore. PreToolUse deny creates a durable transcript event.
+        ctx.task_staleness_enforce_next = True
+        ctx.task_staleness_reminder_count = 1  # Skip allow, go straight to deny
+
         # Return block with injected prompt - AI sees this immediately
         return ctx.block(injection)
 
