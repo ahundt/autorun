@@ -55,6 +55,20 @@ from .config import (
 )
 
 
+def _coerce_tool_result_to_str(tool_result) -> str:
+    """Coerce tool_result to string for regex extraction.
+
+    Claude Code sends tool_result as dict/list for Task tools (PostToolUse).
+    plan_export.py:106 documents this: "tool_result may be string or dict".
+    Without coercion, re.search(pattern, dict) raises TypeError.
+    """
+    if isinstance(tool_result, str):
+        return tool_result
+    if isinstance(tool_result, (dict, list)):
+        return json.dumps(tool_result)
+    return str(tool_result) if tool_result else ""
+
+
 # === Configuration (dataclass pattern from PlanExportConfig) ===
 
 CONFIG_PATH = ipc.AUTORUN_CONFIG_DIR / "task-lifecycle.config.json"
@@ -646,7 +660,7 @@ class TaskLifecycle:
         - Plan linkage (if active plan)
         - Deduplication check
         """
-        result_text = ctx.tool_result or ""
+        result_text = _coerce_tool_result_to_str(ctx.tool_result)
 
         # Multiple regex patterns with fallbacks (Problem 3 solution)
         patterns = [
@@ -689,7 +703,7 @@ class TaskLifecycle:
             return None  # Skip if no task ID
 
         # Update task with all metadata
-        return self.update_task(task_id, ctx.tool_input, ctx.tool_result or "")
+        return self.update_task(task_id, ctx.tool_input, _coerce_tool_result_to_str(ctx.tool_result))
 
     def handle_session_start(self, ctx: EventContext) -> Optional[Dict]:
         """Handle SessionStart (return injection if incomplete tasks).
@@ -1642,7 +1656,7 @@ def register_hooks(app_instance) -> None:
                 tool_input = ctx.tool_input or {}
                 if tool_input.get("taskId"):
                     manager.handle_task_update(ctx)
-                elif "created" in (ctx.tool_result or "").lower():
+                elif "created" in _coerce_tool_result_to_str(ctx.tool_result).lower():
                     manager.handle_task_create(ctx)
                 # else: list/get — just update activity below
             elif ctx.tool_name in TASK_CREATE_TOOLS:
@@ -1653,7 +1667,7 @@ def register_hooks(app_instance) -> None:
                     if manager.config.debug_logging:
                         task_id = ctx.tool_input.get('taskId', '?')
                         status = ctx.tool_input.get('status', '?')
-                        tool_result_snippet = (ctx.tool_result or '')[:80]
+                        tool_result_snippet = _coerce_tool_result_to_str(ctx.tool_result)[:80]
                         manager.log_event(
                             "GHOST_SKIP_HOOK", task_id,
                             f"requested_status={status} tool_result={tool_result_snippet!r}",

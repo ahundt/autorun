@@ -2409,3 +2409,266 @@ def test_enforce_stop_injection_clears_flag_after_deny():
     assert ctx.pending_stop_injection is None, (
         "pending_stop_injection must be cleared after deny fires (one-shot)"
     )
+
+
+# ============================================================================
+# tool_result type coercion tests (Fix: "NO TASKS EXIST" misfiring)
+#
+# Root cause: ctx.tool_result is dict/list from Claude Code PostToolUse,
+# but handle_task_create used `ctx.tool_result or ""` which passes dict
+# through to re.search() → TypeError → swallowed → task never stored.
+# Fix: _coerce_tool_result_to_str() helper at 4 sites in task_lifecycle.py
+# ============================================================================
+
+
+def test_coerce_tool_result_to_str_all_types():
+    """_coerce_tool_result_to_str handles dict, list, str, None, int."""
+    from autorun.task_lifecycle import _coerce_tool_result_to_str
+
+    # dict → json.dumps
+    assert _coerce_tool_result_to_str({"content": "Task #42 created"}) == '{"content": "Task #42 created"}'
+    # list → json.dumps
+    assert _coerce_tool_result_to_str(["Task #7 created successfully"]) == '["Task #7 created successfully"]'
+    # str → passthrough
+    assert _coerce_tool_result_to_str("plain string") == "plain string"
+    # None → empty string
+    assert _coerce_tool_result_to_str(None) == ""
+    # int (truthy) → str()
+    assert _coerce_tool_result_to_str(42) == "42"
+    # int (falsy) → empty string
+    assert _coerce_tool_result_to_str(0) == ""
+    # empty dict → json.dumps (not falsy path)
+    assert _coerce_tool_result_to_str({}) == "{}"
+
+
+def test_handle_task_create_dict_result_creates_task(tmp_path, monkeypatch):
+    """TaskCreate with dict tool_result stores task in lifecycle DB."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-dict-result")
+
+    class FakeCtx:
+        tool_result = {"content": "Task #42 created successfully: Test task"}
+        tool_input = {"subject": "Test task", "description": "desc"}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    tasks = manager.tasks
+    assert "42" in tasks, f"Task #42 must be stored. Got: {list(tasks.keys())}"
+    assert tasks["42"]["subject"] == "Test task"
+    assert tasks["42"]["status"] == "pending"
+
+
+def test_handle_task_create_list_tool_result(tmp_path, monkeypatch):
+    """handle_task_create works when tool_result is a list."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-list-result")
+
+    class FakeCtx:
+        tool_result = ["Task #7 created successfully: Another task"]
+        tool_input = {"subject": "Another task", "description": ""}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    tasks = manager.tasks
+    assert "7" in tasks, f"Task #7 must be stored. Got: {list(tasks.keys())}"
+
+
+def test_handle_task_create_none_tool_result(tmp_path, monkeypatch):
+    """handle_task_create handles None tool_result gracefully (no crash)."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-none-result")
+
+    class FakeCtx:
+        tool_result = None
+        tool_input = {"subject": "No result task", "description": ""}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    # No task ID to extract → fail-open (no task created, no crash)
+    assert len(manager.tasks) == 0
+
+
+def test_gemini_combined_tools_dict_result():
+    """Gemini combined tools path handles dict tool_result without AttributeError."""
+    from autorun.task_lifecycle import _coerce_tool_result_to_str
+
+    # Line 1645: "created" in (ctx.tool_result or "").lower()
+    # With dict: .lower() → AttributeError. With fix: json.dumps().lower() → works
+    result = _coerce_tool_result_to_str({"content": "Task created successfully"})
+    assert "created" in result.lower()
+
+
+def test_handle_task_update_dict_result_no_crash(tmp_path, monkeypatch):
+    """handle_task_update with dict tool_result doesn't crash (line 692 fix)."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-update-dict")
+    manager.create_task("1", {"subject": "Test", "description": ""}, "created")
+
+    class FakeCtx:
+        tool_result = {"content": "Updated task #1 successfully"}
+        tool_input = {"taskId": "1", "status": "in_progress"}
+
+    result = manager.handle_task_update(FakeCtx())
+    assert result is None  # Not ghost_skip
+    assert manager.tasks["1"]["status"] == "in_progress"
+
+
+def test_string_tool_result_still_works(tmp_path, monkeypatch):
+    """REGRESSION: string tool_result (original format) must still work."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-str-regression")
+
+    class FakeCtx:
+        tool_result = "Task #99 created successfully: String task"
+        tool_input = {"subject": "String task", "description": ""}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    assert "99" in manager.tasks
+    assert manager.tasks["99"]["subject"] == "String task"
+
+
+def test_deeply_nested_dict_tool_result(tmp_path, monkeypatch):
+    """Edge case: deeply nested dict still extracts task ID."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-nested-dict")
+
+    class FakeCtx:
+        tool_result = {"result": {"content": "Task #55 created successfully: Nested"}}
+        tool_input = {"subject": "Nested", "description": ""}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    assert "55" in manager.tasks
+
+
+def test_empty_dict_tool_result_no_crash(tmp_path, monkeypatch):
+    """Edge case: empty dict {} doesn't crash or create bogus task."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-empty-dict")
+
+    class FakeCtx:
+        tool_result = {}
+        tool_input = {"subject": "Empty", "description": ""}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    assert len(manager.tasks) == 0  # No task ID to extract → fail-open
+
+
+def test_task_create_then_staleness_finds_task(tmp_path, monkeypatch):
+    """After TaskCreate with dict result, incomplete task must be visible."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-staleness-integration")
+
+    class FakeCtx:
+        tool_result = {"content": "Task #1 created successfully: Real task"}
+        tool_input = {"subject": "Real task", "description": "desc"}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+
+    tasks = manager.tasks
+    assert "1" in tasks, "TaskCreate must store task"
+    assert tasks["1"]["status"] == "pending", "New task must be pending"
+    assert not tasks["1"].get("metadata", {}).get("ghost_task", False), "Must NOT be ghost"
+
+    incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
+    assert len(incomplete) > 0, "Pending task must appear in incomplete list"
+
+
+def test_concurrent_sessions_isolated_task_create(tmp_path, monkeypatch):
+    """Multiple sessions creating tasks with dict tool_result: per-session isolation.
+
+    Simulates the real architecture: one daemon serves multiple Claude/Gemini
+    sessions simultaneously. Each session has its own global_key
+    (__task_lifecycle__{session_id}), so tasks don't leak across sessions.
+    Uses the same session_state() RAII backend that the daemon uses.
+    """
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    # Simulate 3 concurrent sessions (different dirs, same daemon)
+    sessions = {}
+    for i, sid in enumerate(["session-alpha", "session-beta", "session-gamma"]):
+        manager = TaskLifecycle(session_id=sid)
+
+        class FakeCtx:
+            tool_result = {"content": f"Task #{i+1} created successfully: Task for {sid}"}
+            tool_input = {"subject": f"Task for {sid}", "description": f"session {sid}"}
+            plan_active = False
+
+        manager.handle_task_create(FakeCtx())
+        sessions[sid] = manager
+
+    # Verify per-session isolation: each session sees only its own task
+    for i, (sid, manager) in enumerate(sessions.items()):
+        tasks = manager.tasks
+        assert len(tasks) == 1, f"{sid} must have exactly 1 task, got {len(tasks)}"
+        task_id = str(i + 1)
+        assert task_id in tasks, f"{sid} must have task #{task_id}"
+        assert tasks[task_id]["subject"] == f"Task for {sid}"
+        assert tasks[task_id]["status"] == "pending"
+        # Verify NOT ghost
+        assert not tasks[task_id].get("metadata", {}).get("ghost_task", False)
+
+
+def test_concurrent_threads_task_create(tmp_path, monkeypatch):
+    """Multiple threads creating tasks with dict tool_result via session_state() RAII.
+
+    session_state() uses filelock (cross-process) + RLock (cross-thread).
+    This test verifies that concurrent handle_task_create calls from different
+    threads (simulating the daemon's thread pool executor) don't lose tasks.
+    """
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    import threading
+    from autorun.task_lifecycle import TaskLifecycle
+
+    sid = "test-threaded-create"
+    errors = []
+    num_tasks = 10
+
+    def create_task(task_num):
+        try:
+            manager = TaskLifecycle(session_id=sid)
+
+            class FakeCtx:
+                tool_result = {"content": f"Task #{task_num} created successfully: Thread task {task_num}"}
+                tool_input = {"subject": f"Thread task {task_num}", "description": ""}
+                plan_active = False
+
+            manager.handle_task_create(FakeCtx())
+        except Exception as e:
+            errors.append((task_num, str(e)))
+
+    threads = [threading.Thread(target=create_task, args=(i,)) for i in range(1, num_tasks + 1)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, f"Thread errors: {errors}"
+
+    # Verify all tasks were created (session_state filelock ensures no lost writes)
+    manager = TaskLifecycle(session_id=sid)
+    tasks = manager.tasks
+    assert len(tasks) == num_tasks, (
+        f"Expected {num_tasks} tasks from {num_tasks} threads, got {len(tasks)}. "
+        f"Missing: {set(str(i) for i in range(1, num_tasks+1)) - set(tasks.keys())}"
+    )
