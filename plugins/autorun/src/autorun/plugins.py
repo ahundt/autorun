@@ -1280,12 +1280,13 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
             total_tasks = len(manager.tasks)
             incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
-            if total_tasks == 0:
-                # Zero tasks: use lower threshold to prompt task creation quickly
+            if total_tasks == 0 or not incomplete:
+                # No active work: zero tasks or all complete. Both mean the AI
+                # is doing work without task tracking. Use lower no_tasks_threshold
+                # (default 5) to prompt task creation quickly.
                 if count < no_tasks_threshold:
                     return None
                 ctx.tool_calls_since_task_update = 0
-                # Escalate to PreToolUse enforcement (was missing — bug fix)
                 reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
                 ctx.task_staleness_reminder_count = reminder_count
                 ctx.task_staleness_enforce_next = True
@@ -1293,10 +1294,6 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
                     threshold=no_tasks_threshold
                 )
                 ctx.add_chain_notification(msg, channel="both")
-                return None
-            elif not incomplete:
-                # Tasks exist but all complete — nothing to remind about
-                ctx.tool_calls_since_task_update = 0
                 return None
         except Exception:
             pass  # Fail-open — skip lifecycle check on error

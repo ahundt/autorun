@@ -685,8 +685,13 @@ def test_staleness_fires_without_autorun_when_tasks_exist():
     assert "TASK UPDATE REQUIRED" in additional
 
 
-def test_staleness_no_injection_when_all_tasks_complete():
-    """Staleness reminder does not fire when tasks exist but all are complete."""
+def test_staleness_fires_no_tasks_when_all_tasks_complete():
+    """All tasks complete = no active work. Fires NO TASKS EXIST (not TASK UPDATE).
+
+    When all tasks are completed and the AI continues working without creating
+    new tasks, this is treated the same as zero tasks — no active work is being
+    tracked. The no_tasks_threshold fires "NO TASKS EXIST" to prompt task creation.
+    """
     sid = "test-stale-all-complete"
     _make_pending_task(sid, "1", "done task")
     # Mark it complete
@@ -701,8 +706,11 @@ def test_staleness_no_injection_when_all_tasks_complete():
                                tool_calls_since_task_update=50,
                                task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
-    assert "TASK UPDATE" not in str(result)
-    assert "NO TASKS EXIST" not in str(result)
+    # Should fire NO TASKS EXIST (not TASK UPDATE) — all-complete = no active work
+    assert "TASK UPDATE" not in str(result), "All-complete should NOT fire TASK UPDATE"
+    assert "NO TASKS EXIST" in str(result), (
+        f"All-complete should fire NO TASKS EXIST. Got: {str(result)[:120]}"
+    )
 
 
 def test_staleness_fires_when_zero_tasks_exist():
@@ -1996,27 +2004,128 @@ class TestStalenessE2E:
         assert ctx_new.task_staleness_enabled is True, "New session should have staleness enabled"
         assert ctx_new.task_staleness_threshold is None, "New session threshold should be None"
 
-    def test_no_tasks_no_injection_after_resume(self):
-        """Without incomplete tasks, staleness doesn't fire even with high counter.
+    def test_all_complete_tasks_fires_no_tasks_reminder(self):
+        """All tasks complete = no active work. Should fire NO TASKS EXIST after threshold.
 
-        Counter may be high from previous work, but if all tasks are done,
-        no reminder is needed.
+        When all tasks are marked completed and the AI keeps working without
+        creating new tasks, this is the same as zero tasks — the AI is doing
+        untracked work. The no_tasks_threshold (default 5) should fire.
         """
-        sid = self._sid("no-tasks-resume")
+        sid = self._sid("all-complete-reminder")
 
-        # Build up counter
-        for _ in range(20):
-            _e2e_post_tool("Bash", sid, self.store)
+        # Create and complete a task
+        _make_pending_task(sid, "1", "completed task")
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="TaskUpdate", tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status", store=self.store,
+        )
+        plugins.app.dispatch(ctx)
 
-        # Low threshold, but no tasks
+        # Set low threshold
         _e2e_command("/ar:tasks 3", sid, self.store)
 
+        # Do 4 tool calls (below threshold of 3+1 for no_tasks path)
+        for _ in range(4):
+            _e2e_post_tool("Bash", sid, self.store)
+
+        # Next batch should trigger NO TASKS EXIST reminder
         results = []
-        for _ in range(5):
+        for _ in range(3):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK UPDATE" not in str(r) for r in results), (
-            "No injection expected — no incomplete tasks exist"
+        assert any("NO TASKS EXIST" in str(r) for r in results), (
+            f"All tasks complete + threshold crossed should fire NO TASKS EXIST. "
+            f"Got: {[str(r)[:80] for r in results]}"
+        )
+
+    def test_zero_tasks_fires_no_tasks_reminder(self):
+        """Zero tasks fires NO TASKS EXIST after no_tasks_threshold (5).
+
+        The no_tasks_threshold path requires task_lifecycle.is_enabled()=True.
+        We create+complete a task to enable the lifecycle DB, then the tasks
+        dict has total_tasks=1 but incomplete=0 → hits the merged path.
+        no_tasks_threshold is CONFIG-level (default 5), not set by /ar:tasks.
+        """
+        sid = self._sid("zero-tasks-reminder")
+
+        # Enable lifecycle: create a task and complete it (total=1, incomplete=0)
+        _make_pending_task(sid, "99", "setup-only")
+        # Complete it via dispatch so lifecycle DB is properly updated
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="TaskUpdate",
+            tool_input={"taskId": "99", "status": "completed"},
+            tool_result="Updated task #99 status",
+            store=self.store,
+        )
+        plugins.app.dispatch(ctx)
+
+        # Enable staleness tracking
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        # Cross no_tasks_threshold (default 5) — need 5+ calls
+        results = []
+        for _ in range(8):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        assert any("NO TASKS EXIST" in str(r) for r in results), (
+            f"All tasks complete + no_tasks_threshold crossed should fire NO TASKS EXIST. "
+            f"Got: {[str(r)[:80] for r in results]}"
+        )
+
+    def test_incomplete_task_uses_normal_threshold_not_no_tasks(self):
+        """With an incomplete task, normal threshold fires TASK UPDATE REQUIRED (not NO TASKS).
+
+        This ensures the all-complete merge doesn't affect the incomplete-tasks path.
+        """
+        sid = self._sid("incomplete-normal-threshold")
+        _make_pending_task(sid, "1", "in progress task")
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        # Cross normal threshold (3)
+        for _ in range(4):
+            _e2e_post_tool("Bash", sid, self.store)
+
+        results = []
+        for _ in range(3):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        messages = [str(r) for r in results]
+        combined = " ".join(messages)
+        # Should see TASK UPDATE (REQUIRED or OVERDUE), NOT "NO TASKS EXIST"
+        assert "TASK UPDATE" in combined or "NO TASKS" not in combined, (
+            f"Incomplete task should use normal threshold path. "
+            f"Got: {[m[:80] for m in messages]}"
+        )
+        assert "NO TASKS EXIST" not in combined, (
+            f"Incomplete task must NOT trigger NO TASKS EXIST. "
+            f"Got: {[m[:80] for m in messages]}"
+        )
+
+    def test_all_complete_below_threshold_stays_silent(self):
+        """All tasks complete but below no_tasks_threshold — no reminder yet.
+
+        Ensures the threshold check works correctly for the merged path.
+        """
+        sid = self._sid("all-complete-below")
+        _make_pending_task(sid, "1", "done task")
+        ctx = EventContext(
+            session_id=sid, event="PostToolUse", prompt="",
+            tool_name="TaskUpdate", tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status", store=self.store,
+        )
+        plugins.app.dispatch(ctx)
+
+        _e2e_command("/ar:tasks 3", sid, self.store)
+
+        # Only 2 calls — below no_tasks_threshold (default 5)
+        results = []
+        for _ in range(2):
+            results.append(_e2e_post_tool("Bash", sid, self.store))
+
+        assert all("NO TASKS" not in str(r) for r in results), (
+            f"Below threshold should stay silent. Got: {[str(r)[:80] for r in results]}"
         )
 
 
