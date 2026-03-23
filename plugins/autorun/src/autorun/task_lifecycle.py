@@ -56,6 +56,11 @@ from .config import (
 )
 
 
+# === Stop / Resume message fragments (numbered at call site) ===
+_ACT_COMPLETE = 'TaskUpdate(taskId="X", status="in_progress") → status="completed"'
+_ACT_DISCARD  = 'TaskUpdate(taskId="X", status="deleted")'
+_ACT_ESCAPE   = '/ar:sos (emergency) or /ar:task-ignore <id>'
+
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
 
@@ -169,9 +174,8 @@ class TaskLifecycle:
 
     # Status constants (single source of truth - DRY)
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
-    # Statuses that don't block stopping (task is "done" or "parked")
-    # Note: "paused" is NOT included — Claude Code's TaskUpdate tool only accepts
-    # pending|in_progress|completed|deleted, so "paused" can never be set by the AI.
+    # Statuses that don't block stopping.
+    # "ignored" is set by /ar:task-ignore (autorun code), not via TaskUpdate tool.
     NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "ignored"])
 
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
@@ -788,18 +792,12 @@ Your previous session ended with {total} incomplete task(s):
         if older_count > 0:
             injection += f"\n📅 Note: {older_count} older task(s) from previous days also incomplete\n"
 
-        injection += """
-**PRIMARY GOAL**: Continue working until ALL tasks are completed.
-
-**Resume Options:**
-1. **Continue**: Use TaskUpdate(taskId="X", status="in_progress") to start working
-2. **Reassess**: Review with TaskList, mark completed if already done
-3. **Abandon**: Use TaskUpdate(taskId="X", status="deleted") for irrelevant tasks
-
-⚠️ You CANNOT stop until all tasks are marked completed or deleted.
-
-Use /task-status to see full task list and plan linkage.
-"""
+        injection += (
+            f"\n{total} incomplete task(s) remain — complete or delete before stopping.\n"
+            f"1. Review: TaskList\n"
+            f"2. Complete: {_ACT_COMPLETE}\n"
+            f"3. Discard: {_ACT_DISCARD}\n"
+        )
 
         # Log resume event
         self.log_event("RESUME", "session", f"{total} incomplete tasks", "multiple")
@@ -821,7 +819,7 @@ Use /task-status to see full task list and plan linkage.
         Escape hatches (user-driven only, never automatic):
         - User runs /ar:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
         - User runs /ar:task-ignore <id> to mark specific tasks as ignored
-        - User marks tasks as completed/deleted/paused via TaskUpdate
+        - User marks tasks as completed/deleted via TaskUpdate
 
         No automatic override after N attempts - that caused premature stoppage.
         """
@@ -868,23 +866,11 @@ You have {total} incomplete task(s):
         if total > max_tasks:
             injection += f"\n... and {total - max_tasks} more tasks (use /task-status to see all)\n"
 
-        injection += """
-**Required actions:**
-1. Use TaskUpdate(taskId="X", status="in_progress") to start working on a task
-2. Complete the work
-3. Use TaskUpdate(taskId="X", status="completed") when done
-4. Repeat for all tasks
-5. Only stop when ALL tasks are marked completed
-
-**Alternatives:**
-- Task no longer needed: TaskUpdate(taskId="X", status="deleted")
-
-Use TaskList or /task-status to see current state of all tasks.
-
-**User escape hatches** (only the user can trigger these):
-- /ar:sos - Emergency stop (outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
-- /ar:task-ignore <id> - Mark a specific task as ignored to unblock stopping
-"""
+        injection += (
+            f"1. Complete: {_ACT_COMPLETE}\n"
+            f"2. Discard: {_ACT_DISCARD}\n"
+            f"3. User escape: {_ACT_ESCAPE}\n"
+        )
 
         # Log warning
         self.log_event("STOP_WARNING", "session",
