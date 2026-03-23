@@ -356,7 +356,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "prompt": payload.get("prompt", ""),
         "tool_name": payload.get("tool_name") or payload.get("toolName", ""),
         "tool_input": payload.get("tool_input") or payload.get("toolInput", {}),
-        "tool_result": payload.get("tool_result") or payload.get("toolResult"),
+        "tool_result": payload.get("tool_response") or payload.get("tool_result") or payload.get("toolResult"),
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
         "source": payload.get("source", "startup"),

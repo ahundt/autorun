@@ -2441,8 +2441,50 @@ def test_coerce_tool_result_to_str_all_types():
     assert _coerce_tool_result_to_str({}) == "{}"
 
 
+def test_handle_task_create_claude_code_tool_response(tmp_path, monkeypatch):
+    """PRIMARY: Claude Code tool_response format {"task": {"id": "42", "subject": "..."}}.
+
+    Real format from daemon log (2026-03-23 02:28:47):
+      raw_result type=dict value="{'task': {'id': '57', 'subject': '...'}}"
+    Dict-first extraction reads task.id — no regex needed.
+    """
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-claude-tool-response")
+
+    class FakeCtx:
+        # Real Claude Code tool_response format (from daemon log evidence)
+        tool_result = {"task": {"id": "42", "subject": "Test task"}}
+        tool_input = {"subject": "Test task", "description": "desc"}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    tasks = manager.tasks
+    assert "42" in tasks, f"Task #42 must be stored. Got: {list(tasks.keys())}"
+    assert tasks["42"]["subject"] == "Test task"
+    assert tasks["42"]["status"] == "pending"
+
+
+def test_handle_task_create_flat_taskId_format(tmp_path, monkeypatch):
+    """SECONDARY: Flat {"taskId": "42", "success": true} format (TaskUpdate style)."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    from autorun.task_lifecycle import TaskLifecycle
+
+    manager = TaskLifecycle(session_id="test-flat-taskid")
+
+    class FakeCtx:
+        tool_result = {"success": True, "taskId": "42"}
+        tool_input = {"subject": "Flat task", "description": ""}
+        plan_active = False
+
+    manager.handle_task_create(FakeCtx())
+    tasks = manager.tasks
+    assert "42" in tasks, f"Task #42 must be stored. Got: {list(tasks.keys())}"
+
+
 def test_handle_task_create_dict_result_creates_task(tmp_path, monkeypatch):
-    """TaskCreate with dict tool_result stores task in lifecycle DB."""
+    """FALLBACK: dict without taskId field falls back to regex on JSON string."""
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
     from autorun.task_lifecycle import TaskLifecycle
 

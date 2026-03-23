@@ -661,29 +661,44 @@ class TaskLifecycle:
         - Plan linkage (if active plan)
         - Deduplication check
         """
-        result_text = _coerce_tool_result_to_str(ctx.tool_result)
-
-        # Multiple regex patterns with fallbacks (Problem 3 solution)
-        patterns = [
-            r'Task #(\d+) created successfully',
-            r'Created task #(\d+) successfully',
-            r'Task (\d+) created',
-            r'#(\d+)',  # Last resort
-        ]
-
+        # Extract task ID: try structured dict first (Claude Code tool_response),
+        # then regex fallback (Gemini CLI string responses, legacy formats).
+        raw_result = ctx.tool_result
         task_id = None
-        for pattern in patterns:
-            match = re.search(pattern, result_text)
-            if match:
-                task_id = match.group(1)
-                break
+
+        # Primary: extract task ID from dict (Claude Code tool_response format).
+        # Observed formats (from daemon log evidence 2026-03-23):
+        #   {"task": {"id": "57", "subject": "..."}}  — TaskCreate
+        #   {"success": true, "taskId": "18", ...}    — TaskUpdate
+        if isinstance(raw_result, dict):
+            nested = raw_result.get("task", {})
+            if isinstance(nested, dict):
+                task_id = str(nested.get("id") or "")
+            if not task_id:
+                task_id = str(raw_result.get("taskId") or raw_result.get("id") or "")
+
+        # Fallback: regex on string/JSON representation
+        if not task_id:
+            result_text = _coerce_tool_result_to_str(raw_result)
+            patterns = [
+                r'"taskId"\s*:\s*"(\d+)"',   # JSON taskId field
+                r'Task #(\d+) created successfully',
+                r'Created task #(\d+) successfully',
+                r'Task (\d+) created',
+                r'#(\d+)',  # Last resort
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, result_text)
+                if match:
+                    task_id = match.group(1)
+                    break
 
         if not task_id:
             self.log_event("ERROR", "unknown", "Failed to extract task ID", "error")
             return  # Fail-open
 
         # Create task with full metadata
-        self.create_task(task_id, ctx.tool_input, result_text)
+        self.create_task(task_id, ctx.tool_input, _coerce_tool_result_to_str(raw_result))
 
         # If active plan, link this task to the plan for context injection
         if hasattr(ctx, 'plan_active') and ctx.plan_active:
