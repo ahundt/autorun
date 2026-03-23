@@ -2018,3 +2018,201 @@ class TestStalenessE2E:
         assert all("TASK UPDATE" not in str(r) for r in results), (
             "No injection expected — no incomplete tasks exist"
         )
+
+
+# --- BUG #18534 TESTS START --- DELETE THIS BLOCK WHEN BUG IS FIXED ---
+# https://github.com/anthropics/claude-code/issues/18534
+# Tests for _bug_18534_human_channels() helper and respond() PATHWAY 2 workaround.
+# These tests validate behavior under BOTH flag states (True=workaround, False=designed).
+# All tests pass regardless of flag state — safe to flip the flag at any time.
+# TO REMOVE: Delete this entire block (between START/END comments) and the
+# _bug_18534_human_channels() function in core.py.
+
+_BUG_FLAG = "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"
+
+
+def test_bug_18534_helper_upgrades_on_claude():
+    """_bug_18534_human_channels("claude") includes "ai" when workaround enabled."""
+    from autorun.core import _bug_18534_human_channels
+    result = _bug_18534_human_channels("claude")
+    assert "ai" in result, f"Claude + workaround: 'ai' must be in human_channels. Got: {result}"
+    assert "human" in result and "both" in result
+
+
+def test_bug_18534_helper_no_upgrade_on_gemini():
+    """_bug_18534_human_channels("gemini") excludes "ai" — Gemini unaffected."""
+    from autorun.core import _bug_18534_human_channels
+    result = _bug_18534_human_channels("gemini")
+    assert "ai" not in result, f"Gemini: 'ai' must NOT be in human_channels. Got: {result}"
+
+
+def test_bug_18534_helper_no_upgrade_when_config_disabled(monkeypatch):
+    """_bug_18534_human_channels("claude") excludes "ai" when CONFIG flag is False."""
+    from autorun.config import CONFIG
+    from autorun.core import _bug_18534_human_channels
+    monkeypatch.setitem(CONFIG, _BUG_FLAG, False)
+    result = _bug_18534_human_channels("claude")
+    assert "ai" not in result, f"CONFIG disabled: 'ai' must NOT be in human_channels. Got: {result}"
+
+
+def test_bug_18534_helper_env_always_overrides(monkeypatch):
+    """env=always → upgrade even on Gemini."""
+    from autorun.core import _bug_18534_human_channels
+    monkeypatch.setenv(_BUG_FLAG, "always")
+    result = _bug_18534_human_channels("gemini")
+    assert "ai" in result, f"env=always: 'ai' must be in human_channels even on Gemini. Got: {result}"
+
+
+def test_bug_18534_helper_env_never_overrides(monkeypatch):
+    """env=never → no upgrade even on Claude."""
+    from autorun.core import _bug_18534_human_channels
+    monkeypatch.setenv(_BUG_FLAG, "never")
+    result = _bug_18534_human_channels("claude")
+    assert "ai" not in result, f"env=never: 'ai' must NOT be in human_channels on Claude. Got: {result}"
+
+
+def _make_bug_18534_ctx(cli_type, session_suffix):
+    """Helper: build PostToolUse ctx for BUG #18534 tests."""
+    return EventContext(
+        session_id=f"test-bug18534-{session_suffix}",
+        event="PostToolUse",
+        tool_name="Read",
+        tool_input={"file_path": "/tmp/test.txt"},
+        tool_result="contents",
+        store=ThreadSafeDB(),
+        cli_type=cli_type,
+    )
+
+
+def test_respond_pathway2_upgrades_ai_channel_on_claude():
+    """channel="ai" on Claude + workaround → systemMessage includes text."""
+    ctx = _make_bug_18534_ctx("claude", "upgrade")
+    ctx.add_chain_notification("stop injection text", channel="ai")
+    result = ctx.respond("allow", "")
+    assert "stop injection text" in result.get("systemMessage", ""), (
+        f"Workaround active: channel='ai' should appear in systemMessage. "
+        f"Got: {result.get('systemMessage', '')!r}"
+    )
+    # additionalContext ALSO set (future-proof: works when SDK fixes #18534)
+    ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "stop injection text" in ac, f"additionalContext must always be set. Got: {ac!r}"
+
+
+def test_respond_pathway2_preserves_ai_channel_on_gemini():
+    """channel="ai" on Gemini → text NOT merged into human_notifs (stays ai-only path).
+
+    NOTE: systemMessage may still contain ai_text via the `sys_msg = human_text or ai_text`
+    fallback (core.py backwards compat). The key behavior: "ai" is NOT in human_channels,
+    so ai-only messages don't get prepended to human_text. On Gemini, additionalContext
+    is the primary AI delivery path (it works correctly, unlike Claude Code).
+    """
+    ctx = _make_bug_18534_ctx("gemini", "gemini")
+    ctx.add_chain_notification("gemini ai-only text", channel="ai")
+    # Also add a human notification to verify separation
+    ctx.add_chain_notification("human-visible text", channel="human")
+    result = ctx.respond("allow", "")
+    sys_msg = result.get("systemMessage", "")
+    # human_text should contain the human notification but NOT the ai-only one
+    # (The ai text may still appear in systemMessage via fallback, but it should
+    # NOT be merged into human_notifs)
+    assert "human-visible text" in sys_msg, (
+        f"Gemini: human notification must be in systemMessage. Got: {sys_msg!r}"
+    )
+    # additionalContext must contain the ai-only text
+    ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "gemini ai-only text" in ac, (
+        f"Gemini: ai-only text must be in additionalContext. Got: {ac!r}"
+    )
+
+
+def test_respond_pathway2_no_upgrade_when_disabled(monkeypatch):
+    """channel="ai" on Claude + flag=False → ai text NOT merged into human_notifs.
+
+    NOTE: systemMessage may still contain ai_text via `sys_msg = human_text or ai_text`
+    fallback (core.py backwards compat). The key: "ai" is NOT in human_channels,
+    so ai-only messages don't get prepended to human_text. This is the designed
+    behavior when the bug is fixed — additionalContext works and carries the ai text.
+    """
+    from autorun.config import CONFIG
+    monkeypatch.setitem(CONFIG, _BUG_FLAG, False)
+    ctx = _make_bug_18534_ctx("claude", "disabled")
+    ctx.add_chain_notification("should be ai-only", channel="ai")
+    # Also add a human notification to verify separation
+    ctx.add_chain_notification("human-visible text", channel="human")
+    result = ctx.respond("allow", "")
+    sys_msg = result.get("systemMessage", "")
+    # human_text should contain human notification but NOT the ai-only one merged in
+    assert "human-visible text" in sys_msg, (
+        f"Flag=False: human notification must be in systemMessage. Got: {sys_msg!r}"
+    )
+    # additionalContext must contain the ai-only text (designed behavior)
+    ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "should be ai-only" in ac, f"additionalContext must be set even with flag=False. Got: {ac!r}"
+
+
+def test_respond_pathway2_both_channel_unchanged():
+    """channel="both" on Claude → already includes both paths, unaffected by workaround."""
+    ctx = _make_bug_18534_ctx("claude", "both")
+    ctx.add_chain_notification("both-channel text", channel="both")
+    result = ctx.respond("allow", "")
+    assert "both-channel text" in result.get("systemMessage", "")
+    ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "both-channel text" in ac
+
+# --- BUG #18534 TESTS END ---
+
+
+# ── enforce_stop_injection (PreToolUse deny after Stop block) ─────────────
+
+
+def test_enforce_stop_injection_noop_when_no_pending():
+    """No pending_stop_injection → enforce_stop_injection does not deny."""
+    ctx = _make_pre_tool_ctx("Read", "test-stop-inject-noop")
+    # pending_stop_injection defaults to None — enforce_stop_injection should be no-op
+    result = plugins.app.dispatch(ctx)
+    # Other handlers may respond, but NOT with a stop-injection deny
+    if result:
+        reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "CANNOT STOP" not in reason, (
+            f"enforce_stop_injection should not fire without pending_stop_injection. Got: {reason!r}"
+        )
+
+
+def test_enforce_stop_injection_denies_non_task_tool():
+    """pending_stop_injection set + Read tool → deny with injection text."""
+    ctx = _make_pre_tool_ctx("Read", "test-stop-inject-deny")
+    ctx.pending_stop_injection = "CANNOT STOP — 1 incomplete task(s)"
+    result = plugins.app.dispatch(ctx)
+    assert result is not None, "enforce_stop_injection should return a deny response"
+    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+    assert perm == "deny", f"Should deny non-Task tool. Got: {perm}"
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "CANNOT STOP" in reason, f"Deny reason should contain injection. Got: {reason!r}"
+
+
+def test_enforce_stop_injection_allows_task_tools():
+    """pending_stop_injection set + Task tools → NOT denied, flag preserved."""
+    for tool in ["TaskList", "TaskCreate", "TaskUpdate", "TaskGet"]:
+        ctx = _make_pre_tool_ctx(tool, f"test-stop-inject-task-{tool.lower()}")
+        ctx.pending_stop_injection = "CANNOT STOP — 1 incomplete task(s)"
+        result = plugins.app.dispatch(ctx)
+        # Task tools must NOT receive a stop-injection deny
+        if result:
+            reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+            assert "CANNOT STOP" not in reason, (
+                f"{tool} must pass through enforce_stop_injection. Got: {reason!r}"
+            )
+        # Flag must persist (only cleared by non-Task tool deny)
+        assert ctx.pending_stop_injection is not None, (
+            f"pending_stop_injection must persist after {tool}"
+        )
+
+
+def test_enforce_stop_injection_clears_flag_after_deny():
+    """After deny fires, pending_stop_injection must be None (one-shot)."""
+    ctx = _make_pre_tool_ctx("Read", "test-stop-inject-clear")
+    ctx.pending_stop_injection = "CANNOT STOP — 1 incomplete task(s)"
+    plugins.app.dispatch(ctx)
+    assert ctx.pending_stop_injection is None, (
+        "pending_stop_injection must be cleared after deny fires (one-shot)"
+    )

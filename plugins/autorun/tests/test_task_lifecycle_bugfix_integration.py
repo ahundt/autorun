@@ -544,17 +544,34 @@ class TestChainNotificationAccumulator:
         assert len(ctx._chain_notifications) == 0
 
     def test_ai_channel_notifications_in_additional_context(self):
-        """AI-channel notifications appear in additionalContext, not systemMessage."""
-        ctx = make_post_tool_ctx(
+        """AI-channel notifications appear in additionalContext.
+
+        On Gemini (no workaround): ai-only stays out of human_notifs.
+        On Claude (BUG #18534 workaround active): ai-only ALSO merges into
+        human_notifs because additionalContext is broken on Claude Code.
+        https://github.com/anthropics/claude-code/issues/18534
+        """
+        # Test designed behavior on Gemini (additionalContext works, no workaround)
+        # Use EventContext constructor directly to set cli_type (property is read-only)
+        ctx = EventContext(
             session_id=f"test-accum-ai-{time.time()}",
+            event="PostToolUse",
+            prompt="",
             tool_name="ExitPlanMode",
+            tool_input={},
             tool_result="some result",
+            store=ThreadSafeDB(),
+            cli_type="gemini",
         )
         ctx.add_chain_notification("AI-only note", channel="ai")
 
         result = ctx.respond("allow", "", to_human="Human msg", to_ai="AI context")
         assert "AI-only note" in result["hookSpecificOutput"]["additionalContext"]
-        assert "AI-only note" not in result["systemMessage"]
+        # On Gemini, ai-only should NOT be merged into human_notifs
+        # (human_text = "Human msg" from to_human, ai-only prepended only to ai_text)
+        assert "AI-only note" not in result["systemMessage"], (
+            "Gemini: ai-only channel must NOT merge into systemMessage"
+        )
 
     def test_both_channel_notifications(self):
         """Channel 'both' appears in both systemMessage and additionalContext."""

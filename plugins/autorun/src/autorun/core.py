@@ -214,6 +214,47 @@ def format_suggestion(msg: str, cli_type: str) -> str:
     return msg
 
 
+# --- BUG #18534 WORKAROUND START --- DELETE THIS FUNCTION WHEN BUG IS FIXED ---
+# https://github.com/anthropics/claude-code/issues/18534
+# Claude Code PostToolUse additionalContext is documented but silently dropped.
+# This upgrades the human_channels set so channel="ai" notifications also reach
+# the user via systemMessage. Callers are unaffected — channel="ai" just works.
+# TO REMOVE: Delete this function and replace its one call site in respond()
+# PATHWAY 2 with:  human_channels = {"human", "both"}
+def _bug_18534_human_channels(cli_type: str) -> set:
+    """Return the set of channels that should merge into human_notifs.
+
+    Normal (bug fixed or Gemini): {"human", "both"}
+    Claude + bug active:          {"human", "both", "ai"}  — upgrades "ai" to also show in systemMessage
+
+    Single key for both env var and CONFIG dict:
+      AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED
+
+    Priority: env var > CONFIG dict (same pattern as AUTORUN_EXIT2_WORKAROUND).
+    Env var values (case-insensitive):
+      "true" / "1" / "auto" (default): workaround ON for Claude, OFF for Gemini
+      "always": workaround ON for all CLIs (testing)
+      "false" / "0" / "never": workaround OFF for all CLIs (bug fixed)
+    CONFIG dict value: True/False (used when env var is unset).
+    """
+    import os
+    from .config import CONFIG
+    _KEY = "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"
+    base = {"human", "both"}
+    env_val = os.environ.get(_KEY, "").lower()
+    if env_val == "always":
+        return base | {"ai"}
+    if env_val in {"false", "0", "never"}:
+        return base
+    if env_val in {"true", "1", "auto"}:
+        return base | {"ai"} if cli_type == "claude" else base
+    # No env var set — fall back to CONFIG dict
+    if cli_type == "claude" and CONFIG.get(_KEY, True):
+        return base | {"ai"}
+    return base
+# --- BUG #18534 WORKAROUND END ---
+
+
 def get_cli_event_name(internal_event: str, cli_type: str) -> str:
     """Convert internal event name to CLI-specific name for responses.
 
@@ -989,7 +1030,8 @@ class EventContext:
 
             # Merge accumulated chain notifications
             if self._chain_notifications:
-                human_notifs = [m for m, c in self._chain_notifications if c in ("human", "both")]
+                human_channels = _bug_18534_human_channels(cli_type)  # BUG #18534: WHEN FIXED, REPLACE WITH: human_channels = {"human", "both"}
+                human_notifs = [m for m, c in self._chain_notifications if c in human_channels]
                 ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both")]
                 if human_notifs:
                     prefix = "\n".join(human_notifs)

@@ -1094,41 +1094,34 @@ class TestStalenessCounterWriteTodos:
 # === Test 13: PreToolUse matcher RTK compatibility ===
 
 class TestPreToolUseMatcherRTKCompat:
-    """Verify PreToolUse has explicit matcher, not catch-all.
+    """Verify PreToolUse is catch-all for 100% enforcement coverage.
 
-    Catch-all PreToolUse causes parallel-hook updatedInput drop with RTK
-    (hook-pr-comparison.md:130). PreToolUse must use explicit matcher so
-    RTK can patch out Bash and coordinate via manifest fallthrough.
+    Catch-all is safe with RTK because:
+    - When no enforcement is active, autorun returns None → exits silently →
+      Claude Code ignores it → RTK's updatedInput applies normally
+    - When enforcement IS active (deny), tool is blocked → RTK rewrite irrelevant
+    See plan: Critique Finding 5 for full analysis.
 
-    PostToolUse catch-all is correct (no updatedInput conflict).
+    PostToolUse catch-all is also correct (no updatedInput conflict).
     """
 
-    def test_pretooluse_has_explicit_matcher(self):
-        """PreToolUse must have a matcher field (not catch-all)."""
+    def test_pretooluse_is_catch_all(self):
+        """PreToolUse must be catch-all (no matcher) for 100% enforcement coverage.
+
+        enforce_stop_injection and enforce_task_staleness must fire for ALL tools,
+        not just Write|Edit|Bash|ExitPlanMode. Catch-all ensures no tool can bypass
+        enforcement (covers WebFetch, NotebookEdit, LSP, AskUserQuestion, Skill, etc.).
+        """
         import json
         from pathlib import Path
         hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
         for group in pre_tool_groups:
-            assert "matcher" in group, (
-                "PreToolUse must have explicit matcher (catch-all breaks RTK). "
+            assert "matcher" not in group, (
+                "PreToolUse must be catch-all (no matcher) for 100% enforcement. "
                 f"Group: {group}"
             )
-
-    def test_pretooluse_includes_bash(self):
-        """PreToolUse matcher must include Bash for command blocking."""
-        import json
-        from pathlib import Path
-        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
-        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
-        matchers = "|".join(
-            g.get("matcher", "") for g in hooks["hooks"]["PreToolUse"]
-        )
-        assert "Bash" in matchers, (
-            f"PreToolUse must include Bash for check_blocked_commands. "
-            f"Matchers: {matchers}"
-        )
 
     def test_posttooluse_is_catch_all(self):
         """PostToolUse must be catch-all (3 handlers need ALL tools)."""

@@ -1601,12 +1601,17 @@ def register_hooks(app_instance) -> None:
 
     @app_instance.on("PostToolUse")
     def deliver_pending_stop_injection(ctx: EventContext) -> Optional[Dict]:
-        """Deliver deferred Stop-hook injection to AI via additionalContext.
+        """Deliver deferred Stop-hook injection (backup for enforce_stop_injection).
 
-        Stop events cannot use hookSpecificOutput.additionalContext (HOOK_SCHEMAS
-        hso:{} for Stop). handle_stop() stores the injection in session state so
-        this handler can deliver it on the AI's next tool call via PATHWAY 2
-        (PostToolUse → hookSpecificOutput.additionalContext → AI context window).
+        Stop events have no AI context path (HOOK_SCHEMAS hso:{} for Stop).
+        handle_stop() stores injection in ctx.pending_stop_injection.
+        Primary enforcement: enforce_stop_injection (PreToolUse deny) in plugins.py.
+        This PostToolUse handler is backup — delivers via channel="ai".
+        On Claude Code, respond() PATHWAY 2 internally upgrades "ai" → "both"
+        so the message also reaches the user via systemMessage.
+        BUG #18534: https://github.com/anthropics/claude-code/issues/18534
+        Workaround controlled by CONFIG["AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"].
+        Set to False when Anthropic fixes #18534 to restore designed ai-only behavior.
         """
         injection = ctx.pending_stop_injection
         if not injection:

@@ -463,44 +463,79 @@ class TestGeminiHookMatchers:
             f"Groups: {before_tool_groups}"
         )
 
-    def test_claude_pretooluse_must_not_be_catch_all(self):
-        """Claude PreToolUse must NOT be catch-all — explicit matcher required.
+    def test_claude_pretooluse_is_catch_all(self):
+        """Claude PreToolUse must be catch-all for 100% enforcement coverage.
 
-        Catch-all PreToolUse causes parallel-hook updatedInput drop with RTK:
-        when autorun fires in parallel with RTK for Bash events, Claude Code
-        drops updatedInput from both responses (hook-pr-comparison.md:130),
-        silently breaking RTK command rewrites (0% token savings).
-
-        Fix: explicit Write|Edit|Bash|ExitPlanMode matcher so RTK can patch
-        out Bash and coordinate via manifest fallthrough.
+        enforce_stop_injection and enforce_task_staleness must fire for ALL tools.
+        Catch-all is safe with RTK: when no enforcement is active, autorun returns
+        None → exits silently → RTK's updatedInput applies normally. When enforcement
+        IS active (deny), tool is blocked → RTK rewrite irrelevant.
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
         has_catch_all = any("matcher" not in g for g in pre_tool_groups)
-        assert not has_catch_all, (
-            f"Claude PreToolUse must NOT be catch-all (breaks RTK rewrites). "
-            f"Use explicit matcher like Write|Edit|Bash|ExitPlanMode. "
+        assert has_catch_all, (
+            f"Claude PreToolUse must be catch-all (no matcher) for 100% enforcement. "
             f"Groups: {pre_tool_groups}"
         )
 
     def test_claude_pretooluse_covers_required_tools(self):
-        """Claude PreToolUse must cover Write, Edit, Bash, and ExitPlanMode.
+        """Claude PreToolUse must be catch-all, covering ALL tools including these required ones.
 
-        These are the 4 tools that PreToolUse handlers actually need:
+        Required tools per handler:
         - enforce_file_policy: Write
         - gate_exit_plan_mode: ExitPlanMode
         - check_blocked_commands: Bash, Write, Edit
         - track_and_export_plans_early: Write, Edit, ExitPlanMode
+        - enforce_stop_injection: ALL tools (catch-all required)
+        - enforce_task_staleness: ALL tools (catch-all required)
+
+        Catch-all (no matcher field) covers all of these by definition.
+        If someone adds a matcher back, this test fails for every tool not listed.
+        Fix: remove the "matcher" field from PreToolUse in claude-hooks.json.
         """
         hooks_path = get_plugin_root() / "hooks" / "claude-hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
+
+        # Must be catch-all (no matcher) — enforce_stop_injection and
+        # enforce_task_staleness need to fire for ALL tools without exception.
+        catch_all_group = None
+        for group in pre_tool_groups:
+            if "matcher" not in group:
+                catch_all_group = group
+                break
+        assert catch_all_group is not None, (
+            "claude-hooks.json PreToolUse must have a catch-all group (no 'matcher' field). "
+            "enforce_stop_injection and enforce_task_staleness require 100% tool coverage. "
+            "Fix: remove the 'matcher' field from the PreToolUse entry in "
+            "plugins/autorun/hooks/claude-hooks.json. "
+            f"Current groups: {pre_tool_groups}"
+        )
+        assert "hooks" in catch_all_group and len(catch_all_group["hooks"]) > 0, (
+            "Catch-all PreToolUse group must have at least one hook command. "
+            f"Group: {catch_all_group}"
+        )
+
+        # Verify catch-all covers every required tool (by definition it does,
+        # but if someone replaces catch-all with a matcher, each tool must be listed)
+        required_tools = [
+            "Write", "Edit", "Bash", "ExitPlanMode",
+            "Read", "Grep", "Glob", "Agent",
+            "WebFetch", "WebSearch", "NotebookEdit", "LSP",
+            "AskUserQuestion", "Skill", "TaskCreate", "TaskUpdate", "TaskList",
+        ]
         matchers = "|".join(g.get("matcher", "") for g in pre_tool_groups)
-        for tool in ["Write", "Edit", "Bash", "ExitPlanMode"]:
-            assert tool in matchers, (
-                f"Claude PreToolUse must cover '{tool}'. Matchers: {matchers}"
-            )
+        has_explicit_matcher = any("matcher" in g for g in pre_tool_groups)
+        if has_explicit_matcher:
+            for tool in required_tools:
+                assert tool in matchers, (
+                    f"PreToolUse explicit matcher missing '{tool}'. "
+                    f"enforce_stop_injection needs ALL tools — use catch-all instead. "
+                    f"Fix: remove 'matcher' from PreToolUse in claude-hooks.json. "
+                    f"Current matchers: {matchers}"
+                )
 
 
 # --- Canonical valid event sets ---

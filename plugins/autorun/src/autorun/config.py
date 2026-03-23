@@ -417,6 +417,21 @@ CONFIG = {
         "Do not write code until execution tasks are created and wired."
     ),
 
+    # ─── Bug Workarounds ──────────────────────────────────────────────────────
+    # BUG #18534: Claude Code PostToolUse additionalContext broken.
+    # PostToolUse hookSpecificOutput.additionalContext is documented but silently
+    # dropped by Claude Code SDK. Messages sent via channel="ai" (which targets
+    # only additionalContext) never reach the AI on Claude Code.
+    # https://github.com/anthropics/claude-code/issues/18534
+    # https://github.com/anthropics/claude-code/issues/18427
+    # Workaround: respond() PATHWAY 2 in core.py internally upgrades "ai" → "both"
+    # on Claude so messages also go to systemMessage (visible to user + AI same-turn).
+    # On Gemini CLI, additionalContext works correctly — no workaround needed.
+    # Evidence: notes/2026_03_20_task_reminder_delivery_and_compliance_investigation.md
+    # Override: set as env var with same name (true|false|always|never) — env var takes precedence.
+    # Set to False to disable workaround when Anthropic fixes SDK #18534.
+    "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED": True,
+
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,

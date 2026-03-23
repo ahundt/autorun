@@ -1161,6 +1161,45 @@ ls -la ~/.claude/plugins/autorun/commands/
 uv run python -m autorun --install --force                # Install/reinstall via UV
 ```
 
+## Bug Workaround Policy
+
+All SDK bug workarounds (Claude Code, Gemini CLI, future CLIs) **MUST** follow all of the following:
+
+**Flag** — MUST use ONE key as both env var and CONFIG dict entry:
+1. Format: `AUTORUN_BUG_<DESCRIPTIVE_NAME>_BUG_<NUMBER>_WORKAROUND_ENABLED`
+2. Lookup: env var → CONFIG dict → default `True`
+3. Values: `true`/`1`/`auto` (affected platform) · `always` (all) · `false`/`0`/`never` (off)
+
+**Code** — MUST be a self-contained removable unit, invisible to callers:
+1. One bracketed helper function (`# --- BUG #N WORKAROUND START/END --- DELETE WHEN FIXED ---`) with one call site (one-line)
+2. Helper checks env → CONFIG → `cli_type` (via `detect_cli_type()`, never hardcoded); no-op on unaffected platforms
+3. Sets both workaround AND designed output (e.g. `systemMessage` AND `additionalContext`) so designed field is ready when bug is fixed
+4. Preserves `respond()` print guards: `reason=""` when `systemMessage` set (anti-double-print); `reason=""`+`systemMessage=""` on PreToolUse deny (anti-triple-print with stderr)
+5. Only uses fields in `HOOK_SCHEMAS` for the event type (`validate_hook_response()` strips others)
+6. Every affected site has: bug number, full issue link, description, disable key, deletion instruction
+7. Removal: delete helper (START→END) + replace call with designed-behavior literal
+
+**Tests** — MUST have a self-contained removable test block:
+1. Bracketed `# --- BUG #N TESTS START/END ---` with shared `_BUG_FLAG` constant
+2. Pass with flag True AND False; cover: affected+enabled, affected+disabled, unaffected, env=always, env=never
+3. No non-bug test depends on these — delete block when fixed
+
+**When fixed**: set `False` (quick) or delete helper, replace call with literal, delete CONFIG key + test block (cleanup). Defense-in-depth handlers remain.
+
+**CONFIG template** (`config.py` `# ─── Bug Workarounds ───`):
+
+```
+# BUG #NNNNN: What's broken. https://github.com/anthropics/claude-code/issues/NNNNN
+# Workaround: what changes. Override: env var same name (true|false|always|never).
+# Evidence: notes/YYYY_MM_DD_*.md — Set to False when fixed.
+"AUTORUN_BUG_<NAME>_BUG_<NUMBER>_WORKAROUND_ENABLED": True,
+```
+
+| Bug | Platform | Key | Default | Effect |
+|-----|----------|-----|---------|--------|
+| [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_EXIT2_WORKAROUND` (legacy) | `auto` | stderr + exit 2 |
+| [#18534](https://github.com/anthropics/claude-code/issues/18534): additionalContext dropped | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | `True` | channel="ai" → "both" |
+
 ## Contributing and Sharing
 
 autorun is an open source project that thrives on community contributions. If you find bugs, have suggestions, or create improvements, please consider sharing them with the community.

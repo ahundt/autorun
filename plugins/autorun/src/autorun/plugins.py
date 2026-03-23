@@ -1123,6 +1123,38 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
 #   - notes/2026_03_20_task_reminder_delivery_and_compliance_investigation.md
 
 @app.on("PreToolUse")
+def enforce_stop_injection(ctx: EventContext) -> Optional[Dict]:
+    """Deny next non-Task tool after Stop block — forces task resolution.
+
+    Stop events return continue:true but have no AI context delivery path:
+    - HOOK_SCHEMAS hso:{} for Stop — no hookSpecificOutput.additionalContext
+    - PostToolUse additionalContext broken on Claude Code (BUG #18534)
+      https://github.com/anthropics/claude-code/issues/18534
+    handle_stop() (task_lifecycle.py) stores injection in
+    ctx.pending_stop_injection. This handler denies the AI's next non-Task
+    tool call, creating a durable transcript event — the only proven path
+    to force AI compliance on Claude Code.
+
+    BUG #18534 WORKAROUND: This handler exists primarily because PostToolUse
+    additionalContext is broken on Claude Code (SDK #18534).
+    https://github.com/anthropics/claude-code/issues/18534
+    When the bug is fixed and CONFIG["AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"]
+    is set to False, deliver_pending_stop_injection (PostToolUse) will
+    correctly deliver via additionalContext. This handler remains as
+    defense-in-depth since PreToolUse deny is stronger than additionalContext.
+    """
+    injection = ctx.pending_stop_injection
+    if not injection:
+        return None
+    # Always let Task tools through — resolving tasks is the desired action
+    if ctx.tool_name in ALL_TASK_TOOLS:
+        return None
+    # One-shot: clear and deny. Creates durable transcript event.
+    ctx.pending_stop_injection = None
+    return ctx.deny(injection)
+
+
+@app.on("PreToolUse")
 def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """Warn-then-deny: allow with warning first, deny on second offense (v0.11).
 

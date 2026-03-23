@@ -1505,6 +1505,103 @@ class TestClaudeHookEntryPoint:
             rc, stdout, stderr, resp = self._run(hook_resources, payload)
             assert rc == 0, f"Hook for {event} should exit 0. rc={rc} stderr={stderr!r}"
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # BUG #18534: Stop injection via PreToolUse deny + catch-all matcher
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def test_stop_injection_denied_on_pretooluse(self, hook_resources):
+        """After Stop block with incomplete tasks, next PreToolUse non-Task tool is DENIED.
+
+        BUG #18534: https://github.com/anthropics/claude-code/issues/18534
+        Stop events have no AI context path. enforce_stop_injection (PreToolUse)
+        denies the AI's next non-Task tool with the full task list, creating a
+        durable transcript event the AI must respond to.
+
+        Lifecycle:
+          1. Activate autorun + create incomplete task
+          2. Fire Stop event → sets pending_stop_injection (continue:true)
+          3. Fire PreToolUse Read → DENIED with "CANNOT STOP" message
+          4. Fire PreToolUse TaskList → ALLOWED (Task tools pass through)
+        Cost: $0 (uses _run_isolated, no real claude -p calls)
+        """
+        session_id = self._sid("stop-deny-pretool")
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
+
+        # Step 2: Fire Stop event → should block and set pending_stop_injection
+        stop_resp_raw = self._run_isolated(hook_resources, self._base_payload(
+            "Stop", session_id,
+            stop_hook_active=True,
+            session_transcript=[
+                {"role": "user", "content": "/ar:go test"},
+                {"role": "assistant", "content": "Working..."},
+            ],
+        ))
+        rc, stdout, stderr, stop_resp = stop_resp_raw
+        assert stop_resp is not None, "Stop hook must return a response"
+        assert stop_resp.get("continue") is True, "Stop must return continue:true"
+
+        # Step 3: Fire PreToolUse Read → should be DENIED by enforce_stop_injection
+        resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
+        assert resp is not None, "PreToolUse must return a response after Stop block"
+        perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm == "deny", (
+            f"Non-Task tool after Stop block must be DENIED. Got permissionDecision={perm!r}. "
+            f"enforce_stop_injection should fire and deny Read."
+        )
+        assert "CANNOT STOP" in reason or "incomplete" in reason.lower(), (
+            f"Deny reason must contain stop injection. Got: {reason!r}"
+        )
+
+        # Step 4: Fire PreToolUse TaskList → should be ALLOWED (Task tools pass through)
+        resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(hook_resources, session_id, "TaskList")
+        if resp2:
+            perm2 = resp2.get("hookSpecificOutput", {}).get("permissionDecision", "")
+            reason2_text = resp2.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+            assert "CANNOT STOP" not in reason2_text, (
+                f"TaskList must pass through enforce_stop_injection. Got: {reason2_text!r}"
+            )
+
+    def test_staleness_enforcement_fires_on_all_tools(self, hook_resources):
+        """Verify staleness enforcement fires for ALL tool types (catch-all matcher).
+
+        With catch-all PreToolUse matcher, enforce_task_staleness must fire for
+        Read, Grep, Glob, Agent — not just Write|Edit|Bash|ExitPlanMode.
+
+        Cost: $0 (uses _run_isolated)
+        """
+        session_id = self._sid("catch-all-enforce")
+        self._activate_autorun_isolated(hook_resources, session_id)
+        self._create_task_isolated(hook_resources, session_id)
+
+        # Set low threshold and cross it
+        self._run_isolated(hook_resources, self._base_payload(
+            "UserPromptSubmit", session_id,
+            prompt="/ar:tasks 3", session_transcript=[],
+        ))
+        # Cross threshold twice to trigger deny (warn-then-deny)
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+        self._send_pretool_call_isolated(hook_resources, session_id, "Read")  # warn
+        self._send_post_tool_calls_isolated(hook_resources, session_id, 3)
+
+        # Enforcement should DENY the next non-Task tool
+        resp, sys_msg, reason = self._send_pretool_call_isolated(
+            hook_resources, session_id, "Grep",
+        )
+        assert resp is not None, "PreToolUse Grep must return a response"
+        perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm == "deny", (
+            f"Grep should be DENIED after staleness threshold. Got: {perm!r}. "
+            f"With catch-all matcher, enforce_task_staleness must fire for Grep."
+        )
+        assert "BLOCKED" in reason or "REQUIRED" in reason, (
+            f"Deny reason should contain enforcement text. Got: {reason!r}"
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Exit code tests
+    # ─────────────────────────────────────────────────────────────────────────
+
     def test_deny_exits_with_code_2_allow_exits_with_code_0(self, hook_resources):
         """Exit code 2 for deny (Claude bug #4669), exit code 0 for allow.
 
