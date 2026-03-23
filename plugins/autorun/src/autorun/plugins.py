@@ -1122,36 +1122,42 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
 #     "systemMessage content not injected into model context" (marked completed)
 #   - notes/2026_03_20_task_reminder_delivery_and_compliance_investigation.md
 
-@app.on("PreToolUse")
-def enforce_stop_injection(ctx: EventContext) -> Optional[Dict]:
-    """Deny next non-Task tool after Stop block — forces task resolution.
-
-    Stop events return continue:true but have no AI context delivery path:
-    - HOOK_SCHEMAS hso:{} for Stop — no hookSpecificOutput.additionalContext
-    - PostToolUse additionalContext broken on Claude Code (BUG #18534)
-      https://github.com/anthropics/claude-code/issues/18534
-    handle_stop() (task_lifecycle.py) stores injection in
-    ctx.pending_stop_injection. This handler denies the AI's next non-Task
-    tool call, creating a durable transcript event — the only proven path
-    to force AI compliance on Claude Code.
-
-    BUG #18534 WORKAROUND: This handler exists primarily because PostToolUse
-    additionalContext is broken on Claude Code (SDK #18534).
-    https://github.com/anthropics/claude-code/issues/18534
-    When the bug is fixed and CONFIG["AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"]
-    is set to False, deliver_pending_stop_injection (PostToolUse) will
-    correctly deliver via additionalContext. This handler remains as
-    defense-in-depth since PreToolUse deny is stronger than additionalContext.
-    """
-    injection = ctx.pending_stop_injection
-    if not injection:
-        return None
-    # Always let Task tools through — resolving tasks is the desired action
-    if ctx.tool_name in ALL_TASK_TOOLS:
-        return None
-    # One-shot: clear and deny. Creates durable transcript event.
-    ctx.pending_stop_injection = None
-    return ctx.deny(injection)
+# --- DEADLOCK BUG: enforce_stop_injection REMOVED ---
+#
+# WHAT: PreToolUse handler that denied ALL non-Task tools when
+#   pending_stop_injection was set. Intended as one-shot deny to create
+#   a durable transcript event after a Stop block.
+#
+# BUG: handle_stop (task_lifecycle.py) re-armed pending_stop_injection on
+#   EVERY Stop event. In Claude Code, AI text output (no tool call) triggers
+#   a Stop event. This created an infinite loop:
+#     1. Stop → pending set → 2. Edit denied → 3. AI outputs text →
+#     4. Stop fires again → pending re-armed → GOTO 2
+#   Block count reached 175+ in codebase-memory-mcp session. AI could not
+#   use Edit/Bash/Read to complete the very tasks blocking the stop.
+#
+# FIX (two parts):
+#   1. This handler removed entirely — no PreToolUse deny from stop blocks.
+#   2. handle_stop only sets pending_stop_injection on block_count==1 (first stop).
+#
+# REPLACEMENT ENFORCEMENT (existing mechanisms, no new code):
+#   - deliver_pending_stop_injection (task_lifecycle.py PostToolUse): one-shot
+#     informational delivery of stop message to AI via channel="ai".
+#   - check_task_staleness (plugins.py): countdown threshold (25 or 5 tool calls)
+#     → remind → escalate to warn-then-deny via enforce_task_staleness.
+#   Together these inform the AI and enforce compliance without blocking tools.
+#
+# SDK BUG CONTEXT (moved from deleted handler docstring):
+#   The removed handler existed because of two SDK limitations:
+#   1. Stop events have no AI context path (HOOK_SCHEMAS hso:{} for Stop)
+#   2. BUG #18534: PostToolUse additionalContext broken on Claude Code
+#      https://github.com/anthropics/claude-code/issues/18534
+#   These bugs are still active — they are now handled by
+#   deliver_pending_stop_injection (task_lifecycle.py PostToolUse) which
+#   uses channel="ai" upgraded to "both" by respond() PATHWAY 2.
+#
+# EVIDENCE: Plan file optimized-swimming-pony.md "CRITICAL: Stop Hook Deadlock"
+# --- END DEADLOCK BUG ---
 
 
 @app.on("PreToolUse")
@@ -1489,7 +1495,7 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
 
     # Helper: Return via injection method
     def inject(msg: str) -> Optional[Dict]:
-        return ctx.block(msg) if get_injection_method(ctx) == "HOOK_INTEGRATION" else None
+        return ctx.continue_running(msg) if get_injection_method(ctx) == "HOOK_INTEGRATION" else None
 
     # === STAGE 1: Initial work ===
     if stage == EventContext.STAGE_1:

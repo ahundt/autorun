@@ -441,11 +441,14 @@ class TestEventContext:
         # Convenience deny should follow the same keep-working pattern
         assert response["continue"] is True
 
-    def test_block_convenience(self):
-        """block() convenience method should work."""
+    def test_continue_running_convenience(self):
+        """continue_running() sends protocol action 'block' to keep AI running."""
         ctx = EventContext(session_id="test", event="Stop")
-        response = ctx.block("Injection")
+        response = ctx.continue_running("Incomplete tasks")
         assert response["decision"] == "block"
+        # ctx.block() is a backward-compat alias for continue_running()
+        response2 = ctx.block("Same thing")
+        assert response2["decision"] == "block"
 
     def test_command_response_continues_by_default(self):
         """command_response must return continue=True so AI processes output."""
@@ -940,7 +943,7 @@ class TestAutorunApp:
 
         @test_app.on("Stop")
         def injection_handler(ctx):
-            return ctx.block("Continue working")
+            return ctx.continue_running("Continue working")
 
         ctx = EventContext(session_id="test", event="Stop")
         result = test_app.dispatch(ctx)

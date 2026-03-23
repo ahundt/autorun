@@ -1188,8 +1188,25 @@ class EventContext:
     def ask(self, reason: str) -> Dict:
         return self.respond("ask", reason)
 
-    def block(self, reason: str) -> Dict:
+    def continue_running(self, reason: str) -> Dict:
+        """Continue running the AI session (sends "block" to the Stop hook).
+
+        For Stop/SubagentStop events only. Under the hood this sends the
+        protocol action "block" which tells Claude Code / Gemini CLI
+        "do not end the session, the AI should keep working."
+
+        The AI sees `reason` as the stop-hook message (e.g. incomplete tasks).
+        Does NOT override PreToolUse deny — tool-level decisions and
+        session-level continue are independent (separate handler chains).
+        """
         return self.respond("block", reason)
+
+    # ctx.block(reason) is the old name — "block" matches the protocol action
+    # sent in the Stop hook response JSON, but the name was confusing because
+    # it sounds like blocking the AI when it actually keeps the AI running.
+    # Kept as alias because test_core.py tests the convenience method API
+    # (allow/deny/ask/block) and external code may use ctx.block().
+    block = continue_running
 
 
 # === AUTORUN APP (Click-style Registration + Unified Dispatch) ===

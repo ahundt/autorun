@@ -347,39 +347,38 @@ CONFIG = {
     # V4 strings: no emoji, complete tool syntax, dependency wiring, disable instruction.
     # Warn-then-deny enforcement: 2 PostToolUse levels only (1st + 2nd).
     "task_staleness_message": (
-        "\nTASK UPDATE REQUIRED -- {threshold} tool calls without TaskCreate or TaskUpdate. "
+        "\nTASK UPDATE REQUIRED: {threshold} tool calls without TaskCreate or TaskUpdate. "
         "Your next action must be one of these Task tools: "
-        "1. TaskList -- review current tasks and their status "
-        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
-        "3. TaskCreate(subject=\"...\") -- add newly discovered work "
-        "4. TaskUpdate(taskId=N, addBlockedBy=[M]) -- update dependencies if order changed. "
+        "1. TaskList: review current tasks and their status "
+        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\"): update status "
+        "3. TaskCreate(subject=\"[step]: [action]\"): one per specific newly discovered step "
+        "4. TaskUpdate(taskId=N, addBlockedBy=[M]): update dependencies if order changed. "
         "Do not call any tool except these until you have updated your task list. "
         "Your next non-Task tool call will be blocked. Disable: /ar:tasks off"
     ),
     "task_staleness_message_2nd": (
-        "\nTASK UPDATE OVERDUE -- {threshold} more tool calls without a Task tool. "
+        "\nTASK UPDATE OVERDUE: {threshold} more tool calls without a Task tool. "
         "Your next action must be one of these Task tools: "
-        "1. TaskList -- review current tasks "
-        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
-        "3. TaskCreate(subject=\"...\") -- add newly discovered work. "
+        "1. TaskList: review current tasks "
+        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\"): update status "
+        "3. TaskCreate(subject=\"[step]: [action]\"): one per specific newly discovered step. "
         "Do not call any other tool. Your next non-Task tool call will be blocked. "
         "Disable: /ar:tasks off"
     ),
     # Injected when zero tasks exist and no_tasks_threshold crossed.
     "task_staleness_no_tasks_message": (
-        "\nNO TASKS EXIST -- {threshold} tool calls with zero tasks tracking your work. "
+        "\nNO TASKS EXIST: {threshold} tool calls with zero tasks tracking your work. "
         "Your next action must be TaskCreate: "
-        "1. TaskCreate(subject=\"...\", description=\"...\") -- one per distinct goal "
-        "2. TaskUpdate(taskId=N, status=\"in_progress\") -- mark the task you are starting "
-        "3. TaskUpdate(taskId=N, addBlockedBy=[M]) -- wire dependencies if tasks have order. "
+        "1. TaskCreate(subject=\"[step]: [action]\", description=\"...\"): one per specific step, NOT one broad task "
+        "2. TaskUpdate(taskId=N, status=\"in_progress\"): mark the task you are starting "
+        "3. TaskUpdate(taskId=N, addBlockedBy=[M]): wire dependencies if tasks have order. "
         "Do not call any other tool until you have created at least one task. "
         "Disable: /ar:tasks off"
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
     "task_outstanding_stage3_message": (
-        "\n\u26a0\ufe0f THREE-STAGE SYSTEM RESET: Stage 3 cannot complete while tasks are "
-        "outstanding ({count} task(s): {names}). Update task statuses with TaskUpdate, "
-        "then continue \u2014 Stage 2 is still active."
+        "\n⚠️ STAGE 3 RESET: {count} outstanding task(s): {names}. "
+        "Complete or discard them (see actions above), Stage 2 continues."
     ),
 
     # ─── Plan Acceptance ───────────────────────────────────────────────────
@@ -394,29 +393,29 @@ CONFIG = {
         "dependency_wiring": True,
     },
     "tdd_scaffolding_message": (
-        "\n## Task Scaffolding Required\n\n"
-        "Before writing ANY implementation code:\n"
-        "1. Create [TDD] test task for each plan step\n"
-        "2. Create [EXEC] implementation task for each plan step\n"
-        "3. Wire dependencies: each [EXEC] blocked by its [TDD]\n"
-        "4. Update task list immediately\n"
+        "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
+        "1. TaskCreate(subject=\"[TDD] Step N: [test description]\"): one per plan step "
+        "2. TaskCreate(subject=\"[EXEC] Step N: [impl description]\"): one per plan step "
+        "3. TaskUpdate(taskId=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
+        "4. TaskList: verify all tasks visible. "
+        "Do not write implementation code until TDD tasks are created and wired."
     ),
     # --- Task Creation Reminder Messages (v0.10) ---
     "plan_planning_task_reminder": (
-        "\nPLANNING TASKS REQUIRED -- a plan is active with no tasks tracking it. "
+        "\nPLANNING TASKS REQUIRED: a plan is active with no tasks tracking it. "
         "Your next action must be TaskCreate: "
         "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\") "
-        "2. TaskUpdate(taskId=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
-        "3. TaskList -- verify all tasks visible. "
+        "2. TaskUpdate(taskId=N, addBlockedBy=[N-1]): wire sequential dependencies "
+        "3. TaskList: verify all tasks visible. "
         "Do not call any other tool until planning tasks exist."
     ),
     "plan_execution_task_reminder": (
-        "\nEXECUTION TASKS REQUIRED -- plan accepted, no implementation tasks created. "
+        "\nEXECUTION TASKS REQUIRED: plan accepted, no implementation tasks created. "
         "Your next action must be TaskCreate: "
         "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\") "
         "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\") "
         "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-        "4. TaskList -- verify all tasks visible. "
+        "4. TaskList: verify all tasks visible. "
         "Do not write code until execution tasks are created and wired."
     ),
 

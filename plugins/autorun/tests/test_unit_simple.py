@@ -1425,7 +1425,7 @@ def test_stage_reset_when_stage2_completed_and_tasks_outstanding():
         f"Stage should be STAGE_2 after reset, got {ctx.autorun_stage}"
     )
     combined = str(result)
-    assert "CANNOT STOP" in combined or "THREE-STAGE" in combined
+    assert "incomplete task(s)" in combined or "STAGE 3 RESET" in combined
 
 
 def test_no_stage_reset_when_no_tasks_outstanding():
@@ -1435,7 +1435,7 @@ def test_no_stage_reset_when_no_tasks_outstanding():
     autorun_injection runs. autorun_injection at STAGE_2_COMPLETED injects
     countdown messages (lines 1054-1061 of plugins.py) — result is not None.
     The key assertion is: stage remains STAGE_2_COMPLETED (no reset), and
-    the THREE-STAGE SYSTEM RESET message is NOT injected.
+    the STAGE 3 RESET message is NOT injected.
     """
     sid = "test-stage-no-reset"
     # No tasks created for this session_id
@@ -1452,7 +1452,7 @@ def test_no_stage_reset_when_no_tasks_outstanding():
     # Stage must remain STAGE_2_COMPLETED — no reset without outstanding tasks
     assert ctx.autorun_stage == EventContext.STAGE_2_COMPLETED
     # The stage-reset message must NOT appear
-    assert "THREE-STAGE SYSTEM RESET" not in str(result)
+    assert "STAGE 3 RESET" not in str(result)
 
 
 def test_stage_reset_counter_also_reset():
@@ -1953,7 +1953,7 @@ class TestStalenessE2E:
         assert ctx.autorun_stage == EventContext.STAGE_2, (
             f"Stage should be reset to STAGE_2, got {ctx.autorun_stage}"
         )
-        assert "THREE-STAGE SYSTEM RESET" in str(result)
+        assert "STAGE 3 RESET" in str(result)
         assert (ctx.tool_calls_since_task_update or 0) == 0
 
     def test_stop_stage3_not_reset(self):
@@ -1966,7 +1966,7 @@ class TestStalenessE2E:
         result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_3)
 
         # Stop is still blocked (tasks outstanding), but no THREE-STAGE RESET
-        assert "THREE-STAGE SYSTEM RESET" not in str(result)
+        assert "STAGE 3 RESET" not in str(result)
         assert ctx.autorun_stage == EventContext.STAGE_3
 
     def test_stop_stage1_not_reset(self):
@@ -1975,7 +1975,7 @@ class TestStalenessE2E:
         _make_pending_task(sid, task_id="1", subject="stage1 task")
         result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_1)
 
-        assert "THREE-STAGE SYSTEM RESET" not in str(result)
+        assert "STAGE 3 RESET" not in str(result)
         assert ctx.autorun_stage == EventContext.STAGE_1
 
     def test_stop_no_tasks_no_block(self):
@@ -1998,7 +1998,7 @@ class TestStalenessE2E:
 
         result, ctx = _e2e_stop(sid, self.store, autorun_stage=EventContext.STAGE_2_COMPLETED)
         assert "CANNOT STOP" not in str(result)
-        assert "THREE-STAGE SYSTEM RESET" not in str(result)
+        assert "STAGE 3 RESET" not in str(result)
 
     # ── Resume / session lifecycle ─────────────────────────────────────
 
@@ -2355,60 +2355,97 @@ def test_respond_pathway2_both_channel_unchanged():
 # --- BUG #18534 TESTS END ---
 
 
-# ── enforce_stop_injection (PreToolUse deny after Stop block) ─────────────
+# ── Stop block: no PreToolUse deny (enforce_stop_injection REMOVED) ──────
+#
+# enforce_stop_injection was removed because it caused a deadlock:
+# handle_stop re-armed pending_stop_injection on every Stop event (AI text
+# output triggers Stop in Claude Code). Cycle: deny → text → Stop → re-arm
+# → deny → infinite loop. Block count reached 175+ in codebase-memory-mcp.
+#
+# Replacement: deliver_pending_stop_injection (PostToolUse, informational,
+# one-shot on block_count==1) + check_task_staleness countdown (25/5 threshold).
 
 
-def test_enforce_stop_injection_noop_when_no_pending():
-    """No pending_stop_injection → enforce_stop_injection does not deny."""
-    ctx = _make_pre_tool_ctx("Read", "test-stop-inject-noop")
-    # pending_stop_injection defaults to None — enforce_stop_injection should be no-op
+def test_stop_block_does_not_deny_non_task_tools():
+    """After stop block, non-Task tools (Edit, Read, Bash) must NOT be denied."""
+    ctx = _make_pre_tool_ctx("Read", "test-stop-no-deny")
+    ctx.pending_stop_injection = "🛑 1 incomplete task(s)"
     result = plugins.app.dispatch(ctx)
-    # Other handlers may respond, but NOT with a stop-injection deny
+    # No handler should deny — enforce_stop_injection was removed
     if result:
-        reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-        assert "CANNOT STOP" not in reason, (
-            f"enforce_stop_injection should not fire without pending_stop_injection. Got: {reason!r}"
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm != "deny" or "incomplete task" not in str(result), (
+            f"Non-Task tool must not be denied by stop injection. Got: {result}"
         )
 
 
-def test_enforce_stop_injection_denies_non_task_tool():
-    """pending_stop_injection set + Read tool → deny with injection text."""
-    ctx = _make_pre_tool_ctx("Read", "test-stop-inject-deny")
-    ctx.pending_stop_injection = "CANNOT STOP — 1 incomplete task(s)"
-    result = plugins.app.dispatch(ctx)
-    assert result is not None, "enforce_stop_injection should return a deny response"
-    perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
-    assert perm == "deny", f"Should deny non-Task tool. Got: {perm}"
-    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-    assert "CANNOT STOP" in reason, f"Deny reason should contain injection. Got: {reason!r}"
+def test_stop_block_pending_injection_only_on_first_block(tmp_path, monkeypatch):
+    """pending_stop_injection set only on block_count==1, not on subsequent stops."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    sid = "test-stop-first-block-only"
+    store = ThreadSafeDB()
 
+    # Create a task so stop will be blocked
+    _make_pending_task(sid, "1", "Test task")
 
-def test_enforce_stop_injection_allows_task_tools():
-    """pending_stop_injection set + Task tools → NOT denied, flag preserved."""
-    for tool in ["TaskList", "TaskCreate", "TaskUpdate", "TaskGet"]:
-        ctx = _make_pre_tool_ctx(tool, f"test-stop-inject-task-{tool.lower()}")
-        ctx.pending_stop_injection = "CANNOT STOP — 1 incomplete task(s)"
-        result = plugins.app.dispatch(ctx)
-        # Task tools must NOT receive a stop-injection deny
-        if result:
-            reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-            assert "CANNOT STOP" not in reason, (
-                f"{tool} must pass through enforce_stop_injection. Got: {reason!r}"
-            )
-        # Flag must persist (only cleared by non-Task tool deny)
-        assert ctx.pending_stop_injection is not None, (
-            f"pending_stop_injection must persist after {tool}"
-        )
+    # First stop → pending_stop_injection should be set
+    result1, ctx1 = _e2e_stop(sid, store)
+    assert ctx1.pending_stop_injection is not None, "First stop must set pending_stop_injection"
 
+    # Clear it (simulates deliver_pending_stop_injection firing)
+    ctx1.pending_stop_injection = None
 
-def test_enforce_stop_injection_clears_flag_after_deny():
-    """After deny fires, pending_stop_injection must be None (one-shot)."""
-    ctx = _make_pre_tool_ctx("Read", "test-stop-inject-clear")
-    ctx.pending_stop_injection = "CANNOT STOP — 1 incomplete task(s)"
-    plugins.app.dispatch(ctx)
-    assert ctx.pending_stop_injection is None, (
-        "pending_stop_injection must be cleared after deny fires (one-shot)"
+    # Second stop → pending_stop_injection should NOT be re-set
+    result2, ctx2 = _e2e_stop(sid, store)
+    assert ctx2.pending_stop_injection is None, (
+        "Second stop must NOT re-arm pending_stop_injection (prevents deadlock)"
     )
+
+
+def test_stop_block_resets_staleness_counter(tmp_path, monkeypatch):
+    """After stop block, staleness counter must reset to 0 (gives AI full countdown)."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    sid = "test-stop-resets-staleness"
+    store = ThreadSafeDB()
+    _make_pending_task(sid, "1", "Test task")
+
+    # Set counter high (simulates AI working without task updates)
+    ctx_setup = EventContext(session_id=sid, event="PreToolUse", prompt="", store=store)
+    ctx_setup.tool_calls_since_task_update = 20
+
+    # Stop fires → counter should reset
+    result, ctx = _e2e_stop(sid, store)
+    assert (ctx.tool_calls_since_task_update or 0) == 0, (
+        "Stop block must reset staleness counter so AI gets full countdown to work"
+    )
+
+
+def test_stop_block_message_has_anti_gaming_wording(tmp_path, monkeypatch):
+    """Stop block must include 'Do the work' to prevent AI marking tasks done without working."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    sid = "test-stop-anti-gaming"
+    store = ThreadSafeDB()
+    _make_pending_task(sid, "1", "Test task")
+
+    result, ctx = _e2e_stop(sid, store)
+    msg = str(result)
+    assert "Do the work, then:" in msg, f"Stop block must have anti-gaming wording. Got: {msg[:200]}"
+    assert "You must" in msg, f"Stop block must have imperative wording. Got: {msg[:200]}"
+    assert "/ar:sos" in msg, f"Stop block must show override commands. Got: {msg[:200]}"
+
+
+def test_stop_block_no_markdown_literals(tmp_path, monkeypatch):
+    """Stop block must not contain unrendered markdown (## , **bold**)."""
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
+    sid = "test-stop-no-markdown"
+    store = ThreadSafeDB()
+    _make_pending_task(sid, "1", "Test task")
+
+    result, ctx = _e2e_stop(sid, store)
+    msg = str(result)
+    assert "## " not in msg, f"No ## markdown in stop block. Got: {msg[:200]}"
+    assert "**" not in msg, f"No ** markdown in stop block. Got: {msg[:200]}"
+    assert "PRIMARY GOAL" not in msg, f"Old PRIMARY GOAL text must be removed. Got: {msg[:200]}"
 
 
 # ============================================================================

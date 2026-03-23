@@ -56,10 +56,11 @@ from .config import (
 )
 
 
-# === Stop / Resume message fragments (numbered at call site) ===
-_ACT_COMPLETE = 'TaskUpdate(taskId="X", status="in_progress") → status="completed"'
+# === Stop / Resume action fragments (assembled at call site) ===
+_ACT_REVIEW   = 'TaskList'
+_ACT_COMPLETE = 'TaskUpdate(taskId="X", status="completed")'
 _ACT_DISCARD  = 'TaskUpdate(taskId="X", status="deleted")'
-_ACT_ESCAPE   = '/ar:sos (emergency) or /ar:task-ignore <id>'
+_ACT_OVERRIDE = 'only the user can type /ar:sos (emergency stop) or /ar:task-ignore <id> (mark task ignored to unblock stopping)'
 
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
@@ -754,49 +755,34 @@ class TaskLifecycle:
         in_progress_tasks = [t for t in recent_incomplete if t["status"] == "in_progress"]
         pending_tasks = [t for t in recent_incomplete if t["status"] == "pending"]
 
-        # Build resume prompt with cap (Problem 1 solution)
-        lines = []
+        # Build numbered task list (inline, minimal newlines)
+        task_items = []
         total_shown = 0
         max_tasks = self.config.max_resume_tasks
 
-        if in_progress_tasks and total_shown < max_tasks:
-            lines.append("**In Progress:**")
-            for t in in_progress_tasks[:max_tasks - total_shown]:
-                lines.append(f"  - Task #{t['id']}: {t['subject']}")
-                total_shown += 1
+        for t in in_progress_tasks[:max_tasks - total_shown]:
+            task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} (🔄)")
+            total_shown += 1
 
-        if pending_tasks and total_shown < max_tasks:
-            lines.append("\n**Pending:**")
-            for t in pending_tasks[:max_tasks - total_shown]:
-                blockers = t.get("blockedBy", [])
-                if blockers:
-                    lines.append(f"  - Task #{t['id']}: {t['subject']} (⚠️ blocked by {blockers})")
-                else:
-                    lines.append(f"  - Task #{t['id']}: {t['subject']} (✅ ready)")
-                total_shown += 1
+        for t in pending_tasks[:max_tasks - total_shown]:
+            blockers = t.get("blockedBy", [])
+            icon = f"⚠️ blocked by {blockers}" if blockers else "✅ ready"
+            task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} ({icon})")
+            total_shown += 1
 
-        task_list = "\n".join(lines)
+        task_list = " ".join(task_items)
         total = len(incomplete)
         older_count = len(older_incomplete)
+        overflow = f" [... and {total - total_shown} more: use /task-status to see all]" if total > total_shown else ""
+        older = f" [📅 {older_count} older task(s) from previous days also incomplete]" if older_count > 0 else ""
 
-        injection = f"""
-## 🔄 INCOMPLETE TASKS DETECTED - AI MUST CONTINUE
-
-Your previous session ended with {total} incomplete task(s):
-
-{task_list}
-"""
-        if total > total_shown:
-            injection += f"\n... and {total - total_shown} more tasks (use /task-status to see all)\n"
-
-        if older_count > 0:
-            injection += f"\n📅 Note: {older_count} older task(s) from previous days also incomplete\n"
-
-        injection += (
-            f"\n{total} incomplete task(s) remain — complete or delete before stopping.\n"
-            f"1. Review: TaskList\n"
-            f"2. Complete: {_ACT_COMPLETE}\n"
-            f"3. Discard: {_ACT_DISCARD}\n"
+        injection = (
+            f"🔄 incomplete tasks from previous session: {task_list}{overflow}{older}\n"
+            f"Actions: 1. You must complete or discard each task before stopping "
+            f"2. Review: {_ACT_REVIEW} "
+            f"3. Do the work, then: {_ACT_COMPLETE} "
+            f"4. Or discard: {_ACT_DISCARD} "
+            f"5. Override: {_ACT_OVERRIDE}\n"
         )
 
         # Log resume event
@@ -808,8 +794,8 @@ Your previous session ended with {total} incomplete task(s):
         ctx.task_staleness_enforce_next = True
         ctx.task_staleness_reminder_count = 1  # Skip allow, go straight to deny
 
-        # Return block with injected prompt - AI sees this immediately
-        return ctx.block(injection)
+        # Keep AI running with injected prompt — AI sees this immediately
+        return ctx.continue_running(injection)
 
     def handle_stop(self, ctx: EventContext) -> Optional[Dict]:
         """Handle Stop (block if incomplete tasks - PRIMARY GOAL).
@@ -849,40 +835,28 @@ Your previous session ended with {total} incomplete task(s):
             subject = t["subject"]
             status = t["status"]
             status_icon = {"in_progress": "🔄", "pending": "⏸️"}.get(status, "❓")
-            task_lines.append(f"  - Task #{tid}: {subject} ({status_icon} {status})")
+            task_lines.append(f"{len(task_lines)+1}. #{tid}: {subject} ({status_icon})")
 
-        task_list = "\n".join(task_lines)
+        task_list = " ".join(task_lines)
         total = len(incomplete_tasks)
+        overflow = f" [... and {total - max_tasks} more: use /task-status to see all]" if total > max_tasks else ""
 
-        injection = f"""
-🛑 **CANNOT STOP - INCOMPLETE TASKS** (Block #{block_count})
-
-**PRIMARY GOAL**: You must continue working until ALL tasks are completed.
-
-You have {total} incomplete task(s):
-
-{task_list}
-"""
-        if total > max_tasks:
-            injection += f"\n... and {total - max_tasks} more tasks (use /task-status to see all)\n"
-
-        injection += (
-            f"1. Complete: {_ACT_COMPLETE}\n"
-            f"2. Discard: {_ACT_DISCARD}\n"
-            f"3. User escape: {_ACT_ESCAPE}\n"
+        injection = (
+            f"🛑 incomplete tasks: {task_list}{overflow}\n"
+            f"Actions: 1. You must complete or discard each task before stopping "
+            f"2. Review: {_ACT_REVIEW} "
+            f"3. Do the work, then: {_ACT_COMPLETE} "
+            f"4. Or discard: {_ACT_DISCARD} "
+            f"5. Override: {_ACT_OVERRIDE}\n"
         )
 
-        # Log warning
+        # Log warning (block count is diagnostic-only, not shown to AI)
         self.log_event("STOP_WARNING", "session",
                       f"Block #{block_count}: {total} incomplete tasks", "blocked")
 
         # Reset three-stage system if at STAGE_2_COMPLETED — tasks must resolve first.
-        # Chain ordering: prevent_premature_stop fires BEFORE autorun_injection
-        # (core.py:1094-1103 first-non-None wins). autorun_injection never runs when
-        # tasks are outstanding, so the stage reset must happen here.
         if ctx.autorun_stage == EventContext.STAGE_2_COMPLETED:
             ctx.autorun_stage = EventContext.STAGE_2
-            ctx.tool_calls_since_task_update = 0  # Prevent immediate re-trigger on re-entry
             injection += CONFIG.get("task_outstanding_stage3_message", "").format(
                 count=total,
                 names=", ".join(
@@ -890,18 +864,20 @@ You have {total} incomplete task(s):
                 ) + ("..." if total > 3 else ""),
             )
 
-        # BLOCK the stop and store injection for AI delivery on next PostToolUse.
-        #
-        # PATHWAY 3 (Stop events) only supports systemMessage → user terminal.
-        # hookSpecificOutput.additionalContext (AI context) is NOT available for Stop
-        # events (HOOK_SCHEMAS hso:{} for Stop). So systemMessage reaches the user
-        # but NOT the AI — the AI gets continue:true with zero context about why.
-        #
-        # Fix: store injection in session state (persists across events) so the
-        # deliver_pending_stop_injection PostToolUse handler picks it up on the
-        # AI's next tool call and injects it via additionalContext.
-        ctx.pending_stop_injection = injection
-        return ctx.block(injection)
+        # Deferred AI delivery — Stop events cannot reach the AI directly:
+        #   1. HOOK_SCHEMAS hso:{} for Stop — no additionalContext field
+        #   2. BUG #18534: PostToolUse additionalContext broken on Claude Code
+        #      https://github.com/anthropics/claude-code/issues/18534
+        # Workaround: store injection → deliver_pending_stop_injection (PostToolUse)
+        # delivers via channel="ai" → respond() PATHWAY 2 upgrades to "both" on
+        # Claude Code → AI sees it as systemMessage (same-turn only).
+        # Only on first block — re-arming on subsequent stops caused deadlock
+        # (deny → AI text → Stop → re-arm → deny → infinite, Block #175+).
+        if block_count == 1:
+            ctx.pending_stop_injection = injection
+        # Reset staleness counter — AI just learned about tasks, give full countdown.
+        ctx.tool_calls_since_task_update = 0
+        return ctx.continue_running(injection)
 
     def get_plan_approval_injection(self, ctx) -> Optional[str]:
         """Get plan task context as injection string for plan acceptance.
@@ -1610,17 +1586,31 @@ def register_hooks(app_instance) -> None:
 
     @app_instance.on("PostToolUse")
     def deliver_pending_stop_injection(ctx: EventContext) -> Optional[Dict]:
-        """Deliver deferred Stop-hook injection (backup for enforce_stop_injection).
+        """Deliver stop-block message to AI on next PostToolUse (one-shot).
 
-        Stop events have no AI context path (HOOK_SCHEMAS hso:{} for Stop).
-        handle_stop() stores injection in ctx.pending_stop_injection.
-        Primary enforcement: enforce_stop_injection (PreToolUse deny) in plugins.py.
-        This PostToolUse handler is backup — delivers via channel="ai".
-        On Claude Code, respond() PATHWAY 2 internally upgrades "ai" → "both"
-        so the message also reaches the user via systemMessage.
-        BUG #18534: https://github.com/anthropics/claude-code/issues/18534
-        Workaround controlled by CONFIG["AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"].
-        Set to False when Anthropic fixes #18534 to restore designed ai-only behavior.
+        WHY THIS EXISTS — two SDK limitations prevent Stop events from reaching the AI:
+          1. HOOK_SCHEMAS hso:{} for Stop — no hookSpecificOutput.additionalContext.
+             Stop events only support systemMessage → user terminal, NOT AI context.
+          2. BUG #18534: PostToolUse additionalContext is broken on Claude Code.
+             https://github.com/anthropics/claude-code/issues/18534
+             Workaround: respond() PATHWAY 2 upgrades channel="ai" → "both" on
+             Claude Code so messages reach AI via systemMessage (same-turn only).
+             Controlled by CONFIG["AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"].
+
+        HOW IT WORKS:
+          handle_stop() sets ctx.pending_stop_injection on first stop block only
+          (block_count==1). This handler fires on the AI's next PostToolUse,
+          delivers the message via add_chain_notification(channel="ai"), then
+          clears the flag. One-shot — subsequent stops do not re-arm.
+
+        HISTORY: enforce_stop_injection (PreToolUse deny) was removed because it
+          caused a deadlock — handle_stop re-armed pending_stop_injection on every
+          Stop event, and AI text output triggers Stop in Claude Code. See
+          plugins.py "DEADLOCK BUG" comment for full details.
+
+        ONGOING ENFORCEMENT after this one-shot delivery:
+          check_task_staleness (plugins.py) counts tool calls → reminds at threshold.
+          enforce_task_staleness (plugins.py) escalates to warn-then-deny.
         """
         injection = ctx.pending_stop_injection
         if not injection:
