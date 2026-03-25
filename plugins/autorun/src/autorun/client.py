@@ -106,6 +106,9 @@ def output_hook_response(response: dict | str, event: str = "unknown",
     # Reference: Issue #10936 — any stderr at exit 0 shows as "Hook Error" in UI,
     # so we also avoid all stderr here. Just exit 0 silently.
     if not response:
+        if cli_type == "gemini":
+            # Gemini CLI expects valid JSON if a hook is registered
+            print(json.dumps({"continue": True}))
         sys.exit(0)
 
     # ═══════════════════════════════════════════════════════════════

@@ -91,6 +91,8 @@ GEMINI_EVENT_MAP = {
     "AfterAgent": "Stop",
     "SessionStart": "SessionStart",
     "SessionEnd": "SessionEnd",
+    "BeforeModel": "BeforeModel",
+    "AfterModel": "AfterModel",
 }
 
 # Reverse mapping: Internal event name → CLI-specific name
@@ -102,6 +104,8 @@ INTERNAL_TO_CLAUDE = {
     "Stop": "Stop",
     "SessionStart": "SessionStart",
     "SessionEnd": "SessionEnd",
+    "BeforeModel": "BeforeModel",
+    "AfterModel": "AfterModel",
 }
 
 INTERNAL_TO_GEMINI = {
@@ -111,6 +115,8 @@ INTERNAL_TO_GEMINI = {
     "Stop": "AfterAgent",
     "SessionStart": "SessionStart",
     "SessionEnd": "SessionEnd",
+    "BeforeModel": "BeforeModel",
+    "AfterModel": "AfterModel",
 }
 
 
@@ -616,18 +622,35 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                 response["reason"] = hso["permissionDecisionReason"]
 
         # Define Gemini lifecycle events (normalized)
-        # Gemini CLI rejects 'decision' and 'hookSpecificOutput' in these events.
-        gemini_lifecycle_events = {"SessionStart", "SessionEnd", "AfterTool", "AfterAgent", "PostToolUse", "Stop"}
+        # These events generally do NOT support 'decision' or 'reason'.
+        gemini_lifecycle_events = {
+            "SessionStart", "SessionEnd", "PostToolUse", "BeforeModel", "AfterModel"
+        }
         
         allowed_base = {"continue", "systemMessage", "stopReason", "suppressOutput"}
+        
+        # Determine if this is a lifecycle event or tool/agent event
         if event in gemini_lifecycle_events:
-            # We must include additionalContext even in lifecycle events for Gemini
-            # because Gemini (unlike Claude) actually supports it everywhere.
-            allowed_lifecycle = allowed_base | {"hookSpecificOutput", "additionalContext"}
-            return {k: v for k, v in response.items() if k in allowed_lifecycle}
+            # Lifecycle: strictly no decision/reason
+            allowed = allowed_base | {"hookSpecificOutput"}
+        else:
+            # Tool/Agent/Stop: allows decision/reason
+            allowed = allowed_base | {"decision", "reason", "hookSpecificOutput"}
             
-        allowed_tool = allowed_base | {"decision", "reason", "hookSpecificOutput", "permissionDecision", "additionalContext"}
-        return {k: v for k, v in response.items() if k in allowed_tool}
+        filtered = {k: v for k, v in response.items() if k in allowed}
+        
+        # Gemini-specific HSO filtering
+        if "hookSpecificOutput" in filtered:
+            hso = filtered["hookSpecificOutput"]
+            if event == "PreToolUse":
+                # BeforeTool: only allows tool_input
+                allowed_hso = {"hookEventName", "tool_input"}
+            else:
+                # Others (AfterTool, SessionStart, etc.): only allows additionalContext
+                allowed_hso = {"hookEventName", "additionalContext"}
+            filtered["hookSpecificOutput"] = {k: v for k, v in hso.items() if k in allowed_hso}
+            
+        return filtered
 
     # Strict validation for Claude Code (fails on unknown fields)
     schema = HOOK_SCHEMAS.get(event)
