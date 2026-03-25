@@ -158,6 +158,10 @@ CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
         "edit": "Edit",
         "bash": "Bash",
         "ls": "LS",
+        "task_create": "TaskCreate",
+        "task_update": "TaskUpdate",
+        "task_list": "TaskList",
+        "task_title": "subject",
     },
     "gemini": {
         # API tool_names — snake_case, confirmed by hooks.json BeforeTool matchers
@@ -168,6 +172,10 @@ CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
         "edit": "replace",
         "bash": "run_shell_command",
         "ls": "list_directory",
+        "task_create": "Create Task",
+        "task_update": "Update Task",
+        "task_list": "List Tasks",
+        "task_title": "title",
     },
 }
 
@@ -961,7 +969,9 @@ class EventContext:
             message: Notification text
             channel: "human" (systemMessage), "ai" (additionalContext), or "both"
         """
-        self._chain_notifications.append((message, channel))
+        # Interoperability Superset: remap tool placeholders for the target CLI
+        formatted = format_suggestion(message, self.cli_type)
+        self._chain_notifications.append((formatted, channel))
 
     # === UNIFIED RESPONSE BUILDER (DRY: single method handles all events) ===
     def respond(self, decision: str = "allow", reason: str = "", *,
@@ -1021,7 +1031,8 @@ class EventContext:
             decision = "deny"
 
         # Use the raw reason - final json.dumps() in the daemon/client will handle escaping.
-        msg_reason = reason or ""
+        # Interoperability Superset: remap tool placeholders for the target CLI.
+        msg_reason = format_suggestion(reason or "", cli_type)
 
         # =====================================================================
         # PATHWAY 1: PreToolUse (Permission Decisions)

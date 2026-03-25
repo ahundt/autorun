@@ -34,10 +34,10 @@ FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS
 PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"}
 
 # Task Lifecycle Tools
-TASK_CREATE_TOOLS = {"TaskCreate", "task_create"}
-TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update"}
-TASK_LIST_TOOLS = {"TaskList", "task_list"}
-TASK_GET_TOOLS = {"TaskGet", "task_get"}
+TASK_CREATE_TOOLS = {"TaskCreate", "task_create", "Create Task"}
+TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update", "Update Task"}
+TASK_LIST_TOOLS = {"TaskList", "task_list", "List Tasks"}
+TASK_GET_TOOLS = {"TaskGet", "task_get", "Get Task"}
 # Gemini CLI uses "write_todos" for ALL task operations (create, update, list).
 # Routing is handled in track_task_operations by inspecting tool_input.
 TASK_COMBINED_TOOLS = {"write_todos"}
@@ -394,28 +394,28 @@ CONFIG = {
     },
     "tdd_scaffolding_message": (
         "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
-        "1. TaskCreate(subject=\"[TDD] Step N: [test description]\"): one per plan step "
-        "2. TaskCreate(subject=\"[EXEC] Step N: [impl description]\"): one per plan step "
-        "3. TaskUpdate(taskId=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
-        "4. TaskList: verify all tasks visible. "
+        "1. {task_create}({task_title}=\"[TDD] Step N: [test description]\"): one per plan step "
+        "2. {task_create}({task_title}=\"[EXEC] Step N: [impl description]\"): one per plan step "
+        "3. {task_update}(taskId=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
+        "4. {task_list}: verify all tasks visible. "
         "Do not write implementation code until TDD tasks are created and wired."
     ),
     # --- Task Creation Reminder Messages (v0.10) ---
     "plan_planning_task_reminder": (
         "\nPLANNING TASKS REQUIRED: a plan is active with no tasks tracking it. "
-        "Your next action must be TaskCreate: "
-        "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\") "
-        "2. TaskUpdate(taskId=N, addBlockedBy=[N-1]): wire sequential dependencies "
-        "3. TaskList: verify all tasks visible. "
+        "Your next action must be {task_create}: "
+        "1. {task_create}({task_title}=\"[PLANNING] Step N: [name]\") "
+        "2. {task_update}(taskId=N, addBlockedBy=[N-1]): wire sequential dependencies "
+        "3. {task_list}: verify all tasks visible. "
         "Do not call any other tool until planning tasks exist."
     ),
     "plan_execution_task_reminder": (
         "\nEXECUTION TASKS REQUIRED: plan accepted, no implementation tasks created. "
-        "Your next action must be TaskCreate: "
-        "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\") "
-        "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\") "
+        "Your next action must be {task_create}: "
+        "1. {task_create}({task_title}=\"[TDD] Step N: Write tests for [step]\") "
+        "2. {task_create}({task_title}=\"[EXEC] Step N: [step description]\") "
         "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-        "4. TaskList: verify all tasks visible. "
+        "4. {task_list}: verify all tasks visible. "
         "Do not write code until execution tasks are created and wired."
     ),
 

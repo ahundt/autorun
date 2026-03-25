@@ -1200,27 +1200,27 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     if ctx.plan_awaiting_planning_tasks:
         instructions = (
             "You must create planning tasks: "
-            "1. TaskCreate(subject=\"[PLANNING] Step N: [name]\") "
-            "2. TaskUpdate(taskId=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
-            "3. TaskList -- verify all tasks visible. "
+            "1. {task_create}({task_title}=\"[PLANNING] Step N: [name]\") "
+            "2. {task_update}(taskId=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
+            "3. {task_list} -- verify all tasks visible. "
             "Do not call any other tool until planning tasks exist."
         )
     elif ctx.plan_awaiting_execution_tasks:
         instructions = (
             "You must create execution tasks: "
-            "1. TaskCreate(subject=\"[TDD] Step N: Write tests for [step]\") "
-            "2. TaskCreate(subject=\"[EXEC] Step N: [step description]\") "
+            "1. {task_create}({task_title}=\"[TDD] Step N: Write tests for [step]\") "
+            "2. {task_create}({task_title}=\"[EXEC] Step N: [step description]\") "
             "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-            "4. TaskList -- verify all tasks visible. "
+            "4. {task_list} -- verify all tasks visible. "
             "Do not write code until execution tasks are created and wired."
         )
     else:
         instructions = (
             "Call one of these Task tools: "
-            "1. TaskList -- review current tasks "
-            "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
-            "3. TaskCreate(subject=\"...\") -- add newly discovered work "
-            "4. TaskUpdate(taskId=N, addBlockedBy=[M]) -- update dependencies if order changed."
+            "1. {task_list} -- review current tasks "
+            "2. {task_update}(taskId=N, status=\"in_progress\"|\"completed\") -- update status "
+            "3. {task_create}({task_title}=\"...\") -- add newly discovered work "
+            "4. {task_update}(taskId=N, addBlockedBy=[M]) -- update dependencies if order changed."
         )
 
     if reminder_count <= 1:

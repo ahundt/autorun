@@ -445,10 +445,13 @@ class TaskLifecycle:
                 self.log_event("WARNING", task_id, "Duplicate task creation ignored", "duplicate")
                 return
 
+            # Superset Compatibility: support both Claude (subject) and Gemini (title)
+            subject = input_data.get("subject") or input_data.get("title") or ""
+
             tasks[task_id] = {
                 # Core identification
                 "id": task_id,
-                "subject": input_data.get("subject", ""),
+                "subject": subject,
                 "description": input_data.get("description", ""),
                 "activeForm": input_data.get("activeForm", ""),
 
@@ -511,9 +514,11 @@ class TaskLifecycle:
             task = tasks[task_id]
 
             # Update metadata fields (merge semantics)
-            for key in ["subject", "description", "activeForm", "owner"]:
+            # Superset Compatibility: handle 'title' (Gemini) mapping to 'subject'
+            for key in ["subject", "title", "description", "activeForm", "owner"]:
                 if key in updates:
-                    task[key] = updates[key]
+                    target_key = "subject" if key == "title" else key
+                    task[target_key] = updates[key]
 
             if "addBlockedBy" in updates:
                 task["blockedBy"].extend(updates["addBlockedBy"])
@@ -766,6 +771,43 @@ class TaskLifecycle:
 
         # Update task with all metadata
         return self.update_task(task_id, ctx.tool_input, ctx.tool_result_str)
+
+    def handle_bulk_todos(self, ctx: EventContext) -> None:
+        """Handle WriteTodos tool (Gemini Planner).
+
+        Replaces the current session's tasks with the provided todos list.
+        """
+        todos = ctx.tool_input.get("todos", [])
+        if not todos:
+            return
+
+        def updater(tasks):
+            # Clear current session's tasks to avoid stale plan items
+            # (Completed tasks from previous plans stay, pending ones are replaced)
+            to_remove = [tid for tid, t in tasks.items() if t.get("session_id") == self.session_id]
+            for tid in to_remove:
+                tasks.pop(tid)
+
+            for i, todo in enumerate(todos, 1):
+                task_id = str(i)
+                tasks[task_id] = {
+                    "id": task_id,
+                    "subject": todo.get("description", ""),
+                    "description": "",
+                    "activeForm": "",
+                    "status": todo.get("status", "pending"),
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                    "session_id": self.session_id,
+                    "owner": None,
+                    "blockedBy": [],
+                    "blocks": [],
+                    "metadata": {"source": "planner"},
+                    "tool_outputs": []
+                }
+
+        self.atomic_update_tasks(updater)
+        self.log_event("BULK_CREATE", "multiple", f"Created {len(todos)} tasks from planner", "multiple")
 
     def handle_session_start(self, ctx: EventContext) -> Optional[Dict]:
         """Handle SessionStart (return injection if incomplete tasks).
@@ -1683,9 +1725,11 @@ def register_hooks(app_instance) -> None:
 
             if ctx.tool_name in TASK_COMBINED_TOOLS:
                 # Gemini CLI uses write_todos for all task operations.
-                # Route based on content: taskId in input → update, else create.
+                # Route based on content: todos in input → bulk create, else taskId → update.
                 tool_input = ctx.tool_input or {}
-                if tool_input.get("taskId"):
+                if tool_input.get("todos"):
+                    manager.handle_bulk_todos(ctx)
+                elif tool_input.get("taskId"):
                     manager.handle_task_update(ctx)
                 elif "created" in ctx.tool_result_str.lower():
                     manager.handle_task_create(ctx)
