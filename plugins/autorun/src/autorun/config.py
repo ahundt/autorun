@@ -632,43 +632,44 @@ _GEMINI_EVENTS = frozenset({"BeforeTool", "AfterTool", "BeforeAgent", "AfterAgen
 
 
 def detect_cli_type(payload: dict = None) -> str:
-    """Detect which CLI is calling (Claude Code vs Gemini CLI).
+    """Determine the active CLI type (Claude Code vs Gemini CLI).
 
-    Detection order (most reliable first):
-    1. Explicit cli_type or source in payload
-    2. Gemini-specific event names or markers in payload (pre-normalization only)
-    3. GEMINI_SESSION_ID or GEMINI_PROJECT_DIR env vars
-    4. Default to "claude" (safer for bug #4669 workaround)
+    Priority:
+    1. Explicit 'cli_type' parameter in payload (set by hook_entry.py --cli)
+    2. Explicit 'source' parameter in payload
+    3. Gemini-specific identifiers (GEMINI_SESSION_ID, sessionId, session_id)
+    4. Gemini-specific event names (BeforeTool, AfterTool, etc.)
+    5. Environment variables (GEMINI_SESSION_ID, GEMINI_PROJECT_DIR)
+    6. Default: "claude"
 
     Returns:
-        "claude": Claude Code (needs exit-2 workaround for bug #4669)
-        "gemini": Gemini CLI (respects JSON decision natively)
-
-    Reference: notes/hooks_api_reference.md lines 249-272
+        str: "claude" or "gemini"
     """
     import os
 
+    # 1 & 2: Explicit parameters from payload (highest priority)
     if payload:
-        # Tier 1: Explicit markers
-        if payload.get("cli_type") in ("gemini", "claude"):
-            return payload["cli_type"]
-        if payload.get("source") in ("gemini", "claude"):
-            return payload["source"]
+        explicit = payload.get("cli_type") or payload.get("source")
+        if explicit in ("gemini", "claude"):
+            return explicit
 
-        # Tier 2: Gemini-specific signals
-        if payload.get("GEMINI_SESSION_ID") or payload.get("sessionId"):
+        # 3: Gemini-specific session identifiers
+        if any(payload.get(k) for k in ("GEMINI_SESSION_ID", "sessionId", "session_id")):
             return "gemini"
+
+        # 4: Gemini-specific event names
         if payload.get("hook_event_name") in _GEMINI_EVENTS:
             return "gemini"
-        transcript_path = str(payload.get("transcript_path", ""))
-        if ".gemini" in transcript_path:
+
+        # 4b: File path hints
+        if ".gemini" in str(payload.get("transcript_path", "")):
             return "gemini"
 
-    # Tier 3: Environment variables
+    # 5: Environment variables (fallback for direct CLI calls or initialization)
     if os.environ.get("GEMINI_SESSION_ID") or os.environ.get("GEMINI_PROJECT_DIR"):
         return "gemini"
 
-    # Default: Claude (safer - applies exit-2 workaround)
+    # 6: Default fallback
     return "claude"
 
 

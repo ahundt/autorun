@@ -1086,8 +1086,24 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
             # Convert $ARGUMENTS to {{args}} (Gemini convention)
             body = body.replace("$ARGUMENTS", "{{args}}")
 
-            # Escape triple quotes in body if present
-            safe_body = body.replace('"""', '\\"\\"\\"')
+            # Support tool mapping for Gemini CLI (Interoperability Superset)
+            # Reuses CLI_TOOL_NAMES from core.py to ensure suggestions in .toml
+            # use Gemini tool names (e.g. read_file) instead of Claude names (e.g. Read)
+            try:
+                from .core import CLI_TOOL_NAMES
+                gemini_tools = CLI_TOOL_NAMES.get("gemini", {})
+                for claude_name, gemini_name in gemini_tools.items():
+                    # Match {tool_name} placeholder in prompt
+                    placeholder = "{" + claude_name + "}"
+                    if placeholder in body:
+                        body = body.replace(placeholder, "{" + gemini_name + "}")
+            except ImportError:
+                # Fallback if core.py cannot be imported during bootstrap
+                pass
+
+            # Escape backslashes and triple quotes in body for TOML multi-line strings
+            # Gemini CLI parser fails on unescaped backslashes in regex (e.g. \()
+            safe_body = body.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
 
             # Write TOML file
             toml_content = f'description = "{description}"\n'

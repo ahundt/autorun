@@ -350,7 +350,12 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
             logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → "
                         f"{len(truncated)} messages ({size_estimate//1024}KB)")
 
+    # Detect CLI type (explicitly part of normalization for interoperability)
+    from .config import detect_cli_type
+    cli_type = detect_cli_type(payload)
+
     return {
+        "cli_type": cli_type,
         "hook_event_name": event,
         "session_id": session_id,
         "prompt": payload.get("prompt", ""),
@@ -597,26 +602,32 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     logger.debug(f"validate_hook_response(event={event}, cli_type={cli_type}) input decision={response.get('decision')}")
 
     if cli_type == "gemini":
-        # Gemini CLI is lenient - it ignores unknown fields.
-        # We ensure it gets the standard decision/reason fields it expects.
-        # We also INCLUDE hookSpecificOutput for universal test compatibility
-        # and because it doesn't hurt Gemini.
+        # Gemini CLI performs strict JSON schema validation.
+        # Lifecycle events (SessionStart, AfterTool, etc.) MUST NOT have 'decision'.
+        # We ensure it gets exactly what it expects per event.
         
         # Mapping for Gemini top-level decision/reason if they're missing but in HSO
         if "hookSpecificOutput" in response:
             hso = response["hookSpecificOutput"]
             if "decision" not in response and "permissionDecision" in hso:
-                # Map 'deny' or 'block' to Gemini 'deny'
                 d = hso["permissionDecision"]
                 response["decision"] = "allow" if d == "allow" else "deny"
             if "reason" not in response and "permissionDecisionReason" in hso:
                 response["reason"] = hso["permissionDecisionReason"]
 
-        allowed_gemini = {
-            "continue", "decision", "reason", "systemMessage", "stopReason",
-            "hookSpecificOutput", "permissionDecision", "suppressOutput"
-        }
-        return {k: v for k, v in response.items() if k in allowed_gemini}
+        # Define Gemini lifecycle events (normalized)
+        # Gemini CLI rejects 'decision' and 'hookSpecificOutput' in these events.
+        gemini_lifecycle_events = {"SessionStart", "SessionEnd", "AfterTool", "AfterAgent", "PostToolUse", "Stop"}
+        
+        allowed_base = {"continue", "systemMessage", "stopReason", "suppressOutput"}
+        if event in gemini_lifecycle_events:
+            # We must include additionalContext even in lifecycle events for Gemini
+            # because Gemini (unlike Claude) actually supports it everywhere.
+            allowed_lifecycle = allowed_base | {"hookSpecificOutput", "additionalContext"}
+            return {k: v for k, v in response.items() if k in allowed_lifecycle}
+            
+        allowed_tool = allowed_base | {"decision", "reason", "hookSpecificOutput", "permissionDecision", "additionalContext"}
+        return {k: v for k, v in response.items() if k in allowed_tool}
 
     # Strict validation for Claude Code (fails on unknown fields)
     schema = HOOK_SCHEMAS.get(event)
@@ -1082,7 +1093,7 @@ class EventContext:
 
             if ai_text is not None:
                 resp["hookSpecificOutput"] = {
-                    "hookEventName": self._event,
+                    "hookEventName": get_cli_event_name(self._event, cli_type),
                     "additionalContext": ai_text,
                 }
 
@@ -1095,6 +1106,17 @@ class EventContext:
             # PATHWAY 3: to_human/to_ai silently ignored — systemMessage already human+AI visible.
             if to_human is not True or to_ai is not True:
                 logger.debug(f"respond: to_human/to_ai ignored for {self._event} — systemMessage already human-visible")
+            
+            # Merge accumulated chain notifications (Interoperability Superset)
+            stop_msg = msg_reason
+            if self._chain_notifications:
+                # For Stop, we merge everything into the main message since 
+                # Claude doesn't support additionalContext here.
+                notifs = [m for m, c in self._chain_notifications]
+                prefix = "\n".join(notifs)
+                stop_msg = f"{prefix}\n{stop_msg}" if stop_msg else prefix
+                self._chain_notifications.clear()
+
             # Claude Code Stop Schema:
             # - MUST NOT contain 'decision' or 'reason' for standard allow
             # - ONLY supports 'continue', 'stopReason', 'suppressOutput', 'systemMessage'
@@ -1104,10 +1126,10 @@ class EventContext:
                 resp = {
                     "continue": True,  # Keep AI working
                     "decision": actual_decision,
-                    "reason": msg_reason,
+                    "reason": stop_msg,
                     "stopReason": "",
                     "suppressOutput": False,
-                    "systemMessage": msg_reason,
+                    "systemMessage": stop_msg,
                 }
                 return validate_hook_response(self._event, resp, cli_type=cli_type)
             
@@ -1115,7 +1137,7 @@ class EventContext:
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": "",
+                "systemMessage": stop_msg,
             }
             return validate_hook_response(self._event, resp, cli_type=cli_type)
 
@@ -1124,17 +1146,46 @@ class EventContext:
         # =====================================================================
         if self._event == "SessionStart":
             # PATHWAY 4: to_human/to_ai silently ignored — SessionStart systemMessage is always the
-            # only notification channel (hookSpecificOutput impossible per HOOK_SCHEMAS).
+            # only notification channel for Claude (hookSpecificOutput impossible per HOOK_SCHEMAS).
             if to_human is not True or to_ai is not True:
                 logger.debug("respond: to_human/to_ai ignored for SessionStart — systemMessage always human-visible")
+            
+            # Merge accumulated chain notifications (Interoperability Superset)
+            human_text = msg_reason
+            ai_text = None
+            if self._chain_notifications:
+                if cli_type == "gemini":
+                    # Gemini supports additionalContext for SessionStart!
+                    human_notifs = [m for m, c in self._chain_notifications if c in ("human", "both")]
+                    ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both")]
+                    if human_notifs:
+                        prefix = "\n".join(human_notifs)
+                        human_text = f"{prefix}\n{human_text}" if human_text else prefix
+                    if ai_notifs:
+                        ai_text = "\n".join(ai_notifs)
+                else:
+                    # Claude: merge everything into systemMessage
+                    notifs = [m for m, c in self._chain_notifications]
+                    prefix = "\n".join(notifs)
+                    human_text = f"{prefix}\n{human_text}" if human_text else prefix
+                self._chain_notifications.clear()
+
             # Claude Code SessionStart Schema:
             # - MUST NOT contain 'decision', 'reason', or 'hookSpecificOutput'
             resp = {
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": msg_reason,
+                "systemMessage": human_text,
             }
+            
+            # Superset Capability: Context Injection for Gemini
+            if cli_type == "gemini" and ai_text:
+                resp["hookSpecificOutput"] = {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": ai_text
+                }
+                
             return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
@@ -1433,12 +1484,9 @@ class AutorunDaemon:
                 self.active_pids.add(pid)
                 logger.info(f"New session PID: {pid} (active: {len(self.active_pids)})")
 
-            # Normalize payload (includes transcript truncation to ~64KB)
+            # Normalize payload (includes transcript truncation and CLI detection)
             normalized = normalize_hook_payload(payload)
-
-            # Detect CLI type from payload (ensures correct schema for shared daemon)
-            from .config import detect_cli_type
-            cli_type = detect_cli_type(payload)
+            cli_type = normalized["cli_type"]
             logger.info(f"handle_client: cli_type={cli_type} event={event} tool={tool}")
 
             # Resolve session identity (supports tri-layer for resume robustness)

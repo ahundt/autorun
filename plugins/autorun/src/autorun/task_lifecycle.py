@@ -268,10 +268,62 @@ class TaskLifecycle:
 
     @property
     def tasks(self) -> Dict[str, Dict]:
-        """Get tasks dict. For modifications, use atomic_update_tasks()."""
+        """Get tasks dict aggregated from internal store and Conductor (Gemini)."""
         with session_state(self.global_key) as state:
             self._migrate_if_needed(state)
-            return dict(state.get("tasks", {}))
+            tasks = dict(state.get("tasks", {}))
+
+        # Superset Capability: Aggregation with Conductor (Gemini-native)
+        # If in Gemini session and Conductor plan exists, parse and merge its tasks.
+        # This ensures /ar:status and /ar:tasks show Conductor tasks.
+        try:
+            # We don't have ctx here but we can check project directory
+            conductor_dir = Path.cwd() / "conductor" / "tracks"
+            if conductor_dir.is_dir():
+                conductor_tasks = self._parse_conductor_tasks(conductor_dir)
+                # Merge: internal tasks take precedence for status updates,
+                # but Conductor tasks are added if not present.
+                for tid, task in conductor_tasks.items():
+                    if tid not in tasks:
+                        tasks[tid] = task
+        except Exception as e:
+            logger.debug(f"Failed to aggregate Conductor tasks: {e}")
+
+        return tasks
+
+    def _parse_conductor_tasks(self, tracks_dir: Path) -> Dict[str, Dict]:
+        """Parse tasks from latest Conductor plan.md."""
+        tasks = {}
+        try:
+            # Find latest modified track directory
+            tracks = [d for d in tracks_dir.iterdir() if d.is_dir()]
+            if not tracks:
+                return {}
+            latest_track = max(tracks, key=lambda d: d.stat().st_mtime)
+            plan_file = latest_track / "plan.md"
+            if not plan_file.exists():
+                return {}
+
+            content = plan_file.read_text(encoding="utf-8")
+            # Simple regex parser for markdown task lists: - [ ] Task name
+            # Maps to minimal internal Task schema
+            task_idx = 1
+            for line in content.splitlines():
+                match = re.match(r'^\s*-\s*\[([ xX])\]\s*(.*)', line)
+                if match:
+                    status_char = match.group(1).lower()
+                    subject = match.group(2).strip()
+                    tid = f"c{task_idx}"  # Conductor-prefixed ID
+                    tasks[tid] = {
+                        "id": tid,
+                        "subject": subject,
+                        "status": "completed" if status_char == "x" else "pending",
+                        "metadata": {"source": "conductor", "track": latest_track.name}
+                    }
+                    task_idx += 1
+        except Exception:
+            pass
+        return tasks
 
     def atomic_update_tasks(self, updater: Callable[[Dict], None]) -> None:
         """Atomically update tasks. updater(tasks) modifies in-place."""

@@ -1174,7 +1174,13 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     Fires when task_staleness_enforce_next is True (set by check_task_staleness
     or remind_until_tasks_created). One-shot per crossing then resets.
+
+    Bypass for Gemini CLI: Gemini handles task tracking natively via the
+    Conductor extension rather than tool-based callbacks.
     """
+    if ctx.cli_type == "gemini":
+        return None
+
     if not ctx.task_staleness_enforce_next:
         return None
     # Always let Task tools through and reset all counters
@@ -1263,7 +1269,13 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     allow(reason) via enforce_task_staleness.
 
     Fires in any session (not just autorun). Disable with /ar:tasks off.
+
+    Bypass for Gemini CLI: Gemini uses Conductor (markdown-based) rather than
+    native tool calls for task tracking.
     """
+    if ctx.cli_type == "gemini":
+        return None
+
     if not ctx.task_staleness_enabled:
         return None
 
@@ -1456,6 +1468,12 @@ def toggle_task_staleness(ctx: EventContext) -> str:
                 lines.append("Tasks: unavailable (lifecycle error)")
 
         lines.append(f"Staleness reminders: {'on' if enabled else 'off'} ({count}/{threshold} tool calls)")
+        
+        # Superset Capability: Gemini-specific hints for task management
+        if ctx.cli_type == "gemini":
+            lines.append("\n💡 Gemini Note: Tasks are natively managed via the Conductor extension.")
+            lines.append("   Use /conductor:status to see full track details.")
+            
         lines.append("Usage: /ar:tasks on|off|<number> | /ar:task-status for full details")
         return "\n".join(lines)
 
