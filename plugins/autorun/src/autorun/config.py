@@ -666,7 +666,7 @@ def detect_cli_type(payload: dict = None) -> str:
             return "gemini"
 
     # 5: Environment variables (fallback for direct CLI calls or initialization)
-    if os.environ.get("GEMINI_SESSION_ID") or os.environ.get("GEMINI_PROJECT_DIR"):
+    if any(os.environ.get(k) for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI")):
         return "gemini"
 
     # 6: Default fallback

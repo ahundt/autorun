@@ -51,6 +51,12 @@ def pytest_configure(config):
     config._autorun_test_state_dir = _test_state_dir
     os.environ["AUTORUN_TEST_STATE_DIR"] = _test_state_dir
 
+    # PLATFORM ISOLATION: Ensure tests start in a clean environment (not affected by 
+    # the active Gemini CLI session used to run these tests).
+    for env_var in ["GEMINI_CLI", "GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR"]:
+        if env_var in os.environ:
+            del os.environ[env_var]
+
 
 
 # Test file groups for automatic serial/parallel assignment

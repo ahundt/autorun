@@ -194,6 +194,7 @@ class TaskLifecycle:
         Raises:
             ValueError: If session_id cannot be determined
         """
+        self.ctx = ctx
         # Session ID resolution (3 sources - explicit > ctx > env)
         if session_id:
             self.session_id = session_id
@@ -201,8 +202,17 @@ class TaskLifecycle:
             self.session_id = ctx.session_id
         elif os.environ.get('CLAUDE_SESSION_ID'):
             self.session_id = os.environ['CLAUDE_SESSION_ID']
+        elif os.environ.get('GEMINI_SESSION_ID'):
+            self.session_id = os.environ['GEMINI_SESSION_ID']
         else:
             raise ValueError("session_id required: pass explicitly, via ctx, or set CLAUDE_SESSION_ID env var")
+
+        # CLI Type resolution (explicit > ctx > auto-detect)
+        if ctx:
+            self._cli_type = ctx.cli_type
+        else:
+            from .config import detect_cli_type
+            self._cli_type = detect_cli_type()
 
         # Config
         self.config = config or TaskLifecycleConfig.load()
@@ -276,18 +286,18 @@ class TaskLifecycle:
         # Superset Capability: Aggregation with Conductor (Gemini-native)
         # If in Gemini session and Conductor plan exists, parse and merge its tasks.
         # This ensures /ar:status and /ar:tasks show Conductor tasks.
-        try:
-            # We don't have ctx here but we can check project directory
-            conductor_dir = Path.cwd() / "conductor" / "tracks"
-            if conductor_dir.is_dir():
-                conductor_tasks = self._parse_conductor_tasks(conductor_dir)
-                # Merge: internal tasks take precedence for status updates,
-                # but Conductor tasks are added if not present.
-                for tid, task in conductor_tasks.items():
-                    if tid not in tasks:
-                        tasks[tid] = task
-        except Exception as e:
-            logger.debug(f"Failed to aggregate Conductor tasks: {e}")
+        if self._cli_type == "gemini":
+            try:
+                conductor_dir = Path.cwd() / "conductor" / "tracks"
+                if conductor_dir.is_dir():
+                    conductor_tasks = self._parse_conductor_tasks(conductor_dir)
+                    # Merge: internal tasks take precedence for status updates,
+                    # but Conductor tasks are added if not present.
+                    for tid, task in conductor_tasks.items():
+                        if tid not in tasks:
+                            tasks[tid] = task
+            except Exception as e:
+                logger.debug(f"Failed to aggregate Conductor tasks: {e}")
 
         return tasks
 
@@ -318,6 +328,8 @@ class TaskLifecycle:
                         "id": tid,
                         "subject": subject,
                         "status": "completed" if status_char == "x" else "pending",
+                        "created_at": latest_track.stat().st_mtime,
+                        "updated_at": latest_track.stat().st_mtime,
                         "metadata": {"source": "conductor", "track": latest_track.name}
                     }
                     task_idx += 1
@@ -733,11 +745,11 @@ class TaskLifecycle:
             result_text = ctx.tool_result_str
             patterns = [
                 r'"taskId"\s*:\s*"([^"]+)"',   # JSON taskId field
-                r'Task #?([a-zA-Z0-9_-]+) created successfully',
-                r'Created task #?([a-zA-Z0-9_-]+) successfully',
-                r'Created task ([a-zA-Z0-9_-]+):',  # Gemini CLI tracker_create_task format
-                r'Task ([a-zA-Z0-9_-]+) created',
-                r'#([a-zA-Z0-9_-]+)',  # Last resort
+                r'Task #?([a-zA-Z0-9_\-\.]+)\s+created successfully',
+                r'Created task #?([a-zA-Z0-9_\-\.]+)\s+successfully',
+                r'Created task ([a-zA-Z0-9_\-\.]+):',  # Gemini CLI tracker_create_task format
+                r'Task ([a-zA-Z0-9_\-\.]+)\s+created',
+                r'#([a-zA-Z0-9_\-\.]+)',  # Last resort
             ]
             for pattern in patterns:
                 match = re.search(pattern, result_text, re.IGNORECASE)
@@ -778,8 +790,14 @@ class TaskLifecycle:
 
         Replaces the current session's tasks with the provided todos list.
         """
+        # Defensive check for tool_input structure (Pre-mortem fix)
+        if not isinstance(ctx.tool_input, dict):
+            logger.warning(f"handle_bulk_todos: tool_input is not a dict: {type(ctx.tool_input)}")
+            return
+
         todos = ctx.tool_input.get("todos", [])
-        if not todos:
+        if not isinstance(todos, list) or not todos:
+            logger.debug("handle_bulk_todos: no todos list found in input")
             return
 
         def updater(tasks):
@@ -790,10 +808,15 @@ class TaskLifecycle:
                 tasks.pop(tid)
 
             for i, todo in enumerate(todos, 1):
+                if not isinstance(todo, dict):
+                    continue
+                
+                # Gemini tool uses 'description', fall back to 'subject' for cross-platform robustness
+                subject = todo.get("description") or todo.get("subject") or f"Task {i}"
                 task_id = str(i)
                 tasks[task_id] = {
                     "id": task_id,
-                    "subject": todo.get("description", ""),
+                    "subject": subject,
                     "description": "",
                     "activeForm": "",
                     "status": todo.get("status", "pending"),
