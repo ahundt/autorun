@@ -57,9 +57,9 @@ from .config import (
 
 
 # === Stop / Resume action fragments (assembled at call site) ===
-_ACT_REVIEW   = 'TaskList'
-_ACT_COMPLETE = 'TaskUpdate(taskId="X", status="completed")'
-_ACT_DISCARD  = 'TaskUpdate(taskId="X", status="deleted")'
+_ACT_REVIEW   = '{task_list}'
+_ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
+_ACT_DISCARD  = '{task_update}({task_id_param}="X", status="deleted")'
 _ACT_OVERRIDE = 'only the user can type /ar:sos (emergency stop) or /ar:task-ignore <id> (mark task ignored to unblock stopping)'
 
 
@@ -732,14 +732,15 @@ class TaskLifecycle:
         if not task_id:
             result_text = ctx.tool_result_str
             patterns = [
-                r'"taskId"\s*:\s*"(\d+)"',   # JSON taskId field
-                r'Task #(\d+) created successfully',
-                r'Created task #(\d+) successfully',
-                r'Task (\d+) created',
-                r'#(\d+)',  # Last resort
+                r'"taskId"\s*:\s*"([^"]+)"',   # JSON taskId field
+                r'Task #?([a-zA-Z0-9_-]+) created successfully',
+                r'Created task #?([a-zA-Z0-9_-]+) successfully',
+                r'Created task ([a-zA-Z0-9_-]+):',  # Gemini CLI tracker_create_task format
+                r'Task ([a-zA-Z0-9_-]+) created',
+                r'#([a-zA-Z0-9_-]+)',  # Last resort
             ]
             for pattern in patterns:
-                match = re.search(pattern, result_text)
+                match = re.search(pattern, result_text, re.IGNORECASE)
                 if match:
                     task_id = match.group(1)
                     break
@@ -765,7 +766,7 @@ class TaskLifecycle:
         Returns:
             'ghost_skip' if ghost task protection triggered, None otherwise.
         """
-        task_id = ctx.tool_input.get("taskId")
+        task_id = ctx.tool_input.get("taskId") or ctx.tool_input.get("id")
         if not task_id:
             return None  # Skip if no task ID
 
@@ -1009,7 +1010,7 @@ class TaskLifecycle:
         return (
             f"\n## Plan Accepted - Task Context\n\n"
             f"{len(plan_tasks)} task(s):\n\n{task_context}\n\n"
-            f"Use TaskList to see all tasks. You CANNOT stop until all tasks "
+            f"Use {{task_list}} to see all tasks. You CANNOT stop until all tasks "
             f"are completed or deleted.\n"
         )
 

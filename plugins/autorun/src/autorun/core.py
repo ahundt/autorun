@@ -162,6 +162,7 @@ CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
         "task_update": "TaskUpdate",
         "task_list": "TaskList",
         "task_title": "subject",
+        "task_id_param": "taskId",
     },
     "gemini": {
         # API tool_names — snake_case, confirmed by hooks.json BeforeTool matchers
@@ -172,10 +173,11 @@ CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
         "edit": "replace",
         "bash": "run_shell_command",
         "ls": "list_directory",
-        "task_create": "Create Task",
-        "task_update": "Update Task",
-        "task_list": "List Tasks",
+        "task_create": "tracker_create_task",
+        "task_update": "tracker_update_task",
+        "task_list": "tracker_list_tasks",
         "task_title": "title",
+        "task_id_param": "id",
     },
 }
 

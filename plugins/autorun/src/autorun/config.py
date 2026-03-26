@@ -34,10 +34,10 @@ FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS
 PLAN_TOOLS = {"ExitPlanMode", "exit_plan_mode"}
 
 # Task Lifecycle Tools
-TASK_CREATE_TOOLS = {"TaskCreate", "task_create", "Create Task"}
-TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update", "Update Task"}
-TASK_LIST_TOOLS = {"TaskList", "task_list", "List Tasks"}
-TASK_GET_TOOLS = {"TaskGet", "task_get", "Get Task"}
+TASK_CREATE_TOOLS = {"TaskCreate", "task_create", "tracker_create_task"}
+TASK_UPDATE_TOOLS = {"TaskUpdate", "task_update", "tracker_update_task"}
+TASK_LIST_TOOLS = {"TaskList", "task_list", "tracker_list_tasks"}
+TASK_GET_TOOLS = {"TaskGet", "task_get", "tracker_get_task"}
 # Gemini CLI uses "write_todos" for ALL task operations (create, update, list).
 # Routing is handled in track_task_operations by inspecting tool_input.
 TASK_COMBINED_TOOLS = {"write_todos"}
@@ -347,31 +347,31 @@ CONFIG = {
     # V4 strings: no emoji, complete tool syntax, dependency wiring, disable instruction.
     # Warn-then-deny enforcement: 2 PostToolUse levels only (1st + 2nd).
     "task_staleness_message": (
-        "\nTASK UPDATE REQUIRED: {threshold} tool calls without TaskCreate or TaskUpdate. "
+        "\nTASK UPDATE REQUIRED: {threshold} tool calls without {{task_create}} or {{task_update}}. "
         "Your next action must be one of these Task tools: "
-        "1. TaskList: review current tasks and their status "
-        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\"): update status "
-        "3. TaskCreate(subject=\"[step]: [action]\"): one per specific newly discovered step "
-        "4. TaskUpdate(taskId=N, addBlockedBy=[M]): update dependencies if order changed. "
+        "1. {{task_list}}: review current tasks and their status "
+        "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"|\"completed\"): update status "
+        "3. {{task_create}}({{task_title}}=\"[step]: [action]\"): one per specific newly discovered step "
+        "4. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): update dependencies if order changed. "
         "Do not call any tool except these until you have updated your task list. "
         "Your next non-Task tool call will be blocked. Disable: /ar:tasks off"
     ),
     "task_staleness_message_2nd": (
         "\nTASK UPDATE OVERDUE: {threshold} more tool calls without a Task tool. "
         "Your next action must be one of these Task tools: "
-        "1. TaskList: review current tasks "
-        "2. TaskUpdate(taskId=N, status=\"in_progress\"|\"completed\"): update status "
-        "3. TaskCreate(subject=\"[step]: [action]\"): one per specific newly discovered step. "
+        "1. {{task_list}}: review current tasks "
+        "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"|\"completed\"): update status "
+        "3. {{task_create}}({{task_title}}=\"[step]: [action]\"): one per specific newly discovered step. "
         "Do not call any other tool. Your next non-Task tool call will be blocked. "
         "Disable: /ar:tasks off"
     ),
     # Injected when zero tasks exist and no_tasks_threshold crossed.
     "task_staleness_no_tasks_message": (
         "\nNO TASKS EXIST: {threshold} tool calls with zero tasks tracking your work. "
-        "Your next action must be TaskCreate: "
-        "1. TaskCreate(subject=\"[step]: [action]\", description=\"...\"): one per specific step, NOT one broad task "
-        "2. TaskUpdate(taskId=N, status=\"in_progress\"): mark the task you are starting "
-        "3. TaskUpdate(taskId=N, addBlockedBy=[M]): wire dependencies if tasks have order. "
+        "Your next action must be {{task_create}}: "
+        "1. {{task_create}}({{task_title}}=\"[step]: [action]\", description=\"...\"): one per specific step, NOT one broad task "
+        "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"): mark the task you are starting "
+        "3. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): wire dependencies if tasks have order. "
         "Do not call any other tool until you have created at least one task. "
         "Disable: /ar:tasks off"
     ),
@@ -394,28 +394,28 @@ CONFIG = {
     },
     "tdd_scaffolding_message": (
         "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
-        "1. {task_create}({task_title}=\"[TDD] Step N: [test description]\"): one per plan step "
-        "2. {task_create}({task_title}=\"[EXEC] Step N: [impl description]\"): one per plan step "
-        "3. {task_update}(taskId=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
-        "4. {task_list}: verify all tasks visible. "
+        "1. {{task_create}}({{task_title}}=\"[TDD] Step N: [test description]\"): one per plan step "
+        "2. {{task_create}}({{task_title}}=\"[EXEC] Step N: [impl description]\"): one per plan step "
+        "3. {{task_update}}({{task_id_param}}=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
+        "4. {{task_list}}: verify all tasks visible. "
         "Do not write implementation code until TDD tasks are created and wired."
     ),
     # --- Task Creation Reminder Messages (v0.10) ---
     "plan_planning_task_reminder": (
         "\nPLANNING TASKS REQUIRED: a plan is active with no tasks tracking it. "
-        "Your next action must be {task_create}: "
-        "1. {task_create}({task_title}=\"[PLANNING] Step N: [name]\") "
-        "2. {task_update}(taskId=N, addBlockedBy=[N-1]): wire sequential dependencies "
-        "3. {task_list}: verify all tasks visible. "
+        "Your next action must be {{task_create}}: "
+        "1. {{task_create}}({{task_title}}=\"[PLANNING] Step N: [name]\") "
+        "2. {{task_update}}({{task_id_param}}=N, addBlockedBy=[N-1]): wire sequential dependencies "
+        "3. {{task_list}}: verify all tasks visible. "
         "Do not call any other tool until planning tasks exist."
     ),
     "plan_execution_task_reminder": (
         "\nEXECUTION TASKS REQUIRED: plan accepted, no implementation tasks created. "
-        "Your next action must be {task_create}: "
-        "1. {task_create}({task_title}=\"[TDD] Step N: Write tests for [step]\") "
-        "2. {task_create}({task_title}=\"[EXEC] Step N: [step description]\") "
+        "Your next action must be {{task_create}}: "
+        "1. {{task_create}}({{task_title}}=\"[TDD] Step N: Write tests for [step]\") "
+        "2. {{task_create}}({{task_title}}=\"[EXEC] Step N: [step description]\") "
         "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-        "4. {task_list}: verify all tasks visible. "
+        "4. {{task_list}}: verify all tasks visible. "
         "Do not write code until execution tasks are created and wired."
     ),
 

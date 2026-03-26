@@ -604,8 +604,8 @@ def _make_post_tool_ctx(
         prompt="",
         tool_name=tool_name,
         tool_input={},
-        tool_result="",
         store=ThreadSafeDB(),
+        cli_type="claude",
     )
     ctx.autorun_active = autorun_active
     ctx.task_staleness_enabled = task_staleness_enabled
@@ -750,6 +750,7 @@ def _make_pre_tool_ctx(
         tool_name=tool_name,
         tool_input={},
         store=ThreadSafeDB(),
+        cli_type="claude",
     )
     ctx.task_staleness_enforce_next = task_staleness_enforce_next
     ctx.task_staleness_reminder_count = task_staleness_reminder_count
