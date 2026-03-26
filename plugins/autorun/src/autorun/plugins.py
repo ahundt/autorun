@@ -1160,6 +1160,27 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
 # --- END DEADLOCK BUG ---
 
 
+def is_task_update_call(ctx: EventContext) -> bool:
+    """Check if the current tool call represents a task update (WOLOG).
+
+    Includes:
+    1. Direct task tools (TaskCreate, tracker_create_task, etc.)
+    2. File operations on Conductor plan files (plan.md).
+    """
+    # 1. Direct task tools (Create or Update only)
+    if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_COMBINED_TOOLS):
+        return True
+
+    # 2. Conductor plan updates (Gemini-native aggregation)
+    # If AI edits a plan.md file, we count it as a task update.
+    if ctx.tool_name in FILE_TOOLS:
+        path = ctx.tool_input.get("file_path") or ctx.tool_input.get("path")
+        if path and "plan.md" in str(path):
+            return True
+
+    return False
+
+
 @app.on("PreToolUse")
 def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """Warn-then-deny: allow with warning first, deny on second offense (v0.11).
@@ -1174,17 +1195,19 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     Fires when task_staleness_enforce_next is True (set by check_task_staleness
     or remind_until_tasks_created). One-shot per crossing then resets.
-
-    Bypass for Gemini CLI: Gemini handles task tracking natively via the
-    Conductor extension rather than tool-based callbacks.
     """
-    if ctx.cli_type == "gemini":
-        return None
-
     if not ctx.task_staleness_enforce_next:
         return None
+
     # Always let Task tools through and reset all counters
     if ctx.tool_name in ALL_TASK_TOOLS:
+        ctx.task_staleness_enforce_next = False
+        ctx.task_staleness_reminder_count = 0
+        ctx.plan_task_reminder_count = 0
+        return None
+
+    # Conductor plan updates also reset counters (WOLOG)
+    if is_task_update_call(ctx):
         ctx.task_staleness_enforce_next = False
         ctx.task_staleness_reminder_count = 0
         ctx.plan_task_reminder_count = 0
@@ -1269,18 +1292,12 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     allow(reason) via enforce_task_staleness.
 
     Fires in any session (not just autorun). Disable with /ar:tasks off.
-
-    Bypass for Gemini CLI: Gemini uses Conductor (markdown-based) rather than
-    native tool calls for task tracking.
     """
-    if ctx.cli_type == "gemini":
-        return None
-
     if not ctx.task_staleness_enabled:
         return None
 
     # Reset counter when AI actively manages tasks; skip increment.
-    if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_COMBINED_TOOLS):
+    if is_task_update_call(ctx):
         ctx.tool_calls_since_task_update = 0
         ctx.task_staleness_reminder_count = 0
         ctx.task_staleness_enforce_next = False
