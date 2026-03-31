@@ -2656,6 +2656,33 @@ def test_is_task_update_call_exact_filename_match():
         "Conductor plan file conductor/tracks/*/plan.md must match"
     )
 
+    # Edge: bare plan.md (root-level Conductor file) must match
+    class BarePlanCtx:
+        tool_name = "Write"
+        tool_input = {"file_path": "plan.md"}
+
+    assert is_task_update_call(BarePlanCtx()) is True, (
+        "Bare plan.md must match (could be root-level Conductor plan)"
+    )
+
+    # Edge: 'path' key (alternative to 'file_path') must also work
+    class PathKeyCtx:
+        tool_name = "Edit"
+        tool_input = {"path": "/tmp/conductor/tracks/session-1/plan.md"}
+
+    assert is_task_update_call(PathKeyCtx()) is True, (
+        "is_task_update_call must check 'path' key too, not just 'file_path'"
+    )
+
+    # Negative: 'implementation-plan.md' must NOT match
+    class ImplPlanCtx:
+        tool_name = "Edit"
+        tool_input = {"file_path": "/repo/implementation-plan.md"}
+
+    assert is_task_update_call(ImplPlanCtx()) is False, (
+        "implementation-plan.md must not match — only exact 'plan.md'"
+    )
+
 
 def test_coerce_tool_result_to_str_all_types():
     """coerce_tool_result_to_str (core.py) handles dict, list, str, None, int."""
