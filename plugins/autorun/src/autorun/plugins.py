@@ -1175,7 +1175,7 @@ def is_task_update_call(ctx: EventContext) -> bool:
     # If AI edits a plan.md file, we count it as a task update.
     if ctx.tool_name in FILE_TOOLS:
         path = ctx.tool_input.get("file_path") or ctx.tool_input.get("path")
-        if path and "plan.md" in str(path):
+        if path and Path(str(path)).name == "plan.md":
             return True
 
     return False

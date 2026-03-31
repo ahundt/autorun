@@ -569,6 +569,11 @@ class TaskLifecycle:
 
                 if is_ghost and new_status not in terminal_statuses:
                     # Ghost task protection triggered - log for debugging
+                    logger.warning(
+                        "GHOST_SKIP: task_id=%s requested status=%s but ghost tasks "
+                        "can only transition to terminal statuses (%s). Keeping 'ignored'.",
+                        task_id, new_status, ", ".join(sorted(terminal_statuses)),
+                    )
                     self.log_event("GHOST_SKIP", task_id, task["subject"], new_status,
                                   {"old_status": old_status,
                                    "reason": "ghost task cannot become blocking",
