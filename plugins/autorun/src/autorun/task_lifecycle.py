@@ -177,7 +177,7 @@ class TaskLifecycle:
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
     # Statuses that don't block stopping.
     # "ignored" is set by /ar:task-ignore (autorun code), not via TaskUpdate tool.
-    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "ignored"])
+    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
 
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
     PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
@@ -747,7 +747,12 @@ class TaskLifecycle:
 
         # Fallback: regex on string/JSON representation
         if not task_id:
-            result_text = ctx.tool_result_str
+            # Use raw_result directly if it's already a string (e.g. Gemini CLI or test mocks),
+            # otherwise fall back to tool_result_str (JSON-serialized Claude Code response).
+            if isinstance(raw_result, str):
+                result_text = raw_result
+            else:
+                result_text = ctx.tool_result_str
             patterns = [
                 r'"taskId"\s*:\s*"([^"]+)"',   # JSON taskId field
                 r'Task #?([a-zA-Z0-9_\-\.]+)\s+created successfully',
@@ -767,7 +772,9 @@ class TaskLifecycle:
             return  # Fail-open
 
         # Create task with full metadata
-        self.create_task(task_id, ctx.tool_input, ctx.tool_result_str)
+        # Use raw_result directly if string (Gemini/test mocks), else tool_result_str
+        result_str = raw_result if isinstance(raw_result, str) else ctx.tool_result_str
+        self.create_task(task_id, ctx.tool_input, result_str)
 
         # If active plan, link this task to the plan for context injection
         if hasattr(ctx, 'plan_active') and ctx.plan_active:
@@ -788,7 +795,10 @@ class TaskLifecycle:
             return None  # Skip if no task ID
 
         # Update task with all metadata
-        return self.update_task(task_id, ctx.tool_input, ctx.tool_result_str)
+        # Use raw tool_result directly if string (Gemini/test mocks), else tool_result_str
+        raw_result = ctx.tool_result
+        result_str = raw_result if isinstance(raw_result, str) else ctx.tool_result_str
+        return self.update_task(task_id, ctx.tool_input, result_str)
 
     def handle_bulk_todos(self, ctx: EventContext) -> None:
         """Handle WriteTodos tool (Gemini Planner).
@@ -965,7 +975,7 @@ class TaskLifecycle:
         overflow = f" [... and {total - max_tasks} more: use /task-status to see all]" if total > max_tasks else ""
 
         injection = (
-            f"🛑 incomplete tasks: {task_list}{overflow}\n"
+            f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
             f"Actions: 1. You must complete or discard each task before stopping "
             f"2. Review: {_ACT_REVIEW} "
             f"3. Do the work, then: {_ACT_COMPLETE} "

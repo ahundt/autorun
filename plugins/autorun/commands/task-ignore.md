@@ -70,7 +70,8 @@ try:
 
     if success:
         print(f'✅ Task #{task_id} marked as ignored')
-        print(f'   Subject: {task[\"subject\"]}')
+        subj = task.get('subject', '')
+        print(f'   Subject: {subj}')
         print(f'   Previous status: {old_status}')
         print(f'   Reason: {reason}')
         print()

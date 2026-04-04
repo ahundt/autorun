@@ -209,3 +209,143 @@ class TestFix6PlanApprovalInjection:
         assert isinstance(result, str), \
             "get_plan_approval_injection should return a string, not a dict"
         assert "Test task" in result
+
+
+# --- Regression: handle_task_create/update with string tool_result (MagicMock fix) ---
+
+class TestHandleTaskCreateStringResult:
+    """Regression: handle_task_create and handle_task_update must work when
+    ctx.tool_result is a plain string (Gemini CLI, test mocks).
+
+    Root cause: code used ctx.tool_result_str (JSON-serialized) for regex fallback
+    and create_task/update_task calls. When ctx is a MagicMock, tool_result_str is
+    also a MagicMock which can't be JSON-serialized or regex-matched.
+
+    Fix: check isinstance(raw_result, str) and use it directly.
+    """
+
+    def test_create_task_with_string_result(self, isolated_config, isolated_session_manager):
+        """handle_task_create extracts ID and creates task from string result."""
+        session_id = f"test-str-create-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+
+        ctx = MagicMock()
+        ctx.tool_result = "Task #42 created successfully"
+        ctx.tool_input = {"subject": "Test task", "description": "desc"}
+        ctx.plan_active = False
+
+        manager.handle_task_create(ctx)
+
+        assert "42" in manager.tasks, "Task ID should be extracted from string result"
+        assert manager.tasks["42"]["subject"] == "Test task"
+
+    def test_create_task_stores_string_in_tool_outputs(self, isolated_config, isolated_session_manager):
+        """create_task stores the string result in tool_outputs (not MagicMock)."""
+        session_id = f"test-str-outputs-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+
+        ctx = MagicMock()
+        ctx.tool_result = "Task #7 created successfully"
+        ctx.tool_input = {"subject": "String result task", "description": ""}
+        ctx.plan_active = False
+
+        manager.handle_task_create(ctx)
+
+        task = manager.tasks["7"]
+        assert isinstance(task["tool_outputs"][0], str), \
+            "tool_outputs should contain a string, not a MagicMock"
+        assert "Task #7" in task["tool_outputs"][0]
+
+    def test_update_task_with_string_result(self, isolated_config, isolated_session_manager):
+        """handle_task_update works with string ctx.tool_result."""
+        session_id = f"test-str-update-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+
+        # Create task first
+        manager.create_task("1", {"subject": "To update"}, "Created")
+
+        ctx = MagicMock()
+        ctx.tool_result = "Task #1 updated successfully"
+        ctx.tool_input = {"taskId": "1", "status": "in_progress"}
+
+        result = manager.handle_task_update(ctx)
+        assert result is None  # Normal update returns None
+        assert manager.tasks["1"]["status"] == "in_progress"
+
+
+# --- Regression: validate_hook_response keeps permissionDecision in Gemini HSO ---
+
+class TestGeminiHSOPermissionDecision:
+    """Regression: Gemini BeforeTool HSO must include permissionDecision and
+    permissionDecisionReason for portable test assertions.
+
+    Root cause: validate_hook_response stripped these from Gemini PreToolUse HSO,
+    keeping only hookEventName and tool_input. Tests checking
+    hookSpecificOutput.permissionDecision got 'allow' (default) instead of 'deny'.
+    """
+
+    def test_gemini_pretooluse_deny_has_permission_decision(self):
+        """Gemini PreToolUse deny response includes permissionDecision in HSO."""
+        from autorun.core import validate_hook_response
+        response = {
+            "decision": "deny",
+            "reason": "blocked",
+            "continue": True,
+            "stopReason": "",
+            "suppressOutput": False,
+            "systemMessage": "blocked",
+            "hookSpecificOutput": {
+                "hookEventName": "BeforeTool",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Use Read tool instead",
+            },
+        }
+        filtered = validate_hook_response("PreToolUse", response, cli_type="gemini")
+        hso = filtered.get("hookSpecificOutput", {})
+        assert hso.get("permissionDecision") == "deny", \
+            "Gemini BeforeTool HSO must keep permissionDecision for portable assertions"
+        assert "Read tool" in hso.get("permissionDecisionReason", ""), \
+            "Gemini BeforeTool HSO must keep permissionDecisionReason"
+
+    def test_gemini_pretooluse_allow_has_permission_decision(self):
+        """Gemini PreToolUse allow response includes permissionDecision in HSO."""
+        from autorun.core import validate_hook_response
+        response = {
+            "decision": "allow",
+            "reason": "",
+            "continue": True,
+            "stopReason": "",
+            "suppressOutput": False,
+            "systemMessage": "",
+            "hookSpecificOutput": {
+                "hookEventName": "BeforeTool",
+                "permissionDecision": "allow",
+                "permissionDecisionReason": "",
+            },
+        }
+        filtered = validate_hook_response("PreToolUse", response, cli_type="gemini")
+        hso = filtered.get("hookSpecificOutput", {})
+        assert hso.get("permissionDecision") == "allow"
+
+
+# --- Regression: task staleness message includes description parameter ---
+
+class TestTaskStalenessMessageSchema:
+    """Regression: task staleness messages must include 'description' parameter
+    in TaskCreate examples to match actual tool schema.
+
+    Root cause: messages showed TaskCreate(subject="...") without description,
+    causing AI to call TaskCreate without required 'description' parameter.
+    """
+
+    def test_staleness_message_includes_description(self):
+        """Main staleness message TaskCreate example includes description."""
+        msg = CONFIG["task_staleness_message"]
+        assert "description" in msg, \
+            "task_staleness_message must include 'description' in TaskCreate example"
+
+    def test_staleness_message_2nd_includes_description(self):
+        """Second staleness message TaskCreate example includes description."""
+        msg = CONFIG["task_staleness_message_2nd"]
+        assert "description" in msg, \
+            "task_staleness_message_2nd must include 'description' in TaskCreate example"

@@ -619,7 +619,8 @@ class TestRespondToHuman:
         response = ctx.respond("allow", "Plan exported", to_human=True, to_ai=False)
         assert response["systemMessage"] == "Plan exported"
         assert "hookSpecificOutput" not in response
-        assert response["decision"] == "approve"  # PATHWAY 2 uses "approve" for both CLIs
+        # Gemini PostToolUse (AfterTool) is a lifecycle event — decision/reason stripped
+        assert "decision" not in response, "Gemini lifecycle events must not have decision"
         assert response.get("reason", "") == ""
 
     # =========================================================================

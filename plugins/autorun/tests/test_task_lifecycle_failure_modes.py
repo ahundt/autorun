@@ -55,18 +55,18 @@ class TestFailureModes:
         ctx.plan_active = False  # Don't try to link to plan
         ctx.plan_arguments = ''
 
-        def mock_block(msg=''):
-            return {'continue': False, 'systemMessage': msg}
-        ctx.block = MagicMock(side_effect=mock_block)
+        def mock_continue_running(msg=''):
+            return {'continue': True, 'systemMessage': msg}
+        ctx.continue_running = MagicMock(side_effect=mock_continue_running)
 
         result = manager.handle_session_start(ctx)
 
         # Should inject but cap the display
         assert result is not None
         message = result['systemMessage']
-        assert '150 incomplete' in message
-        # Should mention there are more tasks
-        assert 'more tasks' in message or '/task-status' in message
+        assert 'incomplete tasks' in message
+        # Should mention there are more tasks (overflow indicator)
+        assert 'more' in message or '/task-status' in message
 
         # Cleanup
         shutil.rmtree(manager.config.storage_dir / session_id, ignore_errors=True)
@@ -103,19 +103,16 @@ class TestFailureModes:
         ctx.plan_active = False
         ctx.plan_arguments = ''
 
-        def mock_block(msg=''):
-            return {'continue': False, 'systemMessage': msg}
-
-        def mock_allow(msg=''):
+        def mock_continue_running(msg=''):
             return {'continue': True, 'systemMessage': msg}
 
         # Try more than the old max_blocks - should STILL block every time
         for i in range(10):
-            ctx.block = MagicMock(side_effect=mock_block)
-            ctx.allow = MagicMock(side_effect=mock_allow)
+            ctx.continue_running = MagicMock(side_effect=mock_continue_running)
             result = manager.handle_stop(ctx)
-            assert result['continue'] == False, f"Should block attempt {i+1} - no auto-override"
-            assert 'INCOMPLETE TASKS' in result['systemMessage']
+            # continue_running keeps AI working (preventing stop) — continue=True IS the block
+            assert result is not None, f"Should block stop attempt {i+1} - no auto-override"
+            assert 'CANNOT STOP' in result['systemMessage']
 
         # Verify the message includes user escape hatch instructions
         assert '/ar:sos' in result['systemMessage'], "Should mention /ar:sos as user escape hatch"

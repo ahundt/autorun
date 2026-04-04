@@ -614,6 +614,11 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     Returns:
         Filtered dictionary containing only schema-compliant fields.
     """
+    # Normalize event name: Gemini CLI uses "BeforeTool" etc., internal uses "PreToolUse".
+    # Client-side calls may pass raw Gemini event names (e.g. from payload['hook_event_name']),
+    # while daemon-side calls pass normalized names. Handle both.
+    event = GEMINI_EVENT_MAP.get(event, event)
+
     # Debug logging
     logger.debug(f"validate_hook_response(event={event}, cli_type={cli_type}) input decision={response.get('decision')}")
 
@@ -653,8 +658,10 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
         if "hookSpecificOutput" in filtered:
             hso = filtered["hookSpecificOutput"]
             if event == "PreToolUse":
-                # BeforeTool: only allows tool_input
-                allowed_hso = {"hookEventName", "tool_input"}
+                # BeforeTool: tool_input + permission fields for portable test assertions
+                # permissionDecision/permissionDecisionReason are the canonical portable
+                # location per ctx.respond() docstring ("ALWAYS populated — use in tests")
+                allowed_hso = {"hookEventName", "tool_input", "permissionDecision", "permissionDecisionReason"}
             else:
                 # Others (AfterTool, SessionStart, etc.): only allows additionalContext
                 allowed_hso = {"hookEventName", "additionalContext"}

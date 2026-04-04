@@ -1242,7 +1242,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
             "Call one of these Task tools: "
             "1. {task_list} -- review current tasks "
             "2. {task_update}({task_id_param}=N, status=\"in_progress\"|\"completed\") -- update status "
-            "3. {task_create}({task_title}=\"...\") -- add newly discovered work "
+            "3. {task_create}({task_title}=\"...\", description=\"...\") -- add newly discovered work "
             "4. {task_update}({task_id_param}=N, addBlockedBy=[M]) -- update dependencies if order changed."
         )
 

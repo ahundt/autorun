@@ -147,7 +147,7 @@ class TestPlanAcceptanceDualNotification:
 
         ai_msgs = [msg for msg, ch in ctx._chain_notifications if ch in ("ai", "both")]
         ai_context = "\n".join(ai_msgs)
-        assert "Task Scaffolding Required" in ai_context, \
+        assert "TDD SCAFFOLDING REQUIRED" in ai_context, \
             f"TDD scaffolding message should be in AI notifications, got: {ai_context[:200]}"
 
         human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]

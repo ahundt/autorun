@@ -351,7 +351,7 @@ CONFIG = {
         "Your next action must be one of these Task tools: "
         "1. {{task_list}}: review current tasks and their status "
         "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"|\"completed\"): update status "
-        "3. {{task_create}}({{task_title}}=\"[step]: [action]\"): one per specific newly discovered step "
+        "3. {{task_create}}({{task_title}}=\"...\", description=\"...\"): one per specific newly discovered step "
         "4. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): update dependencies if order changed. "
         "Do not call any tool except these until you have updated your task list. "
         "Your next non-Task tool call will be blocked. Disable: /ar:tasks off"
@@ -361,7 +361,7 @@ CONFIG = {
         "Your next action must be one of these Task tools: "
         "1. {{task_list}}: review current tasks "
         "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"|\"completed\"): update status "
-        "3. {{task_create}}({{task_title}}=\"[step]: [action]\"): one per specific newly discovered step. "
+        "3. {{task_create}}({{task_title}}=\"...\", description=\"...\"): one per specific newly discovered step. "
         "Do not call any other tool. Your next non-Task tool call will be blocked. "
         "Disable: /ar:tasks off"
     ),

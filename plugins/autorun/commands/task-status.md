@@ -56,7 +56,9 @@ try:
             icon = {'in_progress': '🔄', 'pending': '⏸️'}.get(status, '❓')
             blockers = task.get('blockedBy', [])
             blocker_str = f' (⚠️ blocked by {blockers})' if blockers else ' (✅ ready)'
-            print(f'  {i}. Task #{task[\"id\"]}: {task[\"subject\"]} ({icon} {status}){blocker_str}')
+            tid = task.get('id', '?')
+            subj = task.get('subject', '')
+            print(f'  {i}. Task #{tid}: {subj} ({icon} {status}){blocker_str}')
     else:
         print('\\n✅ All tasks completed!')
 
@@ -70,7 +72,9 @@ try:
                 task = tasks.get(tid)
                 if task:
                     icon = {'completed': '✅', 'deleted': '🗑️', 'in_progress': '🔄', 'pending': '⏸️'}.get(task['status'], '❓')
-                    print(f'  {icon} Task #{tid}: {task[\"subject\"]} ({task[\"status\"]})')
+                    subj = task.get('subject', '')
+                    st = task.get('status', '?')
+                    print(f'  {icon} Task #{tid}: {subj} ({st})')
 
     # Show storage info
     print('\\n## CLI Commands')

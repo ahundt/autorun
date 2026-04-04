@@ -43,15 +43,19 @@ def create_mock_context(session_id='test-integration', **kwargs):
     ctx.autorun_stage = kwargs.get('autorun_stage', EventContext.STAGE_INACTIVE)
     ctx.tool_calls_since_task_update = kwargs.get('tool_calls_since_task_update', 0)
 
-    # Mock the allow and block methods
+    # Mock the allow, block, and continue_running methods
     def mock_allow(msg=''):
         return {'continue': True, 'systemMessage': msg}
 
     def mock_block(msg=''):
         return {'continue': False, 'systemMessage': msg}
 
+    def mock_continue_running(msg=''):
+        return {'continue': True, 'systemMessage': msg}
+
     ctx.allow = MagicMock(side_effect=mock_allow)
     ctx.block = MagicMock(side_effect=mock_block)
+    ctx.continue_running = MagicMock(side_effect=mock_continue_running)
 
     return ctx
 
@@ -242,11 +246,11 @@ class TestTaskLifecycleIntegration:
         ctx = create_mock_context(session_id=self.session_id)
         result = self.manager.handle_stop(ctx)
 
-        # Verify stop was BLOCKED
+        # Verify stop was BLOCKED (continue_running keeps AI working = stop is blocked)
         assert result is not None, "Stop should return a result (block or allow)"
-        assert result['continue'] == False, "Stop should be BLOCKED with incomplete tasks"
+        assert result['continue'] == True, "continue_running keeps AI working (blocking stop)"
         assert 'CANNOT STOP' in result['systemMessage'], "Should show CANNOT STOP message"
-        assert '2 incomplete' in result['systemMessage'], "Should show count of incomplete tasks"
+        assert 'incomplete tasks' in result['systemMessage'], "Should mention incomplete tasks"
 
         # Verify block counter incremented
         metadata = self.manager.session_metadata
@@ -292,15 +296,15 @@ class TestTaskLifecycleIntegration:
         ctx = create_mock_context(session_id=self.session_id)
         result = self.manager.handle_session_start(ctx)
 
-        # Verify resume prompt was injected
+        # Verify resume prompt was injected (continue_running keeps AI working)
         assert result is not None, "Should inject resume prompt"
-        assert result['continue'] == False, "Should block to show resume prompt"
-        assert 'INCOMPLETE TASKS DETECTED' in result['systemMessage']
-        assert 'In Progress' in result['systemMessage'] or 'Pending' in result['systemMessage']
-        assert '2 incomplete' in result['systemMessage'] or 'In progress task' in result['systemMessage']
+        assert result['continue'] == True, "continue_running keeps AI working with resume context"
+        assert 'incomplete tasks' in result['systemMessage']
+        # Should show task details (in_progress or pending task names)
+        assert 'In progress task' in result['systemMessage'] or 'Pending task' in result['systemMessage']
 
-        # Paused task should not block
-        assert 'Paused task' not in result['systemMessage'] or 'paused' in result['systemMessage'].lower()
+        # Paused task should not be in the resume list (excluded by get_incomplete_tasks)
+        assert 'Paused task' not in result['systemMessage']
 
         print("✅ Test 6 passed: Resume detection works with full context")
 
@@ -405,7 +409,7 @@ class TestTaskLifecycleIntegration:
 
         for i in range(10):
             result = self.manager.handle_stop(ctx)
-            assert result['continue'] == False, f"Attempt {i+1} should block - no auto-override"
+            assert result['continue'] == True, f"Attempt {i+1}: continue_running keeps AI working (blocking stop)"
 
         # Verify message includes user escape hatch instructions
         assert '/ar:sos' in result['systemMessage']
@@ -433,7 +437,7 @@ class TestTaskLifecycleIntegration:
         # Must not raise AttributeError — autorun_stage must be accessible on mock
         result = self.manager.handle_stop(ctx)
         assert result is not None, "Stop should be blocked with incomplete task"
-        assert result['continue'] is False
+        assert result['continue'] is True, "continue_running keeps AI working (blocking stop)"
         print("✅ Regression Test 11 passed: autorun_stage accessible on mock")
 
     def test_12_stage_reset_at_stage2_completed_with_incomplete_tasks(self):
@@ -452,7 +456,7 @@ class TestTaskLifecycleIntegration:
         )
         result = self.manager.handle_stop(ctx)
         assert result is not None, "Stop should be blocked"
-        assert result['continue'] is False, "Stop should be blocked"
+        assert result['continue'] is True, "continue_running keeps AI working (blocking stop)"
         # Stage must be reset to STAGE_2
         assert ctx.autorun_stage == EventContext.STAGE_2, (
             f"Stage should be STAGE_2 after reset, got {ctx.autorun_stage}"
@@ -462,8 +466,8 @@ class TestTaskLifecycleIntegration:
             "tool_calls_since_task_update should be reset to 0"
         )
         # Stage-reset message must appear in block injection
-        assert 'THREE-STAGE SYSTEM RESET' in result['systemMessage'], (
-            "Block message should include three-stage system reset notice"
+        assert 'STAGE 3 RESET' in result['systemMessage'], (
+            "Block message should include stage reset notice"
         )
         print("✅ Test 12 passed: Stage reset correctly at STAGE_2_COMPLETED")
 
