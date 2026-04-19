@@ -398,8 +398,12 @@ class TestPredicateFunctions:
         )
 
     def test_predicate_returns_true_blocks(self):
-        """When _has_unstaged_changes predicate returns True, git checkout . is denied."""
-        with patch.dict(integ._WHEN_PREDICATES, {"_has_unstaged_changes": lambda ctx: True}):
+        """When the repo-diff predicate returns True, git checkout . is denied."""
+        # v4: config.py now uses `_repo_differs_from_head`; legacy name kept as alias.
+        with patch.dict(integ._WHEN_PREDICATES, {
+            "_repo_differs_from_head": lambda ctx: True,
+            "_has_unstaged_changes": lambda ctx: True,  # legacy alias
+        }):
             result = plugins.check_blocked_commands(self._ctx("git checkout ."))
             assert result is not None
             perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
@@ -408,8 +412,10 @@ class TestPredicateFunctions:
     def test_predicate_returns_false_allows(self):
         """When ALL relevant predicates return False, git checkout . is not denied."""
         with patch.dict(integ._WHEN_PREDICATES, {
-            "_has_unstaged_changes": lambda ctx: False,
-            "_file_has_unstaged_changes": lambda ctx: False,
+            "_repo_differs_from_head": lambda ctx: False,
+            "_has_unstaged_changes": lambda ctx: False,  # legacy alias
+            "_file_differs_from_ref": lambda ctx: False,
+            "_file_has_unstaged_changes": lambda ctx: False,  # legacy alias
             "_checkout_targets_file_with_changes": lambda ctx: False,
         }):
             result = plugins.check_blocked_commands(self._ctx("git checkout ."))
@@ -637,14 +643,14 @@ class TestGitCommandTargeting:
 
     @pytest.fixture(autouse=True)
     def mock_git_has_unstaged_changes(self, monkeypatch):
-        """Simulate git repo with unstaged changes so 'when: _has_unstaged_changes' predicates fire.
+        """Simulate git repo with changes so destructive-git predicates fire.
 
-        git checkout . and git reset --hard have 'when: _has_unstaged_changes' — they only
-        block when there are actual unstaged changes to lose. In CI (clean checkout) and in
-        a clean working directory, git diff --quiet returns 0, making the predicate False
-        and causing the tests to fail. This fixture makes the predicate return True so the
-        tests exercise the blocking logic as intended.
+        v4: config.py rules `git checkout .` and `git reset --hard` now use
+        `_repo_differs_from_head` (ref-aware, catches staged-only changes).
+        Legacy `_has_unstaged_changes` is kept as a backward-compat alias.
+        We patch BOTH so tests work regardless of which name is consulted.
         """
+        monkeypatch.setitem(integ._WHEN_PREDICATES, "_repo_differs_from_head", lambda ctx: True)
         monkeypatch.setitem(integ._WHEN_PREDICATES, "_has_unstaged_changes", lambda ctx: True)
 
     def _ctx(self, command: str) -> EventContext:

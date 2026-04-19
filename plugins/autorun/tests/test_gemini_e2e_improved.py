@@ -894,7 +894,11 @@ class TestGeminiHighQualityMocks:
             tool_input=normalized["tool_input"],
             tool_result=normalized["tool_result"],
             session_transcript=normalized["session_transcript"],
-            cli_type=cli_type
+            cli_type=cli_type,
+            # Forward user cwd so ref-aware predicates (git destructive ops)
+            # can diff the correct repo. In production, client.py:210-211
+            # injects _cwd into the payload before dispatch.
+            cwd=payload.get("_cwd"),
         )
         return app.dispatch(ctx)
 
@@ -939,11 +943,17 @@ class TestGeminiHighQualityMocks:
             os.chdir(tmpdir)
             invalidate_caches()
             try:
+                # v4: _repo_differs_from_head predicate requires explicit ctx.cwd
+                # from payload `_cwd` (client.py:209-211 injects this in
+                # production). Pass it here so the predicate checks THIS repo,
+                # not the process cwd (which could be a different repo in
+                # daemon-based deployments).
                 response = self._simulate_hook({
                     "hook_event_name": "BeforeTool",
                     "tool_name": "bash_command",
                     "tool_input": {"command": "git reset --hard HEAD~5"},
                     "session_id": "mock-2",
+                    "_cwd": tmpdir,
                 })
             finally:
                 os.chdir(original_cwd)

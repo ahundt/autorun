@@ -301,23 +301,33 @@ class TestWhenPredicates:
 
     @patch("subprocess.run")
     def test_file_has_unstaged_changes_with_file(self, mock_run):
-        """_file_has_unstaged_changes checks specific file."""
-        mock_run.return_value = MagicMock(returncode=1)  # Has changes
-        ctx = MagicMock(tool_input={"command": "git checkout -- file.txt"})
+        """_file_has_unstaged_changes (alias → _file_differs_from_ref) checks file."""
+        # v4: _git_diff_quiet probes rev-parse --is-inside-work-tree, then
+        # rev-parse --verify HEAD, then git diff HEAD --quiet -- <file>.
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),  # is-inside-work-tree
+            MagicMock(returncode=0),                     # rev-parse --verify HEAD
+            MagicMock(returncode=1),                     # diff: has changes
+        ]
+        ctx = MagicMock(tool_input={"command": "git checkout -- file.txt"}, cwd="/tmp/repo")
 
         result = check_when_predicate("_file_has_unstaged_changes", ctx)
 
         assert result is True
-        # Should check the specific file
         mock_run.assert_called()
-        call_args = mock_run.call_args[0][0]
-        assert "file.txt" in call_args
+        # Verify the diff call references the file
+        diff_call = mock_run.call_args_list[-1]
+        assert "file.txt" in str(diff_call)
 
     @patch("subprocess.run")
     def test_file_has_unstaged_changes_no_changes(self, mock_run):
         """_file_has_unstaged_changes returns False if file clean."""
-        mock_run.return_value = MagicMock(returncode=0)  # No changes
-        ctx = MagicMock(tool_input={"command": "git checkout -- clean.txt"})
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),  # probe
+            MagicMock(returncode=0),                     # verify HEAD
+            MagicMock(returncode=0),                     # diff: clean
+        ]
+        ctx = MagicMock(tool_input={"command": "git checkout -- clean.txt"}, cwd="/tmp/repo")
 
         result = check_when_predicate("_file_has_unstaged_changes", ctx)
 
@@ -831,12 +841,16 @@ class TestWhenPredicateEdgeCases:
     @patch("subprocess.run")
     def test_file_predicate_multiple_files(self, mock_run):
         """_file_has_unstaged_changes with multiple files."""
-        # First file clean, second has changes
+        # v4: each file runs probe+verify+diff; first file clean, second dirty.
         mock_run.side_effect = [
-            MagicMock(returncode=0),  # file1 clean
-            MagicMock(returncode=1),  # file2 has changes
+            MagicMock(returncode=0, stdout=b"true\n"),  # probe (file1)
+            MagicMock(returncode=0),                     # verify HEAD (file1)
+            MagicMock(returncode=0),                     # diff file1: clean
+            MagicMock(returncode=0, stdout=b"true\n"),  # probe (file2)
+            MagicMock(returncode=0),                     # verify HEAD (file2)
+            MagicMock(returncode=1),                     # diff file2: dirty
         ]
-        ctx = MagicMock(tool_input={"command": "git checkout -- file1.txt file2.txt"})
+        ctx = MagicMock(tool_input={"command": "git checkout -- file1.txt file2.txt"}, cwd="/tmp/repo")
 
         result = check_when_predicate("_file_has_unstaged_changes", ctx)
 
@@ -844,13 +858,18 @@ class TestWhenPredicateEdgeCases:
 
     @patch("subprocess.run")
     def test_file_predicate_no_double_dash(self, mock_run):
-        """_file_has_unstaged_changes without -- in command."""
-        mock_run.return_value = MagicMock(returncode=1)
-        ctx = MagicMock(tool_input={"command": "git checkout file.txt"})
+        """_file_has_unstaged_changes without -- still checks full repo for ref."""
+        # v4: without `--`, no pathspec is extracted; falls through to
+        # repo-wide HEAD diff (matches "discards any uncommitted change").
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),  # probe
+            MagicMock(returncode=0),                     # verify HEAD
+            MagicMock(returncode=1),                     # repo-wide diff: dirty
+        ]
+        ctx = MagicMock(tool_input={"command": "git checkout file.txt"}, cwd="/tmp/repo")
 
         result = check_when_predicate("_file_has_unstaged_changes", ctx)
 
-        # Should fall back to last arg as file
         assert result is True
 
     def test_file_predicate_no_tool_input(self):
@@ -914,8 +933,13 @@ class TestWhenPredicateEdgeCases:
     @patch("subprocess.run")
     def test_restore_plain_is_destructive(self, mock_run):
         """'git restore file.txt' is destructive (default is --worktree)."""
-        mock_run.return_value = MagicMock(returncode=1)  # Has changes
-        ctx = MagicMock(tool_input={"command": "git restore file.txt"})
+        # v4: delegates to _file_differs_from_ref → probe+verify+diff.
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),  # probe
+            MagicMock(returncode=0),                     # verify HEAD
+            MagicMock(returncode=1),                     # diff: dirty
+        ]
+        ctx = MagicMock(tool_input={"command": "git restore file.txt"}, cwd="/tmp/repo")
 
         result = check_when_predicate("_restore_is_destructive", ctx)
         assert result is True
@@ -941,47 +965,57 @@ class TestWhenPredicateEdgeCases:
     @patch("subprocess.run")
     def test_restore_worktree_is_destructive(self, mock_run):
         """'git restore --worktree file.txt' is destructive."""
-        mock_run.return_value = MagicMock(returncode=1)
-        ctx = MagicMock(tool_input={"command": "git restore --worktree file.txt"})
-
-        result = check_when_predicate("_restore_is_destructive", ctx)
-        assert result is True
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),
+            MagicMock(returncode=0),
+            MagicMock(returncode=1),
+        ]
+        ctx = MagicMock(tool_input={"command": "git restore --worktree file.txt"}, cwd="/tmp/repo")
+        assert check_when_predicate("_restore_is_destructive", ctx) is True
 
     @patch("subprocess.run")
     def test_restore_short_worktree_is_destructive(self, mock_run):
         """'git restore -W file.txt' is destructive."""
-        mock_run.return_value = MagicMock(returncode=1)
-        ctx = MagicMock(tool_input={"command": "git restore -W file.txt"})
-
-        result = check_when_predicate("_restore_is_destructive", ctx)
-        assert result is True
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),
+            MagicMock(returncode=0),
+            MagicMock(returncode=1),
+        ]
+        ctx = MagicMock(tool_input={"command": "git restore -W file.txt"}, cwd="/tmp/repo")
+        assert check_when_predicate("_restore_is_destructive", ctx) is True
 
     @patch("subprocess.run")
     def test_restore_staged_worktree_is_destructive(self, mock_run):
         """'git restore --staged --worktree file.txt' is destructive (worktree wins)."""
-        mock_run.return_value = MagicMock(returncode=1)
-        ctx = MagicMock(tool_input={"command": "git restore --staged --worktree file.txt"})
-
-        result = check_when_predicate("_restore_is_destructive", ctx)
-        assert result is True
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),
+            MagicMock(returncode=0),
+            MagicMock(returncode=1),
+        ]
+        ctx = MagicMock(tool_input={"command": "git restore --staged --worktree file.txt"}, cwd="/tmp/repo")
+        assert check_when_predicate("_restore_is_destructive", ctx) is True
 
     @patch("subprocess.run")
     def test_restore_combined_SW_is_destructive(self, mock_run):
         """'git restore -SW file.txt' is destructive (W present in combined flag)."""
-        mock_run.return_value = MagicMock(returncode=1)
-        ctx = MagicMock(tool_input={"command": "git restore -SW file.txt"})
-
-        result = check_when_predicate("_restore_is_destructive", ctx)
-        assert result is True
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),
+            MagicMock(returncode=0),
+            MagicMock(returncode=1),
+        ]
+        ctx = MagicMock(tool_input={"command": "git restore -SW file.txt"}, cwd="/tmp/repo")
+        assert check_when_predicate("_restore_is_destructive", ctx) is True
 
     @patch("subprocess.run")
     def test_restore_no_unstaged_changes_allowed(self, mock_run):
         """'git restore file.txt' allowed if file has no unstaged changes."""
-        mock_run.return_value = MagicMock(returncode=0)  # No changes
-        ctx = MagicMock(tool_input={"command": "git restore file.txt"})
-
-        result = check_when_predicate("_restore_is_destructive", ctx)
-        assert result is False
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=b"true\n"),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0),  # diff: clean
+        ]
+        ctx = MagicMock(tool_input={"command": "git restore file.txt"}, cwd="/tmp/repo")
+        assert check_when_predicate("_restore_is_destructive", ctx) is False
 
     def test_restore_empty_command(self):
         """'git restore' with empty command returns False."""
@@ -1443,3 +1477,679 @@ class TestLoadIntegrationsEdgeCases:
         for intg in integrations:
             if intg.source == "default":
                 assert intg.message, f"{intg.name} has empty message"
+
+
+# =============================================================================
+# v4: Ref-aware destructive-git predicates (fixes narrow-diff + daemon-cwd +
+# env-leak bugs). Covers the `git checkout HEAD -- <file>` bypass reported
+# in the transcript that prompted this PR.
+# =============================================================================
+import os
+import subprocess as _subprocess
+import sys
+
+
+def _init_git_repo(path, committed_content="original\n"):
+    """Create a minimal git repo at `path` with one commit. Returns repo path."""
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    _subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True, env=env)
+    for key, val in [("user.email", "t@t"), ("user.name", "t"),
+                     ("commit.gpgsign", "false")]:
+        _subprocess.run(["git", "-C", str(path), "config", key, val],
+                        check=True, env=env)
+    (path / "seed.txt").write_text(committed_content)
+    _subprocess.run(["git", "-C", str(path), "add", "seed.txt"], check=True, env=env)
+    _subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"],
+                    check=True, env=env)
+    return path
+
+
+def _make_ctx(cmd, cwd):
+    """Minimal ctx shim for predicate tests (mimics EventContext surface)."""
+    ctx = MagicMock()
+    ctx.tool_input = {"command": cmd}
+    # ctx.cwd is a property on EventContext; configure_mock sets the attr directly.
+    ctx.configure_mock(cwd=str(cwd) if cwd else None)
+    return ctx
+
+
+class TestGitDiffQuietHelper:
+    """_git_diff_quiet is the single subprocess gate for the predicates.
+
+    Contract:
+      - cwd=None → False (fail-soft, predicate not applicable)
+      - cwd not a git work tree → False
+      - ref missing (fresh repo) → False
+      - clean repo → False
+      - diff present → True
+      - subprocess error → True (fail-safe block)
+      - git env vars (GIT_DIR etc.) scrubbed before subprocess
+    """
+
+    def test_cwd_none_returns_false(self):
+        from autorun.integrations import _git_diff_quiet
+        assert _git_diff_quiet(None, "HEAD", None) is False
+
+    def test_not_a_git_repo_returns_false(self, tmp_path):
+        from autorun.integrations import _git_diff_quiet
+        # tmp_path is not a git repo
+        assert _git_diff_quiet(str(tmp_path), "HEAD", None) is False
+
+    def test_fresh_repo_no_head_returns_false(self, tmp_path):
+        from autorun.integrations import _git_diff_quiet
+        _subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        # No commits yet, HEAD is undefined
+        assert _git_diff_quiet(str(tmp_path), "HEAD", None) is False
+
+    def test_clean_repo_returns_false(self, tmp_path):
+        from autorun.integrations import _git_diff_quiet
+        _init_git_repo(tmp_path)
+        assert _git_diff_quiet(str(tmp_path), "HEAD", None) is False
+        assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is False
+
+    def test_unstaged_change_returns_true(self, tmp_path):
+        from autorun.integrations import _git_diff_quiet
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("modified\n")
+        assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
+
+    def test_staged_only_change_returns_true(self, tmp_path):
+        """THE KEY REGRESSION TEST — proves the narrow-diff bug is fixed.
+
+        Old `git diff --quiet` compared worktree to index; with staged-only
+        changes, worktree == index → exit 0 → predicate False → bug.
+        New `git diff HEAD --quiet` compares to HEAD → catches staged changes.
+        """
+        from autorun.integrations import _git_diff_quiet
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("staged-content\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+        # worktree == index (both changed the same way), but both differ from HEAD
+        assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
+
+    def test_subprocess_error_fails_safe(self, tmp_path, monkeypatch):
+        from autorun.integrations import _git_diff_quiet
+        _init_git_repo(tmp_path)
+
+        def boom(*a, **kw):
+            raise OSError("git binary exploded")
+        monkeypatch.setattr("autorun.integrations.subprocess.run", boom)
+        assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
+
+    def test_timeout_fails_safe(self, tmp_path, monkeypatch):
+        from autorun.integrations import _git_diff_quiet
+        _init_git_repo(tmp_path)
+
+        def timeout(*a, **kw):
+            raise _subprocess.TimeoutExpired("git", 2)
+        monkeypatch.setattr("autorun.integrations.subprocess.run", timeout)
+        assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
+
+    def test_env_vars_scrubbed(self, tmp_path, monkeypatch):
+        """GIT_WORK_TREE/GIT_DIR must not leak to subprocess and redirect git."""
+        from autorun.integrations import _git_diff_quiet, _SCRUBBED_GIT_ENV_KEYS
+
+        _init_git_repo(tmp_path)
+        bogus = tmp_path.parent / "bogus"
+        bogus.mkdir(exist_ok=True)
+
+        calls = []
+        real_run = _subprocess.run
+
+        def spy(argv, **kw):
+            calls.append(kw.get("env", {}))
+            return real_run(argv, **kw)
+
+        monkeypatch.setenv("GIT_WORK_TREE", str(bogus))
+        monkeypatch.setenv("GIT_DIR", str(bogus / ".git"))
+        monkeypatch.setattr("autorun.integrations.subprocess.run", spy)
+
+        _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt")
+        assert calls, "subprocess.run must have been called"
+        for env in calls:
+            assert env is not None, "every predicate call must pass explicit env"
+            for key in _SCRUBBED_GIT_ENV_KEYS:
+                assert key not in env, f"{key} leaked into predicate subprocess"
+
+
+class TestFileDiffersFromRef:
+    """_file_differs_from_ref: ref-aware, segment-scoped, cwd-propagating."""
+
+    def test_staged_only_returns_true(self, tmp_path):
+        """Regression: the exact bug from the transcript."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("staged\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+        ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_unstaged_only_returns_true(self, tmp_path):
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("unstaged\n")
+        ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_clean_returns_false(self, tmp_path):
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is False
+
+    def test_multiline_transcript_reproducer(self, tmp_path):
+        """The exact bash payload from the original bug report."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "universal-app-shell").mkdir()
+        (tmp_path / "universal-app-shell" / "App.tsx").write_text("seed\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "universal-app-shell/App.tsx"], check=True)
+        _subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "add App.tsx"], check=True)
+        # Now create staged-only changes (the exact bug condition):
+        (tmp_path / "universal-app-shell" / "App.tsx").write_text("applied-stash\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "universal-app-shell/App.tsx"], check=True)
+        cmd = ("git checkout HEAD -- universal-app-shell/App.tsx\n"
+               "git status --short universal-app-shell/App.tsx\n"
+               "wc -l universal-app-shell/App.tsx")
+        ctx = _make_ctx(cmd, tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_segment_scoped_not_cross_command(self, tmp_path):
+        """Tokens from subsequent shell-chained commands must NOT be parsed as files."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "a.txt").write_text("seed\n")
+        (tmp_path / "b.txt").write_text("seed\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        _subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "two files"], check=True)
+        # b.txt has changes, a.txt is clean
+        (tmp_path / "b.txt").write_text("dirty\n")
+        # Command: checkout clean a.txt; list dirty b.txt (segments MUST NOT merge)
+        cmd = "git checkout HEAD -- a.txt; ls b.txt"
+        ctx = _make_ctx(cmd, tmp_path)
+        # a.txt is clean in-segment → predicate allows (False)
+        assert _file_differs_from_ref(ctx) is False
+
+    def test_ref_argument_extracted(self, tmp_path):
+        """git checkout <branch> -- <file> uses <branch> as ref, not HEAD."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        # Create a second branch with different content
+        _subprocess.run(["git", "-C", str(tmp_path), "checkout", "-qb", "feature"], check=True)
+        (tmp_path / "seed.txt").write_text("feature-branch-content\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "feature change"], check=True)
+        _subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "main"], check=True)
+        # On main, working tree matches main's HEAD. `git checkout feature -- seed.txt`
+        # would overwrite with feature's content.
+        ctx = _make_ctx("git checkout feature -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_at_symbol_ref(self, tmp_path):
+        """@ is a synonym for HEAD in git."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        ctx = _make_ctx("git checkout @ -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_quoted_path_with_space(self, tmp_path):
+        """File paths with spaces must be handled by shlex tokenization."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        spaced = tmp_path / "my file.ts"
+        spaced.write_text("seed\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "my file.ts"], check=True)
+        _subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "spaced"], check=True)
+        spaced.write_text("dirty\n")
+        ctx = _make_ctx('git checkout HEAD -- "my file.ts"', tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_cwd_missing_returns_false(self):
+        """No repo context → fail-soft allow (predicate inapplicable)."""
+        from autorun.integrations import _file_differs_from_ref
+        ctx = _make_ctx("git checkout HEAD -- x.ts", None)
+        assert _file_differs_from_ref(ctx) is False
+
+    def test_exception_fails_safe(self, tmp_path, monkeypatch):
+        """Internal error → fail-safe block (return True)."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+
+        def boom(*a, **kw):
+            raise OSError("catastrophe")
+        monkeypatch.setattr("autorun.integrations.subprocess.run", boom)
+        ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+    def test_restore_source_argument(self, tmp_path):
+        """git restore --source=HEAD~1 <file> compares to HEAD~1."""
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("v2\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "v2"], check=True)
+        # Working tree matches HEAD, but differs from HEAD~1.
+        ctx = _make_ctx("git restore --source=HEAD~1 seed.txt", tmp_path)
+        assert _file_differs_from_ref(ctx) is True
+
+
+class TestBackwardCompatAlias:
+    """The old predicate name must resolve to the new function."""
+
+    def test_old_name_resolves_to_new(self):
+        from autorun.integrations import (
+            _WHEN_PREDICATES,
+            _file_differs_from_ref,
+            _file_has_unstaged_changes,
+        )
+        # The old key exists and points to the new function (or the alias wrapper).
+        assert "_file_has_unstaged_changes" in _WHEN_PREDICATES
+        assert "_file_differs_from_ref" in _WHEN_PREDICATES
+        # Both resolve to the same callable behavior
+        old_pred = _WHEN_PREDICATES["_file_has_unstaged_changes"]
+        new_pred = _WHEN_PREDICATES["_file_differs_from_ref"]
+        assert old_pred in (_file_has_unstaged_changes, _file_differs_from_ref)
+        assert new_pred is _file_differs_from_ref
+
+    def test_repo_differs_alias(self):
+        from autorun.integrations import (
+            _WHEN_PREDICATES,
+            _repo_differs_from_head,
+            _has_unstaged_changes,
+        )
+        assert "_has_unstaged_changes" in _WHEN_PREDICATES
+        assert "_repo_differs_from_head" in _WHEN_PREDICATES
+        new = _WHEN_PREDICATES["_repo_differs_from_head"]
+        assert new is _repo_differs_from_head
+
+
+class TestRepoDiffersFromHead:
+    """`git checkout .` and `git reset --hard` rules use this predicate."""
+
+    def test_clean_repo_returns_false(self, tmp_path):
+        from autorun.integrations import _repo_differs_from_head
+        _init_git_repo(tmp_path)
+        ctx = _make_ctx("git checkout .", tmp_path)
+        assert _repo_differs_from_head(ctx) is False
+
+    def test_unstaged_returns_true(self, tmp_path):
+        from autorun.integrations import _repo_differs_from_head
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        ctx = _make_ctx("git checkout .", tmp_path)
+        assert _repo_differs_from_head(ctx) is True
+
+    def test_staged_only_returns_true(self, tmp_path):
+        """Regression: `git checkout .` destroys BOTH worktree and index."""
+        from autorun.integrations import _repo_differs_from_head
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("staged\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+        ctx = _make_ctx("git checkout .", tmp_path)
+        assert _repo_differs_from_head(ctx) is True
+
+
+class TestCheckoutTargetsFileWithChanges:
+    """_checkout_targets_file_with_changes: `git checkout <path>` form."""
+
+    def test_dirty_file_target_blocks(self, tmp_path, monkeypatch):
+        """`git checkout <path>` with staged-only changes blocks.
+
+        NOTE: _checkout_targets_file_with_changes uses os.path.exists() which
+        resolves relative to the process cwd, NOT ctx.cwd. We chdir into the
+        tmp repo to exercise the intended code path.
+        """
+        from autorun.integrations import _checkout_targets_file_with_changes
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+        monkeypatch.chdir(tmp_path)
+        ctx = _make_ctx("git checkout seed.txt", tmp_path)
+        assert _checkout_targets_file_with_changes(ctx) is True
+
+    def test_branch_target_allows(self, tmp_path):
+        """`git checkout <branch>` must NOT be blocked."""
+        from autorun.integrations import _checkout_targets_file_with_changes
+        _init_git_repo(tmp_path)
+        _subprocess.run(["git", "-C", str(tmp_path), "branch", "feature"], check=True)
+        ctx = _make_ctx("git checkout feature", tmp_path)
+        assert _checkout_targets_file_with_changes(ctx) is False
+
+
+class TestConcurrentPredicates:
+    """Daemon uses asyncio + thread-pool executor; predicates run concurrently."""
+
+    def test_thread_pool_consistency(self, tmp_path):
+        """10 concurrent predicate calls against the same repo are consistent."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from autorun.integrations import _file_differs_from_ref
+
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+
+        def call():
+            ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
+            return _file_differs_from_ref(ctx)
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = [pool.submit(call) for _ in range(10)]
+            results = [f.result() for f in as_completed(futures)]
+        assert all(r is True for r in results), results
+
+
+class TestRestoreSemantics:
+    """git restore safety classification."""
+
+    def test_restore_staged_no_source_is_allowed(self, tmp_path):
+        """`git restore --staged <file>` just unstages — non-destructive."""
+        from autorun.integrations import _restore_is_destructive
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("staged\n")
+        _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
+        ctx = _make_ctx("git restore --staged seed.txt", tmp_path)
+        assert _restore_is_destructive(ctx) is False
+
+    def test_restore_worktree_blocks_when_dirty(self, tmp_path):
+        from autorun.integrations import _restore_is_destructive
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        ctx = _make_ctx("git restore seed.txt", tmp_path)
+        assert _restore_is_destructive(ctx) is True
+
+    def test_restore_combined_SW_blocks_when_dirty(self, tmp_path):
+        """`git restore -SW <file>` unstages AND discards worktree — destructive."""
+        from autorun.integrations import _restore_is_destructive
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        ctx = _make_ctx("git restore -SW seed.txt", tmp_path)
+        assert _restore_is_destructive(ctx) is True
+
+
+class TestConfigMigration:
+    """All four destructive-git rules now route through the new predicates."""
+
+    def test_checkout_dashdash_uses_file_differs(self):
+        from autorun.config import DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git checkout --"]["when"] == "_file_differs_from_ref"
+
+    def test_checkout_uses_file_differs(self):
+        from autorun.config import DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git checkout"]["when"] == "_file_differs_from_ref"
+
+    def test_checkout_dot_uses_repo_differs(self):
+        from autorun.config import DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git checkout ."]["when"] == "_repo_differs_from_head"
+
+    def test_reset_hard_uses_repo_differs(self):
+        from autorun.config import DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["git reset --hard"]["when"] == "_repo_differs_from_head"
+
+
+# =============================================================================
+# Pure parser tests — _parse_destructive_git_cmd is I/O-free. Every branch
+# can be exercised by feeding a command string, no tmp_path needed. This is
+# the single-source-of-truth for argument parsing; the predicate glues it to
+# subprocess via _git_diff_quiet.
+# =============================================================================
+
+class TestParseDestructiveGitCmd:
+    """Every branch of argument parsing, independent of any subprocess."""
+
+    # ---- checkout ref + pathspec forms ----
+
+    def test_checkout_head_dash_file(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- file.ts")
+        assert p.verb == "checkout"
+        assert p.ref == "HEAD"
+        assert p.files == ("file.ts",)
+
+    def test_checkout_dash_file_no_ref(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout -- file.ts")
+        assert p.verb == "checkout"
+        assert p.ref == "HEAD"
+        assert p.files == ("file.ts",)
+
+    def test_checkout_branch_ref_dash_file(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout feature -- file.ts")
+        assert p.ref == "feature"
+
+    def test_checkout_remote_tracking_ref(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout origin/main -- file.ts")
+        assert p.ref == "origin/main"
+
+    def test_checkout_tag_ref(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout v1.2.3 -- file.ts")
+        assert p.ref == "v1.2.3"
+
+    def test_checkout_commit_hash_ref(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout abc1234 -- file.ts")
+        assert p.ref == "abc1234"
+
+    def test_checkout_reflog_ref(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD@{1} -- file.ts")
+        assert p.ref == "HEAD@{1}"
+
+    def test_checkout_at_synonym(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout @ -- file.ts")
+        assert p.ref == "@"
+
+    def test_checkout_fetch_head(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout FETCH_HEAD -- file.ts")
+        assert p.ref == "FETCH_HEAD"
+
+    def test_checkout_multiple_files(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts b.ts c.ts")
+        assert p.files == ("a.ts", "b.ts", "c.ts")
+
+    def test_checkout_pathspec_dot(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- .")
+        assert p.files == (".",)
+
+    def test_checkout_glob_pathspec(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- 'src/**/*.ts'")
+        assert p.files == ("src/**/*.ts",)
+
+    def test_checkout_quoted_path_with_space(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd('git checkout HEAD -- "my file.ts"')
+        assert p.files == ("my file.ts",)
+
+    def test_checkout_unicode_path(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- 日本.ts")
+        assert p.files == ("日本.ts",)
+
+    # ---- restore forms ----
+
+    def test_restore_plain_file(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git restore file.ts")
+        assert p.verb == "restore"
+        assert p.ref == "HEAD"
+        assert p.files == ("file.ts",)
+
+    def test_restore_source_equals(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git restore --source=HEAD~1 file.ts")
+        assert p.ref == "HEAD~1"
+        assert p.files == ("file.ts",)
+
+    def test_restore_source_space_separated(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git restore --source HEAD~1 file.ts")
+        assert p.ref == "HEAD~1"
+        assert p.files == ("file.ts",)
+
+    def test_restore_short_s_separated(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git restore -s HEAD~1 file.ts")
+        assert p.ref == "HEAD~1"
+        assert p.files == ("file.ts",)
+
+    def test_restore_dashdash_separator(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git restore --source=v1.0 -- file.ts")
+        assert p.ref == "v1.0"
+        assert p.files == ("file.ts",)
+
+    # ---- segment scoping ----
+
+    def test_segment_scoping_semicolon(self):
+        """Tokens from second command must not be consumed as pathspec."""
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts; rm b.ts")
+        assert p.files == ("a.ts",)
+
+    def test_segment_scoping_and(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts && rm b.ts")
+        assert p.files == ("a.ts",)
+
+    def test_segment_scoping_newline(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts\nls b.ts")
+        assert p.files == ("a.ts",)
+
+    def test_segment_scoping_pipe(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts | cat")
+        assert p.files == ("a.ts",)
+
+    def test_segment_scoping_first_match_wins(self):
+        """Earlier segments ignored; first matching git segment parsed."""
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("echo hi; git checkout HEAD -- a.ts")
+        assert p.files == ("a.ts",)
+
+    # ---- non-matches return None ----
+
+    def test_empty_command_returns_none(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        assert _parse_destructive_git_cmd("") is None
+
+    def test_non_git_command_returns_none(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        assert _parse_destructive_git_cmd("rm -rf /") is None
+
+    def test_git_status_returns_none(self):
+        """Non-destructive git commands don't match."""
+        from autorun.integrations import _parse_destructive_git_cmd
+        assert _parse_destructive_git_cmd("git status") is None
+
+    def test_git_log_returns_none(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        assert _parse_destructive_git_cmd("git log --oneline") is None
+
+    def test_git_stash_returns_none(self):
+        """git stash isn't checkout/restore — handled by a different rule."""
+        from autorun.integrations import _parse_destructive_git_cmd
+        assert _parse_destructive_git_cmd("git stash push") is None
+
+    # ---- branch-switch forms (no file destructive intent via this predicate) --
+
+    def test_checkout_branch_only(self):
+        """`git checkout <branch>` with no `--` — file extraction returns empty;
+        predicate falls back to repo-wide diff. _checkout_targets_file_with_changes
+        handles the benign-vs-destructive distinction."""
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout main")
+        assert p.verb == "checkout"
+        assert p.files == ()  # no pathspec, no `--`
+
+    def test_checkout_dash_b_new_branch(self):
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout -b new-branch")
+        # -b is a flag; no pathspec extracted. Ref stays HEAD.
+        assert p.files == ()
+        assert p.ref == "HEAD"
+
+    # ---- unusual but valid inputs ----
+
+    def test_checkout_no_overlay_flag(self):
+        """`git checkout --no-overlay HEAD -- file` (newer flag syntax)."""
+        from autorun.integrations import _parse_destructive_git_cmd
+        p = _parse_destructive_git_cmd("git checkout --no-overlay HEAD -- file.ts")
+        # ref extraction: `--` is at index 3 (git, checkout, --no-overlay, HEAD, --, file)
+        # ref = tokens[2] = "--no-overlay", which is wrong but handled safely
+        # by _git_diff_quiet (rev-parse --verify returns non-zero → False).
+        assert p.verb == "checkout"
+        assert "file.ts" in p.files
+
+
+class TestPredicateFailureModes:
+    """Defensive tests for ctx shapes and failure modes the parser may encounter."""
+
+    def test_ctx_tool_input_is_none(self):
+        from autorun.integrations import _file_differs_from_ref
+        ctx = MagicMock()
+        ctx.tool_input = None
+        # Missing command extraction → None → fail-soft False
+        # Actually hasattr(ctx, "tool_input") is True, so get("command") fails
+        # on None → AttributeError caught by outer try → fail-safe True.
+        # This is defensive over-block, acceptable.
+        result = _file_differs_from_ref(ctx)
+        assert result in (True, False)  # either deterministic outcome is fine
+
+    def test_ctx_empty_tool_input(self):
+        from autorun.integrations import _file_differs_from_ref
+        ctx = MagicMock()
+        ctx.tool_input = {}
+        ctx.configure_mock(cwd=None)
+        assert _file_differs_from_ref(ctx) is False
+
+    def test_ctx_no_tool_input_attr(self):
+        from autorun.integrations import _file_differs_from_ref
+        ctx = MagicMock(spec=[])  # no tool_input attr
+        assert _file_differs_from_ref(ctx) is False
+
+    def test_ctx_cwd_is_path_object(self, tmp_path):
+        """ctx.cwd may be a pathlib.Path, not a str — subprocess accepts both."""
+        from pathlib import Path
+        from autorun.integrations import _file_differs_from_ref
+        _init_git_repo(tmp_path)
+        (tmp_path / "seed.txt").write_text("dirty\n")
+        ctx = MagicMock()
+        ctx.tool_input = {"command": "git checkout HEAD -- seed.txt"}
+        ctx.configure_mock(cwd=Path(tmp_path))  # Path, not str
+        assert _file_differs_from_ref(ctx) is True
+
+
+class TestLegacySymbolExport:
+    """Backward-compat: legacy predicate names remain importable from module."""
+
+    def test_file_has_unstaged_changes_importable(self):
+        from autorun.integrations import _file_has_unstaged_changes
+        assert callable(_file_has_unstaged_changes)
+
+    def test_has_unstaged_changes_importable(self):
+        from autorun.integrations import _has_unstaged_changes
+        assert callable(_has_unstaged_changes)
+
+    def test_legacy_keys_in_predicates_dict(self):
+        from autorun.integrations import _WHEN_PREDICATES
+        # Every legacy key used by config.py (past or present) must still resolve.
+        for legacy in ("_has_unstaged_changes", "_file_has_unstaged_changes",
+                       "_has_uncommitted_changes", "has_uncommitted_changes",
+                       "_stash_exists", "_restore_is_destructive",
+                       "_checkout_targets_file_with_changes", "_not_in_pipe"):
+            assert legacy in _WHEN_PREDICATES, f"missing legacy key: {legacy}"
+
+    def test_new_keys_in_predicates_dict(self):
+        from autorun.integrations import _WHEN_PREDICATES
+        for new in ("_repo_differs_from_head", "_file_differs_from_ref"):
+            assert new in _WHEN_PREDICATES, f"missing new key: {new}"

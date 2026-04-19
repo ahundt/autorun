@@ -29,6 +29,7 @@ Features:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -431,18 +432,82 @@ def _has_uncommitted_changes(ctx: any) -> bool:
         return False
 
 
-def _has_unstaged_changes(ctx: any) -> bool:
-    """Check if git has unstaged changes."""
-    try:
-        result = subprocess.run(
-            "git diff --quiet",
-            shell=True,
-            capture_output=True,
-            timeout=2
-        )
-        return result.returncode != 0
-    except Exception:
+# v4 single-source-of-truth for destructive-git predicates.
+# Fixes four defects at once across all git-diff-based predicates:
+#   1. Narrow diff (`git diff` vs index only) → use `git diff <ref>` (HEAD).
+#   2. Daemon cwd leakage → pass cwd=ctx.cwd explicitly.
+#   3. Shell env leakage (GIT_DIR/GIT_WORK_TREE) → scrub before subprocess.
+#   4. Fail-open on error → fail-safe True (block destructive op when hook is broken).
+_PREDICATE_TIMEOUT: Final[float] = 2.0
+_SCRUBBED_GIT_ENV_KEYS: Final[frozenset] = frozenset({
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG",
+    "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+})
+
+
+def _scrubbed_env() -> dict:
+    """Return os.environ minus git env vars that could redirect the subprocess."""
+    return {k: v for k, v in os.environ.items() if k not in _SCRUBBED_GIT_ENV_KEYS}
+
+
+def _git_diff_quiet(
+    cwd: str | None, ref: str, file_path: str | None = None
+) -> bool:
+    """Return True iff working tree+index differs from `ref` (optionally for one file).
+
+    Contract:
+      * cwd=None or not a git work tree → False (fail-soft: predicate inapplicable)
+      * ref unresolvable (fresh repo, no HEAD) → False (nothing to protect)
+      * clean → False
+      * any diff → True
+      * subprocess error (git missing, timeout, permission) → True (fail-safe block)
+    """
+    if not cwd:
         return False
+    env = _scrubbed_env()
+    try:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, timeout=_PREDICATE_TIMEOUT, cwd=cwd, env=env,
+        )
+        if probe.returncode != 0 or probe.stdout.strip() != b"true":
+            return False
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
+            capture_output=True, timeout=_PREDICATE_TIMEOUT, cwd=cwd, env=env,
+        )
+        if verify.returncode != 0:
+            return False
+        argv = ["git", "diff", ref, "--quiet"]
+        if file_path is not None:
+            argv += ["--", file_path]
+        r = subprocess.run(
+            argv, capture_output=True, timeout=_PREDICATE_TIMEOUT, cwd=cwd, env=env,
+        )
+        return r.returncode != 0
+    except Exception as e:
+        logger.warning(
+            "_git_diff_quiet fail-safe block cwd=%r ref=%r file=%r err=%s",
+            cwd, ref, file_path, e,
+        )
+        return True
+
+
+def _repo_differs_from_head(ctx: any) -> bool:
+    """Return True iff the repo at ctx.cwd differs anywhere from HEAD.
+
+    Used by `git checkout .` and `git reset --hard` rules — both destroy all
+    tracked changes (worktree AND index), so both need a HEAD-relative diff.
+    """
+    return _git_diff_quiet(getattr(ctx, "cwd", None), "HEAD", None)
+
+
+# Backward-compat alias — preserves any user hookify files or config entries
+# still referencing the legacy `_has_unstaged_changes` name. New code should
+# call `_repo_differs_from_head` directly.
+def _has_unstaged_changes(ctx: any) -> bool:
+    return _repo_differs_from_head(ctx)
 
 
 def _stash_exists(ctx: any) -> bool:
@@ -460,50 +525,142 @@ def _stash_exists(ctx: any) -> bool:
         return False
 
 
-def _file_has_unstaged_changes(ctx: any) -> bool:
+# ---- Pure parser for destructive-git commands (no I/O, fully unit-testable) --
+
+@dataclass(frozen=True, slots=True)
+class _DestructiveGitCommand:
+    """Parsed representation of a git checkout/restore invocation.
+
+    Pure data — produced by `_parse_destructive_git_cmd` and consumed by
+    `_file_differs_from_ref`. Keeping the parser pure means every branch in the
+    predicate logic can be exercised by feeding a string, no subprocess needed.
+
+    Fields:
+      verb:  "checkout" or "restore" (the destructive operation)
+      ref:   the ref to diff against (default "HEAD"; overridden by explicit
+             `<ref>` in `git checkout <ref> -- ...` or `--source=<ref>` in
+             `git restore`)
+      files: pathspecs scoped to the matched shell segment only. May be empty,
+             in which case the predicate falls back to a repo-wide diff.
     """
-    Check if a specific file has unstaged changes.
+    verb: str
+    ref: str
+    files: tuple[str, ...]
 
-    Extracts file path from command (e.g., "git checkout -- file.txt")
-    and checks if that file has unstaged changes.
 
-    Args:
-        ctx: EventContext with tool_input["command"]
+def _find_destructive_segment(cmd: str) -> list[str]:
+    """Return tokens of the first shell segment starting with `git checkout`
+    or `git restore`; [] if none.
 
-    Returns:
-        True if file has unstaged changes, False otherwise
+    Segment-scoped: splits on `;`, `&&`, `||`, `|`, `&`, `\\n` so that
+    tokens from subsequent chained commands never leak into pathspec parsing.
+    """
+    from autorun.command_detection import _SHELL_OPERATORS, _shlex_split_safe
+    for segment in _SHELL_OPERATORS.split(cmd):
+        segment = segment.strip()
+        if not segment:
+            continue
+        try:
+            tokens = _shlex_split_safe(segment)
+        except Exception:
+            tokens = segment.split()
+        if len(tokens) >= 2 and tokens[0] == "git" and tokens[1] in ("checkout", "restore"):
+            return tokens
+    return []
+
+
+def _extract_checkout_ref(tokens: list[str]) -> str:
+    """For `git checkout [<ref>] -- <file>`, return <ref> or "HEAD"."""
+    if "--" not in tokens:
+        return "HEAD"
+    dd = tokens.index("--")
+    return tokens[2] if dd >= 3 else "HEAD"
+
+
+def _extract_restore_ref(tokens: list[str]) -> str:
+    """For `git restore [--source=<ref> | --source <ref> | -s <ref>] <file>`, return <ref>."""
+    i = 2
+    while i < len(tokens):
+        t = tokens[i]
+        if t.startswith("--source="):
+            return t.split("=", 1)[1]
+        if t in ("--source", "-s") and i + 1 < len(tokens):
+            return tokens[i + 1]
+        i += 1
+    return "HEAD"
+
+
+def _extract_pathspecs(tokens: list[str], verb: str) -> tuple[str, ...]:
+    """Return the positional pathspec tokens from a destructive git segment.
+
+    For `git checkout ... -- <paths>`: tokens after the first `--`.
+    For `git restore <paths>` (no `--`): positional args, skipping flags and
+    the `--source <ref>` / `-s <ref>` two-arg flag.
+    """
+    if "--" in tokens:
+        dd = tokens.index("--")
+        return tuple(t for t in tokens[dd + 1:] if t and not t.startswith("-"))
+    if verb != "restore":
+        return ()
+    # `git restore` without `--`: consume positional args, skipping flags.
+    files: list[str] = []
+    skip_next = False
+    for t in tokens[2:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if t in ("--source", "-s"):
+            skip_next = True
+            continue
+        if t.startswith("-"):
+            continue
+        files.append(t)
+    return tuple(files)
+
+
+def _parse_destructive_git_cmd(cmd: str) -> _DestructiveGitCommand | None:
+    """Parse a shell command into a _DestructiveGitCommand, or None if no match.
+
+    Pure function. No subprocess, no I/O. Unit-testable in isolation.
+    """
+    if not cmd:
+        return None
+    tokens = _find_destructive_segment(cmd)
+    if not tokens:
+        return None
+    verb = tokens[1]   # "checkout" or "restore"
+    ref = _extract_checkout_ref(tokens) if verb == "checkout" else _extract_restore_ref(tokens)
+    files = _extract_pathspecs(tokens, verb)
+    return _DestructiveGitCommand(verb=verb, ref=ref, files=files)
+
+
+# ---- Predicate using the pure parser + hardened subprocess helper ------------
+
+def _file_differs_from_ref(ctx: any) -> bool:
+    """Return True iff the git checkout/restore in ctx would alter tracked content.
+
+    Uses `_parse_destructive_git_cmd` (pure) to extract (verb, ref, files), then
+    `_git_diff_quiet` (hardened I/O) to check. Fail-safe: block on internal error.
+    Fail-soft: allow when no repo context is available (predicate inapplicable).
     """
     try:
-        # Extract file path from command
         cmd = ctx.tool_input.get("command", "") if hasattr(ctx, "tool_input") else ""
-        if not cmd:
+        parsed = _parse_destructive_git_cmd(cmd)
+        if parsed is None:
             return False
+        cwd = getattr(ctx, "cwd", None)
+        if not parsed.files:
+            return _git_diff_quiet(cwd, parsed.ref, None)
+        return any(_git_diff_quiet(cwd, parsed.ref, f) for f in parsed.files)
+    except Exception as e:
+        logger.warning("_file_differs_from_ref fail-safe block: %s", e)
+        return True
 
-        # Parse: "git checkout -- <file>" or "git checkout -- <file1> <file2>"
-        parts = cmd.split()
-        if "--" in parts:
-            idx = parts.index("--")
-            files = parts[idx + 1:]
-        else:
-            # Fallback: last arg is file
-            files = parts[-1:] if len(parts) > 2 else []
 
-        if not files:
-            return _has_unstaged_changes(ctx)  # Fallback to any unstaged
-
-        # Check if any specified file has unstaged changes
-        for file_path in files:
-            result = subprocess.run(
-                f"git diff --quiet -- {file_path}",
-                shell=True,
-                capture_output=True,
-                timeout=2
-            )
-            if result.returncode != 0:
-                return True
-        return False
-    except Exception:
-        return False
+# Backward-compat alias — preserves config.py and user hookify files that
+# still reference the legacy name. New code should call _file_differs_from_ref.
+def _file_has_unstaged_changes(ctx: any) -> bool:
+    return _file_differs_from_ref(ctx)
 
 
 def _checkout_targets_file_with_changes(ctx: any) -> bool:
@@ -548,16 +705,12 @@ def _checkout_targets_file_with_changes(ctx: any) -> bool:
             # Not a file, probably a branch name - allow
             return False
 
-        # It's a file - check if it has unstaged changes
-        result = subprocess.run(
-            f"git diff --quiet -- {target}",
-            shell=True,
-            capture_output=True,
-            timeout=2
-        )
-        return result.returncode != 0  # Non-zero = has changes
-    except Exception:
-        return False
+        # It's a file — check via the hardened helper (cwd-aware, env-scrubbed,
+        # ref-aware, fail-safe). HEAD-relative diff catches staged + unstaged.
+        return _git_diff_quiet(getattr(ctx, "cwd", None), "HEAD", target)
+    except Exception as e:
+        logger.warning("_checkout_targets_file_with_changes fail-safe block: %s", e)
+        return True
 
 
 def _not_in_pipe(ctx: any) -> bool:
@@ -696,27 +849,40 @@ def _restore_is_destructive(ctx: any) -> bool:
 
         if has_worktree:
             # --worktree is always destructive, even with --staged
-            return _file_has_unstaged_changes(ctx)
+            return _file_differs_from_ref(ctx)
         if has_staged:
-            return False  # staged-only is safe (just unstages)
+            # --staged only: unstages without discarding worktree → safe.
+            # (With --source=<ref>, this restores the INDEX from <ref> — no
+            # worktree data loss; still classified safe.)
+            return False
 
         # Default (no flags) is --worktree, which is destructive
-        return _file_has_unstaged_changes(ctx)
-    except Exception:
-        return False
+        return _file_differs_from_ref(ctx)
+    except Exception as e:
+        logger.warning("_restore_is_destructive fail-safe block: %s", e)
+        return True
 
 
-# Predicate functions (O(1) lookups) - FIX Bug 1
+# Predicate functions (O(1) lookups)
+# v4: new primary names `_repo_differs_from_head` and `_file_differs_from_ref`
+# are ref-aware and cover staged-only changes that the legacy narrow-diff
+# predicates missed. Legacy names kept as aliases for config.py and user
+# hookify files written against prior versions.
 _WHEN_PREDICATES: Final[dict] = {
     "has_uncommitted_changes": _has_uncommitted_changes,
-    "_has_uncommitted_changes": _has_uncommitted_changes,  # Backward compat
+    "_has_uncommitted_changes": _has_uncommitted_changes,
+    # v4 primary: repo-wide HEAD comparison (catches staged-only changes).
+    "_repo_differs_from_head": _repo_differs_from_head,
+    # Legacy alias → delegates to _repo_differs_from_head.
     "_has_unstaged_changes": _has_unstaged_changes,
     "_stash_exists": _stash_exists,
+    # v4 primary: file-scoped HEAD/ref comparison.
+    "_file_differs_from_ref": _file_differs_from_ref,
+    # Legacy alias → delegates to _file_differs_from_ref.
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
-    "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,  # v0.8.0: Catch git checkout <file>
-    "_not_in_pipe": _not_in_pipe,  # v0.8.0: Context-aware blocking for head/tail/grep/cat
-    "_restore_is_destructive": _restore_is_destructive,  # v0.8.0: Allow git restore --staged, block git restore <file>
-    # Add more as needed
+    "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,
+    "_not_in_pipe": _not_in_pipe,
+    "_restore_is_destructive": _restore_is_destructive,
 }
 
 
