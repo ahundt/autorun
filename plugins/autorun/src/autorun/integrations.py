@@ -548,12 +548,63 @@ class _DestructiveGitCommand:
     files: tuple[str, ...]
 
 
-def _find_destructive_segment(cmd: str) -> list[str]:
-    """Return tokens of the first shell segment starting with `git checkout`
-    or `git restore`; [] if none.
+# Git global options that consume the NEXT token as their value. These may
+# appear between `git` and the subcommand (e.g. `git -C /repo checkout ...`)
+# and must be skipped by `_find_destructive_segment` or the parser misses the
+# subcommand entirely — allowing a destructive checkout/restore to bypass the
+# block rule. The attached-value forms (`--git-dir=<path>`, `-c key=val`
+# combined as `--git-dir=<path>`) consume a single token and are handled
+# separately below.
+_GIT_GLOBAL_OPTS_WITH_ARG: Final[frozenset] = frozenset({
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace",
+    "--git-common-dir", "--super-prefix", "--exec-path",
+    "--attr-source", "--list-cmds", "--config-env",
+})
 
-    Segment-scoped: splits on `;`, `&&`, `||`, `|`, `&`, `\\n` so that
-    tokens from subsequent chained commands never leak into pathspec parsing.
+
+def _skip_git_global_opts(tokens: list[str]) -> int:
+    """Return index of the first non-option token after `git`.
+
+    Walks `tokens[1:]` consuming git's global options (both the bare flags
+    like `--paginate` and the ones that take an argument like `-C <path>` or
+    `--git-dir=<path>`). The returned index points at whatever comes next —
+    the subcommand (checkout/restore/status/...) or end-of-tokens.
+
+    Precondition: tokens[0] == "git". Caller must check.
+    """
+    i = 1
+    while i < len(tokens):
+        t = tokens[i]
+        # Flag with separate arg: `-C /path`, `-c key=val`, `--git-dir <path>`.
+        if t in _GIT_GLOBAL_OPTS_WITH_ARG:
+            i += 2
+            continue
+        # Attached-value form: `--git-dir=<path>`, `-c=key=val` (rare but valid).
+        if "=" in t:
+            head = t.split("=", 1)[0]
+            if head in _GIT_GLOBAL_OPTS_WITH_ARG:
+                i += 1
+                continue
+        # Bare flag: `-p`, `--paginate`, `--no-pager`, `--bare`, `--html-path`, etc.
+        if t.startswith("-"):
+            i += 1
+            continue
+        # First non-option token — this is the subcommand (or a pathspec if
+        # there's no subcommand at all, but then we won't match below).
+        return i
+    return i
+
+
+def _find_destructive_segment(cmd: str) -> list[str]:
+    """Return tokens of the first shell segment whose git subcommand is
+    `checkout` or `restore`; [] if none.
+
+    Segment-scoped: splits on `;`, `&&`, `||`, `|`, `&`, `\\n` so tokens
+    from subsequent chained commands never leak into pathspec parsing.
+
+    Normalizes git global options away so downstream callers see
+    `["git", <verb>, ...subcmd_args]` regardless of whether the source
+    command had `git -C <path> checkout ...` or `git checkout ...` form.
     """
     from autorun.command_detection import _SHELL_OPERATORS, _shlex_split_safe
     for segment in _SHELL_OPERATORS.split(cmd):
@@ -564,17 +615,34 @@ def _find_destructive_segment(cmd: str) -> list[str]:
             tokens = _shlex_split_safe(segment)
         except Exception:
             tokens = segment.split()
-        if len(tokens) >= 2 and tokens[0] == "git" and tokens[1] in ("checkout", "restore"):
-            return tokens
+        if not tokens or tokens[0] != "git":
+            continue
+        sub_idx = _skip_git_global_opts(tokens)
+        if sub_idx >= len(tokens):
+            continue
+        if tokens[sub_idx] in ("checkout", "restore"):
+            # Return normalized form so _extract_* helpers can rely on
+            # tokens[0] == "git" and tokens[1] == <verb>.
+            return ["git"] + tokens[sub_idx:]
     return []
 
 
 def _extract_checkout_ref(tokens: list[str]) -> str:
-    """For `git checkout [<ref>] -- <file>`, return <ref> or "HEAD"."""
+    """For `git checkout [<flags>] [<ref>] -- <file>`, return <ref> or "HEAD".
+
+    Flags may appear between `checkout` and `--` (e.g. `-q`, `--force`,
+    `--no-overlay`, `--recurse-submodules`). They must be skipped so the
+    actual ref is extracted. Otherwise the flag string ends up in
+    `_DestructiveGitCommand.ref`, `git rev-parse --verify <flag>` fails,
+    and `_git_diff_quiet` returns False — bypassing the block rule.
+    """
     if "--" not in tokens:
         return "HEAD"
     dd = tokens.index("--")
-    return tokens[2] if dd >= 3 else "HEAD"
+    for t in tokens[2:dd]:
+        if not t.startswith("-"):
+            return t
+    return "HEAD"
 
 
 def _extract_restore_ref(tokens: list[str]) -> str:
