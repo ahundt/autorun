@@ -244,3 +244,63 @@ All SDK bug workarounds (Claude Code, Gemini CLI, future CLIs) **MUST** follow a
 |-----|----------|-----|---------|--------|
 | [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_EXIT2_WORKAROUND` (legacy) | `auto` | stderr + exit 2 |
 | [#18534](https://github.com/anthropics/claude-code/issues/18534): additionalContext dropped | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | `True` | channel="ai" → "both" |
+| [#24115](https://github.com/anthropics/claude-code/issues/24115): plugin loader scans marketplace-source hooks/ AND cache; strict Zod rejects Gemini event names with `invalid_key` | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED` | `True` | Claude events ONLY in `plugins/autorun/hooks/`; Gemini events live under `src/autorun/gemini_template/` (outside Claude's scan path) |
+| [#14449](https://github.com/google-gemini/gemini-cli/issues/14449) ([PR #14460](https://github.com/google-gemini/gemini-cli/pull/14460)): Gemini hardcodes extension hooks at `<ext>/hooks/hooks.json`; manifest `hooks` field ignored | Gemini CLI | `AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED` | `True` | Installer materializes `~/.gemini/extensions/<name>/` from template dir; `hook_entry.py` copied into `<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves |
+
+### Bug #24115 & #14449 in depth
+
+These two bugs co-motivate the split repo layout implemented in install.py
+(`# --- BUG #24115 & #14449 WORKAROUND START ---`).
+
+**Root causes (each bug independent of the other):**
+
+1. **Claude Code bug #24115**: When `claude plugin list` runs, Claude scans
+   `plugins/autorun/hooks/*.json` in the marketplace source directory (git
+   checkout) in addition to the versioned cache. The plugin we ship is
+   registered as a `directory`-type marketplace source pointing at the git
+   repo itself (`~/.claude/plugins/known_marketplaces.json`), so Claude
+   reads the source hooks/ directly. Its Zod schema rejects any unknown
+   event name with `invalid_key`. Gemini event names (`BeforeTool`,
+   `BeforeAgent`, etc.) present in that path silently disable ALL plugin
+   hooks and show `ar@autorun: ✘ failed to load`.
+
+2. **Gemini CLI bug #14449**: Gemini's extension hook loader hardcodes
+   `<extension_root>/hooks/hooks.json`. The `hooks` field in
+   `gemini-extension.json` is documented but ignored at runtime. PR #14460
+   landed in Dec 2025 and should ship in a future release — until then we
+   cannot redirect Gemini to look at a different file path.
+
+**Why one workaround solves both:** Keep Claude's hooks at
+`plugins/autorun/hooks/hooks.json` (default path, Claude-valid events only),
+and stage Gemini's hooks at `plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`
+(outside Claude's scan surface). At install time, point `gemini extensions install`
+at the template dir; it materializes `~/.gemini/extensions/<name>/` with the
+hardcoded layout Gemini expects. Copy `hook_entry.py` into
+`<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves.
+
+**Pathway 2 & 6 (`gemini extensions install <github-url>` or `.` from
+repo root):** committed symlinks at repo root (`./gemini-extension.json`,
+`./hooks/`) redirect into the template so Gemini sees the required layout
+when installing from the repo as a whole. The symlinks are outside Claude's
+scan path.
+
+**Configuration:** either environment variable or CONFIG entry controls
+each workaround independently. Values: `true`/`1`/`auto` (on, default),
+`false`/`0`/`never` (off — likely to produce a broken install until the
+upstream bug is actually fixed).
+
+```bash
+# Disable Claude marketplace-scan workaround (requires #24115 to be fixed)
+export AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED=false
+
+# Disable Gemini hardcoded-hooks-path workaround (requires #14449 to be fixed)
+export AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED=false
+```
+
+**When both bugs are fixed:** follow the deletion instructions in the
+bracketed block in `plugins/autorun/src/autorun/install.py`. Short
+summary: remove the helpers, move Gemini assets back to plugin root,
+rename `hooks/hooks.json` to declare both CLI event sets (or keep them
+separated at a finer granularity), delete the `BUG #24115 & #14449 TESTS`
+block in `test_split_layout.py`, remove the two CONFIG keys, and drop the
+repo-root shim symlinks.

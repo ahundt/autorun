@@ -819,28 +819,66 @@ def _install_pdf_deps() -> CmdResult:
     )
 
 
-# ─── Dual-CLI Layout Rationale ───────────────────────────────────────────────
-# This module and the split repo layout exist to work around two independent
-# upstream bugs that make it impossible to host Claude Code plugin hooks and
-# Gemini CLI extension hooks under the same `hooks/hooks.json` path.
+# --- BUG #24115 & #14449 WORKAROUND START --- DELETE WHEN BOTH BUGS ARE FIXED ---
+# BUG #24115 (Claude Code): plugin loader reads hooks/ from the marketplace
+#   source dir in addition to the installed cache. Any Gemini event name in
+#   `plugins/autorun/hooks/` fails Claude's strict Zod with `invalid_key`.
+#   https://github.com/anthropics/claude-code/issues/24115
+# BUG #14449 (Gemini CLI): hooks.json path is hardcoded at
+#   `<extension_root>/hooks/hooks.json`; the manifest's `hooks` field is ignored.
+#   https://github.com/google-gemini/gemini-cli/issues/14449
+#   https://github.com/google-gemini/gemini-cli/pull/14460
 #
-# BUG: Claude Code plugin loader reads hooks from the marketplace source dir
-# https://github.com/anthropics/claude-code/issues/24115
-# Workaround: keep plugins/autorun/hooks/ populated with Claude-valid events
-# only. Any Gemini event name in that directory causes Zod `invalid_key`
-# errors on `claude plugin list`. DELETE THIS WORKAROUND when #24115 is
-# fixed AND Claude stops scanning the marketplace source.
+# Workaround (applies to both bugs; they co-motivate the same repo split):
+#   - plugins/autorun/hooks/hooks.json holds Claude events ONLY (default path)
+#   - Gemini assets staged under plugins/autorun/src/autorun/gemini_template/
+#     (under src/ so Claude's source scanner does not reach them)
+#   - The installer calls `gemini extensions install <template_dir>` and then
+#     copies hook_entry.py into ~/.gemini/extensions/<name>/hooks/
 #
-# BUG: Gemini CLI hardcodes hooks at `<extension_root>/hooks/hooks.json`
-# https://github.com/google-gemini/gemini-cli/issues/14449
-# (also the `hooks` field in `gemini-extension.json` is ignored today).
-# Workaround: stage Gemini assets under `src/autorun/gemini_template/`
-# (outside Claude's scan surface) and materialize them into
-# `~/.gemini/extensions/<name>/` at install time by invoking
-# `gemini extensions install <template_path>` and then copying
-# `hook_entry.py` into `<ext>/hooks/`. DELETE THIS WORKAROUND when #14449
-# ships and the manifest's `hooks` field is honored everywhere.
-# ─────────────────────────────────────────────────────────────────────────────
+# Configuration (either env var OR CONFIG entry):
+#   AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED
+#   AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED
+#
+# Both default to True. Values: true|1|auto (apply workaround) | false|0|never
+# (skip workaround, likely produces broken install until bugs are fixed).
+#
+# Removal (when bugs are fixed):
+#   1. Set both CONFIG keys to False and verify tests still pass.
+#   2. Move plugins/autorun/src/autorun/gemini_template/ back to plugin root.
+#   3. Delete this bracketed block (START→END), _gemini_template_dir,
+#      _copy_hook_entry_to_gemini_ext, _migrate_legacy_layout.
+#   4. Simplify _install_for_gemini to install from plugin_dir directly.
+
+
+def _bug_24115_workaround_enabled() -> bool:
+    """Check if the Claude Code marketplace-source scan workaround is enabled.
+
+    BUG #24115 regression gate. Env var wins over CONFIG.
+    """
+    from .config import CONFIG
+    _KEY = "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED"
+    env = os.environ.get(_KEY, "").lower().strip()
+    if env in ("false", "0", "never"):
+        return False
+    if env in ("true", "1", "auto", "always"):
+        return True
+    return bool(CONFIG.get(_KEY, True))
+
+
+def _bug_14449_workaround_enabled() -> bool:
+    """Check if the Gemini hardcoded-hooks-path workaround is enabled.
+
+    BUG #14449 regression gate. Env var wins over CONFIG.
+    """
+    from .config import CONFIG
+    _KEY = "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED"
+    env = os.environ.get(_KEY, "").lower().strip()
+    if env in ("false", "0", "never"):
+        return False
+    if env in ("true", "1", "auto", "always"):
+        return True
+    return bool(CONFIG.get(_KEY, True))
 
 
 def _gemini_template_dir(plugin_dir: Path) -> Path:
@@ -848,8 +886,9 @@ def _gemini_template_dir(plugin_dir: Path) -> Path:
 
     The template lives under src/autorun/gemini_template/ so Claude Code's
     bug #24115 marketplace-source scanner (which only walks hooks/) never
-    touches it. The installer materializes ~/.gemini/extensions/<name>/ by
-    copying the template contents plus hook_entry.py.
+    touches it. When either workaround is disabled (both bugs presumed
+    fixed), callers should skip the template path entirely and use the
+    plugin root.
 
     References:
         - anthropics/claude-code#24115 (hooks dir scanned from source)
@@ -867,6 +906,8 @@ def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
     model for both CLIs). gemini extensions install copies everything under
     the source path, but since we install from the template dir (not plugin_dir),
     hook_entry.py is not picked up automatically — we copy it explicitly.
+
+    BUG #14449 WORKAROUND STEP.
     """
     source = plugin_dir / "hooks" / "hook_entry.py"
     if not source.exists():
@@ -889,7 +930,12 @@ def _migrate_legacy_layout(plugin_dir: Path) -> None:
     When BOTH a template dir AND a legacy manifest at plugin root exist, the
     checkout is inconsistent and the installer should abort with an
     actionable message rather than produce a broken dual install.
+
+    BUG #24115 & #14449 WORKAROUND STEP: disable via either bug's env var.
     """
+    if not (_bug_24115_workaround_enabled() and _bug_14449_workaround_enabled()):
+        # Workaround disabled — assume legacy single-root layout is correct.
+        return
     template = _gemini_template_dir(plugin_dir)
     legacy_manifest = plugin_dir / "gemini-extension.json"
     if template.is_dir() and legacy_manifest.exists():
@@ -899,6 +945,7 @@ def _migrate_legacy_layout(plugin_dir: Path) -> None:
             "Fix: git checkout -- plugins/autorun or delete the stale file, then "
             "rerun autorun --install."
         )
+# --- BUG #24115 & #14449 WORKAROUND END ---
 
 
 def _install_to_cache(plugin_name: str) -> bool:

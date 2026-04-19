@@ -434,6 +434,39 @@ CONFIG = {
     # Set to False to disable workaround when Anthropic fixes SDK #18534.
     "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED": True,
 
+    # BUG #24115: Claude Code plugin loader reads hooks/ from the marketplace
+    # source dir in addition to the installed cache. Any Gemini event name in
+    # `plugins/autorun/hooks/*.json` fails Claude's strict Zod schema with
+    # `invalid_key` errors, silently disabling ALL plugin hooks.
+    # https://github.com/anthropics/claude-code/issues/24115
+    # Workaround: keep plugins/autorun/hooks/ populated with Claude events only.
+    # Gemini assets live under plugins/autorun/src/autorun/gemini_template/
+    # (outside Claude's scan surface). The installer materializes
+    # ~/.gemini/extensions/<name>/ from the template at install time.
+    # Evidence: notes/2026_04_19_1627_fix_arautorun_failed_to_load_across_all_install_pathways.md
+    # Override: set as env var with same name (true|false|always|never). Env var wins.
+    # Set to False ONLY when #24115 is fixed AND Claude stops scanning the
+    # marketplace source — then this whole split-layout refactor can be reverted
+    # (keep a single hooks/hooks.json with both Claude & Gemini events separated
+    # by CLI type at runtime).
+    "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED": True,
+
+    # BUG #14449: Gemini CLI hardcodes extension hooks at
+    # `<extension_root>/hooks/hooks.json`; the `hooks` field in
+    # `gemini-extension.json` is ignored at runtime.
+    # https://github.com/google-gemini/gemini-cli/issues/14449
+    # https://github.com/google-gemini/gemini-cli/pull/14460
+    # Workaround: install the Gemini extension from the template dir which has
+    # the hardcoded layout (`hooks/hooks.json` at root). The installer copies
+    # `hook_entry.py` into `<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py`
+    # resolves at runtime (Gemini substitutes ${extensionPath} natively).
+    # Evidence: google-gemini/gemini-cli#14449 confirms hardcoded path.
+    # Override: set as env var with same name (true|false|always|never). Env var wins.
+    # Set to False when PR #14460 ships in a Gemini CLI release AND the
+    # manifest's `hooks` field is honored — then install.py can point Gemini
+    # directly at the plugin root and skip the template materialization.
+    "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED": True,
+
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,

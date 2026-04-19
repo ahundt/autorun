@@ -314,5 +314,90 @@ def test_root_hook_entry_reachable_from_shim():
         )
 
 
+# --- BUG #24115 & #14449 TESTS START --- DELETE WHEN BOTH BUGS ARE FIXED ---
+# These tests pin the bug-workaround flags and helper behavior so regressions
+# in either direction (workaround removed prematurely OR left on after fix)
+# surface immediately. Shared flag constants match the CONFIG keys in
+# plugins/autorun/src/autorun/config.py.
+
+_BUG_24115_FLAG = "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED"
+_BUG_14449_FLAG = "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED"
+
+
+def test_bug_24115_workaround_config_key_exists():
+    """Config entry must exist with default True and bug link in docstring."""
+    from autorun.config import CONFIG
+    assert _BUG_24115_FLAG in CONFIG, (
+        f"CONFIG missing {_BUG_24115_FLAG}. See plugins/autorun/CLAUDE.md "
+        "'Bug Workaround Policy' for required format."
+    )
+    assert CONFIG[_BUG_24115_FLAG] is True, (
+        f"Default for {_BUG_24115_FLAG} must be True until #24115 is fixed."
+    )
+
+
+def test_bug_14449_workaround_config_key_exists():
+    """Gemini hardcoded-hooks-path workaround must be wired."""
+    from autorun.config import CONFIG
+    assert _BUG_14449_FLAG in CONFIG, f"CONFIG missing {_BUG_14449_FLAG}"
+    assert CONFIG[_BUG_14449_FLAG] is True
+
+
+def test_bug_24115_env_var_overrides_config():
+    """Env var value must win over CONFIG value (policy requirement)."""
+    import os
+    from autorun import install as install_mod
+
+    # With workaround enabled (default), _migrate_legacy_layout should trip
+    # on inconsistent layout.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        plugin = tmp_path / "p"
+        template = plugin / "src" / "autorun" / "gemini_template"
+        template.mkdir(parents=True)
+        (plugin / "gemini-extension.json").write_text("{}", encoding="utf-8")
+
+        # Explicitly disable via env var → must skip migration check
+        prev_24115 = os.environ.get(_BUG_24115_FLAG)
+        prev_14449 = os.environ.get(_BUG_14449_FLAG)
+        try:
+            os.environ[_BUG_24115_FLAG] = "false"
+            os.environ[_BUG_14449_FLAG] = "false"
+            # Must NOT raise — workaround disabled
+            install_mod._migrate_legacy_layout(plugin)
+
+            os.environ[_BUG_24115_FLAG] = "true"
+            os.environ[_BUG_14449_FLAG] = "true"
+            with pytest.raises(SystemExit):
+                install_mod._migrate_legacy_layout(plugin)
+        finally:
+            if prev_24115 is None:
+                os.environ.pop(_BUG_24115_FLAG, None)
+            else:
+                os.environ[_BUG_24115_FLAG] = prev_24115
+            if prev_14449 is None:
+                os.environ.pop(_BUG_14449_FLAG, None)
+            else:
+                os.environ[_BUG_14449_FLAG] = prev_14449
+
+
+def test_bug_workaround_helpers_are_bracketed():
+    """install.py must mark the workaround block for easy deletion."""
+    install_py = (PLUGIN_ROOT / "src" / "autorun" / "install.py").read_text(encoding="utf-8")
+    assert "# --- BUG #24115 & #14449 WORKAROUND START" in install_py, (
+        "install.py missing BUG #24115 & #14449 WORKAROUND START marker"
+    )
+    assert "# --- BUG #24115 & #14449 WORKAROUND END" in install_py, (
+        "install.py missing BUG #24115 & #14449 WORKAROUND END marker"
+    )
+    # Deletion instructions must be present
+    assert "DELETE WHEN" in install_py, (
+        "WORKAROUND header must tell maintainers how/when to delete it"
+    )
+
+
+# --- BUG #24115 & #14449 TESTS END ---
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
