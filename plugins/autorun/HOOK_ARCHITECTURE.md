@@ -35,61 +35,185 @@ autorun implements a unified hook system that works across both **Claude Code** 
 
 ## Dual CLI Support
 
-### Architecture
+### Repo Layout & Why It's Split (v0.10.2rc1+)
+
+The repo splits Claude and Gemini assets across two roots to work around two
+independent upstream bugs ([#24115](https://github.com/anthropics/claude-code/issues/24115),
+[#14449](https://github.com/google-gemini/gemini-cli/issues/14449)). Every
+install pathway ends up materializing either `~/.claude/plugins/cache/autorun/ar/<ver>/`
+(Claude) or `~/.gemini/extensions/ar/` (Gemini) from these two roots.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Hook System Architecture                 │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Claude Code                         Gemini CLI             │
-│  ─────────────                       ──────────             │
-│                                                              │
-│  claude-hooks.json                   hooks.json             │
-│  ├─ PreToolUse                       ├─ BeforeTool          │
-│  ├─ PostToolUse                      ├─ AfterTool           │
-│  ├─ UserPromptSubmit                 ├─ BeforeAgent         │
-│  ├─ SessionStart                     ├─ SessionStart        │
-│  └─ Stop                             └─ SessionEnd          │
-│                                                              │
-│  ${CLAUDE_PLUGIN_ROOT}               ${extensionPath}       │
-│  (environment variable)              (template substitution)│
-│                                                              │
-│  Tool names:                         Tool names:            │
-│  - Write, Bash, Edit                 - write_file           │
-│  - ExitPlanMode                      - run_shell_command    │
-│  - TaskCreate                        - replace              │
-│                                                              │
-│  ──────────────────────┬────────────────────────            │
-│                        │                                     │
-│                        ▼                                     │
-│              hooks/hook_entry.py                            │
-│              ├─ get_plugin_root()                           │
-│              ├─ normalize_payload()                         │
-│              ├─ handle_hook()                               │
-│              └─ main()                                      │
-│                        │                                     │
-│                        ▼                                     │
-│           src/autorun/main.py                             │
-│           ├─ handle_pretooluse()                            │
-│           ├─ handle_posttooluse()                           │
-│           ├─ handle_userpromptsubmit()                      │
-│           ├─ handle_session_start()                         │
-│           └─ Command blocking logic                         │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+autorun/                                      ← repo root / workspace
+│
+├── gemini-extension.json  ─────────┐         ← Pathway 2/6 shim (symlink)
+├── hooks/  ────────────────────────┤         ← Pathway 2/6 shim (dir symlink)
+│   ↓ symlinks resolve into         │         resolves to template below
+│                                    │
+├── .claude-plugin/                  │         ← Claude marketplace manifest
+│   ├── marketplace.json             │            (lists ./plugins/autorun)
+│   └── plugin.json -> ../plugins/autorun/.claude-plugin/plugin.json
+│                                    │
+├── plugins/                         │
+│   ├── autorun/                     │         ← Claude plugin root
+│   │   ├── .claude-plugin/          │            scanned by Claude bug #24115
+│   │   │   └── plugin.json          │            (no "hooks" field → default)
+│   │   ├── hooks/                   │
+│   │   │   ├── hooks.json  ─────────┼──┐      ← Claude events ONLY
+│   │   │   │  (PreToolUse, PostToolUse, ...)  (auto-discovered by Claude)
+│   │   │   └── hook_entry.py        │  │      ← canonical shared handler
+│   │   │                            │  │
+│   │   ├── src/autorun/             │  │      ← Python package
+│   │   │   ├── install.py           │  │        _install_for_gemini() reads →
+│   │   │   ├── hook_entry.py*       │  │
+│   │   │   ├── config.py            │  │
+│   │   │   └── gemini_template/ ◄───┘  │      ← Gemini extension template
+│   │   │       │                       │         (OUT of Claude's scan path)
+│   │   │       ├── gemini-extension.json         ◄─── shim target #1
+│   │   │       └── hooks/                        ◄─── shim target #2
+│   │   │           ├── hooks.json              ← Gemini events ONLY
+│   │   │           │  (BeforeTool, AfterTool, ...)
+│   │   │           └── hook_entry.py  ← synced copy of canonical
+│   │   │              (kept byte-identical by aix_manifest.generate_manifests)
+│   │   ├── commands/                           ← shared /ar:* commands
+│   │   ├── skills/                             ← shared skills
+│   │   └── tests/
+│   │
+│   └── pdf-extractor/                          ← legacy layout (unsplit)
+│       ├── gemini-extension.json               ← still at plugin root
+│       ├── .claude-plugin/plugin.json
+│       ├── hooks/   (empty — no hooks)
+│       └── src/pdf_extraction/
+│
+└── src/autorun_workspace/                      ← UV workspace stub
 ```
 
-### Installation Flow
+### Install Flow
 
-**Installer Logic** (`plugins/autorun/src/autorun/install.py:883-920`):
+```
+                  autorun --install
+                        │
+                        ▼
+        ┌─────────────────────────────────────┐
+        │  install.py install_plugins()       │
+        │  1. find_marketplace_root() → repo root
+        │  2. resolve plugin_root =           │
+        │     <repo>/plugins/autorun          │
+        │  3. _update_package_metadata(plugin_root)
+        │     → <plugin>/src/autorun/metadata.json
+        │  4. aix_manifest.generate_manifests(plugin_root)
+        │     → regenerates plugin.json & template/gemini-extension.json
+        │     → syncs hook_entry.py into template (drift-proof)
+        │     → cleans legacy gemini-extension.json at plugin root
+        └─────────────────────────────────────┘
+                        │
+              ┌─────────┴─────────┐
+              │                   │
+              ▼                   ▼
+      Claude Code path      Gemini CLI path
+      ─────────────         ─────────────
+              │                   │
+   claude plugin install    _migrate_legacy_layout(plugin_root)
+      or _install_to_cache    → SystemExit if template + legacy manifest
+              │                 BOTH present
+              │                   │
+      backup+copytree        _gemini_source(plugin_root)
+      plugin_root →          returns template dir (or legacy root for
+      ~/.claude/plugins/     plugins that never migrated)
+      cache/autorun/ar/<ver>/     │
+              │                   │
+      _substitute_paths()     gemini extensions install <template_dir>
+      → expand               → copies template to ~/.gemini/extensions/ar/
+      ${CLAUDE_PLUGIN_ROOT}        │
+      in cache                _copy_hook_entry_to_gemini_ext(plugin_root, ext_dir)
+              │                   → ~/.gemini/extensions/ar/hooks/hook_entry.py
+              │                   │
+              │               _generate_gemini_toml_commands(ext_dir, name)
+              │                   → commands/ar/*.toml (77 files)
+              │                   │
+              └───────────────────┴─── restart daemon → pick up code changes
+```
 
-1. `hooks/hooks.json` is always Gemini format (`${extensionPath}`, Gemini event names)
-2. `hooks/claude-hooks.json` is always Claude Code format (`${CLAUDE_PLUGIN_ROOT}`)
-3. Gemini CLI hardcodes reading `hooks/hooks.json` — no swap needed
-4. Claude Code reads the `"hooks"` field from `plugin.json` → `./hooks/claude-hooks.json`
+### Runtime Flow (Slash Command → Hook → Daemon)
 
-No swap logic required. Each CLI reads its own hooks file.
+```
+  User types /ar:st in either CLI
+            │
+            ▼
+  ┌─────────────────────┐            ┌─────────────────────┐
+  │   Claude Code       │            │   Gemini CLI        │
+  │                     │            │                     │
+  │  UserPromptSubmit   │            │  BeforeAgent        │
+  │  hook fires         │            │  hook fires         │
+  │                     │            │                     │
+  │  Runs:              │            │  Runs:              │
+  │  uv run ...         │            │  uv run ...         │
+  │  ${CLAUDE_PLUGIN_   │            │  ${extensionPath}/  │
+  │   ROOT}/hooks/      │            │   hooks/            │
+  │  hook_entry.py      │            │  hook_entry.py      │
+  │  --cli claude       │            │  --cli gemini       │
+  └─────────┬───────────┘            └─────────┬───────────┘
+            │                                    │
+            └──────────────┬─────────────────────┘
+                           │ both resolve to the SAME Python file
+                           ▼
+            ┌─────────────────────────────┐
+            │  hook_entry.py main()       │
+            │   - detect_cli_type()       │
+            │   - normalize_payload()     │
+            │   - hand off to daemon via  │
+            │     Unix socket ipc.py      │
+            └──────────────┬──────────────┘
+                           │
+                           ▼
+            ┌─────────────────────────────┐
+            │  autorun daemon             │
+            │  (core.py AutorunDaemon)    │
+            │   - routes to handler       │
+            │   - check_blocked_commands  │
+            │     (integrations.py)       │
+            │   - file policy check       │
+            │   - task lifecycle          │
+            │   - BUG #18534 workaround   │
+            │     (ai → both channel)     │
+            └──────────────┬──────────────┘
+                           │
+                           ▼
+                JSON response ↩ stdout
+            { "continue": true, ... }  OR  deny (+ exit 2 for Claude)
+```
+
+### Why Two Roots
+
+| Problem | Impact if NOT split | Split-layout solution |
+|---------|--------------------|-----------------------|
+| Claude scans `hooks/` from marketplace source ([#24115](https://github.com/anthropics/claude-code/issues/24115)) | Gemini events in `plugins/autorun/hooks/` → Zod `invalid_key` → `claude plugin list: ✘ failed to load` | Keep `plugins/autorun/hooks/` Claude-only |
+| Gemini hardcodes `<ext>/hooks/hooks.json` ([#14449](https://github.com/google-gemini/gemini-cli/issues/14449)) | Can't redirect Gemini to a non-conflicting path | Materialize `~/.gemini/extensions/ar/` from `gemini_template/` |
+| Need single hook_entry.py for dual CLI | Code drift between CLIs | One canonical file; aix_manifest syncs template copy; `--cli` flag routes at runtime |
+| Pathway 2/6 (direct `gemini extensions install` from GitHub URL or `.`) needs a Gemini-readable manifest at a predictable location | Gemini fails to install without `autorun --install` follow-up | Committed symlinks at repo root → resolve into template |
+
+### Deletion Runbook
+
+When both [#24115](https://github.com/anthropics/claude-code/issues/24115)
+and [#14449](https://github.com/google-gemini/gemini-cli/issues/14449) are
+fixed upstream:
+
+1. Set both `AUTORUN_BUG_*_WORKAROUND_ENABLED` CONFIG keys to `False` and
+   verify tests still pass.
+2. Move `plugins/autorun/src/autorun/gemini_template/gemini-extension.json`
+   back to `plugins/autorun/gemini-extension.json`.
+3. Move `plugins/autorun/src/autorun/gemini_template/hooks/hooks.json` back
+   to the plugin root (possibly as an additional event-set in hooks.json with
+   both Claude and Gemini events, if the fixed Gemini honors the manifest's
+   `hooks` field).
+4. Delete the bracketed `# --- BUG #24115 & #14449 WORKAROUND START/END ---`
+   block in `plugins/autorun/src/autorun/install.py`.
+5. Delete the `# --- BUG #24115 & #14449 TESTS START/END ---` block in
+   `plugins/autorun/tests/test_split_layout.py`.
+6. Delete the `plugins/autorun/src/autorun/gemini_template/` directory.
+7. Remove the repo-root shim symlinks (`./gemini-extension.json`, `./hooks/`).
+8. Remove both CONFIG keys from `plugins/autorun/src/autorun/config.py`.
+9. Remove the cleanup block in `aix_manifest.py` that wipes legacy files.
 
 ---
 

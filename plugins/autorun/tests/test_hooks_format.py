@@ -64,9 +64,9 @@ def test_source_hooks_json_is_claude_format():
     # Check uses CLAUDE_PLUGIN_ROOT not extensionPath
     hooks_json_str = json.dumps(hooks_data)
     assert "${CLAUDE_PLUGIN_ROOT}" in hooks_json_str, \
-        "Claude claude-hooks.json should use ${CLAUDE_PLUGIN_ROOT}"
+        "Claude hooks.json (Claude) should use ${CLAUDE_PLUGIN_ROOT}"
     assert "${extensionPath}" not in hooks_json_str, \
-        "Claude claude-hooks.json should NOT use ${extensionPath}"
+        "Claude hooks.json (Claude) should NOT use ${extensionPath}"
 
 
 def test_source_hooks_json_has_claude_events():
@@ -100,11 +100,11 @@ def test_source_hooks_json_has_claude_events():
     # Check Gemini events NOT present
     for event in gemini_events:
         assert event not in hooks_section, \
-            f"Gemini event '{event}' should NOT be in Claude claude-hooks.json"
+            f"Gemini event '{event}' should NOT be in Claude hooks.json (Claude)"
 
 
 def test_source_hooks_json_has_claude_tool_names():
-    """Test that source claude-hooks.json uses Claude Code conventions.
+    """Test that source hooks.json (Claude) uses Claude Code conventions.
 
     With catch-all matchers (no matcher field), tool names may not appear
     in the JSON itself. Instead verify: no Gemini tool names present,
@@ -325,7 +325,7 @@ def test_plugin_json_uses_default_hooks_path():
     """plugin.json must NOT declare an explicit 'hooks' field.
 
     Post-split layout: Claude Code auto-discovers hooks/hooks.json by default.
-    Adding an explicit "hooks": "./hooks/claude-hooks.json" override fights
+    Adding an explicit "hooks": "./hooks/hooks.json (Claude)" override fights
     the default and previously created dual-loading confusion. Remove the
     field entirely and let the default discovery path win.
     """
@@ -357,7 +357,7 @@ class TestHookTimeouts:
     """
 
     def test_claude_hooks_timeout_adequate(self):
-        """claude-hooks.json timeouts must be >= 5 seconds (Claude uses seconds)."""
+        """hooks.json (Claude) timeouts must be >= 5 seconds (Claude uses seconds)."""
         hooks_path = get_claude_hooks_path()
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         for event, handler_groups in hooks["hooks"].items():
@@ -509,7 +509,7 @@ class TestGeminiHookMatchers:
 
         Catch-all (no matcher field) covers all of these by definition.
         If someone adds a matcher back, this test fails for every tool not listed.
-        Fix: remove the "matcher" field from PreToolUse in claude-hooks.json.
+        Fix: remove the "matcher" field from PreToolUse in hooks.json (Claude).
         """
         hooks_path = get_claude_hooks_path()
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
@@ -523,10 +523,10 @@ class TestGeminiHookMatchers:
                 catch_all_group = group
                 break
         assert catch_all_group is not None, (
-            "claude-hooks.json PreToolUse must have a catch-all group (no 'matcher' field). "
+            "hooks.json (Claude) PreToolUse must have a catch-all group (no 'matcher' field). "
             "enforce_stop_injection and enforce_task_staleness require 100% tool coverage. "
             "Fix: remove the 'matcher' field from the PreToolUse entry in "
-            "plugins/autorun/hooks/claude-hooks.json. "
+            "plugins/autorun/hooks/hooks.json (Claude). "
             f"Current groups: {pre_tool_groups}"
         )
         assert "hooks" in catch_all_group and len(catch_all_group["hooks"]) > 0, (
@@ -549,7 +549,7 @@ class TestGeminiHookMatchers:
                 assert tool in matchers, (
                     f"PreToolUse explicit matcher missing '{tool}'. "
                     f"enforce_stop_injection needs ALL tools — use catch-all instead. "
-                    f"Fix: remove 'matcher' from PreToolUse in claude-hooks.json. "
+                    f"Fix: remove 'matcher' from PreToolUse in hooks.json (Claude). "
                     f"Current matchers: {matchers}"
                 )
 
@@ -582,13 +582,13 @@ class TestCrossCliEventValidation:
     """
 
     def test_claude_hooks_only_valid_claude_events(self):
-        """claude-hooks.json must only use Claude Code event names."""
+        """hooks.json (Claude) must only use Claude Code event names."""
         hooks_file = get_claude_hooks_path()
         with open(hooks_file, encoding="utf-8") as f:
             data = json.load(f)
         for event in data.get("hooks", {}):
             assert event in CLAUDE_CODE_VALID_EVENTS, (
-                f"'{event}' in claude-hooks.json is not a valid Claude Code event. "
+                f"'{event}' in hooks.json (Claude) is not a valid Claude Code event. "
                 f"Valid: {sorted(CLAUDE_CODE_VALID_EVENTS)}"
             )
 
@@ -649,10 +649,11 @@ class TestCacheCleanup:
             f"Claude cache missing hooks/hooks.json at {hooks_json}. "
             "Plugin hooks will not load without it."
         )
-        # No leftover claude-hooks.json or any file with Gemini events.
+        # No leftover claude-hooks.json (pre-refactor name) or file with Gemini events.
         legacy = latest / "hooks" / "claude-hooks.json"
         assert not legacy.exists(), (
-            f"Stale claude-hooks.json at {legacy}; should be renamed to hooks.json."
+            f"Stale claude-hooks.json at {legacy}; should have been renamed to hooks.json "
+            "by the bug #24115 split refactor."
         )
         data = json.loads(hooks_json.read_text(encoding="utf-8"))
         events = set(data.get("hooks", {}).keys())

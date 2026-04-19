@@ -79,7 +79,7 @@ def test_claude_hooks_at_default_path_and_schema_valid():
     gemini_contamination = events & GEMINI_ONLY
     assert not gemini_contamination, (
         f"plugins/autorun/hooks/hooks.json has Gemini-only events: {gemini_contamination}. "
-        "Move these to plugins/ar-gemini/hooks/hooks.json."
+        "Move these to plugins/autorun/src/autorun/gemini_template/hooks/hooks.json."
     )
 
     # Must use Claude's plugin root variable, not Gemini's.

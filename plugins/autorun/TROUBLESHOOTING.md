@@ -232,14 +232,15 @@ chmod +x ~/.claude/plugins/cache/autorun/autorun/*/hooks/hook_entry.py
 
 2. **Verify Source hooks.json**
 
-   Check that source files have correct format:
+   Check that source files have correct format (post-split-layout):
    ```bash
-   head -5 ~/.claude/autorun/plugins/autorun/hooks/claude-hooks.json  # Claude Code
-   head -5 ~/.claude/autorun/plugins/autorun/hooks/hooks.json         # Gemini CLI
+   head -5 ~/.claude/autorun/plugins/autorun/hooks/hooks.json                                # Claude Code
+   head -5 ~/.claude/autorun/plugins/autorun/src/autorun/gemini_template/hooks/hooks.json    # Gemini CLI
    ```
 
-   Claude version (`claude-hooks.json`) uses `${CLAUDE_PLUGIN_ROOT}` and Claude event names.
-   Gemini version (`hooks.json`) uses `${extensionPath}` and Gemini event names.
+   The Claude file (`plugins/autorun/hooks/hooks.json`) uses `${CLAUDE_PLUGIN_ROOT}` and Claude event names.
+   The Gemini template (`plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`) uses `${extensionPath}` and Gemini event names.
+   See bug #24115 / #14449 workaround notes in `plugins/autorun/CLAUDE.md` for why they live apart.
 
 3. **Reinstall**
 

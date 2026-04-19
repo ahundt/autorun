@@ -80,6 +80,21 @@ def generate_manifests(plugin_dir: Path):
         json.dump(gemini_manifest, f, indent=2)
     print(f"   ✓ Generated src/autorun/gemini_template/gemini-extension.json")
 
+    # 3b. Sync hook_entry.py into the template so Pathway 2/6
+    # (`gemini extensions install <github-url>` or `.` from repo root) finds a
+    # usable hook_entry.py at `<template>/hooks/hook_entry.py` without needing
+    # the autorun installer to run first. The canonical source is
+    # `plugins/autorun/hooks/hook_entry.py` — this copy is kept byte-identical.
+    # test_dual_cli_pathways.test_template_hook_entry_matches_canonical pins
+    # the sync so drift fails loudly at pytest time.
+    canonical_entry = plugin_dir / "hooks" / "hook_entry.py"
+    template_hooks_dir = gemini_template / "hooks"
+    if canonical_entry.is_file():
+        template_hooks_dir.mkdir(parents=True, exist_ok=True)
+        template_entry = template_hooks_dir / "hook_entry.py"
+        shutil.copy2(canonical_entry, template_entry)
+        print(f"   ✓ Synced hook_entry.py → gemini_template/hooks/")
+
     # 4. Cleanup legacy manifest locations (runs after every install to keep
     # pre-refactor working trees healthy).
     for legacy in [plugin_dir / "gemini-extension.json",

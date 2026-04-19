@@ -107,7 +107,7 @@ path = "plugins/autorun/commands/commit.md"
 path = "plugins/autorun/hooks/hooks.json"
 
 [hooks.gemini_cli]
-path = "plugins/autorun/hooks/gemini-hooks.json"
+path = "plugins/autorun/src/autorun/gemini_template/hooks/hooks.json"
 
 # Installation hooks (custom AIX extension)
 # CRITICAL: Only performs LOCAL installation (aix skills install .)
