@@ -319,15 +319,22 @@ class TestSessionTargetingRegression:
             subprocess.run(['tmux', 'kill-session', '-t', session2], capture_output=True, timeout=5)
 
     def test_no_target_leakage_in_current_session(self):
-        """Test that targeted commands don't leak into current session.
+        """Test that targeted commands don't leak into a non-target session.
 
-        Uses UUID-based markers so test source code in the pane buffer can't
-        cause false positives.  Compares new content (after − before) rather
-        than scanning the full buffer which may contain prior test output.
+        Design: create a dedicated "observer" session that is NEVER targeted
+        by send_keys. Verify probes show up in the target session AND do not
+        show up in the observer session.
+
+        Why not `tmux capture-pane -p` (no `-t`)? Without the TMUX env var
+        (common when pytest runs outside a tmux client), that call defaults
+        to the server's last-active session — typically the session we just
+        created in setup_method. The capture then reflects the SAME session
+        we're sending to, producing guaranteed false positives. Using an
+        explicit observer session eliminates that ambiguity.
         """
         import uuid
 
-        # Unique markers that can't appear in existing pane history
+        # Unique markers that can't appear in existing pane history.
         uid = uuid.uuid4().hex[:12]
         test_commands = [
             f"echo leakage-probe-{uid}-1",
@@ -335,37 +342,51 @@ class TestSessionTargetingRegression:
             f"echo leakage-probe-{uid}-3",
         ]
 
-        # Snapshot current pane BEFORE sending anything
-        before_capture = subprocess.run(
-            ['tmux', 'capture-pane', '-p'],
-            capture_output=True, text=True, timeout=5,
+        # Create a separate observer session that should remain untouched.
+        observer_session = f"leakage-observer-{uid}"
+        subprocess.run(
+            ['tmux', 'new-session', '-d', '-s', observer_session],
+            capture_output=True, timeout=5,
         )
-        before_content = before_capture.stdout
+        try:
+            # Snapshot observer session BEFORE sending anything.
+            before_observer = self._capture_session_content(observer_session)
 
-        # Send commands to the *target* session (NOT the current pane)
-        for cmd in test_commands:
-            self.tmux.send_keys(cmd, self.test_session)
-            self.tmux.send_keys('C-m', self.test_session)
-            time.sleep(0.1)
+            # Send commands to the *target* session (NOT the observer).
+            for cmd in test_commands:
+                assert self.tmux.send_keys(cmd, self.test_session), \
+                    f"send_keys({cmd!r}) failed"
+                assert self.tmux.send_keys('C-m', self.test_session), \
+                    "send_keys(C-m) failed"
+                time.sleep(0.1)
 
-        time.sleep(0.3)  # let commands execute in target session
+            time.sleep(0.3)  # let commands execute in target session
 
-        # Snapshot current pane AFTER
-        after_capture = subprocess.run(
-            ['tmux', 'capture-pane', '-p'],
-            capture_output=True, text=True, timeout=5,
-        )
-        after_content = after_capture.stdout
+            # Positive check: probes should appear in the *target* session.
+            target_content = self._capture_session_content(self.test_session)
+            for cmd in test_commands:
+                assert cmd in target_content, (
+                    f"Command {cmd!r} did not reach target session "
+                    f"{self.test_session!r}. send_keys may be broken. "
+                    f"Target content: {target_content!r:.400}"
+                )
 
-        # Only check content that is NEW (appeared after the test started).
-        # This avoids false positives from prior test output still in the
-        # scrollback or from pytest itself printing source code.
-        new_content = after_content[len(before_content):] if after_content.startswith(before_content) else after_content
-
-        for cmd in test_commands:
-            assert cmd not in new_content, (
-                f"Command '{cmd}' leaked into current session pane (new content). "
-                f"New content: {new_content!r:.200}"
+            # Negative check: probes must NOT appear in the observer session.
+            after_observer = self._capture_session_content(observer_session)
+            new_observer = (
+                after_observer[len(before_observer):]
+                if after_observer.startswith(before_observer) else after_observer
+            )
+            for cmd in test_commands:
+                assert cmd not in new_observer, (
+                    f"Command {cmd!r} leaked from target {self.test_session!r} "
+                    f"into observer {observer_session!r}. "
+                    f"New observer content: {new_observer!r:.400}"
+                )
+        finally:
+            subprocess.run(
+                ['tmux', 'kill-session', '-t', observer_session],
+                capture_output=True, timeout=5,
             )
 
     def test_session_targeting_with_window_and_pane(self):
