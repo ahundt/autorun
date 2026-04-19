@@ -40,7 +40,7 @@ def generate_manifests(plugin_dir: Path):
     # does not check — still, keep it out of the plugin root for consistency).
     manifest = {
         "name": "ar",
-        "version": pkg.get("version", "0.10.1"),
+        "version": pkg.get("version", "0.10.2rc1"),
         "description": pkg.get("description", ""),
         "author": {
             "name": pkg.get("authors", ["autorun contributors"])[0],

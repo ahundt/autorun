@@ -73,7 +73,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ---
 
-## autorun Plugin (v0.10.1)
+## autorun Plugin (v0.10.2rc1)
 
 ### Three-Stage Verification System
 
