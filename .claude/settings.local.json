@@ -4,7 +4,9 @@
       "Bash(AGENT_MODE=HOOK_INTEGRATION python3 -m autorun.main)",
       "Bash(AGENT_MODE=HOOK_INTEGRATION PYTHONPATH=src python3 src/autorun/main.py)",
       "Bash(PYTHONPATH=src python3 -m pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v)",
-      "Bash(.venv/bin/python -m pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v)"
+      "Bash(.venv/bin/python -m pytest tests/test_unit_simple.py tests/test_autorun_compatibility.py -v)",
+      "Bash(mkdir -p plugins/autorun/src/autorun/gemini_template/hooks)",
+      "Bash(git mv *)"
     ],
     "deny": [],
     "ask": []

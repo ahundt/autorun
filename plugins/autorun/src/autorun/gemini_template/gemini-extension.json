@@ -19,6 +19,6 @@
   ],
   "commands": "./commands/",
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
-  "contextFileName": "GEMINI.md"
+  "contextFileName": "GEMINI.md",
+  "hooks": "./hooks/hooks.json"
 }

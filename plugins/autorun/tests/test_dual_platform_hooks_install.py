@@ -77,11 +77,17 @@ def _extract_function(content: str, func_name: str) -> str:
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 HOOKS_DIR = PLUGIN_ROOT / "hooks"
-HOOKS_JSON = HOOKS_DIR / "claude-hooks.json"
-GEMINI_HOOKS_JSON = HOOKS_DIR / "hooks.json"
+# Post-split layout:
+#   - plugins/autorun/hooks/hooks.json    → Claude Code events (default path)
+#   - plugins/autorun/src/autorun/gemini_template/hooks/hooks.json
+#                                           → Gemini CLI events (template; hidden
+#                                             from Claude bug #24115 scanner)
+HOOKS_JSON = HOOKS_DIR / "hooks.json"
+GEMINI_TEMPLATE_DIR = PLUGIN_ROOT / "src" / "autorun" / "gemini_template"
+GEMINI_HOOKS_JSON = GEMINI_TEMPLATE_DIR / "hooks" / "hooks.json"
 HOOK_ENTRY_PY = HOOKS_DIR / "hook_entry.py"
 PLUGIN_JSON = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
-GEMINI_EXT_JSON = PLUGIN_ROOT / "gemini-extension.json"
+GEMINI_EXT_JSON = GEMINI_TEMPLATE_DIR / "gemini-extension.json"
 INSTALL_PY = PLUGIN_ROOT / "src" / "autorun" / "install.py"
 CORE_PY = PLUGIN_ROOT / "src" / "autorun" / "core.py"
 MAIN_PY = PLUGIN_ROOT / "src" / "autorun" / "main.py"
@@ -415,19 +421,20 @@ class TestCrossPlatformConsistency:
 class TestManifestFiles:
     """Validate plugin.json and gemini-extension.json are correct."""
 
-    def test_plugin_json_has_hooks_field(self):
+    def test_plugin_json_uses_default_hooks_path(self):
+        """Post-split: plugin.json has NO 'hooks' field (uses default hooks/hooks.json)."""
         with open(PLUGIN_JSON, encoding="utf-8") as f:
             manifest = json.load(f)
-        assert "hooks" in manifest, \
-            "plugin.json MUST have 'hooks' field for Claude Code hook discovery"
-        assert "claude-hooks.json" in manifest["hooks"]
+        assert "hooks" not in manifest, (
+            f"plugin.json should not declare a 'hooks' field — Claude Code auto-discovers "
+            f"hooks/hooks.json. Got: {manifest.get('hooks')!r}"
+        )
 
-    def test_plugin_json_hooks_file_exists(self):
-        with open(PLUGIN_JSON, encoding="utf-8") as f:
-            manifest = json.load(f)
-        hooks_ref = manifest.get("hooks", "")
-        hooks_path = PLUGIN_ROOT / hooks_ref.lstrip("./")
-        assert hooks_path.exists(), f"Referenced hooks file missing: {hooks_path}"
+    def test_default_claude_hooks_file_exists(self):
+        """hooks/hooks.json must exist at the default discovery path."""
+        assert HOOKS_JSON.exists(), (
+            f"Claude default hooks file missing: {HOOKS_JSON}"
+        )
 
     def test_gemini_extension_json_exists(self):
         assert GEMINI_EXT_JSON.exists()
@@ -570,44 +577,60 @@ class TestHookEntryDualPlatform:
 class TestGeminiHookSwapLogic:
     """Test that hooks.json is Gemini format and claude-hooks.json is Claude format.
 
-    No swap needed: hooks.json is always Gemini format (Gemini hardcodes this filename).
-    Claude Code reads plugin.json 'hooks' field pointing to claude-hooks.json.
-    See: https://geminicli.com/docs/extensions/writing-extensions/
+    Post-split layout:
+      - plugins/autorun/hooks/hooks.json → Claude (default discovery path)
+      - plugins/autorun/src/autorun/gemini_template/hooks/hooks.json → Gemini
+
+    Both files share the filename `hooks.json` but live in different roots so
+    each CLI's scanner sees only the events valid for it.
     """
 
     def test_install_py_references_both_hooks_files(self):
         content = INSTALL_PY.read_text(encoding="utf-8")
-        assert "claude-hooks.json" in content
         assert "hooks.json" in content
+        assert "gemini_template" in content, (
+            "install.py must reference the gemini_template path"
+        )
 
     def test_hooks_json_is_gemini_format(self):
-        """hooks.json must be Gemini format since Gemini CLI hardcodes this filename."""
-        hooks_file = HOOKS_DIR / "hooks.json"
-        with open(hooks_file, encoding="utf-8") as f:
+        """gemini_template/hooks/hooks.json must be Gemini format."""
+        with open(GEMINI_HOOKS_JSON, encoding="utf-8") as f:
             data = json.load(f)
         hooks = data.get("hooks", {})
-        assert "BeforeTool" in hooks, "hooks.json should use Gemini event name BeforeTool"
-        assert "PreToolUse" not in hooks, "hooks.json should NOT use Claude event name PreToolUse"
+        assert "BeforeTool" in hooks, (
+            f"Gemini hooks template should use BeforeTool at {GEMINI_HOOKS_JSON}"
+        )
+        assert "PreToolUse" not in hooks, (
+            "Gemini hooks template should NOT use Claude event PreToolUse"
+        )
 
     def test_claude_hooks_json_is_claude_format(self):
-        """claude-hooks.json must be Claude format."""
-        hooks_file = HOOKS_DIR / "claude-hooks.json"
-        with open(hooks_file, encoding="utf-8") as f:
+        """plugins/autorun/hooks/hooks.json must be Claude format."""
+        with open(HOOKS_JSON, encoding="utf-8") as f:
             data = json.load(f)
         hooks = data.get("hooks", {})
-        assert "PreToolUse" in hooks, "claude-hooks.json should use Claude event name PreToolUse"
-        assert "BeforeTool" not in hooks, "claude-hooks.json should NOT use Gemini event name BeforeTool"
+        assert "PreToolUse" in hooks, (
+            f"Claude hooks should use PreToolUse at {HOOKS_JSON}"
+        )
+        assert "BeforeTool" not in hooks, (
+            "Claude hooks should NOT use Gemini event BeforeTool"
+        )
 
     def test_no_swap_logic_in_installer(self):
-        """Installer should not need swap logic since filenames are correct."""
+        """Installer should not need swap logic."""
         content = INSTALL_PY.read_text(encoding="utf-8")
-        assert "hooks.json.claude-backup" not in content, \
-            "Swap logic removed — hooks.json is always Gemini format"
+        assert "hooks.json.claude-backup" not in content
+        # Legacy helper deleted as part of template refactor.
+        assert "_clean_cross_cli_hooks" not in content, (
+            "_clean_cross_cli_hooks should be fully removed; no references allowed"
+        )
 
     def test_both_hooks_files_coexist(self):
-        """Both hooks files exist side by side — no swap needed."""
-        assert (HOOKS_DIR / "hooks.json").exists(), "Gemini hooks.json must exist"
-        assert (HOOKS_DIR / "claude-hooks.json").exists(), "Claude claude-hooks.json must exist"
+        """Each CLI's hooks live in its own root — no shared directory."""
+        assert HOOKS_JSON.exists(), f"Claude hooks missing at {HOOKS_JSON}"
+        assert GEMINI_HOOKS_JSON.exists(), (
+            f"Gemini hooks template missing at {GEMINI_HOOKS_JSON}"
+        )
 
 
 # =============================================================================

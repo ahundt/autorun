@@ -49,13 +49,22 @@ path = "plugins/autorun/skills/test-skill/SKILL.md"
             assert data["description"] == "Test Description"
             assert data["author"]["name"] == "Test Author"
             
-        # 5. Verify Gemini Manifest
-        gemini_manifest_path = plugin_dir / "gemini-extension.json"
-        assert gemini_manifest_path.exists()
+        # 5. Verify Gemini Manifest is at the template path under src/
+        # (kept out of Claude Code's bug #24115 scan surface).
+        gemini_manifest_path = plugin_dir / "src" / "autorun" / "gemini_template" / "gemini-extension.json"
+        assert gemini_manifest_path.exists(), (
+            f"Expected Gemini manifest at {gemini_manifest_path}"
+        )
         with open(gemini_manifest_path, encoding="utf-8") as f:
             data = json.load(f)
             assert data["contextFileName"] == "GEMINI.md"
             assert data["version"] == "0.9.9"
+
+        # Legacy location must NOT be written.
+        legacy_path = plugin_dir / "gemini-extension.json"
+        assert not legacy_path.exists(), (
+            f"Legacy path {legacy_path} should not be created by generate_manifests"
+        )
             
         # 6. Verify Proxy Symlink
         skill_link = plugin_dir / "skills" / "test-skill" / "SKILL.md"

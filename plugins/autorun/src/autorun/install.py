@@ -819,55 +819,86 @@ def _install_pdf_deps() -> CmdResult:
     )
 
 
-def _clean_cross_cli_hooks(cache_dir: Path, target_cli: str = "claude") -> None:
-    """Remove hooks files that belong to the other CLI from a cache directory.
+# ─── Dual-CLI Layout Rationale ───────────────────────────────────────────────
+# This module and the split repo layout exist to work around two independent
+# upstream bugs that make it impossible to host Claude Code plugin hooks and
+# Gemini CLI extension hooks under the same `hooks/hooks.json` path.
+#
+# BUG: Claude Code plugin loader reads hooks from the marketplace source dir
+# https://github.com/anthropics/claude-code/issues/24115
+# Workaround: keep plugins/autorun/hooks/ populated with Claude-valid events
+# only. Any Gemini event name in that directory causes Zod `invalid_key`
+# errors on `claude plugin list`. DELETE THIS WORKAROUND when #24115 is
+# fixed AND Claude stops scanning the marketplace source.
+#
+# BUG: Gemini CLI hardcodes hooks at `<extension_root>/hooks/hooks.json`
+# https://github.com/google-gemini/gemini-cli/issues/14449
+# (also the `hooks` field in `gemini-extension.json` is ignored today).
+# Workaround: stage Gemini assets under `src/autorun/gemini_template/`
+# (outside Claude's scan surface) and materialize them into
+# `~/.gemini/extensions/<name>/` at install time by invoking
+# `gemini extensions install <template_path>` and then copying
+# `hook_entry.py` into `<ext>/hooks/`. DELETE THIS WORKAROUND when #14449
+# ships and the manifest's `hooks` field is honored everywhere.
+# ─────────────────────────────────────────────────────────────────────────────
 
-    Claude Code scans all .json files in hooks/ and fails if any contain
-    invalid event names. Gemini CLI only reads its manifest-specified file
-    but having extra files is unnecessary.
 
-    Args:
-        cache_dir: Path to the plugin cache directory
-        target_cli: "claude" removes Gemini files, "gemini" removes Claude files
+def _gemini_template_dir(plugin_dir: Path) -> Path:
+    """Return the Gemini extension template directory for a Claude plugin.
+
+    The template lives under src/autorun/gemini_template/ so Claude Code's
+    bug #24115 marketplace-source scanner (which only walks hooks/) never
+    touches it. The installer materializes ~/.gemini/extensions/<name>/ by
+    copying the template contents plus hook_entry.py.
+
+    References:
+        - anthropics/claude-code#24115 (hooks dir scanned from source)
+        - google-gemini/gemini-cli#14449 (hooks.json hardcoded at ext root)
     """
-    hooks_dir = cache_dir / "hooks"
-    if not hooks_dir.is_dir():
+    return plugin_dir / "src" / "autorun" / "gemini_template"
+
+
+def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
+    """Copy plugins/autorun/hooks/hook_entry.py into an installed Gemini
+    extension dir so ${extensionPath}/hooks/hook_entry.py resolves at runtime.
+
+    The Gemini hooks template references ${extensionPath}/hooks/hook_entry.py
+    (the "hooks/" subdir matches how Claude references it, keeping one mental
+    model for both CLIs). gemini extensions install copies everything under
+    the source path, but since we install from the template dir (not plugin_dir),
+    hook_entry.py is not picked up automatically — we copy it explicitly.
+    """
+    source = plugin_dir / "hooks" / "hook_entry.py"
+    if not source.exists():
+        logger.warning(f"hook_entry.py not found at {source}; Gemini hooks will fail")
         return
+    target_dir = ext_dir / "hooks"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "hook_entry.py"
+    shutil.copy2(source, target)
+    logger.debug(f"Copied hook_entry.py → {target}")
 
-    if target_cli == "claude":
-        # Only remove if both files exist (dual-CLI plugin indicator).
-        # A plugin with only hooks.json might use it for Claude legitimately.
-        if not (hooks_dir / "claude-hooks.json").exists():
-            return
-        remove_files = ["hooks.json"]
-    elif target_cli == "gemini":
-        if not (hooks_dir / "hooks.json").exists():
-            return
-        remove_files = ["claude-hooks.json"]
-    else:
-        # Unknown target_cli — do nothing rather than accidentally deleting files
-        return
 
-    for filename in remove_files:
-        target = hooks_dir / filename
-        if target.is_symlink():
-            # NEVER delete symlinks — could delete source repo file.
-            # Gemini CLI 0.28.2 creates absolute symlinks during install.
-            logger.warning(f"Skipping symlink {target} (would delete source)")
-        elif target.exists():
-            try:
-                target.unlink()
-                logger.debug(f"Removed cross-CLI hooks file {target}")
-            except PermissionError:
-                logger.warning(f"Permission denied removing {target}")
+def _migrate_legacy_layout(plugin_dir: Path) -> None:
+    """Fail-fast detector for stale working trees from before the template refactor.
 
-    # Clean up backup files from either cache
-    for bak_file in hooks_dir.glob("*.bak"):
-        if not bak_file.is_symlink():
-            try:
-                bak_file.unlink()
-            except PermissionError:
-                logger.warning(f"Permission denied removing {bak_file}")
+    Only applies to plugins that have migrated to the template layout. A
+    plugin without src/autorun/gemini_template/ is assumed to still use the
+    legacy layout legitimately (e.g., pdf-extractor today).
+
+    When BOTH a template dir AND a legacy manifest at plugin root exist, the
+    checkout is inconsistent and the installer should abort with an
+    actionable message rather than produce a broken dual install.
+    """
+    template = _gemini_template_dir(plugin_dir)
+    legacy_manifest = plugin_dir / "gemini-extension.json"
+    if template.is_dir() and legacy_manifest.exists():
+        raise SystemExit(
+            f"Legacy Gemini manifest detected at {legacy_manifest}. "
+            "This plugin has already migrated to the gemini_template/ layout. "
+            "Fix: git checkout -- plugins/autorun or delete the stale file, then "
+            "rerun autorun --install."
+        )
 
 
 def _install_to_cache(plugin_name: str) -> bool:
@@ -927,13 +958,10 @@ def _install_to_cache(plugin_name: str) -> bool:
         logger.error(f"Failed to copy {plugin_name} to cache: {e}")
         return False
 
-    # Remove Gemini hooks from Claude Code cache.
-    # Claude Code scans the entire hooks/ directory and rejects ALL plugin hooks
-    # if any .json file contains invalid event names (BeforeAgent, BeforeTool, etc.).
-    # Only claude-hooks.json belongs in the Claude Code cache.
-    _clean_cross_cli_hooks(cache_dir, target_cli="claude")
-
-    # Substitute ${CLAUDE_PLUGIN_ROOT} in copied files
+    # No cross-CLI cleanup required after the programmatic split:
+    # plugins/autorun/hooks/hooks.json holds Claude-only events, and Gemini
+    # assets live under src/autorun/gemini_template/ which is out of Claude's
+    # marketplace-source scan path (bug #24115).
     _substitute_paths(cache_dir)
 
     # Register in installed_plugins.json
@@ -994,14 +1022,14 @@ def _substitute_paths(plugin_dir: Path) -> None:
     """
     abs_path = str(plugin_dir.resolve())
     
-    # 1. Manifests and Hooks (Fixed paths)
-    # NOTE: hooks/hooks.json excluded — it's Gemini format, removed from
-    # Claude Code cache by _clean_cross_cli_hooks(). Gemini uses
-    # ${extensionPath} resolved at runtime, not ${CLAUDE_PLUGIN_ROOT}.
+    # 1. Manifests and Hooks (Fixed paths).
+    # hooks/hooks.json now holds Claude Code events exclusively (post-split).
+    # Gemini assets live under src/autorun/gemini_template/ and are materialized
+    # at install time by _install_for_gemini — never substituted here, because
+    # Gemini resolves ${extensionPath} at runtime.
     target_files = [
         ".claude-plugin/plugin.json",
-        "gemini-extension.json",
-        "hooks/claude-hooks.json",
+        "hooks/hooks.json",
     ]
     
     # 2. Commands and Skills (Recursive discovery)
@@ -1153,6 +1181,23 @@ def _install_for_gemini(
         marketplace_root.parent
     ]
 
+    # A plugin dir now advertises Gemini support via either (a) legacy
+    # gemini-extension.json at plugin root (pdf-extractor still uses this)
+    # or (b) a gemini_template/ with gemini-extension.json inside it
+    # (autorun post-refactor).
+    def _gemini_source(plugin_dir: Path) -> Path | None:
+        """Return the directory to hand to `gemini extensions install`.
+
+        Prefers the programmatic template path. Falls back to legacy layout.
+        Returns None if the plugin does not ship a Gemini manifest.
+        """
+        template = _gemini_template_dir(plugin_dir)
+        if template.is_dir() and (template / "gemini-extension.json").exists():
+            return template
+        if (plugin_dir / "gemini-extension.json").exists():
+            return plugin_dir
+        return None
+
     # Build name→source map from marketplace.json (plugin name may differ from dir name,
     # e.g. name="ar" maps to source="./plugins/autorun")
     marketplace_source_map: dict[str, Path] = {}
@@ -1167,34 +1212,38 @@ def _install_for_gemini(
                 _source = _entry.get("source", "")
                 if _entry_name and _source:
                     _resolved = (marketplace_root / _source).resolve()
-                    if _resolved.is_dir() and (_resolved / "gemini-extension.json").exists():
+                    if _resolved.is_dir() and _gemini_source(_resolved) is not None:
                         marketplace_source_map[_entry_name] = _resolved
         except Exception:
             pass
 
-    # Find directories for requested plugins (must have gemini-extension.json)
-    plugins_to_install = []
+    # plugins_to_install holds (plugin_dir, gemini_source_dir) pairs so the
+    # installer can copy hook_entry.py from plugin_dir/hooks/ while handing
+    # gemini_source_dir to `gemini extensions install`.
+    plugins_to_install: list[tuple[Path, Path]] = []
     for name in plugins:
-        found = False
+        candidate: Path | None = None
 
-        # Strategy 0: resolve via marketplace.json source field (handles name ≠ dir name)
+        # Strategy 0: resolve via marketplace.json source field
         if name in marketplace_source_map:
-            plugins_to_install.append(marketplace_source_map[name])
-            found = True
+            candidate = marketplace_source_map[name]
 
-        if not found:
+        if candidate is None:
             for p_dir in potential_plugin_dirs:
                 target = p_dir / name
-                if target.is_dir() and (target / "gemini-extension.json").exists():
-                    plugins_to_install.append(target)
-                    found = True
+                if target.is_dir() and _gemini_source(target) is not None:
+                    candidate = target
                     break
 
-        if not found:
+        if candidate is None:
             # Check if marketplace_root itself is the plugin
-            if marketplace_root.name == name and (marketplace_root / "gemini-extension.json").exists():
-                plugins_to_install.append(marketplace_root)
-                found = True
+            if marketplace_root.name == name and _gemini_source(marketplace_root) is not None:
+                candidate = marketplace_root
+
+        if candidate is not None:
+            src = _gemini_source(candidate)
+            if src is not None:
+                plugins_to_install.append((candidate, src))
 
     if not plugins_to_install:
         return (False, f"No plugins found matching selection: {', '.join(plugins)} in {marketplace_root}")
@@ -1205,13 +1254,16 @@ def _install_for_gemini(
     success_count = 0
     failed_plugins = []
 
-    for plugin_dir in plugins_to_install:
+    for plugin_dir, gemini_src in plugins_to_install:
         plugin_name = plugin_dir.name
+
+        # Detect stale pre-refactor layout before doing anything destructive.
+        _migrate_legacy_layout(plugin_dir)
 
         # Read gemini-extension.json to get the extension name
         try:
             import json
-            with open(plugin_dir / "gemini-extension.json", encoding="utf-8") as f:
+            with open(gemini_src / "gemini-extension.json", encoding="utf-8") as f:
                 ext_config = json.load(f)
                 ext_name = ext_config.get("name", plugin_name)
         except Exception:
@@ -1219,32 +1271,36 @@ def _install_for_gemini(
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 
-        # CRITICAL FIX: Stop using TemporaryDirectory for Gemini installation.
-        # Gemini (0.28.2) creates absolute symlinks to the source path during
-        # local extension installation. If we install from /tmp, the links
-        # break immediately after the installer exits.
-        
-        # hooks/hooks.json is Gemini format (${extensionPath}, Gemini event names).
-        # hooks/claude-hooks.json is Claude Code format (${CLAUDE_PLUGIN_ROOT}).
-        # Gemini CLI hardcodes reading hooks/hooks.json, so no swap needed.
-        # See: https://geminicli.com/docs/extensions/writing-extensions/
-        #
-        # DO NOT call _substitute_paths() here. It resolves ${CLAUDE_PLUGIN_ROOT}
-        # in source files, which is destructive. Gemini uses ${extensionPath}
-        # (resolved at runtime by Gemini CLI), not ${CLAUDE_PLUGIN_ROOT}.
-        # Path substitution is only needed for the Claude Code cache copy.
+        # gemini extensions install expects a persistent source path. Gemini
+        # 0.28.2 creates absolute symlinks into that path, so the source must
+        # not be a TemporaryDirectory. For autorun, gemini_src points at
+        # plugins/autorun/src/autorun/gemini_template — a persistent repo path.
+        # hook_entry.py lives outside the template (shared with Claude) and is
+        # copied in after install completes via _copy_hook_entry_to_gemini_ext.
 
         if force:
             run_cmd(["gemini", "extensions", "uninstall", ext_name])
 
-        # Install directly from the persistent repository path
-        result = run_cmd(["gemini", "extensions", "install", str(plugin_dir), "--consent"])
+        # Install directly from the persistent source path
+        result = run_cmd(["gemini", "extensions", "install", str(gemini_src), "--consent"])
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
-            # Generate TOML command files for Gemini CLI
             installed_dir = gemini_dir / "extensions" / ext_name
             if installed_dir.is_dir():
+                # Copy hook_entry.py from the Claude plugin dir so the Gemini
+                # hooks.json's ${extensionPath}/hook_entry.py reference resolves.
+                _copy_hook_entry_to_gemini_ext(plugin_dir, installed_dir)
+                # Generate TOML command files for Gemini CLI. Commands live at
+                # plugin_dir/commands/ (shared with Claude); mirror into the
+                # installed extension so /<ext_name>:* commands work.
+                commands_src = plugin_dir / "commands"
+                if commands_src.is_dir():
+                    shutil.copytree(
+                        commands_src,
+                        installed_dir / "commands",
+                        dirs_exist_ok=True,
+                    )
                 n = _generate_gemini_toml_commands(installed_dir, ext_name)
                 if n > 0:
                     print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
@@ -1823,7 +1879,6 @@ def install_plugins(
                         version = _read_plugin_version(plugin_dir_src)
                         cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
                         if cache_path.exists():
-                            _clean_cross_cli_hooks(cache_path, target_cli="claude")
                             _substitute_paths(cache_path)
 
                     claude_succeeded.append(name)
@@ -1860,7 +1915,6 @@ def install_plugins(
                     version = _read_plugin_version(plugin_dir_src)
                     cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
                     if cache_path.exists():
-                        _clean_cross_cli_hooks(cache_path, target_cli="claude")
                         _substitute_paths(cache_path)
 
                 claude_succeeded.append(name)

@@ -18,6 +18,5 @@
     "safety-guards"
   ],
   "commands": "./commands/",
-  "skills": "./skills/",
-  "hooks": "./hooks/claude-hooks.json"
+  "skills": "./skills/"
 }

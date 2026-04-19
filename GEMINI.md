@@ -9,8 +9,17 @@
 ### From GitHub (Production - Recommended)
 
 ```bash
-# Install directly via Gemini extension system
-gemini extensions install https://github.com/ahundt/autorun.git
+# Canonical installer (recommended) — detects Claude Code and Gemini CLI and
+# installs for whichever are present.
+autorun --install
+
+# Alternative: Gemini-only install direct from GitHub. Because the autorun
+# Gemini extension template lives under plugins/autorun/src/autorun/gemini_template/
+# (see File Structure below), installing the repo root as a single Gemini
+# extension does not succeed — finish the install with `autorun --install`
+# which materializes ~/.gemini/extensions/ar/ from the template programmatically.
+gemini extensions install https://github.com/ahundt/autorun.git/plugins/pdf-extractor  # pdf-extractor still uses legacy layout
+autorun --install  # completes the autorun Gemini extension setup
 
 # Verify
 gemini extensions list  # Should show: ar@0.10.1, pdf-extractor@0.10.1
@@ -280,22 +289,33 @@ The hook system works because Gemini CLI provides:
 
 ```
 autorun/
-├── gemini-extension.json          # Workspace-level Gemini manifest
-├── GEMINI.md                       # This file
+├── GEMINI.md                              # This file
 └── plugins/
     ├── autorun/
-    │   ├── gemini-extension.json          # Plugin manifest for Gemini
     │   ├── .claude-plugin/plugin.json     # Plugin manifest for Claude
     │   ├── hooks/
-    │   │   ├── gemini-hooks.json          # Gemini event hooks
-    │   │   ├── hooks.json                 # Claude event hooks
+    │   │   ├── hooks.json                 # Claude event hooks (default path)
     │   │   └── hook_entry.py              # Shared hook handler (both CLIs)
+    │   ├── src/autorun/
+    │   │   └── gemini_template/           # Gemini extension template
+    │   │       ├── gemini-extension.json  # Gemini manifest (materialized at install)
+    │   │       └── hooks/hooks.json       # Gemini event hooks (Gemini-only events)
     │   └── commands/                      # Shared commands (both CLIs)
     └── pdf-extractor/
-        ├── gemini-extension.json          # Plugin manifest for Gemini
+        ├── gemini-extension.json          # Plugin manifest for Gemini (legacy layout)
         ├── .claude-plugin/plugin.json     # Plugin manifest for Claude
         └── commands/                      # Shared commands (both CLIs)
 ```
+
+**Why the template lives under `src/autorun/`:** Claude Code's plugin loader
+([bug #24115](https://github.com/anthropics/claude-code/issues/24115)) scans
+`plugins/autorun/hooks/` from BOTH the installed cache AND the marketplace
+source directory. Gemini-only event names (`BeforeTool`, `BeforeAgent`, etc.)
+in that path fail Claude's strict Zod schema (`invalid_key`). Putting Gemini
+assets under `src/autorun/gemini_template/` keeps them out of Claude's scan
+path while still shipping them in the repo. The installer programmatically
+materializes `~/.gemini/extensions/ar/` from the template and copies
+`hook_entry.py` into place so `${extensionPath}/hook_entry.py` resolves.
 
 ## Gemini-Specific Command Reference
 

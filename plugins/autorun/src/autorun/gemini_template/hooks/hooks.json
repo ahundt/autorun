@@ -1,0 +1,77 @@
+{
+  "description": "autorun v0.10 - Gemini CLI native compatibility hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{
+          "name": "autorun-init",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
+        "hooks": [{
+          "name": "autorun-command",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "hooks": [{
+          "name": "autorun-pretool",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "AUTORUN|/ar:",
+        "hooks": [{
+          "name": "autorun-afteragent",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterModel": [
+      {
+        "hooks": [{
+          "name": "autorun-aftermodel",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "AfterTool": [
+      {
+        "hooks": [{
+          "name": "autorun-posttool",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{
+          "name": "autorun-cleanup",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ]
+  }
+}

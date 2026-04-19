@@ -31,8 +31,13 @@ def generate_manifests(plugin_dir: Path):
         aix_data = tomllib.load(f)
 
     pkg = aix_data.get("package", {})
-    
-    # 1. Base Manifest Data
+
+    # 1. Base Manifest Data (shared fields). Claude uses the default hooks path
+    # (hooks/hooks.json) and therefore declares no explicit "hooks" field.
+    # Claude bug #24115 scans the hooks/ subdirectory of the plugin source,
+    # so the Gemini manifest cannot live at plugin root (would not leak Gemini
+    # event names into Claude's scan, but would leak a manifest that bug #24115
+    # does not check — still, keep it out of the plugin root for consistency).
     manifest = {
         "name": "ar",
         "version": pkg.get("version", "0.10.1"),
@@ -45,28 +50,47 @@ def generate_manifests(plugin_dir: Path):
         "repository": pkg.get("repository", ""),
         "license": pkg.get("license", "Apache-2.0"),
         "keywords": [
-            "claude-code", "gemini-cli", "agent-sdk", "file-policy", 
+            "claude-code", "gemini-cli", "agent-sdk", "file-policy",
             "autonomous-sessions", "safety-guards"
         ],
         "commands": "./commands/",
         "skills": "./skills/",
-        "hooks": "./hooks/claude-hooks.json"
     }
 
-    # 2. Write Claude Manifest
+    # 2. Write Claude Manifest (no explicit hooks field — uses default path).
     claude_dir = plugin_dir / ".claude-plugin"
     claude_dir.mkdir(exist_ok=True)
     with open(claude_dir / "plugin.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     print(f"   ✓ Generated .claude-plugin/plugin.json")
 
-    # 3. Write Gemini Manifest
-    with open(plugin_dir / "gemini-extension.json", "w", encoding="utf-8") as f:
-        gemini_manifest = manifest.copy()
-        gemini_manifest["contextFileName"] = "GEMINI.md"
-        gemini_manifest["hooks"] = "./hooks/hooks.json"
+    # 3. Write Gemini Manifest into the template dir under src/autorun/. This
+    # keeps Gemini-only assets out of Claude's marketplace-source scan path
+    # (bug #24115). The installer materializes ~/.gemini/extensions/ar/ from
+    # this template; Gemini's hardcoded "hooks/hooks.json" path lives next to
+    # this manifest inside the template directory.
+    gemini_template = plugin_dir / "src" / "autorun" / "gemini_template"
+    gemini_template.mkdir(parents=True, exist_ok=True)
+    gemini_manifest = manifest.copy()
+    gemini_manifest["contextFileName"] = "GEMINI.md"
+    # Gemini CLI ignores this field today (bug #14449) but include it for
+    # forward compatibility with PR #14460 (gemini-cli 0.28+).
+    gemini_manifest["hooks"] = "./hooks/hooks.json"
+    with open(gemini_template / "gemini-extension.json", "w", encoding="utf-8") as f:
         json.dump(gemini_manifest, f, indent=2)
-    print(f"   ✓ Generated gemini-extension.json")
+    print(f"   ✓ Generated src/autorun/gemini_template/gemini-extension.json")
+
+    # 4. Cleanup legacy manifest locations (runs after every install to keep
+    # pre-refactor working trees healthy).
+    for legacy in [plugin_dir / "gemini-extension.json",
+                   plugin_dir / "hooks" / "claude-hooks.json",
+                   plugin_dir / "hooks" / "claude-hooks.json.bak"]:
+        if legacy.exists() and not legacy.is_symlink():
+            try:
+                legacy.unlink()
+                print(f"   ✓ Removed legacy file: {legacy.relative_to(plugin_dir)}")
+            except OSError:
+                pass
 
     # 4. Generate Skill Proxies (Gemini Compliance)
     skills_dir = plugin_dir / "skills"

@@ -1283,16 +1283,12 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
 def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """Inject reminder when AI hasn't updated tasks recently (v0.9).
 
-    Counts tool calls per session. Resets on TaskCreate/TaskUpdate.
-    Injects reminder when count reaches threshold AND incomplete tasks exist.
-
-    Delivery: channel="both" (PostToolUse) + enforce_next flag (PreToolUse allow).
-    PostToolUse additionalContext is broken in Claude Code SDK (issue #18534),
-    so we use dual delivery: systemMessage via channel="both" AND PreToolUse
-    allow(reason) via enforce_task_staleness.
-
-    Fires in any session (not just autorun). Disable with /ar:tasks off.
+    Bypass for Gemini CLI: Gemini uses Conductor (markdown-based) rather than
+    native tool calls for task tracking.
     """
+    if ctx.cli_type == "gemini":
+        return None
+
     if not ctx.task_staleness_enabled:
         return None
 

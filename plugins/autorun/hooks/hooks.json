@@ -1,76 +1,35 @@
 {
-  "description": "autorun v0.10 - Gemini CLI native compatibility hooks",
+  "description": "autorun v0.10 - unified daemon-based hook handler",
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [{
-          "name": "autorun-init",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
-      }
-    ],
-    "BeforeAgent": [
+    "UserPromptSubmit": [
       {
         "matcher": "/afs|/afa|/afj|/afst|/autorun|/autostop|/estop|/ar:",
-        "hooks": [{
-          "name": "autorun-command",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
-    "BeforeTool": [
+    "PreToolUse": [
       {
-        "hooks": [{
-          "name": "autorun-pretool",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
-    "AfterAgent": [
+    "PostToolUse": [
       {
-        "matcher": "AUTORUN|/ar:",
-        "hooks": [{
-          "name": "autorun-afteragent",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
-    "AfterModel": [
+    "SessionStart": [
       {
-        "hooks": [{
-          "name": "autorun-aftermodel",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
-    "AfterTool": [
+    "Stop": [
       {
-        "hooks": [{
-          "name": "autorun-posttool",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ],
-    "SessionEnd": [
+    "SubagentStop": [
       {
-        "hooks": [{
-          "name": "autorun-cleanup",
-          "type": "command",
-          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
-          "timeout": 5000
-        }]
+        "hooks": [{ "type": "command", "command": "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude", "timeout": 10 }]
       }
     ]
   }
