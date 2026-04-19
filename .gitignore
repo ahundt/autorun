@@ -29,6 +29,13 @@ MANIFEST
 .uv_cache/
 uv.lock
 
+# Installer leak: `autorun --install` used to write generated artifacts
+# (metadata.json, gemini_template/) to the workspace-root src/autorun/
+# because find_marketplace_root() returns the workspace root. Fixed in
+# install.py to route writes to plugins/autorun/src/autorun/, but keep
+# a gitignore safety net in case the logic regresses.
+/src/autorun/
+
 # Virtual environments
 .env
 .venv

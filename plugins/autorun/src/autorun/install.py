@@ -1572,16 +1572,25 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
         return (False, result.output)
 
 
-def _update_package_metadata(marketplace_root: Path) -> None:
-    """Automatically update metadata.json with current commit and build time."""
+def _update_package_metadata(plugin_dir: Path) -> None:
+    """Automatically update plugin_dir/src/autorun/metadata.json with current
+    commit and build time.
+
+    Args:
+        plugin_dir: The PLUGIN directory (e.g., plugins/autorun/), not the
+            workspace root. Writes to plugin_dir/src/autorun/metadata.json.
+            Walks up to find the enclosing .git for the commit SHA.
+    """
     try:
-        # 1. Get git commit (try marketplace root first, then its parent)
-        commit_dir = marketplace_root
-        if not (commit_dir / ".git").exists():
-            commit_dir = marketplace_root.parent
-            
-        if not (commit_dir / ".git").exists():
-            msg = f"No .git directory found in {commit_dir}. Run from a git clone to include version metadata."
+        # 1. Get git commit by walking up from plugin_dir looking for .git
+        commit_dir: Path | None = None
+        for p in [plugin_dir, *plugin_dir.parents]:
+            if (p / ".git").exists():
+                commit_dir = p
+                break
+
+        if commit_dir is None:
+            msg = f"No .git directory found walking up from {plugin_dir}. Run from a git clone to include version metadata."
             logger.info(msg)
             print(f"   ℹ️  Note: {msg}")
             return
@@ -1746,15 +1755,29 @@ def install_plugins(
     Note:
         Commands and skills work natively via extension manifest.
     """
-    # Ensure metadata is fresh before install starts
+    # Ensure metadata is fresh before install starts.
+    # find_marketplace_root() returns the workspace root (which has its own
+    # .claude-plugin/marketplace.json listing ./plugins/autorun as a source).
+    # The metadata and manifests must be written INTO the plugin dir, not the
+    # workspace root, otherwise stray src/autorun/metadata.json and
+    # src/autorun/gemini_template/ files leak into the workspace on every
+    # `autorun --install` run. Prefer `<root>/plugins/autorun` when present,
+    # fall back to `root` only if the workspace root IS the plugin dir
+    # (single-plugin repo).
     root = find_marketplace_root()
-    _update_package_metadata(root)
+    plugin_candidate = root / "plugins" / "autorun"
+    if plugin_candidate.is_dir() and (plugin_candidate / ".claude-plugin" / "plugin.json").exists():
+        plugin_root = plugin_candidate
+    elif (root / ".claude-plugin" / "plugin.json").exists():
+        plugin_root = root
+    else:
+        plugin_root = plugin_candidate  # best-effort fallback
+
+    _update_package_metadata(plugin_root)
 
     # NEW: Harmonize manifests from aix.toml (Single Source of Truth)
     try:
         from autorun.aix_manifest import generate_manifests
-        # root could be workspace root or plugin root
-        plugin_root = root if (root / ".claude-plugin").exists() else root / "plugins" / "autorun"
         if plugin_root.exists():
             generate_manifests(plugin_root)
     except ImportError:
