@@ -304,22 +304,22 @@ class TestTryCliRobustness:
 
 
 # =============================================================================
-# Test: claude-hooks.json Configuration
+# Test: hooks.json (Claude Code default path) Configuration
 # =============================================================================
 
 
 class TestHooksJson:
-    """Verify claude-hooks.json is correctly configured."""
+    """Verify plugins/autorun/hooks/hooks.json is correctly configured for Claude Code."""
 
     def test_uses_hook_entry(self):
         """claude-hooks.json calls hook_entry.py."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
+        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         content = hooks_json.read_text(encoding="utf-8")
         assert "hook_entry.py" in content
 
     def test_no_direct_cli_reference(self):
         """claude-hooks.json uses hook_entry.py, not direct CLI."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
+        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         data = json.loads(hooks_json.read_text(encoding="utf-8"))
 
         for event, matchers in data.get("hooks", {}).items():
@@ -332,7 +332,7 @@ class TestHooksJson:
 
     def test_no_shell_script_reference(self):
         """claude-hooks.json does not reference old shell script."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
+        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         content = hooks_json.read_text(encoding="utf-8")
         assert "autorun-hook.sh" not in content
 
@@ -971,7 +971,7 @@ class TestAllLocationsSync:
     1. Source: plugins/autorun/src/autorun/
     2. Dev venv: plugins/autorun/.venv/.../autorun/
     3. Build: plugins/autorun/build/lib/autorun/
-    4. Claude cache: ~/.claude/plugins/cache/autorun/ar/0.10.1/
+    4. Claude cache: ~/.claude/plugins/cache/autorun/ar/0.10.2rc1/
     5. UV tool: ~/.local/share/uv/tools/autorun/.../autorun/
     6. Gemini extension: ~/.gemini/extensions/ar/
 
@@ -983,13 +983,14 @@ class TestAllLocationsSync:
     """
 
     def test_source_hooks_json_is_claude_format(self):
-        """Source claude-hooks.json must have Claude Code format, not Gemini format."""
-        hooks_json = PLUGIN_ROOT / "hooks" / "claude-hooks.json"
+        """Source hooks.json must have Claude Code format (post-split-layout:
+        plugins/autorun/hooks/hooks.json holds only Claude events)."""
+        hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         content = hooks_json.read_text(encoding="utf-8")
 
         assert "unified daemon-based hook handler" in content, \
-            "Source claude-hooks.json has wrong format. Should be Claude Code, not Gemini. " \
-            "Restore from: ~/.claude/plugins/cache/autorun/ar/0.10.1/hooks/claude-hooks.json"
+            "Source hooks.json has wrong format. Should be Claude Code, not Gemini. " \
+            "Restore from: ~/.claude/plugins/cache/autorun/ar/0.10.2rc1/hooks/hooks.json"
 
         assert "PreToolUse" in content, \
             "Must have Claude Code event names (not Gemini's BeforeTool)"
@@ -1043,13 +1044,17 @@ class TestAllLocationsSync:
             f"UV tool has direct_url.json but editable=false. Reinstall with --editable."
 
     def test_gemini_extension_hooks_match_source(self):
-        """Gemini extension hooks.json must match source."""
+        """Gemini extension hooks.json must match the Gemini TEMPLATE source
+        (not the Claude plugin's hooks.json). Post-split-layout, Claude's
+        hooks live at plugins/autorun/hooks/hooks.json and Gemini's live at
+        plugins/autorun/src/autorun/gemini_template/hooks/hooks.json.
+        """
         gemini_ext = Path.home() / ".gemini/extensions/ar"
 
         if not gemini_ext.exists():
             pytest.skip("Gemini extension not installed")
 
-        source_hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
+        source_hooks = PLUGIN_ROOT / "src" / "autorun" / "gemini_template" / "hooks" / "hooks.json"
         ext_hooks = gemini_ext / "hooks" / "hooks.json"
 
         assert ext_hooks.exists(), (
