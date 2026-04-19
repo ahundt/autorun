@@ -1,8 +1,8 @@
 # Hook Architecture Documentation
 
 **Version**: 0.10.2rc1
-**Last Updated**: 2026-02-10
-**Status**: Complete for Claude Code and Gemini CLI
+**Last Updated**: 2026-04-19
+**Status**: Complete for Claude Code and Gemini CLI (post split-root refactor for bugs #24115/#14449)
 
 ---
 
@@ -34,6 +34,109 @@ autorun implements a unified hook system that works across both **Claude Code** 
 ---
 
 ## Dual CLI Support
+
+### Hook System Architecture (side-by-side)
+
+The two CLIs disagree on file names, event names, path variables, and tool
+names. autorun wraps both with a single shared Python handler that routes
+by `--cli` flag and normalizes payloads so downstream code never branches
+on CLI type except at the boundary.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          Hook System Architecture                            │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Claude Code                              Gemini CLI                         │
+│  ─────────────                            ──────────                         │
+│                                                                              │
+│  plugins/autorun/hooks/hooks.json         plugins/autorun/src/autorun/       │
+│    (auto-discovered; plugin.json has        gemini_template/hooks/hooks.json │
+│     no "hooks" field — uses default)        (template; installer materializes│
+│                                              to ~/.gemini/extensions/ar/)    │
+│                                                                              │
+│  ├─ SessionStart                          ├─ SessionStart                    │
+│  ├─ UserPromptSubmit                      ├─ BeforeAgent                     │
+│  ├─ PreToolUse                            ├─ BeforeTool                      │
+│  ├─ PostToolUse                           ├─ AfterTool                       │
+│  ├─ Stop                                  ├─ AfterAgent                      │
+│  ├─ SubagentStop                          ├─ AfterModel                      │
+│  └─ (PreCompact/PostCompact available)    └─ SessionEnd                      │
+│                                                                              │
+│  Path variable:                           Path variable:                     │
+│    ${CLAUDE_PLUGIN_ROOT}                    ${extensionPath}                 │
+│    (substituted at install time by          (resolved at runtime by          │
+│     install.py:_substitute_paths)           Gemini CLI — NEVER pre-          │
+│                                             substituted by installer)        │
+│                                                                              │
+│  Tool names (PascalCase):                 Tool names (snake_case):           │
+│  - Write, Edit, Bash                      - write_file, replace,             │
+│  - Read, Grep, Glob                         run_shell_command                │
+│  - ExitPlanMode                           - read_file, grep_search, glob     │
+│  - TaskCreate, TaskUpdate                 - exit_plan_mode                   │
+│  - AskUserQuestion, Skill                 - (no native task tools — autorun  │
+│                                              bypasses staleness checks on    │
+│                                              Gemini; see plugins.py)         │
+│                                                                              │
+│  Timeout unit: SECONDS                    Timeout unit: MILLISECONDS         │
+│  (timeout: 10 = 10s)                      (timeout: 5000 = 5s)               │
+│                                                                              │
+│  Response contract:                       Response contract:                 │
+│  { "hookSpecificOutput": {                { "decision": "allow"/"deny",      │
+│      "permissionDecision": "allow"/"deny",  "reason": "...",                 │
+│      "permissionDecisionReason": "..." }, "additionalContext": "..." }       │
+│    "systemMessage": "...",                                                   │
+│    "additionalContext": "..." }           (works as documented on Gemini;    │
+│                                            Claude drops additionalContext —  │
+│  Blocking: bug #4669 → exit 2 + stderr     see BUG #18534 workaround)        │
+│  (auto-detected by core.py respond())                                        │
+│                                                                              │
+│  ──────────────────────────┬───────────────────────────                      │
+│                            │                                                 │
+│                            ▼                                                 │
+│         plugins/autorun/hooks/hook_entry.py  (single source of truth)        │
+│           ├─ detect_cli_type()      — GEMINI_SESSION_ID → "gemini"           │
+│           ├─ get_project_dir()      — CLAUDE/GEMINI_PROJECT_DIR fallback     │
+│           ├─ normalize_payload()    — maps Gemini fields → Claude fields     │
+│           ├─ spawn_background_bootstrap()  — Pathway 8 self-heal             │
+│           └─ main()                 — routes to daemon via Unix socket       │
+│                                                                              │
+│         (The same file lives at <template>/hooks/hook_entry.py byte-for-     │
+│          byte — aix_manifest.generate_manifests shutil.copy2's it on every   │
+│          install. test_template_hook_entry_matches_canonical pins drift.)    │
+│                            │                                                 │
+│                            ▼  JSON over Unix socket (ipc.py)                 │
+│                                                                              │
+│         src/autorun/core.py  (AutorunDaemon)                                 │
+│           ├─ handle_client()          — dispatch by event name               │
+│           ├─ respond()                — builds response for cli_type         │
+│           │   └─ BUG #18534 workaround: "ai" → "both" on Claude              │
+│           ├─ check_blocked_commands() — integrations.py DEFAULT_INTEGRATIONS │
+│           ├─ enforce_file_policy()    — AutoFile allow/justify/strict        │
+│           ├─ task_lifecycle           — TaskCreate/Update tracking           │
+│           ├─ plan_export              — ExitPlanMode → notes/                │
+│           └─ BUG #4669 workaround     — exit 2 + stderr for Claude deny      │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Key takeaways from the table:
+
+- **Events are 100% disjoint** on the CLI-specific side — `PreToolUse` is
+  valid in Claude but not Gemini, and vice versa. Only `SessionStart` and
+  `SessionEnd` appear in both (and Gemini's `Notification`/`PreCompress`
+  don't map to Claude events either).
+- **Variables are disjoint** — `${CLAUDE_PLUGIN_ROOT}` is substituted at
+  install time; `${extensionPath}` is resolved at runtime by Gemini. Mixing
+  them silently produces broken commands.
+- **Tool names are disjoint** — Claude's PascalCase `Write` vs Gemini's
+  `write_file`. `normalize_payload()` converts on the way into the daemon.
+- **Timeout units differ** — Claude seconds, Gemini milliseconds. The
+  `test_hooks_timeout_adequate` suite pins each file to the correct unit.
+- **Response contracts differ** — Claude's `hookSpecificOutput.permissionDecision`
+  vs Gemini's top-level `decision`. The daemon emits BOTH so either CLI
+  can consume the response; plus bug #4669 / #18534 workarounds documented
+  inline.
 
 ### Repo Layout & Why It's Split (v0.10.2rc1+)
 
@@ -219,7 +322,18 @@ fixed upstream:
 
 ## Hook Files
 
-### Claude Code Format (`hooks/hooks.json`)
+> Post-refactor paths:
+> - Claude: `plugins/autorun/hooks/hooks.json` (default discovery path; no
+>   explicit field in `plugin.json`)
+> - Gemini: `plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`
+>   (template; installer materializes to `~/.gemini/extensions/ar/hooks/hooks.json`)
+>
+> The JSON examples below show the authorship conventions. The shipping
+> files use catch-all matchers (no `matcher` field) and invoke
+> `uv run --quiet --project <root> python <root>/hooks/hook_entry.py --cli <name>`
+> instead of `python3`. Timeouts are ≥10s for Claude and ≥5000ms for Gemini.
+
+### Claude Code Format (`plugins/autorun/hooks/hooks.json`)
 
 ```json
 {
@@ -274,7 +388,7 @@ fixed upstream:
 - Tool names: `Write`, `Bash`, `Edit`, `ExitPlanMode`, `TaskCreate`
 - Timeout: 10 seconds (seconds, not milliseconds)
 
-### Gemini CLI Format (`hooks/hooks.json`)
+### Gemini CLI Format (`plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`)
 
 ```json
 {
