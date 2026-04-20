@@ -76,7 +76,7 @@ class TestFix1NonBlockingStatuses:
 
     def test_non_blocking_statuses_values(self):
         assert TaskLifecycle.NON_BLOCKING_STATUSES == frozenset(
-            ["completed", "deleted", "paused", "ignored"])
+            ["completed", "deleted", "paused", "ignored", "delegated"])
 
 
 # --- Fix 2: Ghost task returns sentinel ---

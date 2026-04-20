@@ -118,7 +118,7 @@ class TestGhostTaskBugReplication:
         assert tasks['6']['status'] == 'ignored', "Migration fixes ghost task"
 
         with session_state(global_key) as state:
-            assert state.get("schema_version") == 2
+            assert state.get("schema_version") == TaskLifecycle.SCHEMA_VERSION
 
     def test_migration_idempotent(self, isolated_config):
         """TEST ROBUSTNESS: Migration safe to run multiple times."""
@@ -365,7 +365,7 @@ class TestCrossSessionPersistence:
         assert manager.tasks['6']['status'] == 'ignored'
 
         with session_state(global_key) as state:
-            assert state.get("schema_version") == 2
+            assert state.get("schema_version") == TaskLifecycle.SCHEMA_VERSION
 
     def test_session_resume_inherits_fixed_ghosts(self, isolated_config):
         """TEST: Resumed session sees migrated ghosts as ignored."""

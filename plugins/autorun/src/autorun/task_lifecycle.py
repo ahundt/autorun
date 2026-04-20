@@ -59,6 +59,7 @@ from .config import (
 # === Stop / Resume action fragments (assembled at call site) ===
 _ACT_REVIEW   = '{task_list}'
 _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
+_ACT_DELEGATE = '{task_update}({task_id_param}="X", status="delegated")'
 _ACT_DISCARD  = '{task_update}({task_id_param}="X", status="deleted")'
 _ACT_OVERRIDE = 'only the user can type /ar:sos (emergency stop) or /ar:task-ignore <id> (mark task ignored to unblock stopping)'
 
@@ -171,13 +172,17 @@ class TaskLifecycle:
     #       transition to terminal statuses (completed/deleted/ignored). Non-terminal
     #       status requests (in_progress/pending) are silently skipped. Existing v1
     #       ghost tasks with blocking statuses are reset to "ignored" on migration.
-    SCHEMA_VERSION = 2
+    #   v3: "delegated" status added to NON_BLOCKING_STATUSES. Allows AI to explicitly
+    #       mark tasks as delegated to a subagent, unblocking Stop while preserving
+    #       task visibility (delegated tasks appear in SessionStart for follow-up).
+    SCHEMA_VERSION = 3
 
     # Status constants (single source of truth - DRY)
     COMPLETED_STATUSES = frozenset(["completed", "deleted"])
     # Statuses that don't block stopping.
     # "ignored" is set by /ar:task-ignore (autorun code), not via TaskUpdate tool.
-    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored"])
+    # "delegated" is set explicitly by AI before spawning a subagent for a task.
+    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored", "delegated"])
 
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
     PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
@@ -271,6 +276,13 @@ class TaskLifecycle:
             if fixed_count > 0 and self.config.debug_logging:
                 self.log_event("MIGRATION", "v1->v2", f"Fixed {fixed_count} ghost tasks",
                               "schema_update", {"fixed_count": fixed_count})
+
+        # === v2 → v3 Migration: "delegated" status added to NON_BLOCKING_STATUSES ===
+        # No data migration needed — "delegated" is a new status AI can set going
+        # forward. Existing tasks are unaffected. Version bump records the schema
+        # so future migrations have a clean baseline.
+        if stored_version < 3:
+            pass  # v2→v3: pure addition, no data changes needed
 
         # Atomic update: tasks + version together
         state["tasks"] = tasks
@@ -565,7 +577,7 @@ class TaskLifecycle:
                 # - Stop hook only blocks if incomplete tasks exist
                 # - Migration (v1→v2) automatically fixes old ghost tasks on first access
                 is_ghost = task.get("metadata", {}).get("ghost_task", False)
-                terminal_statuses = {"completed", "deleted", "ignored"}
+                terminal_statuses = {"completed", "deleted", "ignored", "delegated"}
 
                 if is_ghost and new_status not in terminal_statuses:
                     # Ghost task protection triggered - log for debugging
@@ -874,8 +886,12 @@ class TaskLifecycle:
         # REMOVED: self.prune_old_tasks() - manual pruning only
         incomplete = self.get_incomplete_tasks(exclude_blocking=True)
 
-        if not incomplete:
-            return None  # No incomplete tasks - session proceeds normally
+        # Also find delegated tasks — non-blocking but need follow-up if child failed
+        all_tasks = self.tasks
+        delegated_all = [t for t in all_tasks.values() if t.get("status") == "delegated"]
+
+        if not incomplete and not delegated_all:
+            return None  # No incomplete or delegated tasks - session proceeds normally
 
         # Get prioritized tasks for better AI guidance
         prioritized = self.get_prioritized_tasks()
@@ -903,6 +919,12 @@ class TaskLifecycle:
             task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} ({icon})")
             total_shown += 1
 
+        # Show delegated tasks (non-blocking but need follow-up if child failed)
+        delegated_tasks = delegated_all
+        for t in delegated_tasks[:max_tasks - total_shown]:
+            task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} (🤝 delegated — check if complete)")
+            total_shown += 1
+
         task_list = " ".join(task_items)
         total = len(incomplete)
         older_count = len(older_incomplete)
@@ -914,8 +936,9 @@ class TaskLifecycle:
             f"Actions: 1. You must complete or discard each task before stopping "
             f"2. Review: {_ACT_REVIEW} "
             f"3. Do the work, then: {_ACT_COMPLETE} "
-            f"4. Or discard: {_ACT_DISCARD} "
-            f"5. Override: {_ACT_OVERRIDE}\n"
+            f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
+            f"5. Or discard: {_ACT_DISCARD} "
+            f"6. Override: {_ACT_OVERRIDE}\n"
         )
 
         # Log resume event
@@ -942,6 +965,15 @@ class TaskLifecycle:
 
         No automatic override after N attempts - that caused premature stoppage.
         """
+        # SubagentStop fires in the PARENT's context when a child agent (spawned via
+        # Agent tool) completes and returns results. Blocking SubagentStop creates a
+        # deadlock: parent waits for child results, but SubagentStop is blocked so
+        # results never arrive → parent loops forever. The parent's own Stop events
+        # (separate event name) still enforce task completion, so auto-resume is
+        # completely unaffected by this early return.
+        if ctx.event == "SubagentStop":
+            return None
+
         # Find incomplete tasks (exclude paused/ignored - they're explicitly parked)
         incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
 
@@ -967,7 +999,7 @@ class TaskLifecycle:
             tid = t["id"]
             subject = t["subject"]
             status = t["status"]
-            status_icon = {"in_progress": "🔄", "pending": "⏸️"}.get(status, "❓")
+            status_icon = {"in_progress": "🔄", "pending": "⏸️", "delegated": "🤝"}.get(status, "❓")
             task_lines.append(f"{len(task_lines)+1}. #{tid}: {subject} ({status_icon})")
 
         task_list = " ".join(task_lines)
@@ -979,8 +1011,9 @@ class TaskLifecycle:
             f"Actions: 1. You must complete or discard each task before stopping "
             f"2. Review: {_ACT_REVIEW} "
             f"3. Do the work, then: {_ACT_COMPLETE} "
-            f"4. Or discard: {_ACT_DISCARD} "
-            f"5. Override: {_ACT_OVERRIDE}\n"
+            f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
+            f"5. Or discard: {_ACT_DISCARD} "
+            f"6. Override: {_ACT_OVERRIDE}\n"
         )
 
         # Log warning (block count is diagnostic-only, not shown to AI)
