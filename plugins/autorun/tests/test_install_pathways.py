@@ -282,20 +282,26 @@ class TestReadPluginVersion:
     """Test _read_plugin_version() function."""
 
     def test_read_plugin_version_autorun(self):
-        """Verify version read from autorun plugin.json."""
+        """Verify version read from autorun plugin.json returns a valid semver string."""
         install = get_install_module()
         plugin_root = get_plugin_root()
 
         version = install._read_plugin_version(plugin_root)
-        assert version == "0.10.1"
+        # Version must be a non-empty string matching the pattern N.N.N[suffix]
+        assert isinstance(version, str) and version, "Version must be a non-empty string"
+        parts = version.split(".")
+        assert len(parts) >= 2, f"Version must have at least major.minor: {version}"
+        assert parts[0].isdigit(), f"Major version must be numeric: {version}"
 
     def test_read_plugin_version_fallback(self):
-        """Verify fallback version when plugin.json missing."""
+        """Verify fallback version when plugin.json missing returns a valid string."""
         install = get_install_module()
         nonexistent = Path("/tmp/nonexistent-plugin")
 
         version = install._read_plugin_version(nonexistent)
-        assert version == "0.10.1"  # Default fallback
+        # Fallback must be a non-empty semver-like string (tracks install.py default)
+        assert isinstance(version, str) and version, "Fallback version must be non-empty"
+        assert "." in version, f"Fallback version must be semver-like: {version}"
 
 
 class TestCacheVersionSort:

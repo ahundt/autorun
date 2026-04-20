@@ -9,7 +9,7 @@ def test_gemini_native_tool_matcher_coverage():
     With catch-all (no matcher field), all native Gemini tools are covered.
     Handlers self-filter by tool name in the daemon.
     """
-    hooks_file = Path(__file__).parent.parent / "hooks" / "hooks.json"
+    hooks_file = Path(__file__).parent.parent / "src" / "autorun" / "gemini_template" / "hooks" / "hooks.json"
 
     with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
@@ -35,7 +35,7 @@ def test_gemini_native_tool_matcher_coverage():
 
 def test_after_agent_hook_exists():
     """Verify that AfterAgent hook is configured."""
-    hooks_file = Path(__file__).parent.parent / "hooks" / "hooks.json"
+    hooks_file = Path(__file__).parent.parent / "src" / "autorun" / "gemini_template" / "hooks" / "hooks.json"
     
     with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)

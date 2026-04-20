@@ -136,8 +136,8 @@ class TestGetHooksDir:
         from autorun.resources import get_hooks_dir
 
         hooks_dir = get_hooks_dir()
-        # hooks.json is the primary hook configuration for Claude Code
-        assert (hooks_dir / "claude-hooks.json").exists(), "claude-hooks.json not found"
+        # hooks.json is the primary hook configuration for Claude Code (renamed from claude-hooks.json)
+        assert (hooks_dir / "hooks.json").exists(), "hooks.json not found"
         assert (hooks_dir / "hook_entry.py").exists(), "hook_entry.py not found"
 
 

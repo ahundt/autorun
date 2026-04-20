@@ -558,9 +558,13 @@ class TestCodeQuality:
         )
 
         if result.returncode == 0:  # grep found matches
-            # EXCEPTION: print(reason, file=sys.stderr) is ALLOWED for exit code 2 workaround (Bug #4669)
+            # EXCEPTION 1: print(reason, file=sys.stderr) is ALLOWED for exit code 2 workaround (Bug #4669)
+            # EXCEPTION 2: print(result.stderr, ..., file=sys.stderr) is ALLOWED for subprocess stderr
+            #   pass-through in hook_entry.py. hook_entry.py forwards the daemon subprocess's stderr
+            #   so Claude Code receives it (needed for exit-2 workaround; harmless for Gemini).
             violations = [v for v in result.stdout.strip().split('\n')
-                         if "print(reason, file=sys.stderr)" not in v]
+                         if "print(reason, file=sys.stderr)" not in v
+                         and "print(result.stderr, end=" not in v]
             
             if violations:
                 pytest.fail(

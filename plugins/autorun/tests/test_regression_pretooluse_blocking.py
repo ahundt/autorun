@@ -233,7 +233,7 @@ class TestHooksJsonUVCentric:
     @pytest.fixture
     def hooks_json(self):
         """Load hooks.json from source."""
-        hooks_path = plugin_root / "hooks" / "claude-hooks.json"
+        hooks_path = plugin_root / "hooks" / "hooks.json"
         assert hooks_path.exists(), f"hooks.json not found at {hooks_path}"
         with open(hooks_path, encoding="utf-8") as f:
             return json.load(f)

@@ -1114,7 +1114,7 @@ class TestPreToolUseMatcherRTKCompat:
         """
         import json
         from pathlib import Path
-        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks_path = Path(__file__).parent.parent / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
         for group in pre_tool_groups:
@@ -1127,7 +1127,7 @@ class TestPreToolUseMatcherRTKCompat:
         """PostToolUse must be catch-all (3 handlers need ALL tools)."""
         import json
         from pathlib import Path
-        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks_path = Path(__file__).parent.parent / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         post_tool_groups = hooks["hooks"]["PostToolUse"]
         has_catch_all = any("matcher" not in g for g in post_tool_groups)
@@ -1146,7 +1146,7 @@ class TestPreToolUseMatcherRTKCompat:
         """
         import json
         from pathlib import Path
-        hooks_path = Path(__file__).parent.parent / "hooks" / "claude-hooks.json"
+        hooks_path = Path(__file__).parent.parent / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         matchers = "|".join(
             g.get("matcher", "") for g in hooks["hooks"]["PreToolUse"]
