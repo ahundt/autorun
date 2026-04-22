@@ -381,6 +381,30 @@ CONFIG = {
         "Complete or discard them (see actions above), Stage 2 continues."
     ),
 
+    # ─── Ghost-Task / Stale-Ref Workaround (v0.11) ────────────────────────────
+    # SINGLE SOURCE OF TRUTH for the marker literal. Both the injection builder
+    # (uses .format(id=…)) and the detection regex (uses .split("{id}") +
+    # re.escape) derive from this one string.
+    "ghost_clear_marker_template": "AUTORUN_TASKS_CLEAR_STALE_TASK({id})",
+
+    "ghost_clear_reason": (
+        "stale ref: marker emitted after "
+        "ghost_clear_min_consecutive_blocks identical stop blocks"
+    ),
+
+    "ghost_clear_injection_template": (
+        "\n"
+        "⚠  STALE-TASK ESCAPE HATCH — this same set of ids has blocked Stop "
+        "{threshold} times in a row with no tool call in between. If a task "
+        "above is a stale reference (TaskList does not show it, or TaskUpdate "
+        "returns \"Task not found\"), print one of the following on its own "
+        "line, exactly, for each stale id you want to clear:\n"
+        "{marker_lines}\n"
+        "These will be detected and marked `ignored` (non-blocking). Do NOT "
+        "emit them for real, in-progress tasks — only for ones Claude's own "
+        "Task DB no longer knows about. Disable: /ar:tasks stale off\n"
+    ),
+
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py

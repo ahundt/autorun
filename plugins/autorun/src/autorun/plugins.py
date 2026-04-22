@@ -32,7 +32,7 @@ import re
 import fnmatch
 import shlex
 import time
-from functools import lru_cache
+from functools import lru_cache, cache
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -629,6 +629,24 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         if len(cleaned) != len(allows):
             accessor.set_allowed(cleaned)
 
+    # TIER 1.5: /ar:cache gate — cache-pressure / cache-miss protection.
+    # Runs AFTER TIER 1 allows (so `/ar:ok <cmd>` still overrides when armed)
+    # and BEFORE TIER 2 blocks. OFF by default: FeatureToggle.is_enabled()
+    # short-circuits before any I/O beyond a single session_state read.
+    # See plans/make-a-plan-to-sunny-sparkle.md §6.4 + cache_guard.py.
+    try:
+        from .cache_guard import CacheGuard
+        cache_dec = CacheGuard.from_session(session_id=ctx.session_id).on_pretooluse(
+            {"transcript_path": ctx.transcript_path,
+             "tool_name": ctx.tool_name,
+             "tool_input": ctx.tool_input}
+        )
+        if cache_dec.is_block():
+            return ctx.deny(cache_dec.message)
+    except Exception:
+        # Fail-open: cache guard errors must never block legitimate tool use.
+        pass
+
     # TIER 2: Collect ALL matching blocks + warns (stacking: deny wins over warn)
     deny_parts: list = []
     warn_parts: list = []
@@ -1181,6 +1199,66 @@ def is_task_update_call(ctx: EventContext) -> bool:
     return False
 
 
+@cache
+def _ghost_marker_regex() -> re.Pattern:
+    """Cached regex derived from the CONFIG marker template (single source of truth)."""
+    template = CONFIG["ghost_clear_marker_template"]
+    prefix, suffix = template.split("{id}")
+    return re.compile(re.escape(prefix) + r"(\d+)" + re.escape(suffix))
+
+
+@app.on("PostToolUse")
+def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
+    """Reset consecutive identical stop-block counter whenever a tool fires (v0.11)."""
+    if not task_lifecycle.is_enabled():
+        return None
+    try:
+        manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+        manager.atomic_update_metadata(task_lifecycle._reset_ghost_counter)
+    except Exception:
+        pass
+    return None
+
+
+@app.on("PostToolUse")
+def clear_ghost_tasks(ctx: EventContext) -> Optional[Dict]:
+    """Detect AUTORUN_TASKS_CLEAR_STALE_TASK(N) markers in AI output and mark tasks ignored (v0.11)."""
+    if not task_lifecycle.is_enabled():
+        return None
+    try:
+        manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+        if not manager.config.ghost_clear_enabled:
+            return None
+    except Exception:
+        return None
+
+    transcript_text = ctx.transcript.text if ctx.transcript else ""
+    combined = (ctx.tool_result_str or "") + transcript_text
+    if not (matches := _ghost_marker_regex().findall(combined)):
+        return None
+
+    unique_ids = list(dict.fromkeys(str(m) for m in matches))
+    reason = CONFIG["ghost_clear_reason"]
+    cleared: list[str] = []
+    for tid in unique_ids:
+        try:
+            if manager.ignore_task(tid, reason=reason):
+                cleared.append(tid)
+                manager.log_event(
+                    "GHOST_CLEAR", f"task#{tid}",
+                    "Cleared via ghost-clear marker", "cleared",
+                )
+        except Exception:
+            continue
+
+    if cleared:
+        ctx.add_chain_notification(
+            f"Cleared stale task(s): {', '.join(f'#{c}' for c in cleared)}",
+            channel="both",
+        )
+    return None
+
+
 @app.on("PreToolUse")
 def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """Warn-then-deny: allow with warning first, deny on second offense (v0.11).
@@ -1404,6 +1482,20 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     return None
 
 
+@app.command("/ar:cache")
+def handle_cache(ctx: EventContext) -> str:
+    """Dispatch `/ar:cache` subcommands (on/off/set/ok/no/status).
+
+    Reuses `scoped_allow.parse_scope_args` for `5m|5|perm` grammar; see
+    `cache_guard.cache_command` and plan §6.5.1.
+    """
+    from .cache_guard import cache_command
+    prompt = ctx.activation_prompt or ctx.prompt or ""
+    # Strip the leading "/ar:cache" token to get the sub-arg string.
+    tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
+    return cache_command(tail, ctx.session_id)
+
+
 @app.command("/ar:tasks")
 def toggle_task_staleness(ctx: EventContext) -> str:
     """Toggle task staleness reminder on/off or set threshold.
@@ -1429,6 +1521,25 @@ def toggle_task_staleness(ctx: EventContext) -> str:
         ctx.task_staleness_threshold = int(arg)
         ctx.tool_calls_since_task_update = 0
         return f"Task staleness threshold set to {arg} tool calls."
+    elif arg in ("stale", "ghost"):  # "ghost" kept as alias
+        sub = parts[2].strip().lower() if len(parts) > 2 else ""
+        cfg = task_lifecycle.TaskLifecycleConfig.load()
+        if sub == "on":
+            cfg.ghost_clear_enabled = True
+            cfg.save()
+            return "Stale-task clear: enabled."
+        elif sub == "off":
+            cfg.ghost_clear_enabled = False
+            cfg.save()
+            return "Stale-task clear: disabled."
+        elif sub == "min" and len(parts) > 3 and parts[3].isdigit() and int(parts[3]) >= 1:
+            ctx.ghost_clear_min_consecutive_blocks_override = int(parts[3])
+            return f"Stale-task clear threshold (this session): {parts[3]} consecutive identical blocks."
+        else:
+            enabled = "on" if cfg.ghost_clear_enabled else "off"
+            n = getattr(ctx, 'ghost_clear_min_consecutive_blocks_override', None) or cfg.ghost_clear_min_consecutive_blocks
+            return (f"Stale-task clear: {enabled}, min consecutive blocks: {n}.\n"
+                    f"Usage: /ar:tasks stale on | off | min <N>")
     elif arg:
         # Catches: "0", negative numbers like "-5", non-numeric strings
         return f"Invalid threshold '{arg}'. Use a positive integer (e.g. /ar:tasks 10)."
@@ -1481,7 +1592,10 @@ def toggle_task_staleness(ctx: EventContext) -> str:
                 lines.append("Tasks: unavailable (lifecycle error)")
 
         lines.append(f"Staleness reminders: {'on' if enabled else 'off'} ({count}/{threshold} tool calls)")
-        
+        cfg = task_lifecycle.TaskLifecycleConfig.load()
+        ghost_state = "on" if cfg.ghost_clear_enabled else "off"
+        lines.append(f"Stale-task clear: {ghost_state} (min={cfg.ghost_clear_min_consecutive_blocks})")
+
         # Superset Capability: Gemini-specific hints for task management
         if ctx.cli_type == "gemini":
             lines.append("\n💡 Gemini Note: Tasks are natively managed via the Conductor extension.")
@@ -1604,6 +1718,57 @@ def cleanup_expired_allows(ctx: EventContext) -> None:
         cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
         if len(cleaned) != len(allows):
             accessor.set_allowed(cleaned)
+    # Also purge expired cache_guard overrides — same lifecycle, same GC point.
+    try:
+        from .cache_guard import _purge_expired_overrides
+        _purge_expired_overrides(ctx.session_id)
+    except Exception:
+        pass  # fail-open; GC must never block session-start
+    return None
+
+
+# === CACHE GUARD — memo invalidation on compaction/session-start events ===
+#
+# Claude Code: fires PreCompact before, PostCompact after, and SessionStart
+# (matcher=compact) after a compaction. Gemini CLI: fires PreCompress
+# (advisory) + SessionStart. Routing every one of these through
+# CacheGuard.on_compaction_event ensures the 2-second `cache/last_usage` memo
+# can't serve stale data from before a compaction.
+#
+# All handlers catch exceptions — cache guard failures must never block a
+# legitimate session-start flow (that would be worse than the staleness they
+# protect against).
+
+def _cache_guard_invalidate(ctx: EventContext, event_name: str) -> None:
+    try:
+        from .cache_guard import CacheGuard
+        CacheGuard.from_session(session_id=ctx.session_id).on_compaction_event(event_name)
+    except Exception:
+        pass
+
+
+@app.on("SessionStart")
+def cache_guard_on_sessionstart(ctx: EventContext) -> None:
+    _cache_guard_invalidate(ctx, "SessionStart")
+    return None
+
+
+@app.on("PreCompact")
+def cache_guard_on_precompact(ctx: EventContext) -> None:
+    _cache_guard_invalidate(ctx, "PreCompact")
+    return None
+
+
+@app.on("PostCompact")
+def cache_guard_on_postcompact(ctx: EventContext) -> None:
+    _cache_guard_invalidate(ctx, "PostCompact")
+    return None
+
+
+@app.on("PreCompress")
+def cache_guard_on_precompress(ctx: EventContext) -> None:
+    # Gemini CLI equivalent of PreCompact (advisory — cannot block).
+    _cache_guard_invalidate(ctx, "PreCompress")
     return None
 
 

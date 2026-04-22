@@ -178,8 +178,22 @@ See `plugins/autorun/src/autorun/config.py:63-276` for DEFAULT_INTEGRATIONS list
 | Command | Description |
 |---------|-------------|
 | `/ar:tasks` | Toggle task staleness reminders on/off or set threshold |
+| `/ar:tasks stale on\|off\|min <N>` | Enable/disable stale-task escape hatch or set consecutive-block threshold (v0.11) |
 | `/ar:task-status` | Show task lifecycle status and incomplete tasks |
 | `/ar:task-ignore <id>` | Mark task as ignored (user override to unblock stop) |
+
+**Cache-Miss / Compaction Protection** (off by default):
+
+| Command | Description |
+|---------|-------------|
+| `/ar:cache` | Show status (enabled/disabled, thresholds, active overrides). |
+| `/ar:cache on [5m\|1h\|perm]` | Enable the gate (optionally for a window). |
+| `/ar:cache off [5m\|1h\|perm]` | Disable the gate. |
+| `/ar:cache set ratio\|read\|age\|full <value>` | Configure threshold axes. Tokens `50k \| .5M`, percents `85%`, durations `5m \| 2h30m`. |
+| `/ar:cache ok [5m\|N\|perm]` | Override the gate (same grammar as `/ar:ok`). |
+| `/ar:cache no` | Cancel outstanding overrides. |
+
+Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAllow`, `parse_scope_args`, `session_state`, `check_blocked_commands`, `detect_cli_type`. See plan at `~/.claude/plans/make-a-plan-to-sunny-sparkle.md`.
 
 **Developer/Admin**:
 

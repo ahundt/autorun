@@ -38,11 +38,13 @@ Architecture:
 
 from typing import Optional, Dict, List, Callable
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+import hashlib
 import json
 import os
 import time
 import re
+from collections.abc import Iterable
 from datetime import datetime
 
 from . import ipc
@@ -78,6 +80,9 @@ class TaskLifecycleConfig:
     stop_block_max_count: int = 3
     task_ttl_days: int = 30
     debug_logging: bool = False
+    ghost_clear_enabled: bool = True
+    ghost_clear_min_consecutive_blocks: int = 2
+    ghost_clear_hash_length: int = 12
 
     @classmethod
     def load(cls) -> "TaskLifecycleConfig":
@@ -95,14 +100,8 @@ class TaskLifecycleConfig:
     def save(self) -> None:
         """Save config to file."""
         CONFIG_PATH.parent.mkdir(exist_ok=True)
-        data = {
-            "enabled": self.enabled,
-            "storage_dir": str(self.storage_dir),
-            "max_resume_tasks": self.max_resume_tasks,
-            "stop_block_max_count": self.stop_block_max_count,
-            "task_ttl_days": self.task_ttl_days,
-            "debug_logging": self.debug_logging,
-        }
+        data = asdict(self)
+        data["storage_dir"] = str(data["storage_dir"])
         CONFIG_PATH.write_text(json.dumps(data, indent=2))
 
 
@@ -138,6 +137,22 @@ class PlanNotifyConfig:
             "dependency_wiring": self.dependency_wiring,
         }
         PLAN_NOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2))
+
+
+# === Ghost-Task Helpers (v0.11) ===
+
+
+def _ghost_id_set_hash(tasks: Iterable[dict], hex_chars: int) -> str:
+    """Stable hash of the sorted task-id set — detects identical consecutive stop blocks."""
+    ids = ",".join(sorted(str(t["id"]) for t in tasks))
+    byte_size = max(4, min(32, hex_chars // 2))
+    return hashlib.blake2s(ids.encode(), digest_size=byte_size).hexdigest()
+
+
+def _reset_ghost_counter(metadata: dict) -> None:
+    """Reset consecutive identical stop-block counter (called on clean exit or tool activity)."""
+    metadata["consecutive_identical_stop_block_count"] = 0
+    metadata.pop("last_stop_block_id_hash", None)
 
 
 # === TaskLifecycle Class ===
@@ -978,18 +993,31 @@ class TaskLifecycle:
         incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
 
         if not incomplete_tasks:
-            # Reset stop block counter
             def reset_counter(metadata):
                 metadata['stop_block_count'] = 0
+                _reset_ghost_counter(metadata)
             self.atomic_update_metadata(reset_counter)
-            return None  # Allow stop - all tasks completed
+            return None
 
-        # Increment stop block counter for diagnostics
         block_count = self.session_metadata.get('stop_block_count', 0) + 1
 
-        def increment_counter(metadata):
+        override = getattr(ctx, 'ghost_clear_min_consecutive_blocks_override', None)
+        min_consecutive = (
+            override if override is not None
+            else self.config.ghost_clear_min_consecutive_blocks
+        )
+        ghost_enabled = self.config.ghost_clear_enabled
+
+        id_hash = _ghost_id_set_hash(incomplete_tasks, self.config.ghost_clear_hash_length)
+        prev_hash = self.session_metadata.get("last_stop_block_id_hash")
+        prev_count = self.session_metadata.get("consecutive_identical_stop_block_count", 0)
+        consecutive = prev_count + 1 if id_hash == prev_hash else 1
+
+        def update_counters(metadata):
             metadata['stop_block_count'] = block_count
-        self.atomic_update_metadata(increment_counter)
+            metadata["last_stop_block_id_hash"] = id_hash
+            metadata["consecutive_identical_stop_block_count"] = consecutive
+        self.atomic_update_metadata(update_counters)
 
         # Build task list with status indicators (cap at max_resume_tasks)
         max_tasks = self.config.max_resume_tasks
@@ -1015,6 +1043,17 @@ class TaskLifecycle:
             f"5. Or discard: {_ACT_DISCARD} "
             f"6. Override: {_ACT_OVERRIDE}\n"
         )
+
+        if ghost_enabled and consecutive >= min_consecutive:
+            marker_template = CONFIG["ghost_clear_marker_template"]
+            marker_lines = "\n".join(
+                f"   {marker_template.format(id=t['id'])}"
+                for t in incomplete_tasks[:max_tasks]
+            )
+            injection += CONFIG["ghost_clear_injection_template"].format(
+                threshold=min_consecutive,
+                marker_lines=marker_lines,
+            )
 
         # Log warning (block count is diagnostic-only, not shown to AI)
         self.log_event("STOP_WARNING", "session",

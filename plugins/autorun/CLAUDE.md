@@ -101,6 +101,21 @@ autorun/                             # Git repository root
 - **CLI**: `autorun` command → `src/autorun/__main__.py:main` (installed globally via `uv tool install --editable .`)
 - **Config**: `src/autorun/config.py` — single source of truth for all CONFIG values
 
+## Feature Implementation Lessons (from `/ar:cache`, v0.10)
+
+Rules extracted from the `/ar:cache` build and earlier fixes. Follow them when adding any new gated feature.
+
+1. **Reuse `ScopedAllow` + `parse_scope_args` for every override grant.** Do not invent a new TTL/count parser — the `5m | 5 | perm | 2h30m` grammar lives in `scoped_allow.py:42-76` and its `_PARALLEL_GRACE_SECONDS = 1.0` fingerprint-matched grace window already mitigates rtk's double-hook. See `cache_guard.grant_override`.
+2. **Use `session_state()` for all persisted state.** Prefix your keys (`<session_id>/<feature>/<key>` and `__global__/<feature>/<key>`). Reuses the one filelock, no new machinery.
+3. **When a feature adds a new Claude event, add the Gemini analog at the same time.** `PreCompact` on Claude → `PreCompress` on Gemini (advisory, cannot block, no PostCompress exists). Wire both at `plugins.py:@app.on(...)`, add mapping in `core.py:GEMINI_EVENT_MAP`, and declare the event in BOTH `hooks/hooks.json` (Claude) AND `src/autorun/gemini_template/hooks/hooks.json` (Gemini).
+4. **When you need data from hook stdin beyond what `EventContext` already exposes, add a slot + property.** `transcript_path` was missing before `/ar:cache`. Pattern: add the slot, property, kwarg to `__init__`, and update every `EventContext(...)` call site (daemon, plan_export, anywhere else). Do not `getattr(ctx, "field", None)` — that silently returns None when the plumbing is broken.
+5. **Features that may block tools must slot AFTER TIER 1 (`/ar:ok` allows) and BEFORE TIER 2 (pattern blocks).** Otherwise an explicit allow cannot bypass the new gate. See `plugins.check_blocked_commands` → `CacheGuard.from_session().on_pretooluse(...)` site.
+6. **Coalesce filelock acquires inside a single hook invocation.** Multiple `session_state()` calls inside one PreToolUse each take the lock. Read everything you need in one open.
+7. **Fail open when data is unknown.** A gate that errors or denies on missing fields is worse than a gate that allows. CacheGuard returns `HookDecision.allow()` whenever the configured axis's data is None. Cross-CLI robustness falls out of this rule for free.
+8. **Default off.** Any new gate must default `False` in its `FeatureToggle`. Users opt in via `/ar:<feature> on`.
+9. **Anchor `.gitignore` directory patterns with a leading `/` when you mean the repo root.** Unanchored `cache/` matches `plugins/autorun/skills/cache/` too — the `/ar:cache` skill was invisible to git until this was fixed. Use `/cache/` + explicit `!plugins/autorun/skills/cache/` when you must name the dir `cache` for UX reasons.
+10. **When editing a Gemini hook schema validator test, update the event list in ALL three tests:** `test_split_layout.py`, `test_hooks_format.py`, `test_dual_cli_pathways.py` — they each maintain a canonical event list independently.
+
 ## Verification Commands
 
 **Check if you're in the right location:**

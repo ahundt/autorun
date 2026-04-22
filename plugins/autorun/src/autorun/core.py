@@ -93,6 +93,11 @@ GEMINI_EVENT_MAP = {
     "SessionEnd": "SessionEnd",
     "BeforeModel": "BeforeModel",
     "AfterModel": "AfterModel",
+    # Gemini CLI has no PostCompress event — PreCompress is intentionally NOT
+    # remapped to Claude's PreCompact. Both names stay distinct so @app.on
+    # handlers can route either flavour without ambiguity; cache_guard
+    # listens to both directly in plugins.py.
+    "PreCompress": "PreCompress",
 }
 
 # Reverse mapping: Internal event name → CLI-specific name
@@ -382,6 +387,9 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
         "source": payload.get("source", "startup"),
+        # Expanded at normalise time so downstream consumers can read a filesystem-ready path.
+        "transcript_path": os.path.expanduser(payload["transcript_path"])
+            if payload.get("transcript_path") else None,
     }
 
 
@@ -704,10 +712,20 @@ class EventContext:
             ...
     """
     # Reserved attributes (not persisted)
+    # Slot map (transcript-related fields clarified — they are NOT duplicates):
+    #   _session_transcript : List[Dict]         — already-parsed recent messages (truncated ≤64KB at ingest).
+    #                                               Used by pattern-search features needing the in-memory tail.
+    #   _transcript         : LazyTranscript|None — lazily-built wrapper over _session_transcript
+    #                                               that memoises string joins for regex searches.
+    #                                               A cached view of _session_transcript, not fresh data.
+    #   _transcript_path    : str|None            — absolute path to the JSONL on disk. Features that need
+    #                                               fresh / long-tail reads (e.g. cache_guard's bounded
+    #                                               reverse-scan) read the file themselves from this path.
+    #                                               Distinct purpose from the two in-memory views above.
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
                  '_tool_result', '_session_transcript', '_state', '_transcript',
                  '_store', '_cli_type', '_cwd', '_permission_mode', '_source',
-                 '_chain_notifications')
+                 '_chain_notifications', '_transcript_path')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -744,13 +762,15 @@ class EventContext:
         'plan_awaiting_execution_tasks': False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
         'plan_task_reminder_count': 0,       # v0.11: Escalation for remind_until_tasks_created
         'pending_stop_injection': None,          # v0.10: Stop-hook msg deferred to next PostToolUse
+        'ghost_clear_min_consecutive_blocks_override': None,  # v0.11: Session override
     }
 
     def __init__(self, session_id: str, event: str, prompt: str = "",
                  tool_name: str = None, tool_input: Dict = None,
                  tool_result: str = None, session_transcript: List = None,
                  store: 'ThreadSafeDB' = None, cli_type: str = None, cwd: str = None,
-                 permission_mode: str = "default", source: str = "startup"):
+                 permission_mode: str = "default", source: str = "startup",
+                 transcript_path: str = None):
         object.__setattr__(self, '_session_id', session_id)
         object.__setattr__(self, '_event', event)
         object.__setattr__(self, '_prompt', prompt)
@@ -767,6 +787,10 @@ class EventContext:
         object.__setattr__(self, '_cwd', cwd)
         # Permission mode from hook payload (plan/bypassPermissions/acceptEdits/default)
         object.__setattr__(self, '_permission_mode', permission_mode)
+        # Path to the session's JSONL transcript (propagated from hook stdin).
+        # Used by features that need to read raw usage / history (e.g. cache_guard).
+        # Always present on hook-originated contexts; may be None for test / CLI contexts.
+        object.__setattr__(self, '_transcript_path', transcript_path)
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, '_source', source)
         object.__setattr__(self, '_chain_notifications', [])
@@ -787,6 +811,17 @@ class EventContext:
             detected = detect_cli_type()
             object.__setattr__(self, '_cli_type', detected)
         return self._cli_type
+
+    @property
+    def transcript_path(self) -> "str | None":
+        """Absolute path to the session's JSONL transcript, if propagated.
+
+        ``None`` when the EventContext was built outside a hook (e.g. unit
+        tests, CLI subcommands) or when the hook payload did not include it.
+        Features that need live token/cache info should read this and fall
+        back to fail-open behaviour on ``None``.
+        """
+        return self._transcript_path
 
     @property
     def prompt(self) -> str:
@@ -1552,6 +1587,7 @@ class AutorunDaemon:
                 cwd=payload.get("_cwd"),
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
+                transcript_path=normalized.get("transcript_path"),
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
