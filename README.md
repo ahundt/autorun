@@ -521,8 +521,16 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:reload` | - | - | Reload integration rules from config files |
 | `/ar:restart-daemon` | - | - | Restart daemon to reload Python code changes |
 | `/ar:tasks` | - | - | Toggle task staleness reminders on/off or set threshold |
+| `/ar:tasks stale [on\|off\|min <N>]` | - | - | Stale-task escape hatch: after N identical consecutive stop blocks, inject clear-marker instructions (v0.11) |
 | `/ar:task-status` | - | - | Show task lifecycle status and incomplete tasks |
 | `/ar:task-ignore <id>` | - | - | Mark task as ignored (unblock stop) |
+| `/ar:cache` | - | - | Cache-miss / compaction protection gate (off by default) — show status |
+| `/ar:cache on [5m\|1h\|perm]` | - | - | Enable the gate (optionally for a window) |
+| `/ar:cache off [5m\|1h\|perm]` | - | - | Disable the gate (optionally temporarily, prior state restores) |
+| `/ar:cache set ratio\|read\|age\|full <v>` | - | - | Configure threshold axes (tokens `50k\|.5M`, `85%`, durations `5m\|2h30m`) |
+| `/ar:cache ok [5m\|N\|perm]` | - | - | Override the gate — same grammar as `/ar:ok` |
+| `/ar:cache no` | - | - | Cancel outstanding overrides |
+| `/ar:cache global <subcmd>` | - | - | Same operations at the global (cross-session) scope |
 | `/ar:pe` | `/ar:planexport` | - | Show plan export status |
 | `/ar:pe-on` | `/ar:planexport-enable` | - | Enable auto-export |
 | `/ar:pe-off` | `/ar:planexport-disable` | - | Disable auto-export |
@@ -689,7 +697,7 @@ Structured planning for complex development tasks — reduces mistakes and ensur
 
 ### Task Lifecycle Tracking
 
-Ensures AI continues working while tasks are outstanding. The stop hook blocks session exit until tasks are complete (with escape hatch after 3 attempts).
+Ensures AI continues working while tasks are outstanding. The stop hook blocks session exit until tasks are complete or explicitly cleared.
 
 **Slash commands:**
 
@@ -709,23 +717,28 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 
 **Key features:** Stop hook enforcement, SessionStart resume detection, plan context injection, blockedBy/blocks dependency ordering, escape hatch, full audit trail.
 
-#### Task Staleness Reminders (v0.9)
+#### Task Staleness Reminders (v0.9) and Stale-Task Escape Hatch (v0.11)
 
-Injects a reminder when 25+ tool calls pass without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work.
+Injects a reminder when 25+ tool calls pass without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work. Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding.
 
-- **/ar:tasks** — Show staleness status (enabled/disabled, count, threshold)
-- **/ar:tasks on** — Enable reminders
-- **/ar:tasks off** — Disable reminders
-- **/ar:tasks \<number>** — Set custom threshold (default: 25)
+- **/ar:tasks** — Show status (enabled/disabled, count, threshold)
+- **/ar:tasks on/off** — Enable/disable reminders
+- **/ar:tasks \<number>** — Set threshold (default: 25 tool calls)
+- **/ar:tasks stale** — Show stale-task escape hatch status
+- **/ar:tasks stale on/off** — Enable/disable escape hatch (default: on)
+- **/ar:tasks stale min \<N>** — Require N consecutive identical stop blocks before showing escape hatch (default: 2, session-only)
 
-Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding, preventing premature completion.
+**Stale-task escape hatch:** When the same set of task IDs blocks Stop N times in a row with no non-task tool call between them, the stop injection gains an escape hatch instructing the AI to emit `AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for any task that Claude's Task DB no longer knows about. A PostToolUse hook detects the marker and marks the task `ignored` (non-blocking), allowing the stop.
 
-**Settings:**
+**Settings** (`~/.autorun/task-lifecycle.config.json`):
 - `enabled`: Enable/disable task lifecycle tracking (default: true)
-- `max_resume_tasks`: Max tasks shown in resume prompt (default: 20)
+- `max_resume_tasks`: Max tasks shown in resume/stop prompt (default: 20)
 - `stop_block_max_count`: Stop override threshold (default: 3)
 - `task_ttl_days`: Auto-prune completed tasks after N days (default: 30)
 - `debug_logging`: Enable audit logging (default: false)
+- `ghost_clear_enabled`: Enable stale-task escape hatch (default: true)
+- `ghost_clear_min_consecutive_blocks`: Consecutive identical stop blocks before escape hatch appears (default: 2)
+- `ghost_clear_hash_length`: Hex chars in task-id-set digest (default: 12)
 
 **Storage:**
 - **State**: `~/.claude/sessions/daemon_state.json` (single JSON file via filelock+JSON backend)
