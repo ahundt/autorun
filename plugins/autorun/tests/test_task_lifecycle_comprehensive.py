@@ -953,20 +953,31 @@ class TestClaudeCodeBugScenarios:
         assert t["subject"] == "Original"
         assert t["status"] == "in_progress"
 
-    def test_stop_block_does_not_re_arm_injection_after_first(self, isolated_session, cfg):
-        """Re-arming pending_stop_injection on every block caused deadlock (Block #175+)."""
+    def test_stop_block_re_arm_policy_prevents_deadlock(self, isolated_session, cfg):
+        """Re-arm policy: arm at block 1 and at escape-hatch threshold; never beyond.
+
+        Original bug: re-arming on every block caused deadlock (deny→AI text→Stop→
+        re-arm→deny→infinite, Block #175+). Fix: re-arm at most twice —
+        block_count==1 (first stop) and consecutive==min_consecutive (escape hatch).
+        Blocks beyond that do NOT re-arm, preserving the deadlock prevention.
+        """
         mgr = _mgr("bug-rearm", cfg)
         mgr.create_task("t1", {"subject": "Task"}, "created")
         mgr.update_task("t1", {"status": "in_progress"}, "started")
 
         ctx1 = _stop_ctx("bug-rearm"); ctx1.pending_stop_injection = None
         mgr.handle_stop(ctx1)
-        first_injection = ctx1.pending_stop_injection
-        assert first_injection is not None
+        assert ctx1.pending_stop_injection is not None  # block_count==1: always arm
 
         ctx2 = _stop_ctx("bug-rearm"); ctx2.pending_stop_injection = None
         mgr.handle_stop(ctx2)
-        assert ctx2.pending_stop_injection is None  # NOT re-armed
+        # consecutive==min_consecutive==2: re-armed so escape hatch reaches AI
+        assert ctx2.pending_stop_injection is not None
+
+        ctx3 = _stop_ctx("bug-rearm"); ctx3.pending_stop_injection = None
+        mgr.handle_stop(ctx3)
+        # consecutive==3 > min_consecutive: deadlock prevention — NOT re-armed
+        assert ctx3.pending_stop_injection is None
 
     def test_stage2_completed_only_reset_when_tasks_block(self, isolated_session, cfg):
         """Three-stage reset ONLY fires when stop is blocked (not on allowed stop)."""

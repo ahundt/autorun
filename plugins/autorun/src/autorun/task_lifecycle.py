@@ -1024,8 +1024,13 @@ class TaskLifecycle:
             computed['consecutive'] = consecutive
 
         self.atomic_update_metadata(update_counters)
-        block_count = computed['block_count']
-        consecutive = computed['consecutive']
+        # Use .get() with safe defaults: if atomic update failed (exception in
+        # callback), computed is empty. Default to block_count=1/consecutive=1
+        # so we show the standard block message but do NOT trigger the escape
+        # hatch (consecutive=1 < min_consecutive). Prefer a correct block over
+        # a fail-open allow-stop.
+        block_count = computed.get('block_count', 1)
+        consecutive = computed.get('consecutive', 1)
 
         # Build task list with status indicators (cap at max_resume_tasks)
         max_tasks = self.config.max_resume_tasks
