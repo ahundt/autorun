@@ -1209,8 +1209,18 @@ def _ghost_marker_regex() -> re.Pattern:
 
 @app.on("PostToolUse")
 def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
-    """Reset consecutive identical stop-block counter whenever a tool fires (v0.11)."""
+    """Reset consecutive identical stop-block counter on non-task tool calls (v0.11).
+
+    Task tool calls (TaskUpdate, TaskList, etc.) are NOT counted as activity —
+    a failing TaskUpdate("Task not found") is exactly what happens in the ghost
+    scenario and must not reset the counter or the threshold is never reached.
+    """
     if not task_lifecycle.is_enabled():
+        return None
+    # Ghost scenario: AI keeps calling Task tools (TaskUpdate → "not found", TaskList).
+    # Resetting the counter on those calls prevents the threshold from ever being
+    # reached. Only reset on non-task tool calls (real work: Read, Edit, Bash, etc.).
+    if ctx.tool_name in ALL_TASK_TOOLS:
         return None
     try:
         manager = task_lifecycle.TaskLifecycle(ctx=ctx)

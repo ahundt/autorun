@@ -999,8 +999,6 @@ class TaskLifecycle:
             self.atomic_update_metadata(reset_counter)
             return None
 
-        block_count = self.session_metadata.get('stop_block_count', 0) + 1
-
         override = getattr(ctx, 'ghost_clear_min_consecutive_blocks_override', None)
         min_consecutive = (
             override if override is not None
@@ -1009,15 +1007,25 @@ class TaskLifecycle:
         ghost_enabled = self.config.ghost_clear_enabled
 
         id_hash = _ghost_id_set_hash(incomplete_tasks, self.config.ghost_clear_hash_length)
-        prev_hash = self.session_metadata.get("last_stop_block_id_hash")
-        prev_count = self.session_metadata.get("consecutive_identical_stop_block_count", 0)
-        consecutive = prev_count + 1 if id_hash == prev_hash else 1
+
+        # Read AND write inside one atomic lock — eliminates race between
+        # two concurrent Stop hooks reading stale session_metadata snapshots.
+        computed: dict = {}
 
         def update_counters(metadata):
+            block_count = metadata.get('stop_block_count', 0) + 1
+            prev_hash = metadata.get("last_stop_block_id_hash")
+            prev_count = metadata.get("consecutive_identical_stop_block_count", 0)
+            consecutive = prev_count + 1 if id_hash == prev_hash else 1
             metadata['stop_block_count'] = block_count
             metadata["last_stop_block_id_hash"] = id_hash
             metadata["consecutive_identical_stop_block_count"] = consecutive
+            computed['block_count'] = block_count
+            computed['consecutive'] = consecutive
+
         self.atomic_update_metadata(update_counters)
+        block_count = computed['block_count']
+        consecutive = computed['consecutive']
 
         # Build task list with status indicators (cap at max_resume_tasks)
         max_tasks = self.config.max_resume_tasks
@@ -1076,9 +1084,16 @@ class TaskLifecycle:
         # Workaround: store injection → deliver_pending_stop_injection (PostToolUse)
         # delivers via channel="ai" → respond() PATHWAY 2 upgrades to "both" on
         # Claude Code → AI sees it as systemMessage (same-turn only).
-        # Only on first block — re-arming on subsequent stops caused deadlock
-        # (deny → AI text → Stop → re-arm → deny → infinite, Block #175+).
-        if block_count == 1:
+        #
+        # Re-arm on two conditions:
+        #   1. block_count==1 — first stop, always deliver the base message.
+        #   2. consecutive==min_consecutive — first time escape hatch appears;
+        #      AI must see the stale-task instructions or it can't act on them.
+        # Beyond these two, do NOT re-arm — repeated re-arming caused the
+        # original deadlock (deny→AI text→Stop→re-arm→deny→infinite, Block #175+).
+        # Safety: re-arming is only triggered by Stop events; PostToolUse delivery
+        # clears pending_stop_injection, so each re-arm fires exactly once.
+        if block_count == 1 or (ghost_enabled and consecutive == min_consecutive):
             ctx.pending_stop_injection = injection
         # Reset staleness counter — AI just learned about tasks, give full countdown.
         ctx.tool_calls_since_task_update = 0

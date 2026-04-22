@@ -571,8 +571,16 @@ class TestGCAndPruning:
 
 class TestStopHookBehavioralInvariants:
 
-    def test_pending_stop_injection_only_set_on_first_block(self, isolated_session, cfg):
-        """pending_stop_injection is set ONLY on block_count==1 to prevent deadlock."""
+    def test_pending_stop_injection_set_on_first_block_and_escape_hatch_threshold(self, isolated_session, cfg):
+        """pending_stop_injection is set on block_count==1 and when escape hatch threshold is first crossed.
+
+        Re-arm policy (v0.11):
+          - block_count==1: always arm (AI must learn it can't stop)
+          - consecutive==min_consecutive: arm once when escape hatch first appears
+            (AI must see the stale-task instructions or it can't act on them)
+          - consecutive>min_consecutive: do NOT re-arm (prevent deadlock)
+        """
+        # default ghost_clear_min_consecutive_blocks=2
         mgr = _mgr("sh-inject", cfg)
         mgr.create_task("t1", {"subject": "Task"}, "created")
         mgr.update_task("t1", {"status": "in_progress"}, "started")
@@ -580,12 +588,17 @@ class TestStopHookBehavioralInvariants:
         ctx1 = _stop_ctx("sh-inject")
         ctx1.pending_stop_injection = None
         mgr.handle_stop(ctx1)
-        assert ctx1.pending_stop_injection is not None  # set on first block
+        assert ctx1.pending_stop_injection is not None  # block_count==1: always arm
 
         ctx2 = _stop_ctx("sh-inject")
         ctx2.pending_stop_injection = None
         mgr.handle_stop(ctx2)
-        assert ctx2.pending_stop_injection is None  # NOT re-set on second block
+        assert ctx2.pending_stop_injection is not None  # consecutive==min_consecutive==2: re-arm for escape hatch
+
+        ctx3 = _stop_ctx("sh-inject")
+        ctx3.pending_stop_injection = None
+        mgr.handle_stop(ctx3)
+        assert ctx3.pending_stop_injection is None  # consecutive==3 > min_consecutive: NOT re-armed
 
     def test_staleness_counter_reset_on_stop_block(self, isolated_session, cfg):
         """Stop block resets tool_calls_since_task_update to 0."""
