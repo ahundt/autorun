@@ -521,7 +521,7 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:reload` | - | - | Reload integration rules from config files |
 | `/ar:restart-daemon` | - | - | Restart daemon to reload Python code changes |
 | `/ar:tasks` | - | - | Toggle task staleness reminders on/off or set threshold |
-| `/ar:tasks stale [on\|off\|min <N>]` | - | - | Stale-task escape hatch: after N identical consecutive stop blocks, inject clear-marker instructions (v0.11) |
+| `/ar:tasks stale [on\|off\|min <N>]` | - | - | Stale-task escape hatch: after N identical consecutive stop blocks, inject clear-marker instructions (v0.10.2) |
 | `/ar:task-status` | - | - | Show task lifecycle status and incomplete tasks |
 | `/ar:task-ignore <id>` | - | - | Mark task as ignored (unblock stop) |
 | `/ar:cache` | - | - | Cache-miss / compaction protection gate (off by default) — show status |
@@ -717,7 +717,7 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 
 **Key features:** Stop hook enforcement, SessionStart resume detection, plan context injection, blockedBy/blocks dependency ordering, escape hatch, full audit trail.
 
-#### Task Staleness Reminders (v0.9) and Stale-Task Escape Hatch (v0.11)
+#### Task Staleness Reminders (v0.9) and Stale-Task Escape Hatch (v0.10.2)
 
 Injects a reminder when 25+ tool calls pass without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work. Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding.
 

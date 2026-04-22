@@ -381,7 +381,7 @@ CONFIG = {
         "Complete or discard them (see actions above), Stage 2 continues."
     ),
 
-    # ─── Ghost-Task / Stale-Ref Workaround (v0.11) ────────────────────────────
+    # ─── Ghost-Task / Stale-Ref Workaround (v0.10.2) ─────────────────────────
     # SINGLE SOURCE OF TRUTH for the marker literal. Both the injection builder
     # (uses .format(id=…)) and the detection regex (uses .split("{id}") +
     # re.escape) derive from this one string.

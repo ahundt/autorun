@@ -139,7 +139,7 @@ class PlanNotifyConfig:
         PLAN_NOTIFY_CONFIG_PATH.write_text(json.dumps(data, indent=2))
 
 
-# === Ghost-Task Helpers (v0.11) ===
+# === Ghost-Task Helpers (v0.10.2) ===
 
 
 def _ghost_id_set_hash(tasks: Iterable[dict], hex_chars: int) -> str:

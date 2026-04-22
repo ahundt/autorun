@@ -737,7 +737,7 @@ def test_staleness_no_fire_below_zero_tasks_threshold():
     assert "TASK UPDATE" not in str(result)
 
 
-# ── PreToolUse warn-then-deny enforcement (v0.11) ─────────────────────────
+# ── PreToolUse warn-then-deny enforcement (v0.10.2) ─────────────────────────
 
 def _make_pre_tool_ctx(
     tool_name: str,

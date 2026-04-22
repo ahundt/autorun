@@ -756,13 +756,13 @@ class EventContext:
         'tool_calls_since_task_update': 0,   # v0.9: Counter for task staleness reminder
         'task_staleness_enabled': True,      # v0.9: Enable/disable reminder injection
         'task_staleness_threshold': None,    # v0.9: Session override (None = use CONFIG default)
-        'task_staleness_reminder_count': 0,  # v0.11: Escalation level (1=normal, 2=stronger, 3+=enforce)
-        'task_staleness_enforce_next': False, # v0.11: One-shot PreToolUse deny flag
+        'task_staleness_reminder_count': 0,  # v0.10.2: Escalation level (1=normal, 2=stronger, 3+=enforce)
+        'task_staleness_enforce_next': False, # v0.10.2: One-shot PreToolUse deny flag
         'plan_awaiting_planning_tasks': False,   # v0.10: Nag until [PLANNING] tasks created
         'plan_awaiting_execution_tasks': False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
-        'plan_task_reminder_count': 0,       # v0.11: Escalation for remind_until_tasks_created
+        'plan_task_reminder_count': 0,       # v0.10.2: Escalation for remind_until_tasks_created
         'pending_stop_injection': None,          # v0.10: Stop-hook msg deferred to next PostToolUse
-        'ghost_clear_min_consecutive_blocks_override': None,  # v0.11: Session override
+        'ghost_clear_min_consecutive_blocks_override': None,  # v0.10.2: Session override
     }
 
     def __init__(self, session_id: str, event: str, prompt: str = "",

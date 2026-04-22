@@ -178,7 +178,7 @@ See `plugins/autorun/src/autorun/config.py:63-276` for DEFAULT_INTEGRATIONS list
 | Command | Description |
 |---------|-------------|
 | `/ar:tasks` | Toggle task staleness reminders on/off or set threshold |
-| `/ar:tasks stale on\|off\|min <N>` | Enable/disable stale-task escape hatch or set consecutive-block threshold (v0.11) |
+| `/ar:tasks stale on\|off\|min <N>` | Enable/disable stale-task escape hatch or set consecutive-block threshold (v0.10.2) |
 | `/ar:task-status` | Show task lifecycle status and incomplete tasks |
 | `/ar:task-ignore <id>` | Mark task as ignored (user override to unblock stop) |
 

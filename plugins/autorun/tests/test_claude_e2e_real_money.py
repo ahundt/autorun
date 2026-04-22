@@ -1141,7 +1141,7 @@ class TestClaudeHookEntryPoint:
         )
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Task reminder delivery and escalation (v0.11)
+    # Task reminder delivery and escalation (v0.10.2)
     # ─────────────────────────────────────────────────────────────────────────
 
     def _isolated_env(self):
@@ -1877,7 +1877,7 @@ class TestClaudeE2ERealMoney:
 
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Task reminder compliance — Haiku model (v0.11)
+    # Task reminder compliance — Haiku model (v0.10.2)
     # ─────────────────────────────────────────────────────────────────────────
 
     def test_ai_creates_tasks_when_reminded_haiku(self, tmp_path, claude_cli_check):
@@ -1948,7 +1948,7 @@ class TestClaudeE2ERealMoney:
 
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Task reminder compliance — UNPROMPTED task creation (v0.11)
+    # Task reminder compliance — UNPROMPTED task creation (v0.10.2)
     #
     # These tests give the AI a normal work task WITHOUT mentioning tasks.
     # The staleness/no-tasks reminder fires via systemMessage + PreToolUse

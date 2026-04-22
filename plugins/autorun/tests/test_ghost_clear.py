@@ -1,4 +1,4 @@
-"""Ghost-task / stale-ref workaround tests (v0.11).
+"""Ghost-task / stale-ref workaround tests (v0.10.2).
 
 Covers: counter reset/increment, injection augmentation, marker regex,
 handler idempotence, end-to-end loop, disabled-feature, multi-session

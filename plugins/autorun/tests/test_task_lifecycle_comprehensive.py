@@ -574,7 +574,7 @@ class TestStopHookBehavioralInvariants:
     def test_pending_stop_injection_set_on_first_block_and_escape_hatch_threshold(self, isolated_session, cfg):
         """pending_stop_injection is set on block_count==1 and when escape hatch threshold is first crossed.
 
-        Re-arm policy (v0.11):
+        Re-arm policy (v0.10.2):
           - block_count==1: always arm (AI must learn it can't stop)
           - consecutive==min_consecutive: arm once when escape hatch first appears
             (AI must see the stale-task instructions or it can't act on them)

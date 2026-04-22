@@ -1115,7 +1115,7 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
     return None
 
 
-# === TASK STALENESS ENFORCEMENT (v0.11) ===
+# === TASK STALENESS ENFORCEMENT (v0.10.2) ===
 #
 # Warn-then-deny strategy for task reminder compliance:
 #
@@ -1209,7 +1209,7 @@ def _ghost_marker_regex() -> re.Pattern:
 
 @app.on("PostToolUse")
 def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
-    """Reset consecutive identical stop-block counter on non-task tool calls (v0.11).
+    """Reset consecutive identical stop-block counter on non-task tool calls (v0.10.2).
 
     Task tool calls (TaskUpdate, TaskList, etc.) are NOT counted as activity —
     a failing TaskUpdate("Task not found") is exactly what happens in the ghost
@@ -1232,7 +1232,7 @@ def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
 
 @app.on("PostToolUse")
 def clear_ghost_tasks(ctx: EventContext) -> Optional[Dict]:
-    """Detect AUTORUN_TASKS_CLEAR_STALE_TASK(N) markers in AI output and mark tasks ignored (v0.11)."""
+    """Detect AUTORUN_TASKS_CLEAR_STALE_TASK(N) markers in AI output and mark tasks ignored (v0.10.2)."""
     if not task_lifecycle.is_enabled():
         return None
     try:
@@ -1271,7 +1271,7 @@ def clear_ghost_tasks(ctx: EventContext) -> Optional[Dict]:
 
 @app.on("PreToolUse")
 def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
-    """Warn-then-deny: allow with warning first, deny on second offense (v0.11).
+    """Warn-then-deny: allow with warning first, deny on second offense (v0.10.2).
 
     Escalation:
       reminder_count == 1 → allow(warning) — tool executes, AI sees warning
@@ -1357,7 +1357,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return ctx.deny(deny_msg)
 
 
-# === TASK STALENESS REMINDER (v0.9, delivery fix v0.11) ===
+# === TASK STALENESS REMINDER (v0.9, delivery fix v0.10.2) ===
 #
 # Uses channel="both" because PostToolUse additionalContext is broken:
 #   https://github.com/anthropics/claude-code/issues/18534
@@ -1442,7 +1442,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     return None
 
 
-# === TASK CREATION REMINDER (v0.10, delivery fix v0.11) ===
+# === TASK CREATION REMINDER (v0.10, delivery fix v0.10.2) ===
 #
 # Same dual delivery as check_task_staleness: channel="both" (PostToolUse) +
 # enforce_next flag (PreToolUse allow). See SDK bug references above.
