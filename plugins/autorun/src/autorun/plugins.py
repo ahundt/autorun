@@ -605,9 +605,8 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     #
     # is_valid uses the stored last_call_id to verify fingerprint-match before granting grace.
     # consume stores call_id so the next parallel invocation can verify it.
-    call_id = hashlib.md5(
-        f"{ctx.session_id}:{ctx.tool_name}:{cmd}".encode()
-    ).hexdigest()[:16]
+    from .scoped_allow import fingerprint_call
+    call_id = fingerprint_call(ctx.session_id, ctx.tool_name, cmd)
 
     # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
     for scope_name in ("session", "global"):
@@ -636,13 +635,9 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # See plans/make-a-plan-to-sunny-sparkle.md §6.4 + cache_guard.py.
     try:
         from .cache_guard import CacheGuard
-        cache_dec = CacheGuard.from_session(session_id=ctx.session_id).on_pretooluse(
-            {"transcript_path": ctx.transcript_path,
-             "tool_name": ctx.tool_name,
-             "tool_input": ctx.tool_input}
-        )
-        if cache_dec.is_block():
-            return ctx.deny(cache_dec.message)
+        result = CacheGuard.from_ctx(ctx).check(ctx)
+        if result is not None:
+            return result
     except Exception:
         # Fail-open: cache guard errors must never block legitimate tool use.
         pass
@@ -1730,8 +1725,8 @@ def cleanup_expired_allows(ctx: EventContext) -> None:
             accessor.set_allowed(cleaned)
     # Also purge expired cache_guard overrides — same lifecycle, same GC point.
     try:
-        from .cache_guard import _purge_expired_overrides
-        _purge_expired_overrides(ctx.session_id)
+        from .cache_guard import purge_stale_overrides
+        purge_stale_overrides(ctx.session_id)
     except Exception:
         pass  # fail-open; GC must never block session-start
     return None

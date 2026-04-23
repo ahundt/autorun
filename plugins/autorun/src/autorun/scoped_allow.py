@@ -76,6 +76,16 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
     return (ttl, uses, False)
 
 
+def fingerprint_call(session_id: str, tool_name: str, cmd: str) -> str:
+    """Stable 16-char fingerprint for parallel-hook deduplication.
+
+    Matches the format in plugins.check_blocked_commands (plugins.py:608-610)
+    so cache-override grace is byte-identical to /ar:ok grace windows.
+    """
+    import hashlib
+    return hashlib.md5(f"{session_id}:{tool_name}:{cmd}".encode()).hexdigest()[:16]
+
+
 # Seconds after last consumption that a count=0 allow still passes is_valid().
 #
 # Root cause: autorun runs twice per Bash command — once via the plugin's own
