@@ -130,8 +130,9 @@ new_test_*.txt
 debug_*.txt
 
 # Cache and runtime
-cache/
+/cache/
 .cache/
+!plugins/autorun/skills/cache/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -310,6 +310,14 @@ For more information: https://github.com/ahundt/autorun
         action="store_true",
         help="Restart the autorun daemon (stops, cleans up, and starts fresh)",
     )
+    info_group.add_argument(
+        "--cache-snapshot",
+        action="store_true",
+        help="Read Claude Code statusline JSON from stdin and persist "
+             "context_window/rate_limits snapshot for /ar:cache. Opt-in "
+             "tap; users invoke by piping their statusline stdin through "
+             "`autorun --cache-snapshot`. Always exits 0 (fail-open).",
+    )
 
     # Update group
     update_group = parser.add_argument_group("Update")
@@ -666,6 +674,7 @@ def run_direct() -> int:
         cwd=payload.get("_cwd") or os.getcwd(),
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
+        transcript_path=normalized.get("transcript_path"),
     )
 
     response = app.dispatch(ctx)
@@ -749,6 +758,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         from autorun.restart_daemon import restart_daemon
 
         return restart_daemon()
+
+    # Cache snapshot tap (opt-in; user's statusline pipes JSON here)
+    if getattr(args, 'cache_snapshot', False):
+        from autorun.cache_guard import persist_statusline_snapshot
+        return persist_statusline_snapshot(sys.stdin)
 
     # Uninstall mode
     if args.uninstall:

@@ -63,6 +63,16 @@
         }]
       }
     ],
+    "PreCompress": [
+      {
+        "hooks": [{
+          "name": "autorun-precompress",
+          "type": "command",
+          "command": "uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+          "timeout": 5000
+        }]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [{

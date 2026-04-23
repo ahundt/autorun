@@ -176,6 +176,7 @@ from typing import Optional, Dict, List
 from pathlib import Path
 from dataclasses import dataclass, field
 import hashlib
+import os
 import shutil
 import re
 import json
@@ -955,11 +956,18 @@ def handle_session_start(hook_input: dict) -> None:
     cwd = hook_input.get("cwd", str(Path.cwd()))
     cli_type = detect_cli_type(hook_input)
 
+    # Resolve transcript_path up-front so it can be propagated on EventContext
+    # for downstream consumers (cache_guard, future features).
+    _expanded_transcript_path = hook_input.get("transcript_path")
+    if _expanded_transcript_path:
+        _expanded_transcript_path = os.path.expanduser(_expanded_transcript_path)
+
     ctx = EventContext(
         session_id=session_id,
         event="SessionStart",
         tool_input={"cwd": cwd},
-        store=store
+        store=store,
+        transcript_path=_expanded_transcript_path,
     )
 
     config = PlanExportConfig.load()
@@ -971,7 +979,7 @@ def handle_session_start(hook_input: dict) -> None:
         print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
         return
 
-    transcript_path = hook_input.get("transcript_path")
+    transcript_path = _expanded_transcript_path
     if not transcript_path:
         print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
         return

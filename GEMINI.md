@@ -128,9 +128,18 @@ gemini --version  # Should show 0.28.0 or later
 /ar:pe              # Show plan export status
 /ar:no <pattern>    # Block command pattern in session
 /ar:ok <pattern>    # Allow blocked command in session
+/ar:cache           # Cache-miss / compaction protection gate (off by default)
 ```
 
 See [README.md](README.md) for the complete command reference (77 slash commands).
+
+#### Cache-Miss / Compaction Protection on Gemini CLI
+
+`/ar:cache` works on Gemini CLI with reduced signal fidelity. Gemini does not surface `cache_read_input_tokens` or `cache_creation_input_tokens` to its hook stdin or statusline, and Gemini's JSONL transcript schema does not consistently expose per-message cache tokens. Consequences when enabled on Gemini:
+
+- **Works**: `cache_age_max_seconds` axis (time since last assistant message proxies cache warmth), `compaction_used_max` axis (total-token proxy vs. inferred 2M / 1M context window).
+- **Fail-open**: `cache_hit_ratio_min` and `cache_read_tokens_min` axes — Gemini's transcript usually lacks the required fields, so cache_guard returns ALLOW on those axes. `/ar:cache` will print which axes are inactive on your current CLI.
+- **PreCompress hook**: autorun wires Gemini's `PreCompress` event (advisory — cannot block) to invalidate the cached usage memo, so the next `BeforeTool` re-reads the transcript after compression.
 
 #### Task Staleness Reminders (v0.9)
 
