@@ -1001,7 +1001,7 @@ class TaskLifecycle:
 
         override = getattr(ctx, 'ghost_clear_min_consecutive_blocks_override', None)
         min_consecutive = (
-            override if override is not None
+            override if isinstance(override, int)
             else self.config.ghost_clear_min_consecutive_blocks
         )
         ghost_enabled = self.config.ghost_clear_enabled
