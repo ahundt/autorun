@@ -58,6 +58,10 @@ from .config import (
 )
 
 
+_SECONDS_PER_DAY: int = 24 * 3600          # pure unit conversion (not a config value)
+_STAGE3_OVERFLOW_NAME_COUNT: int = 3       # task names shown in stage-3 overflow message
+
+
 # === Stop / Resume action fragments (assembled at call site) ===
 _ACT_REVIEW   = '{task_list}'
 _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
@@ -79,6 +83,7 @@ class TaskLifecycleConfig:
     max_resume_tasks: int = 20
     stop_block_max_count: int = 3
     task_ttl_days: int = 30
+    recent_task_days: int = 1              # tasks created within this window shown as "recent"
     debug_logging: bool = False
     ghost_clear_enabled: bool = True
     ghost_clear_min_consecutive_blocks: int = 2
@@ -689,7 +694,7 @@ class TaskLifecycle:
         Returns:
             Number of tasks pruned
         """
-        ttl_seconds = self.config.task_ttl_days * 86400
+        ttl_seconds = self.config.task_ttl_days * _SECONDS_PER_DAY
         now = time.time()
         pruned_count = 0
 
@@ -913,8 +918,9 @@ class TaskLifecycle:
 
         # Separate by status for better visibility
         now = time.time()
-        recent_incomplete = [t for t in prioritized if now - t["created_at"] < 86400]  # 24 hours
-        older_incomplete = [t for t in prioritized if now - t["created_at"] >= 86400]
+        recent_threshold = self.config.recent_task_days * _SECONDS_PER_DAY
+        recent_incomplete = [t for t in prioritized if now - t["created_at"] < recent_threshold]
+        older_incomplete = [t for t in prioritized if now - t["created_at"] >= recent_threshold]
 
         in_progress_tasks = [t for t in recent_incomplete if t["status"] == "in_progress"]
         pending_tasks = [t for t in recent_incomplete if t["status"] == "pending"]
@@ -1078,8 +1084,8 @@ class TaskLifecycle:
             injection += CONFIG.get("task_outstanding_stage3_message", "").format(
                 count=total,
                 names=", ".join(
-                    t.get("subject", f"#{t.get('id', '?')}") for t in incomplete_tasks[:3]
-                ) + ("..." if total > 3 else ""),
+                    t.get("subject", f"#{t.get('id', '?')}") for t in incomplete_tasks[:_STAGE3_OVERFLOW_NAME_COUNT]
+                ) + ("..." if total > _STAGE3_OVERFLOW_NAME_COUNT else ""),
             )
 
         # Deferred AI delivery — Stop events cannot reach the AI directly:
@@ -1451,7 +1457,7 @@ class TaskLifecycle:
         try:
             config = config or cls._get_config()
             ttl = ttl_days if ttl_days is not None else config.task_ttl_days
-            ttl_seconds = ttl * 86400
+            ttl_seconds = ttl * _SECONDS_PER_DAY
             mgr = get_session_manager()
             sessions_dir = mgr.state_dir
             # JSON key prefix for task lifecycle sessions (matches global_key format below)
@@ -1576,7 +1582,7 @@ class TaskLifecycle:
                             if age < ttl_seconds:
                                 skip_young += 1
                                 if dry_run:
-                                    print(f"  SKIP    {sid[:12]}... ({age/86400:.1f}d old)")
+                                    print(f"  SKIP    {sid[:12]}... ({age/_SECONDS_PER_DAY:.1f}d old)")
                                 continue
 
                         if dry_run:

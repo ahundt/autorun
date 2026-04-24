@@ -405,6 +405,18 @@ CONFIG = {
         "Task DB no longer knows about. Disable: /ar:tasks stale off\n"
     ),
 
+    # ─── Cache Guard (/ar:cache) ─────────────────────────────────────────────
+    # How much of the JSONL transcript to tail-scan on each PreToolUse call.
+    # Larger values find usage stats in sessions with large tool_result payloads.
+    "cache_guard_jsonl_scan_bytes": 64 * 1024,
+    # Retry window when the initial scan finds no assistant entry (4× initial).
+    "cache_guard_jsonl_retry_bytes": 256 * 1024,
+    # How long (seconds) to trust a memoised usage reading before re-scanning.
+    "cache_guard_memo_ttl_seconds": 2.0,
+    # Clock-skew tolerance: timestamps this far in the future are treated as
+    # "just now" (age=0) instead of unknown (fail-open).
+    "cache_guard_clock_skew_tolerance_s": 60.0,
+
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py

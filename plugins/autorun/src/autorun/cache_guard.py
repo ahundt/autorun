@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import IO, Literal, Optional
 
-from .config import detect_cli_type
+from .config import CONFIG, detect_cli_type
 from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
     fingerprint_call, parse_scope_args, parse_duration,
@@ -194,11 +194,10 @@ class UsageReading:
 
 # ── JSONL bounded-tail reader ────────────────────────────────────────
 
-# Tail-scan window sizes tried in order. The first win short-circuits. A retry
-# at 4× max handles the rare "last assistant entry is inside a big tool_result"
-# case without paying O(file_size) on every PreToolUse.
-_TAIL_DEFAULT_BYTES = 64 * 1024
-_TAIL_RETRY_BYTES   = 256 * 1024
+# Tail-scan window sizes (from CONFIG — see config.py "Cache Guard" section).
+# A retry at 4× initial handles sessions with large tool_result payloads
+# without paying O(file_size) on every PreToolUse.
+_TAIL_RETRY_BYTES        = CONFIG["cache_guard_jsonl_retry_bytes"]
 
 _ASSISTANT_TYPES = frozenset({"assistant", "model"})
 _TIMESTAMP_KEYS  = ("timestamp", "time", "created_at", "createdAt", "ts")
@@ -315,7 +314,7 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
     # Clock-skew handling: far-future timestamps (beyond tolerance) → age = None
     # (fail-open), not clamped 0 which would silently suppress age-axis trips.
     age: float | None = None
-    _CLOCK_SKEW_TOLERANCE_S = 60.0
+    _clock_skew_tol = CONFIG["cache_guard_clock_skew_tolerance_s"]
     for k in _TIMESTAMP_KEYS:
         raw = entry.get(k)
         if raw is None:
@@ -326,7 +325,7 @@ def _usage_from_assistant(entry: dict, usage: dict, *, cli: str) -> UsageReading
         delta = time.time() - t
         if delta >= 0:
             age = delta
-        elif -delta <= _CLOCK_SKEW_TOLERANCE_S:
+        elif -delta <= _clock_skew_tol:
             age = 0.0   # small negative drift → treat as "just happened"
         else:
             age = None  # far-future timestamp → unknown → fail-open
@@ -419,8 +418,8 @@ def _which_axes_trip(cfg: CacheGuardConfig, usage: Optional[UsageReading]) -> li
 
 # ── CacheGuard ────────────────────────────────────────────────────────
 
-_DEFAULT_JSONL_MAX_BYTES = 64 * 1024
-_MEMO_TTL_SECONDS = 2.0
+_DEFAULT_JSONL_MAX_BYTES = CONFIG["cache_guard_jsonl_scan_bytes"]
+_MEMO_TTL_SECONDS        = CONFIG["cache_guard_memo_ttl_seconds"]
 _GRANT_KEY = "cache/overrides"
 _LAST_USAGE_KEY = "cache/last_usage"
 _SNAPSHOT_KEY = "cache/statusline_snapshot"
