@@ -1340,8 +1340,8 @@ class TestRedirectInDenyMessage:
         assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
         assert "trash file.txt" in str(result)
 
-    def test_redirect_multiple_args_substituted(self):
-        """rm -rf /tmp/dir blocked → deny message contains 'trash -rf /tmp/dir'."""
+    def test_redirect_flags_stripped_for_trash(self):
+        """rm -rf /tmp/dir blocked → deny message contains 'trash /tmp/dir' (flag stripped)."""
         store = ThreadSafeDB()
         ctx = EventContext(
             session_id="test-redirect-multi",
@@ -1351,7 +1351,24 @@ class TestRedirectInDenyMessage:
         result = plugins.check_blocked_commands(ctx)
 
         assert result is not None
-        assert "trash -rf /tmp/dir" in str(result)
+        result_str = str(result)
+        assert "trash /tmp/dir" in result_str
+        assert "trash -rf" not in result_str
+
+    def test_redirect_f_flag_stripped_for_trash(self):
+        """rm -f file1 file2 blocked → deny message contains 'trash file1 file2' (no -f)."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-redirect-f-flag",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": "rm -f /tmp/foo.log /tmp/bar.py"}, store=store
+        )
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        result_str = str(result)
+        assert "trash /tmp/foo.log /tmp/bar.py" in result_str
+        assert "trash -f" not in result_str
 
     def test_redirect_file_substituted_in_deny_message(self):
         """git checkout -- src/main.py → deny contains 'git stash push src/main.py'."""
@@ -1560,7 +1577,7 @@ class TestDefaultIntegrationsConfig:
                 f"Block integration '{pattern}' suggestion missing '/ar:ok' hint"
 
     def test_redirect_templates_use_valid_placeholders(self):
-        """All redirect templates use only {args} or {file} placeholders."""
+        """All redirect templates use only {args}, {file}, or {file_args} placeholders."""
         from autorun.config import DEFAULT_INTEGRATIONS
         import re
         for pattern, cfg in DEFAULT_INTEGRATIONS.items():
@@ -1569,7 +1586,7 @@ class TestDefaultIntegrationsConfig:
                 continue
             # Find all {placeholder} occurrences
             placeholders = set(re.findall(r"\{(\w+)\}", redirect))
-            invalid = placeholders - {"args", "file"}
+            invalid = placeholders - {"args", "file", "file_args"}
             assert not invalid, \
                 f"Integration '{pattern}' redirect '{redirect}' has unknown placeholders: {invalid}"
 
@@ -1609,10 +1626,10 @@ class TestDefaultIntegrationsConfig:
         assert "/ar:ok 'git push'" in suggestion
 
     def test_rm_has_redirect_to_trash(self):
-        """rm integration redirects to trash."""
+        """rm integration redirects to trash using {file_args} (flags stripped)."""
         from autorun.config import DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["rm"]["redirect"] == "trash {args}"
-        assert DEFAULT_INTEGRATIONS["rm -rf"]["redirect"] == "trash {args}"
+        assert DEFAULT_INTEGRATIONS["rm"]["redirect"] == "trash {file_args}"
+        assert DEFAULT_INTEGRATIONS["rm -rf"]["redirect"] == "trash {file_args}"
 
     def test_git_checkout_dot_uses_stash_redirect(self):
         """git checkout . redirect suggests git stash push."""

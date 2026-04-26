@@ -725,13 +725,15 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             seen.add(key)
                             msg = format_suggestion(intg.message, ctx.cli_type)
                             if intg.redirect:
-                                # Substitute {args} with actual args, {file} with target file
+                                # Substitute {args} with actual args, {file} with target file,
+                                # {file_args} with non-flag args only (strips -f, -r, etc.)
                                 args = cmd.split(maxsplit=1)[1] if " " in cmd else ""
+                                parts = cmd.split()
+                                non_flag_parts = [p for p in parts[1:] if p != "--" and not p.startswith("-")]
                                 redirect_cmd = intg.redirect.replace("{args}", args)
+                                redirect_cmd = redirect_cmd.replace("{file_args}", " ".join(non_flag_parts))
                                 if "{file}" in redirect_cmd:
-                                    parts = cmd.split()
-                                    file_args = [p for p in parts[2:] if p != "--" and not p.startswith("-")]
-                                    file_val = file_args[-1] if file_args else args
+                                    file_val = non_flag_parts[-1] if non_flag_parts else args
                                     redirect_cmd = redirect_cmd.replace("{file}", file_val)
                                 msg += f"\n\nUse instead: `{redirect_cmd}`"
                             if decision == "warn":
