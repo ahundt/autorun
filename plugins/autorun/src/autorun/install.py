@@ -1612,7 +1612,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
         
         # 3. Resolve metadata file path
         # Marketplace root is /plugins/autorun
-        meta_file = marketplace_root / "src" / "autorun" / "metadata.json"
+        meta_file = plugin_dir / "src" / "autorun" / "metadata.json"
         
         # 4. Write metadata with robust error handling
         try:
