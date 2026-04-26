@@ -789,21 +789,31 @@ class TestRenderStatusGemini:
 
 class TestToggleTTLRevert:
     def test_ttl_revert_to_prior_false(self, tmp_state_dir):
+        from unittest.mock import patch
+        import autorun.cache_guard as cg
         from autorun.cache_guard import set_cache_enabled, is_cache_enabled
         sid = _sid()
-        set_cache_enabled(sid, True, duration=0.01)
-        assert is_cache_enabled(sid)
-        time.sleep(0.05)
-        assert not is_cache_enabled(sid)
+        t0 = 1_000_000.0
+        with patch.object(cg, "time") as mock_time:
+            mock_time.time.return_value = t0
+            set_cache_enabled(sid, True, duration=10.0)
+            assert is_cache_enabled(sid)        # before expiry
+            mock_time.time.return_value = t0 + 20.0
+            assert not is_cache_enabled(sid)    # after expiry, reverts to prior=False
 
     def test_ttl_revert_to_prior_true(self, tmp_state_dir):
+        from unittest.mock import patch
+        import autorun.cache_guard as cg
         from autorun.cache_guard import set_cache_enabled, is_cache_enabled
         sid = _sid()
-        set_cache_enabled(sid, True)
-        set_cache_enabled(sid, False, duration=0.01)
-        assert not is_cache_enabled(sid)
-        time.sleep(0.05)
-        assert is_cache_enabled(sid)
+        t0 = 1_000_000.0
+        with patch.object(cg, "time") as mock_time:
+            mock_time.time.return_value = t0
+            set_cache_enabled(sid, True)
+            set_cache_enabled(sid, False, duration=10.0)
+            assert not is_cache_enabled(sid)    # before expiry
+            mock_time.time.return_value = t0 + 20.0
+            assert is_cache_enabled(sid)        # after expiry, reverts to prior=True
 
 
 # === 15. purge_stale_overrides public API ============================
