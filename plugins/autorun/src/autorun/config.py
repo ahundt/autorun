@@ -274,7 +274,7 @@ DEFAULT_INTEGRATIONS = {
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",
-        "suggestion": "Git commit rules: 1) Concrete terms (specific file paths, exact error messages) 2) No vague language ('improve', 'enhance', 'update') 3) Include technical details (line numbers, function names, test results) 4) Reference specific sources when making claims",
+        "suggestion": "Git commit rules: 1) Concrete terms (specific file paths, exact error messages) 2) No vague language ('improve', 'enhance', 'update') 3) Include technical details (line numbers, function names, test results) 4) Reference specific sources when making claims 5) No transient internal AI session details (plan phases, task IDs, CI run numbers, session references)",
     },
 }
 
