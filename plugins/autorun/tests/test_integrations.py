@@ -1450,7 +1450,7 @@ class TestLoadIntegrationsEdgeCases:
         assert len(rm_intgs) > 0
         rm_intg = rm_intgs[0]
         assert rm_intg.redirect is not None
-        assert "{args}" in rm_intg.redirect
+        assert "{file_args}" in rm_intg.redirect
 
     def test_loads_integration_with_when_predicate(self):
         """Loads integration with when field (e.g., git reset --hard)."""
