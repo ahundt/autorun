@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv and Python
         # setup-uv@v7 is the current recommended version per official uv docs.
@@ -89,7 +89,7 @@ jobs:
         # Works on Linux, macOS, and Windows (pure Node.js, no Docker required).
         # reporter: java-junit parses the JUnit XML that pytest --junitxml generates.
         # fail-on-error: false prevents publishing from independently failing the job.
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         if: always()
         with:
           name: "autorun Tests (${{ matrix.os }}, py${{ matrix.python-version }})"
