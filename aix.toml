@@ -1,6 +1,6 @@
 [package]
 name = "autorun"
-version = "0.10.2rc1"
+version = "0.11.0"
 description = "Autonomous execution, file policies, safety guards for AI coding assistants"
 authors = ["Andrew Hundt <athundt@gmail.com>"]
 license = "Apache-2.0"

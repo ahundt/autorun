@@ -101,7 +101,7 @@ class TestSemverComparison:
     @pytest.mark.parametrize("current,latest_tag,expected", [
         ("0.9.0", "v0.10.1", True),    # multi-digit minor
         ("0.10.0", "v0.10.1", True),   # patch bump
-        ("0.10.2", "v0.10.1", False),  # downgrade
+        ("0.11.0", "v0.10.1", False),  # downgrade
         ("0.10.1", "v0.10.1", False),  # same version
         ("0.10.1", "v1.0.0", True),    # major bump
         ("1.0.0", "v0.99.99", False),  # major > minor.patch

@@ -31,4 +31,4 @@ __all__ = [
     "pdf_to_txt",
 ]
 
-__version__ = "0.10.2rc1"
+__version__ = "0.11.0"

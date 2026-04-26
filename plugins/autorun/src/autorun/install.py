@@ -531,16 +531,16 @@ def _read_plugin_version(plugin_dir: Path) -> str:
         plugin_dir: Path to plugin directory
 
     Returns:
-        Version string from plugin.json, or "0.10.2rc1" as fallback
+        Version string from plugin.json, or "0.11.0" as fallback
     """
     manifest = plugin_dir / ".claude-plugin" / "plugin.json"
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-            return data.get("version", "0.10.2rc1")
+            return data.get("version", "0.11.0")
         except (json.JSONDecodeError, OSError):
             pass
-    return "0.10.2rc1"
+    return "0.11.0"
 
 
 def _check_hook_conflicts() -> None:
@@ -1619,7 +1619,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
             meta_file.parent.mkdir(parents=True, exist_ok=True)
             import json
             data = {
-                "version": "0.10.2rc1",
+                "version": "0.11.0",
                 "commit": commit,
                 "build_time": build_time
             }
@@ -1853,7 +1853,7 @@ def install_plugins(
     try:
         from autorun import __version__
     except ImportError:
-        __version__ = "0.10.2rc1"
+        __version__ = "0.11.0"
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")
