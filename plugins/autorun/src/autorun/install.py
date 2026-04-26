@@ -1092,18 +1092,18 @@ def _substitute_paths(plugin_dir: Path) -> None:
             continue
             
         try:
-            content = fp.read_text()
+            content = fp.read_text(encoding="utf-8")
             original_content = content
-            
+
             # Substitute Claude Code variable only.
             # ${extensionPath} is resolved at runtime by Gemini CLI
             # (see https://geminicli.com/docs/extensions/reference/)
             # and must NOT be pre-resolved by the installer.
             if "${CLAUDE_PLUGIN_ROOT}" in content:
                 content = content.replace("${CLAUDE_PLUGIN_ROOT}", abs_path)
-            
+
             if content != original_content:
-                fp.write_text(content)
+                fp.write_text(content, encoding="utf-8")
                 logger.debug(f"Substituted paths in {rel_path}")
         except OSError as e:
             logger.warning(f"Failed to substitute paths in {rel_path}: {e}")

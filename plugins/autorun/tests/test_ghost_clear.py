@@ -228,7 +228,7 @@ def test_handler_logs_ghost_clear(tmp_path, monkeypatch):
 
     log_path = cfg.storage_dir / _sid(tmp_path) / "audit.log"
     assert log_path.exists(), "Audit log must be created (debug_logging=True required)"
-    log_text = log_path.read_text()
+    log_text = log_path.read_text(encoding="utf-8")
     assert "GHOST_CLEAR" in log_text
     assert "task#72" in log_text
 
@@ -308,7 +308,7 @@ def test_marker_literal_single_source_of_truth():
     for py in src.rglob("*.py"):
         if py.name == "config.py":
             continue
-        text = py.read_text()
+        text = py.read_text(encoding="utf-8")
         if marker not in text:
             continue
         # Parse AST and check only non-docstring string literals
