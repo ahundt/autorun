@@ -132,17 +132,8 @@ omit = [
     # External system integration (requires tmux)
     "**/tmux_injector.py",
     "**/tmux_utils.py",
-    # Test utilities (tested indirectly)
-    "**/testing_framework.py",
-    # Discovery utilities (runtime-dependent)
-    "**/command_discovery.py",
     # AI monitoring (requires running sessions)
     "**/ai_monitor.py",
-    # Complex integration modules (require full environment)
-    "**/injection_monitoring.py",
-    # Analysis modules (require complex transcript data)
-    "**/transcript_analyzer.py",
-    "**/verification_engine.py",
 ]
 
 [tool.coverage.report]

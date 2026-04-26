@@ -182,9 +182,6 @@ history.jsonl
 *_test_file.txt
 *.session.json
 
-# Injection monitoring data (generated at runtime)
-injection_monitoring/injection_data.json
-
 # Session storage directory (runtime state)
 sessions/
 
