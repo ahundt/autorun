@@ -1499,6 +1499,72 @@ def _install_for_codex(
     return (True, "success")
 
 
+def _resolve_forge_base() -> Path:
+    """Resolve ForgeCode's base config path.
+
+    Per crates/forge_config/src/reader.rs:58-84 the precedence is:
+        FORGE_CONFIG env var > ~/forge/ (legacy, only if it exists) > ~/.forge/.
+    """
+    env = os.environ.get("FORGE_CONFIG")
+    if env:
+        return Path(env)
+    legacy = Path.home() / "forge"
+    if legacy.is_dir():
+        return legacy
+    return Path.home() / ".forge"
+
+
+def _install_for_forgecode(
+    marketplace_root: Path,
+    plugins: list[str],
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Install autorun commands + AGENTS.md into ForgeCode's config dir.
+
+    ForgeCode has no external hook system, so this install is template-only:
+    commands land under <base>/commands/*.md and the advisory safety
+    guidance lands at <base>/AGENTS.md. ForgeCode reads both at startup
+    and injects AGENTS.md content as "custom instructions".
+
+    Args:
+        marketplace_root: Path to marketplace root directory.
+        plugins: List of plugin names to install (only "autorun" provides
+                 a ForgeCode template today; others are no-ops).
+        force: Reserved for parity with other installers; copy is
+               idempotent so force has no effect today.
+    """
+    plugin_dir = None
+    for name in plugins:
+        if name == "autorun":
+            plugin_dir = _resolve_plugin_dir(marketplace_root, name)
+            break
+    if plugin_dir is None:
+        return (False, f"autorun plugin not found under {marketplace_root}")
+
+    template = plugin_dir / "src" / "autorun" / "forgecode_template"
+    if not template.is_dir():
+        return (False, f"forgecode_template missing at {template}")
+
+    base = _resolve_forge_base()
+    base.mkdir(parents=True, exist_ok=True)
+    cmds_dst = base / "commands"
+    cmds_dst.mkdir(exist_ok=True)
+
+    cmds_src = template / "commands"
+    for src in cmds_src.glob("*.md"):
+        shutil.copy2(src, cmds_dst / src.name)
+
+    agents_src = template / "AGENTS.md"
+    if agents_src.is_file():
+        shutil.copy2(agents_src, base / "AGENTS.md")
+
+    print()
+    print(f"✓ ForgeCode commands installed at {base}/commands/")
+    print(f"✓ Advisory safety guidance written to {base}/AGENTS.md")
+    print("  Note: ForgeCode has no external hooks — guards run advisory only.")
+    return (True, "success")
+
+
 def _install_conductor(force: bool = False) -> tuple[bool, str]:
     """Install Conductor extension for Gemini CLI (plan mode).
 
@@ -2137,6 +2203,11 @@ def install_plugins(
     if "codex" in target_clis:
         codex_success, codex_msg = _install_for_codex(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and codex_success
+
+    # Install for ForgeCode (template-only — commands + AGENTS.md, no hooks)
+    if "forgecode" in target_clis:
+        forge_success, forge_msg = _install_for_forgecode(marketplace_root, plugins, force)
+        all_succeeded = all_succeeded and forge_success
 
     # Optional: uv tool install for global CLI
     if tool:
