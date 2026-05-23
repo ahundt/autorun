@@ -695,48 +695,69 @@ After every step and substep you must say "Wait," and execute this sequential th
 # =============================================================================
 
 
-# Gemini-only event names (pre-normalization)
-_GEMINI_EVENTS = frozenset({"BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
-                             "BeforeModel", "AfterModel", "BeforeToolSelection"})
+# Platform detection metadata derives from the single source of truth in
+# autorun.platforms.PLATFORMS — adding a new CLI = adding one Platform()
+# definition there. No parallel maintenance here.
+from .platforms import PLATFORMS as _PLATFORMS, detection_platforms as _detection_platforms
+
+# Ordered detectors for all non-default CLIs. Each entry is a 5-tuple:
+#   (name, session_id_keys, event_names, path_hints, env_vars)
+# First match wins; "claude" is always the default fallback (excluded here).
+_CLI_DETECTORS = [
+    (
+        p.name,
+        p.detect_session_keys,
+        p.detect_event_names,
+        p.detect_path_hints,
+        p.detect_env_vars,
+    )
+    for p in _detection_platforms()
+]
+
+# Gemini-only event names (pre-normalization) — kept for backward compat callers.
+_GEMINI_EVENTS = _PLATFORMS["gemini"].detect_event_names
+
+# Set of all known CLI names (used for explicit-payload validation).
+_KNOWN_CLI_NAMES = frozenset(_PLATFORMS.keys())
 
 
 def detect_cli_type(payload: dict = None) -> str:
-    """Determine the active CLI type (Claude Code vs Gemini CLI).
+    """Determine the active CLI type from payload or environment.
 
     Priority:
-    1. Explicit 'cli_type' parameter in payload (set by hook_entry.py --cli)
-    2. Explicit 'source' parameter in payload
-    3. Gemini-specific identifiers (GEMINI_SESSION_ID, sessionId, session_id)
-    4. Gemini-specific event names (BeforeTool, AfterTool, etc.)
-    5. Environment variables (GEMINI_SESSION_ID, GEMINI_PROJECT_DIR)
+    1. Explicit 'cli_type' or 'source' parameter in payload
+    2. Platform-specific session-ID keys in payload
+    3. Platform-specific event names in payload
+    4. Platform-specific path hints in transcript_path
+    5. Environment variables (checked in _CLI_DETECTORS order)
     6. Default: "claude"
 
     Returns:
-        str: "claude" or "gemini"
+        str: one of "claude", "gemini", "codex", "forgecode"
     """
     import os
 
-    # 1 & 2: Explicit parameters from payload (highest priority)
+    # 1: Explicit parameters from payload (highest priority)
     if payload:
         explicit = payload.get("cli_type") or payload.get("source")
-        if explicit in ("gemini", "claude"):
+        if explicit in _KNOWN_CLI_NAMES:
             return explicit
 
-        # 3: Gemini-specific session identifiers
-        if any(payload.get(k) for k in ("GEMINI_SESSION_ID", "sessionId", "session_id")):
-            return "gemini"
+        # 2–4: Check each detector's payload signals in order
+        for name, session_keys, event_names, path_hints, _ in _CLI_DETECTORS:
+            if session_keys and any(payload.get(k) for k in session_keys):
+                return name
+            if event_names and payload.get("hook_event_name") in event_names:
+                return name
+            if path_hints:
+                path = str(payload.get("transcript_path", ""))
+                if any(h in path for h in path_hints):
+                    return name
 
-        # 4: Gemini-specific event names
-        if payload.get("hook_event_name") in _GEMINI_EVENTS:
-            return "gemini"
-
-        # 4b: File path hints
-        if ".gemini" in str(payload.get("transcript_path", "")):
-            return "gemini"
-
-    # 5: Environment variables (fallback for direct CLI calls or initialization)
-    if any(os.environ.get(k) for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI")):
-        return "gemini"
+    # 5: Environment variables
+    for name, _, _, _, env_vars in _CLI_DETECTORS:
+        if env_vars and any(os.environ.get(k) for k in env_vars):
+            return name
 
     # 6: Default fallback
     return "claude"

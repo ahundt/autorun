@@ -1,0 +1,248 @@
+"""Single source of truth for AI coding CLI platforms supported by autorun.
+
+Adding a new CLI is one Platform(...) definition plus (optionally) one
+install function. All cli_type-aware code paths (detection, event maps,
+tool names, schema validation, bug-workaround applicability, install
+templates) read from this registry instead of holding parallel tables.
+
+Thread-safety:
+    Platform is a frozen+slots dataclass — fields cannot mutate after
+    construction. PLATFORMS is read-only after module import (register
+    raises on duplicate insertion).
+
+Multi-process safety:
+    All fields are immutable primitives (str, tuple, frozenset, bool) or
+    plain dict (used for ordered mappings; treated as read-only).
+    Child processes that import this module observe identical data.
+
+Multi-session safety:
+    No session-scoped data lives on Platform; session state belongs in
+    EventContext / SessionStateManager.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Mapping
+
+
+# Click/Typer-style decorator helper module: the @register() pattern keeps
+# definitions terse while behavior stays in dispatch sites (which look up
+# attributes by name instead of branching on cli_type).
+
+
+@dataclass(frozen=True, slots=True)
+class Platform:
+    """Immutable specification for one AI coding CLI platform.
+
+    Fields are grouped: identity, detection, event mapping, tool names,
+    schema/bug applicability, install metadata.
+    """
+
+    # === Identity ===
+    name: str
+    display_name: str
+    binary: str  # for shutil.which() probes
+
+    # === Detection (used by config.detect_cli_type) ===
+    detect_env_vars: tuple[str, ...] = ()
+    detect_session_keys: tuple[str, ...] = ()
+    detect_event_names: frozenset[str] = field(default_factory=frozenset)
+    detect_path_hints: tuple[str, ...] = ()
+
+    # === Event normalization (cli name → internal name) ===
+    # Empty dict = identity (Claude / Codex use canonical names directly).
+    cli_to_internal_events: Mapping[str, str] = field(default_factory=dict)
+    internal_to_cli_events: Mapping[str, str] = field(default_factory=dict)
+
+    # === Tool name resolution (logical key → API tool_name) ===
+    tool_names: Mapping[str, str] = field(default_factory=dict)
+
+    # === Hook capability ===
+    has_hooks: bool = True
+    schema_type: str = "strict"   # "strict" | "permissive" | "none"
+
+    # === Bug workaround applicability ===
+    has_exit2_workaround: bool = False     # Claude #4669
+    drops_additional_context: bool = False  # Claude #18534
+
+    # === Install metadata ===
+    config_dir: str = ""
+    template_dir: str | None = None
+    hooks_path_var: str = ""
+    install_fn_name: str = ""
+    list_cmd: tuple[str, ...] = ()
+
+
+# === Registry ==============================================================
+# Module-level dict — declaration order = detection priority.
+PLATFORMS: dict[str, Platform] = {}
+
+
+def register(platform: Platform) -> Platform:
+    """Click/Typer-style helper: register a Platform, return it for chaining."""
+    if platform.name in PLATFORMS:
+        raise ValueError(f"Platform {platform.name!r} already registered")
+    PLATFORMS[platform.name] = platform
+    return platform
+
+
+# === Tool-name tables ======================================================
+# Kept inline so PLATFORMS and core.CLI_TOOL_NAMES stay in lockstep.
+_CLAUDE_TOOLS = {
+    "grep": "Grep", "glob": "Glob", "read": "Read",
+    "write": "Write", "edit": "Edit", "bash": "Bash", "ls": "LS",
+    "task_create": "TaskCreate", "task_update": "TaskUpdate",
+    "task_list": "TaskList",
+    "task_title": "subject", "task_id_param": "taskId",
+}
+
+_GEMINI_TOOLS = {
+    "grep": "grep_search", "glob": "glob", "read": "read_file",
+    "write": "write_file", "edit": "replace", "bash": "run_shell_command",
+    "ls": "list_directory",
+    "task_create": "tracker_create_task",
+    "task_update": "tracker_update_task",
+    "task_list": "tracker_list_tasks",
+    "task_title": "title", "task_id_param": "id",
+}
+
+# Codex CLI v0.133 docs show identical hook tool names to Claude Code's API
+# (Bash, Read, Write, Edit, Grep, Glob, …). The Codex env additionally sets
+# both PLUGIN_ROOT/PLUGIN_DATA and CLAUDE_PLUGIN_ROOT/CLAUDE_PLUGIN_DATA
+# (compat aliases) so a single hook binary serves both.
+_CODEX_TOOLS = dict(_CLAUDE_TOOLS)
+
+
+# === Platform definitions ==================================================
+# IMPORTANT: order matters for detection priority. Claude is the default
+# fallback (registered first so the canonical Claude data structures exist
+# first; detection_platforms() filters it out).
+
+CLAUDE = register(Platform(
+    name="claude",
+    display_name="Claude Code",
+    binary="claude",
+    has_hooks=True,
+    schema_type="strict",
+    has_exit2_workaround=True,
+    drops_additional_context=True,
+    config_dir="~/.claude/",
+    template_dir=None,                       # hooks live at plugin root
+    hooks_path_var="${CLAUDE_PLUGIN_ROOT}",
+    install_fn_name="_install_for_claude",
+    list_cmd=("claude", "plugin", "list"),
+    tool_names=_CLAUDE_TOOLS,
+    # event maps left empty: Claude events are canonical (identity).
+    internal_to_cli_events={
+        "PreToolUse": "PreToolUse", "PostToolUse": "PostToolUse",
+        "UserPromptSubmit": "UserPromptSubmit", "Stop": "Stop",
+        "SessionStart": "SessionStart", "SessionEnd": "SessionEnd",
+        "BeforeModel": "BeforeModel", "AfterModel": "AfterModel",
+    },
+))
+
+
+GEMINI = register(Platform(
+    name="gemini",
+    display_name="Gemini CLI",
+    binary="gemini",
+    detect_env_vars=("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI"),
+    detect_session_keys=("GEMINI_SESSION_ID", "sessionId", "session_id"),
+    detect_event_names=frozenset({
+        "BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
+        "BeforeModel", "AfterModel", "BeforeToolSelection",
+    }),
+    detect_path_hints=(".gemini",),
+    cli_to_internal_events={
+        "BeforeTool": "PreToolUse",
+        "AfterTool": "PostToolUse",
+        "BeforeAgent": "UserPromptSubmit",
+        "AfterAgent": "Stop",
+        "SessionStart": "SessionStart",
+        "SessionEnd": "SessionEnd",
+        "BeforeModel": "BeforeModel",
+        "AfterModel": "AfterModel",
+        "PreCompress": "PreCompress",
+    },
+    internal_to_cli_events={
+        "PreToolUse": "BeforeTool",
+        "PostToolUse": "AfterTool",
+        "UserPromptSubmit": "BeforeAgent",
+        "Stop": "AfterAgent",
+        "SessionStart": "SessionStart",
+        "SessionEnd": "SessionEnd",
+        "BeforeModel": "BeforeModel",
+        "AfterModel": "AfterModel",
+    },
+    has_hooks=True,
+    schema_type="permissive",
+    has_exit2_workaround=False,
+    drops_additional_context=False,
+    config_dir="~/.gemini/",
+    template_dir="gemini_template",
+    hooks_path_var="${extensionPath}",
+    install_fn_name="_install_for_gemini",
+    list_cmd=("gemini", "extensions", "list"),
+    tool_names=_GEMINI_TOOLS,
+))
+
+
+CODEX = register(Platform(
+    name="codex",
+    display_name="Codex CLI",
+    binary="codex",
+    detect_env_vars=("CODEX_SESSION_ID", "CODEX_PROJECT_DIR"),
+    detect_session_keys=("CODEX_SESSION_ID",),
+    detect_path_hints=(".codex",),
+    has_hooks=True,
+    schema_type="strict",          # same JSON schema as Claude Code
+    has_exit2_workaround=False,    # exit 0 + JSON deny works
+    drops_additional_context=False,
+    config_dir="~/.codex/",
+    template_dir=None,             # user-level install at ~/.codex/hooks.json
+    hooks_path_var="${PLUGIN_ROOT}",  # ${CLAUDE_PLUGIN_ROOT} also set as compat
+    install_fn_name="_install_for_codex",
+    list_cmd=("codex", "plugin", "list"),
+    tool_names=_CODEX_TOOLS,
+    # event_map: identity (Codex shares Claude's event names)
+    internal_to_cli_events={
+        "PreToolUse": "PreToolUse", "PostToolUse": "PostToolUse",
+        "UserPromptSubmit": "UserPromptSubmit", "Stop": "Stop",
+        "SessionStart": "SessionStart", "SessionEnd": "SessionEnd",
+    },
+))
+
+
+FORGECODE = register(Platform(
+    name="forgecode",
+    display_name="ForgeCode",
+    binary="forge",
+    detect_env_vars=("FORGE_CONFIG", "_FORGE_CONVERSATION_ID"),
+    detect_path_hints=(".forge",),
+    has_hooks=False,
+    schema_type="none",            # no hook responses
+    config_dir="~/.forge/",
+    template_dir="forgecode_template",
+    install_fn_name="_install_for_forgecode",
+    # tool_names empty: not relevant without hooks (advisory AGENTS.md only)
+))
+
+
+# === Lookup API ============================================================
+
+def get_platform(name: str) -> Platform | None:
+    """Return Platform by name, or None if not registered."""
+    return PLATFORMS.get(name)
+
+
+def hook_platforms() -> list[Platform]:
+    """All platforms that support external hooks (excludes ForgeCode)."""
+    return [p for p in PLATFORMS.values() if p.has_hooks]
+
+
+def detection_platforms() -> list[Platform]:
+    """All non-default platforms in detection priority order.
+
+    Claude is the fallback default so it's excluded from positive detection.
+    """
+    return [p for p in PLATFORMS.values() if p.name != "claude"]

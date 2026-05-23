@@ -2384,46 +2384,29 @@ def test_stop_block_does_not_deny_non_task_tools():
         )
 
 
-def test_stop_block_pending_injection_only_on_first_block(tmp_path, monkeypatch):
-    """pending_stop_injection re-arms on exactly two events, then stops.
+def test_stop_block_pending_injection_re_armed_every_block(tmp_path, monkeypatch):
+    """pending_stop_injection is re-armed on every Stop block (v0.11.0).
 
-    Re-arm events (by design — see task_lifecycle.py handle_stop comments):
-      1. block_count==1: first stop always delivers the base block message.
-      2. consecutive==ghost_clear_min_consecutive_blocks: first time escape
-         hatch fires; AI must see the stale-task instructions to act on them.
-
-    After these two events, further stops must NOT re-arm (prevents the
-    deny→AI text→Stop→re-arm→deny deadlock seen at Block #175+).
+    Earlier policy suppressed re-arming beyond block_count==1 or
+    consecutive==min_consecutive to break a PreToolUse-deny deadlock loop.
+    That loop required enforce_stop_injection (PreToolUse deny) which was
+    removed, so unconditional re-arming is now safe — and is REQUIRED
+    so the override actions (/ar:sos, /ar:task-ignore) stay visible to
+    the AI even when consecutive resets because tasks churn between stops.
+    Frequency stays low because Stop events themselves are infrequent.
     """
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
-    sid = "test-stop-first-block-only"
+    sid = "test-stop-every-block-rearm"
     store = ThreadSafeDB()
-
-    # Create a task so stop will be blocked
     _make_pending_task(sid, "1", "Test task")
 
-    # First stop (block_count=1) → pending_stop_injection must be set
-    result1, ctx1 = _e2e_stop(sid, store)
-    assert ctx1.pending_stop_injection is not None, "First stop must set pending_stop_injection"
-    ctx1.pending_stop_injection = None  # simulate delivery
-
-    # Second stop (consecutive==ghost_clear_min_consecutive_blocks==2):
-    # escape hatch fires for the first time → pending_stop_injection must be set
-    # so the AI sees the /ar:task-ignore instructions.
-    result2, ctx2 = _e2e_stop(sid, store)
-    assert ctx2.pending_stop_injection is not None, (
-        "Second stop must re-arm pending_stop_injection when escape hatch fires "
-        "(consecutive==min_consecutive); AI needs to see /ar:task-ignore instructions"
-    )
-    ctx2.pending_stop_injection = None  # simulate delivery
-
-    # Third stop (consecutive==3 > min_consecutive==2, block_count==3):
-    # neither condition holds → must NOT re-arm (prevents deadlock)
-    result3, ctx3 = _e2e_stop(sid, store)
-    assert ctx3.pending_stop_injection is None, (
-        "Third stop must NOT re-arm pending_stop_injection (prevents deadlock after "
-        "both first-block and escape-hatch deliveries have already fired)"
-    )
+    for i in range(3):
+        result, ctx = _e2e_stop(sid, store)
+        assert ctx.pending_stop_injection is not None, (
+            f"Stop block #{i+1}: pending_stop_injection must be re-armed every "
+            f"Stop so AI sees override actions"
+        )
+        ctx.pending_stop_injection = None  # simulate PostToolUse delivery clearing
 
 
 def test_stop_block_resets_staleness_counter(tmp_path, monkeypatch):

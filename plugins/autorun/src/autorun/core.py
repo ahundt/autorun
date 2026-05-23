@@ -84,45 +84,16 @@ logger = logging.getLogger("autorun")
 # Gemini CLI uses different event names and camelCase keys vs Claude Code's snake_case.
 # This mapping normalizes both formats to a single internal representation.
 
-GEMINI_EVENT_MAP = {
-    "BeforeTool": "PreToolUse",
-    "AfterTool": "PostToolUse",
-    "BeforeAgent": "UserPromptSubmit",
-    "AfterAgent": "Stop",
-    "SessionStart": "SessionStart",
-    "SessionEnd": "SessionEnd",
-    "BeforeModel": "BeforeModel",
-    "AfterModel": "AfterModel",
-    # Gemini CLI has no PostCompress event — PreCompress is intentionally NOT
-    # remapped to Claude's PreCompact. Both names stay distinct so @app.on
-    # handlers can route either flavour without ambiguity; cache_guard
-    # listens to both directly in plugins.py.
-    "PreCompress": "PreCompress",
-}
+# Event maps derive from autorun.platforms (single source of truth).
+# When @app.on handlers route either Gemini's PreCompress or Claude's
+# PreCompact, they listen to both directly in plugins.py without remapping.
+from .platforms import PLATFORMS as _PLATFORMS
 
-# Reverse mapping: Internal event name → CLI-specific name
-# For converting normalized internal events back to original CLI format
-INTERNAL_TO_CLAUDE = {
-    "PreToolUse": "PreToolUse",
-    "PostToolUse": "PostToolUse",
-    "UserPromptSubmit": "UserPromptSubmit",
-    "Stop": "Stop",
-    "SessionStart": "SessionStart",
-    "SessionEnd": "SessionEnd",
-    "BeforeModel": "BeforeModel",
-    "AfterModel": "AfterModel",
-}
+GEMINI_EVENT_MAP = dict(_PLATFORMS["gemini"].cli_to_internal_events)
 
-INTERNAL_TO_GEMINI = {
-    "PreToolUse": "BeforeTool",
-    "PostToolUse": "AfterTool",
-    "UserPromptSubmit": "BeforeAgent",
-    "Stop": "AfterAgent",
-    "SessionStart": "SessionStart",
-    "SessionEnd": "SessionEnd",
-    "BeforeModel": "BeforeModel",
-    "AfterModel": "AfterModel",
-}
+# Reverse mapping: internal event name → CLI-specific name.
+INTERNAL_TO_CLAUDE = dict(_PLATFORMS["claude"].internal_to_cli_events)
+INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].internal_to_cli_events)
 
 
 # === CLI TOOL NAME DISPATCH TABLE ===
@@ -154,37 +125,9 @@ INTERNAL_TO_GEMINI = {
 # Suggestions addressed to the AI must use API names so the AI calls the right tool.
 # The UX mismatch (Claude "Glob" displayed as "Search") is cosmetic, not functional.
 CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
-    "claude": {
-        # API tool_names — PascalCase (Claude Code CLI v2.1.47)
-        # Note: Claude Code terminal renders Glob→"Search" but hook/API name is "Glob"
-        "grep": "Grep",
-        "glob": "Glob",
-        "read": "Read",
-        "write": "Write",
-        "edit": "Edit",
-        "bash": "Bash",
-        "ls": "LS",
-        "task_create": "TaskCreate",
-        "task_update": "TaskUpdate",
-        "task_list": "TaskList",
-        "task_title": "subject",
-        "task_id_param": "taskId",
-    },
-    "gemini": {
-        # API tool_names — snake_case, confirmed by hooks.json BeforeTool matchers
-        "grep": "grep_search",
-        "glob": "glob",
-        "read": "read_file",
-        "write": "write_file",
-        "edit": "replace",
-        "bash": "run_shell_command",
-        "ls": "list_directory",
-        "task_create": "tracker_create_task",
-        "task_update": "tracker_update_task",
-        "task_list": "tracker_list_tasks",
-        "task_title": "title",
-        "task_id_param": "id",
-    },
+    name: dict(p.tool_names)
+    for name, p in _PLATFORMS.items()
+    if p.tool_names
 }
 
 
