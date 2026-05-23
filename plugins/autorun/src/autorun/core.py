@@ -204,17 +204,25 @@ def _bug_18534_human_channels(cli_type: str) -> set:
     """
     import os
     from .config import CONFIG
+    from .platforms import get_platform
     _KEY = "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"
     base = {"human", "both"}
+
+    # The "ai" channel only needs to be folded into human channels for
+    # platforms that DROP additionalContext (per Platform metadata). This
+    # replaces hard-coded cli_type == "claude" checks with a registry query.
+    platform = get_platform(cli_type)
+    affected = bool(platform and platform.drops_additional_context)
+
     env_val = os.environ.get(_KEY, "").lower()
     if env_val == "always":
         return base | {"ai"}
     if env_val in {"false", "0", "never"}:
         return base
     if env_val in {"true", "1", "auto"}:
-        return base | {"ai"} if cli_type == "claude" else base
+        return base | {"ai"} if affected else base
     # No env var set — fall back to CONFIG dict
-    if cli_type == "claude" and CONFIG.get(_KEY, True):
+    if affected and CONFIG.get(_KEY, True):
         return base | {"ai"}
     return base
 # --- BUG #18534 WORKAROUND END ---
@@ -574,7 +582,18 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     # Debug logging
     logger.debug(f"validate_hook_response(event={event}, cli_type={cli_type}) input decision={response.get('decision')}")
 
-    if cli_type == "gemini":
+    # Platform.schema_type drives the validation branch (per platforms.py):
+    #   "permissive" → Gemini-style decision/HSO inference + lifecycle whitelist
+    #   "strict"     → Claude/Codex-style HOOK_SCHEMAS filter
+    #   "none"       → ForgeCode-style template-only (no hook responses)
+    from .platforms import get_platform
+    platform = get_platform(cli_type)
+    schema_type = platform.schema_type if platform else "strict"
+
+    if schema_type == "none":
+        return {}
+
+    if schema_type == "permissive":
         # Gemini CLI performs strict JSON schema validation.
         # Lifecycle events (SessionStart, AfterTool, etc.) MUST NOT have 'decision'.
         # We ensure it gets exactly what it expects per event.
