@@ -571,34 +571,33 @@ class TestGCAndPruning:
 
 class TestStopHookBehavioralInvariants:
 
-    def test_pending_stop_injection_set_on_first_block_and_escape_hatch_threshold(self, isolated_session, cfg):
-        """pending_stop_injection is set on block_count==1 and when escape hatch threshold is first crossed.
+    def test_pending_stop_injection_set_on_every_block(self, isolated_session, cfg):
+        """pending_stop_injection is re-armed on every Stop block.
 
-        Re-arm policy (v0.10.2):
-          - block_count==1: always arm (AI must learn it can't stop)
-          - consecutive==min_consecutive: arm once when escape hatch first appears
-            (AI must see the stale-task instructions or it can't act on them)
-          - consecutive>min_consecutive: do NOT re-arm (prevent deadlock)
+        Re-arm policy (v0.11.0):
+          - EVERY Stop block re-arms pending_stop_injection so the override
+            actions (/ar:sos, /ar:task-ignore) reliably reach the AI on its
+            next PostToolUse. Earlier policy (re-arm only on block_count==1
+            or consecutive==min_consecutive) left "infinite non-overridable
+            stop failure" cases where the AI churned tasks and never re-saw
+            the override instructions.
+          - Frequency stays low because Stop events themselves are infrequent.
+            The historical deadlock that motivated suppression required
+            PreToolUse deny, which has since been removed.
         """
         # default ghost_clear_min_consecutive_blocks=2
         mgr = _mgr("sh-inject", cfg)
         mgr.create_task("t1", {"subject": "Task"}, "created")
         mgr.update_task("t1", {"status": "in_progress"}, "started")
 
-        ctx1 = _stop_ctx("sh-inject")
-        ctx1.pending_stop_injection = None
-        mgr.handle_stop(ctx1)
-        assert ctx1.pending_stop_injection is not None  # block_count==1: always arm
-
-        ctx2 = _stop_ctx("sh-inject")
-        ctx2.pending_stop_injection = None
-        mgr.handle_stop(ctx2)
-        assert ctx2.pending_stop_injection is not None  # consecutive==min_consecutive==2: re-arm for escape hatch
-
-        ctx3 = _stop_ctx("sh-inject")
-        ctx3.pending_stop_injection = None
-        mgr.handle_stop(ctx3)
-        assert ctx3.pending_stop_injection is None  # consecutive==3 > min_consecutive: NOT re-armed
+        for i in range(3):
+            ctx = _stop_ctx("sh-inject")
+            ctx.pending_stop_injection = None  # simulate PostToolUse delivery clearing it
+            mgr.handle_stop(ctx)
+            assert ctx.pending_stop_injection is not None, (
+                f"Block #{i+1}: pending_stop_injection must be re-armed every Stop "
+                f"so the AI sees override actions"
+            )
 
     def test_staleness_counter_reset_on_stop_block(self, isolated_session, cfg):
         """Stop block resets tool_calls_since_task_update to 0."""
@@ -953,31 +952,29 @@ class TestClaudeCodeBugScenarios:
         assert t["subject"] == "Original"
         assert t["status"] == "in_progress"
 
-    def test_stop_block_re_arm_policy_prevents_deadlock(self, isolated_session, cfg):
-        """Re-arm policy: arm at block 1 and at escape-hatch threshold; never beyond.
+    def test_stop_block_re_arm_policy_keeps_override_visible(self, isolated_session, cfg):
+        """Re-arm policy (v0.11.0): every Stop block re-arms pending_stop_injection.
 
-        Original bug: re-arming on every block caused deadlock (deny→AI text→Stop→
-        re-arm→deny→infinite, Block #175+). Fix: re-arm at most twice —
-        block_count==1 (first stop) and consecutive==min_consecutive (escape hatch).
-        Blocks beyond that do NOT re-arm, preserving the deadlock prevention.
+        Historical context: an earlier policy suppressed re-arming beyond
+        block 1 + consecutive==min_consecutive to avoid a PreToolUse-deny
+        deadlock (deny→AI text→Stop→re-arm→deny→infinite). That deadlock
+        path was removed when enforce_stop_injection (PreToolUse deny) was
+        deleted, so unconditional re-arming is now safe and is required so
+        the override actions (/ar:sos, /ar:task-ignore) stay visible to the
+        AI on every Stop block — not just the first or the escape-hatch
+        threshold crossing.
         """
         mgr = _mgr("bug-rearm", cfg)
         mgr.create_task("t1", {"subject": "Task"}, "created")
         mgr.update_task("t1", {"status": "in_progress"}, "started")
 
-        ctx1 = _stop_ctx("bug-rearm"); ctx1.pending_stop_injection = None
-        mgr.handle_stop(ctx1)
-        assert ctx1.pending_stop_injection is not None  # block_count==1: always arm
-
-        ctx2 = _stop_ctx("bug-rearm"); ctx2.pending_stop_injection = None
-        mgr.handle_stop(ctx2)
-        # consecutive==min_consecutive==2: re-armed so escape hatch reaches AI
-        assert ctx2.pending_stop_injection is not None
-
-        ctx3 = _stop_ctx("bug-rearm"); ctx3.pending_stop_injection = None
-        mgr.handle_stop(ctx3)
-        # consecutive==3 > min_consecutive: deadlock prevention — NOT re-armed
-        assert ctx3.pending_stop_injection is None
+        for i in range(3):
+            ctx = _stop_ctx("bug-rearm")
+            ctx.pending_stop_injection = None
+            mgr.handle_stop(ctx)
+            assert ctx.pending_stop_injection is not None, (
+                f"Block #{i+1}: every Stop must re-arm pending_stop_injection"
+            )
 
     def test_stage2_completed_only_reset_when_tasks_block(self, isolated_session, cfg):
         """Three-stage reset ONLY fires when stop is blocked (not on allowed stop)."""

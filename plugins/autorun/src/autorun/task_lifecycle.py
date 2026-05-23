@@ -1096,16 +1096,18 @@ class TaskLifecycle:
         # delivers via channel="ai" → respond() PATHWAY 2 upgrades to "both" on
         # Claude Code → AI sees it as systemMessage (same-turn only).
         #
-        # Re-arm on two conditions:
-        #   1. block_count==1 — first stop, always deliver the base message.
-        #   2. consecutive==min_consecutive — first time escape hatch appears;
-        #      AI must see the stale-task instructions or it can't act on them.
-        # Beyond these two, do NOT re-arm — repeated re-arming caused the
-        # original deadlock (deny→AI text→Stop→re-arm→deny→infinite, Block #175+).
-        # Safety: re-arming is only triggered by Stop events; PostToolUse delivery
-        # clears pending_stop_injection, so each re-arm fires exactly once.
-        if block_count == 1 or (ghost_enabled and consecutive == min_consecutive):
-            ctx.pending_stop_injection = injection
+        # Re-arm on EVERY Stop block so the AI reliably sees the override
+        # actions (/ar:sos, /ar:task-ignore) on its next PostToolUse. Earlier
+        # logic only re-armed on block_count==1 or consecutive==min_consecutive,
+        # which left "infinite non-overridable stop failure" cases: e.g. the
+        # AI churning task subjects between stops drove consecutive=1 forever,
+        # so it never re-saw the override instructions. Frequency is naturally
+        # low because Stop events themselves are infrequent (one per AI
+        # stop-attempt). Safety: PostToolUse delivery clears pending_stop_injection,
+        # so each Stop re-arm fires AT MOST once. The historical deadlock
+        # (re-arm + PreToolUse deny + AI text → Stop → re-arm) is impossible
+        # now because enforce_stop_injection (PreToolUse deny) was removed.
+        ctx.pending_stop_injection = injection
         # Reset staleness counter — AI just learned about tasks, give full countdown.
         ctx.tool_calls_since_task_update = 0
         return ctx.continue_running(injection)
