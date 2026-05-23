@@ -47,6 +47,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import ipc
+from .platforms import PLATFORMS, get_platform
 
 # Configure logging (CLI entry points will set level)
 logger = logging.getLogger(__name__)
@@ -668,13 +669,10 @@ def _check_uv_env(plugin_dir: Path) -> CmdResult:
 def detect_available_clis() -> dict[str, bool]:
     """Detect which AI CLIs are available on the system.
 
-    Returns:
-        Dict mapping CLI name to availability: {"claude": bool, "gemini": bool}
+    Returns a dict keyed by every Platform name in the PLATFORMS registry
+    so adding a new platform requires no change here.
     """
-    return {
-        "claude": shutil.which("claude") is not None,
-        "gemini": shutil.which("gemini") is not None,
-    }
+    return {p.name: shutil.which(p.binary) is not None for p in PLATFORMS.values()}
 
 
 def determine_target_clis(
@@ -685,12 +683,12 @@ def determine_target_clis(
     """Determine which CLIs to install for based on flags and availability.
 
     Args:
-        claude_only: If True, include Claude Code in install targets
-        gemini_only: If True, include Gemini CLI in install targets
+        claude_only: If True, include only Claude Code in install targets
+        gemini_only: If True, include only Gemini CLI in install targets
         available: Dict of CLI availability from detect_available_clis()
 
     Returns:
-        List of CLI names to install for (e.g., ["claude", "gemini"])
+        List of CLI names to install for (e.g., ["claude", "gemini", "codex"])
 
     Logic:
         - If both flags False (default): install for all available CLIs
@@ -700,23 +698,18 @@ def determine_target_clis(
     """
     # If both flags are set, install for both
     if claude_only and gemini_only:
-        targets = []
-        if available["claude"]:
-            targets.append("claude")
-        if available["gemini"]:
-            targets.append("gemini")
-        return targets
+        return [name for name in ("claude", "gemini") if available.get(name)]
 
     # If only claude flag is set
     if claude_only:
-        return ["claude"] if available["claude"] else []
+        return ["claude"] if available.get("claude") else []
 
     # If only gemini flag is set
     if gemini_only:
-        return ["gemini"] if available["gemini"] else []
+        return ["gemini"] if available.get("gemini") else []
 
-    # Default: install for all available CLIs
-    return [cli for cli, avail in available.items() if avail]
+    # Default: install for all available CLIs (insertion order from PLATFORMS)
+    return [name for name, avail in available.items() if avail]
 
 
 # =============================================================================
@@ -1372,6 +1365,140 @@ def _install_for_gemini(
         return (False, msg)
 
 
+def _resolve_plugin_dir(marketplace_root: Path, name: str) -> Path | None:
+    """Find a plugin directory by name under the marketplace root.
+
+    Searches marketplace_root/plugins/<name> first, then marketplace_root/<name>,
+    then marketplace_root itself if its basename matches.
+    """
+    for candidate in (
+        marketplace_root / "plugins" / name,
+        marketplace_root / name,
+    ):
+        if candidate.is_dir():
+            return candidate
+    if marketplace_root.name == name and marketplace_root.is_dir():
+        return marketplace_root
+    return None
+
+
+def _build_codex_hook_block(plugin_dir: Path) -> dict:
+    """Build the autorun hook block for ~/.codex/hooks.json.
+
+    Codex uses identical event names + JSON schema as Claude Code. The
+    ${PLUGIN_ROOT} env var is Codex's primary plugin-root variable;
+    ${CLAUDE_PLUGIN_ROOT} is also set as a compat alias.
+    """
+    hook_entry = "${PLUGIN_ROOT}/hooks/hook_entry.py"
+    command = (
+        f"uv run --quiet --project ${{PLUGIN_ROOT}} python {hook_entry} --cli codex"
+    )
+
+    pretool_postool_entry = {
+        "matcher": ".*",
+        "hooks": [{"type": "command", "command": command, "_autorun_owned": True}],
+    }
+    bare_entry = {"type": "command", "command": command, "_autorun_owned": True}
+
+    return {
+        "PreToolUse": [pretool_postool_entry],
+        "PostToolUse": [pretool_postool_entry],
+        "UserPromptSubmit": [bare_entry],
+        "SessionStart": [bare_entry],
+        "SessionEnd": [bare_entry],
+        "Stop": [bare_entry],
+        "SubagentStop": [bare_entry],
+    }
+
+
+def _merge_codex_hooks(existing: dict, autorun_block: dict) -> dict:
+    """Merge autorun hook entries into an existing ~/.codex/hooks.json structure.
+
+    Preserves the user's custom hooks for any event. For events where autorun
+    contributes, the autorun-owned entries (marked with `_autorun_owned: True`)
+    are replaced — non-autorun entries the user added are kept.
+    """
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    hooks = dict(merged.get("hooks", {})) if isinstance(merged.get("hooks"), dict) else {}
+
+    def _strip_autorun(entries):
+        if not isinstance(entries, list):
+            return entries
+        stripped = []
+        for e in entries:
+            if isinstance(e, dict):
+                inner = e.get("hooks")
+                if isinstance(inner, list):
+                    keep_inner = [h for h in inner if not (isinstance(h, dict) and h.get("_autorun_owned"))]
+                    if not keep_inner:
+                        continue
+                    e = dict(e)
+                    e["hooks"] = keep_inner
+                if e.get("_autorun_owned"):
+                    continue
+            stripped.append(e)
+        return stripped
+
+    for event, autorun_entries in autorun_block.items():
+        existing_entries = _strip_autorun(hooks.get(event, []))
+        hooks[event] = list(existing_entries) + list(autorun_entries)
+
+    merged["hooks"] = hooks
+    return merged
+
+
+def _install_for_codex(
+    marketplace_root: Path,
+    plugins: list[str],
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Install autorun hooks at ~/.codex/hooks.json (user-level, always active).
+
+    Codex's user-level hooks file is always active and bypasses the
+    `features.plugin_hooks=true` opt-in required for plugin-bundled hooks.
+    This mirrors autorun's "install once globally" model for Claude
+    (via the plugin manifest) and Gemini (via the extension manifest).
+
+    Args:
+        marketplace_root: Path to marketplace root directory (plugin directory)
+        plugins: List of plugin names to install (only "autorun" is supported
+                 for Codex hook integration; others are no-ops)
+        force: Reserved for parity with other installers; merge logic is
+               idempotent so force has no effect here today.
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    plugin_dir = None
+    for name in plugins:
+        if name == "autorun":
+            plugin_dir = _resolve_plugin_dir(marketplace_root, name)
+            break
+    if plugin_dir is None:
+        return (False, f"autorun plugin not found under {marketplace_root}")
+
+    codex_dir = Path.home() / ".codex"
+    codex_dir.mkdir(exist_ok=True)
+    hooks_path = codex_dir / "hooks.json"
+
+    existing = {}
+    if hooks_path.exists():
+        try:
+            existing = json.loads(hooks_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # malformed file — surface but don't clobber
+            return (False, f"~/.codex/hooks.json is not valid JSON: {exc}")
+
+    autorun_block = _build_codex_hook_block(plugin_dir)
+    merged = _merge_codex_hooks(existing, autorun_block)
+    hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+
+    print()
+    print("✓ Codex hooks installed at ~/.codex/hooks.json")
+    print("  Next: run '/hooks' inside Codex CLI to trust the new hook hashes.")
+    print("        (Codex silently skips hooks until they are approved.)")
+    return (True, "success")
+
+
 def _install_conductor(force: bool = False) -> tuple[bool, str]:
     """Install Conductor extension for Gemini CLI (plan mode).
 
@@ -2005,6 +2132,11 @@ def install_plugins(
             conductor_success, conductor_msg = _install_conductor(force)
             # Note: Conductor failure doesn't affect overall success
             # (it's an optional enhancement)
+
+    # Install for Codex CLI (user-level ~/.codex/hooks.json — always active)
+    if "codex" in target_clis:
+        codex_success, codex_msg = _install_for_codex(marketplace_root, plugins, force)
+        all_succeeded = all_succeeded and codex_success
 
     # Optional: uv tool install for global CLI
     if tool:
