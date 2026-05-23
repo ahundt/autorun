@@ -1368,8 +1368,13 @@ def _install_for_gemini(
 def _resolve_plugin_dir(marketplace_root: Path, name: str) -> Path | None:
     """Find a plugin directory by name under the marketplace root.
 
-    Searches marketplace_root/plugins/<name> first, then marketplace_root/<name>,
-    then marketplace_root itself if its basename matches.
+    Tries (in order):
+        1. marketplace_root/plugins/<name>            (direct directory match)
+        2. marketplace_root/<name>                    (flat layout)
+        3. marketplace_root itself (basename matches)
+        4. marketplace_root/.claude-plugin/marketplace.json → source field
+           (covers cases where plugin name != directory name, e.g. name="ar"
+            registered with source="./plugins/autorun")
     """
     for candidate in (
         marketplace_root / "plugins" / name,
@@ -1379,6 +1384,31 @@ def _resolve_plugin_dir(marketplace_root: Path, name: str) -> Path | None:
             return candidate
     if marketplace_root.name == name and marketplace_root.is_dir():
         return marketplace_root
+
+    manifest = marketplace_root / ".claude-plugin" / "marketplace.json"
+    if manifest.is_file():
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            for entry in data.get("plugins", []):
+                if entry.get("name") == name:
+                    source = entry.get("source", "")
+                    resolved = (marketplace_root / source).resolve()
+                    if resolved.is_dir():
+                        return resolved
+        except Exception:
+            pass
+    return None
+
+
+def _autorun_plugin_dir(marketplace_root: Path, plugins: list[str]) -> Path | None:
+    """Locate the autorun plugin directory regardless of which name(s) the
+    plugins list uses. Tries the requested names first, then falls back to
+    well-known aliases ("autorun", "ar").
+    """
+    for candidate in list(plugins) + ["autorun", "ar"]:
+        plugin_dir = _resolve_plugin_dir(marketplace_root, candidate)
+        if plugin_dir and plugin_dir.name == "autorun":
+            return plugin_dir
     return None
 
 
@@ -1469,11 +1499,7 @@ def _install_for_codex(
     Returns:
         Tuple of (success: bool, message: str)
     """
-    plugin_dir = None
-    for name in plugins:
-        if name == "autorun":
-            plugin_dir = _resolve_plugin_dir(marketplace_root, name)
-            break
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
 
@@ -1533,11 +1559,7 @@ def _install_for_forgecode(
         force: Reserved for parity with other installers; copy is
                idempotent so force has no effect today.
     """
-    plugin_dir = None
-    for name in plugins:
-        if name == "autorun":
-            plugin_dir = _resolve_plugin_dir(marketplace_root, name)
-            break
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
 
@@ -2200,11 +2222,13 @@ def install_plugins(
             # (it's an optional enhancement)
 
     # Install for Codex CLI (user-level ~/.codex/hooks.json — always active)
+    codex_success = False
     if "codex" in target_clis:
         codex_success, codex_msg = _install_for_codex(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and codex_success
 
     # Install for ForgeCode (template-only — commands + AGENTS.md, no hooks)
+    forge_success = False
     if "forgecode" in target_clis:
         forge_success, forge_msg = _install_for_forgecode(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and forge_success
@@ -2253,6 +2277,18 @@ def install_plugins(
                     print(f"⚠️  Gemini CLI: Conductor installation failed (optional)")
         else:
             print(f"✗ Gemini CLI: Installation failed")
+
+    if "codex" in target_clis:
+        if codex_success:
+            print(f"✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
+        else:
+            print(f"✗ Codex CLI: hooks install failed")
+
+    if "forgecode" in target_clis:
+        if forge_success:
+            print(f"✓ ForgeCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
+        else:
+            print(f"✗ ForgeCode: install failed")
 
     print()
     print("Available commands:")
