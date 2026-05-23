@@ -50,39 +50,49 @@ BOOTSTRAP_MSG = (
 # =============================================================================
 
 
+_VALID_CLI_TYPES = ("claude", "gemini", "codex", "forgecode")
+
+
 def detect_cli_type() -> str:
     """Detect which CLI is calling the hook.
 
     Detection priority:
-    1. --cli <type> argument in sys.argv (explicit, set by hooks.json/claude-hooks.json)
-    2. GEMINI_SESSION_ID environment variable
-    3. GEMINI_PROJECT_DIR present without CLAUDE_PROJECT_DIR
-    4. Default to "claude"
+    1. --cli <type> argument in sys.argv (explicit, set by hooks.json files)
+    2. GEMINI_SESSION_ID env var
+    3. CODEX_SESSION_ID env var
+    4. FORGE_CONFIG env var
+    5. GEMINI_PROJECT_DIR present without CLAUDE_PROJECT_DIR
+    6. Default to "claude"
 
-    The hooks files pass --cli explicitly so both CLIs can call the shared daemon
-    simultaneously without ambiguity:
-    - hooks.json (Gemini): hook_entry.py --cli gemini
-    - claude-hooks.json (Claude): hook_entry.py --cli claude
+    The hooks files pass --cli explicitly so all CLIs can call the shared
+    daemon simultaneously without ambiguity:
+        hooks.json   (Gemini): hook_entry.py --cli gemini
+        claude-hooks.json    : hook_entry.py --cli claude
+        ~/.codex/hooks.json  : hook_entry.py --cli codex
 
     Returns:
-        str: "claude" or "gemini"
+        str: one of "claude", "gemini", "codex", "forgecode"
     """
     try:
         # Priority 1: Explicit --cli argument (most reliable - set by hooks.json)
         for i, arg in enumerate(sys.argv[1:], 1):
             if arg == "--cli" and i < len(sys.argv):
                 value = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
-                if value in ("gemini", "claude"):
+                if value in _VALID_CLI_TYPES:
                     return value
             elif arg.startswith("--cli="):
                 value = arg.split("=", 1)[1]
-                if value in ("gemini", "claude"):
+                if value in _VALID_CLI_TYPES:
                     return value
 
-        # Priority 2: Gemini-specific environment variables
+        # Priority 2-4: Platform-specific environment variables
         if os.environ.get("GEMINI_SESSION_ID"):
             return "gemini"
-        elif os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
+        if os.environ.get("CODEX_SESSION_ID"):
+            return "codex"
+        if os.environ.get("FORGE_CONFIG"):
+            return "forgecode"
+        if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
             return "gemini"
 
         # Default to Claude (safe fallback - preserves existing behavior)
