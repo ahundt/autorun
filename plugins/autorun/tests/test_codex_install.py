@@ -258,3 +258,213 @@ def test_codex_hooks_all_required_events_present(tmp_path, monkeypatch):
                 "SessionStart", "Stop", "SubagentStop"}
     missing = required - keys
     assert not missing, f"Codex hooks.json missing events: {sorted(missing)}"
+
+
+# ─── AGENTS.md install pathway (Codex reads ~/.codex/AGENTS.md globally) ─────
+#
+# Codex injects ~/.codex/AGENTS.md into every session per
+# https://developers.openai.com/codex/guides/agents-md (32 KiB limit, merged
+# with project-level AGENTS.md). Autorun ships advisory safety guidance there
+# for the same reason it ships forgecode_template/AGENTS.md: hooks cover the
+# enforcement path, but the model also benefits from knowing the override
+# commands (/ar:sos, /ar:task-ignore) and the philosophy behind the guards.
+
+def test_install_for_codex_writes_agents_md(tmp_path, monkeypatch):
+    """Install must write ~/.codex/AGENTS.md with autorun safety guidance."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = tmp_path / "marketplace"
+    fake_plugin = fake_marketplace / "plugins" / "autorun"
+    fake_plugin.mkdir(parents=True)
+    (fake_plugin / "hooks").mkdir()
+    (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
+    template = fake_plugin / "src" / "autorun" / "codex_template"
+    template.mkdir(parents=True)
+    (template / "AGENTS.md").write_text(
+        "# autorun safety guidance (Codex)\n\n"
+        "Override commands: /ar:sos, /ar:task-ignore <id>.\n"
+    )
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    agents = tmp_path / ".codex" / "AGENTS.md"
+    assert agents.is_file(), "~/.codex/AGENTS.md must be created"
+    text = agents.read_text()
+    # Core override-action mentions must be present so the model can see them.
+    assert "/ar:sos" in text
+    assert "/ar:task-ignore" in text
+
+
+def test_install_for_codex_preserves_existing_user_agents_md(tmp_path, monkeypatch):
+    """A pre-existing user AGENTS.md must not be clobbered.
+
+    Codex users may already have ~/.codex/AGENTS.md with their own
+    instructions. Autorun must append/merge, never overwrite.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "AGENTS.md").write_text(
+        "# my custom rules\nalways use snake_case in python\n"
+    )
+
+    fake_marketplace = tmp_path / "marketplace"
+    fake_plugin = fake_marketplace / "plugins" / "autorun"
+    fake_plugin.mkdir(parents=True)
+    (fake_plugin / "hooks").mkdir()
+    (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
+    template = fake_plugin / "src" / "autorun" / "codex_template"
+    template.mkdir(parents=True)
+    (template / "AGENTS.md").write_text(
+        "# autorun safety guidance (Codex)\n\n"
+        "Override commands: /ar:sos, /ar:task-ignore <id>.\n"
+    )
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    merged = (codex_dir / "AGENTS.md").read_text()
+    # User content preserved
+    assert "always use snake_case in python" in merged
+    # Autorun guidance also present
+    assert "/ar:sos" in merged
+    assert "/ar:task-ignore" in merged
+
+
+# ─── Global skills install (~/.agents/skills) ────────────────────────────────
+#
+# Per https://developers.openai.com/codex/skills, Codex scans
+# $HOME/.agents/skills/ for user-level skills (NOT ~/.codex/skills/, which
+# is unused by Codex per the same docs). Autorun ships skill files in
+# plugins/autorun/skills/<name>/SKILL.md; the install copies each into
+# ~/.agents/skills/<name>/ with a .autorun-owned marker so re-installs
+# replace ours without clobbering a user-authored skill that happens to
+# share the same kebab-case name.
+
+def _make_fake_plugin_with_skills(tmp_path, skill_names):
+    """Build a fake plugin tree with the given skill directory names."""
+    fake_marketplace = tmp_path / "marketplace"
+    fake_plugin = fake_marketplace / "plugins" / "autorun"
+    fake_plugin.mkdir(parents=True)
+    (fake_plugin / "hooks").mkdir()
+    (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
+    template = fake_plugin / "src" / "autorun" / "codex_template"
+    template.mkdir(parents=True)
+    (template / "AGENTS.md").write_text("# autorun\n/ar:sos /ar:task-ignore\n")
+    skills_root = fake_plugin / "skills"
+    skills_root.mkdir()
+    for name in skill_names:
+        skill_dir = skills_root / name
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: test fixture skill\n---\n# {name}\n"
+        )
+    return fake_marketplace
+
+
+def test_install_for_codex_installs_skills_globally(tmp_path, monkeypatch):
+    """Install copies autorun skills into ~/.agents/skills/<name>/."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(
+        tmp_path, ["ai-session-tools", "mermaid-diagrams", "cache"]
+    )
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    skills_root = tmp_path / ".agents" / "skills"
+    assert skills_root.is_dir(), "~/.agents/skills/ must be created"
+    for name in ("ai-session-tools", "mermaid-diagrams", "cache"):
+        skill_md = skills_root / name / "SKILL.md"
+        assert skill_md.is_file(), f"skill {name} missing"
+        marker = skills_root / name / ".autorun-owned"
+        assert marker.is_file(), f"autorun-owned marker missing for {name}"
+
+
+def test_install_for_codex_skills_preserves_user_authored(tmp_path, monkeypatch):
+    """A user-authored skill with the same name must NOT be clobbered.
+
+    A user may already have ~/.agents/skills/cache/ with their own content.
+    Autorun must detect the absence of the .autorun-owned marker and leave
+    that skill alone.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # Pre-existing user skill (no .autorun-owned marker)
+    user_skill = tmp_path / ".agents" / "skills" / "cache"
+    user_skill.mkdir(parents=True)
+    user_skill_md = user_skill / "SKILL.md"
+    user_skill_md.write_text("---\nname: cache\ndescription: USER OWNED\n---\n")
+
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache", "mermaid-diagrams"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    # User's cache skill content is intact
+    assert "USER OWNED" in user_skill_md.read_text()
+    assert not (user_skill / ".autorun-owned").exists(), (
+        "autorun must not claim ownership of a user-authored skill"
+    )
+    # Other autorun skills still installed normally
+    other = tmp_path / ".agents" / "skills" / "mermaid-diagrams"
+    assert (other / "SKILL.md").is_file()
+    assert (other / ".autorun-owned").is_file()
+
+
+def test_install_for_codex_skills_idempotent(tmp_path, monkeypatch):
+    """Re-installing replaces autorun-owned skills with fresh copies; no growth."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["mermaid-diagrams", "cache"])
+
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    first_listing = sorted((tmp_path / ".agents" / "skills").rglob("*"))
+
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    second_listing = sorted((tmp_path / ".agents" / "skills").rglob("*"))
+
+    assert first_listing == second_listing, (
+        "Re-install must not create or delete files in ~/.agents/skills/"
+    )
+
+
+def test_install_for_codex_skills_replaces_stale_autorun_owned(tmp_path, monkeypatch):
+    """If an old autorun-owned SKILL.md exists, the new install overwrites it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    # Pre-stage a stale autorun-owned copy
+    skill_dir = tmp_path / ".agents" / "skills" / "cache"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("STALE CONTENT\n")
+    (skill_dir / ".autorun-owned").write_text("")
+
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+
+    text = (skill_dir / "SKILL.md").read_text()
+    assert "STALE CONTENT" not in text
+    assert "test fixture skill" in text
+
+
+def test_install_for_codex_agents_md_idempotent(tmp_path, monkeypatch):
+    """Re-running install must not duplicate autorun's AGENTS.md block."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = tmp_path / "marketplace"
+    fake_plugin = fake_marketplace / "plugins" / "autorun"
+    fake_plugin.mkdir(parents=True)
+    (fake_plugin / "hooks").mkdir()
+    (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
+    template = fake_plugin / "src" / "autorun" / "codex_template"
+    template.mkdir(parents=True)
+    (template / "AGENTS.md").write_text(
+        "# autorun safety guidance (Codex)\n\n"
+        "Override commands: /ar:sos, /ar:task-ignore <id>.\n"
+    )
+
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    first = (tmp_path / ".codex" / "AGENTS.md").read_text()
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    second = (tmp_path / ".codex" / "AGENTS.md").read_text()
+    assert first == second, "AGENTS.md content must be stable across re-installs"
+    # Hard upper bound: 2× template length leaves no room for double-appending.
+    assert second.count("/ar:sos") == 1
+    assert second.count("/ar:task-ignore") == 1

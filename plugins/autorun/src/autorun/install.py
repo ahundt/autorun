@@ -1570,11 +1570,120 @@ def _install_for_codex(
     merged = _merge_codex_hooks(existing, autorun_block)
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
+    agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
+    skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
+
     print()
     print("✓ Codex hooks installed at ~/.codex/hooks.json")
+    if agents_written:
+        print("✓ Advisory safety guidance written to ~/.codex/AGENTS.md")
+    if skills_installed:
+        print(f"✓ Installed {skills_installed} autorun skill(s) at ~/.agents/skills/")
+    if skills_skipped:
+        print(
+            f"  ({skills_skipped} user-authored skill(s) with matching names "
+            f"left untouched)"
+        )
     print("  Next: run '/hooks' inside Codex CLI to trust the new hook hashes.")
     print("        (Codex silently skips hooks until they are approved.)")
     return (True, "success")
+
+
+_CODEX_SKILL_OWNED_MARKER = ".autorun-owned"
+
+
+def _install_codex_skills(plugin_dir: Path) -> tuple[int, int]:
+    """Copy autorun skills into ~/.agents/skills/ (Codex global skills dir).
+
+    Per https://developers.openai.com/codex/skills the user-level skills
+    directory Codex scans is `$HOME/.agents/skills/` (NOT `~/.codex/skills/`,
+    which is unused). We copy each plugin skill dir into ~/.agents/skills/<name>/
+    and drop a `.autorun-owned` marker file so subsequent re-installs can
+    replace ours in place without ever clobbering a user-authored skill
+    that happens to share the same kebab-case name.
+
+    Returns:
+        (installed_count, skipped_count) — skipped counts user-authored
+        skills (no marker) that we deliberately left intact.
+    """
+    src_root = plugin_dir / "skills"
+    if not src_root.is_dir():
+        return (0, 0)
+
+    dst_root = Path.home() / ".agents" / "skills"
+    dst_root.mkdir(parents=True, exist_ok=True)
+
+    installed = 0
+    skipped = 0
+    for skill_src in sorted(src_root.iterdir()):
+        if not skill_src.is_dir():
+            continue
+        if not (skill_src / "SKILL.md").is_file():
+            continue
+
+        skill_dst = dst_root / skill_src.name
+        if skill_dst.exists() and not (skill_dst / _CODEX_SKILL_OWNED_MARKER).is_file():
+            # User-authored skill with the same name — never touch it.
+            skipped += 1
+            continue
+
+        if skill_dst.exists():
+            shutil.rmtree(skill_dst)
+        shutil.copytree(skill_src, skill_dst)
+        (skill_dst / _CODEX_SKILL_OWNED_MARKER).write_text(
+            "Autorun-owned. Safe to delete to un-claim this directory; the\n"
+            "next autorun install will then leave it alone as user-authored.\n",
+            encoding="utf-8",
+        )
+        installed += 1
+    return (installed, skipped)
+
+
+_CODEX_AGENTS_START = "<!-- autorun:codex-agents-md:start -->"
+_CODEX_AGENTS_END = "<!-- autorun:codex-agents-md:end -->"
+
+
+def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
+    """Write autorun's advisory block into ~/.codex/AGENTS.md.
+
+    Codex injects ~/.codex/AGENTS.md into every session
+    (https://developers.openai.com/codex/guides/agents-md, 32 KiB limit).
+    We append a sentinel-delimited block so:
+      - existing user content is preserved
+      - re-installing replaces just our block (idempotent)
+      - a future uninstall can strip our block cleanly
+
+    Returns True if a template was installed, False if the template is
+    missing from the plugin (older builds, partial extracts).
+    """
+    template = plugin_dir / "src" / "autorun" / "codex_template" / "AGENTS.md"
+    if not template.is_file():
+        return False
+
+    raw = template.read_text(encoding="utf-8")
+    # Strip any pre-existing sentinels so we always wrap with one canonical
+    # pair — keeps the merge boundary stable regardless of whether the
+    # checked-in template author remembered to add the markers.
+    body = raw.replace(_CODEX_AGENTS_START, "").replace(_CODEX_AGENTS_END, "")
+    block = f"{_CODEX_AGENTS_START}\n{body.strip()}\n{_CODEX_AGENTS_END}\n"
+
+    target = codex_dir / "AGENTS.md"
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+
+    start = existing.find(_CODEX_AGENTS_START)
+    end = existing.find(_CODEX_AGENTS_END)
+    if start != -1 and end != -1 and end > start:
+        prefix = existing[:start].rstrip("\n")
+        suffix = existing[end + len(_CODEX_AGENTS_END):].lstrip("\n")
+        parts = [p for p in (prefix, block.rstrip(), suffix.rstrip()) if p]
+        new = "\n\n".join(parts) + "\n"
+    elif existing.strip():
+        new = existing.rstrip("\n") + "\n\n" + block
+    else:
+        new = block
+
+    target.write_text(new, encoding="utf-8")
+    return True
 
 
 def _resolve_forge_base() -> Path:
