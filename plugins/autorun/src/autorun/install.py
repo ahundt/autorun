@@ -1412,32 +1412,47 @@ def _autorun_plugin_dir(marketplace_root: Path, plugins: list[str]) -> Path | No
     return None
 
 
+_CODEX_AUTORUN_COMMAND_MARK = "/hooks/hook_entry.py --cli codex"
+
+
 def _build_codex_hook_block(plugin_dir: Path) -> dict:
     """Build the autorun hook block for ~/.codex/hooks.json.
 
-    Codex uses identical event names + JSON schema as Claude Code. The
-    ${PLUGIN_ROOT} env var is Codex's primary plugin-root variable;
-    ${CLAUDE_PLUGIN_ROOT} is also set as a compat alias.
+    Path resolution: user-level Codex hooks do NOT receive ${PLUGIN_ROOT}
+    or ${CLAUDE_PLUGIN_ROOT} — those are set only for plugin-bundled
+    hooks per https://developers.openai.com/codex/hooks. We resolve the
+    plugin directory to an absolute path at install time. Re-running the
+    installer updates the absolute path if the repo moved.
+
+    Schema: every event uses the canonical {matcher (omitted = wildcard),
+    hooks: [{type, command, timeout}]} wrapper used by Claude Code's
+    hooks.json. Bare {type, command} entries are silently dropped by
+    Codex's strict schema (observed: /hooks TUI showed 0/0 installed
+    for the affected events).
+
+    Event coverage: PreToolUse, PostToolUse, UserPromptSubmit,
+    SessionStart, Stop, SubagentStop. SubagentStart, PermissionRequest,
+    PreCompact, PostCompact are intentionally omitted — autorun has no
+    handlers for them today and registering empty subprocess calls would
+    raise daemon load without benefit.
     """
-    hook_entry = "${PLUGIN_ROOT}/hooks/hook_entry.py"
+    plugin_abs = str(plugin_dir.resolve())
+    hook_entry = f"{plugin_abs}/hooks/hook_entry.py"
     command = (
-        f"uv run --quiet --project ${{PLUGIN_ROOT}} python {hook_entry} --cli codex"
+        f"uv run --quiet --project {plugin_abs} python {hook_entry} --cli codex"
     )
 
-    pretool_postool_entry = {
-        "matcher": ".*",
-        "hooks": [{"type": "command", "command": command, "_autorun_owned": True}],
+    entry = {
+        "hooks": [{"type": "command", "command": command, "timeout": 10}]
     }
-    bare_entry = {"type": "command", "command": command, "_autorun_owned": True}
 
     return {
-        "PreToolUse": [pretool_postool_entry],
-        "PostToolUse": [pretool_postool_entry],
-        "UserPromptSubmit": [bare_entry],
-        "SessionStart": [bare_entry],
-        "SessionEnd": [bare_entry],
-        "Stop": [bare_entry],
-        "SubagentStop": [bare_entry],
+        "PreToolUse": [entry],
+        "PostToolUse": [entry],
+        "UserPromptSubmit": [entry],
+        "SessionStart": [entry],
+        "Stop": [entry],
+        "SubagentStop": [entry],
     }
 
 
@@ -1451,27 +1466,64 @@ def _merge_codex_hooks(existing: dict, autorun_block: dict) -> dict:
     merged = dict(existing) if isinstance(existing, dict) else {}
     hooks = dict(merged.get("hooks", {})) if isinstance(merged.get("hooks"), dict) else {}
 
+    def _is_autorun_command(h):
+        """Match autorun's canonical Codex hook command string.
+
+        Identifies both the new format (absolute path + --cli codex) and
+        the historical `${PLUGIN_ROOT}/hooks/hook_entry.py --cli codex`
+        marker so re-installs from older autorun versions still cleanup.
+        """
+        return (
+            isinstance(h, dict)
+            and h.get("type") == "command"
+            and _CODEX_AUTORUN_COMMAND_MARK in (h.get("command") or "")
+        )
+
+    def _is_autorun_entry(e):
+        if not isinstance(e, dict):
+            return False
+        if e.get("_autorun_owned"):
+            return True                                    # legacy marker
+        if _is_autorun_command(e):
+            return True                                    # legacy bare entry
+        inner = e.get("hooks")
+        return isinstance(inner, list) and any(_is_autorun_command(h) for h in inner)
+
     def _strip_autorun(entries):
         if not isinstance(entries, list):
             return entries
         stripped = []
         for e in entries:
-            if isinstance(e, dict):
-                inner = e.get("hooks")
-                if isinstance(inner, list):
-                    keep_inner = [h for h in inner if not (isinstance(h, dict) and h.get("_autorun_owned"))]
-                    if not keep_inner:
-                        continue
-                    e = dict(e)
-                    e["hooks"] = keep_inner
-                if e.get("_autorun_owned"):
+            if _is_autorun_entry(e):
+                continue
+            # Drop legacy _autorun_owned inner entries if any survive
+            if isinstance(e, dict) and isinstance(e.get("hooks"), list):
+                keep_inner = [
+                    h for h in e["hooks"]
+                    if not (isinstance(h, dict) and (h.get("_autorun_owned") or _is_autorun_command(h)))
+                ]
+                if not keep_inner:
                     continue
+                e = dict(e)
+                e["hooks"] = keep_inner
             stripped.append(e)
         return stripped
 
     for event, autorun_entries in autorun_block.items():
         existing_entries = _strip_autorun(hooks.get(event, []))
         hooks[event] = list(existing_entries) + list(autorun_entries)
+
+    # Drop any events autorun no longer manages but previously installed
+    # (e.g. SessionEnd, which Codex never accepted) so re-install fully
+    # cleans up legacy entries.
+    for event in list(hooks.keys()):
+        if event in autorun_block:
+            continue
+        cleaned = _strip_autorun(hooks[event])
+        if cleaned:
+            hooks[event] = cleaned
+        else:
+            del hooks[event]
 
     merged["hooks"] = hooks
     return merged
