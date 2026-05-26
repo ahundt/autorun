@@ -139,6 +139,11 @@ def test_counter_resets_on_posttooluse(tmp_path, monkeypatch):
 # ─── Section 4: injection unchanged at count == 1 ─────────────────────────────
 
 def test_injection_unchanged_at_count_one(tmp_path):
+    """At count=1 the active STALE-TASK ESCAPE HATCH block is NOT appended,
+    but the AI-escape *hint* (mentioning the marker) IS in the base injection
+    so the AI can discover the path on block #1. Compare with
+    test_injection_augmented_at_threshold which checks the active hatch.
+    """
     mgr = _make_mgr(tmp_path)
     _add_task(mgr, "72", "Ghost #72")
     ctx = _make_stop_ctx(tmp_path)
@@ -148,8 +153,19 @@ def test_injection_unchanged_at_count_one(tmp_path):
     assert result.get("continue") is True
 
     msg = result.get("systemMessage", "")
-    assert "AUTORUN_TASKS_CLEAR_STALE_TASK" not in msg
+    # The active hatch (heading + "this same set of ids has blocked Stop")
+    # must NOT fire at count=1 — anti-abuse: only after min_consecutive blocks.
     assert "STALE-TASK ESCAPE HATCH" not in msg
+    assert "this same set of ids has blocked Stop" not in msg
+    # The hint that the AI-callable marker exists IS expected on block #1
+    # (added for the "infinite non-overridable stop failure" bug fix). The
+    # literal AUTORUN_TASKS_CLEAR_STALE_TASK appearing in the message is
+    # explicitly desired here — see _ACT_STALE_AI_ESCAPE in task_lifecycle.py.
+    assert "AUTORUN_TASKS_CLEAR_STALE_TASK" in msg, (
+        "Block #1 must hint at the AI-callable stale-clear marker so the AI "
+        "knows an override path exists. See test_first_stop_block_mentions_"
+        "stale_task_ai_escape_path."
+    )
     assert "CANNOT STOP" in msg
     assert "Actions: 1." in msg
 

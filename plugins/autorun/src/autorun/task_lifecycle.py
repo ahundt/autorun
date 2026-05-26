@@ -68,6 +68,29 @@ _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
 _ACT_DELEGATE = '{task_update}({task_id_param}="X", status="delegated")'
 _ACT_DISCARD  = '{task_update}({task_id_param}="X", status="deleted")'
 _ACT_OVERRIDE = 'only the user can type /ar:sos (emergency stop) or /ar:task-ignore <id> (mark task ignored to unblock stopping)'
+# AI-callable escape route — emitted on EVERY Stop block so the AI does
+# not give up on block #1 when a task is provably stale. The actual marker
+# only takes effect after ghost_clear_min_consecutive_blocks identical blocks
+# (anti-abuse: prevents instant single-block clears), but discoverability
+# must not depend on the threshold being met.
+# The marker literal lives in CONFIG["ghost_clear_marker_template"]
+# (single source of truth, enforced by test_marker_literal_single_source_of_truth).
+_ACT_STALE_AI_ESCAPE = (
+    "If a task above is stale (Claude's TaskList does not show it or "
+    "TaskUpdate returns \"Task not found\"), retry — after "
+    "{threshold} identical Stop blocks an AI-callable stale-clear marker "
+    "({marker}) becomes printable to mark "
+    "those ids ignored without user intervention."
+)
+
+
+def _stale_clear_marker_example() -> str:
+    """Render the stale-clear marker template with a placeholder id.
+
+    Derives from CONFIG to avoid duplicating the marker literal — keeps
+    test_marker_literal_single_source_of_truth's invariant intact.
+    """
+    return CONFIG["ghost_clear_marker_template"].replace("{id}", "<id>")
 
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
@@ -959,7 +982,8 @@ class TaskLifecycle:
             f"3. Do the work, then: {_ACT_COMPLETE} "
             f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
             f"5. Or discard: {_ACT_DISCARD} "
-            f"6. Override: {_ACT_OVERRIDE}\n"
+            f"6. Override: {_ACT_OVERRIDE} "
+            f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
         )
 
         # Log resume event
@@ -1060,7 +1084,8 @@ class TaskLifecycle:
             f"3. Do the work, then: {_ACT_COMPLETE} "
             f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
             f"5. Or discard: {_ACT_DISCARD} "
-            f"6. Override: {_ACT_OVERRIDE}\n"
+            f"6. Override: {_ACT_OVERRIDE} "
+            f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
         )
 
         if ghost_enabled and consecutive >= min_consecutive:

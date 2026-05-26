@@ -336,3 +336,74 @@ def test_base_injection_includes_task_subject_and_count(
     assert "Task seed0" in sys_msg
     assert OVERRIDE_SOS in sys_msg
     assert OVERRIDE_TASK_IGNORE in sys_msg
+
+
+# === AI-callable stale-task escape route must be discoverable on FIRST block ===
+#
+# Concrete failure this test pins down (observed live in this session, 2026-05):
+#   The autorun daemon's task tracker had a stale task #1 left over from an
+#   earlier planning run. Claude Code's own TaskList returned "Task not found"
+#   for it, and TaskUpdate(taskId="1", status="deleted") returned the same.
+#   The AI gave up because the Stop-block message said:
+#     "6. Override: only the user can type /ar:sos or /ar:task-ignore"
+#   …without mentioning that an AI-callable stale-clear marker
+#   (AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)) becomes available after
+#   ghost_clear_min_consecutive_blocks identical blocks.
+#
+#   The base message MUST tell the AI that the stale-clear marker exists and
+#   becomes printable after a small number of identical re-stops. That is the
+#   "text that can be supplied by the AI to override" the user asked for.
+
+
+def test_first_stop_block_mentions_stale_task_ai_escape_path(
+    isolated_task_config, isolated_session, tmp_path,
+):
+    """The base message (block #1) must reference the AI-callable stale-clear path.
+
+    Before the fix the AI sees only "only the user can type" on block #1.
+    After the fix it must see that retrying surfaces an AI-callable marker.
+    """
+    cfg = isolated_task_config
+    sid = f"stop-stale-hint-{time.time_ns()}"
+    manager = TaskLifecycle(session_id=sid, config=cfg)
+    _seed_tasks(manager, 1, prefix="seed")
+
+    ctx = _make_stop_ctx(sid, cli_type="claude")
+    resp = manager.handle_stop(ctx)
+    sys_msg = resp.get("systemMessage", "")
+    pending = ctx.pending_stop_injection or ""
+
+    # Either the literal marker shape or the docstring keyword must be present
+    # so the AI can find it; we accept either wording.
+    stale_hints = ("AUTORUN_TASKS_CLEAR_STALE_TASK", "stale-clear marker")
+    assert any(h in sys_msg for h in stale_hints), (
+        "Block #1 systemMessage must hint at the AI-callable stale-clear "
+        f"path. Got: {sys_msg[:400]!r}"
+    )
+    assert any(h in pending for h in stale_hints), (
+        "Block #1 pending_stop_injection must also carry the hint so the AI "
+        f"sees it via the next PostToolUse delivery. Got: {pending[:400]!r}"
+    )
+
+
+@pytest.mark.parametrize("cli_type", ["claude", "gemini"])
+def test_every_stop_block_mentions_ai_escape_path(
+    cli_type, isolated_task_config, isolated_session, tmp_path,
+):
+    """Every Stop block (1..N) must mention the AI-callable stale-clear path."""
+    cfg = isolated_task_config
+    sid = f"stop-every-{cli_type}-{time.time_ns()}"
+    manager = TaskLifecycle(session_id=sid, config=cfg)
+    _seed_tasks(manager, 1, prefix="seed")
+
+    store = ThreadSafeDB()
+    for i in range(5):
+        ctx = _make_stop_ctx(sid, cli_type=cli_type, store=store)
+        resp = manager.handle_stop(ctx)
+        sys_msg = resp.get("systemMessage", "")
+        assert (
+            "AUTORUN_TASKS_CLEAR_STALE_TASK" in sys_msg
+            or "stale-clear marker" in sys_msg
+        ), f"[{cli_type} block#{i+1}] missing AI-escape hint: {sys_msg[:400]!r}"
+        if i < 4:
+            _simulate_posttooluse_delivery(sid, store)
