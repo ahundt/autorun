@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,15 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
 SRC_DIR = PLUGIN_ROOT / "src"
 DAEMON_PY = PLUGIN_ROOT / "src" / "autorun" / "daemon.py"
+
+
+def load_hook_entry_module():
+    """Load hook_entry.py as an importable module for direct function tests."""
+    spec = importlib.util.spec_from_file_location("autorun_hook_entry_test", HOOK_ENTRY)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 # =============================================================================
@@ -196,9 +206,12 @@ class TestTryCliRobustness:
 
     Bug history:
     - try_cli() returned True even when the subprocess failed (non-zero exit
-      code, argparse errors from stale UV tool installs, empty stdout). This
+      code, argparse errors from stale UV tool installs). This
       caused hook_entry.py to exit without printing any JSON → Claude Code
       fail-open → rm/git-reset-hard executed unblocked.
+    - hook_entry.py later treated empty successful stdout as failure, but empty
+      stdout is the correct implicit-allow response for hooks where no rules
+      fired.
     - try_cli() consumed stdin, so if it failed the fallback path
       (run_fallback → run_client → json.load(sys.stdin)) got empty input.
     """
@@ -210,15 +223,85 @@ class TestTryCliRobustness:
             "try_cli must check subprocess return code. Without this, " \
             "a stale/broken CLI binary silently causes fail-open."
 
-    def test_try_cli_requires_stdout(self):
-        """try_cli must return False when stdout is empty."""
-        content = HOOK_ENTRY.read_text(encoding="utf-8")
-        # After the returncode check, there should be a check for empty stdout
-        try_cli_idx = content.find("def try_cli(")
-        try_cli_end = content.find("\ndef ", try_cli_idx + 1)
-        try_cli_body = content[try_cli_idx:try_cli_end]
-        assert "return False" in try_cli_body, \
-            "try_cli must return False on empty stdout (no valid hook response)"
+    def test_try_cli_accepts_empty_stdout_success_as_implicit_allow(self, tmp_path, capsys):
+        """Empty stdout with exit 0 is a valid hook allow response."""
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text("#!/bin/sh\nexit 0\n")
+        fake_autorun.chmod(0o755)
+
+        hook_entry = load_hook_entry_module()
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.try_cli(fake_autorun, "{}")
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 0
+        assert captured.out == ""
+        assert captured.err == ""
+
+    def test_main_does_not_fallback_when_cli_allows_with_empty_stdout(self, tmp_path):
+        """Empty successful CLI output must not trigger fallback source lookup."""
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text("#!/bin/sh\nexit 0\n")
+        fake_autorun.chmod(0o755)
+
+        extension_root = tmp_path / "gemini-extension-no-src"
+        extension_root.mkdir()
+
+        env = os.environ.copy()
+        env["PATH"] = str(tmp_path)
+        env["AUTORUN_PLUGIN_ROOT"] = str(extension_root)
+        env.pop("CLAUDE_PLUGIN_ROOT", None)
+
+        result = subprocess.run(
+            [sys.executable, str(HOOK_ENTRY)],
+            input=json.dumps({
+                "hook_event_name": "BeforeTool",
+                "tool_name": "bash_command",
+                "tool_input": {"command": "cargo build 2>&1 | head -50"},
+            }),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+
+    def test_tool_gate_fails_closed_when_cli_fails_and_extension_has_no_source(self, tmp_path):
+        """A broken CLI fast path must not fail open for Gemini tool gates."""
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text("#!/bin/sh\nexit 1\n")
+        fake_autorun.chmod(0o755)
+
+        extension_root = tmp_path / "gemini-extension-no-src"
+        extension_root.mkdir()
+
+        env = os.environ.copy()
+        env["PATH"] = str(tmp_path)
+        env["AUTORUN_PLUGIN_ROOT"] = str(extension_root)
+        env.pop("CLAUDE_PLUGIN_ROOT", None)
+
+        result = subprocess.run(
+            [sys.executable, str(HOOK_ENTRY), "--cli", "gemini"],
+            input=json.dumps({
+                "hook_event_name": "BeforeTool",
+                "tool_name": "bash_command",
+                "tool_input": {"command": "rm test"},
+            }),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        assert result.returncode == 0
+        output = json.loads(result.stdout)
+        assert output.get("decision") == "deny"
+        assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        assert "Cannot locate plugin source" in output.get("reason", "")
 
     def test_stdin_read_once_in_main(self):
         """stdin must be read once in main(), not inside try_cli."""
@@ -298,7 +381,7 @@ class TestTryCliRobustness:
         # stderr SHOULD contain the denial reason (exit code 2 shows stderr to Claude)
         # This is the workaround for bug #4669 - stderr is shown, stdout JSON ignored
         assert result.stderr, \
-            f"Blocked command should have stderr message for exit code 2. stderr was empty."
+            "Blocked command should have stderr message for exit code 2. stderr was empty."
         assert "trash" in result.stderr.lower() or "blocked" in result.stderr.lower(), \
             f"stderr should contain helpful message. Got: {result.stderr[:200]}"
 
@@ -547,9 +630,9 @@ class TestUVCompatibility:
                 found_deprecated.append(f"  - {field}: {fix}")
 
         assert len(found_deprecated) == 0, (
-            f"pyproject.toml [tool.uv] contains deprecated fields that cause UV stderr warnings.\n"
-            f"Claude Code treats hook stderr as errors, disabling all hook protections.\n\n"
-            f"Deprecated fields found:\n" + "\n".join(found_deprecated) + "\n\n"
+            "pyproject.toml [tool.uv] contains deprecated fields that cause UV stderr warnings.\n"
+            "Claude Code treats hook stderr as errors, disabling all hook protections.\n\n"
+            "Deprecated fields found:\n" + "\n".join(found_deprecated) + "\n\n"
             f"File: {pyproject_path}"
         )
 
@@ -707,7 +790,7 @@ class TestCacheSync:
                 )
 
         assert len(errors) == 0, (
-            f"Plugin cache has deprecated [tool.uv] fields that cause hook errors:\n"
+            "Plugin cache has deprecated [tool.uv] fields that cause hook errors:\n"
             + "\n".join(errors) + "\n\n"
             f"Source: {PLUGIN_ROOT / 'pyproject.toml'}\n"
             f"Run: cp {PLUGIN_ROOT / 'pyproject.toml'} <cache_path>/pyproject.toml"
@@ -1041,7 +1124,7 @@ class TestAllLocationsSync:
         import json
         direct_url = json.loads(tool_paths[0].read_text(encoding="utf-8"))
         assert direct_url.get("dir_info", {}).get("editable") is True, \
-            f"UV tool has direct_url.json but editable=false. Reinstall with --editable."
+            "UV tool has direct_url.json but editable=false. Reinstall with --editable."
 
     def test_gemini_extension_hooks_match_source(self):
         """Gemini extension hooks.json must match the Gemini TEMPLATE source

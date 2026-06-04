@@ -132,13 +132,14 @@ def _json_from_codex_debug_models(output: str) -> dict:
 
 def _spark_slugs_from_catalog(catalog: dict) -> list[str]:
     """Return available Spark model slugs from a Codex model catalog."""
-    return [
+    slugs = [
         m.get("slug", "")
         for m in catalog.get("models", [])
         if "spark" in str(m.get("slug", "")).lower()
         or "spark" in str(m.get("display_name", "")).lower()
         or "spark" in str(m.get("description", "")).lower()
     ]
+    return sorted(slugs, key=lambda slug: (slug != "gpt-5.3-codex-spark", slug))
 
 
 def _load_codex_model_catalog(args: list[str]) -> dict | None:
@@ -271,7 +272,13 @@ class TestCodexE2ERealMoney:
             timeout=120,
         )
 
-        log_path = _log_run("real-cli-userprompt-ar-st", prompt, result.returncode, result.stdout, result.stderr)
+        log_path = _log_run(
+            "real-cli-userprompt-ar-st",
+            {"model": model, "prompt": prompt},
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
         combined = result.stdout + "\n" + result.stderr
         assert "UserPromptSubmit hook (failed)" not in combined
         assert "invalid user prompt submit JSON output" not in combined.lower()

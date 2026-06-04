@@ -20,10 +20,8 @@ Requirements sourced from:
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -31,7 +29,7 @@ import pytest
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from autorun.core import EventContext, ThreadSafeDB
+from autorun.core import EventContext
 from autorun import plugins
 from autorun.session_manager import session_state, clear_test_session_state
 
@@ -887,8 +885,8 @@ class TestDeployedCopiesMatchSource:
         if not cached_entry.exists():
             pytest.skip("No hook_entry.py in cache")
         assert HOOK_ENTRY_PY.read_text(encoding="utf-8") == cached_entry.read_text(encoding="utf-8"), (
-            f"Cache hook_entry.py doesn't match source. "
-            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Cache hook_entry.py doesn't match source. "
+            "Run: uv run --project plugins/autorun python -m autorun --install --force"
         )
 
     def test_gemini_extension_hooks_match_source(self):
@@ -899,8 +897,8 @@ class TestDeployedCopiesMatchSource:
         source_content = GEMINI_HOOKS_JSON.read_text(encoding="utf-8")
         ext_content = ext_hooks.read_text(encoding="utf-8")
         assert source_content == ext_content, (
-            f"Gemini extension hooks.json doesn't match source. "
-            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Gemini extension hooks.json doesn't match source. "
+            "Run: uv run --project plugins/autorun python -m autorun --install --force"
         )
 
     def test_gemini_extension_hook_entry_matches_source(self):
@@ -911,8 +909,8 @@ class TestDeployedCopiesMatchSource:
         source_content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         ext_content = ext_entry.read_text(encoding="utf-8")
         assert source_content == ext_content, (
-            f"Gemini extension hook_entry.py doesn't match source. "
-            f"Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Gemini extension hook_entry.py doesn't match source. "
+            "Run: uv run --project plugins/autorun python -m autorun --install --force"
         )
 
 
@@ -1175,6 +1173,90 @@ class TestInstallForGeminiMarketplaceResolution:
         func = _extract_function(content, "_install_for_gemini")
         # Both the marketplace_source_map building and the per-plugin loop check it
         assert func.count("gemini-extension.json") >= 2
+
+
+class TestClaudeCachePathSubstitution:
+    """Regression coverage for local Claude marketplace cache path substitution."""
+
+    def _make_marketplace(self, root: Path, plugins: list[dict]) -> None:
+        claude_plugin_dir = root / ".claude-plugin"
+        claude_plugin_dir.mkdir(parents=True, exist_ok=True)
+        (claude_plugin_dir / "marketplace.json").write_text(
+            json.dumps({
+                "name": "autorun",
+                "version": "1.0.0",
+                "plugins": plugins,
+            })
+        )
+
+    def _make_plugin_source(self, root: Path, dirname: str, version: str) -> Path:
+        plugin_dir = root / "plugins" / dirname
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": dirname, "version": version})
+        )
+        return plugin_dir
+
+    def _make_cached_hooks(self, home: Path, plugin_name: str, version: str) -> Path:
+        cache_dir = (
+            home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "autorun"
+            / plugin_name
+            / version
+        )
+        hooks_dir = cache_dir / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "PreToolUse": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": (
+                                "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} "
+                                "python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py "
+                                "--cli claude"
+                            ),
+                        }]
+                    }]
+                }
+            })
+        )
+        return cache_dir
+
+    def test_substitutes_cache_for_alias_resolved_by_marketplace_json(self, tmp_path):
+        """Logical plugin name ar maps to source dir plugins/autorun."""
+        import autorun.install as install_mod
+
+        self._make_plugin_source(tmp_path, "autorun", "9.8.7")
+        self._make_marketplace(tmp_path, [
+            {"name": "ar", "source": "./plugins/autorun"},
+        ])
+        cache_dir = self._make_cached_hooks(tmp_path, "ar", "9.8.7")
+
+        with patch("autorun.install.Path.home", return_value=tmp_path):
+            assert install_mod._substitute_claude_cache_paths(tmp_path, "ar")
+
+        hooks_text = (cache_dir / "hooks" / "hooks.json").read_text()
+        assert "${CLAUDE_PLUGIN_ROOT}" not in hooks_text
+        assert str(cache_dir.resolve()) in hooks_text
+
+    def test_substitutes_existing_cache_versions_when_source_lookup_fails(self, tmp_path):
+        """Already-cached hooks are still repaired if the source tree moved."""
+        import autorun.install as install_mod
+
+        self._make_marketplace(tmp_path, [])
+        cache_dir = self._make_cached_hooks(tmp_path, "ar", "1.2.3")
+
+        with patch("autorun.install.Path.home", return_value=tmp_path):
+            assert install_mod._substitute_claude_cache_paths(tmp_path, "ar")
+
+        hooks_text = (cache_dir / "hooks" / "hooks.json").read_text()
+        assert "${CLAUDE_PLUGIN_ROOT}" not in hooks_text
+        assert str(cache_dir.resolve()) in hooks_text
 
 
 if __name__ == "__main__":

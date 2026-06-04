@@ -580,7 +580,7 @@ def _check_hook_conflicts() -> None:
                         plugin_name = hooks_file.parts[-4] + "@" + hooks_file.parts[-3]
                         if plugin_name != "autorun@autorun" and enabled.get(plugin_name, False):
                             conflicting.append(plugin_name)
-                except:
+                except Exception:
                     continue
 
             if conflicting:
@@ -951,26 +951,9 @@ def _install_to_cache(plugin_name: str) -> bool:
         True if cache install succeeded, False otherwise
     """
     root = find_marketplace_root()
-    
-    # Robust plugin discovery
-    potential_paths = [
-        root / "plugins" / plugin_name,
-        root / plugin_name,
-        root.parent / plugin_name
-    ]
-    
-    plugin_dir = None
-    for p in potential_paths:
-        if p.is_dir() and (p / ".claude-plugin").exists():
-            plugin_dir = p
-            break
-            
-    if not plugin_dir:
-        # Fallback: if root itself matches the name
-        if root.name == plugin_name and (root / ".claude-plugin").exists():
-            plugin_dir = root
-        else:
-            return False
+    plugin_dir = _resolve_plugin_dir(root, plugin_name)
+    if not plugin_dir or not (plugin_dir / ".claude-plugin").exists():
+        return False
 
     # Read version from plugin.json
     version = _read_plugin_version(plugin_dir)
@@ -1367,35 +1350,73 @@ def _resolve_plugin_dir(marketplace_root: Path, name: str) -> Path | None:
     """Find a plugin directory by name under the marketplace root.
 
     Tries (in order):
-        1. marketplace_root/plugins/<name>            (direct directory match)
-        2. marketplace_root/<name>                    (flat layout)
-        3. marketplace_root itself (basename matches)
-        4. marketplace_root/.claude-plugin/marketplace.json → source field
+        1. marketplace_root/.claude-plugin/marketplace.json → source field
            (covers cases where plugin name != directory name, e.g. name="ar"
             registered with source="./plugins/autorun")
+        2. marketplace_root/plugins/<name>            (direct directory match)
+        3. marketplace_root/<name>                    (flat layout)
+        4. marketplace_root.parent/<name>             (legacy sibling layout)
+        5. marketplace_root itself (basename matches)
     """
-    for candidate in (
-        marketplace_root / "plugins" / name,
-        marketplace_root / name,
-    ):
-        if candidate.is_dir():
-            return candidate
-    if marketplace_root.name == name and marketplace_root.is_dir():
-        return marketplace_root
-
     manifest = marketplace_root / ".claude-plugin" / "marketplace.json"
     if manifest.is_file():
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
             for entry in data.get("plugins", []):
-                if entry.get("name") == name:
-                    source = entry.get("source", "")
-                    resolved = (marketplace_root / source).resolve()
-                    if resolved.is_dir():
-                        return resolved
+                if entry.get("name") != name:
+                    continue
+                source = entry.get("source", "")
+                if not source:
+                    continue
+                resolved = (marketplace_root / source).resolve()
+                if resolved.is_dir():
+                    return resolved
         except Exception:
             pass
+
+    for candidate in (
+        marketplace_root / "plugins" / name,
+        marketplace_root / name,
+        marketplace_root.parent / name,
+    ):
+        if candidate.is_dir():
+            return candidate
+    if marketplace_root.name == name and marketplace_root.is_dir():
+        return marketplace_root
     return None
+
+
+def _substitute_claude_cache_paths(marketplace_root: Path, plugin_name: str) -> bool:
+    """Substitute ${CLAUDE_PLUGIN_ROOT} in Claude's cached plugin copy.
+
+    Claude Code does not reliably expand this variable for local marketplace
+    plugins. The logical plugin name may also differ from the source directory
+    name, so cache repair must resolve through marketplace.json instead of
+    guessing plugins/<name>.
+    """
+    cache_root = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / plugin_name
+    cache_dirs: list[Path] = []
+
+    plugin_dir = _resolve_plugin_dir(marketplace_root, plugin_name)
+    if plugin_dir is not None:
+        version = _read_plugin_version(plugin_dir)
+        versioned_cache = cache_root / version
+        if versioned_cache.is_dir():
+            cache_dirs.append(versioned_cache)
+
+    if cache_root.is_dir():
+        cache_dirs.extend(sorted(p for p in cache_root.iterdir() if p.is_dir()))
+
+    seen: set[Path] = set()
+    repaired = False
+    for cache_dir in cache_dirs:
+        resolved = cache_dir.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        _substitute_paths(cache_dir)
+        repaired = True
+    return repaired
 
 
 def _autorun_plugin_dir(marketplace_root: Path, plugins: list[str]) -> Path | None:
@@ -2318,18 +2339,7 @@ def install_plugins(
                 enable_result = run_cmd(["claude", "plugin", "enable", fq_name])
                 if enable_result.ok or enable_result.has_text("already"):
                     print("updated")
-                    
-                    # NEW: Perform manual substitution even after success for local marketplaces
-                    # Discover version to find the cache path
-                    plugin_dir_src = marketplace_root / "plugins" / name
-                    if not plugin_dir_src.exists():
-                        plugin_dir_src = marketplace_root / name
-                    
-                    if plugin_dir_src.exists():
-                        version = _read_plugin_version(plugin_dir_src)
-                        cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
-                        if cache_path.exists():
-                            _substitute_paths(cache_path)
+                    _substitute_claude_cache_paths(marketplace_root, name)
 
                     claude_succeeded.append(name)
                     continue
@@ -2355,17 +2365,7 @@ def install_plugins(
             result = run_cmd(["claude", "plugin", "enable", fq_name])
             if result.ok or result.has_text("already"):
                 print("ok")
-                
-                # NEW: Perform manual substitution even after success for local marketplaces
-                plugin_dir_src = marketplace_root / "plugins" / name
-                if not plugin_dir_src.exists():
-                    plugin_dir_src = marketplace_root / name
-                
-                if plugin_dir_src.exists():
-                    version = _read_plugin_version(plugin_dir_src)
-                    cache_path = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / name / version
-                    if cache_path.exists():
-                        _substitute_paths(cache_path)
+                _substitute_claude_cache_paths(marketplace_root, name)
 
                 claude_succeeded.append(name)
             else:

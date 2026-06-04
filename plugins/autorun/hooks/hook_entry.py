@@ -10,7 +10,7 @@ Execution Priority:
 3. Fallback: Run from plugin cache via CLAUDE_PLUGIN_ROOT
 
 Design Principles:
-- Fail-open: Never crash Claude - always output valid JSON
+- Fail-open for lifecycle/context hooks, fail-closed for tool permission gates
 - Fast: Try CLI first (no Python import overhead if available)
 - Robust: Handle missing env vars, missing files, import errors
 - Minimal: Only stdlib imports (json, os, shutil, subprocess, sys, time)
@@ -51,6 +51,7 @@ BOOTSTRAP_MSG = (
 
 
 _VALID_CLI_TYPES = ("claude", "gemini", "codex", "forgecode")
+_TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 
 
 def detect_cli_type() -> str:
@@ -184,6 +185,78 @@ def fail_open(message: str = "") -> NoReturn:
     sys.exit(0)
 
 
+def is_tool_gate_event(event_name: str) -> bool:
+    """Return True for events where fail-open would allow a tool to run."""
+    return event_name in _TOOL_GATE_EVENTS
+
+
+def _peek_stdin_text() -> str:
+    """Read stdin without consuming it when possible."""
+    try:
+        if hasattr(sys.stdin, "getvalue"):
+            return sys.stdin.getvalue()
+        if hasattr(sys.stdin, "tell") and hasattr(sys.stdin, "seek"):
+            pos = sys.stdin.tell()
+            text = sys.stdin.read()
+            sys.stdin.seek(pos)
+            return text
+    except Exception:
+        return ""
+    return ""
+
+
+def _peek_event_name(default: str = "unknown") -> str:
+    """Best-effort event name extraction for fallback safety decisions."""
+    text = _peek_stdin_text()
+    if not text:
+        return default
+    try:
+        payload = json.loads(text)
+        return payload.get("hook_event_name", default)
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return default
+
+
+def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoReturn:
+    """Block tool execution when autorun cannot evaluate a permission gate."""
+    reason = (
+        f"[autorun] {message}. Blocking tool use to avoid fail-open. "
+        "Run `autorun --restart-daemon` or `autorun --install --force`, then retry."
+    )
+    hook_specific = {
+        "hookEventName": event_name,
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason,
+    }
+
+    if cli_type == "codex":
+        response = {
+            "decision": "block",
+            "reason": reason,
+            "systemMessage": reason,
+            "hookSpecificOutput": hook_specific,
+        }
+        print(json.dumps(response))
+        sys.exit(0)
+
+    decision = "deny" if cli_type == "gemini" else "block"
+    response = {
+        "decision": decision,
+        "permissionDecision": "deny",
+        "reason": reason if cli_type == "gemini" else "",
+        "continue": True,
+        "stopReason": "",
+        "suppressOutput": False,
+        "systemMessage": reason if cli_type == "gemini" else "",
+        "hookSpecificOutput": hook_specific,
+    }
+    print(json.dumps(response))
+    if cli_type == "claude":
+        print(reason, file=sys.stderr)
+        sys.exit(2)
+    sys.exit(0)
+
+
 # =============================================================================
 # CLI Resolution (priority: venv > global > fallback)
 # =============================================================================
@@ -241,9 +314,12 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
 
     Bug history:
         - Previously returned True unconditionally even when subprocess failed
-          (non-zero exit code, argparse errors, empty stdout). This caused
+          (non-zero exit code, argparse errors). This caused
           hook_entry.py to exit without printing any JSON, and Claude Code
           would fail-open (allow rm, git reset --hard, etc.).
+        - Empty stdout with exit code 0 is a valid implicit allow response.
+          It must not trigger fallback, especially for Gemini extension hooks
+          whose installed extension root intentionally does not contain src/.
         - Previously read stdin inside try_cli, consuming it so the fallback
           path (run_fallback → run_client) couldn't read the payload.
     """
@@ -286,9 +362,10 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         if result.returncode not in (0, 2):
             return False
 
-        # Must have stdout output — hook response is JSON on stdout
         if not result.stdout:
-            return False
+            if result.stderr:
+                print(result.stderr, end="", file=sys.stderr)
+            sys.exit(result.returncode)
 
         # Extract valid JSON from stdout (filters out noise like environment warnings)
         def extract_json(text: str) -> str | None:
@@ -495,6 +572,9 @@ def run_fallback() -> None:
         src_dir = get_src_dir()
 
     if not src_dir or not src_dir.is_dir():
+        event_name = _peek_event_name()
+        if is_tool_gate_event(event_name):
+            fail_closed_tool_gate("Cannot locate plugin source", detect_cli_type(), event_name)
         fail_open("Cannot locate plugin source")
 
     # Add to Python path for imports
@@ -630,7 +710,9 @@ def main() -> None:
             if result.stderr:
                 log_debug(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr}")
 
-            if result.stdout:
+            if result.returncode not in (0, 2):
+                log_debug("✗ CLI returned unsupported exit code")
+            elif result.stdout:
                 # Extract valid JSON from stdout (filters out noise like environment warnings)
                 def extract_json(text: str) -> str | None:
                     """Find valid JSON block efficiently."""
@@ -677,7 +759,11 @@ def main() -> None:
                 log_debug(f"Hook entry finished with exit code {result.returncode}")
                 sys.exit(result.returncode)
             else:
-                log_debug("✗ CLI returned empty stdout")
+                log_debug("✓ CLI returned empty stdout; treating as implicit hook response")
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+                log_debug(f"Hook entry finished with exit code {result.returncode}")
+                sys.exit(result.returncode)
         except subprocess.TimeoutExpired:
             log_debug("✗ CLI timed out")
         except Exception as e:
