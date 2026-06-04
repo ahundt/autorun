@@ -19,12 +19,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from autorun.install import (
+    CmdResult,
     _install_for_codex,
     detect_available_clis,
     determine_target_clis,
+    show_status,
 )
 
 
@@ -51,6 +51,16 @@ def test_determine_target_clis_default_returns_all_available():
     targets = determine_target_clis(False, False, available)
     assert "codex" in targets
     assert "forgecode" not in targets
+
+
+def test_determine_target_clis_codex_only():
+    available = {"claude": True, "gemini": True, "codex": True, "forgecode": True}
+    assert determine_target_clis(False, False, available, codex_only=True) == ["codex"]
+
+
+def test_determine_target_clis_multiple_selected_platforms():
+    available = {"claude": True, "gemini": True, "codex": True, "forgecode": True}
+    assert determine_target_clis(True, False, available, codex_only=True) == ["claude", "codex"]
 
 
 # ─── _install_for_codex installation ─────────────────────────────────────────
@@ -146,6 +156,52 @@ def test_install_for_codex_prints_trust_reminder(tmp_path, monkeypatch, capsys):
         "install output must remind user that Codex needs /hooks approval "
         "for new hook hashes (Codex HookStateToml trust model)"
     )
+
+
+def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, monkeypatch, capsys):
+    """Status must expose deployment health for every supported platform."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("autorun.install.find_marketplace_root", lambda: tmp_path)
+    monkeypatch.setattr("autorun.install._check_uv_env", lambda _p: CmdResult(True, "OK"))
+
+    def fake_which(binary: str):
+        return f"/usr/bin/{binary}" if binary in {"claude", "gemini", "codex", "autorun", "aise"} else None
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        if cmd[:3] == ["claude", "plugin", "list"]:
+            return CmdResult(True, "autorun enabled\npdf-extractor enabled\n")
+        if cmd[:3] == ["gemini", "extensions", "list"]:
+            return CmdResult(True, "ar\npdf-extractor\nconductor\n")
+        return CmdResult(True, "")
+
+    monkeypatch.setattr("shutil.which", fake_which)
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    codex_hooks = {
+        "hooks": {
+            ev: [{"hooks": [{"type": "command", "command": "uv run python /x/hooks/hook_entry.py --cli codex"}]}]
+            for ev in ("PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart", "Stop", "SubagentStop")
+        }
+    }
+    (codex_dir / "hooks.json").write_text(json.dumps(codex_hooks))
+    (codex_dir / "AGENTS.md").write_text("autorun safety guidance")
+    skill_dir = tmp_path / ".agents" / "skills" / "autorun"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("autorun skill")
+
+    forge = tmp_path / ".forge"
+    (forge / "commands").mkdir(parents=True)
+    (forge / "commands" / "ar-st.md").write_text("---\ndescription: status\n---\n")
+    (forge / "AGENTS.md").write_text("autorun advisory")
+
+    assert show_status() == 0
+    out = capsys.readouterr().out
+    assert "Codex CLI:" in out
+    assert "hooks.json: ✓ installed" in out
+    assert "ForgeCode:" in out
+    assert "hooks: advisory only" in out
 
 
 # ─── Hot-fix regression tests: schema correctness + path resolution ──────────

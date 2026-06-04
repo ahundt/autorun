@@ -74,7 +74,8 @@ _SERIAL_SHELVE_TESTS = {
 _SERIAL_DAEMON_TESTS = {
     "test_hook_entry", "test_dual_platform_hooks_install",
     "test_session_persistence_hooks", "test_gemini_e2e_improved",
-    "test_gemini_e2e_real_money", "test_gemini_before_tool_hooks",
+    "test_gemini_e2e_real_money", "test_codex_e2e_real_money",
+    "test_gemini_before_tool_hooks",
     "test_task_cli_commands", "test_demo",
 }
 

@@ -11,8 +11,6 @@ divergences captured here:
 """
 from __future__ import annotations
 
-import pytest
-
 from autorun.platforms import PLATFORMS, get_platform
 
 
@@ -134,6 +132,16 @@ def test_codex_install_metadata():
     # as a compat alias in the same environment.
     assert "PLUGIN_ROOT" in p.hooks_path_var
     assert p.install_fn_name == "_install_for_codex"
+
+
+def test_codex_response_capabilities_are_not_claude_clone():
+    """Codex has Claude-like event names but Codex-specific output schemas."""
+    p = PLATFORMS["codex"]
+    assert p.normal_allow_decision is None
+    assert p.block_decision == "block"
+    assert "UserPromptSubmit" in p.supports_additional_context_events
+    assert "continue" in p.unsupported_response_fields_by_event["PreToolUse"]
+    assert "permissionDecision" in p.unsupported_response_fields_by_event["PreToolUse"]
 
 
 # ─── _bug_18534_human_channels: Codex should NOT trigger workaround ───────────

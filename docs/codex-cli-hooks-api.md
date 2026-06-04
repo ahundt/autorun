@@ -1,10 +1,12 @@
 # Codex CLI hook surface (v0.11.0 reference)
 
 OpenAI's [Codex CLI](https://developers.openai.com/codex/) (v0.133 at
-the time of writing) ships a hook system that is binary-compatible with
-Claude Code's hooks. Autorun's integration uses this surface directly —
-the same `hook_entry.py` script handles Claude, Codex, and Gemini
-events; the `--cli codex` flag selects the right code paths.
+the time of writing, rechecked against local `codex-cli 0.137.0`) ships a
+hook system with Claude-like event names but Codex-specific response schemas.
+Autorun's integration uses the shared `hook_entry.py` script, but the
+`--cli codex` flag must select Codex-specific response filtering. Treating
+Codex as "Claude strict schema" is not safe: Codex rejects unsupported output
+fields and reports hook failures.
 
 ## Hook events
 
@@ -33,10 +35,31 @@ Stdin JSON contains: `session_id`, `transcript_path`, `cwd`,
 
 ## Hook response
 
-Strict JSON schema (`additionalProperties:false`); unknown fields are
-rejected. Same shape as Claude Code's HOOK_SCHEMAS. Exit code 0 plus a
-JSON `permissionDecision:"deny"` is honored — no exit-2 workaround is
-required (Claude bug #4669 does not apply).
+Codex performs strict JSON validation (`additionalProperties:false`);
+unknown or unsupported fields are rejected and surfaced as hook failures.
+The response shape is not identical to Claude Code's legacy schema.
+
+Important autorun rules:
+
+- Normal `UserPromptSubmit` and command responses MUST NOT emit
+  `decision: "approve"`. Codex accepts `decision: "block"` for prompt-blocking
+  responses; normal allow/context responses should omit `decision`.
+- `UserPromptSubmit` command output should use common fields such as
+  `continue`, `stopReason`, `suppressOutput`, `systemMessage`, plus
+  `hookSpecificOutput.additionalContext` when the model should see the text.
+- `PreToolUse` must omit Codex-unsupported common fields such as `continue`,
+  `stopReason`, and `suppressOutput`. Autorun keeps the portable
+  `hookSpecificOutput.permissionDecision` / `permissionDecisionReason` fields
+  and uses a top-level `decision: "block"` + `reason` for blocking feedback.
+- Exit code 0 plus valid JSON is the standard path. The Claude exit-2
+  workaround does not apply to Codex.
+
+The observed failure signature for stale/incorrect output is:
+
+```text
+UserPromptSubmit hook (failed)
+error: hook returned invalid user prompt submit JSON output
+```
 
 ## Where autorun installs hooks
 

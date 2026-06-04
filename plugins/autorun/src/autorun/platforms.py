@@ -65,6 +65,14 @@ class Platform:
     has_exit2_workaround: bool = False     # Claude #4669
     drops_additional_context: bool = False  # Claude #18534
 
+    # === Hook response capability metadata ===
+    # "approve" is a Claude legacy allow shape. Codex rejects it on events such
+    # as UserPromptSubmit, so strict platforms cannot share one schema without validation.
+    normal_allow_decision: str | None = "approve"
+    block_decision: str = "block"
+    supports_additional_context_events: frozenset[str] = field(default_factory=frozenset)
+    unsupported_response_fields_by_event: Mapping[str, frozenset[str]] = field(default_factory=dict)
+
     # === Install metadata ===
     config_dir: str = ""
     template_dir: str | None = None
@@ -132,6 +140,9 @@ CLAUDE = register(Platform(
     install_fn_name="_install_for_claude",
     list_cmd=("claude", "plugin", "list"),
     tool_names=_CLAUDE_TOOLS,
+    normal_allow_decision="approve",
+    block_decision="block",
+    supports_additional_context_events=frozenset({"UserPromptSubmit", "PostToolUse"}),
     # event maps left empty: Claude events are canonical (identity).
     internal_to_cli_events={
         "PreToolUse": "PreToolUse", "PostToolUse": "PostToolUse",
@@ -184,6 +195,11 @@ GEMINI = register(Platform(
     install_fn_name="_install_for_gemini",
     list_cmd=("gemini", "extensions", "list"),
     tool_names=_GEMINI_TOOLS,
+    normal_allow_decision="allow",
+    block_decision="deny",
+    supports_additional_context_events=frozenset({
+        "SessionStart", "UserPromptSubmit", "PostToolUse",
+    }),
 ))
 
 
@@ -204,6 +220,17 @@ CODEX = register(Platform(
     install_fn_name="_install_for_codex",
     list_cmd=("codex", "plugin", "list"),
     tool_names=_CODEX_TOOLS,
+    normal_allow_decision=None,
+    block_decision="block",
+    supports_additional_context_events=frozenset({
+        "SessionStart", "UserPromptSubmit", "PostToolUse", "SubagentStart",
+    }),
+    unsupported_response_fields_by_event={
+        "PreToolUse": frozenset({
+            "continue", "stopReason", "suppressOutput", "permissionDecision",
+        }),
+        "PostToolUse": frozenset({"suppressOutput"}),
+    },
     # event_map: identity (Codex shares Claude's event names)
     internal_to_cli_events={
         "PreToolUse": "PreToolUse", "PostToolUse": "PostToolUse",

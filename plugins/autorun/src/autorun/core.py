@@ -43,6 +43,7 @@ from functools import lru_cache
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
 from .session_manager import session_state
 from .config import CONFIG
+from .platforms import PLATFORMS as _PLATFORMS
 from . import ipc
 
 # === CONFIGURATION ===
@@ -87,8 +88,6 @@ logger = logging.getLogger("autorun")
 # Event maps derive from autorun.platforms (single source of truth).
 # When @app.on handlers route either Gemini's PreCompress or Claude's
 # PreCompact, they listen to both directly in plugins.py without remapping.
-from .platforms import PLATFORMS as _PLATFORMS
-
 GEMINI_EVENT_MAP = dict(_PLATFORMS["gemini"].cli_to_internal_events)
 
 # Reverse mapping: internal event name → CLI-specific name.
@@ -640,6 +639,69 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
             
         return filtered
 
+    if platform and platform.name == "codex":
+        allowed_common = {"continue", "stopReason", "suppressOutput", "systemMessage"}
+        unsupported = set(platform.unsupported_response_fields_by_event.get(event, frozenset()))
+
+        # Codex does not accept Claude's legacy allow marker. Keep only blocking
+        # decisions, where the documented shape is decision="block" + reason.
+        normalized = dict(response)
+        if normalized.get("decision") in {"approve", "allow"}:
+            normalized.pop("decision", None)
+        elif normalized.get("decision") in {"deny", "ask"}:
+            normalized["decision"] = platform.block_decision
+
+        if "decision" not in normalized:
+            # Top-level reason is only part of Codex blocking responses. For
+            # context injection, use systemMessage and/or additionalContext.
+            normalized.pop("reason", None)
+        elif normalized.get("decision") == platform.block_decision:
+            reason = normalized.get("reason") or normalized.get("systemMessage") or ""
+            hso_reason = normalized.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+            normalized["reason"] = reason or hso_reason
+
+        if event == "PreToolUse":
+            allowed = {"systemMessage", "decision", "reason", "hookSpecificOutput"}
+            allowed_hso = {
+                "hookEventName", "permissionDecision", "permissionDecisionReason",
+                "additionalContext", "updatedInput",
+            }
+        elif event in {"UserPromptSubmit", "SessionStart", "Stop", "SubagentStop"}:
+            allowed = allowed_common | {"decision", "reason", "hookSpecificOutput"}
+            allowed_hso = {"hookEventName", "additionalContext"}
+        elif event == "PostToolUse":
+            allowed = allowed_common | {"decision", "reason", "hookSpecificOutput"}
+            allowed_hso = {"hookEventName", "additionalContext"}
+        else:
+            allowed = allowed_common | {"decision", "reason", "hookSpecificOutput"}
+            allowed_hso = {"hookEventName", "additionalContext"}
+
+        allowed -= unsupported
+        filtered = {k: v for k, v in normalized.items() if k in allowed}
+
+        if "hookSpecificOutput" in filtered:
+            hso = filtered["hookSpecificOutput"]
+            if not isinstance(hso, dict):
+                filtered.pop("hookSpecificOutput", None)
+            else:
+                hso_filtered = {k: v for k, v in hso.items() if k in allowed_hso}
+                if hso_filtered.get("permissionDecision") == "ask":
+                    hso_filtered["permissionDecision"] = "deny"
+                if (
+                    "additionalContext" in hso_filtered
+                    and not hso_filtered["additionalContext"]
+                    and event != "PreToolUse"
+                ):
+                    hso_filtered.pop("additionalContext", None)
+                if len(hso_filtered) == 1 and "hookEventName" in hso_filtered:
+                    filtered.pop("hookSpecificOutput", None)
+                elif hso_filtered:
+                    filtered["hookSpecificOutput"] = hso_filtered
+                else:
+                    filtered.pop("hookSpecificOutput", None)
+
+        return filtered
+
     # Strict validation for Claude Code (fails on unknown fields)
     schema = HOOK_SCHEMAS.get(event)
     if not schema:
@@ -1031,6 +1093,8 @@ class EventContext:
         - CLAUDE.md: Hook Error Prevention section
         """
         cli_type = self.cli_type
+        from .platforms import get_platform
+        platform = get_platform(cli_type)
         logger.debug(f"respond: event={self._event} decision={decision} to_human={to_human!r} to_ai={to_ai!r} cli_type={cli_type}")
         # This keeps both CLIs as first-class citizens by using the best available
         # blocking mechanism for each.
@@ -1059,10 +1123,13 @@ class EventContext:
                 # Map any blocking decision (deny, block, ask) to "deny".
                 top_decision = "allow" if decision == "allow" else "deny"
                 logger.debug(f"respond: gemini PreToolUse decision={decision} -> top_decision={top_decision}")
+            elif cli_type == "codex":
+                top_decision = "block" if decision != "allow" else "approve"
 
             # To avoid triple-printing in the UI, we only provide the reason 
             # in hookSpecificOutput. Claude will also show stderr for exit 2.
             is_deny = decision == "deny"
+            hide_json_reason = bool(platform and platform.has_exit2_workaround and is_deny)
 
             # CRITICAL SEMANTICS:
             # 1. 'continue: True' means the AI loop keeps running. We ALWAYS want this
@@ -1082,11 +1149,11 @@ class EventContext:
             resp = {
                 "decision": top_decision,
                 "permissionDecision": decision,
-                "reason": msg_reason if cli_type == "gemini" else ("" if is_deny else msg_reason),
+                "reason": "" if hide_json_reason else msg_reason,
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
-                "systemMessage": msg_reason if cli_type == "gemini" else ("" if is_deny else msg_reason),
+                "systemMessage": "" if hide_json_reason else msg_reason,
                 # Claude Code hookSpecificOutput (REQUIRED for PreToolUse)
                 # Gemini CLI hookSpecificOutput (BeforeTool expects hookEventName: "BeforeTool")
                 "hookSpecificOutput": {
@@ -1101,6 +1168,17 @@ class EventContext:
         # PATHWAY 2: UserPromptSubmit & PostToolUse (Context Injection)
         # =====================================================================
         if self._event in ("UserPromptSubmit", "PostToolUse"):
+            if cli_type == "codex" and decision != "allow":
+                resp = {
+                    "decision": platform.block_decision if platform else "block",
+                    "reason": msg_reason,
+                    "continue": True,
+                    "stopReason": "",
+                    "suppressOutput": False,
+                    "systemMessage": msg_reason,
+                }
+                return validate_hook_response(self._event, resp, cli_type=cli_type)
+
             human_text = self._resolve_channel(to_human, msg_reason)
             ai_text = self._resolve_channel(to_ai, msg_reason)
 
@@ -1123,14 +1201,18 @@ class EventContext:
             # NOTE: reason="" keyed on human_text (not sys_msg) to preserve backwards compat:
             #   to_human=False → human_text=None → reason=msg_reason (old AI-injection path kept)
             sys_msg = human_text or ai_text or ""
+            if cli_type == "codex" and not sys_msg and ai_text in (None, ""):
+                return {}
             resp = {
-                "decision": "approve",
-                "reason": "" if human_text else msg_reason,
                 "continue": True,
                 "stopReason": "",
                 "suppressOutput": False,
                 "systemMessage": sys_msg,
             }
+            if platform and platform.normal_allow_decision is not None:
+                resp["decision"] = platform.normal_allow_decision
+            if cli_type != "codex":
+                resp["reason"] = "" if human_text else msg_reason
 
             if ai_text is not None:
                 resp["hookSpecificOutput"] = {
@@ -1163,7 +1245,7 @@ class EventContext:
             # - ONLY supports 'continue', 'stopReason', 'suppressOutput', 'systemMessage'
             if decision == "block":
                 # For Gemini, 'block' decision must be 'deny' to trigger retry
-                actual_decision = "deny" if cli_type == "gemini" else "block"
+                actual_decision = platform.block_decision if platform else ("deny" if cli_type == "gemini" else "block")
                 resp = {
                     "continue": True,  # Keep AI working
                     "decision": actual_decision,
@@ -1264,7 +1346,7 @@ class EventContext:
             "suppressOutput": False,
             "systemMessage": response_text,
             "hookSpecificOutput": {
-                "hookEventName": self._event,
+                "hookEventName": get_cli_event_name(self._event, self.cli_type),
                 "additionalContext": response_text,
             },
         }

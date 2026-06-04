@@ -21,7 +21,6 @@ To skip these tests (default):
 Mock tests (no cost) are in test_gemini_loading.py
 """
 import os
-import sys
 import json
 import subprocess
 import shutil
@@ -60,7 +59,7 @@ def find_hook_script() -> Path:
             return location
 
     raise FileNotFoundError(
-        f"hook_entry.py not found. Searched:\n" +
+        "hook_entry.py not found. Searched:\n" +
         "\n".join(f"  - {loc}" for loc in possible_locations)
     )
 
@@ -444,7 +443,7 @@ class TestGeminiCLIRealMoney:
                 hooks_file = candidate
                 break
         assert hooks_file is not None, \
-            f"hooks.json not found. Searched:\n" + "\n".join(f"  - {p}" for p in hooks_candidates)
+            "hooks.json not found. Searched:\n" + "\n".join(f"  - {p}" for p in hooks_candidates)
 
         # Verify hooks file is valid JSON
         try:
@@ -485,7 +484,7 @@ class TestGeminiExtensionInstalledHook:
             if hook_path.exists():
                 return hook_path
         pytest.skip(
-            f"Gemini hook_entry.py not found. Searched:\n"
+            "Gemini hook_entry.py not found. Searched:\n"
             + "\n".join(f"  - {p}" for p in candidates)
         )
 
@@ -498,6 +497,10 @@ class TestGeminiExtensionInstalledHook:
         env = os.environ.copy()
         env["GEMINI_SESSION_ID"] = "test-installed-hook"
         env["GEMINI_PROJECT_DIR"] = "/tmp/autorun-gemini-test"
+        # Match the source-level Gemini E2E tests above: this exercises the
+        # installed hook wrapper and canonical dispatch without depending on a
+        # production daemon that other tests or live sessions may be using.
+        env["AUTORUN_USE_DAEMON"] = "0"
         # Set plugin root so hook_entry.py can find the plugin source
         plugin_root = str(Path(__file__).parent.parent)
         env["AUTORUN_PLUGIN_ROOT"] = plugin_root
@@ -707,7 +710,7 @@ class TestGeminiWriteFileBlocking:
             if hook_path.exists():
                 return hook_path
         pytest.skip(
-            f"Gemini hook_entry.py not found. Searched:\n"
+            "Gemini hook_entry.py not found. Searched:\n"
             + "\n".join(f"  - {p}" for p in candidates)
         )
 

@@ -47,7 +47,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import ipc
-from .platforms import PLATFORMS, get_platform
+from .platforms import PLATFORMS
 
 # Configure logging (CLI entry points will set level)
 logger = logging.getLogger(__name__)
@@ -658,7 +658,7 @@ def _check_uv_env(plugin_dir: Path) -> CmdResult:
         return CmdResult(False, f"pyproject.toml not found in {plugin_dir}")
 
     if not (plugin_dir / "uv.lock").exists():
-        return CmdResult(False, f"uv.lock not found — run 'uv sync' first")
+        return CmdResult(False, "uv.lock not found — run 'uv sync' first")
 
     if not (plugin_dir / ".venv").exists():
         return CmdResult(False, ".venv not found — run 'uv sync' first")
@@ -678,35 +678,33 @@ def detect_available_clis() -> dict[str, bool]:
 def determine_target_clis(
     claude_only: bool,
     gemini_only: bool,
-    available: dict[str, bool]
+    available: dict[str, bool],
+    codex_only: bool = False,
 ) -> list[str]:
     """Determine which CLIs to install for based on flags and availability.
 
     Args:
         claude_only: If True, include only Claude Code in install targets
         gemini_only: If True, include only Gemini CLI in install targets
+        codex_only: If True, include only Codex CLI in install targets
         available: Dict of CLI availability from detect_available_clis()
 
     Returns:
         List of CLI names to install for (e.g., ["claude", "gemini", "codex"])
 
     Logic:
-        - If both flags False (default): install for all available CLIs
-        - If both flags True: install for both CLIs (if available)
-        - If only claude_only: install only for Claude
-        - If only gemini_only: install only for Gemini
+        - If no platform flags: install for all available CLIs
+        - If any platform flags: install for the selected available CLIs
     """
-    # If both flags are set, install for both
-    if claude_only and gemini_only:
-        return [name for name in ("claude", "gemini") if available.get(name)]
-
-    # If only claude flag is set
+    selected = []
     if claude_only:
-        return ["claude"] if available.get("claude") else []
-
-    # If only gemini flag is set
+        selected.append("claude")
     if gemini_only:
-        return ["gemini"] if available.get("gemini") else []
+        selected.append("gemini")
+    if codex_only:
+        selected.append("codex")
+    if selected:
+        return [name for name in selected if available.get(name)]
 
     # Default: install for all available CLIs (insertion order from PLATFORMS)
     return [name for name, avail in available.items() if avail]
@@ -1902,15 +1900,15 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                         # Check if autorun hooks are present
                         has_hooks = any("autorun" in str(hook) for hook in hooks_data.get("hooks", []))
                         if has_hooks:
-                            print(f"   ✓ Claude Code hooks registered")
+                            print("   ✓ Claude Code hooks registered")
                         else:
-                            print(f"   ⚠️  Claude Code hooks may not be registered")
+                            print("   ⚠️  Claude Code hooks may not be registered")
                             hooks_ok = False
                     except Exception:
-                        print(f"   ⚠️  Could not verify Claude Code hooks")
+                        print("   ⚠️  Could not verify Claude Code hooks")
                         hooks_ok = False
                 else:
-                    print(f"   ⚠️  Claude Code hooks file not found")
+                    print("   ⚠️  Claude Code hooks file not found")
                     hooks_ok = False
 
             elif platform == "gemini":
@@ -1924,15 +1922,15 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
                         # Check if autorun hooks are present
                         has_hooks = any("autorun" in str(ext) for ext in config_data.get("extensions", []))
                         if has_hooks:
-                            print(f"   ✓ Gemini CLI hooks registered")
+                            print("   ✓ Gemini CLI hooks registered")
                         else:
-                            print(f"   ⚠️  Gemini CLI hooks may not be registered")
+                            print("   ⚠️  Gemini CLI hooks may not be registered")
                             hooks_ok = False
                     except Exception:
-                        print(f"   ⚠️  Could not verify Gemini CLI hooks")
+                        print("   ⚠️  Could not verify Gemini CLI hooks")
                         hooks_ok = False
                 else:
-                    print(f"   ⚠️  Gemini CLI config file not found")
+                    print("   ⚠️  Gemini CLI config file not found")
                     hooks_ok = False
 
         if not hooks_ok:
@@ -2081,7 +2079,7 @@ def _install_aise(force: bool = False) -> bool:
         return True
 
     # All attempts failed — non-fatal, autorun works without aise
-    print(f"   aise: install failed (optional, continuing)")
+    print("   aise: install failed (optional, continuing)")
     logger.warning(f"aise install failed: {aise_result.output}")
     return False
 
@@ -2098,6 +2096,7 @@ def install_plugins(
     force: bool = False,
     claude_only: bool = False,
     gemini_only: bool = False,
+    codex_only: bool = False,
     conductor: bool = True,
     use_aix: bool = None,  # NEW: Auto-detect AIX if None (default behavior)
 ) -> int:
@@ -2112,6 +2111,7 @@ def install_plugins(
         force: Force reinstall even if already installed (for dev with same version)
         claude_only: Install only for Claude Code (default: False)
         gemini_only: Install only for Gemini CLI (default: False)
+        codex_only: Install only for Codex CLI (default: False)
         conductor: Install Conductor extension for Gemini (default: True)
         use_aix: Use AIX for installation (None = auto-detect, True = force use, False = skip)
 
@@ -2122,7 +2122,8 @@ def install_plugins(
         - Default (no CLI flags): Installs for all available CLIs with maximum capability
         - --claude: Installs only for Claude Code (error if not available)
         - --gemini: Installs only for Gemini CLI (error if not available)
-        - --claude --gemini: Installs for both CLIs
+        - --codex: Installs only for Codex CLI (error if not available)
+        - Multiple platform flags: Installs for all selected CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
         - --aix: Force use AIX (fail if not installed)
         - --no-aix: Skip AIX even if installed
@@ -2182,7 +2183,7 @@ def install_plugins(
     if use_aix is None:
         use_aix = detect_aix_installed()  # Auto-detect by default
 
-    if use_aix and not (claude_only or gemini_only):
+    if use_aix and not (claude_only or gemini_only or codex_only):
         aix_success, aix_msg = install_via_aix(force)
         if aix_success:
             print("\n✓ Installation via AIX completed successfully")
@@ -2202,7 +2203,7 @@ def install_plugins(
     available = detect_available_clis()
 
     try:
-        target_clis = determine_target_clis(claude_only, gemini_only, available)
+        target_clis = determine_target_clis(claude_only, gemini_only, available, codex_only=codex_only)
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -2216,6 +2217,9 @@ def install_plugins(
         if gemini_only and not available["gemini"]:
             print("   Gemini CLI not found. Install from:")
             print("   npm install -g @google-labs/gemini-cli")
+        if codex_only and not available["codex"]:
+            print("   Codex CLI not found. Install from:")
+            print("   https://developers.openai.com/codex/")
         return 1
 
     # Ensure marketplace is added
@@ -2280,7 +2284,7 @@ def install_plugins(
     # Install for Claude Code
     if "claude" in target_clis:
         print()
-        print(f"Adding autorun marketplace for Claude Code...")
+        print("Adding autorun marketplace for Claude Code...")
         result = run_cmd(["claude", "plugin", "marketplace", "add", str(marketplace_root)])
         if result.ok:
             print("   Added autorun marketplace")
@@ -2433,23 +2437,23 @@ def install_plugins(
             if conductor:
                 conductor_ok = _verify_conductor_installation()
                 if conductor_ok:
-                    print(f"✓ Gemini CLI: Conductor extension installed")
+                    print("✓ Gemini CLI: Conductor extension installed")
                 else:
-                    print(f"⚠️  Gemini CLI: Conductor installation failed (optional)")
+                    print("⚠️  Gemini CLI: Conductor installation failed (optional)")
         else:
-            print(f"✗ Gemini CLI: Installation failed")
+            print("✗ Gemini CLI: Installation failed")
 
     if "codex" in target_clis:
         if codex_success:
-            print(f"✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
+            print("✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
         else:
-            print(f"✗ Codex CLI: hooks install failed")
+            print("✗ Codex CLI: hooks install failed")
 
     if "forgecode" in target_clis:
         if forge_success:
-            print(f"✓ ForgeCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
+            print("✓ ForgeCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
         else:
-            print(f"✗ ForgeCode: install failed")
+            print("✗ ForgeCode: install failed")
 
     print()
     print("Available commands:")
@@ -2617,6 +2621,70 @@ def show_status() -> int:
     else:
         print("  gemini CLI: not found")
         print("  Install: npm install -g @google-labs/gemini-cli")
+
+    # Check Codex CLI user-level install.
+    print()
+    print("-" * 60)
+    print("Codex CLI:")
+
+    codex_ok = shutil.which("codex") is not None
+    print(f"  codex CLI: {'found' if codex_ok else 'not found'}")
+    codex_dir = Path.home() / ".codex"
+    codex_hooks = codex_dir / "hooks.json"
+    required_codex_events = {
+        "PreToolUse",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "SessionStart",
+        "Stop",
+        "SubagentStop",
+    }
+    if codex_hooks.is_file():
+        try:
+            hooks_data = json.loads(codex_hooks.read_text(encoding="utf-8"))
+            events = set(hooks_data.get("hooks", {}))
+            has_events = required_codex_events.issubset(events)
+            has_autorun = "--cli codex" in json.dumps(hooks_data.get("hooks", {}))
+            hooks_status = "✓ installed" if has_events and has_autorun else "✗ incomplete"
+            if codex_ok and hooks_status.startswith("✗"):
+                all_ok = False
+            print(f"  hooks.json: {hooks_status}")
+            if not has_events:
+                missing = ", ".join(sorted(required_codex_events - events))
+                print(f"    missing events: {missing}")
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  hooks.json: ✗ unreadable ({e})")
+            if codex_ok:
+                all_ok = False
+    else:
+        print("  hooks.json: ✗ not installed")
+        if codex_ok:
+            all_ok = False
+
+    codex_agents = codex_dir / "AGENTS.md"
+    print(f"  AGENTS.md: {'✓ installed' if codex_agents.is_file() else '✗ not installed'}")
+    skills_root = Path.home() / ".agents" / "skills"
+    autorun_skills = sorted(skills_root.glob("*/SKILL.md")) if skills_root.is_dir() else []
+    autorun_skill_count = sum(
+        1 for skill in autorun_skills
+        if "autorun" in skill.read_text(encoding="utf-8", errors="ignore").lower()
+    )
+    print(f"  skills: {'✓' if autorun_skill_count else '✗'} {autorun_skill_count} autorun-related")
+    if not codex_ok:
+        print("  Install: https://developers.openai.com/codex/")
+
+    # Check ForgeCode advisory install.
+    print()
+    print("-" * 60)
+    print("ForgeCode:")
+
+    forge_base = _resolve_forge_base()
+    forge_commands = forge_base / "commands"
+    forge_agents = forge_base / "AGENTS.md"
+    forge_command_count = len(list(forge_commands.glob("ar-*.md"))) if forge_commands.is_dir() else 0
+    print(f"  commands: {'✓ installed' if forge_command_count else '✗ not installed'} ({forge_command_count})")
+    print(f"  AGENTS.md: {'✓ installed' if forge_agents.is_file() else '✗ not installed'}")
+    print("  hooks: advisory only (ForgeCode has no external hook system)")
 
     return 0 if all_ok else 1
 

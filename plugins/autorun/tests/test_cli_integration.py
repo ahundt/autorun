@@ -17,7 +17,6 @@ These tests verify:
 import sys
 from pathlib import Path
 from io import StringIO
-from unittest.mock import patch
 
 # Add src to path
 plugin_root = Path(__file__).parent.parent
@@ -83,6 +82,30 @@ def test_install_command_parsing():
     assert args.force is True, "Force install flag should be set"
 
     print("✅ Install command parsing works")
+
+
+def test_install_platform_flags_parse_all_supported_clis():
+    """Install targeting accepts Claude, Gemini, and Codex."""
+    args = parse_args(['--install', '--claude'])
+    assert args.claude is True
+    assert args.gemini is False
+    assert args.codex is False
+
+    args = parse_args(['--install', '--gemini'])
+    assert args.claude is False
+    assert args.gemini is True
+    assert args.codex is False
+
+    args = parse_args(['--install', '--codex'])
+    assert args.claude is False
+    assert args.gemini is False
+    assert args.codex is True
+
+
+def test_hook_cli_identity_accepts_codex():
+    """hook_entry.py forwards --cli codex to autorun's fast CLI path."""
+    args = parse_args(['--cli', 'codex'])
+    assert args.cli == 'codex'
 
 
 def test_status_command_parsing():
