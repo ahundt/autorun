@@ -78,7 +78,6 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "DANGEROUS: 'git reset --hard' permanently discards all uncommitted changes.\n\n**SAFER ALTERNATIVES (in order of preference):**\n\n1. **Stash changes** (RECOMMENDED - preserves work, easily recoverable):\n   git stash push -m \"WIP: brief description of changes\"\n   # Later: git stash list, git stash pop, or git stash apply\n\n2. **Create backup branch** (if stash isn't suitable):\n   git checkout -b backup/$(date +%Y%m%d-%H%M)-wip\n   git add -A && git commit -m \"WIP: checkpoint before reset\"\n   git checkout -  # return to original branch\n\n3. **Selective stash** (to save specific files only):\n   git stash push <file> -m 'WIP: <file>'\n\n**View what would be lost:**\n   git status && git diff\n\nTo allow (default 1 use): /ar:ok 'git reset --hard'\nScope: [N|5m|permanent] (default 1 use)",
         "redirect": "git stash push -m 'WIP: {args}'",
-        "when": "_repo_differs_from_head",
     },
     "git checkout .": {
         "action": "block",

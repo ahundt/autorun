@@ -18,7 +18,6 @@
 Tests for unified integrations system (superset of hookify).
 """
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from autorun.integrations import (
@@ -1453,14 +1452,13 @@ class TestLoadIntegrationsEdgeCases:
         assert "{file_args}" in rm_intg.redirect
 
     def test_loads_integration_with_when_predicate(self):
-        """Loads integration with when field (e.g., git reset --hard)."""
+        """Loads integration with when field (e.g., git checkout .)."""
         integrations = load_all_integrations()
 
-        # Find git reset --hard integration
-        reset_intgs = [i for i in integrations if "git reset --hard" in i.patterns]
-        assert len(reset_intgs) > 0
-        reset_intg = reset_intgs[0]
-        assert reset_intg.when != "always"
+        checkout_dot_intgs = [i for i in integrations if "git checkout ." in i.patterns]
+        assert len(checkout_dot_intgs) > 0
+        checkout_dot_intg = checkout_dot_intgs[0]
+        assert checkout_dot_intg.when != "always"
 
     def test_all_defaults_have_valid_action(self):
         """All default integrations have valid action."""
@@ -1486,7 +1484,6 @@ class TestLoadIntegrationsEdgeCases:
 # =============================================================================
 import os
 import subprocess as _subprocess
-import sys
 
 
 def _init_git_repo(path, committed_content="original\n"):
@@ -1757,7 +1754,6 @@ class TestBackwardCompatAlias:
         from autorun.integrations import (
             _WHEN_PREDICATES,
             _repo_differs_from_head,
-            _has_unstaged_changes,
         )
         assert "_has_unstaged_changes" in _WHEN_PREDICATES
         assert "_repo_differs_from_head" in _WHEN_PREDICATES
@@ -1883,9 +1879,9 @@ class TestConfigMigration:
         from autorun.config import DEFAULT_INTEGRATIONS
         assert DEFAULT_INTEGRATIONS["git checkout ."]["when"] == "_repo_differs_from_head"
 
-    def test_reset_hard_uses_repo_differs(self):
+    def test_reset_hard_is_unconditional(self):
         from autorun.config import DEFAULT_INTEGRATIONS
-        assert DEFAULT_INTEGRATIONS["git reset --hard"]["when"] == "_repo_differs_from_head"
+        assert "when" not in DEFAULT_INTEGRATIONS["git reset --hard"]
 
 
 # =============================================================================
@@ -2197,11 +2193,6 @@ class TestDestructiveGitCmdFlagBypass:
         (tmp_path / "seed.txt").write_text("staged-change\n")
         import subprocess as sp
         sp.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
-        # cwd is a different dir, but -C redirects git to tmp_path.
-        other = tmp_path.parent
-        ctx = _make_ctx(
-            f"git -C {tmp_path} checkout HEAD -- seed.txt", other
-        )
         # The predicate uses ctx.cwd for the diff probe; after the fix
         # _find_destructive_segment still recognizes the checkout verb, so
         # the predicate can at least see the destructive pattern. The diff

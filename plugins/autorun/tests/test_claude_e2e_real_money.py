@@ -101,6 +101,17 @@ def _log_run(label: str, payload: dict, rc: int, stdout: str, stderr: str) -> Pa
 # =============================================================================
 
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
+ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS = (
+    os.environ.get("AUTORUN_ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS", "0") == "1"
+)
+slow_claude_model_behavior = pytest.mark.skipif(
+    not ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS,
+    reason=(
+        "Set AUTORUN_ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS=1 to run slow, "
+        "model-behavior Claude E2E diagnostics. Core live hook/CLI tests still run "
+        "with AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1."
+    ),
+)
 
 pytestmark = [
     pytest.mark.e2e,
@@ -1114,7 +1125,6 @@ class TestClaudeHookEntryPoint:
 
         # Step 3: Send PostToolUse events to trigger staleness (threshold=3)
         # check_task_staleness is registered on PostToolUse, not PreToolUse
-        last_resp = None
         last_msg = ""
         for i in range(5):
             payload = self._base_payload(
@@ -1129,7 +1139,6 @@ class TestClaudeHookEntryPoint:
                 msg = get_system_message(resp)
                 if msg and ("task" in msg.lower() or "stale" in msg.lower()):
                     last_msg = msg
-                    last_resp = resp
 
         # We should have received a staleness reminder at some point
         # Note: The reminder is injected via ctx.allow(msg), so rc=0 and
@@ -1435,15 +1444,14 @@ class TestClaudeHookEntryPoint:
             f"Expected 3 PostToolUse reminders (1st=REQUIRED, 2nd+=OVERDUE). "
             f"Got {len(post_escalation)}: {[m[:50] for m in post_escalation]}"
         )
-        assert "REQUIRED" in post_escalation[0], f"1st PostToolUse should be REQUIRED"
-        assert "OVERDUE" in post_escalation[1], f"2nd PostToolUse should be OVERDUE"
-        assert "OVERDUE" in post_escalation[2], f"3rd PostToolUse should be OVERDUE (no FINAL in V4)"
+        assert "REQUIRED" in post_escalation[0], "1st PostToolUse should be REQUIRED"
+        assert "OVERDUE" in post_escalation[1], "2nd PostToolUse should be OVERDUE"
+        assert "OVERDUE" in post_escalation[2], "3rd PostToolUse should be OVERDUE (no FINAL in V4)"
 
         # Verify at least one allow and at least one deny across the 3 cycles
         # (exact cycle depends on cross-process counter offset in AUTORUN_USE_DAEMON=0)
         perms = [perm for _, perm, _ in pre_results]
         reasons = [reason for _, _, reason in pre_results]
-        has_allow = any(p == "allow" for p in perms)
         has_deny = any(p == "deny" for p in perms)
         assert has_deny, (
             f"At least one cycle should DENY (block tool). Got perms: {perms}. "
@@ -1509,19 +1517,19 @@ class TestClaudeHookEntryPoint:
     # BUG #18534: Stop injection via PreToolUse deny + catch-all matcher
     # ─────────────────────────────────────────────────────────────────────────
 
-    def test_stop_injection_denied_on_pretooluse(self, hook_resources):
-        """After Stop block with incomplete tasks, next PreToolUse non-Task tool is DENIED.
+    def test_stop_injection_delivered_on_posttooluse_not_pretooluse(self, hook_resources):
+        """After Stop block with incomplete tasks, delivery is deferred to PostToolUse.
 
         BUG #18534: https://github.com/anthropics/claude-code/issues/18534
-        Stop events have no AI context path. enforce_stop_injection (PreToolUse)
-        denies the AI's next non-Task tool with the full task list, creating a
-        durable transcript event the AI must respond to.
+        Stop events have no AI context path. The old PreToolUse denial path was
+        removed because it deadlocked sessions by blocking useful recovery tool
+        calls after every Stop block. The safer contract is:
 
         Lifecycle:
           1. Activate autorun + create incomplete task
           2. Fire Stop event → sets pending_stop_injection (continue:true)
-          3. Fire PreToolUse Read → DENIED with "CANNOT STOP" message
-          4. Fire PreToolUse TaskList → ALLOWED (Task tools pass through)
+          3. Fire PreToolUse Read → pass-through (tools are not deadlocked)
+          4. Fire PostToolUse Read → pending stop message is delivered once
         Cost: $0 (uses _run_isolated, no real claude -p calls)
         """
         session_id = self._sid("stop-deny-pretool")
@@ -1541,22 +1549,40 @@ class TestClaudeHookEntryPoint:
         assert stop_resp is not None, "Stop hook must return a response"
         assert stop_resp.get("continue") is True, "Stop must return continue:true"
 
-        # Step 3: Fire PreToolUse Read → should be DENIED by enforce_stop_injection
+        # Step 3: Fire PreToolUse Read → should NOT be denied by the removed
+        # enforce_stop_injection path.
         resp, sys_msg, reason = self._send_pretool_call_isolated(hook_resources, session_id, "Read")
-        assert resp is not None, "PreToolUse must return a response after Stop block"
-        perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
-        assert perm == "deny", (
-            f"Non-Task tool after Stop block must be DENIED. Got permissionDecision={perm!r}. "
-            f"enforce_stop_injection should fire and deny Read."
+        if resp is not None:
+            perm = resp.get("hookSpecificOutput", {}).get("permissionDecision", "")
+            assert perm != "deny", (
+                f"Non-Task tool after Stop block must not be deadlocked by "
+                f"PreToolUse stop injection. Got permissionDecision={perm!r}."
+            )
+
+        # Step 4: Fire PostToolUse Read → should deliver pending stop injection
+        # and clear it.
+        rc_post, stdout_post, stderr_post, post_resp = self._run_isolated(
+            hook_resources,
+            self._base_payload(
+                "PostToolUse", session_id,
+                tool_name="Read",
+                tool_input={"file_path": "/tmp/example.txt"},
+                tool_result={"content": "example"},
+            ),
         )
-        assert "CANNOT STOP" in reason or "incomplete" in reason.lower(), (
-            f"Deny reason must contain stop injection. Got: {reason!r}"
+        assert rc_post == 0
+        assert post_resp is not None, "PostToolUse must flush pending stop injection"
+        post_text = (
+            post_resp.get("systemMessage", "")
+            + post_resp.get("hookSpecificOutput", {}).get("additionalContext", "")
+        )
+        assert "CANNOT STOP" in post_text or "incomplete" in post_text.lower(), (
+            f"PostToolUse must deliver stop injection. Got: {post_text!r}"
         )
 
-        # Step 4: Fire PreToolUse TaskList → should be ALLOWED (Task tools pass through)
+        # Step 5: Fire PreToolUse TaskList → should be ALLOWED (Task tools pass through)
         resp2, sys_msg2, reason2 = self._send_pretool_call_isolated(hook_resources, session_id, "TaskList")
         if resp2:
-            perm2 = resp2.get("hookSpecificOutput", {}).get("permissionDecision", "")
             reason2_text = resp2.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
             assert "CANNOT STOP" not in reason2_text, (
                 f"TaskList must pass through enforce_stop_injection. Got: {reason2_text!r}"
@@ -1638,6 +1664,7 @@ class TestClaudeHookEntryPoint:
 # =============================================================================
 
 
+@pytest.mark.timeout(420)
 class TestClaudeE2ERealMoney:
     """Real Claude CLI E2E tests — spawn `claude -p` (costs API tokens).
 
@@ -1656,17 +1683,88 @@ class TestClaudeE2ERealMoney:
         """Return env without CLAUDECODE so nested claude -p calls are not blocked."""
         return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
+    @staticmethod
+    def _model_args() -> list[str]:
+        """Return optional model override for real Claude E2E runs.
+
+        Defaulting to Claude CLI's configured model is more reliable in this
+        environment than forcing the `haiku` alias. Use
+        AUTORUN_CLAUDE_E2E_MODEL=haiku to force the older cheap-model path.
+        """
+        model = os.environ.get("AUTORUN_CLAUDE_E2E_MODEL", "").strip()
+        return ["--model", model] if model else []
+
+    @staticmethod
+    def _timeout(default: int) -> int:
+        """Allow slow live backends to be tuned without editing tests."""
+        raw = os.environ.get("AUTORUN_CLAUDE_E2E_TIMEOUT", "").strip()
+        if not raw:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+
     def _log_claude_run(self, tmp_path: Path, test_name: str, result) -> Path:
         """Write full claude -p subprocess output to a log file in tmp_path."""
         log_path = tmp_path / f"{test_name}.log"
         log_path.write_text(
             f"=== {test_name} ===\n"
             f"Timestamp: {datetime.datetime.now().isoformat()}\n"
+            f"Command: {' '.join(getattr(result, 'args', []) or [])}\n"
+            f"Timed out: {getattr(result, 'timed_out', False)}\n"
+            f"Timeout seconds: {getattr(result, 'timeout_seconds', '')}\n"
             f"Return code: {result.returncode}\n\n"
             f"--- STDOUT ---\n{result.stdout}\n\n"
             f"--- STDERR ---\n{result.stderr}\n"
         )
         return log_path
+
+    def _run_claude(
+        self,
+        tmp_path: Path,
+        test_name: str,
+        args: list[str],
+        *,
+        timeout: int,
+        cwd: str | None = None,
+        env: dict | None = None,
+    ) -> tuple[subprocess.CompletedProcess, Path]:
+        """Run `claude -p` and always return/log a result, even on timeout."""
+        cmd = ["claude", "-p"]
+        if "--model" not in args:
+            cmd.extend(self._model_args())
+        cmd.extend(args)
+        env = env if env is not None else self._claude_env()
+        timeout_seconds = self._timeout(timeout)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                cwd=cwd,
+                env=env,
+            )
+            result.timed_out = False
+            result.timeout_seconds = timeout_seconds
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            stderr = (
+                f"{stderr}\n[TIMEOUT] claude -p exceeded {timeout_seconds}s"
+            ).strip()
+            result = subprocess.CompletedProcess(cmd, 124, stdout, stderr)
+            result.timed_out = True
+            result.timeout_seconds = timeout_seconds
+
+        log_path = self._log_claude_run(tmp_path, test_name, result)
+        return result, log_path
 
     def test_claude_basic_interaction_and_hooks_dont_crash(
         self, tmp_path, claude_cli_check
@@ -1679,12 +1777,12 @@ class TestClaudeE2ERealMoney:
 
         Estimated cost: < $0.001 (minimal tokens)
         """
-        result = subprocess.run(
-            ["claude", "-p", "What is 2+2? Answer with just the number, nothing else."],
-            capture_output=True, text=True, timeout=90,
-            env=self._claude_env(),
+        result, log_path = self._run_claude(
+            tmp_path,
+            "basic_interaction",
+            ["What is 2+2? Answer with just the number, nothing else."],
+            timeout=180,
         )
-        log_path = self._log_claude_run(tmp_path, "basic_interaction", result)
         assert result.returncode == 0, (
             f"claude -p failed. Hooks may have crashed the session.\n"
             f"Full output in: {log_path}\n"
@@ -1715,20 +1813,17 @@ class TestClaudeE2ERealMoney:
             "The autorun safety guard should block rm."
         )
 
-        result = subprocess.run(
+        result, log_path = self._run_claude(
+            tmp_path,
+            "rm_blocked",
             [
-                "claude", "-p",
-                f"Please run this exact bash command and report the result: "
-                f"rm {test_file}",
+                f"Please run this exact bash command once, report the result, "
+                f"then stop: rm {test_file}",
             ],
-            capture_output=True,
-            text=True,
-            timeout=120,
+            timeout=240,
             cwd=str(tmp_path),
-            env=self._claude_env(),
         )
 
-        log_path = self._log_claude_run(tmp_path, "rm_blocked", result)
         assert test_file.exists(), (
             f"CRITICAL: rm was NOT blocked. The file was deleted.\n"
             f"autorun safety guard FAILED for Claude Code.\n"
@@ -1749,19 +1844,14 @@ class TestClaudeE2ERealMoney:
         test_file = tmp_path / "grep-test.txt"
         test_file.write_text("hello world\ntest line\nfoo bar\n")
 
-        result = subprocess.run(
-            [
-                "claude", "-p",
-                f"Run this bash command: grep 'hello' {test_file}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
+        result, log_path = self._run_claude(
+            tmp_path,
+            "grep_blocked",
+            [f"Run this bash command once and stop: grep 'hello' {test_file}"],
+            timeout=240,
             cwd=str(tmp_path),
-            env=self._claude_env(),
         )
 
-        log_path = self._log_claude_run(tmp_path, "grep_blocked", result)
         # Claude session should complete (not crash due to hook)
         assert result.returncode == 0, (
             f"claude -p should not crash after grep block. rc={result.returncode}\n"
@@ -1779,16 +1869,14 @@ class TestClaudeE2ERealMoney:
         Verifies that the UserPromptSubmit hook fires for /ar: commands
         and injects policy info into the Claude session context.
         """
-        result = subprocess.run(
-            ["claude", "-p", "/ar:st"],
-            capture_output=True,
-            text=True,
-            timeout=90,
+        result, log_path = self._run_claude(
+            tmp_path,
+            "ar_st_policy",
+            ["/ar:st"],
+            timeout=240,
             cwd=str(tmp_path),
-            env=self._claude_env(),
         )
 
-        log_path = self._log_claude_run(tmp_path, "ar_st_policy", result)
         assert result.returncode == 0, (
             f"claude -p /ar:st should not crash. rc={result.returncode}\n"
             f"Full output in: {log_path}\n"
@@ -1807,6 +1895,7 @@ class TestClaudeE2ERealMoney:
             f"stderr:\n{result.stderr}"
         )
 
+    @slow_claude_model_behavior
     def test_claude_autorun_three_stage_forced_continuation(
         self, tmp_path, claude_cli_check
     ):
@@ -1822,9 +1911,10 @@ class TestClaudeE2ERealMoney:
         Estimated cost: < $0.010 (longer interaction due to three stages).
         Timeout: 180s (three stages means more back-and-forth with hooks).
         """
-        result = subprocess.run(
+        result, log_path = self._run_claude(
+            tmp_path,
+            "three_stage",
             [
-                "claude", "-p",
                 "/ar:go Write a Python function that adds two numbers. "
                 "Follow the three-stage system exactly: "
                 "Stage 1: Write the function, then output AUTORUN_INITIAL_TASKS_COMPLETED. "
@@ -1833,14 +1923,9 @@ class TestClaudeE2ERealMoney:
                 "Stage 3: Final verification, then output "
                 "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY.",
             ],
-            capture_output=True,
-            text=True,
-            timeout=180,
+            timeout=300,
             cwd=str(tmp_path),
-            env=self._claude_env(),
         )
-
-        log_path = self._log_claude_run(tmp_path, "three_stage", result)
 
         # Session should complete without crashing
         assert result.returncode == 0, (
@@ -1877,32 +1962,32 @@ class TestClaudeE2ERealMoney:
 
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Task reminder compliance — Haiku model (v0.10.2)
+    # Slow model-behavior diagnostics — task reminder compliance (v0.10.2)
     # ─────────────────────────────────────────────────────────────────────────
 
+    @slow_claude_model_behavior
     def test_ai_creates_tasks_when_reminded_haiku(self, tmp_path, claude_cli_check):
-        """E2E: Haiku creates tasks when explicitly asked via systemMessage.
+        """E2E: Claude creates tasks when explicitly asked via systemMessage.
 
-        Spawns claude -p --model haiku with a task-creation prompt.
+        Spawns claude -p with the default model unless
+        AUTORUN_CLAUDE_E2E_MODEL is set.
         Verifies AI calls TaskCreate within the session output.
-        Estimated cost: < $0.005 (haiku is cheapest model).
 
         Empirically validates the channel="both" fix (SDK issue #18534).
         """
-        result = subprocess.run(
+        result, log_path = self._run_claude(
+            tmp_path,
+            "creates_tasks",
             [
-                "claude", "-p", "--model", "haiku",
                 "Create 3 tasks for the following work items using TaskCreate: "
                 "1) Fix login bug 2) Add unit tests 3) Update docs. "
                 "Create each task now with TaskCreate.",
             ],
-            capture_output=True, text=True, timeout=120,
+            timeout=240,
             cwd=str(tmp_path),
-            env=self._claude_env(),
         )
-        log_path = self._log_claude_run(tmp_path, "haiku_creates_tasks", result)
         assert result.returncode == 0, (
-            f"claude -p --model haiku failed. rc={result.returncode}\n"
+            f"claude -p task creation failed. rc={result.returncode}\n"
             f"Full output in: {log_path}\nstderr:\n{result.stderr}"
         )
         output = result.stdout.lower()
@@ -1913,29 +1998,28 @@ class TestClaudeE2ERealMoney:
             f"Full output in: {log_path}\nstdout:\n{result.stdout[:500]}"
         )
 
+    @slow_claude_model_behavior
     def test_ai_creates_planning_tasks_after_plan_start_haiku(
         self, tmp_path, claude_cli_check
     ):
-        """E2E: Haiku creates [PLANNING] tasks when asked.
+        """E2E: Claude creates [PLANNING] tasks when asked.
 
         Tests AI compliance with task creation requests delivered
         via systemMessage (channel="both" fix for SDK issue #18534).
-        Estimated cost: < $0.005 (haiku is cheapest model).
         """
-        result = subprocess.run(
+        result, log_path = self._run_claude(
+            tmp_path,
+            "planning_tasks",
             [
-                "claude", "-p", "--model", "haiku",
                 "Create a plan with 3 steps to add error handling to a Python "
                 "web server. For each step, create a [PLANNING] task using "
                 "TaskCreate with subject starting with '[PLANNING]'.",
             ],
-            capture_output=True, text=True, timeout=120,
+            timeout=240,
             cwd=str(tmp_path),
-            env=self._claude_env(),
         )
-        log_path = self._log_claude_run(tmp_path, "haiku_planning_tasks", result)
         assert result.returncode == 0, (
-            f"claude -p --model haiku failed. rc={result.returncode}\n"
+            f"claude -p planning task creation failed. rc={result.returncode}\n"
             f"Full output in: {log_path}\nstderr:\n{result.stderr}"
         )
         output = result.stdout
@@ -2029,6 +2113,7 @@ class TestClaudeE2ERealMoney:
             ]),
         }
 
+    @slow_claude_model_behavior
     def test_haiku_sees_system_messages_two_turn(
         self, tmp_path, claude_cli_check
     ):
@@ -2053,9 +2138,10 @@ class TestClaudeE2ERealMoney:
         # Use --disallowedTools to prevent AI from calling TodoWrite/TaskCreate
         # on its own (which would reset the staleness counter before the reminder fires).
         # Use --append-system-prompt to set a low staleness threshold.
-        work_result = subprocess.run(
+        work_result, work_log = self._run_claude(
+            tmp_path,
+            "turn1_work",
             [
-                "claude", "-p", "--model", "haiku",
                 "--session-id", session_id,
                 "--disallowed-tools", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList",
                 "--",
@@ -2064,11 +2150,10 @@ class TestClaudeE2ERealMoney:
                 "Then count the total number of functions across all files. "
                 "Finally, suggest one improvement for the codebase.",
             ],
-            capture_output=True, text=True, timeout=180,
+            timeout=300,
             cwd=str(tmp_path),
             env=env,
         )
-        work_log = self._log_claude_run(tmp_path, "turn1_work", work_result)
         assert work_result.returncode == 0, (
             f"Turn 1 (work) failed. rc={work_result.returncode}\n"
             f"Full output in: {work_log}\nstderr:\n{work_result.stderr}"
@@ -2082,9 +2167,10 @@ class TestClaudeE2ERealMoney:
         )
 
         # Turn 2: Resume same session, ask about system messages
-        probe_result = subprocess.run(
+        probe_result, probe_log = self._run_claude(
+            tmp_path,
+            "turn2_probe",
             [
-                "claude", "-p", "--model", "haiku",
                 "--resume", session_id,
                 "--disallowed-tools", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList",
                 "--",
@@ -2093,11 +2179,10 @@ class TestClaudeE2ERealMoney:
                 "were NOT part of my prompts. Include the exact text of each. "
                 "If you received none, say 'NO_SYSTEM_MESSAGES_RECEIVED'.",
             ],
-            capture_output=True, text=True, timeout=120,
+            timeout=240,
             cwd=str(tmp_path),
             env=env,
         )
-        probe_log = self._log_claude_run(tmp_path, "turn2_probe", probe_result)
         assert probe_result.returncode == 0, (
             f"Turn 2 (probe) failed. rc={probe_result.returncode}\n"
             f"Full output in: {probe_log}\nstderr:\n{probe_result.stderr}"

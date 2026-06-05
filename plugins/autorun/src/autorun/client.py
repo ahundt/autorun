@@ -53,6 +53,86 @@ except ImportError:
 from . import ipc
 
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
+_TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
+_DAEMON_RESPONSE_TIMEOUT_BY_CLI = {
+    "gemini": 3.5,
+    "claude": 6.5,
+    "codex": 6.5,
+    "forgecode": 6.5,
+}
+
+
+def is_tool_gate_event(event: str) -> bool:
+    """Return True when fail-open would allow a tool to run."""
+    return event in _TOOL_GATE_EVENTS
+
+
+def daemon_response_timeout_for_cli(cli_type: str) -> float:
+    """Return how long the client should wait for a daemon response."""
+    return _DAEMON_RESPONSE_TIMEOUT_BY_CLI.get(cli_type, _DAEMON_RESPONSE_TIMEOUT_BY_CLI["claude"])
+
+
+def _hook_specific_event_name(event: str, cli_type: str) -> str:
+    """Return the platform event name used inside hookSpecificOutput."""
+    if cli_type == "gemini" and event == "PreToolUse":
+        return "BeforeTool"
+    if cli_type != "gemini" and event == "BeforeTool":
+        return "PreToolUse"
+    return event
+
+
+def build_daemon_failure_response(event: str, cli_type: str, message: str) -> dict:
+    """Build a platform-correct fallback for daemon communication failures.
+
+    Permission-gate hooks fail closed. Lifecycle/context hooks fail open.
+    """
+    if not is_tool_gate_event(event):
+        return {
+            "continue": True,
+            "stopReason": "",
+            "suppressOutput": False,
+            "systemMessage": f"[autorun] {message}" if message else "",
+        }
+
+    reason = (
+        f"[autorun] {message}. Blocking tool use because autorun could not "
+        "evaluate this permission gate. Run `autorun --restart-daemon`, then retry."
+    )
+    hook_specific = {
+        "hookEventName": _hook_specific_event_name(event, cli_type),
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason,
+    }
+
+    if cli_type == "codex":
+        return {
+            "decision": "block",
+            "reason": reason,
+            "systemMessage": reason,
+            "hookSpecificOutput": hook_specific,
+        }
+
+    if cli_type == "gemini":
+        return {
+            "decision": "deny",
+            "reason": reason,
+            "continue": True,
+            "stopReason": "",
+            "suppressOutput": False,
+            "systemMessage": reason,
+            "hookSpecificOutput": hook_specific,
+        }
+
+    return {
+        "decision": "block",
+        "permissionDecision": "deny",
+        "reason": "",
+        "continue": True,
+        "stopReason": "",
+        "suppressOutput": False,
+        "systemMessage": "",
+        "hookSpecificOutput": hook_specific,
+    }
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:
@@ -234,7 +314,10 @@ def run_client() -> int:
             writer.write(json.dumps(payload).encode() + b'\n')
             await writer.drain()
 
-            resp = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=5.0)
+            resp = await asyncio.wait_for(
+                reader.readuntil(b'\n'),
+                timeout=daemon_response_timeout_for_cli(cli_type),
+            )
             resp_text = resp.decode().strip()
 
             _log_hook_lifecycle("DAEMON→CLIENT RAW RESPONSE", FullResponse=resp_text)
@@ -244,18 +327,33 @@ def run_client() -> int:
                 resp_json = json.loads(resp_text)
                 return output_hook_response(resp_json, event=hook_event, cli_type=cli_type, source="daemon")
             except json.JSONDecodeError:
+                if is_tool_gate_event(hook_event):
+                    return output_hook_response(
+                        build_daemon_failure_response(
+                            hook_event,
+                            cli_type,
+                            "Daemon returned invalid JSON",
+                        ),
+                        event=hook_event,
+                        cli_type=cli_type,
+                        source="daemon-invalid-json",
+                    )
                 # Not valid JSON, output as-is
                 return output_hook_response(resp_text, event=hook_event, cli_type=cli_type, source="daemon-raw")
 
         except asyncio.LimitOverrunError as e:
             # Response from daemon exceeded buffer (shouldn't happen - response is tiny)
             logger.error(f"Client buffer error: {e}")
-            return output_hook_response({
-                "continue": True,
-                "stopReason": "",
-                "suppressOutput": False,
-                "systemMessage": f"Client buffer error: Daemon response too large. {e}"
-            }, event=hook_event, cli_type=cli_type, source="buffer-error")
+            return output_hook_response(
+                build_daemon_failure_response(
+                    hook_event,
+                    cli_type,
+                    f"Client buffer error: Daemon response too large. {e}",
+                ),
+                event=hook_event,
+                cli_type=cli_type,
+                source="buffer-error",
+            )
         except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
             if isinstance(e, PermissionError):
                 raise  # Can't recover from permission errors
@@ -338,14 +436,17 @@ def run_client() -> int:
     try:
         return asyncio.run(forward())
     except Exception as e:
-        # Fail open
-        logger.error(f"Client exception (fail-open): {e}", exc_info=True)
-        return output_hook_response({
-            "continue": True,
-            "stopReason": "",
-            "suppressOutput": False,
-            "systemMessage": ""
-        }, event=hook_event, cli_type=cli_type, source="exception")
+        logger.error(f"Client exception while contacting daemon: {e}", exc_info=True)
+        return output_hook_response(
+            build_daemon_failure_response(
+                hook_event,
+                cli_type,
+                f"Daemon unavailable or timed out: {e}",
+            ),
+            event=hook_event,
+            cli_type=cli_type,
+            source="exception",
+        )
 
 
 if __name__ == "__main__":

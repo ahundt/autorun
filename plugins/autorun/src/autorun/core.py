@@ -1581,10 +1581,11 @@ class AutorunDaemon:
         import time
         start_time = time.time()
         self.last_activity = start_time
+        event = "unknown"
+        tool = ""
+        cli_type = "claude"
         # None = pass-through (dispatch returned None = nothing fired = output nothing)
-        # _fallback = used only for error cases (timeout, buffer overflow, exception)
         response = None
-        _fallback = {"continue": True, "stopReason": "", "suppressOutput": False, "systemMessage": ""}
 
         try:
             # Read payload (READ_BUFFER_LIMIT set on server to accept large payloads)
@@ -1644,28 +1645,33 @@ class AutorunDaemon:
                 )
             except asyncio.TimeoutError:
                 logger.error(
-                    f"Handler for '{ctx.event}' timed out after 15s (fail-open)"
+                    f"Handler for '{ctx.event}' timed out after 15s"
                 )
-                _fallback["systemMessage"] = f"Daemon handler for '{ctx.event}' timed out after 15s"
-                response = _fallback
+                from .client import build_daemon_failure_response
+                response = build_daemon_failure_response(
+                    ctx.event,
+                    cli_type,
+                    f"Daemon handler for '{ctx.event}' timed out after 15s",
+                )
 
         except asyncio.LimitOverrunError as e:
             # Buffer size exceeded - provide actionable guidance
             current_mb = READ_BUFFER_LIMIT // (1024 * 1024)
             logger.error(f"Buffer overflow: Session transcript exceeded {current_mb}MB limit", exc_info=True)
-            _fallback["systemMessage"] = (
-                f"Daemon buffer overflow (fail-open): Session transcript exceeded {current_mb}MB.\n\n"
+            message = (
+                f"Daemon buffer overflow: Session transcript exceeded {current_mb}MB.\n\n"
                 f"SOLUTION: Increase buffer size with environment variable:\n"
                 f"  export AUTORUN_BUFFER_LIMIT={READ_BUFFER_LIMIT * 2}  # {current_mb * 2}MB\n"
                 f"  # Then restart daemon: uv run python plugins/autorun/scripts/restart_daemon.py\n\n"
                 f"Current limit: {current_mb}MB (READ_BUFFER_LIMIT={READ_BUFFER_LIMIT:,} bytes)\n"
                 f"Details: {e}"
             )
-            response = _fallback
+            from .client import build_daemon_failure_response
+            response = build_daemon_failure_response(event, cli_type, message)
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
-            _fallback["systemMessage"] = f"Daemon error (fail-open): {e}"
-            response = _fallback
+            from .client import build_daemon_failure_response
+            response = build_daemon_failure_response(event, cli_type, f"Daemon error: {e}")
 
         finally:
             # None = pass-through: send {} so client exits 0 with no stdout output
@@ -1674,13 +1680,20 @@ class AutorunDaemon:
             response_json = json.dumps(final)
             logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")
 
-            writer.write(response_json.encode() + b'\n')
-            await writer.drain()
-            writer.close()
             try:
-                await writer.wait_closed()
-            except Exception:
-                pass  # Ignore errors on close (connection may already be gone)
+                writer.write(response_json.encode() + b'\n')
+                await writer.drain()
+            except (ConnectionResetError, BrokenPipeError):
+                logger.warning(
+                    "Client disconnected before daemon response could be delivered "
+                    f"(event={event}, cli={cli_type})"
+                )
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass  # Ignore errors on close (connection may already be gone)
 
             duration = (time.time() - start_time) * 1000
             from .client import _log_hook_lifecycle

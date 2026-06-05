@@ -37,9 +37,16 @@ from typing import NoReturn
 # Constants
 # =============================================================================
 
-# Gemini CLI enforces 5s timeout; Claude Code enforces 10s.
-# We use 4s to stay safe on both platforms.
-HOOK_TIMEOUT = 4
+# Gemini CLI enforces a 5s timeout, so it keeps the tight 4s budget. Claude
+# Code and Codex allow more room; using one global 4s timeout caused avoidable
+# daemon fallbacks and client disconnect churn under real CLI E2E load.
+HOOK_TIMEOUT_BY_CLI = {
+    "gemini": 4,
+    "claude": 8,
+    "codex": 8,
+    "forgecode": 8,
+}
+HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
 BOOTSTRAP_MSG = (
     "autorun deps not installed. Run: uv pip install autorun && autorun --install"
@@ -52,6 +59,11 @@ BOOTSTRAP_MSG = (
 
 _VALID_CLI_TYPES = ("claude", "gemini", "codex", "forgecode")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
+
+
+def hook_timeout_for_cli(cli_type: str) -> int:
+    """Return the hook wrapper subprocess timeout for a CLI platform."""
+    return HOOK_TIMEOUT_BY_CLI.get(cli_type, HOOK_TIMEOUT_BY_CLI["claude"])
 
 
 def detect_cli_type() -> str:
@@ -290,7 +302,7 @@ def get_autorun_bin() -> Path | None:
     return None
 
 
-def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
+def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -> bool:
     """Try to run autorun CLI, passing pre-read stdin payload.
 
     Args:
@@ -323,13 +335,14 @@ def try_cli(bin_path: Path, stdin_data: str = "") -> bool:
         - Previously read stdin inside try_cli, consuming it so the fallback
           path (run_fallback → run_client) couldn't read the payload.
     """
+    cli_type = cli_type or detect_cli_type()
     try:
         result = subprocess.run(
             [str(bin_path)],
             input=stdin_data,
             capture_output=True,
             text=True,
-            timeout=HOOK_TIMEOUT,
+            timeout=hook_timeout_for_cli(cli_type),
         )
 
         # Debug logging (ALWAYS enabled to diagnose hook issues)
@@ -703,7 +716,7 @@ def main() -> None:
                 input=stdin_data,
                 capture_output=True,
                 text=True,
-                timeout=HOOK_TIMEOUT,
+                timeout=hook_timeout_for_cli(cli_type),
             )
             log_debug(f"CLI exit code: {result.returncode}")
             log_debug(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}")

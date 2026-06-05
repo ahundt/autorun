@@ -24,10 +24,9 @@ Tests for:
 - Plan Management Plugin: New/refine/update/process handlers
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
-from autorun.core import app, EventContext, AutorunApp, ThreadSafeDB
+from autorun.core import app, EventContext, ThreadSafeDB
 from autorun.config import CONFIG
 from autorun import plugins
 
@@ -281,7 +280,7 @@ class TestAutorunPlugin:
         handler = app.command_handlers.get("activate")
         assert handler is not None
 
-        result = handler(ctx)
+        handler(ctx)
         assert ctx.autorun_active is True
         assert ctx.autorun_stage == EventContext.STAGE_1
 
@@ -295,7 +294,7 @@ class TestAutorunPlugin:
         ctx.activation_prompt = "/ar:gp build something"
 
         handler = app.command_handlers.get("activate")
-        result = handler(ctx)
+        handler(ctx)
 
         assert ctx.autorun_mode == "procedural"
 
@@ -307,7 +306,7 @@ class TestAutorunPlugin:
         ctx.autorun_active = True
 
         handler = app.command_handlers.get("stop")
-        result = handler(ctx)
+        handler(ctx)
 
         assert ctx.autorun_active is False
 
@@ -543,7 +542,7 @@ class TestReloadCommand:
 
     def test_reload_clears_cache(self):
         """Reload should clear integration cache."""
-        from autorun.integrations import load_all_integrations, invalidate_caches
+        from autorun.integrations import load_all_integrations
 
         # Load once
         integrations1 = load_all_integrations()
@@ -750,7 +749,7 @@ class TestWhenPredicateIntegration:
     @patch("autorun.integrations.subprocess.run")
     def test_when_predicate_evaluated(self, mock_run):
         """When predicate should be evaluated before blocking."""
-        # git reset --hard has when: has_uncommitted_changes
+        # git checkout . still uses when: _repo_differs_from_head
         mock_run.return_value = MagicMock(returncode=1)  # Has changes
 
         store = ThreadSafeDB()
@@ -758,7 +757,7 @@ class TestWhenPredicateIntegration:
             session_id="test",
             event="PreToolUse",
             tool_name="Bash",
-            tool_input={"command": "git reset --hard HEAD"},
+            tool_input={"command": "git checkout ."},
             store=store
         )
 
@@ -770,7 +769,7 @@ class TestWhenPredicateIntegration:
     @patch("autorun.integrations.subprocess.run")
     def test_when_predicate_false_skips_integration(self, mock_run):
         """When predicate returning False should skip that integration."""
-        # git reset --hard has when: has_uncommitted_changes
+        # git checkout . still uses when: _repo_differs_from_head
         mock_run.return_value = MagicMock(returncode=0)  # No changes
 
         store = ThreadSafeDB()
@@ -778,13 +777,13 @@ class TestWhenPredicateIntegration:
             session_id="test",
             event="PreToolUse",
             tool_name="Bash",
-            tool_input={"command": "git reset --hard HEAD"},
+            tool_input={"command": "git checkout ."},
             store=store
         )
 
         result = plugins.check_blocked_commands(ctx)
 
-        # The "git reset --hard" integration is skipped (when=False)
+        # The "git checkout ." integration is skipped (when=False)
         # But "git" integration still matches with action: warn
         # So result is allow (not deny), not None
         if result is not None:

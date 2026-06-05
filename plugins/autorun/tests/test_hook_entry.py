@@ -108,6 +108,14 @@ class TestHookEntryExecutionPriority:
         content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "HOOK_TIMEOUT" in content
 
+    def test_hook_timeout_is_platform_specific(self):
+        """Gemini keeps a 4s budget; Claude/Codex can use their larger hook budgets."""
+        hook_entry = load_hook_entry_module()
+        assert hook_entry.hook_timeout_for_cli("gemini") == 4
+        assert hook_entry.hook_timeout_for_cli("claude") >= 8
+        assert hook_entry.hook_timeout_for_cli("codex") >= 8
+        assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
+
 
 # =============================================================================
 # Test: hook_entry.py Fail-Open Behavior

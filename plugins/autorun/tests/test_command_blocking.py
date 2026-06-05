@@ -27,7 +27,7 @@ Tests the core functions for managing command blocking patterns:
 
 import contextlib
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # command_matches_pattern is kept in main.py as a utility function
 from autorun.main import command_matches_pattern
@@ -645,8 +645,9 @@ class TestGitCommandTargeting:
     def mock_git_has_unstaged_changes(self, monkeypatch):
         """Simulate git repo with changes so destructive-git predicates fire.
 
-        v4: config.py rules `git checkout .` and `git reset --hard` now use
-        `_repo_differs_from_head` (ref-aware, catches staged-only changes).
+        v4: config.py rule `git checkout .` now uses `_repo_differs_from_head`
+        (ref-aware, catches staged-only changes). `git reset --hard` is
+        unconditional because it is destructive even without a reliable cwd.
         Legacy `_has_unstaged_changes` is kept as a backward-compat alias.
         We patch BOTH so tests work regardless of which name is consulted.
         """
@@ -679,6 +680,13 @@ class TestGitCommandTargeting:
     def test_git_reset_hard_is_denied(self):
         """git reset --hard HEAD → deny."""
         result = plugins.check_blocked_commands(self._ctx("git reset --hard HEAD"))
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny"
+
+    def test_git_reset_hard_is_denied_without_repo_context(self):
+        """git reset --hard must deny even when cwd is unavailable."""
+        result = plugins.check_blocked_commands(self._ctx("git reset --hard HEAD~1"))
         assert result is not None
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         assert perm == "deny"
