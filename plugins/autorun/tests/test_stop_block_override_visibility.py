@@ -319,7 +319,7 @@ def test_pending_injection_set_when_consecutive_below_min_threshold(
     assert OVERRIDE_TASK_IGNORE in ctx3.pending_stop_injection
 
 
-# === Sanity: no regression of base injection content ===
+# === Validation: no regression of base injection content ===
 
 def test_base_injection_includes_task_subject_and_count(
     isolated_task_config, isolated_session, tmp_path,

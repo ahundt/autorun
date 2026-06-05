@@ -30,7 +30,7 @@ If this session was compacted, these rules STILL apply without exception:
 | TDD | Test-Driven Development |
 | DRY | Don't Repeat Yourself |
 | OODA | Observe-Orient-Decide-Act |
-| KISS | Keep It Simple, Stupid |
+| KISS | Keep It Simple |
 | YAGNI | You Aren't Gonna Need It |
 | SOLID | Single responsibility, Open/closed, Liskov, Interface segregation, Dependency inversion |
 | RAII | Resource Acquisition Is Initialization |

@@ -176,7 +176,7 @@ Added comprehensive tests in:
 3. ✅ Python string literals with command names
 4. ✅ Comments containing command names
 5. ❌ **Heredoc grep NOT matched** (FAILING - this is the bug)
-6. ✅ Actual commands DO match (sanity check)
+6. ✅ Actual commands DO match (validation check)
 7. ✅ Piped commands DO match (for _not_in_pipe to handle)
 
 ## Files Involved

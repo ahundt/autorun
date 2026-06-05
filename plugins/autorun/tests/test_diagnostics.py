@@ -330,7 +330,7 @@ class TestHealthChecker:
         if not DIAGNOSTICS_AVAILABLE:
             pytest.skip("Diagnostics not available")
 
-        def dummy_check():
+        def sample_check():
             return HealthCheck(
                 name="test_check",
                 status=HealthStatus.HEALTHY,
@@ -339,7 +339,7 @@ class TestHealthChecker:
                 duration=0.1
             )
 
-        self.health_checker.register_check("test_check", dummy_check, interval=300)
+        self.health_checker.register_check("test_check", sample_check, interval=300)
 
         # Should have registered the check
         assert len(self.health_checker.health_checks) == 1

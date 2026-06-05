@@ -31,7 +31,7 @@ If this session was compacted, these rules STILL apply without exception:
 | TDD | Test-Driven Development | Tests written first? Location specified? |
 | DRY | Don't Repeat Yourself | No code duplication? Reusing utilities? |
 | OODA | Observe-Orient-Decide-Act | Cycle followed before each decision? |
-| KISS | Keep It Simple, Stupid | Simplest solution that works? |
+| KISS | Keep It Simple | Simplest solution that works? |
 | YAGNI | You Aren't Gonna Need It | No premature optimization? |
 | SOLID | Single responsibility, Open/closed, Liskov, Interface segregation, Dependency inversion | Each principle addressed? |
 | RAII | Resource Acquisition Is Initialization | Resources properly managed? |

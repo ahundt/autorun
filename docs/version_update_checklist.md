@@ -105,7 +105,7 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 
 ### Gotcha 1: Third-party dependency version collision
 
-Blind `0.10.0` → `0.10.1` replace will change `pdfplumber>=0.10.0` to `pdfplumber>=0.10.1`. This is a **third-party library version**, not autorun's version.
+Unchecked `0.10.0` → `0.10.1` replace will change `pdfplumber>=0.10.0` to `pdfplumber>=0.10.1`. This is a **third-party library version**, not autorun's version.
 
 **Affected files:**
 - `plugins/pdf-extractor/pyproject.toml` — `pdfplumber>=0.10.0`
@@ -124,13 +124,13 @@ Blind `0.10.0` → `0.10.1` replace will change `pdfplumber>=0.10.0` to `pdfplum
 ("0.10.0", "v0.10.0", False),  # same version — no update
 ```
 
-Blind replace turns ALL three into `("0.10.1", "v0.10.1", ...)` — collapsing distinct test cases into duplicates. The "patch bump" case becomes identical to "same version."
+Unchecked replacement turns ALL three into `("0.10.1", "v0.10.1", ...)` — collapsing distinct test cases into duplicates. The "patch bump" case becomes identical to "same version."
 
 **Fix:** After bulk replace, manually verify parametrized test cases still have **distinct version pairs** that test the intended comparison (upgrade, downgrade, same).
 
 ### Gotcha 3: Test version list deduplication
 
-`test_install_pathways.py` has version lists like `["0.8.0", "0.9.0", "0.10.0", "0.10.1"]` for testing sort order. Blind replace turns this into `["0.8.0", "0.9.0", "0.10.1", "0.10.1"]` — duplicate entries that break the sort test.
+`test_install_pathways.py` has version lists like `["0.8.0", "0.9.0", "0.10.0", "0.10.1"]` for testing sort order. Unchecked replacement turns this into `["0.8.0", "0.9.0", "0.10.1", "0.10.1"]` — duplicate entries that break the sort test.
 
 **Fix:** After bulk replace, verify version lists in test files still have **all-distinct entries**.
 

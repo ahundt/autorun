@@ -92,7 +92,7 @@ try:
         SessionTimeoutError
     )
 except ImportError:
-    # If session manager can't be imported, provide dummy exports
+    # If session manager can't be imported, provide fallback exports
     # This helps with import errors in plugin environments
     class SessionStateError(Exception):
         pass

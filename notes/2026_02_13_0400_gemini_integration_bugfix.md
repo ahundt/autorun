@@ -13,7 +13,7 @@
 ### 1.2 Hook & Performance Issues
 - **Timeout Mismatch:** Gemini enforces a **5s timeout**; `hook_entry.py` assumes **9s**.
 - **PID Confusion:** `client.py` tracks the wrong PID (`hook_entry.py` instead of the Gemini session), causing the daemon to "forget" the session too early.
-- **Tool Blindness:** `grep_search`, `glob`, and `read_file` (Gemini-native tools) are not intercepted by the current hook matcher.
+- **Tool Coverage Gap:** `grep_search`, `glob`, and `read_file` (Gemini-native tools) are not intercepted by the current hook matcher.
 - **Overhead:** `uv run --quiet` in hook commands adds significant latency, increasing the risk of hitting the 5s timeout.
 
 ### 1.3 Installation Bugs (MAJOR)

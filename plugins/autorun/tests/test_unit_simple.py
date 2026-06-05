@@ -2576,7 +2576,7 @@ def test_write_todos_error_string_no_false_positive(tmp_path, monkeypatch):
 
     # The error string contains "created" but should NOT trigger handle_task_create
     # After A4 fix, the check should be "created successfully" not just "created"
-    # For now, verify the manager doesn't blindly create a task from error text
+    # For now, verify the manager doesn't treat error text as task creation
     manager.handle_task_create(FakeCtx())
     tasks = manager.tasks
     # If a task WAS created from this error string, it means the false-positive exists

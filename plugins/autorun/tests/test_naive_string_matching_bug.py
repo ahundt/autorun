@@ -139,7 +139,7 @@ EOF"""
             )
 
     def test_actual_commands_do_match(self):
-        """Verify that ACTUAL grep/head/tail commands DO match (sanity check)."""
+        """Verify that ACTUAL grep/head/tail commands DO match (validation check)."""
         actual_commands = [
             ("grep pattern file.txt", "grep"),
             ("head -50 file.txt", "head"),

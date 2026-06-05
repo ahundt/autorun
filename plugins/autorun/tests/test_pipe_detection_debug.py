@@ -98,7 +98,7 @@ class TestPipeDetectionRealWorld:
             )
 
     def test_direct_commands_blocked(self):
-        """Test that direct file operations ARE blocked (sanity check)."""
+        """Test that direct file operations ARE blocked (validation check)."""
         commands = [
             "grep pattern file.txt",
             "head -50 somefile",
