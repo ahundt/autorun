@@ -80,7 +80,7 @@ git ls-files sessions/ | grep -E '\.db$|\.db\.db$' | wc -l
 - `sessions/plugin_*.db` (multiple)
 - `sessions/test_*.db` (multiple)
 - `sessions/test_backend_*.db.db` (multiple)
-- `sessions/test_simpledbm_*.db.db` (multiple)
+- `sessions/test_dumbdbm_*.db.db` (multiple)
 
 ### 4. Git Commit Created
 **Commit Hash**: `7a3612d`

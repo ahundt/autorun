@@ -100,7 +100,7 @@ memory_*.db
 test_*.db
 debug_*.db
 *_fallback.db
-*_simple.db
+*_dumb.db
 high_freq_test.db
 multiprocess_*.db
 policy_switching*.db

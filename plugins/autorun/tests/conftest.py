@@ -307,8 +307,8 @@ def cleanup_test_sessions():
     cleaned = 0
     for session_id in _test_session_ids:
         # Direct file removal with known shelve suffixes (no glob — slow with 10K+ files)
-        for prefix in [session_id, f"test_backend_{session_id}", f"test_simpledbm_{session_id}",
-                       f"plugin_{session_id}.db", f"plugin_{session_id}_simple.db"]:
+        for prefix in [session_id, f"test_backend_{session_id}", f"test_dumbdbm_{session_id}",
+                       f"plugin_{session_id}.db", f"plugin_{session_id}_dumb.db"]:
             base = str(state_dir / prefix)
             for suffix in ["", ".db", ".dir", ".bak", ".dat"]:
                 try:
@@ -365,8 +365,8 @@ def unique_session_id():
         state_dir = Path.home() / ".claude" / "sessions"
         if state_dir.exists():
             for session_id in created_ids:
-                for prefix in [session_id, f"test_backend_{session_id}", f"test_simpledbm_{session_id}",
-                               f"plugin_{session_id}.db", f"plugin_{session_id}_simple.db"]:
+                for prefix in [session_id, f"test_backend_{session_id}", f"test_dumbdbm_{session_id}",
+                               f"plugin_{session_id}.db", f"plugin_{session_id}_dumb.db"]:
                     base = str(state_dir / prefix)
                     for suffix in ["", ".db", ".dir", ".bak", ".dat"]:
                         try:

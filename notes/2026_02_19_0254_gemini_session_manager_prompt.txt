@@ -15,7 +15,7 @@ These are written on ExitPlanMode (accepted/abandoned plans) and read on Session
 `session_manager.py` is ~420 lines implementing custom RAII locking around Python's `shelve`:
 - `SessionLock` class: uses `fcntl.flock(LOCK_EX | LOCK_NB)` with retry loop (100 retries × 0.01s = ~1s timeout)
 - `_lock_registry`: threading.Lock-guarded dict keyed by (pid, thread_id) for reentrant detection
-- `SessionBackendManager`: tests default/simpledbm/memory backends at startup
+- `SessionBackendManager`: tests default/dumbdbm/memory backends at startup
 - `session_state()` contextmanager: acquires flock → opens shelve → yields → closes shelve → releases flock
 
 **The critical bugs this causes:**
