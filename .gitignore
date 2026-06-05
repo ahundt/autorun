@@ -202,6 +202,7 @@ settings.local.json
 
 # Git worktrees (local development)
 .worktrees/
+.claude/worktrees/
 
 # Stashed files (originals before symlinking)
 .stashed/
@@ -226,4 +227,3 @@ conductor/tracks/
 /autorun
 /debug/latest
 metadata.json
-
