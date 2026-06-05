@@ -270,6 +270,27 @@ def get_stable_pid() -> int:
     return os.getppid()
 
 
+def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
+    """Add client-side runtime context and explicit CLI identity for the daemon.
+
+    The daemon runs in a separate process, so environment variables set by
+    `autorun --cli ...` in this short-lived client are not a reliable identity
+    channel. Persist the resolved cli_type into the JSON payload before sending.
+    """
+    payload = dict(payload or {})
+
+    # Inject context for daemon lifecycle management.
+    payload["_pid"] = get_stable_pid()
+    if "_cwd" not in payload:
+        payload["_cwd"] = os.getcwd()
+
+    from .config import detect_cli_type
+    cli_type = detect_cli_type(payload)
+    payload["cli_type"] = cli_type
+
+    return payload, cli_type
+
+
 def run_client() -> int:
     """Forward hook payload to daemon.
     
@@ -284,15 +305,7 @@ def run_client() -> int:
     except Exception:
         pass
 
-    # Inject context for daemon lifecycle management
-    # CRITICAL: Use stable PID to prevent premature daemon cleanup
-    payload["_pid"] = get_stable_pid()
-    if "_cwd" not in payload:
-        payload["_cwd"] = os.getcwd()   # Current working directory (don't overwrite if already set)
-
-    # Detect CLI type for schema enforcement
-    from .config import detect_cli_type
-    cli_type = detect_cli_type(payload)
+    payload, cli_type = prepare_payload_for_daemon(payload)
 
     # Lifecycle logging (DRY)
     hook_event = payload.get('hook_event_name', 'unknown')

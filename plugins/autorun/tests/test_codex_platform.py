@@ -53,6 +53,14 @@ def test_codex_detected_via_explicit_cli_type():
     assert detect_cli_type({"source": "codex"}) == "codex"
 
 
+def test_explicit_cli_env_overrides_ambient_platform_hints(monkeypatch):
+    from autorun.config import detect_cli_type
+
+    monkeypatch.setenv("AUTORUN_CLI_TYPE", "codex")
+    monkeypatch.setenv("GEMINI_CLI", "1")
+    assert detect_cli_type({"sessionId": "ambient-gemini-session"}) == "codex"
+
+
 def test_codex_detected_via_session_id_env(monkeypatch):
     for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
               "FORGE_CONFIG"):

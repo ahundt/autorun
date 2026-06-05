@@ -240,8 +240,6 @@ class DaemonManager:
         Returns (test_pids, production_pids) for diagnostics.
         Use this in tests instead of raw pgrep/kill calls.
         """
-        import warnings
-
         # Kill extras first, keep oldest
         test_pids = cls.get_test_daemon_pids()
         if len(test_pids) > max_test_daemons:
@@ -256,12 +254,6 @@ class DaemonManager:
             pytest.fail(
                 f"Too many test daemons ({len(test_pids)}): {test_pids}. "
                 f"Production daemons ({len(prod_pids)}): {prod_pids}."
-            )
-        elif len(test_pids) > 0:
-            warnings.warn(
-                f"Test daemons running ({len(test_pids)}): {test_pids}. "
-                f"Production daemons ({len(prod_pids)}): {prod_pids}.",
-                stacklevel=2
             )
 
         return test_pids, prod_pids

@@ -725,11 +725,12 @@ def detect_cli_type(payload: dict = None) -> str:
 
     Priority:
     1. Explicit 'cli_type' or 'source' parameter in payload
-    2. Platform-specific session-ID keys in payload
-    3. Platform-specific event names in payload
-    4. Platform-specific path hints in transcript_path
-    5. Environment variables (checked in _CLI_DETECTORS order)
-    6. Default: "claude"
+    2. Explicit AUTORUN_CLI_TYPE environment variable set by --cli
+    3. Platform-specific session-ID keys in payload
+    4. Platform-specific event names in payload
+    5. Platform-specific path hints in transcript_path
+    6. Environment variables (checked in _CLI_DETECTORS order)
+    7. Default: "claude"
 
     Returns:
         str: one of "claude", "gemini", "codex", "forgecode"
@@ -742,7 +743,12 @@ def detect_cli_type(payload: dict = None) -> str:
         if explicit in _KNOWN_CLI_NAMES:
             return explicit
 
-        # 2–4: Check each detector's payload signals in order
+    env_explicit = os.environ.get("AUTORUN_CLI_TYPE")
+    if env_explicit in _KNOWN_CLI_NAMES:
+        return env_explicit
+
+    if payload:
+        # 3–5: Check each detector's payload signals in order
         for name, session_keys, event_names, path_hints, _ in _CLI_DETECTORS:
             if session_keys and any(payload.get(k) for k in session_keys):
                 return name
@@ -753,12 +759,12 @@ def detect_cli_type(payload: dict = None) -> str:
                 if any(h in path for h in path_hints):
                     return name
 
-    # 5: Environment variables
+    # 6: Environment variables
     for name, _, _, _, env_vars in _CLI_DETECTORS:
         if env_vars and any(os.environ.get(k) for k in env_vars):
             return name
 
-    # 6: Default fallback
+    # 7: Default fallback
     return "claude"
 
 

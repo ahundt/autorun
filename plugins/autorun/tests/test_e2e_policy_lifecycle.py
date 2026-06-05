@@ -11,19 +11,15 @@ Daemon-path architecture note:
   Tests replicate this by creating a shared ThreadSafeDB (self._store) used by all
   EventContexts within a test, exactly mirroring daemon behavior.
 """
-import pytest
+import os
 import subprocess
 import sys
 import uuid
-import json
 from pathlib import Path
-from unittest.mock import Mock
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun.session_manager import session_state
-from autorun.config import CONFIG
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
 from conftest import register_test_session
@@ -221,12 +217,12 @@ class TestE2ECrossProcessPersistence:
     """Test that policies persist across separate process invocations (simulates real hook behavior)
 
     Architecture note:
-      Cross-process persistence requires a running daemon. In production, ALL hook subprocess
-      invocations connect to the SAME long-running daemon process via Unix socket, and the daemon
-      maintains a shared ThreadSafeDB in memory. Without a daemon, each subprocess has its own
-      isolated ThreadSafeDB (or ephemeral _state), so policy set in subprocess 1 is invisible
-      to subprocess 2. This class tests the canonical daemon scenario via subprocess simulation.
-      The xfail test below documents this limitation.
+      Cross-process persistence is provided by ThreadSafeDB over session_state(), not by
+      EventContext(store=None). In production, hook subprocesses normally connect to the daemon,
+      which uses ThreadSafeDB for fast in-memory access backed by the process-safe JSON session
+      store. This test exercises that persistent layer directly from two Python processes with
+      an isolated AUTORUN_TEST_STATE_DIR, so it is deterministic and does not depend on a live
+      daemon owned by the developer's current session.
     """
 
     def setup_method(self):
@@ -234,24 +230,13 @@ class TestE2ECrossProcessPersistence:
         self.session_id = f"test_e2e_xproc_{uuid.uuid4().hex[:8]}"
         register_test_session(self.session_id)
 
-    @pytest.mark.xfail(
-        reason=(
-            "Cross-process policy persistence requires a running daemon. "
-            "EventContext.__getattr__ with store=None reads only from _state (local, ephemeral) "
-            "or returns _DEFAULTS — it does NOT read from shelve. "
-            "EventContext.__setattr__ with store=None writes only to _state. "
-            "Without a shared ThreadSafeDB (i.e. no running daemon), policy set by subprocess 1 "
-            "is invisible to subprocess 2. "
-            "In production, both hook subprocesses connect to the SAME daemon socket, "
-            "and the daemon's shared ThreadSafeDB provides cross-request persistence. "
-            "Use TestE2EPolicyLifecycle (shared self._store = ThreadSafeDB()) to test "
-            "daemon-path policy lifecycle without a running daemon."
-        ),
-        strict=False,  # Allow it to pass if daemon happens to be running
-    )
-    def test_policy_persists_across_subprocess_hooks(self):
-        """E2E: Policy set in one subprocess persists to another (simulates hook invocations)"""
+    def test_policy_persists_across_subprocess_hooks(self, tmp_path):
+        """E2E: Policy set in one subprocess persists to another through session_state."""
         src_path = Path(__file__).parent.parent / "src"
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        env = os.environ.copy()
+        env["AUTORUN_TEST_STATE_DIR"] = str(state_dir)
 
         # Subprocess 1: Simulate UserPromptSubmit setting policy
         result1 = subprocess.run([
@@ -261,6 +246,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('{src_path}').resolve()))
 from autorun.core import EventContext
+from autorun.core import ThreadSafeDB
 from autorun import plugins
 
 # Canonical replacement for deleted claude_code_handler: plugins.app.dispatch(ctx)
@@ -270,11 +256,12 @@ ctx = EventContext(
     prompt="/ar:j",
     tool_name="",
     tool_input={{}},
+    store=ThreadSafeDB(),
 )
 plugins.app.dispatch(ctx)
 print("POLICY_SET")
 """
-        ], capture_output=True, text=True, timeout=10)
+        ], capture_output=True, text=True, timeout=10, env=env)
 
         assert result1.returncode == 0, f"Subprocess 1 failed: {result1.stderr}"
         assert "POLICY_SET" in result1.stdout
@@ -310,7 +297,7 @@ result = _pretooluse(ctx)
 decision = result["hookSpecificOutput"]["permissionDecision"]
 print(f"DECISION:{{decision}}")
 """
-        ], capture_output=True, text=True, timeout=10)
+        ], capture_output=True, text=True, timeout=10, env=env)
 
         assert result2.returncode == 0, f"Subprocess 2 failed: {result2.stderr}"
 

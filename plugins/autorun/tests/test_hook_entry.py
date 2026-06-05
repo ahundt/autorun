@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import importlib.util
+import types
 from pathlib import Path
 
 import pytest
@@ -336,6 +337,25 @@ class TestTryCliRobustness:
         signature = content[try_cli_idx:sig_end]
         assert "stdin_data" in signature, \
             "try_cli must accept stdin_data as parameter, not read stdin itself"
+
+    def test_fallback_forces_direct_mode(self, monkeypatch):
+        """Fallback must not recursively call the daemon after the CLI path fails."""
+        module = load_hook_entry_module()
+        fake_main_module = types.ModuleType("autorun.__main__")
+
+        def fake_main():
+            assert os.environ["AUTORUN_USE_DAEMON"] == "0"
+            return 0
+
+        fake_main_module.main = fake_main
+        monkeypatch.setitem(sys.modules, "autorun.__main__", fake_main_module)
+        monkeypatch.setattr(module, "get_plugin_root", lambda: str(PLUGIN_ROOT))
+        monkeypatch.delenv("AUTORUN_USE_DAEMON", raising=False)
+
+        with pytest.raises(SystemExit) as exc:
+            module.run_fallback()
+
+        assert exc.value.code == 0
 
     def test_hook_rm_blocked_no_stderr(self):
         """Full e2e: hook_entry.py blocks rm with exit code 2.

@@ -1,328 +1,218 @@
 #!/usr/bin/env python3
-"""
-Comprehensive test suite for RAII session manager
-Validates proper resource management, thread/process safety, and error handling
-"""
+"""Tests for the JSON/filelock-backed session state manager."""
 
-import sys
 import os
-import time
+import sys
 import threading
-from pathlib import Path
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+
+def _session_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+
+
+def _state_dir() -> Path:
+    return Path(os.environ["AUTORUN_TEST_STATE_DIR"])
+
 
 def test_raii_resource_management():
-    """Test RAII automatic resource acquisition and release"""
-    print("🔍 Testing RAII Resource Management...")
-
-    from autorun.session_manager import SessionLock
-
-    session_id = "raii_test_session"
-    lock_file = Path.home() / ".claude" / "sessions" / f".{session_id}.lock"
-    results = []
-
-    def raii_worker(worker_id):
-        try:
-            state_dir = Path.home() / ".claude" / "sessions"
-            with SessionLock(session_id, 5.0, state_dir) as lock_fd:
-                # Verify lock file exists and contains correct info
-                assert lock_file.exists(), f"Worker {worker_id}: Lock file should exist"
-
-                # Verify we can write to lock file descriptor
-                test_data = f"worker_{worker_id}_{time.time()}"
-                lock_fd.write(test_data)
-                lock_fd.flush()
-
-                # Simulate work
-                time.sleep(0.05)
-
-                results.append({
-                    'worker_id': worker_id,
-                    'lock_file_exists': lock_file.exists(),
-                    'test_data_written': True,
-                    'success': True
-                })
-
-        except Exception as e:
-            results.append({
-                'worker_id': worker_id,
-                'error': str(e),
-                'success': False
-            })
-
-    # Test sequential access
-    raii_worker(1)
-    raii_worker(2)
-
-    print(f"RAII test: {len(results)} workers completed")
-
-    success_count = sum(1 for r in results if r.get('success', False))
-    return success_count == len(results)
-
-def test_concurrent_raii_safety():
-    """Test concurrent RAII operations for race conditions"""
-    print("\n🔍 Testing Concurrent RAII Safety...")
-
+    """State writes persist when the context exits and the lock file remains observable."""
     from autorun.session_manager import session_state
 
-    session_id = "concurrent_raii_test"
+    session_id = _session_id("raii")
+    lock_file = _state_dir() / "daemon_state.json.lock"
+    state_file = _state_dir() / "daemon_state.json"
+
+    with session_state(session_id) as state:
+        state["worker_1"] = "complete"
+
+    assert state_file.exists()
+    assert lock_file.exists()
+
+    with session_state(session_id) as state:
+        assert state["worker_1"] == "complete"
+        state["worker_2"] = "complete"
+
+    with session_state(session_id) as state:
+        assert state["worker_1"] == "complete"
+        assert state["worker_2"] == "complete"
+
+
+def test_concurrent_raii_safety():
+    """Concurrent threads serialize through session_state without losing writes."""
+    from autorun.session_manager import session_state
+
+    session_id = _session_id("concurrent_raii")
     results = []
     errors = []
 
     def concurrent_worker(worker_id):
         try:
             with session_state(session_id) as state:
-                # Each thread gets exclusive access
                 state[f"worker_{worker_id}_start"] = time.time()
                 state[f"worker_{worker_id}_pid"] = os.getpid()
-
-                # Simulate concurrent work
                 time.sleep(0.02)
-
-                # Read back data
-                start_time = state[f"worker_{worker_id}_start"]
-                pid = state[f"worker_{worker_id}_pid"]
-
                 results.append({
-                    'worker_id': worker_id,
-                    'start_time': start_time,
-                    'pid': pid,
-                    'state_size': len(state),
-                    'success': True
+                    "worker_id": worker_id,
+                    "pid": state[f"worker_{worker_id}_pid"],
                 })
-
         except Exception as e:
             errors.append((worker_id, str(e)))
 
-    # Start multiple threads
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(concurrent_worker, i) for i in range(15)]
-
-        # Wait for completion
         for future in futures:
             future.result()
 
-    print(f"Concurrent RAII test: {len(results)} completed, {len(errors)} errors")
+    assert errors == []
+    assert len(results) == 15
 
-    # Verify no data corruption
-    for result in results:
-        if result['state_size'] < 2:  # Should have at least start_time and pid
-            print(f"❌ Worker {result['worker_id']} insufficient state size: {result['state_size']}")
-        else:
-            print(f"✅ Worker {result['worker_id']} state intact: {result['state_size']} items")
+    with session_state(session_id) as state:
+        for worker_id in range(15):
+            assert f"worker_{worker_id}_start" in state
+            assert state[f"worker_{worker_id}_pid"] == os.getpid()
 
-    return len(errors) == 0
 
 def test_timeout_behavior():
-    """Test timeout behavior with concrete error details"""
-    print("\n🔍 Testing Timeout Behavior...")
+    """A waiter with a short timeout fails while another thread holds the state lock."""
+    from autorun.session_manager import SessionTimeoutError, session_state
 
-    from autorun.session_manager import SessionTimeoutError
-
-    session_id = "timeout_test"
+    session_id = _session_id("timeout")
     results = []
 
     def blocking_worker():
-        """Worker that holds lock for specific duration"""
         try:
-            from autorun.session_manager import SessionLock
-            state_dir = Path.home() / ".claude" / "sessions"
-            with SessionLock(session_id, 10.0, state_dir):
-                time.sleep(0.3)  # Hold lock for 300ms
+            with session_state(session_id, timeout=2.0) as state:
+                state["blocking_worker"] = "holding"
+                time.sleep(0.6)
                 results.append("blocking_completed")
         except Exception as e:
             results.append(f"blocking_error: {e}")
 
     def timeout_worker():
-        """Worker that should timeout"""
         try:
-            from autorun.session_manager import SessionLock
-            time.sleep(0.05)  # Start after blocking worker
-            state_dir = Path.home() / ".claude" / "sessions"
-            with SessionLock(session_id, 0.1, state_dir):
+            time.sleep(0.05)
+            with session_state(session_id, timeout=0.1) as state:
+                state["timeout_worker"] = "should_not_reach"
                 results.append("timeout_unexpected_success")
-        except SessionTimeoutError as e:
-            results.append(f"timeout_expected: {e}")
+        except SessionTimeoutError:
+            results.append("timeout_expected")
         except Exception as e:
             results.append(f"timeout_unexpected_error: {e}")
 
     def quick_worker():
-        """Worker that should succeed after lock is released"""
         try:
-            from autorun.session_manager import SessionLock
-            time.sleep(0.4)  # Start after blocking worker finishes
-            state_dir = Path.home() / ".claude" / "sessions"
-            with SessionLock(session_id, 5.0, state_dir):
+            time.sleep(0.8)
+            with session_state(session_id, timeout=1.0) as state:
+                state["quick_worker"] = "success"
                 results.append("quick_success")
         except Exception as e:
             results.append(f"quick_error: {e}")
 
-    # Start workers in sequence
-    blocking_thread = threading.Thread(target=blocking_worker)
-    timeout_thread = threading.Thread(target=timeout_worker)
-    quick_thread = threading.Thread(target=quick_worker)
+    threads = [
+        threading.Thread(target=blocking_worker),
+        threading.Thread(target=timeout_worker),
+        threading.Thread(target=quick_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
-    blocking_thread.start()
-    timeout_thread.start()
-    quick_thread.start()
+    assert "blocking_completed" in results
+    assert "timeout_expected" in results
+    assert "quick_success" in results
+    assert not any("unexpected" in result or "error" in result for result in results)
 
-    blocking_thread.join()
-    timeout_thread.join()
-    quick_thread.join()
-
-    print(f"Timeout test results: {len(results)} operations")
-
-    # Verify expected behavior
-    expected_patterns = ["blocking_completed", "timeout_expected", "quick_success"]
-    found_patterns = sum(1 for pattern in expected_patterns
-                         if any(pattern in result for result in results))
-
-    return found_patterns == len(expected_patterns)
 
 def test_shared_access_isolation():
-    """Test shared access scenarios with proper isolation"""
-    print("\n🔍 Testing Shared Access Isolation...")
-
+    """The shared-session wrapper uses the same isolated test state backend."""
     from autorun.session_manager import session_state, shared_session_state
 
-    session_id = "shared_access_test"
+    session_id = _session_id("shared_access")
     results = []
+    errors = []
 
     def exclusive_worker():
-        """Worker with exclusive access"""
         try:
             with session_state(session_id, timeout=2.0) as state:
                 state["exclusive_data"] = "exclusive_value"
                 state["exclusive_timestamp"] = time.time()
-                results.append({
-                    'type': 'exclusive',
-                    'exclusive_data': state.get("exclusive_data"),
-                    'shared_count': state.get("_shared_access_count", 0),
-                    'success': True
-                })
+                results.append({"type": "exclusive", "success": True})
         except Exception as e:
-            results.append({
-                'type': 'exclusive',
-                'error': str(e),
-                'success': False
-            })
+            errors.append(("exclusive", str(e)))
 
     def shared_worker(worker_id):
-        """Worker with shared access"""
         try:
-            with shared_session_state(session_id, timeout=1.0) as state:
-                exclusive_data = state.get("exclusive_data")
-                shared_count = state.get("_shared_access_count", 0)
-
+            with shared_session_state(session_id, timeout=2.0) as state:
                 results.append({
-                    'type': 'shared',
-                    'worker_id': worker_id,
-                    'exclusive_data': exclusive_data,
-                    'shared_count': shared_count,
-                    'success': True
+                    "type": "shared",
+                    "worker_id": worker_id,
+                    "exclusive_data": state.get("exclusive_data"),
+                    "success": True,
                 })
         except Exception as e:
-            results.append({
-                'type': 'shared',
-                'worker_id': worker_id,
-                'error': str(e),
-                'success': False
-            })
+            errors.append((f"shared_{worker_id}", str(e)))
 
-    # Start workers
     exclusive_thread = threading.Thread(target=exclusive_worker)
     exclusive_thread.start()
-
-    # Small delay to let exclusive worker establish lock
-    time.sleep(0.01)
-
-    # Start shared workers
-    shared_threads = []
-    for i in range(3):
-        thread = threading.Thread(target=shared_worker, args=(i,))
-        shared_threads.append(thread)
-        thread.start()
-
-    # Wait for completion
     exclusive_thread.join()
+
+    shared_threads = [threading.Thread(target=shared_worker, args=(i,)) for i in range(3)]
+    for thread in shared_threads:
+        thread.start()
     for thread in shared_threads:
         thread.join()
 
-    print(f"Shared access test: {len(results)} results")
+    assert errors == []
+    assert len(results) == 4
+    assert sum(1 for r in results if r["type"] == "exclusive") == 1
+    shared_results = [r for r in results if r["type"] == "shared"]
+    assert len(shared_results) == 3
+    assert all(r["exclusive_data"] == "exclusive_value" for r in shared_results)
 
-    success_count = sum(1 for r in results if r.get('success', False))
-    return success_count == len(results)
 
 def test_error_handling_robustness():
-    """Test robust error handling with concrete error details"""
-    print("\n🔍 Testing Error Handling Robustness...")
+    """Invalid session IDs fail before creating ambiguous state prefixes."""
+    import pytest
 
-    from autorun.session_manager import session_state, SessionStateError, SessionTimeoutError
+    from autorun.session_manager import SessionStateError, session_state
 
-    results = []
+    for invalid_session_id in ("", "   ", None):
+        with pytest.raises(SessionStateError):
+            with session_state(invalid_session_id, timeout=1.0):
+                pass
 
-    # Test invalid session_id
-    try:
-        with session_state("", timeout=1.0):
-            results.append("empty_session_id_unexpected_success")
-    except SessionStateError as e:
-        results.append(f"empty_session_id_expected_error: {e}")
-    except Exception as e:
-        results.append(f"empty_session_id_unexpected_error: {e}")
-
-    # Test None session_id
-    try:
-        with session_state(None, timeout=1.0):
-            results.append("none_session_id_unexpected_success")
-    except SessionStateError as e:
-        results.append(f"none_session_id_expected_error: {e}")
-    except Exception as e:
-        results.append(f"none_session_id_unexpected_error: {e}")
-
-    # Test extremely short timeout
-    try:
-        with session_state("short_timeout_test", timeout=0.001):
-            results.append("short_timeout_unexpected_success")
-    except (SessionTimeoutError, Exception) as e:
-        results.append(f"short_timeout_expected_error: {type(e).__name__}")
-
-    print(f"Error handling test: {len(results)} test cases")
-    assert len(results) > 0, "Should have some expected errors"
 
 def test_dry_principles():
-    """Test DRY principles and avoid code duplication"""
-    print("\n🔍 Testing DRY Principles...")
+    """Convenience wrappers share the same session manager and state file."""
+    from autorun.session_manager import get_session_manager, session_state, shared_session_state
 
-    from autorun.session_manager import session_state, shared_session_state, get_session_manager
-
-    # Test singleton pattern
+    session_id = _session_id("dry")
     manager1 = get_session_manager()
     manager2 = get_session_manager()
-    same_manager = manager1 is manager2
 
-    # Test convenience wrappers work
-    try:
-        with session_state("dry_test") as state1:
-            state1["test"] = "value1"
+    assert manager1 is manager2
 
-        with shared_session_state("dry_test") as state2:
-            state2["test"] = "value2"
+    with session_state(session_id) as state:
+        state["test"] = "value1"
 
-        results = "DRY principles working"
-    except Exception as e:
-        results = f"DRY principles failed: {e}"
+    with shared_session_state(session_id) as state:
+        assert state["test"] == "value1"
+        state["test"] = "value2"
 
-    print(f"DRY principles test: {results}")
-    return same_manager and "working" in results
+    with session_state(session_id) as state:
+        assert state["test"] == "value2"
+
 
 def run_comprehensive_raii_tests():
-    """Run comprehensive RAII session manager tests"""
-    print("🚀 Starting Comprehensive RAII Session Manager Tests")
-    print("=" * 70)
-
+    """Run this module as a script for manual diagnostics."""
     tests = [
         ("RAII Resource Management", test_raii_resource_management),
         ("Concurrent RAII Safety", test_concurrent_raii_safety),
@@ -332,49 +222,13 @@ def run_comprehensive_raii_tests():
         ("DRY Principles", test_dry_principles),
     ]
 
-    results = {}
-
     for test_name, test_func in tests:
-        try:
-            print(f"\nRunning {test_name} test...")
-            start_time = time.time()
-            result = test_func()
-            duration = time.time() - start_time
-            results[test_name] = result
+        print(f"Running {test_name}...")
+        test_func()
+        print(f"{test_name}: PASSED")
 
-            if result:
-                print(f"✅ {test_name}: PASSED ({duration:.3f}s)")
-            else:
-                print(f"❌ {test_name}: FAILED ({duration:.3f}s)")
+    return True
 
-        except Exception as e:
-            print(f"❌ {test_name}: ERROR - {e}")
-            results[test_name] = False
-
-    print("\n" + "=" * 70)
-    print("RAII SESSION MANAGER TEST SUMMARY")
-    print("=" * 70)
-
-    passed = sum(1 for result in results.values() if result)
-    total = len(results)
-
-    for test_name, result in results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{test_name}: {status}")
-
-    print(f"\nOverall: {passed}/{total} tests passed")
-
-    if passed == total:
-        print("🎉 ALL RAII TESTS PASSED!")
-        print("✅ Proper RAII resource management confirmed")
-        print("✅ Thread and process safety validated")
-        print("✅ Error handling is robust and concrete")
-        print("✅ DRY principles followed correctly")
-        print("✅ Context managers work automatically")
-    else:
-        print("⚠️ Some RAII tests failed - review implementation")
-
-    return passed == total
 
 if __name__ == "__main__":
     run_comprehensive_raii_tests()

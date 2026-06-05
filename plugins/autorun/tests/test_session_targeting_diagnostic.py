@@ -48,6 +48,7 @@ def test_session_targeting_root_cause_analysis():
                                        capture_output=True, text=True, timeout=5)
         print(f"   Command: tmux send-keys -t {test_session} echo manual-test C-m")
         print(f"   Return code: {manual_result.returncode}")
+        assert manual_result.returncode == 0, manual_result.stderr
 
         time.sleep(0.2)
         manual_capture = subprocess.run(['tmux', 'capture-pane', '-t', test_session, '-p'],
@@ -139,10 +140,9 @@ def test_session_targeting_root_cause_analysis():
                 print("2. Extract socket path from TMUX environment variable")
                 print("3. Use tmux -S <socket> for all subprocess tmux commands")
                 print("="*80)
-                return False  # Test indicates problem exists
+                pytest.fail("Python tmux targeting failed while explicit socket targeting worked")
             elif socket_success and target_success:
                 print("   ✅ Both socket and regular commands work")
-                return True  # Test passes
         else:
             print("   No TMUX environment variable found")
 
@@ -160,7 +160,7 @@ def test_session_targeting_root_cause_analysis():
         else:
             print("   ❌ Unknown issue - both manual and Python commands failed")
 
-        return target_success
+        assert target_success, "Python tmux utility did not target the requested session"
 
     finally:
         # Clean up
@@ -169,8 +169,5 @@ def test_session_targeting_root_cause_analysis():
 
 
 if __name__ == '__main__':
-    success = test_session_targeting_root_cause_analysis()
-    if not success:
-        pytest.fail("Session targeting diagnostic test revealed critical issues")
-    else:
-        print("\n✅ Session targeting diagnostic test passed")
+    test_session_targeting_root_cause_analysis()
+    print("\n✅ Session targeting diagnostic test passed")

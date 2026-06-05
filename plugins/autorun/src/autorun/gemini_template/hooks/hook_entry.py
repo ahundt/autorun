@@ -596,6 +596,11 @@ def run_fallback() -> None:
         sys.path.insert(0, src_str)
 
     try:
+        # The primary CLI path already tried daemon mode. Fallback must be an
+        # actual in-process dispatch path, otherwise a daemon timeout can repeat
+        # and exceed the outer hook process timeout.
+        os.environ["AUTORUN_USE_DAEMON"] = "0"
+
         from autorun.__main__ import main as autorun_main
 
         exit_code = autorun_main()

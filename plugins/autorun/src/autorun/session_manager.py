@@ -168,6 +168,9 @@ class _JSONStore:
 
     @contextlib.contextmanager
     def session(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT):
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise SessionStateError("session_id must be a non-empty string")
+
         # Reentrant support: same thread already holds the lock — share _data, defer save
         if getattr(self._held_by, 'active', False):
             proxy = _StateProxy(self._data, session_id, self)
