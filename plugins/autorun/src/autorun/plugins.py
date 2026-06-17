@@ -40,10 +40,9 @@ from .core import app, EventContext, logger, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
-    TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS, TASK_COMBINED_TOOLS,
-    ALL_TASK_TOOLS,
     PATTERN_DISPLAY_MAX_LEN,
 )
+from .platforms import is_task_progress_tool, is_task_tool, platform_for
 from .session_manager import session_state
 from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
 from .command_detection import command_matches_pattern
@@ -55,6 +54,16 @@ from . import plan_export  # noqa: F401
 # Import task_lifecycle and register hooks (if enabled)
 from . import task_lifecycle  # noqa: F401
 task_lifecycle.register_hooks(app)  # Register task lifecycle hooks
+
+
+def _task_cli_hint(ctx: EventContext) -> str | None:
+    """Return explicit CLI hint for task-tool classification, if one was supplied."""
+    if hasattr(ctx, "_cli_type") and not getattr(ctx, "_cli_type_explicit", False):
+        return None
+    raw_cli_type = getattr(ctx, "_cli_type", None)
+    if raw_cli_type is not None:
+        return raw_cli_type
+    return getattr(ctx, "cli_type", None)
 
 
 # ============================================================================
@@ -974,11 +983,111 @@ def _get_task_creation_reminder(ctx: EventContext) -> Optional[str]:
     Used by both detect_plan_approval (inline append) and
     remind_until_tasks_created (chain notification stacking).
     """
+    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+        if ctx.plan_awaiting_execution_tasks:
+            return (
+                "\nEXECUTION TASKS REQUIRED: plan accepted, no implementation checklist exists. "
+                "Your next action must be {task_progress} with a plan list that tracks concrete work: "
+                "1. [TDD] Step N: write tests for [step] "
+                "2. [EXEC] Step N: [implementation step] "
+                "3. keep exactly one item in_progress, use pending for later items, and completed for finished items. "
+                "Do not write code until the checklist exists."
+            )
+        if ctx.plan_awaiting_planning_tasks:
+            return (
+                "\nPLANNING TASKS REQUIRED: a plan is active with no checklist tracking it. "
+                "Your next action must be {task_progress} with a plan list of concrete planning steps: "
+                "1. [PLANNING] Step N: [name] "
+                "2. keep exactly one item in_progress, use pending for later items, and completed for finished items. "
+                "Do not call any other tool until the checklist exists."
+            )
     if ctx.plan_awaiting_execution_tasks:
         return CONFIG["plan_execution_task_reminder"]
     elif ctx.plan_awaiting_planning_tasks:
         return CONFIG["plan_planning_task_reminder"]
     return None
+
+
+def _get_tdd_scaffolding_message(ctx: EventContext) -> str:
+    """Return platform-native TDD scaffolding reminder text."""
+    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+        return (
+            "\nTDD SCAFFOLDING REQUIRED: use {task_progress} before writing implementation code. "
+            "The plan list must include one [TDD] item and one [EXEC] item per implementation step, "
+            "with each [EXEC] item pending until its matching [TDD] item is completed."
+        )
+    return CONFIG.get("tdd_scaffolding_message", "")
+
+
+def _task_staleness_instructions(ctx: EventContext) -> str:
+    """Return native task/checklist instructions for staleness enforcement."""
+    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+        if ctx.plan_awaiting_planning_tasks:
+            return (
+                "Call {task_progress} now with a plan list of [PLANNING] steps. "
+                "Use statuses pending|in_progress|completed and keep exactly one item in_progress. "
+                "Do not call any other tool until the checklist exists."
+            )
+        if ctx.plan_awaiting_execution_tasks:
+            return (
+                "Call {task_progress} now with [TDD] and [EXEC] checklist items for the accepted plan. "
+                "Keep exactly one item in_progress and leave future work pending. "
+                "Do not write code until the checklist exists."
+            )
+        return (
+            "Call {task_progress} now with the current checklist, updating statuses to "
+            "pending|in_progress|completed and adding any newly discovered concrete work."
+        )
+
+    if ctx.plan_awaiting_planning_tasks:
+        return (
+            "You must create planning tasks: "
+            "1. {task_create}({task_title}=\"[PLANNING] Step N: [name]\") "
+            "2. {task_update}({task_id_param}=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
+            "3. {task_list} -- verify all tasks visible. "
+            "Do not call any other tool until planning tasks exist."
+        )
+    if ctx.plan_awaiting_execution_tasks:
+        return (
+            "You must create execution tasks: "
+            "1. {task_create}({task_title}=\"[TDD] Step N: Write tests for [step]\") "
+            "2. {task_create}({task_title}=\"[EXEC] Step N: [step description]\") "
+            "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
+            "4. {task_list} -- verify all tasks visible. "
+            "Do not write code until execution tasks are created and wired."
+        )
+    return (
+        "Call one of these Task tools: "
+        "1. {task_list} -- review current tasks "
+        "2. {task_update}({task_id_param}=N, status=\"in_progress\"|\"completed\") -- update status "
+        "3. {task_create}({task_title}=\"...\", description=\"...\") -- add newly discovered work "
+        "4. {task_update}({task_id_param}=N, addBlockedBy=[M]) -- update dependencies if order changed."
+    )
+
+
+def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: bool = False, no_tasks: bool = False) -> str:
+    """Return the PostToolUse staleness reminder in the platform's native terms."""
+    if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+        if no_tasks:
+            return (
+                f"\nNO CHECKLIST EXISTS: {threshold} tool calls with zero checklist items tracking your work. "
+                "Your next action must be {task_progress} with one concrete item per step; "
+                "set the current step to in_progress and later steps to pending. "
+                "Do not call any other tool until the checklist exists. Disable: /ar:tasks off"
+            )
+        level = "TASK UPDATE OVERDUE" if overdue else "TASK UPDATE REQUIRED"
+        return (
+            f"\n{level}: {threshold} tool calls without a checklist update. "
+            "Your next action must be {task_progress}: update the plan list with current statuses "
+            "and any newly discovered concrete work. Your next non-task tool call will be blocked. "
+            "Disable: /ar:tasks off"
+        )
+
+    if no_tasks:
+        return CONFIG["task_staleness_no_tasks_message"].format(threshold=threshold)
+    if overdue:
+        return CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
+    return CONFIG["task_staleness_message"].format(threshold=threshold)
 
 @app.on("PostToolUse")
 def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
@@ -1042,7 +1151,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     # Fix 8: Configurable TDD scaffolding
     plan_cfg = task_lifecycle.PlanNotifyConfig.load()
     if plan_cfg.tdd_scaffolding:
-        injection += CONFIG.get("tdd_scaffolding_message", "")
+        injection += _get_tdd_scaffolding_message(ctx)
     if plan_cfg.task_update_enforcement:
         threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
         ctx.tool_calls_since_task_update = max(0, threshold - 2)
@@ -1182,8 +1291,8 @@ def is_task_update_call(ctx: EventContext) -> bool:
     1. Direct task tools (TaskCreate, tracker_create_task, etc.)
     2. File operations on Conductor plan files (plan.md).
     """
-    # 1. Direct task tools (Create or Update only)
-    if ctx.tool_name in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_COMBINED_TOOLS):
+    # 1. Native task/checklist progress tools (Create/Update/Bulk/Plan)
+    if is_task_progress_tool(_task_cli_hint(ctx), ctx.tool_name):
         return True
 
     # 2. Conductor plan updates (Gemini-native aggregation)
@@ -1201,7 +1310,7 @@ def _ghost_marker_regex() -> re.Pattern:
     """Cached regex derived from the CONFIG marker template (single source of truth)."""
     template = CONFIG["ghost_clear_marker_template"]
     prefix, suffix = template.split("{id}")
-    return re.compile(re.escape(prefix) + r"(\d+)" + re.escape(suffix))
+    return re.compile(re.escape(prefix) + r"([A-Za-z0-9_.-]+)" + re.escape(suffix))
 
 
 @app.on("PostToolUse")
@@ -1217,7 +1326,7 @@ def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
     # Ghost scenario: AI keeps calling Task tools (TaskUpdate → "not found", TaskList).
     # Resetting the counter on those calls prevents the threshold from ever being
     # reached. Only reset on non-task tool calls (real work: Read, Edit, Bash, etc.).
-    if ctx.tool_name in ALL_TASK_TOOLS:
+    if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
         return None
     try:
         manager = task_lifecycle.TaskLifecycle(ctx=ctx)
@@ -1285,7 +1394,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         return None
 
     # Always let Task tools through and reset all counters
-    if ctx.tool_name in ALL_TASK_TOOLS:
+    if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
         ctx.task_staleness_enforce_next = False
         ctx.task_staleness_reminder_count = 0
         ctx.plan_task_reminder_count = 0
@@ -1303,33 +1412,8 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
 
-    # Build context-aware instructions based on active planning/execution flags.
-    # The AI needs to know exactly what to do, with the right prefixes and wiring.
-    if ctx.plan_awaiting_planning_tasks:
-        instructions = (
-            "You must create planning tasks: "
-            "1. {task_create}({task_title}=\"[PLANNING] Step N: [name]\") "
-            "2. {task_update}({task_id_param}=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
-            "3. {task_list} -- verify all tasks visible. "
-            "Do not call any other tool until planning tasks exist."
-        )
-    elif ctx.plan_awaiting_execution_tasks:
-        instructions = (
-            "You must create execution tasks: "
-            "1. {task_create}({task_title}=\"[TDD] Step N: Write tests for [step]\") "
-            "2. {task_create}({task_title}=\"[EXEC] Step N: [step description]\") "
-            "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
-            "4. {task_list} -- verify all tasks visible. "
-            "Do not write code until execution tasks are created and wired."
-        )
-    else:
-        instructions = (
-            "Call one of these Task tools: "
-            "1. {task_list} -- review current tasks "
-            "2. {task_update}({task_id_param}=N, status=\"in_progress\"|\"completed\") -- update status "
-            "3. {task_create}({task_title}=\"...\", description=\"...\") -- add newly discovered work "
-            "4. {task_update}({task_id_param}=N, addBlockedBy=[M]) -- update dependencies if order changed."
-        )
+    # Build context-aware instructions based on the platform's native task surface.
+    instructions = _task_staleness_instructions(ctx)
 
     if reminder_count <= 1:
         # First offense: WARN — allow the tool but inject context-aware reminder
@@ -1406,9 +1490,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
                 reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
                 ctx.task_staleness_reminder_count = reminder_count
                 ctx.task_staleness_enforce_next = True
-                msg = CONFIG["task_staleness_no_tasks_message"].format(
-                    threshold=no_tasks_threshold
-                )
+                msg = _task_staleness_notification(ctx, no_tasks_threshold, no_tasks=True)
                 ctx.add_chain_notification(msg, channel="both")
                 return None
         except Exception:
@@ -1429,10 +1511,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
 
     # 2-level escalation: REQUIRED (1st) then OVERDUE (2nd+). No 3rd level —
     # the PreToolUse deny at step 2 IS the enforcement (warn-then-deny).
-    if reminder_count >= 2:
-        msg = CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
-    else:
-        msg = CONFIG["task_staleness_message"].format(threshold=threshold)
+    msg = _task_staleness_notification(ctx, threshold, overdue=reminder_count >= 2)
 
     # Also send via systemMessage as secondary channel (may reach AI if #25987 is fixed)
     ctx.add_chain_notification(msg, channel="both")
@@ -1464,8 +1543,8 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
     if not awaiting_planning and not awaiting_execution:
         return None
 
-    # TaskCreate clears the active flag and resets escalation
-    if ctx.tool_name in TASK_CREATE_TOOLS:
+    # Native task/checklist progress clears the active flag and resets escalation.
+    if is_task_progress_tool(_task_cli_hint(ctx), ctx.tool_name):
         if awaiting_planning:
             ctx.plan_awaiting_planning_tasks = False
         if awaiting_execution:

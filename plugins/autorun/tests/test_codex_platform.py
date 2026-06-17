@@ -1,13 +1,13 @@
 """Tests for Codex CLI platform support (v0.11.0 / C3).
 
-Codex shares Claude Code's hook contract: same event names, same strict
-JSON schema (additionalProperties:false), same payload shape. The
+Codex shares Claude Code's hook contract for events and file/shell tools:
+same event names, same strict JSON schema (additionalProperties:false). The
 divergences captured here:
   - schema_type: still "strict" but no exit-2 workaround required
   - additionalContext NOT dropped (Bug #18534 is Claude-only)
   - env vars CODEX_SESSION_ID + CODEX_PROJECT_DIR (no env'd session id in 0.133;
     we still test "set the env var → detect codex" so future versions stay covered)
-  - tool_names: identical to Claude (PascalCase)
+  - task progress: native update_plan checklist, not Claude TaskCreate/TaskUpdate
 """
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ def test_codex_get_cli_event_name_identity():
 # ─── Tool names (same as Claude) ──────────────────────────────────────────────
 
 def test_codex_tool_names_match_claude():
-    """Codex's API tool names match Claude (PascalCase: Grep, Glob, Read, …)."""
+    """Codex file/shell API tool names match Claude (PascalCase)."""
     codex_tools = PLATFORMS["codex"].tool_names
     claude_tools = PLATFORMS["claude"].tool_names
     for key in ("grep", "glob", "read", "write", "edit", "bash"):
@@ -115,11 +115,21 @@ def test_codex_tool_names_match_claude():
         )
 
 
+def test_codex_task_progress_uses_update_plan():
+    """Codex exposes task/checklist progress as update_plan, not Claude task tools."""
+    p = PLATFORMS["codex"]
+    assert p.task_management_style == "plan_checklist"
+    assert p.task_plan_tools == frozenset({"update_plan"})
+    assert p.tool_names["task_progress"] == "update_plan"
+    assert "TaskCreate" not in p.task_create_tools
+
+
 def test_codex_get_tool_names():
     from autorun.core import get_tool_names
     tools = get_tool_names("codex")
     assert tools["grep"] == "Grep"
     assert tools["bash"] == "Bash"
+    assert tools["task_progress"] == "update_plan"
 
 
 # ─── format_suggestion ────────────────────────────────────────────────────────

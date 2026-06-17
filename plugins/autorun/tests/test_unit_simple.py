@@ -600,6 +600,8 @@ def _make_post_tool_ctx(
     task_staleness_enabled: bool = True,
     tool_calls_since_task_update: int = 0,
     task_staleness_threshold: _Optional[int] = None,
+    cli_type: str = "claude",
+    tool_input: dict | None = None,
 ) -> EventContext:
     """Build PostToolUse EventContext for staleness tests."""
     ctx = EventContext(
@@ -607,9 +609,9 @@ def _make_post_tool_ctx(
         event="PostToolUse",
         prompt="",
         tool_name=tool_name,
-        tool_input={},
+        tool_input=tool_input or {},
         store=ThreadSafeDB(),
-        cli_type="claude",
+        cli_type=cli_type,
     )
     ctx.autorun_active = autorun_active
     ctx.task_staleness_enabled = task_staleness_enabled
@@ -663,6 +665,19 @@ def test_staleness_counter_resets_on_task_update():
     """TaskUpdate call resets the counter."""
     ctx = _make_post_tool_ctx("TaskUpdate", "test-stale-reset-update",
                                tool_calls_since_task_update=20)
+    plugins.app.dispatch(ctx)
+    assert (ctx.tool_calls_since_task_update or 0) == 0
+
+
+def test_staleness_counter_resets_on_codex_update_plan():
+    """Codex update_plan is native task/checklist progress and resets staleness."""
+    ctx = _make_post_tool_ctx(
+        "update_plan",
+        "test-stale-reset-codex-plan",
+        cli_type="codex",
+        tool_calls_since_task_update=20,
+        tool_input={"plan": [{"step": "Track the native checklist", "status": "in_progress"}]},
+    )
     plugins.app.dispatch(ctx)
     assert (ctx.tool_calls_since_task_update or 0) == 0
 
@@ -745,6 +760,8 @@ def _make_pre_tool_ctx(
     *,
     task_staleness_enforce_next: bool = False,
     task_staleness_reminder_count: int = 0,
+    cli_type: str = "claude",
+    tool_input: dict | None = None,
 ) -> EventContext:
     """Build PreToolUse EventContext for enforcement tests."""
     ctx = EventContext(
@@ -752,9 +769,9 @@ def _make_pre_tool_ctx(
         event="PreToolUse",
         prompt="",
         tool_name=tool_name,
-        tool_input={},
+        tool_input=tool_input or {},
         store=ThreadSafeDB(),
-        cli_type="claude",
+        cli_type=cli_type,
     )
     ctx.task_staleness_enforce_next = task_staleness_enforce_next
     ctx.task_staleness_reminder_count = task_staleness_reminder_count
@@ -845,6 +862,57 @@ def test_enforce_staleness_allows_task_tools():
         assert ctx.task_staleness_enforce_next is False, (
             f"enforce_next should clear after {tool}. Got: {ctx.task_staleness_enforce_next}"
         )
+
+
+def test_enforce_staleness_allows_codex_update_plan():
+    """Codex update_plan passes through enforcement and resets counters."""
+    ctx = _make_pre_tool_ctx(
+        "update_plan", "test-enforce-codex-plan",
+        cli_type="codex",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=5,
+        tool_input={"plan": [{"step": "Update native checklist", "status": "in_progress"}]},
+    )
+    result = plugins.app.dispatch(ctx)
+    if result:
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
+        assert perm != "deny"
+    assert ctx.task_staleness_reminder_count == 0
+    assert ctx.task_staleness_enforce_next is False
+
+
+def test_codex_staleness_warning_mentions_update_plan():
+    """Codex staleness instructions must name update_plan, not Claude TaskCreate."""
+    ctx = _make_pre_tool_ctx(
+        "Read", "test-enforce-codex-warning",
+        cli_type="codex",
+        task_staleness_enforce_next=True,
+        task_staleness_reminder_count=1,
+    )
+    result = plugins.app.dispatch(ctx)
+    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+    assert "update_plan" in reason
+    assert "TaskCreate" not in reason
+
+
+def test_task_cli_hint_ignores_autodetected_fallback():
+    """Task dispatch should distinguish explicit CLI from ambient auto-detect."""
+    implicit = EventContext(
+        session_id="test-implicit-cli-task-hint",
+        event="PostToolUse",
+        tool_name="write_todos",
+        tool_input={},
+        store=ThreadSafeDB(),
+    )
+    # Force the property to auto-detect and fill _cli_type.
+    assert implicit.cli_type in {"claude", "gemini", "codex", "forgecode"}
+    assert plugins._task_cli_hint(implicit) is None
+
+    explicit = _make_post_tool_ctx(
+        "TaskCreate", "test-explicit-codex-task-hint", cli_type="codex"
+    )
+    assert plugins._task_cli_hint(explicit) == "codex"
+    assert plugins.is_task_update_call(explicit) is False
 
 
 def test_enforce_staleness_full_lifecycle():
@@ -1134,6 +1202,29 @@ def test_planning_reminder_clears_on_task_create():
     assert "PLANNING TASKS REQUIRED" not in str(result)
 
 
+def test_planning_reminder_clears_on_codex_update_plan():
+    """Codex update_plan clears plan-task reminders like native task creation."""
+    sid = "test-planning-clears-codex-plan"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store, cli_type="codex")
+    ctx.plan_awaiting_planning_tasks = True
+
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="update_plan",
+                        tool_input={"plan": [{"step": "[PLANNING] Step 1: inspect", "status": "in_progress"}]},
+                        tool_result="",
+                        store=store, cli_type="codex")
+    plugins.app.dispatch(ctx2)
+
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store, cli_type="codex")
+    result = plugins.app.dispatch(ctx3) or {}
+    assert "PLANNING TASKS REQUIRED" not in str(result)
+
+
 def test_plan_acceptance_sets_execution_reminder_and_clears_planning():
     """Plan acceptance sets execution flag and clears planning flag."""
     sid = "test-acceptance-flags"
@@ -1189,6 +1280,25 @@ def test_execution_reminder_fires_until_task_create():
                         store=store)
     result2 = plugins.app.dispatch(ctx4) or {}
     assert "EXECUTION TASKS REQUIRED" not in str(result2)
+
+
+def test_codex_execution_reminder_uses_update_plan():
+    """Codex execution reminders should use update_plan checklist wording."""
+    sid = "test-codex-exec-reminder"
+    store = ThreadSafeDB()
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                       tool_name="Bash", tool_input={}, tool_result="",
+                       store=store, cli_type="codex")
+    ctx.plan_awaiting_execution_tasks = True
+
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
+                        tool_name="Bash", tool_input={}, tool_result="",
+                        store=store, cli_type="codex")
+    result = plugins.app.dispatch(ctx2) or {}
+    text = str(result)
+    assert "EXECUTION TASKS REQUIRED" in text
+    assert "update_plan" in text
+    assert "TaskCreate" not in text
 
 
 def test_execution_reminder_references_tdd_exec():

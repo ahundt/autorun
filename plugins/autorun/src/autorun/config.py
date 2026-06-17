@@ -41,7 +41,12 @@ TASK_GET_TOOLS = {"TaskGet", "task_get", "tracker_get_task"}
 # Gemini CLI uses "write_todos" for ALL task operations (create, update, list).
 # Routing is handled in track_task_operations by inspecting tool_input.
 TASK_COMBINED_TOOLS = {"write_todos"}
-ALL_TASK_TOOLS = TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS
+# Codex exposes native task/checklist progress as update_plan.
+CODEX_PLAN_TASK_TOOLS = {"update_plan"}
+ALL_TASK_TOOLS = (
+    TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS |
+    TASK_COMBINED_TOOLS | CODEX_PLAN_TASK_TOOLS
+)
 
 # Truncation limits for log/debug output (avoid magic numbers across codebase)
 LOG_SNIPPET_MAX_LEN = 120     # tool results, error messages, evidence in log output

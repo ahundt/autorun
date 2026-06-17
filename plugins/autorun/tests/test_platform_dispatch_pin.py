@@ -226,6 +226,16 @@ def test_cli_tool_names_gemini_pin():
         assert CLI_TOOL_NAMES["gemini"][k] == v, f"CLI_TOOL_NAMES['gemini'][{k!r}] regressed"
 
 
+def test_cli_tool_names_codex_pin():
+    expected = {
+        "grep": "Grep", "glob": "Glob", "read": "Read",
+        "write": "Write", "edit": "Edit", "bash": "Bash", "ls": "LS",
+        "task_progress": "update_plan",
+    }
+    for k, v in expected.items():
+        assert CLI_TOOL_NAMES["codex"][k] == v, f"CLI_TOOL_NAMES['codex'][{k!r}] regressed"
+
+
 def test_get_tool_names_unknown_returns_empty():
     assert get_tool_names("doesnotexist") == {}
 
@@ -235,6 +245,7 @@ def test_get_tool_names_unknown_returns_empty():
 @pytest.mark.parametrize("template,cli,expected", [
     ("Use {grep} instead", "claude", "Use Grep instead"),
     ("Use {grep} instead", "gemini", "Use grep_search instead"),
+    ("Use {task_progress}", "codex", "Use update_plan"),
     ("Try {edit} or {bash}", "claude", "Try Edit or Bash"),
     ("Try {edit} or {bash}", "gemini", "Try replace or run_shell_command"),
     ("xargs -I{} mv {} dest", "claude", "xargs -I{} mv {} dest"),  # shell syntax preserved

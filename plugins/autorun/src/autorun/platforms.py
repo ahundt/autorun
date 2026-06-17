@@ -35,7 +35,7 @@ class Platform:
     """Immutable specification for one AI coding CLI platform.
 
     Fields are grouped: identity, detection, event mapping, tool names,
-    schema/bug applicability, install metadata.
+    native task/checklist behavior, schema/bug applicability, install metadata.
     """
 
     # === Identity ===
@@ -56,6 +56,18 @@ class Platform:
 
     # === Tool name resolution (logical key → API tool_name) ===
     tool_names: Mapping[str, str] = field(default_factory=dict)
+
+    # === Native task/checklist tools ===
+    # Different harnesses expose task progress differently:
+    # - Claude has first-class TaskCreate/TaskUpdate/TaskList tools.
+    # - Gemini may expose tracker_* tools or one write_todos bulk state tool.
+    # - Codex exposes update_plan, a checklist/progress tool, not Plan Mode.
+    task_management_style: str = "none"  # "task_tools" | "bulk_todos" | "plan_checklist" | "none"
+    task_create_tools: frozenset[str] = field(default_factory=frozenset)
+    task_update_tools: frozenset[str] = field(default_factory=frozenset)
+    task_review_tools: frozenset[str] = field(default_factory=frozenset)
+    task_bulk_tools: frozenset[str] = field(default_factory=frozenset)
+    task_plan_tools: frozenset[str] = field(default_factory=frozenset)
 
     # === Hook capability ===
     has_hooks: bool = True
@@ -101,6 +113,7 @@ _CLAUDE_TOOLS = {
     "write": "Write", "edit": "Edit", "bash": "Bash", "ls": "LS",
     "task_create": "TaskCreate", "task_update": "TaskUpdate",
     "task_list": "TaskList",
+    "task_progress": "TaskUpdate",
     "task_title": "subject", "task_id_param": "taskId",
 }
 
@@ -111,14 +124,17 @@ _GEMINI_TOOLS = {
     "task_create": "tracker_create_task",
     "task_update": "tracker_update_task",
     "task_list": "tracker_list_tasks",
+    "task_progress": "write_todos",
     "task_title": "title", "task_id_param": "id",
 }
 
 # Codex CLI v0.133 docs show identical hook tool names to Claude Code's API
-# (Bash, Read, Write, Edit, Grep, Glob, …). The Codex env additionally sets
-# both PLUGIN_ROOT/PLUGIN_DATA and CLAUDE_PLUGIN_ROOT/CLAUDE_PLUGIN_DATA
-# (compat aliases) so a single hook binary serves both.
+# for file/shell tools (Bash, Read, Write, Edit, Grep, Glob, …). Task progress
+# is native Codex update_plan, not Claude TaskCreate/TaskUpdate.
 _CODEX_TOOLS = dict(_CLAUDE_TOOLS)
+_CODEX_TOOLS.update({
+    "task_progress": "update_plan",
+})
 
 
 # === Platform definitions ==================================================
@@ -140,6 +156,10 @@ CLAUDE = register(Platform(
     install_fn_name="_install_for_claude",
     list_cmd=("claude", "plugin", "list"),
     tool_names=_CLAUDE_TOOLS,
+    task_management_style="task_tools",
+    task_create_tools=frozenset({"TaskCreate"}),
+    task_update_tools=frozenset({"TaskUpdate"}),
+    task_review_tools=frozenset({"TaskList", "TaskGet"}),
     normal_allow_decision="approve",
     block_decision="block",
     supports_additional_context_events=frozenset({"UserPromptSubmit", "PostToolUse"}),
@@ -195,6 +215,14 @@ GEMINI = register(Platform(
     install_fn_name="_install_for_gemini",
     list_cmd=("gemini", "extensions", "list"),
     tool_names=_GEMINI_TOOLS,
+    task_management_style="bulk_todos",
+    task_create_tools=frozenset({"task_create", "tracker_create_task"}),
+    task_update_tools=frozenset({"task_update", "tracker_update_task"}),
+    task_review_tools=frozenset({
+        "task_list", "tracker_list_tasks",
+        "task_get", "tracker_get_task",
+    }),
+    task_bulk_tools=frozenset({"write_todos"}),
     normal_allow_decision="allow",
     block_decision="deny",
     supports_additional_context_events=frozenset({
@@ -220,6 +248,8 @@ CODEX = register(Platform(
     install_fn_name="_install_for_codex",
     list_cmd=("codex", "plugin", "list"),
     tool_names=_CODEX_TOOLS,
+    task_management_style="plan_checklist",
+    task_plan_tools=frozenset({"update_plan"}),
     normal_allow_decision=None,
     block_decision="block",
     supports_additional_context_events=frozenset({
@@ -273,3 +303,54 @@ def detection_platforms() -> list[Platform]:
     Claude is the fallback default so it's excluded from positive detection.
     """
     return [p for p in PLATFORMS.values() if p.name != "claude"]
+
+
+def platform_for(name: str | None) -> Platform:
+    """Return a known Platform, defaulting to Claude for unknown legacy callers."""
+    return PLATFORMS.get(name or "", PLATFORMS["claude"])
+
+
+def task_tool_role(cli_type: str | None, tool_name: str | None) -> str | None:
+    """Classify a tool according to the platform's native task surface.
+
+    Return values are deliberately small strings so hot-path hook code can
+    dispatch without importing platform-specific classes or branching on CLI
+    names: "create", "update", "review", "bulk", "plan", or None.
+    """
+    if not tool_name:
+        return None
+
+    def role_for(platform: Platform) -> str | None:
+        if tool_name in platform.task_plan_tools:
+            return "plan"
+        if tool_name in platform.task_bulk_tools:
+            return "bulk"
+        if tool_name in platform.task_create_tools:
+            return "create"
+        if tool_name in platform.task_update_tools:
+            return "update"
+        if tool_name in platform.task_review_tools:
+            return "review"
+        return None
+
+    platform = get_platform(cli_type or "")
+    if platform is not None:
+        return role_for(platform)
+
+    # Backward compatibility and daemon robustness: older tests/hooks may omit
+    # cli_type. Infer by native tool name only when no known platform was given.
+    for candidate in PLATFORMS.values():
+        role = role_for(candidate)
+        if role is not None:
+            return role
+    return None
+
+
+def is_task_tool(cli_type: str | None, tool_name: str | None) -> bool:
+    """True when tool_name is any native task/checklist tool for cli_type."""
+    return task_tool_role(cli_type, tool_name) is not None
+
+
+def is_task_progress_tool(cli_type: str | None, tool_name: str | None) -> bool:
+    """True when tool_name can create/update task state for cli_type."""
+    return task_tool_role(cli_type, tool_name) in {"create", "update", "bulk", "plan"}

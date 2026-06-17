@@ -748,8 +748,9 @@ class EventContext:
     #                                               Distinct purpose from the two in-memory views above.
     __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
                  '_tool_result', '_session_transcript', '_state', '_transcript',
-                 '_store', '_cli_type', '_cwd', '_permission_mode', '_source',
-                 '_chain_notifications', '_transcript_path')
+                 '_store', '_cli_type', '_cli_type_explicit', '_cwd',
+                 '_permission_mode', '_source', '_chain_notifications',
+                 '_transcript_path')
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -805,8 +806,11 @@ class EventContext:
         object.__setattr__(self, '_state', {})
         object.__setattr__(self, '_transcript', None)
         object.__setattr__(self, '_store', store)
-        # Auto-detect CLI type from environment if not explicitly provided
+        # Auto-detect CLI type from environment if not explicitly provided.
+        # Keep an explicitness bit so shared-daemon task dispatch can avoid
+        # treating an ambient fallback as a platform assertion.
         object.__setattr__(self, '_cli_type', cli_type)
+        object.__setattr__(self, '_cli_type_explicit', cli_type is not None)
         # Working directory injected by client.py (_cwd field) for plan tracking
         object.__setattr__(self, '_cwd', cwd)
         # Permission mode from hook payload (plan/bypassPermissions/acceptEdits/default)

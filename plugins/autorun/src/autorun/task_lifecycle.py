@@ -52,10 +52,10 @@ from .core import EventContext, app, logger
 from .session_manager import session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
-    PLAN_TOOLS, TASK_CREATE_TOOLS, TASK_UPDATE_TOOLS,
-    TASK_LIST_TOOLS, TASK_GET_TOOLS, TASK_COMBINED_TOOLS,
+    PLAN_TOOLS,
     LOG_SNIPPET_MAX_LEN,
 )
+from .platforms import platform_for, task_tool_role
 
 
 _SECONDS_PER_DAY: int = 24 * 3600          # pure unit conversion (not a config value)
@@ -82,6 +82,37 @@ _ACT_STALE_AI_ESCAPE = (
     "({marker}) becomes printable to mark "
     "those ids ignored without user intervention."
 )
+
+
+def _task_actions_fragment(cli_type: str | None) -> str:
+    """Return stop/resume actions in the platform's native task vocabulary."""
+    if platform_for(cli_type).task_management_style == "plan_checklist":
+        return (
+            "Actions: 1. You must complete or remove each checklist item before stopping "
+            "2. Review/update: {task_progress} with the current plan list "
+            "3. Finish work: {task_progress} with finished items status=\"completed\" "
+            "4. Defer/delegate: keep a concrete follow-up item pending "
+            "5. Discard obsolete work: remove it from the current plan list "
+            f"6. Override: {_ACT_OVERRIDE} "
+        )
+    return (
+        f"Actions: 1. You must complete or discard each task before stopping "
+        f"2. Review: {_ACT_REVIEW} "
+        f"3. Do the work, then: {_ACT_COMPLETE} "
+        f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
+        f"5. Or discard: {_ACT_DISCARD} "
+        f"6. Override: {_ACT_OVERRIDE} "
+    )
+
+
+def _task_cli_hint(ctx: EventContext) -> str | None:
+    """Return explicit CLI hint for task-tool classification, if one was supplied."""
+    if hasattr(ctx, "_cli_type") and not getattr(ctx, "_cli_type_explicit", False):
+        return None
+    raw_cli_type = getattr(ctx, "_cli_type", None)
+    if raw_cli_type is not None:
+        return raw_cli_type
+    return getattr(ctx, "cli_type", None)
 
 
 def _stale_clear_marker_example() -> str:
@@ -870,10 +901,19 @@ class TaskLifecycle:
             logger.debug("handle_bulk_todos: no todos list found in input")
             return
 
+        now = time.time()
+
         def updater(tasks):
-            # Clear current session's tasks to avoid stale plan items
-            # (Completed tasks from previous plans stay, pending ones are replaced)
-            to_remove = [tid for tid, t in tasks.items() if t.get("session_id") == self.session_id]
+            # Clear only previous planner-sourced tasks for this session. The
+            # daemon may also track explicit TaskCreate records in the same
+            # session; a bulk planner refresh must not erase them.
+            to_remove = [
+                tid for tid, t in tasks.items()
+                if (
+                    t.get("session_id") == self.session_id
+                    and t.get("metadata", {}).get("source") == "planner"
+                )
+            ]
             for tid in to_remove:
                 tasks.pop(tid)
 
@@ -890,8 +930,8 @@ class TaskLifecycle:
                     "description": "",
                     "activeForm": "",
                     "status": todo.get("status", "pending"),
-                    "created_at": time.time(),
-                    "updated_at": time.time(),
+                    "created_at": now,
+                    "updated_at": now,
                     "session_id": self.session_id,
                     "owner": None,
                     "blockedBy": [],
@@ -902,6 +942,106 @@ class TaskLifecycle:
 
         self.atomic_update_tasks(updater)
         self.log_event("BULK_CREATE", "multiple", f"Created {len(todos)} tasks from planner", "multiple")
+
+    def handle_plan_checklist(self, ctx: EventContext) -> None:
+        """Handle native plan/checklist tools such as Codex update_plan.
+
+        update_plan is a current-state checklist, not an append-only task event.
+        Sync only tasks previously sourced from this checklist so unrelated
+        Claude/Gemini task records are not overwritten.
+        """
+        if not isinstance(ctx.tool_input, dict):
+            logger.warning(f"handle_plan_checklist: tool_input is not a dict: {type(ctx.tool_input)}")
+            return
+
+        plan = ctx.tool_input.get("plan", [])
+        if not isinstance(plan, list) or not plan:
+            logger.debug("handle_plan_checklist: no plan list found in input")
+            return
+
+        raw_result = ctx.tool_result
+        result_str = raw_result if isinstance(raw_result, str) else ctx.tool_result_str
+        result_snippet = result_str[:LOG_SNIPPET_MAX_LEN] if result_str else ""
+        explanation = ctx.tool_input.get("explanation")
+        now = time.time()
+        valid_statuses = {"pending", "in_progress", "completed"}
+        synced_count = 0
+        removed_count = 0
+
+        def updater(tasks):
+            nonlocal synced_count, removed_count
+            current_ids: set[str] = set()
+
+            for i, item in enumerate(plan, 1):
+                if not isinstance(item, dict):
+                    continue
+
+                subject = str(
+                    item.get("step")
+                    or item.get("subject")
+                    or item.get("title")
+                    or ""
+                ).strip()
+                if not subject:
+                    continue
+
+                status = str(item.get("status") or "pending").strip().lower()
+                if status not in valid_statuses:
+                    status = "pending"
+
+                task_id = f"plan-{i}"
+                current_ids.add(task_id)
+                existing = tasks.get(task_id, {})
+                metadata = dict(existing.get("metadata", {}))
+                metadata.update({
+                    "source": "plan_checklist",
+                    "platform": ctx.cli_type,
+                    "position": i,
+                    "tool_name": ctx.tool_name,
+                })
+                if explanation:
+                    metadata["explanation"] = str(explanation)
+
+                outputs = list(existing.get("tool_outputs", []))
+                if result_snippet:
+                    outputs.append(result_snippet)
+
+                tasks[task_id] = {
+                    "id": task_id,
+                    "subject": subject,
+                    "description": str(item.get("description") or ""),
+                    "activeForm": existing.get("activeForm", ""),
+                    "status": status,
+                    "created_at": existing.get("created_at", now),
+                    "updated_at": now,
+                    "session_id": self.session_id,
+                    "owner": existing.get("owner"),
+                    "blockedBy": list(existing.get("blockedBy", [])),
+                    "blocks": list(existing.get("blocks", [])),
+                    "metadata": metadata,
+                    "tool_outputs": outputs,
+                }
+                synced_count += 1
+
+            for task_id, task in list(tasks.items()):
+                metadata = task.get("metadata", {})
+                if (
+                    metadata.get("source") == "plan_checklist"
+                    and task.get("session_id") == self.session_id
+                    and task_id not in current_ids
+                    and task.get("status") not in self.NON_BLOCKING_STATUSES
+                ):
+                    task["status"] = "deleted"
+                    task["updated_at"] = now
+                    task.setdefault("tool_outputs", []).append("Removed from native plan checklist")
+                    removed_count += 1
+
+        self.atomic_update_tasks(updater)
+        self.log_event(
+            "PLAN_SYNC", "multiple",
+            f"Synced {synced_count} native checklist task(s); removed {removed_count}",
+            "multiple",
+        )
 
     def handle_session_start(self, ctx: EventContext) -> Optional[Dict]:
         """Handle SessionStart (return injection if incomplete tasks).
@@ -977,12 +1117,7 @@ class TaskLifecycle:
 
         injection = (
             f"🔄 incomplete tasks from previous session: {task_list}{overflow}{older}\n"
-            f"Actions: 1. You must complete or discard each task before stopping "
-            f"2. Review: {_ACT_REVIEW} "
-            f"3. Do the work, then: {_ACT_COMPLETE} "
-            f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
-            f"5. Or discard: {_ACT_DISCARD} "
-            f"6. Override: {_ACT_OVERRIDE} "
+            f"{_task_actions_fragment(ctx.cli_type)}"
             f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
         )
 
@@ -1079,12 +1214,7 @@ class TaskLifecycle:
 
         injection = (
             f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
-            f"Actions: 1. You must complete or discard each task before stopping "
-            f"2. Review: {_ACT_REVIEW} "
-            f"3. Do the work, then: {_ACT_COMPLETE} "
-            f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
-            f"5. Or discard: {_ACT_DISCARD} "
-            f"6. Override: {_ACT_OVERRIDE} "
+            f"{_task_actions_fragment(ctx.cli_type)}"
             f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
         )
 
@@ -1880,14 +2010,17 @@ def register_hooks(app_instance) -> None:
     @app_instance.on("PostToolUse")
     def track_task_operations(ctx: EventContext) -> Optional[Dict]:
         """Track Task tool usage for AI continuation (PostToolUse hook)."""
-        if ctx.tool_name not in (TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS | TASK_COMBINED_TOOLS):
+        role = task_tool_role(_task_cli_hint(ctx), ctx.tool_name)
+        if role is None:
             return None
 
         try:
             # Instantiate class with auto-detected session ID
             manager = TaskLifecycle(ctx=ctx)
 
-            if ctx.tool_name in TASK_COMBINED_TOOLS:
+            if role == "plan":
+                manager.handle_plan_checklist(ctx)
+            elif role == "bulk":
                 # Gemini CLI uses write_todos for all task operations.
                 # Route based on content: todos in input → bulk create, else taskId → update.
                 tool_input = ctx.tool_input or {}
@@ -1898,9 +2031,9 @@ def register_hooks(app_instance) -> None:
                 elif "created" in ctx.tool_result_str.lower():
                     manager.handle_task_create(ctx)
                 # else: list/get — just update activity below
-            elif ctx.tool_name in TASK_CREATE_TOOLS:
+            elif role == "create":
                 manager.handle_task_create(ctx)
-            elif ctx.tool_name in TASK_UPDATE_TOOLS:
+            elif role == "update":
                 ghost_result = manager.handle_task_update(ctx)
                 if ghost_result == "ghost_skip":
                     if manager.config.debug_logging:
@@ -1912,7 +2045,7 @@ def register_hooks(app_instance) -> None:
                             f"requested_status={status} tool_result={tool_result_snippet!r}",
                             status="ignored",
                         )
-            elif ctx.tool_name in TASK_LIST_TOOLS:
+            elif role == "review":
                 # Update last activity timestamp
                 def update_activity(metadata):
                     metadata['last_activity'] = time.time()

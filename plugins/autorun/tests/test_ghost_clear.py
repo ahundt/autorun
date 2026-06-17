@@ -195,6 +195,8 @@ def test_injection_augmented_at_threshold(tmp_path):
     ("AUTORUN_TASKS_CLEAR_STALE_TASK(72)", "72"),
     ("noise AUTORUN_TASKS_CLEAR_STALE_TASK(1) noise", "1"),
     ("AUTORUN_TASKS_CLEAR_STALE_TASK(99999)", "99999"),
+    ("AUTORUN_TASKS_CLEAR_STALE_TASK(plan-1)", "plan-1"),
+    ("AUTORUN_TASKS_CLEAR_STALE_TASK(task.alpha_2)", "task.alpha_2"),
 ])
 def test_regex_positive(sample, expected):
     match = plg._ghost_marker_regex().search(sample)
@@ -206,9 +208,9 @@ def test_regex_positive(sample, expected):
 
 @pytest.mark.parametrize("sample", [
     "AUTORUN_TASKS_CLEAR_STALE_TASK",
-    "AUTORUN_TASKS_CLEAR_STALE_TASK(abc)",
     "AUTORUN_TASKS_CLEAR_STALE_TASK()",
     "AUTORUN_TASKS_CLEAR_STALE_TASK(72",
+    "AUTORUN_TASKS_CLEAR_STALE_TASK(plan/1)",
 ])
 def test_regex_negative(sample):
     assert plg._ghost_marker_regex().search(sample) is None

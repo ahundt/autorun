@@ -180,6 +180,36 @@ def test_platform_fields_are_immutable_primitives():
         )
 
 
+def test_platform_task_metadata_is_immutable():
+    """Native task/checklist tool metadata must be safe in one shared daemon."""
+    for p in PLATFORMS.values():
+        for field_name in (
+            "task_create_tools", "task_update_tools", "task_review_tools",
+            "task_bulk_tools", "task_plan_tools",
+        ):
+            assert isinstance(getattr(p, field_name), frozenset)
+
+
+def test_task_tool_role_uses_platform_native_surfaces():
+    from autorun.platforms import is_task_progress_tool, is_task_tool, task_tool_role
+
+    assert task_tool_role("claude", "TaskCreate") == "create"
+    assert task_tool_role("claude", "update_plan") is None
+    assert task_tool_role("gemini", "write_todos") == "bulk"
+    assert task_tool_role("codex", "update_plan") == "plan"
+    assert is_task_progress_tool("codex", "update_plan") is True
+    assert is_task_tool("codex", "TaskCreate") is False
+
+
+def test_task_tool_role_infers_unique_tool_when_cli_type_is_missing():
+    from autorun.platforms import task_tool_role
+
+    assert task_tool_role(None, "write_todos") == "bulk"
+    assert task_tool_role("unknown", "write_todos") == "bulk"
+    assert task_tool_role("claude", "write_todos") is None
+    assert task_tool_role(None, "update_plan") == "plan"
+
+
 # ─── Backward-compat aliases derived from PLATFORMS ───────────────────────────
 
 def test_config_aliases_derived_from_platforms():

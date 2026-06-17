@@ -17,6 +17,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from autorun.config import CONFIG
+from autorun.core import EventContext
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun.session_manager import session_state, SessionStateManager
 
@@ -106,6 +107,88 @@ class TestFix2GhostTaskSentinel:
         result = manager.update_task('1', {'status': 'in_progress'}, 'Start')
         assert result is None, \
             "Normal task update should return None"
+
+
+class TestCodexPlanChecklistSync:
+    def _ctx(self, session_id, plan):
+        return EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            prompt="",
+            tool_name="update_plan",
+            tool_input={"plan": plan, "explanation": "sync checklist"},
+            tool_result="plan updated",
+            cli_type="codex",
+        )
+
+    def test_update_plan_syncs_native_checklist_tasks(self, isolated_config, isolated_session_manager):
+        session_id = f"test-codex-plan-sync-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+
+        manager.handle_plan_checklist(self._ctx(session_id, [
+            {"step": "Write focused regression", "status": "completed"},
+            {"step": "Implement native checklist sync", "status": "in_progress"},
+            {"step": "Run focused tests", "status": "pending"},
+        ]))
+
+        tasks = manager.tasks
+        assert tasks["plan-1"]["subject"] == "Write focused regression"
+        assert tasks["plan-1"]["status"] == "completed"
+        assert tasks["plan-2"]["status"] == "in_progress"
+        assert tasks["plan-2"]["metadata"]["source"] == "plan_checklist"
+        assert tasks["plan-2"]["metadata"]["platform"] == "codex"
+
+    def test_update_plan_replacement_keeps_explicit_tasks(self, isolated_config, isolated_session_manager):
+        session_id = f"test-codex-plan-keeps-explicit-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        manager.create_task("1", {"subject": "Explicit Claude task"}, "created")
+
+        manager.handle_plan_checklist(self._ctx(session_id, [
+            {"step": "Codex checklist item", "status": "in_progress"},
+        ]))
+        manager.handle_plan_checklist(self._ctx(session_id, [
+            {"step": "Codex checklist item updated", "status": "completed"},
+        ]))
+
+        tasks = manager.tasks
+        assert tasks["1"]["subject"] == "Explicit Claude task"
+        assert tasks["1"]["status"] == "pending"
+        assert tasks["plan-1"]["subject"] == "Codex checklist item updated"
+        assert tasks["plan-1"]["status"] == "completed"
+
+    def test_update_plan_removes_only_own_missing_checklist_items(self, isolated_config, isolated_session_manager):
+        session_id = f"test-codex-plan-removes-stale-{time.time()}"
+        manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+        manager.create_task("external", {"subject": "External explicit task"}, "created")
+
+        manager.handle_plan_checklist(self._ctx(session_id, [
+            {"step": "Keep this item", "status": "in_progress"},
+            {"step": "Remove this item", "status": "pending"},
+        ]))
+        manager.handle_plan_checklist(self._ctx(session_id, [
+            {"step": "Keep this item", "status": "in_progress"},
+        ]))
+
+        tasks = manager.tasks
+        assert tasks["plan-1"]["status"] == "in_progress"
+        assert tasks["plan-2"]["status"] == "deleted"
+        assert tasks["external"]["status"] == "pending"
+
+    def test_update_plan_is_session_scoped(self, isolated_config, isolated_session_manager):
+        session_a = f"test-codex-plan-session-a-{time.time()}"
+        session_b = f"test-codex-plan-session-b-{time.time()}"
+        manager_a = TaskLifecycle(session_id=session_a, config=isolated_config)
+        manager_b = TaskLifecycle(session_id=session_b, config=isolated_config)
+
+        manager_a.handle_plan_checklist(self._ctx(session_a, [
+            {"step": "A checklist item", "status": "in_progress"},
+        ]))
+        manager_b.handle_plan_checklist(self._ctx(session_b, [
+            {"step": "B checklist item", "status": "pending"},
+        ]))
+
+        assert manager_a.tasks["plan-1"]["subject"] == "A checklist item"
+        assert manager_b.tasks["plan-1"]["subject"] == "B checklist item"
 
 
 # --- Fix 4: Block count resets on task completion ---

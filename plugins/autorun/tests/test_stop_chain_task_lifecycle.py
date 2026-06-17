@@ -919,6 +919,32 @@ class TestWriteTodosRouting:
             "write_todos list/get must NOT create tasks"
         )
 
+    def test_write_todos_bulk_refresh_keeps_explicit_tasks(
+        self, isolated_task_config, isolated_session
+    ):
+        """Planner bulk refresh replaces only planner-sourced tasks."""
+        sid = f"test-write-todos-bulk-keeps-explicit-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+        manager.create_task("explicit", {"subject": "Explicit task"}, "created")
+
+        bulk_ctx = EventContext(
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="write_todos",
+            tool_input={"todos": [{"description": "Planner task", "status": "in_progress"}]},
+            tool_result="todos updated",
+            store=store,
+            cli_type="gemini",
+        )
+        plugins.app._run_chain(bulk_ctx, "PostToolUse")
+
+        tasks = manager.tasks
+        assert tasks["explicit"]["subject"] == "Explicit task"
+        assert tasks["explicit"]["status"] == "pending"
+        assert tasks["1"]["subject"] == "Planner task"
+        assert tasks["1"]["metadata"]["source"] == "planner"
+
     def test_write_todos_none_tool_input(
         self, isolated_task_config, isolated_session
     ):
