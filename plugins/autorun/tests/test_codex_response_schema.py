@@ -22,8 +22,11 @@ from autorun.core import (
     ThreadSafeDB,
     format_suggestion,
     get_cli_event_name,
+    normalize_hook_payload,
+    resolve_session_key,
     validate_hook_response,
 )
+from autorun.client import prepare_payload_for_daemon
 from autorun.session_manager import session_state
 
 
@@ -348,6 +351,74 @@ def test_codex_plain_ar_allow_alias_unblocks_same_session_command():
     assert "permissionDecision" not in hso
     assert "additionalContext" in hso
     assert "git push" in hso["additionalContext"]
+
+
+def test_codex_allow_without_session_id_uses_stable_cli_parent(monkeypatch):
+    """One Codex ar:ok must apply to the next tool hook even through wrappers."""
+    from unittest import mock
+
+    class FakeProcess:
+        def __init__(self, pid, name, parent=None):
+            self.pid = pid
+            self._name = name
+            self._parent = parent
+
+        def name(self):
+            return self._name
+
+        def parent(self):
+            return self._parent
+
+        def cmdline(self):
+            return [self._name]
+
+    codex = FakeProcess(42000, "codex")
+    zsh = FakeProcess(42001, "zsh", codex)
+    uv = FakeProcess(42002, "uv", zsh)
+    python = FakeProcess(42003, "python3.12", uv)
+    ephemeral_ppids = iter([11111, 22222])
+    store = ThreadSafeDB()
+
+    def context_from_payload(payload):
+        normalized = normalize_hook_payload(payload)
+        session_id = resolve_session_key(
+            payload.get("_pid"), payload.get("_cwd", ""), normalized["session_id"]
+        )
+        return EventContext(
+            session_id=session_id,
+            event=normalized["hook_event_name"],
+            prompt=normalized["prompt"],
+            tool_name=normalized["tool_name"],
+            tool_input=normalized["tool_input"],
+            cli_type=normalized["cli_type"],
+            cwd=payload.get("_cwd"),
+            store=store,
+            transcript_path=normalized.get("transcript_path"),
+        )
+
+    monkeypatch.setenv("AUTORUN_CLI_TYPE", "codex")
+    monkeypatch.setattr("os.getppid", lambda: next(ephemeral_ppids))
+    with mock.patch("psutil.Process", return_value=python):
+        allow_payload, _ = prepare_payload_for_daemon({
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "ar:ok git push",
+        })
+        push_payload, _ = prepare_payload_for_daemon({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git push origin main"},
+        })
+
+    allow_response = plugins.app.dispatch(context_from_payload(allow_payload))
+    assert_codex_response_valid("UserPromptSubmit", allow_response)
+
+    push_response = plugins.check_blocked_commands(context_from_payload(push_payload))
+    assert push_response is not None
+    assert_codex_response_valid("PreToolUse", push_response)
+    hso = push_response["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "additionalContext" in hso
+    assert "Allowed 'git push'" in hso["additionalContext"]
 
 
 @pytest.mark.parametrize(

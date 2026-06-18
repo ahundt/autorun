@@ -7,6 +7,7 @@ or returns invalid data. Lifecycle/context events may continue permissively.
 
 from autorun.client import (
     build_daemon_failure_response,
+    get_stable_pid,
     is_tool_gate_event,
     prepare_payload_for_daemon,
 )
@@ -37,6 +38,32 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     assert payload["cli_type"] == "codex"
     assert payload["_pid"] == 12345
     assert "_cwd" in payload
+
+
+def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
+    """Codex hooks must share one parent-derived fallback session across invocations."""
+    from unittest import mock
+
+    class FakeProcess:
+        def __init__(self, pid, name, parent=None):
+            self.pid = pid
+            self._name = name
+            self._parent = parent
+
+        def name(self):
+            return self._name
+
+        def parent(self):
+            return self._parent
+
+    codex = FakeProcess(42000, "codex")
+    zsh = FakeProcess(42001, "zsh", codex)
+    uv = FakeProcess(42002, "uv", zsh)
+    python = FakeProcess(42003, "python3.12", uv)
+
+    monkeypatch.setattr("os.getppid", lambda: 99999)
+    with mock.patch("psutil.Process", return_value=python):
+        assert get_stable_pid() == 42000
 
 
 def test_claude_daemon_failure_on_pretooluse_fails_closed():

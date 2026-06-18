@@ -60,6 +60,26 @@ _DAEMON_RESPONSE_TIMEOUT_BY_CLI = {
     "codex": 6.5,
     "forgecode": 6.5,
 }
+_STABLE_PID_PARENT_SCAN_DEPTH = 12
+
+
+def _hook_platform_process_markers() -> tuple[str, ...]:
+    """Return process-name markers for hook-capable CLI parents."""
+    try:
+        from .platforms import hook_platforms
+
+        markers = {
+            marker.lower()
+            for platform in hook_platforms()
+            for marker in (platform.name, platform.binary)
+            if marker
+        }
+        # Common installed process name for Claude Code; kept as compatibility data
+        # beside the registry-derived names instead of a separate branch.
+        markers.add("claude-code")
+        return tuple(sorted(markers, key=len, reverse=True))
+    except Exception:
+        return ("claude-code", "forgecode", "claude", "gemini", "codex", "forge")
 
 
 def is_tool_gate_event(event: str) -> bool:
@@ -250,19 +270,25 @@ def output_hook_response(response: dict | str, event: str = "unknown",
 def get_stable_pid() -> int:
     """Traverse up process tree to find the stable CLI process ID.
 
-    Avoids using the ephemeral hook_entry.py PID. Looks for 'gemini' or 'claude'.
-    Falls back to ppid if discovery fails.
+    Avoids using the ephemeral hook_entry.py/uv/python PID. Looks for any
+    hook-capable platform registered in platforms.py, so new harnesses do not
+    need a separate branch here. Falls back to ppid if discovery fails.
     """
     try:
         import psutil
+
+        markers = _hook_platform_process_markers()
         current = psutil.Process()
-        # Search up to 5 levels for CLI binary
-        for _ in range(5):
+        for _ in range(_STABLE_PID_PARENT_SCAN_DEPTH):
             parent = current.parent()
             if not parent:
                 break
             name = parent.name().lower()
-            if "gemini" in name or "claude" in name:
+            try:
+                cmdline = " ".join(parent.cmdline()).lower()
+            except Exception:
+                cmdline = ""
+            if any(marker in name or marker in cmdline for marker in markers):
                 return parent.pid
             current = parent
     except (ImportError, Exception):
