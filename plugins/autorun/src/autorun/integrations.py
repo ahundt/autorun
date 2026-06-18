@@ -37,6 +37,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
+from .command_detection import command_tokens_for
+
 from autorun.config import CONFIG, DEFAULT_INTEGRATIONS
 
 __all__ = [
@@ -878,6 +880,46 @@ def _not_in_pipe(ctx: any) -> bool:
         return False
 
 
+def _sed_modifies_files(ctx: any) -> bool:
+    """Return True only for sed invocations that edit files in place.
+
+    Plain `sed -n ... file` and `sed 's/a/b/' file` are read/transform
+    operations. The file-mutating forms are the `-i` family and GNU
+    `--in-place` variants; those should use the platform edit path instead.
+    """
+    try:
+        cmd = ctx.tool_input.get("command", "") if hasattr(ctx, "tool_input") else ""
+        tokens = command_tokens_for(cmd, "sed")
+        if not tokens:
+            return False
+
+        skip_next_script_arg = False
+        for token in tokens[1:]:
+            if skip_next_script_arg:
+                skip_next_script_arg = False
+                continue
+            if token == "--":
+                return False
+            if token in {"-e", "-f", "--expression", "--file"}:
+                skip_next_script_arg = True
+                continue
+            if token.startswith("--expression=") or token.startswith("--file="):
+                continue
+            if token == "--in-place" or token.startswith("--in-place="):
+                return True
+            if token.startswith("--"):
+                continue
+            if token.startswith("-") and token != "-":
+                # BSD/GNU sed accept `-i`, `-i.bak`, and combined flags like `-Ei`.
+                return "i" in token[1:]
+            # First non-option is the script; later `-i` text is not an option.
+            return False
+        return False
+    except Exception as e:
+        logger.warning("_sed_modifies_files predicate error: %s", e)
+        return False
+
+
 def _restore_is_destructive(ctx: any) -> bool:
     """
     Check if 'git restore' is destructive (discards working tree changes).
@@ -950,6 +992,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_file_has_unstaged_changes": _file_has_unstaged_changes,
     "_checkout_targets_file_with_changes": _checkout_targets_file_with_changes,
     "_not_in_pipe": _not_in_pipe,
+    "_sed_modifies_files": _sed_modifies_files,
     "_restore_is_destructive": _restore_is_destructive,
 }
 

@@ -228,8 +228,8 @@ def test_cli_tool_names_gemini_pin():
 
 def test_cli_tool_names_codex_pin():
     expected = {
-        "grep": "Grep", "glob": "Glob", "read": "Read",
-        "write": "Write", "edit": "Edit", "bash": "Bash", "ls": "LS",
+        "grep": "Grep", "glob": "Glob", "read": "shell file inspection",
+        "write": "Write", "edit": "apply_patch", "bash": "Bash", "ls": "LS",
         "task_progress": "update_plan",
     }
     for k, v in expected.items():
@@ -246,6 +246,7 @@ def test_get_tool_names_unknown_returns_empty():
     ("Use {grep} instead", "claude", "Use Grep instead"),
     ("Use {grep} instead", "gemini", "Use grep_search instead"),
     ("Use {task_progress}", "codex", "Use update_plan"),
+    ("Use {read} then {edit}", "codex", "Use shell file inspection then apply_patch"),
     ("Try {edit} or {bash}", "claude", "Try Edit or Bash"),
     ("Try {edit} or {bash}", "gemini", "Try replace or run_shell_command"),
     ("xargs -I{} mv {} dest", "claude", "xargs -I{} mv {} dest"),  # shell syntax preserved

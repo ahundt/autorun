@@ -453,7 +453,7 @@ def restart_daemon() -> int:
 
         print("\n=== Test Commands ===")
         print("cargo build 2>&1 | head -50  # Should be ALLOWED")
-        print("head somefile.txt             # Should be BLOCKED")
+        print("head somefile.txt             # Claude/Gemini block; Codex allows native reads")
         return 0
 
 

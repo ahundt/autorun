@@ -1080,6 +1080,7 @@ class TestGeminiExtensionVerification:
         required_dirs = [
             base_dir / "hooks",
             base_dir / "commands",
+            base_dir / "skills",
         ]
 
         for required_dir in required_dirs:

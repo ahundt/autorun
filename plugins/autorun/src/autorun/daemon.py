@@ -43,8 +43,7 @@ import threading
 import time
 from pathlib import Path
 
-from .core import app, AutorunDaemon, LOCK_PATH, logger
-from . import ipc
+from .core import app, AutorunDaemon, logger
 
 
 # =============================================================================
@@ -268,6 +267,14 @@ def _bootstrap_optional_deps() -> None:
 # =============================================================================
 
 
+def _owns_lifecycle_files(daemon: AutorunDaemon) -> bool:
+    """Return True when this daemon instance owns socket/lock cleanup."""
+    return bool(
+        getattr(daemon, "running", False)
+        or getattr(daemon, "_daemon_lock", None) is not None
+    )
+
+
 def main():
     """
     Daemon entry point.
@@ -317,15 +324,16 @@ def main():
         logger.error(f"Daemon error: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        # Safety cleanup - daemon.async_stop() should have already cleaned up,
-        # but ensure files are removed if something went wrong
-        try:
-            ipc.cleanup_socket()
-            if LOCK_PATH.exists():
-                LOCK_PATH.unlink()
-                logger.debug("Final cleanup: removed lock")
-        except OSError as e:
-            logger.warning(f"Final cleanup error: {e}")
+        # Safety cleanup - daemon.async_stop() should have already cleaned up.
+        # Only the daemon that acquired the lifecycle lock may remove shared
+        # files; a concurrent startup loser must not unlink the live daemon.
+        if _owns_lifecycle_files(daemon):
+            try:
+                daemon._cleanup_files()
+            except OSError as e:
+                logger.warning(f"Final cleanup error: {e}")
+        else:
+            logger.debug("Skipping final cleanup; daemon lifecycle files not owned")
 
     logger.info("Daemon exited")
 

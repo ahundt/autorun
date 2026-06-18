@@ -1175,6 +1175,59 @@ class TestInstallForGeminiMarketplaceResolution:
         assert func.count("gemini-extension.json") >= 2
 
 
+class TestGeminiExtensionResourceSync:
+    """Regression coverage for resources materialized after Gemini install."""
+
+    def _make_plugin(self, root: Path) -> Path:
+        plugin_dir = root / "plugins" / "autorun"
+        (plugin_dir / "hooks").mkdir(parents=True)
+        (plugin_dir / "commands").mkdir()
+        (plugin_dir / "skills" / "cache").mkdir(parents=True)
+        (plugin_dir / "hooks" / "hook_entry.py").write_text("print('hook')\n", encoding="utf-8")
+        (plugin_dir / "commands" / "status.md").write_text(
+            "---\ndescription: Show status\n---\nShow status for $ARGUMENTS\n",
+            encoding="utf-8",
+        )
+        (plugin_dir / "commands" / "status.md.tmp").write_text(
+            "temporary editor artifact\n",
+            encoding="utf-8",
+        )
+        (plugin_dir / "commands" / "__pycache__").mkdir()
+        (plugin_dir / "commands" / "__pycache__" / "status.pyc").write_bytes(b"bytecode")
+        (plugin_dir / "skills" / "cache" / "SKILL.md").write_text(
+            "# Cache\n\nCache instructions.\n",
+            encoding="utf-8",
+        )
+        (plugin_dir / "skills" / "cache" / "__pycache__").mkdir()
+        (plugin_dir / "skills" / "cache" / "__pycache__" / "cache.pyc").write_bytes(b"bytecode")
+        return plugin_dir
+
+    def test_sync_installs_hooks_commands_toml_and_skills(self, tmp_path):
+        import autorun.install as install_mod
+
+        plugin_dir = self._make_plugin(tmp_path)
+        ext_dir = tmp_path / ".gemini" / "extensions" / "ar"
+        ext_dir.mkdir(parents=True)
+
+        commands_generated, skills_synced = install_mod._sync_gemini_extension_resources(
+            plugin_dir,
+            ext_dir,
+            "ar",
+        )
+
+        assert commands_generated == 1
+        assert skills_synced == 1
+        assert (ext_dir / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "print('hook')\n"
+        assert (ext_dir / "commands" / "status.md").is_file()
+        toml = (ext_dir / "commands" / "ar" / "status.toml").read_text(encoding="utf-8")
+        assert 'description = "Show status"' in toml
+        assert "{{args}}" in toml
+        assert (ext_dir / "skills" / "cache" / "SKILL.md").read_text(encoding="utf-8").startswith("# Cache")
+        assert not (ext_dir / "commands" / "status.md.tmp").exists()
+        assert not (ext_dir / "commands" / "__pycache__").exists()
+        assert not (ext_dir / "skills" / "cache" / "__pycache__").exists()
+
+
 class TestClaudeCachePathSubstitution:
     """Regression coverage for local Claude marketplace cache path substitution."""
 

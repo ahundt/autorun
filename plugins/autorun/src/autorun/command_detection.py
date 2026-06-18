@@ -39,6 +39,7 @@ from typing import Final
 
 __all__ = [
     "command_matches_pattern",
+    "command_tokens_for",
     "extract_commands",
     "ParsedPattern",
     "ExtractedCommands",
@@ -302,6 +303,42 @@ def _extract_recursive(cmd: str, depth: int) -> tuple[set[str], set[str], set[st
             strings.add(string)
 
     return names, strings, potential
+
+
+def command_tokens_for(
+    cmd: str,
+    command_name: str,
+    *,
+    allow_prefixes: bool = True,
+) -> tuple[str, ...]:
+    """Return argv-like tokens for a command invocation inside a shell string.
+
+    The extractor reuses autorun's normal prefix-aware command parser, so
+    `sudo sed -i ...` can still be recognized as sed when desired. Callers that
+    need only a direct shell command can set allow_prefixes=False.
+    """
+    if not cmd or not command_name:
+        return ()
+
+    for segment in _SHELL_OPERATORS.split(cmd):
+        if not (segment := segment.strip()):
+            continue
+
+        tokens = _shlex_split_safe(segment)
+        if not tokens:
+            continue
+
+        name, _string, _potential = _extract_from_tokens(tokens)
+        if name != command_name:
+            continue
+        if not allow_prefixes and _get_basename(tokens[0]) != command_name:
+            continue
+
+        for i, token in enumerate(tokens):
+            if _get_basename(token) == command_name:
+                return tuple(tokens[i:])
+
+    return ()
 
 
 # ─── bashlex Visitor ──────────────────────────────────────────────────────────

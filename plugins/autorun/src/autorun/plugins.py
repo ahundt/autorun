@@ -45,7 +45,7 @@ from .config import (
 from .platforms import is_task_progress_tool, is_task_tool, platform_for
 from .session_manager import session_state
 from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
-from .command_detection import command_matches_pattern
+from .command_detection import command_matches_pattern, command_tokens_for
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
 
 # Import plan_export to register its @app.on() handlers with daemon
@@ -64,6 +64,78 @@ def _task_cli_hint(ctx: EventContext) -> str | None:
     if raw_cli_type is not None:
         return raw_cli_type
     return getattr(ctx, "cli_type", None)
+
+
+def _has_shell_output_redirection(command: str) -> bool:
+    """Return True when a shell command redirects output to a file/descriptor."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except Exception:
+        tokens = command.split()
+
+    for token in tokens:
+        if token in {">", ">>", ">|", "&>", "&>>", ">&"}:
+            return True
+        if re.fullmatch(r"\d*(?:>|>>|>\|)", token):
+            return True
+        if ">" in token and not token.startswith("<"):
+            return True
+    return False
+
+
+def _tail_follow_requested(tokens: tuple[str, ...]) -> bool:
+    """Return True for tail follow modes that can keep a hook command running."""
+    skip_next = False
+    for token in tokens[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"--", ""}:
+            break
+        if token == "--follow" or token.startswith("--follow="):
+            return True
+        if token in {"-n", "--lines", "-c", "--bytes", "-s", "--sleep-interval", "--pid"}:
+            skip_next = True
+            continue
+        if (
+            token.startswith("--lines=") or token.startswith("--bytes=")
+            or token.startswith("--sleep-interval=") or token.startswith("--pid=")
+        ):
+            continue
+        if token.startswith("--"):
+            continue
+        if token.startswith("-") and token != "-":
+            opts = token[1:]
+            if "f" in opts or "F" in opts:
+                return True
+            continue
+    return False
+
+
+def _default_integration_allows_native_shell_read(
+    ctx: EventContext, pattern: str, command: str, source: str
+) -> bool:
+    """Allow default read-command redirects to yield to platform-native shell reads.
+
+    User integration files and explicit /ar:no blocks are not skipped here: this
+    only adapts the built-in "use a dedicated read tool" default to platforms
+    whose actual model-facing read path is the shell.
+    """
+    if source != "default":
+        return False
+    platform = platform_for(ctx.cli_type)
+    if pattern not in platform.native_shell_read_commands:
+        return False
+    tokens = command_tokens_for(command, pattern, allow_prefixes=False)
+    if not tokens:
+        return False
+    if _has_shell_output_redirection(command):
+        return False
+    if pattern == "tail" and _tail_follow_requested(tokens):
+        return False
+    return True
 
 
 # ============================================================================
@@ -778,6 +850,10 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             for pattern in intg.patterns:
                 try:
                     if command_matches_pattern(cmd, pattern):  # O(1) cached
+                        if _default_integration_allows_native_shell_read(
+                            ctx, pattern, cmd, intg.source
+                        ):
+                            break
                         decision = "warn" if intg.action == "warn" else "deny"
                         key = pattern  # dedup by pattern string only (see TIER 2 comment above)
                         if key not in seen:

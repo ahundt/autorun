@@ -158,6 +158,7 @@ DEFAULT_INTEGRATIONS = {
     "sed": {
         "action": "block",
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno sed",
+        "when": "_sed_modifies_files",
     },
     "awk": {
         "action": "block",

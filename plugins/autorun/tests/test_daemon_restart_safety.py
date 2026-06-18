@@ -365,3 +365,91 @@ class TestPsutilProcessLifecycle:
         assert 'os.kill(' not in source, (
             "restart_daemon.py still contains os.kill() — must use psutil for cross-platform"
         )
+
+
+class TestDaemonMainLifecycleCleanup:
+    """Daemon entry-point cleanup must only remove files owned by this process."""
+
+    def test_start_failure_without_owned_lock_preserves_live_daemon_files(self, tmp_path):
+        """A startup loser must not unlink another daemon's socket or PID file."""
+        import autorun.daemon as daemon_mod
+
+        lock_path = tmp_path / "daemon.lock"
+        lock_path.write_text("12345", encoding="utf-8")
+        cleanup_calls = []
+
+        class FakeDaemon:
+            running = False
+            _daemon_lock = None
+
+            async def start(self):
+                raise RuntimeError("Another daemon is already running")
+
+            def _cleanup_files(self):
+                cleanup_calls.append("cleanup")
+
+        with mock.patch.object(daemon_mod, "_bootstrap_optional_deps", return_value=None):
+            with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
+                with mock.patch.object(daemon_mod, "ipc", mock.MagicMock(), create=True) as ipc_mod:
+                    with pytest.raises(SystemExit):
+                        daemon_mod.main()
+
+        ipc_mod.cleanup_socket.assert_not_called()
+        assert cleanup_calls == []
+        assert lock_path.read_text(encoding="utf-8") == "12345"
+
+    def test_start_failure_with_owned_lock_cleans_owned_files(self):
+        """A daemon that acquired the flock still cleans up after startup failure."""
+        import autorun.daemon as daemon_mod
+
+        cleanup_calls = []
+
+        class FakeDaemon:
+            running = False
+            _daemon_lock = object()
+
+            async def start(self):
+                raise RuntimeError("startup failed after lock acquisition")
+
+            def _cleanup_files(self):
+                cleanup_calls.append("cleanup")
+                self._daemon_lock = None
+
+        with mock.patch.object(daemon_mod, "_bootstrap_optional_deps", return_value=None):
+            with mock.patch.object(daemon_mod, "AutorunDaemon", return_value=FakeDaemon()):
+                with pytest.raises(SystemExit):
+                    daemon_mod.main()
+
+        assert cleanup_calls == ["cleanup"]
+
+
+class TestInstallerDaemonRestart:
+    """Installer restart should use the robust daemon discovery path."""
+
+    def test_installer_restarts_orphan_daemon_discovered_without_pid_file(self, tmp_path):
+        import autorun.install as install_mod
+        import autorun.restart_daemon as restart_mod
+
+        missing_lock = tmp_path / "daemon.lock"
+
+        with mock.patch.object(install_mod.ipc, "AUTORUN_LOCK_PATH", missing_lock):
+            with mock.patch.object(restart_mod, "get_daemon_pid", return_value=12345) as get_pid:
+                with mock.patch.object(restart_mod, "restart_daemon", return_value=0) as restart:
+                    install_mod._restart_daemon_if_running()
+
+        get_pid.assert_called_once_with()
+        restart.assert_called_once_with()
+
+    def test_installer_skips_restart_when_discovery_finds_no_daemon(self, tmp_path):
+        import autorun.install as install_mod
+        import autorun.restart_daemon as restart_mod
+
+        missing_lock = tmp_path / "daemon.lock"
+
+        with mock.patch.object(install_mod.ipc, "AUTORUN_LOCK_PATH", missing_lock):
+            with mock.patch.object(restart_mod, "get_daemon_pid", return_value=None) as get_pid:
+                with mock.patch.object(restart_mod, "restart_daemon") as restart:
+                    install_mod._restart_daemon_if_running()
+
+        get_pid.assert_called_once_with()
+        restart.assert_not_called()

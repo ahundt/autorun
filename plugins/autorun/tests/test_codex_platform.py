@@ -103,16 +103,19 @@ def test_codex_get_cli_event_name_identity():
         assert get_cli_event_name(ev, "codex") == ev
 
 
-# ─── Tool names (same as Claude) ──────────────────────────────────────────────
+# ─── Tool names (Claude-like hooks, Codex-specific model surface) ─────────────
 
-def test_codex_tool_names_match_claude():
-    """Codex file/shell API tool names match Claude (PascalCase)."""
+def test_codex_tool_names_match_current_model_surface():
+    """Codex shares some Claude hook names but not its Read/Edit model tools."""
     codex_tools = PLATFORMS["codex"].tool_names
     claude_tools = PLATFORMS["claude"].tool_names
-    for key in ("grep", "glob", "read", "write", "edit", "bash"):
+    for key in ("grep", "glob", "write", "bash"):
         assert codex_tools[key] == claude_tools[key], (
-            f"Codex tool_names[{key!r}] must match Claude (verified per v0.133 hook spec)"
+            f"Codex tool_names[{key!r}] should stay aligned with Claude where hooks share names"
         )
+    assert codex_tools["read"] == "shell file inspection"
+    assert codex_tools["edit"] == "apply_patch"
+    assert PLATFORMS["codex"].native_shell_read_commands == frozenset({"cat", "head", "tail"})
 
 
 def test_codex_task_progress_uses_update_plan():
@@ -148,9 +151,10 @@ def test_codex_get_tool_names():
 
 # ─── format_suggestion ────────────────────────────────────────────────────────
 
-def test_codex_format_suggestion_uses_claude_tool_names():
+def test_codex_format_suggestion_uses_codex_tool_surface():
     from autorun.core import format_suggestion
-    assert format_suggestion("Use {grep} then {edit}", "codex") == "Use Grep then Edit"
+    assert format_suggestion("Use {grep} then {edit}", "codex") == "Use Grep then apply_patch"
+    assert format_suggestion("Use {read}", "codex") == "Use shell file inspection"
 
 
 def test_codex_formats_autorun_commands_with_platform_display_prefix():

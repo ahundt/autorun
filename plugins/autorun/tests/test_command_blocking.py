@@ -31,6 +31,7 @@ from unittest.mock import patch
 
 # command_matches_pattern is kept in main.py as a utility function
 from autorun.main import command_matches_pattern
+from autorun.command_detection import command_tokens_for
 from autorun.config import DEFAULT_INTEGRATIONS
 import autorun.integrations as integ
 # Canonical daemon-path imports
@@ -110,6 +111,18 @@ class TestPatternMatching:
         """Test commands with pipes."""
         assert command_matches_pattern("cat file | rm output", "rm") is True
         assert command_matches_pattern("ls | grep test", "rm") is False
+
+    def test_command_tokens_for_prefix_control(self):
+        """Token slices can either include or reject prefixed command forms."""
+        assert command_tokens_for("sudo sed -i s/a/b/ file", "sed") == (
+            "sed", "-i", "s/a/b/", "file"
+        )
+        assert command_tokens_for(
+            "sudo sed -i s/a/b/ file",
+            "sed",
+            allow_prefixes=False,
+        ) == ()
+        assert command_tokens_for("grep x file | head -20", "head") == ("head", "-20")
 
 
 class TestSessionBlockManagement:
@@ -383,6 +396,82 @@ class TestShouldBlockCommand:
         assert result is not None
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         assert perm == "deny"
+
+
+class TestPlatformAwareShellFileInspection:
+    """Platform-specific shell read routing without weakening write guards."""
+
+    def _ctx(self, command: str, cli_type: str = "codex") -> EventContext:
+        store = ThreadSafeDB()
+        return EventContext(
+            session_id=f"test-shell-read-{cli_type}-{id(self)}-{command[:8].replace(' ', '_')}",
+            event="PreToolUse", tool_name="Bash",
+            tool_input={"command": command}, store=store, cli_type=cli_type
+        )
+
+    @pytest.mark.parametrize("command", [
+        "cat README.md",
+        "head -20 README.md",
+        "tail -n 40 daemon.log",
+    ])
+    def test_codex_allows_native_read_only_shell_inspection(self, command):
+        """Codex has no exposed Read tool here, so bounded shell reads are native."""
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is None, f"Codex read-only shell inspection must pass through: {result!r}"
+
+    @pytest.mark.parametrize("command", [
+        "cat README.md > /tmp/out.txt",
+        "head -20 README.md >> /tmp/out.txt",
+        "tail -n 40 daemon.log > /tmp/out.txt",
+        "tail -f daemon.log",
+        "tail -F daemon.log",
+        "sudo tail -f daemon.log",
+        "sudo cat README.md",
+    ])
+    def test_codex_still_blocks_shell_read_writes_or_unbounded_follow(self, command):
+        """Codex native file inspection must not become a shell-write bypass."""
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is not None, f"Unsafe shell read form must be handled: {command}"
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        assert perm == "deny", f"Unsafe shell read form must be denied, got {perm!r}"
+
+    @pytest.mark.parametrize("cli_type,expected", [
+        ("claude", "Read tool"),
+        ("gemini", "read_file tool"),
+    ])
+    def test_claude_and_gemini_keep_dedicated_read_tool_routing(self, cli_type, expected):
+        """Harnesses with dedicated file-read tools should retain their guardrail."""
+        result = plugins.check_blocked_commands(self._ctx("cat README.md", cli_type=cli_type))
+        assert result is not None, f"{cli_type} direct cat must still be routed"
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert perm == "deny"
+        assert expected in msg
+
+    @pytest.mark.parametrize("command", [
+        "sed -n '1,20p' README.md",
+        "sed 's/old/new/g' README.md",
+    ])
+    def test_read_only_sed_is_allowed_for_shell_inspection(self, command):
+        """sed only needs the edit-tool guard when it modifies files in place."""
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is None, f"Read-only sed must not be blocked: {result!r}"
+
+    @pytest.mark.parametrize("command", [
+        "sed -i 's/old/new/g' README.md",
+        "sed -i.bak 's/old/new/g' README.md",
+        "sed -Ei 's/old/new/g' README.md",
+        "sed --in-place 's/old/new/g' README.md",
+        "sudo sed -i 's/old/new/g' README.md",
+    ])
+    def test_sed_in_place_still_blocks_with_codex_edit_guidance(self, command):
+        """In-place sed remains an edit operation and should suggest Codex's edit path."""
+        result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
+        assert result is not None
+        perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
+        msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert perm == "deny"
+        assert "apply_patch" in msg
 
 
 

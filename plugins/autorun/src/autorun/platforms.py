@@ -57,6 +57,12 @@ class Platform:
     # === Tool name resolution (logical key → API tool_name) ===
     tool_names: Mapping[str, str] = field(default_factory=dict)
 
+    # === Native shell affordances ===
+    # Some harnesses expose no dedicated file-read model tool. For those,
+    # autorun allows bounded read-only shell inspection commands while still
+    # blocking shell writes and unbounded follow-style reads.
+    native_shell_read_commands: frozenset[str] = field(default_factory=frozenset)
+
     # === Native task/checklist tools ===
     # Different harnesses expose task progress differently:
     # - Claude has first-class TaskCreate/TaskUpdate/TaskList tools.
@@ -135,11 +141,13 @@ _GEMINI_TOOLS = {
     "task_title": "title", "task_id_param": "id",
 }
 
-# Codex CLI v0.133 docs show identical hook tool names to Claude Code's API
-# for file/shell tools (Bash, Read, Write, Edit, Grep, Glob, …). Task progress
-# is native Codex update_plan, not Claude TaskCreate/TaskUpdate.
+# Codex hook events use Claude-like shell/edit matcher names, but the current
+# Codex model-facing tool surface does not expose a generic Claude-style Read
+# tool. Keep suggestions pointed at what Codex can actually do here.
 _CODEX_TOOLS = dict(_CLAUDE_TOOLS)
 _CODEX_TOOLS.update({
+    "read": "shell file inspection",
+    "edit": "apply_patch",
     "task_progress": "update_plan",
 })
 
@@ -255,6 +263,7 @@ CODEX = register(Platform(
     install_fn_name="_install_for_codex",
     list_cmd=("codex", "plugin", "list"),
     tool_names=_CODEX_TOOLS,
+    native_shell_read_commands=frozenset({"cat", "head", "tail"}),
     task_management_style="plan_checklist",
     task_plan_tools=frozenset({"update_plan"}),
     command_prefixes=("/ar:", "ar:", "ar "),

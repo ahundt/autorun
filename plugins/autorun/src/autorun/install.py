@@ -159,25 +159,21 @@ def _restart_daemon_if_running() -> None:
     Imports restart_daemon() from autorun.restart_daemon.
     Non-fatal: installation succeeds even if daemon restart fails.
     """
-    lock_path = ipc.AUTORUN_LOCK_PATH
-
-    # Quick check: skip entirely if no daemon is running
-    if not lock_path.exists():
-        return
     try:
-        import psutil
-        pid = int(lock_path.read_text().strip())
-        if not psutil.pid_exists(pid):
-            return
-    except (ValueError, OSError):
+        from autorun.restart_daemon import get_daemon_pid, restart_daemon
+
+        pid = get_daemon_pid()
+    except Exception as e:
+        logger.debug(f"Could not check daemon state before restart: {e}")
+        return
+
+    if not pid:
         return
 
     print()
     print("Restarting daemon to pick up changes...")
 
     try:
-        from autorun.restart_daemon import restart_daemon
-
         result = restart_daemon()
         if result == 0:
             print("   Daemon restarted")
@@ -911,6 +907,71 @@ def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
     logger.debug(f"Copied hook_entry.py → {target}")
 
 
+def _copy_tree(src: Path, dst: Path) -> bool:
+    """Mirror a plugin-owned resource tree into an installed location."""
+    if not src.is_dir():
+        return False
+    if dst.exists() or dst.is_symlink():
+        if dst.is_symlink() or dst.is_file():
+            dst.unlink()
+        else:
+            shutil.rmtree(dst)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak"),
+    )
+    return True
+
+
+def _count_skill_dirs(skills_dir: Path) -> int:
+    """Count top-level Gemini/Claude skill directories in a copied skills tree."""
+    if not skills_dir.is_dir():
+        return 0
+    return sum(
+        1
+        for child in skills_dir.iterdir()
+        if child.is_dir() and (child / "SKILL.md").is_file()
+    )
+
+
+def _sync_gemini_extension_resources(
+    plugin_dir: Path,
+    ext_dir: Path,
+    ext_name: str,
+) -> tuple[int, int]:
+    """Materialize shared autorun resources into an installed Gemini extension.
+
+    Gemini extension install reads from the Gemini-specific template, while
+    autorun's commands, skills, and executable hook entry are shared with other
+    harnesses at the plugin root. Keep that source tree single-owned, and sync
+    the shared resources into the installed extension after Gemini has created
+    or confirmed the extension directory.
+
+    Returns:
+        (generated_command_count, synced_skill_count)
+    """
+    template_dir = _gemini_template_dir(plugin_dir)
+    gemini_src = template_dir if (template_dir / "gemini-extension.json").is_file() else plugin_dir
+
+    manifest_src = gemini_src / "gemini-extension.json"
+    if manifest_src.is_file():
+        shutil.copy2(manifest_src, ext_dir / "gemini-extension.json")
+
+    _copy_tree(gemini_src / "hooks", ext_dir / "hooks")
+    _copy_hook_entry_to_gemini_ext(plugin_dir, ext_dir)
+
+    commands_generated = 0
+    if _copy_tree(plugin_dir / "commands", ext_dir / "commands"):
+        commands_generated = _generate_gemini_toml_commands(ext_dir, ext_name)
+
+    skills_synced = 0
+    if _copy_tree(plugin_dir / "skills", ext_dir / "skills"):
+        skills_synced = _count_skill_dirs(ext_dir / "skills")
+
+    return (commands_generated, skills_synced)
+
+
 def _migrate_legacy_layout(plugin_dir: Path) -> None:
     """Fail-fast detector for stale working trees from before the template refactor.
 
@@ -1309,22 +1370,15 @@ def _install_for_gemini(
             print(f"   ✓ {ext_name} installed successfully")
             installed_dir = gemini_dir / "extensions" / ext_name
             if installed_dir.is_dir():
-                # Copy hook_entry.py from the Claude plugin dir so the Gemini
-                # hooks.json's ${extensionPath}/hook_entry.py reference resolves.
-                _copy_hook_entry_to_gemini_ext(plugin_dir, installed_dir)
-                # Generate TOML command files for Gemini CLI. Commands live at
-                # plugin_dir/commands/ (shared with Claude); mirror into the
-                # installed extension so /<ext_name>:* commands work.
-                commands_src = plugin_dir / "commands"
-                if commands_src.is_dir():
-                    shutil.copytree(
-                        commands_src,
-                        installed_dir / "commands",
-                        dirs_exist_ok=True,
-                    )
-                n = _generate_gemini_toml_commands(installed_dir, ext_name)
+                n, skills_count = _sync_gemini_extension_resources(
+                    plugin_dir,
+                    installed_dir,
+                    ext_name,
+                )
                 if n > 0:
                     print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
+                if skills_count > 0:
+                    print(f"   ✓ Synced {skills_count} skill(s) for Gemini")
             success_count += 1
         else:
             print(f"   ✗ {ext_name} installation failed:")
