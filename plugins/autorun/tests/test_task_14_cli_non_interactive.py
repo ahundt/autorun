@@ -10,6 +10,7 @@ Verifies that:
 """
 
 import sys
+import os
 import subprocess
 from pathlib import Path
 import pytest
@@ -21,15 +22,39 @@ plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
 
+@pytest.fixture
+def isolated_autorun_home(tmp_path):
+    return tmp_path / "autorun-home"
+
+
+def run_task_lifecycle_cli(*args: str, autorun_home: Path, **kwargs) -> subprocess.CompletedProcess:
+    """Run the task lifecycle CLI through the autorun project environment."""
+    env = dict(os.environ)
+    env["AUTORUN_HOME"] = str(autorun_home)
+    env.update(kwargs.pop("env", {}) or {})
+    return subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(plugin_root),
+            "python",
+            str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
+            *args,
+        ],
+        env=env,
+        **kwargs,
+    )
+
+
 class TestCLINonInteractive:
     """Test CLI non-interactive behavior."""
 
-    def test_configure_non_tty_shows_settings_only(self):
+    def test_configure_non_tty_shows_settings_only(self, isolated_autorun_home):
         """Test --configure in non-TTY shows settings without prompting."""
-        result = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--configure"],
+        result = run_task_lifecycle_cli(
+            "--configure",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,  # Non-TTY (no stdin)
@@ -46,12 +71,11 @@ class TestCLINonInteractive:
         assert "Modify settings? (y/n):" not in result.stdout
         assert "Enable task lifecycle?" not in result.stdout
 
-    def test_configure_with_pipe_input(self):
+    def test_configure_with_pipe_input(self, isolated_autorun_home):
         """Test --configure works when input is piped (non-TTY)."""
-        result = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--configure"],
+        result = run_task_lifecycle_cli(
+            "--configure",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             input="y\n",  # Provide input via pipe (still non-TTY)
@@ -61,13 +85,12 @@ class TestCLINonInteractive:
         assert result.returncode == 0
         assert "Non-interactive mode" in result.stdout
 
-    def test_clear_with_no_confirm_flag(self):
+    def test_clear_with_no_confirm_flag(self, isolated_autorun_home):
         """Test --clear --all --no-confirm works without prompting."""
-        result = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--clear", "test-session-nonexistent",
-             "--no-confirm"],
+        result = run_task_lifecycle_cli(
+            "--clear", "test-session-nonexistent",
+            "--no-confirm",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -80,12 +103,11 @@ class TestCLINonInteractive:
         # Should NOT contain confirmation prompts
         assert "Type 'yes' to confirm:" not in result.stdout
 
-    def test_clear_without_no_confirm_in_non_tty_refuses(self):
+    def test_clear_without_no_confirm_in_non_tty_refuses(self, isolated_autorun_home):
         """Test --clear without --no-confirm refuses in non-TTY."""
-        result = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--clear", "--all"],
+        result = run_task_lifecycle_cli(
+            "--clear", "--all",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,  # Non-TTY
@@ -95,12 +117,11 @@ class TestCLINonInteractive:
         # Should refuse or exit with error code
         assert result.returncode == 2 or "non-interactive mode" in result.stdout.lower()
 
-    def test_status_command_always_works_non_interactive(self):
+    def test_status_command_always_works_non_interactive(self, isolated_autorun_home):
         """Test --status works in non-TTY (never prompts)."""
-        result = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--status"],
+        result = run_task_lifecycle_cli(
+            "--status",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -114,13 +135,12 @@ class TestCLINonInteractive:
         # Should NOT hang waiting for input
         assert "Modify settings" not in result.stdout
 
-    def test_enable_disable_commands_non_interactive(self):
+    def test_enable_disable_commands_non_interactive(self, isolated_autorun_home):
         """Test --enable and --disable work without prompting."""
         # Test enable
-        result_enable = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--enable"],
+        result_enable = run_task_lifecycle_cli(
+            "--enable",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -130,10 +150,9 @@ class TestCLINonInteractive:
         assert result_enable.returncode == 0
 
         # Test disable
-        result_disable = subprocess.run(
-            ["uv", "run", "python",
-             str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-             "--disable"],
+        result_disable = run_task_lifecycle_cli(
+            "--disable",
+            autorun_home=isolated_autorun_home,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -142,16 +161,13 @@ class TestCLINonInteractive:
 
         assert result_disable.returncode == 0
 
-    def test_no_hanging_in_background_script(self):
+    def test_no_hanging_in_background_script(self, isolated_autorun_home):
         """Test CLI doesn't hang when run in background (common CI scenario)."""
-        import signal
-
         # Run with timeout to detect hangs
         try:
-            result = subprocess.run(
-                ["uv", "run", "python",
-                 str(plugin_root / "scripts" / "task_lifecycle_cli.py"),
-                 "--configure"],
+            result = run_task_lifecycle_cli(
+                "--configure",
+                autorun_home=isolated_autorun_home,
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,

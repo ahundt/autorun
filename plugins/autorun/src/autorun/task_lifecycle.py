@@ -48,11 +48,10 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from . import ipc
-from .core import EventContext, app, format_command_for_cli, logger
+from .core import EventContext, format_command_for_cli, logger
 from .session_manager import session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
-    PLAN_TOOLS,
     LOG_SNIPPET_MAX_LEN,
 )
 from .platforms import platform_for, task_tool_role
@@ -1332,7 +1331,6 @@ class TaskLifecycle:
         Returns:
             Exit code (0 = success, 1 = error)
         """
-        import sys
         try:
             # Auto-detect session ID if not provided
             if not session_id:
@@ -1406,7 +1404,6 @@ class TaskLifecycle:
         Returns:
             Exit code (0 = success, 1 = error)
         """
-        import sys
         try:
             manager = cls(session_id=session_id)
             tasks = manager.tasks
@@ -1482,6 +1479,11 @@ class TaskLifecycle:
             config = TaskLifecycleConfig.load()
 
             if all_sessions:
+                if confirm and not sys.stdin.isatty():
+                    print("⚠️ Refusing to clear all sessions in non-interactive mode")
+                    print("Use --no-confirm flag to proceed")
+                    return 2
+
                 sessions_dir = config.storage_dir
                 if not sessions_dir.exists():
                     print("No task data found.")
@@ -1490,10 +1492,6 @@ class TaskLifecycle:
                 session_dirs = [d for d in sessions_dir.iterdir() if d.is_dir()]
 
                 if confirm:
-                    if not sys.stdin.isatty():
-                        print("⚠️ Refusing to clear all sessions in non-interactive mode")
-                        print("Use --no-confirm flag to proceed")
-                        return 2
                     print(f"⚠️  WARNING: About to clear {len(session_dirs)} session(s)")
                     response = input("Type 'yes' to confirm: ")
                     if response.lower() != 'yes':
@@ -1613,7 +1611,9 @@ class TaskLifecycle:
             # Clean old sessions, keep last 7 days
             TaskLifecycle.cli_gc(ttl_days=7)
         """
-        import sys, fnmatch, shutil
+        import sys
+        import fnmatch
+        import shutil
         from .session_manager import get_session_manager
 
         try:
@@ -1801,7 +1801,7 @@ class TaskLifecycle:
                     print(f"  • Too recent: {skip_young} (age < {ttl}d TTL)")
 
             # Actions taken
-            print(f"\nActions:")
+            print("\nActions:")
             print(f"  • {verb} archive: {archived} sessions")
             print(f"  • {verb} clear: {cleared} sessions")
 
@@ -1872,7 +1872,7 @@ class TaskLifecycle:
             print("Task Lifecycle Configuration")
             print("============================")
             print()
-            print(f"Current settings:")
+            print("Current settings:")
             print(f"  Enabled: {config.enabled}")
             print(f"  Storage directory: {config.storage_dir}")
             print(f"  Max resume tasks: {config.max_resume_tasks}")
@@ -1930,7 +1930,6 @@ class TaskLifecycle:
         Returns:
             Exit code (0 = success, 1 = error)
         """
-        import sys
         try:
             config = TaskLifecycleConfig.load()
             config.enabled = True
@@ -1948,7 +1947,6 @@ class TaskLifecycle:
         Returns:
             Exit code (0 = success, 1 = error)
         """
-        import sys
         try:
             config = TaskLifecycleConfig.load()
             config.enabled = False

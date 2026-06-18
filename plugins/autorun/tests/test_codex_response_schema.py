@@ -421,6 +421,150 @@ def test_codex_allow_without_session_id_uses_stable_cli_parent(monkeypatch):
     assert "Allowed 'git push'" in hso["additionalContext"]
 
 
+def _write_codex_rollout_user_messages(path: Path, prompts: list[str], *, event_msg: bool = False) -> None:
+    lines = []
+    for index, prompt in enumerate(prompts):
+        timestamp = f"2026-06-18T15:45:{index:02d}Z"
+        if event_msg:
+            entry = {
+                "timestamp": timestamp,
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": prompt,
+                    "kind": "plain",
+                },
+            }
+        else:
+            entry = {
+                "timestamp": timestamp,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": prompt}],
+                },
+            }
+        lines.append(json.dumps(entry))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("event_msg", [False, True])
+def test_codex_transcript_ar_ok_fallback_unblocks_when_prompt_hook_missing(tmp_path, event_msg):
+    store = ThreadSafeDB()
+    session_id = f"codex-transcript-allow-{uuid.uuid4().hex}"
+    transcript = tmp_path / "rollout.jsonl"
+    _write_codex_rollout_user_messages(transcript, ["ar:ok 'git push'"], event_msg=event_msg)
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin main"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "additionalContext" in hso
+    assert "Allowed 'git push'" in hso["additionalContext"]
+
+
+def test_codex_transcript_ar_ok_fallback_does_not_replay_consumed_prompt(tmp_path):
+    store = ThreadSafeDB()
+    session_id = f"codex-transcript-no-replay-{uuid.uuid4().hex}"
+    transcript = tmp_path / "rollout.jsonl"
+    _write_codex_rollout_user_messages(transcript, ["ar:ok 'git push'"])
+
+    first_ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin main"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+    first = plugins.check_blocked_commands(first_ctx)
+    assert first is not None
+    assert_codex_response_valid("PreToolUse", first)
+    assert "Allowed 'git push'" in json.dumps(first)
+
+    second_ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin feature"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+    second = plugins.check_blocked_commands(second_ctx)
+
+    assert second is not None
+    assert_codex_response_valid("PreToolUse", second)
+    hso = second["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "deny"
+    assert "git push requires explicit user permission" in hso["permissionDecisionReason"]
+
+
+def test_codex_transcript_freeform_permission_text_does_not_unblock_push(tmp_path):
+    store = ThreadSafeDB()
+    session_id = f"codex-transcript-freeform-{uuid.uuid4().hex}"
+    transcript = tmp_path / "rollout.jsonl"
+    _write_codex_rollout_user_messages(transcript, ["ok do an escalated push attempt"])
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin main"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "deny"
+    assert "git push requires explicit user permission" in hso["permissionDecisionReason"]
+
+
+def test_codex_transcript_stale_ar_ok_before_newer_user_text_does_not_unblock_push(tmp_path):
+    store = ThreadSafeDB()
+    session_id = f"codex-transcript-stale-allow-{uuid.uuid4().hex}"
+    transcript = tmp_path / "rollout.jsonl"
+    _write_codex_rollout_user_messages(
+        transcript,
+        ["ar:ok 'git push'", "actually do not push yet"],
+    )
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin main"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "deny"
+    assert "git push requires explicit user permission" in hso["permissionDecisionReason"]
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected"),
     [

@@ -50,6 +50,7 @@ from .command_detection import (
     shell_command_from_tool_input,
 )
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
+from .transcript_commands import latest_transcript_command
 
 # Import plan_export to register its @app.on() handlers with daemon
 from . import plan_export  # noqa: F401
@@ -661,6 +662,81 @@ for scope, cmd, op in _BLOCK_COMMANDS:
     app.command(cmd)(_make_block_op(scope, op))
 
 
+_TRANSCRIPT_POLICY_COMMANDS = frozenset({
+    "/ar:ok",
+    "/ar:globalok",
+    "/ar:no",
+    "/ar:globalno",
+    "/ar:clear",
+    "/ar:globalclear",
+})
+_TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY = "processed_transcript_policy_commands"
+_TRANSCRIPT_POLICY_COMMAND_MARKER_LIMIT = 200
+
+
+def _claim_transcript_policy_command(ctx: EventContext, marker: str) -> bool:
+    """Atomically mark one transcript command as processed for this session."""
+    try:
+        with session_state(ctx.session_id) as st:
+            markers = list(st.get(_TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY, []))
+            if marker in markers:
+                return False
+            markers.append(marker)
+            st[_TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY] = markers[-_TRANSCRIPT_POLICY_COMMAND_MARKER_LIMIT:]
+            return True
+    except Exception as exc:
+        logger.warning(f"Transcript policy command marker failed closed: {exc}")
+        return False
+
+
+def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
+    """Process one exact autorun policy command from Codex transcripts.
+
+    Some Codex API-backed sessions deliver PreToolUse hooks with a transcript
+    path but skip UserPromptSubmit hooks. This bridges only explicit autorun
+    policy commands such as ``ar:ok 'git push'`` and routes them through the
+    same registered handlers as native prompt hooks.
+    """
+    if ctx.cli_type != "codex":
+        return None
+
+    command = latest_transcript_command(
+        ctx.transcript_path,
+        cli_type=ctx.cli_type,
+        command_names=_TRANSCRIPT_POLICY_COMMANDS,
+    )
+    if command is None:
+        return None
+
+    match = app._find_command(command.canonical_prompt, ctx.cli_type)
+    if match is None or match.alias not in _TRANSCRIPT_POLICY_COMMANDS:
+        return None
+
+    if not _claim_transcript_policy_command(ctx, command.marker):
+        return None
+
+    fallback_ctx = EventContext(
+        session_id=ctx.session_id,
+        event="UserPromptSubmit",
+        prompt=command.prompt,
+        cli_type=ctx.cli_type,
+        cwd=ctx.cwd,
+        permission_mode=ctx.permission_mode,
+        source=ctx.source,
+        transcript_path=ctx.transcript_path,
+        store=getattr(ctx, "_store", None),
+    )
+    fallback_ctx.activation_prompt = match.activation_prompt
+    try:
+        result = match.handler(fallback_ctx)
+    except Exception as exc:
+        logger.warning(f"Transcript policy command handler failed closed: {exc}")
+        return None
+
+    logger.info(f"Applied Codex transcript policy command {match.alias}: {result}")
+    return result
+
+
 @app.command("/ar:reload")
 def handle_reload(ctx: EventContext) -> str:
     """Force reload of integration files."""
@@ -726,6 +802,8 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # Centralized prefix check (DRY): Internal autorun commands are always allowed
     if cmd.strip().startswith("/ar:"):
         return ctx.allow()
+
+    _apply_pending_transcript_policy_command(ctx)
 
     # Fingerprint for this hook invocation: identifies parallel invocations of the
     # same tool call in the same session. Constructed from session_id+tool+cmd so
