@@ -36,6 +36,7 @@ import time
 import copy
 import logging
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Callable, Set, Union
 from functools import lru_cache
@@ -43,7 +44,7 @@ from functools import lru_cache
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
 from .session_manager import session_state
 from .config import CONFIG
-from .platforms import PLATFORMS as _PLATFORMS
+from .platforms import PLATFORMS as _PLATFORMS, hook_platforms, platform_for
 from . import ipc
 
 # === CONFIGURATION ===
@@ -79,6 +80,16 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger("autorun")
+
+
+CANONICAL_COMMAND_PREFIX = "/ar:"
+
+
+@dataclass(frozen=True)
+class CommandMatch:
+    handler: Callable
+    alias: str
+    activation_prompt: str
 
 
 # === GEMINI CLI PAYLOAD NORMALIZATION ===
@@ -138,6 +149,56 @@ def get_tool_names(cli_type: str) -> dict[str, str]:
     return CLI_TOOL_NAMES.get(cli_type, {})
 
 
+def _command_prefixes_for_cli(cli_type: str | None) -> tuple[str, ...]:
+    """Return accepted autorun command prefixes for a platform.
+
+    Unknown callers get the union of hook-platform prefixes so tests and older
+    hook payloads can still normalize prompt text before cli_type is known.
+    """
+    if cli_type:
+        return platform_for(cli_type).command_prefixes
+
+    prefixes: list[str] = [CANONICAL_COMMAND_PREFIX]
+    for platform in hook_platforms():
+        prefixes.extend(platform.command_prefixes)
+    return tuple(dict.fromkeys(prefixes))
+
+
+def canonicalize_command_prompt(prompt: str, cli_type: str | None = None) -> str:
+    """Normalize an accepted autorun prompt command to canonical /ar:* form."""
+    prompt = prompt.strip()
+    for prefix in sorted(_command_prefixes_for_cli(cli_type), key=len, reverse=True):
+        if not prompt.startswith(prefix):
+            continue
+        suffix = prompt[len(prefix):]
+        if re.match(r"^[A-Za-z][A-Za-z0-9_-]*(?:\s|$)", suffix):
+            return f"{CANONICAL_COMMAND_PREFIX}{suffix}"
+    return prompt
+
+
+def command_display_prefix(cli_type: str | None) -> str:
+    """Return the preferred user-facing autorun command prefix for a platform."""
+    return platform_for(cli_type).command_display_prefix or CANONICAL_COMMAND_PREFIX
+
+
+def format_command_for_cli(command: str, cli_type: str | None) -> str:
+    """Render one canonical /ar:* command in the platform's preferred spelling."""
+    display_prefix = command_display_prefix(cli_type)
+    if display_prefix == CANONICAL_COMMAND_PREFIX:
+        return command
+    if command.startswith(CANONICAL_COMMAND_PREFIX):
+        return f"{display_prefix}{command[len(CANONICAL_COMMAND_PREFIX):]}"
+    return command
+
+
+def format_commands_for_cli(text: str, cli_type: str | None) -> str:
+    """Render canonical /ar:* command mentions for the target platform."""
+    display_prefix = command_display_prefix(cli_type)
+    if display_prefix == CANONICAL_COMMAND_PREFIX:
+        return text
+    return text.replace(CANONICAL_COMMAND_PREFIX, display_prefix)
+
+
 @lru_cache(maxsize=64)
 def format_suggestion(msg: str, cli_type: str) -> str:
     """Resolve {tool_key} placeholders in safety-guard suggestion strings to the
@@ -175,7 +236,7 @@ def format_suggestion(msg: str, cli_type: str) -> str:
     """
     for key, value in get_tool_names(cli_type).items():
         msg = msg.replace(f"{{{key}}}", value)
-    return msg
+    return format_commands_for_cli(msg, cli_type)
 
 
 # --- BUG #18534 WORKAROUND START --- DELETE THIS FUNCTION WHEN BUG IS FIXED ---
@@ -687,6 +748,15 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                 hso_filtered = {k: v for k, v in hso.items() if k in allowed_hso}
                 if hso_filtered.get("permissionDecision") == "ask":
                     hso_filtered["permissionDecision"] = "deny"
+                if "updatedInput" in hso_filtered:
+                    if (
+                        filtered.get("decision") == platform.block_decision
+                        or hso_filtered.get("permissionDecision") == "deny"
+                    ):
+                        hso_filtered.pop("updatedInput", None)
+                    else:
+                        hso_filtered["permissionDecision"] = "allow"
+                        hso_filtered.setdefault("permissionDecisionReason", "")
                 if (
                     "additionalContext" in hso_filtered
                     and not hso_filtered["additionalContext"]
@@ -1471,21 +1541,23 @@ class AutorunApp:
             return ctx.respond("allow", "")
         return None
 
-    def _find_command(self, prompt: str) -> Optional[tuple]:
+    def _find_command(self, prompt: str, cli_type: str | None = None) -> Optional[CommandMatch]:
         """
         Find matching command handler (DRY: single lookup logic).
 
-        Returns (handler, matched_alias) or None.
+        Returns CommandMatch or None.
         """
+        canonical_prompt = canonicalize_command_prompt(prompt, cli_type)
+
         # Check CONFIG command_mappings
-        command = CONFIG["command_mappings"].get(prompt)
+        command = CONFIG["command_mappings"].get(canonical_prompt)
         if command and command in self.command_handlers:
-            return (self.command_handlers[command], command)
+            return CommandMatch(self.command_handlers[command], command, canonical_prompt)
 
         # Check direct aliases
         for alias, handler in self.command_handlers.items():
-            if prompt == alias or prompt.startswith(f"{alias} "):
-                return (handler, alias)
+            if canonical_prompt == alias or canonical_prompt.startswith(f"{alias} "):
+                return CommandMatch(handler, alias, canonical_prompt)
 
         return None
 
@@ -1499,11 +1571,10 @@ class AutorunApp:
 
         # UserPromptSubmit: Check commands first
         if event == "UserPromptSubmit":
-            match = self._find_command(ctx.prompt.strip())
+            match = self._find_command(ctx.prompt.strip(), ctx.cli_type)
             if match:
-                handler, alias = match
-                ctx.activation_prompt = ctx.prompt
-                response_text = handler(ctx)
+                ctx.activation_prompt = match.activation_prompt
+                response_text = match.handler(ctx)
                 # Stop/estop handlers set _halt_ai=True to kill AI loop
                 halt = getattr(ctx, '_halt_ai', False)
                 return ctx.command_response(response_text, continue_loop=not halt)

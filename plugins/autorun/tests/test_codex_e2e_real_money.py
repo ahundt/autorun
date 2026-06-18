@@ -258,12 +258,14 @@ class TestCodexE2ERealMoney:
     def test_codex_userprompt_hook_does_not_fail_in_real_cli(self, codex_cli_check, tmp_path):
         """Run a real Codex prompt through UserPromptSubmit hooks.
 
-        This intentionally uses /ar:st because it exercises the same command
-        path that was broken by decision="approve" in Codex UserPromptSubmit.
+        This intentionally uses ar:st because current Codex TUI can consume
+        unknown first-line slash commands before prompt hooks see them. The
+        hook-safe spelling exercises the same command handler and Codex schema
+        path that previously broke with decision="approve".
         """
         model = _choose_codex_e2e_model()
         output_file = tmp_path / "codex-last-message.txt"
-        prompt = "/ar:st\nThen answer exactly: DONE"
+        prompt = "ar:st\nThen answer exactly: DONE"
 
         result = subprocess.run(
             _codex_exec_command(model, REPO_ROOT, output_file, prompt),

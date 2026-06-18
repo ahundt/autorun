@@ -8,12 +8,19 @@ overrides exist so a stop or a block can always be resolved.
 
 ## Override commands (user types these)
 
-- `/ar:sos` — emergency stop, cancels the current autorun.
-- `/ar:task-ignore <id>` — mark a tracked task as ignored so a Stop
+Codex-native forms avoid unknown slash-command interception in the TUI:
+
+- `ar:sos` — emergency stop, cancels the current autorun.
+- `ar:task-ignore <id>` — mark a tracked task as ignored so a Stop
   block can clear.
-- `/ar:ok <pattern> [N|5m|perm]` — allow a blocked command in this
+- `ar:ok <pattern> [N|5m|perm]` — allow a blocked command in this
   session; default is one use then auto-revoke.
-- `/ar:globalok <pattern> [N|5m|perm]` — same allow, persisted globally.
+- `ar:globalok <pattern> [N|5m|perm]` — same allow, persisted globally.
+
+Slash forms such as `/ar:sos`, `/ar:task-ignore`, and `/ar:ok` remain
+supported by autorun when a harness passes them to hooks, but current Codex
+CLI may handle unknown slash commands before `UserPromptSubmit` hooks see
+them. In Codex, prefer `ar:*` or `ar <command>` forms.
 
 ## Safety guardrails
 
@@ -27,6 +34,6 @@ overrides exist so a stop or a block can always be resolved.
 ## Stop semantics
 
 If you have incomplete tracked tasks and the user asks you to stop,
-surface the override path: only the user can type `/ar:sos` or
-`/ar:task-ignore <id>` to unblock the Stop.
+surface the override path: only the user can type `ar:sos` or
+`ar:task-ignore <id>` to unblock the Stop.
 <!-- autorun:codex-agents-md:end -->

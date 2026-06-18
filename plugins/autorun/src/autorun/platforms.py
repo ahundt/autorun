@@ -69,6 +69,13 @@ class Platform:
     task_bulk_tools: frozenset[str] = field(default_factory=frozenset)
     task_plan_tools: frozenset[str] = field(default_factory=frozenset)
 
+    # === Autorun prompt commands ===
+    # Autorun command handlers are registered in canonical /ar:* form. Some
+    # harnesses accept additional prompt-hook spellings; dispatch normalizes any
+    # listed prefix back to /ar:* before handlers run.
+    command_prefixes: tuple[str, ...] = ("/ar:",)
+    command_display_prefix: str = "/ar:"
+
     # === Hook capability ===
     has_hooks: bool = True
     schema_type: str = "strict"   # "strict" | "permissive" | "none"
@@ -250,6 +257,8 @@ CODEX = register(Platform(
     tool_names=_CODEX_TOOLS,
     task_management_style="plan_checklist",
     task_plan_tools=frozenset({"update_plan"}),
+    command_prefixes=("/ar:", "ar:", "ar "),
+    command_display_prefix="ar:",
     normal_allow_decision=None,
     block_decision="block",
     supports_additional_context_events=frozenset({

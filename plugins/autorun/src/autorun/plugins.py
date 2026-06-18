@@ -36,7 +36,7 @@ from functools import lru_cache, cache
 from pathlib import Path
 from typing import Optional, Dict
 
-from .core import app, EventContext, logger, format_suggestion
+from .core import app, EventContext, logger, format_command_for_cli, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
     BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
@@ -288,6 +288,40 @@ def _match(cmd: str, pattern: str, ptype: str = "literal") -> bool:
     return False
 
 
+_MAX_PATTERN_LENGTH = 10 * 1024  # 10KB limit
+
+
+def _split_command_args(args: str) -> list[str]:
+    """Split command-control arguments with shell-style quoting support."""
+    try:
+        return shlex.split(args)
+    except ValueError:
+        return args.split()
+
+
+def _extract_pattern_type(args: str) -> tuple[str, str]:
+    """Extract optional regex:/glob: prefix from command-control args."""
+    if args.startswith("regex:"):
+        return "regex", args[6:].lstrip()
+    if args.startswith("glob:"):
+        return "glob", args[5:].lstrip()
+    return "literal", args
+
+
+def _auto_detect_regex(pattern: str, ptype: str) -> tuple[str, str]:
+    """Preserve /regex/ shorthand detection for parsed command patterns."""
+    if ptype == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
+        if any(c in pattern[1:-1] for c in r"[]{}()*+?|^$.\ "):
+            return pattern[1:-1], "regex"
+    return pattern, ptype
+
+
+def _is_scope_token(token: str) -> bool:
+    """Return whether a token is an /ar:ok scope modifier."""
+    token = token.strip().lower()
+    return token.isdigit() or token in _PERMANENT_KEYWORDS or parse_duration(token) is not None
+
+
 def _parse_args(args: str) -> tuple:
     """
     Parse pattern with shlex quoted string support and type detection.
@@ -301,40 +335,64 @@ def _parse_args(args: str) -> tuple:
     Raises:
         ValueError: If pattern is empty or too long
     """
-    MAX_PATTERN_LENGTH = 10 * 1024  # 10KB limit
-
     args = args.strip()
     if not args:
         raise ValueError("No pattern provided")
 
-    if len(args) > MAX_PATTERN_LENGTH:
-        raise ValueError(f"Pattern too long (max {MAX_PATTERN_LENGTH})")
+    if len(args) > _MAX_PATTERN_LENGTH:
+        raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
 
-    ptype = "literal"
-
-    # Type prefix detection
-    if args.startswith("regex:"):
-        ptype, args = "regex", args[6:].lstrip()
-    elif args.startswith("glob:"):
-        ptype, args = "glob", args[5:].lstrip()
-
-    # Shlex parsing for quoted strings
-    try:
-        parts = shlex.split(args)
-    except ValueError:
-        parts = args.split(None, 1)
+    ptype, args = _extract_pattern_type(args)
+    parts = _split_command_args(args)
 
     if not parts:
         raise ValueError("No pattern provided")
 
     pattern = parts[0]
-
-    # Auto-detect /pattern/ regex
-    if ptype == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
-        if any(c in pattern[1:-1] for c in r"[]{}()*+?|^$.\ "):
-            ptype, pattern = "regex", pattern[1:-1]
+    pattern, ptype = _auto_detect_regex(pattern, ptype)
 
     desc = " ".join(parts[1:]) if len(parts) > 1 else None
+    return pattern, desc, ptype
+
+
+def _parse_allow_args(args: str) -> tuple:
+    """Parse /ar:ok arguments, allowing unquoted multiword command patterns.
+
+    Scope modifiers may appear before or after the pattern:
+      /ar:ok git push
+      /ar:ok git push 5m
+      /ar:ok 5m git push
+
+    If a literal pattern itself ends with a scope-looking token, quote it
+    (for example: /ar:ok "sleep 5").
+    """
+    args = args.strip()
+    if not args:
+        raise ValueError("No pattern provided")
+
+    if len(args) > _MAX_PATTERN_LENGTH:
+        raise ValueError(f"Pattern too long (max {_MAX_PATTERN_LENGTH})")
+
+    ptype, args = _extract_pattern_type(args)
+    parts = _split_command_args(args)
+    if not parts:
+        raise ValueError("No pattern provided")
+
+    leading_scope: list[str] = []
+    while parts and _is_scope_token(parts[0]):
+        leading_scope.append(parts.pop(0))
+
+    trailing_scope: list[str] = []
+    while parts and _is_scope_token(parts[-1]):
+        trailing_scope.insert(0, parts.pop())
+
+    if not parts:
+        raise ValueError("No pattern provided")
+
+    pattern = " ".join(parts)
+    pattern, ptype = _auto_detect_regex(pattern, ptype)
+    scope_args = leading_scope + trailing_scope
+    desc = " ".join(scope_args) if scope_args else None
     return pattern, desc, ptype
 
 
@@ -476,17 +534,9 @@ def _make_block_op(scope: str, op: str):
                 prefix = "global" if scope == "global" else ""
                 return f"❌ Usage: /ar:{prefix}ok <pattern> [count] [duration] [permanent|perm|p]"
             try:
-                pattern, desc, ptype = _parse_args(args)
+                pattern, desc, ptype = _parse_allow_args(args)
             except ValueError as e:
                 return f"❌ Error: {e}"
-            # Flexible ordering: if first token is a scope modifier and second is the pattern, swap.
-            # O(1) checks first (isdigit, frozenset lookup), regex only if needed.
-            if desc and (
-                pattern.isdigit()
-                or pattern.lower() in _PERMANENT_KEYWORDS
-                or parse_duration(pattern) is not None
-            ) and desc.strip().lower() not in _PERMANENT_KEYWORDS:
-                pattern, desc = desc, pattern
 
             ttl, uses, explicit_permanent = parse_scope_args(desc)
             if not explicit_permanent and ttl is None and uses is None:
@@ -826,6 +876,36 @@ def handle_sos(ctx: EventContext) -> str:
     """Emergency stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, f"⚠️ EMERGENCY STOP\n{CONFIG['emergency_stop']}")
+
+
+@app.command("/ar:task-ignore")
+def handle_task_ignore(ctx: EventContext) -> str:
+    """Mark a tracked task ignored so a Stop block can clear."""
+    prompt = ctx.activation_prompt or ctx.prompt or ""
+    parts = prompt.split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].strip():
+        usage = format_command_for_cli("/ar:task-ignore <id> [reason]", ctx.cli_type)
+        return f"❌ Usage: {usage}"
+
+    task_id = parts[1].strip()
+    reason = parts[2].strip() if len(parts) > 2 and parts[2].strip() else "User ignored"
+
+    try:
+        manager = task_lifecycle.TaskLifecycle(ctx=ctx)
+    except Exception as exc:
+        logger.warning("Task ignore failed to initialize task lifecycle: %s", exc)
+        return f"❌ Unable to access task tracking for this session: {exc}"
+
+    if manager.ignore_task(task_id, reason):
+        return f"✅ Ignored task {task_id}: {reason}"
+
+    tasks = manager.tasks
+    if not tasks:
+        return f"❌ Task {task_id} was not found. No tracked tasks exist for this session."
+
+    visible_ids = ", ".join(sorted(str(tid) for tid in tasks)[:10])
+    suffix = " ..." if len(tasks) > 10 else ""
+    return f"❌ Task {task_id} was not found. Known task ids: {visible_ids}{suffix}"
 
 
 # === AUTORUN HELPERS ===

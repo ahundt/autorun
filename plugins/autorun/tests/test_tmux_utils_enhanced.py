@@ -17,7 +17,9 @@ from unittest.mock import Mock, patch
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from autorun import tmux_utils as tmux_module
 from autorun.tmux_utils import (
+    resolve_tmux_binary,
     tmux_detect_claude_thinking_mode,
     tmux_detect_claude_mode,
     tmux_detect_claude_active,
@@ -40,6 +42,137 @@ from autorun.tmux_utils import (
     CLAUDE_MODE_BYPASS,
     CLAUDE_MODE_ACCEPT_EDITS,
 )
+
+
+class TestTmuxBinaryResolution:
+    """Tests for robust tmux client selection."""
+
+    def teardown_method(self):
+        resolve_tmux_binary.cache_clear()
+
+    def test_env_override_wins(self, monkeypatch):
+        monkeypatch.setenv("AUTORUN_TMUX_BIN", "/custom/bin/tmux")
+        resolve_tmux_binary.cache_clear()
+        assert resolve_tmux_binary() == "/custom/bin/tmux"
+
+    def test_candidate_homebrew_prefers_intel_prefix_on_genuine_intel_mac(self, monkeypatch):
+        monkeypatch.delenv("AUTORUN_TMUX_BIN", raising=False)
+        resolve_tmux_binary.cache_clear()
+
+        with patch.object(tmux_module.platform, "system", return_value="Darwin"), patch.object(
+            tmux_module,
+            "_is_apple_silicon",
+            return_value=False,
+        ), patch.object(
+            tmux_module.shutil,
+            "which",
+            side_effect=lambda name: "/opt/homebrew/bin/brew" if name == "brew" else None,
+        ), patch.object(tmux_module.Path, "exists", return_value=True):
+            candidates = tmux_module._candidate_homebrew_binaries()
+
+        assert candidates[0] == "/usr/local/bin/brew"
+        assert candidates.index("/usr/local/bin/brew") < candidates.index("/opt/homebrew/bin/brew")
+
+    def test_candidate_binaries_prefer_apple_silicon_homebrew_tmux(self, monkeypatch):
+        monkeypatch.delenv("AUTORUN_TMUX_BIN", raising=False)
+        resolve_tmux_binary.cache_clear()
+
+        with patch.object(tmux_module.platform, "system", return_value="Darwin"), patch.object(
+            tmux_module.platform,
+            "machine",
+            return_value="arm64",
+        ), patch.object(
+            tmux_module,
+            "_tmux_paths_from_homebrew",
+            return_value=["/opt/homebrew/opt/tmux/bin/tmux"],
+        ), patch.object(
+            tmux_module.shutil,
+            "which",
+            side_effect=lambda name: "/usr/local/bin/tmux" if name == "tmux" else None,
+        ), patch.object(tmux_module.Path, "exists", return_value=True):
+            candidates = tmux_module._candidate_tmux_binaries()
+
+        assert candidates[0] == "/opt/homebrew/opt/tmux/bin/tmux"
+        assert candidates.index("/opt/homebrew/bin/tmux") < candidates.index("/usr/local/bin/tmux")
+
+    def test_candidate_binaries_prefer_apple_silicon_homebrew_tmux_under_rosetta(self, monkeypatch):
+        monkeypatch.delenv("AUTORUN_TMUX_BIN", raising=False)
+        resolve_tmux_binary.cache_clear()
+
+        with patch.object(tmux_module.platform, "system", return_value="Darwin"), patch.object(
+            tmux_module.platform,
+            "machine",
+            return_value="x86_64",
+        ), patch.object(
+            tmux_module,
+            "_is_apple_silicon",
+            return_value=True,
+        ), patch.object(
+            tmux_module,
+            "_tmux_paths_from_homebrew",
+            return_value=["/opt/homebrew/opt/tmux/bin/tmux"],
+        ), patch.object(
+            tmux_module.shutil,
+            "which",
+            side_effect=lambda name: "/usr/local/bin/tmux" if name == "tmux" else None,
+        ), patch.object(tmux_module.Path, "exists", return_value=True):
+            candidates = tmux_module._candidate_tmux_binaries()
+
+        assert candidates[0] == "/opt/homebrew/opt/tmux/bin/tmux"
+        assert candidates.index("/opt/homebrew/bin/tmux") < candidates.index("/usr/local/bin/tmux")
+
+    def test_candidate_binaries_prefer_intel_homebrew_tmux_on_genuine_intel_mac(self, monkeypatch):
+        monkeypatch.delenv("AUTORUN_TMUX_BIN", raising=False)
+        resolve_tmux_binary.cache_clear()
+
+        with patch.object(tmux_module.platform, "system", return_value="Darwin"), patch.object(
+            tmux_module.platform,
+            "machine",
+            return_value="x86_64",
+        ), patch.object(
+            tmux_module,
+            "_is_apple_silicon",
+            return_value=False,
+        ), patch.object(
+            tmux_module,
+            "_tmux_paths_from_homebrew",
+            return_value=[
+                "/usr/local/opt/tmux/bin/tmux",
+                "/opt/homebrew/opt/tmux/bin/tmux",
+            ],
+        ), patch.object(
+            tmux_module.shutil,
+            "which",
+            side_effect=lambda name: "/opt/homebrew/bin/tmux" if name == "tmux" else None,
+        ), patch.object(tmux_module.Path, "exists", return_value=True):
+            candidates = tmux_module._candidate_tmux_binaries()
+
+        assert candidates[0] == "/usr/local/opt/tmux/bin/tmux"
+        assert candidates.index("/usr/local/bin/tmux") < candidates.index("/opt/homebrew/bin/tmux")
+
+    def test_prefers_client_that_can_read_inherited_socket(self, monkeypatch):
+        monkeypatch.delenv("AUTORUN_TMUX_BIN", raising=False)
+        monkeypatch.setenv("TERM_PROGRAM_VERSION", "3.6b")
+        resolve_tmux_binary.cache_clear()
+
+        with patch.object(
+            tmux_module,
+            "_candidate_tmux_binaries",
+            return_value=["/usr/local/bin/tmux", "/opt/homebrew/bin/tmux"],
+        ), patch.object(
+            tmux_module,
+            "_current_tmux_socket",
+            return_value="/private/tmp/tmux-502/default",
+        ), patch.object(
+            tmux_module,
+            "_tmux_socket_is_usable",
+            side_effect=lambda binary, _socket: binary == "/opt/homebrew/bin/tmux",
+        ), patch.object(
+            tmux_module,
+            "_tmux_version",
+            side_effect=lambda binary: "tmux 3.6b" if binary == "/opt/homebrew/bin/tmux" else "tmux 3.5a",
+        ):
+            assert resolve_tmux_binary() == "/opt/homebrew/bin/tmux"
 
 
 class TestDetectThinkingMode:

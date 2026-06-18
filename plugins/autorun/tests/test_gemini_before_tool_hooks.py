@@ -448,6 +448,11 @@ def test_gemini_before_tool_hook_covers_replace(
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
+    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
+           "this test runs Gemini CLI which costs real money"
+)
 def test_before_tool_hook_input_structure_has_required_fields(
     gemini_available,
     gemini_settings_enabled,

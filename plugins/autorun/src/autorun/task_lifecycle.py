@@ -48,7 +48,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from . import ipc
-from .core import EventContext, app, logger
+from .core import EventContext, app, format_command_for_cli, logger
 from .session_manager import session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
@@ -67,7 +67,6 @@ _ACT_REVIEW   = '{task_list}'
 _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
 _ACT_DELEGATE = '{task_update}({task_id_param}="X", status="delegated")'
 _ACT_DISCARD  = '{task_update}({task_id_param}="X", status="deleted")'
-_ACT_OVERRIDE = 'only the user can type /ar:sos (emergency stop) or /ar:task-ignore <id> (mark task ignored to unblock stopping)'
 # AI-callable escape route — emitted on EVERY Stop block so the AI does
 # not give up on block #1 when a task is provably stale. The actual marker
 # only takes effect after ghost_clear_min_consecutive_blocks identical blocks
@@ -86,6 +85,12 @@ _ACT_STALE_AI_ESCAPE = (
 
 def _task_actions_fragment(cli_type: str | None) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
+    sos = format_command_for_cli("/ar:sos", cli_type)
+    task_ignore = format_command_for_cli("/ar:task-ignore <id>", cli_type)
+    act_override = (
+        f"only the user can type {sos} (emergency stop) or "
+        f"{task_ignore} (mark task ignored to unblock stopping)"
+    )
     if platform_for(cli_type).task_management_style == "plan_checklist":
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
@@ -93,7 +98,7 @@ def _task_actions_fragment(cli_type: str | None) -> str:
             "3. Finish work: {task_progress} with finished items status=\"completed\" "
             "4. Defer/delegate: keep a concrete follow-up item pending "
             "5. Discard obsolete work: remove it from the current plan list "
-            f"6. Override: {_ACT_OVERRIDE} "
+            f"6. Override: {act_override} "
         )
     return (
         f"Actions: 1. You must complete or discard each task before stopping "
@@ -101,7 +106,7 @@ def _task_actions_fragment(cli_type: str | None) -> str:
         f"3. Do the work, then: {_ACT_COMPLETE} "
         f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
         f"5. Or discard: {_ACT_DISCARD} "
-        f"6. Override: {_ACT_OVERRIDE} "
+        f"6. Override: {act_override} "
     )
 
 
@@ -1117,7 +1122,7 @@ class TaskLifecycle:
 
         injection = (
             f"🔄 incomplete tasks from previous session: {task_list}{overflow}{older}\n"
-            f"{_task_actions_fragment(ctx.cli_type)}"
+            f"{_task_actions_fragment(_task_cli_hint(ctx))}"
             f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
         )
 
@@ -1214,7 +1219,7 @@ class TaskLifecycle:
 
         injection = (
             f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
-            f"{_task_actions_fragment(ctx.cli_type)}"
+            f"{_task_actions_fragment(_task_cli_hint(ctx))}"
             f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
         )
 

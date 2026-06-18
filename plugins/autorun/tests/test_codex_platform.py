@@ -124,6 +124,20 @@ def test_codex_task_progress_uses_update_plan():
     assert "TaskCreate" not in p.task_create_tools
 
 
+def test_codex_command_prefix_metadata_accepts_plain_prompt_forms():
+    """Command spelling differences are platform data, not dispatch branches."""
+    p = PLATFORMS["codex"]
+    assert p.command_prefixes == ("/ar:", "ar:", "ar ")
+    assert p.command_display_prefix == "ar:"
+
+
+def test_claude_and_gemini_keep_native_slash_command_prefixes():
+    assert PLATFORMS["claude"].command_prefixes == ("/ar:",)
+    assert PLATFORMS["claude"].command_display_prefix == "/ar:"
+    assert PLATFORMS["gemini"].command_prefixes == ("/ar:",)
+    assert PLATFORMS["gemini"].command_display_prefix == "/ar:"
+
+
 def test_codex_get_tool_names():
     from autorun.core import get_tool_names
     tools = get_tool_names("codex")
@@ -137,6 +151,19 @@ def test_codex_get_tool_names():
 def test_codex_format_suggestion_uses_claude_tool_names():
     from autorun.core import format_suggestion
     assert format_suggestion("Use {grep} then {edit}", "codex") == "Use Grep then Edit"
+
+
+def test_codex_formats_autorun_commands_with_platform_display_prefix():
+    from autorun.core import canonicalize_command_prompt, format_command_for_cli, format_commands_for_cli
+
+    assert canonicalize_command_prompt("ar:ok git push", "codex") == "/ar:ok git push"
+    assert canonicalize_command_prompt("ar ok git push", "codex") == "/ar:ok git push"
+    assert canonicalize_command_prompt("/ar:ok git push", "codex") == "/ar:ok git push"
+    assert format_command_for_cli("/ar:task-ignore <id>", "codex") == "ar:task-ignore <id>"
+    assert format_commands_for_cli("Try /ar:ok git push then /ar:st", "codex") == (
+        "Try ar:ok git push then ar:st"
+    )
+    assert format_commands_for_cli("Try /ar:ok git push", "claude") == "Try /ar:ok git push"
 
 
 # ─── Install metadata ─────────────────────────────────────────────────────────

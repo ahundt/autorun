@@ -149,7 +149,7 @@ class TestSessionTargetingRegression:
         command = result['command']
         assert isinstance(command, list), "Command should be a list"
         assert len(command) >= 5, "Command should have tmux, socket/send-keys, text, -t, target"
-        assert command[0] == 'tmux', "Should start with tmux"
+        assert os.path.basename(command[0]) == 'tmux', "Should start with a tmux executable"
 
         # When running within tmux, command should include socket specification
         # Format: ['tmux', '-S', socket_path, 'send-keys', '-t', 'session', 'text']
@@ -264,7 +264,7 @@ class TestSessionTargetingRegression:
 
         # Verify the command includes proper targeting
         command = result['command']
-        assert 'tmux' in command, "Command should start with tmux"
+        assert os.path.basename(command[0]) == 'tmux', "Command should start with a tmux executable"
         assert 'send-keys' in command, "Command should include send-keys"
         assert '-t' in command, "Command should include target flag"
         assert 'test-construction' in command, "Command should include target session"

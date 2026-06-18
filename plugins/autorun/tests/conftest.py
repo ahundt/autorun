@@ -57,6 +57,42 @@ def pytest_configure(config):
         if env_var in os.environ:
             del os.environ[env_var]
 
+    # TMUX ISOLATION: tmux tests often shell out directly with ["tmux", ...].
+    # If pytest itself is launched from inside the user's live byobu/tmux
+    # server, redirect tests to a private tmux socket so test sessions and
+    # cleanup cannot touch the user's active windows. AUTORUN_TEST_USE_LIVE_TMUX=1
+    # opts out for manual diagnostics.
+    if os.environ.get("TMUX") and os.environ.get("AUTORUN_TEST_USE_LIVE_TMUX") != "1":
+        original_tmux = os.environ["TMUX"]
+        socket_path = os.environ.get(
+            "AUTORUN_TEST_TMUX_SOCKET",
+            str(Path(tempfile.gettempdir()) / f"autorun-pytest-tmux-{uuid.uuid4().hex}"),
+        )
+        config._autorun_original_tmux = original_tmux
+        config._autorun_test_tmux_socket = socket_path
+        os.environ["AUTORUN_ORIGINAL_TMUX"] = original_tmux
+        os.environ["AUTORUN_TEST_TMUX_SOCKET"] = socket_path
+        os.environ["TMUX"] = f"{socket_path},0,0"
+
+    # Resolve the compatible tmux client once and put its directory first for
+    # this pytest process only. On Apple Silicon this prefers /opt/homebrew over
+    # an older /usr/local client.
+    src_path = str(Path(__file__).parent.parent / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    try:
+        from autorun.tmux_utils import resolve_tmux_binary
+
+        tmux_bin = resolve_tmux_binary()
+        os.environ["AUTORUN_TMUX_BIN"] = tmux_bin
+        tmux_dir = str(Path(tmux_bin).parent)
+        path_parts = os.environ.get("PATH", "").split(os.pathsep)
+        if tmux_dir and (not path_parts or path_parts[0] != tmux_dir):
+            os.environ["PATH"] = os.pathsep.join(
+                [tmux_dir] + [p for p in path_parts if p and p != tmux_dir]
+            )
+    except Exception:
+        pass
 
 
 # Test file groups for automatic serial/parallel assignment
@@ -389,6 +425,19 @@ def pytest_sessionfinish(session, exitstatus):
     cleanup_test_sessions()
     DaemonManager.cleanup()
 
+    test_tmux_socket = getattr(session.config, "_autorun_test_tmux_socket", None)
+    if test_tmux_socket and not should_keep_test_artifacts():
+        tmux_bin = os.environ.get("AUTORUN_TMUX_BIN", "tmux")
+        try:
+            subprocess.run(
+                [tmux_bin, "-S", test_tmux_socket, "kill-server"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+
     # Clean up test state directory and reset session_manager
     test_state_dir = getattr(session.config, '_autorun_test_state_dir', None)
     if test_state_dir and os.path.isdir(test_state_dir):
@@ -399,6 +448,9 @@ def pytest_sessionfinish(session, exitstatus):
 
     # Remove env var and reset singletons so production code isn't affected
     os.environ.pop("AUTORUN_TEST_STATE_DIR", None)
+    os.environ.pop("AUTORUN_TEST_TMUX_SOCKET", None)
+    os.environ.pop("AUTORUN_ORIGINAL_TMUX", None)
+    os.environ.pop("AUTORUN_TMUX_BIN", None)
     import autorun.session_manager as sm
     sm._store = None
     sm._manager = None

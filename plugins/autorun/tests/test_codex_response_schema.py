@@ -16,8 +16,14 @@ from pathlib import Path
 
 import pytest
 
-from autorun import plugins
-from autorun.core import EventContext, ThreadSafeDB, get_cli_event_name
+from autorun import plugins, task_lifecycle
+from autorun.core import (
+    EventContext,
+    ThreadSafeDB,
+    format_suggestion,
+    get_cli_event_name,
+    validate_hook_response,
+)
 from autorun.session_manager import session_state
 
 
@@ -125,6 +131,8 @@ def _sample_prompt(alias: str) -> str:
         return f"{alias} regex:test-block test block"
     if alias == "/ar:tasks":
         return "/ar:tasks 3"
+    if alias == "/ar:task-ignore":
+        return "/ar:task-ignore nonexistent-test-task no longer relevant"
     if alias == "/ar:cache":
         return "/ar:cache status"
     if alias in {"/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc", "activate"}:
@@ -264,6 +272,140 @@ def test_stateful_policy_command_mutates_shared_store_for_all_hook_platforms(cli
     assert verify.file_policy == "JUSTIFY"
 
 
+def test_codex_plain_ar_alias_dispatches_without_leading_slash():
+    ctx = _codex_context("UserPromptSubmit", prompt="ar:st")
+    response = plugins.app.dispatch(ctx)
+    assert response is not None
+    assert_codex_response_valid("UserPromptSubmit", response)
+    assert "AutoFile policy" in json.dumps(response)
+
+
+@pytest.mark.parametrize(
+    "alias",
+    sorted(a for a in plugins.app.command_handlers if a.startswith("/ar:")),
+)
+def test_every_slash_ar_command_also_dispatches_with_codex_plain_prefix(alias):
+    prompt = _sample_prompt(alias).removeprefix("/")
+    ctx = _codex_context("UserPromptSubmit", prompt=prompt)
+    response = plugins.app.dispatch(ctx)
+    assert response is not None, f"{prompt} did not dispatch through plain ar:* prefix"
+    assert_codex_response_valid("UserPromptSubmit", response)
+
+
+@pytest.mark.parametrize("prompt", ["ar:st", "ar st"])
+def test_codex_accepts_colon_and_space_plain_ar_command_spelling(prompt):
+    ctx = _codex_context("UserPromptSubmit", prompt=prompt)
+    response = plugins.app.dispatch(ctx)
+    assert response is not None
+    assert_codex_response_valid("UserPromptSubmit", response)
+    assert "AutoFile policy" in json.dumps(response)
+
+
+def test_codex_plain_ar_allow_alias_unblocks_same_session_command():
+    store = ThreadSafeDB()
+    session_id = f"codex-plain-allow-{uuid.uuid4().hex}"
+
+    denied_ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin main"},
+        cli_type="codex",
+        store=store,
+    )
+    denied = plugins.check_blocked_commands(denied_ctx)
+    assert denied is not None
+    assert_codex_response_valid("PreToolUse", denied)
+
+    allow_ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt="ar:ok git push",
+        cli_type="codex",
+        store=store,
+    )
+    allow_response = plugins.app.dispatch(allow_ctx)
+    assert allow_response is not None
+    assert_codex_response_valid("UserPromptSubmit", allow_response)
+    assert "git push" in json.dumps(allow_response)
+
+    allowed_ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push origin main"},
+        cli_type="codex",
+        store=store,
+    )
+    allowed = plugins.check_blocked_commands(allowed_ctx)
+    assert allowed is not None
+    assert_codex_response_valid("PreToolUse", allowed)
+    assert allowed["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("ar:ok git push", "git push"),
+        ("ar:ok git push 5m", "git push"),
+        ("ar:ok 5m git push", "git push"),
+        ("ar:ok 'sleep 5'", "sleep 5"),
+    ],
+)
+def test_codex_plain_ar_allow_supports_unquoted_multiword_patterns(prompt, expected):
+    store = ThreadSafeDB()
+    session_id = f"codex-plain-allow-pattern-{uuid.uuid4().hex}"
+    ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        cli_type="codex",
+        store=store,
+    )
+    response = plugins.app.dispatch(ctx)
+    assert response is not None
+    assert_codex_response_valid("UserPromptSubmit", response)
+    assert expected in json.dumps(response)
+    assert ctx.session_allowed_patterns[-1]["pattern"] == expected
+
+
+@pytest.mark.parametrize("prompt_prefix", ["/ar:task-ignore", "ar:task-ignore", "ar task-ignore"])
+def test_task_ignore_command_marks_task_ignored_across_native_and_plain_aliases(prompt_prefix):
+    session_id = f"task-ignore-{uuid.uuid4().hex}"
+    store = ThreadSafeDB()
+    setup_ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt="setup",
+        cli_type="codex",
+        store=store,
+    )
+    manager = task_lifecycle.TaskLifecycle(ctx=setup_ctx)
+    manager.create_task("T-ignore", {"subject": "Temporary tracked work"}, "created")
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=f"{prompt_prefix} T-ignore no longer relevant",
+        cli_type="codex",
+        store=store,
+    )
+    response = plugins.app.dispatch(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("UserPromptSubmit", response)
+    assert task_lifecycle.TaskLifecycle(ctx=ctx).tasks["T-ignore"]["status"] == "ignored"
+    assert "no longer relevant" in json.dumps(response)
+
+
+def test_codex_suggestions_use_plain_ar_aliases_not_rejected_slash_commands():
+    message = "To allow (default 1 use): /ar:ok git push\nBlock globally: /ar:globalno git push"
+    assert format_suggestion(message, "codex") == (
+        "To allow (default 1 use): ar:ok git push\nBlock globally: ar:globalno git push"
+    )
+    assert format_suggestion(message, "claude") == message
+
+
 def test_codex_pretooluse_deny_omits_unsupported_common_fields():
     ctx = _codex_context("PreToolUse", tool_name="Bash", tool_input={"command": "rm test"})
     response = ctx.respond("deny", "Blocked")
@@ -273,6 +415,45 @@ def test_codex_pretooluse_deny_omits_unsupported_common_fields():
     assert "continue" not in response
     assert "stopReason" not in response
     assert "suppressOutput" not in response
+
+
+def test_codex_pretooluse_updated_input_requires_allow_permission_decision():
+    response = validate_hook_response(
+        "PreToolUse",
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "updatedInput": {"command": "git status"},
+            }
+        },
+        cli_type="codex",
+    )
+    hso = response["hookSpecificOutput"]
+    assert hso["updatedInput"] == {"command": "git status"}
+    assert hso["permissionDecision"] == "allow"
+    assert hso["permissionDecisionReason"] == ""
+    assert_codex_response_valid("PreToolUse", response)
+
+
+def test_codex_pretooluse_block_drops_updated_input():
+    response = validate_hook_response(
+        "PreToolUse",
+        {
+            "decision": "block",
+            "reason": "Blocked",
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Blocked",
+                "updatedInput": {"command": "git status"},
+            },
+        },
+        cli_type="codex",
+    )
+    hso = response["hookSpecificOutput"]
+    assert "updatedInput" not in hso
+    assert hso["permissionDecision"] == "deny"
+    assert_codex_response_valid("PreToolUse", response)
 
 
 def test_codex_stop_block_uses_continue_shape():

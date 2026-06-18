@@ -34,6 +34,8 @@ from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 # === Sentinels — exact substrings that MUST appear in the user-visible channel ===
 OVERRIDE_SOS = "/ar:sos"
 OVERRIDE_TASK_IGNORE = "/ar:task-ignore"
+CODEX_OVERRIDE_SOS = "ar:sos"
+CODEX_OVERRIDE_TASK_IGNORE = "ar:task-ignore"
 
 
 # === Test fixtures (parallel to test_stop_chain_task_lifecycle.py) ===
@@ -229,10 +231,9 @@ def test_override_visible_in_pending_injection_every_block(
 def test_override_visible_for_codex_cli_type(
     block_count, isolated_task_config, isolated_session, tmp_path,
 ):
-    """Codex uses Claude-equivalent strict hook schema. Same override
-    visibility invariant must hold once Codex platform is registered (C3).
-    Test skips if Codex not yet a known cli_type (pre-C3) — becomes active
-    automatically after C3 ships.
+    """Codex uses the same stop-block visibility invariant with Codex-native
+    command spelling. Current Codex may intercept unknown slash commands before
+    prompt hooks see them, so the override text must teach `ar:*` forms.
     """
     try:
         from autorun.config import detect_cli_type
@@ -263,10 +264,10 @@ def test_override_visible_for_codex_cli_type(
 
     sys_msg = last_response.get("systemMessage", "")
     pending = last_ctx.pending_stop_injection or ""
-    assert OVERRIDE_SOS in sys_msg
-    assert OVERRIDE_TASK_IGNORE in sys_msg
-    assert OVERRIDE_SOS in pending
-    assert OVERRIDE_TASK_IGNORE in pending
+    assert CODEX_OVERRIDE_SOS in sys_msg
+    assert CODEX_OVERRIDE_TASK_IGNORE in sys_msg
+    assert CODEX_OVERRIDE_SOS in pending
+    assert CODEX_OVERRIDE_TASK_IGNORE in pending
 
 
 # === Pinpoint the original failing case (block 2+ with churning tasks) ===

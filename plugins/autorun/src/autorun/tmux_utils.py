@@ -62,11 +62,205 @@ control sequence parsing, session naming, and command dispatch.
 """
 
 import os
+import platform
 import re
+import shutil
 import subprocess
 import time
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Callable, Union
 from enum import Enum
+
+
+_KNOWN_TMUX_PATHS = (
+    "/opt/homebrew/bin/tmux",
+    "/usr/local/bin/tmux",
+    "/usr/bin/tmux",
+)
+_KNOWN_HOMEBREW_PATHS = (
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+)
+
+
+def _current_tmux_socket() -> Optional[str]:
+    """Return the inherited tmux socket path from TMUX, if present."""
+    tmux_env = os.getenv("TMUX")
+    if not tmux_env:
+        return None
+    socket_path = tmux_env.split(",", 1)[0].strip()
+    return socket_path or None
+
+
+def _is_apple_silicon() -> bool:
+    """True on Apple Silicon, including Rosetta-translated processes."""
+    if platform.system() != "Darwin":
+        return False
+    if platform.machine() == "arm64":
+        return True
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            shell=False,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "1"
+
+
+def _known_homebrew_paths_for_platform() -> tuple[str, ...]:
+    """Return Homebrew binary paths ordered for the current hardware."""
+    if _is_apple_silicon():
+        return ("/opt/homebrew/bin/brew", "/usr/local/bin/brew")
+    if platform.system() == "Darwin":
+        return ("/usr/local/bin/brew", "/opt/homebrew/bin/brew")
+    return _KNOWN_HOMEBREW_PATHS
+
+
+def _known_tmux_paths_for_platform() -> tuple[str, ...]:
+    """Return tmux binary paths ordered for the current hardware."""
+    if _is_apple_silicon():
+        return ("/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux")
+    if platform.system() == "Darwin":
+        return ("/usr/local/bin/tmux", "/usr/bin/tmux", "/opt/homebrew/bin/tmux")
+    return _KNOWN_TMUX_PATHS
+
+
+def _candidate_homebrew_binaries() -> List[str]:
+    """Return ordered Homebrew candidates for the current hardware."""
+    candidates: List[str] = []
+    if platform.system() == "Darwin":
+        candidates.extend(_known_homebrew_paths_for_platform())
+    path_brew = shutil.which("brew")
+    if path_brew:
+        candidates.append(path_brew)
+    if platform.system() != "Darwin":
+        candidates.extend(_known_homebrew_paths_for_platform())
+
+    seen = set()
+    existing = []
+    for candidate in candidates:
+        path = str(Path(candidate))
+        if path in seen or not Path(path).exists():
+            continue
+        seen.add(path)
+        existing.append(path)
+    return existing
+
+
+def _tmux_paths_from_homebrew() -> List[str]:
+    """Return tmux client paths reported by Homebrew, in preferred order."""
+    paths: List[str] = []
+    for brew in _candidate_homebrew_binaries():
+        try:
+            result = subprocess.run(
+                [brew, "--prefix", "tmux"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                shell=False,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0:
+            continue
+        prefix = result.stdout.strip()
+        if prefix:
+            paths.append(str(Path(prefix) / "bin" / "tmux"))
+    return paths
+
+
+def _candidate_tmux_binaries() -> List[str]:
+    """Return ordered tmux client candidates, deduplicated and existing."""
+    candidates: List[str] = []
+    if platform.system() == "Darwin":
+        candidates.extend(_tmux_paths_from_homebrew())
+        if _is_apple_silicon():
+            candidates.append("/opt/homebrew/bin/tmux")
+        candidates.extend(_known_tmux_paths_for_platform())
+    path_tmux = shutil.which("tmux")
+    if path_tmux:
+        candidates.append(path_tmux)
+    if platform.system() != "Darwin":
+        candidates.extend(_known_tmux_paths_for_platform())
+
+    seen = set()
+    existing = []
+    for candidate in candidates:
+        path = str(Path(candidate))
+        if path in seen or not Path(path).exists():
+            continue
+        seen.add(path)
+        existing.append(path)
+    return existing or ["tmux"]
+
+
+def _tmux_version(binary: str) -> str:
+    """Return `tmux -V` output for a candidate client, or empty string."""
+    try:
+        result = subprocess.run(
+            [binary, "-V"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            shell=False,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _tmux_socket_is_usable(binary: str, socket_path: str) -> bool:
+    """True if binary can talk to the inherited tmux server socket."""
+    try:
+        result = subprocess.run(
+            [binary, "-S", socket_path, "display-message", "-p", "#S"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            shell=False,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+@lru_cache(maxsize=1)
+def resolve_tmux_binary() -> str:
+    """Resolve a tmux client that is safe for the current execution context.
+
+    When autorun runs inside byobu/tmux, subprocesses inherit TMUX and should
+    talk to the same server socket. If PATH finds an older tmux client than the
+    active server, clients can fail with "server exited unexpectedly" even
+    though the live session is healthy. Prefer a candidate that can perform a
+    read-only query against the inherited socket, then fall back to PATH.
+    """
+    override = os.getenv("AUTORUN_TMUX_BIN")
+    if override:
+        return override
+
+    candidates = _candidate_tmux_binaries()
+    socket_path = _current_tmux_socket()
+    if not socket_path:
+        return candidates[0]
+
+    working = [binary for binary in candidates if _tmux_socket_is_usable(binary, socket_path)]
+    if not working:
+        return candidates[0]
+
+    version_hint = os.getenv("TERM_PROGRAM_VERSION", "").strip()
+    if version_hint:
+        for binary in working:
+            if _tmux_version(binary).endswith(version_hint):
+                return binary
+
+    return working[0]
 
 
 class TmuxControlState(Enum):
@@ -226,6 +420,7 @@ class TmuxUtilities:
         """
         self.session_name = session_name or self.DEFAULT_SESSION_NAME
         self.control_state = TmuxControlState.NORMAL
+        self.tmux_binary = resolve_tmux_binary()
 
     def detect_tmux_environment(self) -> Optional[Dict[str, str]]:
         """
@@ -308,7 +503,7 @@ class TmuxUtilities:
         target_session = session or self.session_name
 
         # Build command list
-        base_cmd = ["tmux"]
+        base_cmd = [self.tmux_binary]
 
         # CRITICAL FIX: For send-keys commands, target specification must come BEFORE keys
         # Format: tmux [socket] send-keys -t target [keys...] where control sequences are separate args
@@ -371,11 +566,11 @@ class TmuxUtilities:
 
                 # Build command with explicit socket specification
                 # Format: tmux -S <socket> <command> [args...]
-                socket_cmd = ['tmux', '-S', socket_path] + full_cmd[1:]
+                socket_cmd = [self.tmux_binary, '-S', socket_path] + full_cmd[1:]
 
                 # Ensure target session exists for commands that support targeting
                 if cmd and cmd[0] in commands_supporting_target:
-                    subprocess.run(['tmux', '-S', socket_path, 'new-session', '-d', '-s', target_session],
+                    subprocess.run([self.tmux_binary, '-S', socket_path, 'new-session', '-d', '-s', target_session],
                                   capture_output=True, text=True, timeout=5, shell=False)
 
                 result = subprocess.run(
@@ -389,7 +584,7 @@ class TmuxUtilities:
                 # Not running within tmux, use regular command
                 # Ensure target session exists for commands that support targeting
                 if cmd and cmd[0] in commands_supporting_target:
-                    subprocess.run(['tmux', 'new-session', '-d', '-s', target_session],
+                    subprocess.run([self.tmux_binary, 'new-session', '-d', '-s', target_session],
                                   capture_output=True, text=True, timeout=5, shell=False)
 
                 result = subprocess.run(
@@ -547,7 +742,7 @@ class TmuxUtilities:
         # has-session always succeed and cause spurious typing detection.
         try:
             result = subprocess.run(
-                ['tmux', 'has-session', '-t', target],
+                [self.tmux_binary, 'has-session', '-t', target],
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode != 0:
@@ -737,7 +932,7 @@ def detect_current_tmux_session() -> Optional[str]:
     import subprocess
     try:
         result = subprocess.run(
-            ['tmux', 'display-message', '-p', '#{session_name}'],
+            [resolve_tmux_binary(), 'display-message', '-p', '#{session_name}'],
             capture_output=True, text=True, timeout=2
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -1105,7 +1300,7 @@ def _tmux_get_current_window() -> Tuple[str, str]:
     """Get current tmux session:window. Returns ('', '') if not in tmux."""
     try:
         result = subprocess.run(
-            ['tmux', 'display-message', '-p', '#{session_name}:#{window_index}'],
+            [resolve_tmux_binary(), 'display-message', '-p', '#{session_name}:#{window_index}'],
             capture_output=True, text=True, timeout=2
         )
         if result.returncode == 0:

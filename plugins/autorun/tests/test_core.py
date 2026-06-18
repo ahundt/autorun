@@ -869,8 +869,9 @@ class TestAutorunApp:
         result = test_app._find_command("/ar:a")
 
         assert result is not None
-        handler, alias = result
-        assert alias == "ALLOW"
+        assert result.alias == "ALLOW"
+        assert result.handler is handle_allow
+        assert result.activation_prompt == "/ar:a"
 
     def test_find_command_direct_alias(self):
         """_find_command should find commands by direct alias."""
@@ -883,8 +884,9 @@ class TestAutorunApp:
         result = test_app._find_command("/custom:cmd")
 
         assert result is not None
-        handler, alias = result
-        assert alias == "/custom:cmd"
+        assert result.alias == "/custom:cmd"
+        assert result.handler is custom_handler
+        assert result.activation_prompt == "/custom:cmd"
 
     def test_find_command_with_args(self):
         """_find_command should match commands with arguments."""
@@ -897,8 +899,17 @@ class TestAutorunApp:
         result = test_app._find_command("/ar:go build something")
 
         assert result is not None
-        handler, alias = result
-        assert alias == "/ar:go"
+        assert result.alias == "/ar:go"
+        assert result.handler is handle_go
+        assert result.activation_prompt == "/ar:go build something"
+
+        codex_result = test_app._find_command("ar go build something", "codex")
+        assert codex_result is not None
+        assert codex_result.alias == "/ar:go"
+        assert codex_result.handler is handle_go
+        assert codex_result.activation_prompt == "/ar:go build something"
+        assert test_app._find_command("ar go build something", "claude") is None
+        assert test_app._find_command("ar go build something", "gemini") is None
 
     def test_dispatch_user_prompt_submit_command(self):
         """dispatch should handle UserPromptSubmit with command."""
