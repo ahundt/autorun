@@ -698,6 +698,22 @@ def _drop_empty_codex_hso(filtered: dict, hso: dict, *, event: str) -> None:
         filtered.pop("hookSpecificOutput", None)
 
 
+def _drop_duplicate_codex_pretooluse_system_message(
+    filtered: dict,
+    hso: dict,
+    *,
+    event: str,
+) -> None:
+    """Avoid rendering one Codex PreToolUse status as both warning and context."""
+    if event != "PreToolUse":
+        return
+    if filtered.get("decision") == "block" or hso.get("permissionDecision") == "deny":
+        return
+    additional_context = hso.get("additionalContext")
+    if additional_context and filtered.get("systemMessage") == additional_context:
+        filtered.pop("systemMessage", None)
+
+
 def validate_hook_response(event: str, response: dict, cli_type: str = "claude") -> dict:
     """
     Perform strict code-based enforcement of hook schemas.
@@ -814,6 +830,11 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                         root_decision=filtered.get("decision", ""),
                         root_reason=filtered.get("reason", ""),
                         system_message=filtered.get("systemMessage", ""),
+                    )
+                    _drop_duplicate_codex_pretooluse_system_message(
+                        filtered,
+                        hso_filtered,
+                        event=event,
                     )
                 _drop_empty_codex_hso(filtered, hso_filtered, event=event)
 

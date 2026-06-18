@@ -103,8 +103,10 @@ Claude/Gemini examples usually show `/ar:*`. In Codex, prefer `ar:*` or
 commands can be intercepted before `UserPromptSubmit` hooks see them.
 When Codex does not deliver `UserPromptSubmit`, autorun's transcript fallback
 processes exact `ar:*` policy commands on the first later `PreToolUse` and
-returns a `systemMessage`/`additionalContext` notice there. This is the
-earliest reliable notification autorun can emit without blocking the tool.
+returns a `hookSpecificOutput.additionalContext` notice there. This is the
+earliest reliable notification autorun can emit without blocking the tool, and
+it avoids duplicating the same status text as both a Codex `warning` and hook
+context.
 
 ## Trust model
 

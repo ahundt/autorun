@@ -556,11 +556,10 @@ def test_codex_transcript_ar_ok_notifies_on_first_later_safe_tool(tmp_path):
     assert_codex_response_valid("PreToolUse", response)
     hso = response["hookSpecificOutput"]
     assert "permissionDecision" not in hso
-    assert "systemMessage" in response
-    assert "Autorun processed latest Codex command" in response["systemMessage"]
-    assert "Allowed" in response["systemMessage"]
-    assert "git push" in response["systemMessage"]
-    assert hso["additionalContext"] == response["systemMessage"]
+    assert "systemMessage" not in response
+    assert "Autorun processed latest Codex command" in hso["additionalContext"]
+    assert "Allowed" in hso["additionalContext"]
+    assert "git push" in hso["additionalContext"]
     assert ctx.session_allowed_patterns[-1]["pattern"] == "git push"
     assert ctx.session_allowed_patterns[-1]["remaining_uses"] == 1
 
@@ -746,7 +745,19 @@ def test_codex_pretooluse_allow_warning_uses_additional_context_not_permission_d
     hso = response["hookSpecificOutput"]
     assert "permissionDecision" not in hso
     assert "permissionDecisionReason" not in hso
+    assert "systemMessage" not in response
     assert hso["additionalContext"] == "warn about this command"
+
+
+def test_codex_pretooluse_human_only_system_message_is_kept():
+    response = validate_hook_response(
+        "PreToolUse",
+        {"systemMessage": "human-only hook notice"},
+        cli_type="codex",
+    )
+
+    assert response == {"systemMessage": "human-only hook notice"}
+    assert_codex_response_valid("PreToolUse", response)
 
 
 def test_codex_pretooluse_git_commit_rules_warning_is_valid_context():
