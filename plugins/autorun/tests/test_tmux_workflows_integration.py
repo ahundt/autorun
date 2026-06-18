@@ -56,6 +56,24 @@ def clean_tmux_test_sessions():
     _cleanup()
 
 
+def _capture_pane_output(tmux, session_name):
+    capture = tmux.execute_tmux_command(['capture-pane', '-p'], session_name)
+    assert capture is not None
+    assert capture['returncode'] == 0
+    return capture['stdout']
+
+
+def _wait_for_pane_text(tmux, session_name, expected_text, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    output = ""
+    while time.monotonic() < deadline:
+        output = _capture_pane_output(tmux, session_name)
+        if expected_text in output:
+            return output
+        time.sleep(0.2)
+    return output
+
+
 class TestSessionAutomationWorkflows:
     """Integration tests for session automation workflows"""
 
@@ -113,7 +131,7 @@ class TestSessionAutomationWorkflows:
                 time.sleep(1.2)  # Wait for sleep command
 
         # Phase 5: Output Capture and Validation
-        output = tmux.capture_current_input(session_name)
+        output = _wait_for_pane_text(tmux, session_name, 'Process execution completed')
         assert isinstance(output, str)
         assert 'Process execution completed' in output
 

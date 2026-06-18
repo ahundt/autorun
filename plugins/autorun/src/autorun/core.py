@@ -621,6 +621,83 @@ HOOK_SCHEMAS = {
     }
 }
 
+CODEX_COMMON_ROOT_FIELDS = frozenset({"continue", "stopReason", "suppressOutput", "systemMessage"})
+CODEX_CONTEXT_HSO_FIELDS = frozenset({"hookEventName", "additionalContext"})
+CODEX_PRETOOLUSE_ROOT_FIELDS = frozenset({"systemMessage", "decision", "reason", "hookSpecificOutput"})
+CODEX_PRETOOLUSE_HSO_FIELDS = frozenset({
+    "hookEventName",
+    "permissionDecision",
+    "permissionDecisionReason",
+    "additionalContext",
+    "updatedInput",
+})
+
+
+def _codex_hook_fields(event: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Return Codex-supported root and hookSpecificOutput fields for an event."""
+    if event == "PreToolUse":
+        return CODEX_PRETOOLUSE_ROOT_FIELDS, CODEX_PRETOOLUSE_HSO_FIELDS
+
+    return (
+        CODEX_COMMON_ROOT_FIELDS | {"decision", "reason", "hookSpecificOutput"},
+        CODEX_CONTEXT_HSO_FIELDS,
+    )
+
+
+def _promote_permission_reason_to_context(hso: dict) -> None:
+    """Move Claude/Gemini permission text to Codex model context."""
+    permission_reason = hso.pop("permissionDecisionReason", "")
+    if permission_reason and "additionalContext" not in hso:
+        hso["additionalContext"] = permission_reason
+
+
+def _normalize_codex_pretooluse_hso(
+    hso: dict,
+    *,
+    root_decision: str,
+    root_reason: str,
+    system_message: str,
+) -> dict:
+    """Adapt portable PreToolUse HSO fields to Codex's stricter contract."""
+    if hso.get("permissionDecision") == "ask":
+        hso["permissionDecision"] = "deny"
+
+    if "updatedInput" in hso:
+        if root_decision == "block" or hso.get("permissionDecision") == "deny":
+            hso.pop("updatedInput", None)
+        else:
+            hso["permissionDecision"] = "allow"
+            hso.setdefault("permissionDecisionReason", "")
+            return hso
+
+    if hso.get("permissionDecision") == "deny":
+        hso["permissionDecisionReason"] = (
+            hso.get("permissionDecisionReason")
+            or root_reason
+            or hso.get("additionalContext")
+            or system_message
+            or ""
+        )
+        return hso
+
+    hso.pop("permissionDecision", None)
+    _promote_permission_reason_to_context(hso)
+    return hso
+
+
+def _drop_empty_codex_hso(filtered: dict, hso: dict, *, event: str) -> None:
+    """Store HSO only when it carries more than the event name."""
+    if "additionalContext" in hso and not hso["additionalContext"] and event != "PreToolUse":
+        hso.pop("additionalContext", None)
+
+    if len(hso) == 1 and "hookEventName" in hso:
+        filtered.pop("hookSpecificOutput", None)
+    elif hso:
+        filtered["hookSpecificOutput"] = hso
+    else:
+        filtered.pop("hookSpecificOutput", None)
+
+
 def validate_hook_response(event: str, response: dict, cli_type: str = "claude") -> dict:
     """
     Perform strict code-based enforcement of hook schemas.
@@ -701,7 +778,6 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
         return filtered
 
     if platform and platform.name == "codex":
-        allowed_common = {"continue", "stopReason", "suppressOutput", "systemMessage"}
         unsupported = set(platform.unsupported_response_fields_by_event.get(event, frozenset()))
 
         # Codex does not accept Claude's legacy allow marker. Keep only blocking
@@ -718,25 +794,11 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
             normalized.pop("reason", None)
         elif normalized.get("decision") == platform.block_decision:
             reason = normalized.get("reason") or normalized.get("systemMessage") or ""
-            hso_reason = normalized.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+            hso = normalized.get("hookSpecificOutput")
+            hso_reason = hso.get("permissionDecisionReason", "") if isinstance(hso, dict) else ""
             normalized["reason"] = reason or hso_reason
 
-        if event == "PreToolUse":
-            allowed = {"systemMessage", "decision", "reason", "hookSpecificOutput"}
-            allowed_hso = {
-                "hookEventName", "permissionDecision", "permissionDecisionReason",
-                "additionalContext", "updatedInput",
-            }
-        elif event in {"UserPromptSubmit", "SessionStart", "Stop", "SubagentStop"}:
-            allowed = allowed_common | {"decision", "reason", "hookSpecificOutput"}
-            allowed_hso = {"hookEventName", "additionalContext"}
-        elif event == "PostToolUse":
-            allowed = allowed_common | {"decision", "reason", "hookSpecificOutput"}
-            allowed_hso = {"hookEventName", "additionalContext"}
-        else:
-            allowed = allowed_common | {"decision", "reason", "hookSpecificOutput"}
-            allowed_hso = {"hookEventName", "additionalContext"}
-
+        allowed, allowed_hso = _codex_hook_fields(event)
         allowed -= unsupported
         filtered = {k: v for k, v in normalized.items() if k in allowed}
 
@@ -746,29 +808,14 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                 filtered.pop("hookSpecificOutput", None)
             else:
                 hso_filtered = {k: v for k, v in hso.items() if k in allowed_hso}
-                if hso_filtered.get("permissionDecision") == "ask":
-                    hso_filtered["permissionDecision"] = "deny"
-                if "updatedInput" in hso_filtered:
-                    if (
-                        filtered.get("decision") == platform.block_decision
-                        or hso_filtered.get("permissionDecision") == "deny"
-                    ):
-                        hso_filtered.pop("updatedInput", None)
-                    else:
-                        hso_filtered["permissionDecision"] = "allow"
-                        hso_filtered.setdefault("permissionDecisionReason", "")
-                if (
-                    "additionalContext" in hso_filtered
-                    and not hso_filtered["additionalContext"]
-                    and event != "PreToolUse"
-                ):
-                    hso_filtered.pop("additionalContext", None)
-                if len(hso_filtered) == 1 and "hookEventName" in hso_filtered:
-                    filtered.pop("hookSpecificOutput", None)
-                elif hso_filtered:
-                    filtered["hookSpecificOutput"] = hso_filtered
-                else:
-                    filtered.pop("hookSpecificOutput", None)
+                if event == "PreToolUse":
+                    hso_filtered = _normalize_codex_pretooluse_hso(
+                        hso_filtered,
+                        root_decision=filtered.get("decision", ""),
+                        root_reason=filtered.get("reason", ""),
+                        system_message=filtered.get("systemMessage", ""),
+                    )
+                _drop_empty_codex_hso(filtered, hso_filtered, event=event)
 
         return filtered
 

@@ -96,6 +96,10 @@ def assert_codex_response_valid(event: str, response: dict | None) -> None:
             assert set(hso) <= hso_allowed, response
             assert hso.get("hookEventName") == "PreToolUse", response
             assert hso.get("permissionDecision") != "ask", response
+            if hso.get("permissionDecision") == "allow":
+                assert "updatedInput" in hso, response
+            if "permissionDecisionReason" in hso:
+                assert hso.get("permissionDecision") in {"deny", "allow"}, response
         return
 
     if event == "PostToolUse":
@@ -340,7 +344,10 @@ def test_codex_plain_ar_allow_alias_unblocks_same_session_command():
     allowed = plugins.check_blocked_commands(allowed_ctx)
     assert allowed is not None
     assert_codex_response_valid("PreToolUse", allowed)
-    assert allowed["hookSpecificOutput"]["permissionDecision"] == "allow"
+    hso = allowed["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "additionalContext" in hso
+    assert "git push" in hso["additionalContext"]
 
 
 @pytest.mark.parametrize(
@@ -415,6 +422,40 @@ def test_codex_pretooluse_deny_omits_unsupported_common_fields():
     assert "continue" not in response
     assert "stopReason" not in response
     assert "suppressOutput" not in response
+
+
+def test_codex_pretooluse_allow_warning_uses_additional_context_not_permission_decision():
+    response = validate_hook_response(
+        "PreToolUse",
+        {
+            "systemMessage": "warn about this command",
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "permissionDecisionReason": "warn about this command",
+            },
+        },
+        cli_type="codex",
+    )
+
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "permissionDecisionReason" not in hso
+    assert hso["additionalContext"] == "warn about this command"
+
+
+def test_codex_pretooluse_git_commit_rules_warning_is_valid_context():
+    ctx = _codex_context("PreToolUse", tool_name="Bash", tool_input={"command": "git status"})
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    assert "Git commit rules" in json.dumps(response)
+    hso = response["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "permissionDecisionReason" not in hso
+    assert "additionalContext" in hso
 
 
 def test_codex_pretooluse_updated_input_requires_allow_permission_decision():

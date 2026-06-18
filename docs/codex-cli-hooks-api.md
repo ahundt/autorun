@@ -48,9 +48,13 @@ Important autorun rules:
   `continue`, `stopReason`, `suppressOutput`, `systemMessage`, plus
   `hookSpecificOutput.additionalContext` when the model should see the text.
 - `PreToolUse` must omit Codex-unsupported common fields such as `continue`,
-  `stopReason`, and `suppressOutput`. Autorun keeps the portable
-  `hookSpecificOutput.permissionDecision` / `permissionDecisionReason` fields
-  and uses a top-level `decision: "block"` + `reason` for blocking feedback.
+  `stopReason`, and `suppressOutput`. Use
+  `hookSpecificOutput.permissionDecision: "deny"` with
+  `permissionDecisionReason` for blocking, or a top-level
+  `decision: "block"` + `reason` legacy block. Use
+  `hookSpecificOutput.permissionDecision: "allow"` only when also returning
+  `updatedInput`; ordinary non-blocking warnings/context should use
+  `systemMessage` and/or `hookSpecificOutput.additionalContext`.
 - Exit code 0 plus valid JSON is the standard path. The Claude exit-2
   workaround does not apply to Codex.
 

@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun import CONFIG, COMMAND_HANDLERS
+from autorun import CONFIG
 # Daemon-path imports for migrated tests
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
@@ -488,7 +488,6 @@ class TestCodeQuality:
         Python's logging defaults to stderr when no handlers specified.
         This breaks Claude Code hooks.
         """
-        import subprocess
         from pathlib import Path
 
         src_dir = Path(__file__).parent.parent / "src" / "autorun"
@@ -890,9 +889,11 @@ def test_codex_staleness_warning_mentions_update_plan():
         task_staleness_reminder_count=1,
     )
     result = plugins.app.dispatch(ctx)
-    reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-    assert "update_plan" in reason
-    assert "TaskCreate" not in reason
+    hso = result.get("hookSpecificOutput", {})
+    context = hso.get("additionalContext") or result.get("systemMessage", "")
+    assert "permissionDecisionReason" not in hso
+    assert "update_plan" in context
+    assert "TaskCreate" not in context
 
 
 def test_task_cli_hint_ignores_autodetected_fallback():
@@ -2688,7 +2689,6 @@ def test_write_todos_error_string_no_false_positive(tmp_path, monkeypatch):
     # After A4 fix, the check should be "created successfully" not just "created"
     # For now, verify the manager doesn't treat error text as task creation
     manager.handle_task_create(FakeCtx())
-    tasks = manager.tasks
     # If a task WAS created from this error string, it means the false-positive exists
     # The fix should tighten the match to "created successfully"
 
