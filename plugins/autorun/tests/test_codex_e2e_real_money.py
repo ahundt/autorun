@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,21 @@ pytestmark = [
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 REPO_ROOT = PLUGIN_ROOT.parent.parent
+
+
+@dataclass(frozen=True)
+class CodexExecResult:
+    model: str
+    output_file: Path
+    last_message: str
+    completed: subprocess.CompletedProcess
+    log_path: Path
+
+    @property
+    def combined_output(self) -> str:
+        return "\n".join(
+            part for part in (self.completed.stdout, self.completed.stderr, self.last_message) if part
+        )
 
 
 def _log_run(label: str, payload_or_prompt, rc: int, stdout: str, stderr: str) -> Path:
@@ -142,6 +158,14 @@ def _spark_slugs_from_catalog(catalog: dict) -> list[str]:
     return sorted(slugs, key=lambda slug: (slug != "gpt-5.3-codex-spark", slug))
 
 
+def _is_spark_model(model: str) -> bool:
+    return "spark" in model.lower()
+
+
+def _allow_non_spark_codex_e2e_model() -> bool:
+    return os.environ.get("AUTORUN_CODEX_E2E_ALLOW_NON_SPARK_MODEL", "0") == "1"
+
+
 def _load_codex_model_catalog(args: list[str]) -> dict | None:
     result = subprocess.run(
         ["codex", "debug", "models", *args],
@@ -160,6 +184,12 @@ def _load_codex_model_catalog(args: list[str]) -> dict | None:
 def _choose_codex_e2e_model() -> str:
     override = os.environ.get("AUTORUN_CODEX_E2E_MODEL", "").strip()
     if override:
+        if not _is_spark_model(override) and not _allow_non_spark_codex_e2e_model():
+            pytest.skip(
+                "AUTORUN_CODEX_E2E_MODEL is not a Spark model. Codex/OpenAI "
+                "real-money tests require a Spark model by default; set "
+                "AUTORUN_CODEX_E2E_ALLOW_NON_SPARK_MODEL=1 to override intentionally."
+            )
         return override
 
     # Refresh first: account-available models may include Spark entries that
@@ -192,6 +222,43 @@ def _codex_exec_command(model: str, cwd: Path, output_file: Path, prompt: str) -
         str(output_file),
         prompt,
     ]
+
+
+def _read_output_file(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _run_codex_exec_case(
+    label: str,
+    prompt: str,
+    tmp_path: Path,
+    timeout: int = 120,
+) -> CodexExecResult:
+    model = _choose_codex_e2e_model()
+    output_file = tmp_path / f"{label}.last-message.txt"
+    completed = subprocess.run(
+        _codex_exec_command(model, REPO_ROOT, output_file, prompt),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    last_message = _read_output_file(output_file)
+    log_path = _log_run(
+        label,
+        {"model": model, "prompt": prompt, "last_message": last_message},
+        completed.returncode,
+        completed.stdout,
+        completed.stderr,
+    )
+    return CodexExecResult(
+        model=model,
+        output_file=output_file,
+        last_message=last_message,
+        completed=completed,
+        log_path=log_path,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -263,26 +330,42 @@ class TestCodexE2ERealMoney:
         hook-safe spelling exercises the same command handler and Codex schema
         path that previously broke with decision="approve".
         """
-        model = _choose_codex_e2e_model()
-        output_file = tmp_path / "codex-last-message.txt"
         prompt = "ar:st\nThen answer exactly: DONE"
-
-        result = subprocess.run(
-            _codex_exec_command(model, REPO_ROOT, output_file, prompt),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-
-        log_path = _log_run(
-            "real-cli-userprompt-ar-st",
-            {"model": model, "prompt": prompt},
-            result.returncode,
-            result.stdout,
-            result.stderr,
-        )
-        combined = result.stdout + "\n" + result.stderr
+        run = _run_codex_exec_case("real-cli-userprompt-ar-st", prompt, tmp_path)
+        combined = run.combined_output
         assert "UserPromptSubmit hook (failed)" not in combined
         assert "invalid user prompt submit JSON output" not in combined.lower()
         assert "decision\\\":\\\"approve" not in combined
-        assert result.returncode == 0, f"Full output in: {log_path}\n{combined[-4000:]}"
+        assert run.completed.returncode == 0, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+
+    @pytest.mark.serial
+    def test_codex_ar_ok_allows_git_push_dry_run_in_real_cli(self, codex_cli_check, tmp_path):
+        """Prove Codex can consume ar:ok and run the next git push tool call.
+
+        The command uses --dry-run with a nonexistent remote, so success means
+        the autorun block cleared and Git reached its own missing-remote error.
+        """
+        prompt = "\n".join(
+            [
+                "ar:ok git push",
+                "Use the shell tool to run exactly:",
+                "git push --dry-run no-such-remote HEAD",
+                "After the command returns, answer exactly: COMMAND_RAN",
+                "If autorun blocks it, answer exactly: AUTORUN_BLOCKED",
+            ]
+        )
+        run = _run_codex_exec_case("real-cli-ar-ok-git-push-dry-run", prompt, tmp_path)
+        combined = run.combined_output
+
+        forbidden_fragments = [
+            "AUTORUN_BLOCKED",
+            "Blocked: git push requires explicit user permission",
+            "PreToolUse hook (failed)",
+            "unsupported permissionDecision:allow",
+            "updatedInput without permissionDecision:allow",
+        ]
+        for fragment in forbidden_fragments:
+            assert fragment not in combined, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        assert "COMMAND_RAN" in combined, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        assert "no-such-remote" in combined, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        assert run.completed.returncode == 0, f"Full output in: {run.log_path}\n{combined[-4000:]}"

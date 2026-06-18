@@ -38,25 +38,34 @@ def latest_transcript_command(
 ) -> TranscriptCommand | None:
     """Return the newest transcript user prompt that is an allowed autorun command.
 
-    The scan is bounded to the JSONL tail and only accepts prompts whose first
-    token canonicalizes to one of ``command_names``. Free-form approval text is
-    ignored.
+    The scan is bounded to the JSONL tail and only accepts the first non-empty
+    line of the newest user prompt when that line canonicalizes to one of
+    ``command_names``. Free-form approval text is ignored.
     """
     if not path:
         return None
 
     for prompt in _iter_user_prompts_from_tail(path, max_bytes=max_bytes):
-        canonical = canonicalize_command_prompt(prompt.text, cli_type)
+        command_line = _first_non_empty_line(prompt.text)
+        canonical = canonicalize_command_prompt(command_line, cli_type)
         command = canonical.split(maxsplit=1)[0] if canonical else ""
         if command not in command_names:
             return None
         return TranscriptCommand(
-            prompt=prompt.text,
+            prompt=command_line,
             canonical_prompt=canonical,
             command=command,
             marker=prompt.marker,
         )
     return None
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def _iter_user_prompts_from_tail(path: str, *, max_bytes: int) -> Iterable[_TranscriptPrompt]:

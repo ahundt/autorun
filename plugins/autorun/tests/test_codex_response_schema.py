@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def _load_codex_e2e_module():
     spec = importlib.util.spec_from_file_location("autorun_test_codex_e2e_real_money", CODEX_E2E)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -159,6 +161,7 @@ def test_codex_user_prompt_submit_allow_has_no_approve_decision():
 def test_codex_e2e_model_selector_prefers_refreshed_spark_catalog(monkeypatch):
     e2e = _load_codex_e2e_module()
     monkeypatch.delenv("AUTORUN_CODEX_E2E_MODEL", raising=False)
+    monkeypatch.delenv("AUTORUN_CODEX_E2E_ALLOW_NON_SPARK_MODEL", raising=False)
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -171,6 +174,23 @@ def test_codex_e2e_model_selector_prefers_refreshed_spark_catalog(monkeypatch):
 
     assert e2e._choose_codex_e2e_model() == "gpt-5.3-codex-spark"
     assert calls == [["codex", "debug", "models"]]
+
+
+def test_codex_e2e_model_selector_rejects_non_spark_override_by_default(monkeypatch):
+    e2e = _load_codex_e2e_module()
+    monkeypatch.setenv("AUTORUN_CODEX_E2E_MODEL", "gpt-5.3-codex")
+    monkeypatch.delenv("AUTORUN_CODEX_E2E_ALLOW_NON_SPARK_MODEL", raising=False)
+
+    with pytest.raises(pytest.skip.Exception):
+        e2e._choose_codex_e2e_model()
+
+
+def test_codex_e2e_model_selector_allows_explicit_non_spark_override(monkeypatch):
+    e2e = _load_codex_e2e_module()
+    monkeypatch.setenv("AUTORUN_CODEX_E2E_MODEL", "gpt-5.3-codex")
+    monkeypatch.setenv("AUTORUN_CODEX_E2E_ALLOW_NON_SPARK_MODEL", "1")
+
+    assert e2e._choose_codex_e2e_model() == "gpt-5.3-codex"
 
 
 def test_codex_e2e_exec_command_uses_current_exec_flags(tmp_path):
@@ -474,6 +494,44 @@ def test_codex_transcript_ar_ok_fallback_unblocks_when_prompt_hook_missing(tmp_p
     assert "permissionDecision" not in hso
     assert "additionalContext" in hso
     assert "Allowed 'git push'" in hso["additionalContext"]
+
+
+def test_codex_transcript_multiline_ar_ok_uses_only_first_line(tmp_path):
+    store = ThreadSafeDB()
+    session_id = f"codex-transcript-multiline-allow-{uuid.uuid4().hex}"
+    transcript = tmp_path / "rollout.jsonl"
+    _write_codex_rollout_user_messages(
+        transcript,
+        [
+            "\n".join(
+                [
+                    "ar:ok git push",
+                    "Use the shell tool to run exactly:",
+                    "git push --dry-run no-such-remote HEAD",
+                    "After the command returns, answer exactly: COMMAND_RAN",
+                ]
+            )
+        ],
+    )
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push --dry-run no-such-remote HEAD"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "Allowed 'git push'" in hso["additionalContext"]
+    assert ctx.session_allowed_patterns[-1]["pattern"] == "git push"
 
 
 def test_codex_transcript_ar_ok_fallback_does_not_replay_consumed_prompt(tmp_path):
