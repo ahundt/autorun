@@ -84,6 +84,20 @@ Path variables available inside hook commands:
 No `CODEX_SESSION_ID` env var is exported to hook subprocesses today —
 the session id arrives only through stdin JSON.
 
+## Autorun behavior
+
+Autorun uses the same command handlers and safety policies for Codex as for
+Claude Code and Gemini CLI, but adapts the model-facing tool names to Codex:
+
+- Task progress maps to Codex's native `update_plan` checklist tool.
+- File guidance uses shell file inspection for reads and `apply_patch` for edits.
+- Plain bounded `cat`, `head`, and `tail` reads are allowed for Codex; redirects,
+  follow-mode `tail`, and prefixed forms such as `sudo cat` remain blocked.
+
+Claude/Gemini examples usually show `/ar:*`. In Codex, prefer `ar:*` or
+`ar <command>` (for example `ar:st` or `ar:ok git push`) because unknown slash
+commands can be intercepted before `UserPromptSubmit` hooks see them.
+
 ## Trust model
 
 Codex hashes each hook command and stores the approved hashes in a TOML

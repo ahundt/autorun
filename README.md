@@ -8,13 +8,13 @@
 
 ## Key Features
 
-1. **Fewer Interruptions**: Claude/Gemini keeps working without "continue" prompts so you can step away
+1. **Fewer Interruptions**: Claude, Gemini, or Codex keeps working without "continue" prompts so you can step away
 2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written
 3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
 4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
 5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-6. **Works with Claude Code and Gemini CLI**: Same commands, same safety, both platforms
-7. **80+ Slash Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
+6. **Works with Claude Code, Gemini CLI, and Codex CLI**: Same safety policies across supported harnesses
+7. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 8. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
 ![autorun Architecture](autorun-architecture.svg)
@@ -55,7 +55,9 @@ autorun --install
 /ar:sos                  # Emergency stop
 ```
 
-> Works with both **Claude Code** and **Gemini CLI** — see [Dual CLI Support](#dual-cli-support-claude-code--gemini-cli).
+> Works with **Claude Code**, **Gemini CLI**, and **Codex CLI** — see [Multi-CLI Support](#multi-cli-support-claude-code--gemini-cli--codex-cli).
+
+> Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`.
 
 **Self-Improvement** (learn from past sessions):
 
@@ -70,7 +72,7 @@ aise analyze                            # Full qualitative analysis
 - [Key Features](#key-features)
 - [Quick Start](#quick-start)
 - [UV Installation](#uv-installation-recommended)
-  - [Dual CLI Support (Claude Code + Gemini CLI)](#dual-cli-support-claude-code--gemini-cli)
+  - [Multi-CLI Support (Claude Code + Gemini CLI + Codex CLI)](#multi-cli-support-claude-code--gemini-cli--codex-cli)
 - [What autorun Does For You](#what-autorun-does-for-you)
 - [Why Byobu + tmux Integration](#why-byobu--tmux-integration)
 - [AutoFile Lifecycle Flow](#autofile-lifecycle-flow)
@@ -187,9 +189,15 @@ claude plugin marketplace list
 # Expected: "AutoFile policy: allow-all"
 ```
 
-### Dual CLI Support (Claude Code + Gemini CLI)
+### Multi-CLI Support (Claude Code + Gemini CLI + Codex CLI)
 
-**autorun works identically in both Claude Code and Gemini CLI**, providing the same safety features, commands, and autonomous execution capabilities across both platforms.
+**autorun supports Claude Code, Gemini CLI, and Codex CLI**, providing shared safety features, command handlers, and autonomous execution capabilities across supported harnesses.
+
+#### Codex CLI Support
+
+Autorun installs Codex hooks at `~/.codex/hooks.json`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, and file guidance uses Codex's available shell inspection and `apply_patch` paths.
+
+For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
 #### Gemini CLI Requirements
 
@@ -248,7 +256,7 @@ gemini
 
 #### Multi-Model Workflows
 
-Use autorun's safety features across both CLIs:
+Use autorun's safety features across supported CLIs:
 
 ```bash
 # Claude Code creates implementation
@@ -260,7 +268,7 @@ gemini
 "Review the authentication code and analyze this architecture diagram"
 # Attach: architecture.png
 
-# Both sessions use autorun safety:
+# All sessions use autorun safety:
 # - File policies enforce consistently
 # - Command blocking prevents dangerous operations
 # - Sessions are isolated (no state leakage)
@@ -286,10 +294,10 @@ gemini -c "Review src/auth.py for security issues and suggest improvements"
 
 #### Installation Notes
 
-1. **Single install command**: `autorun --install` detects both CLIs and installs for whichever are present
-2. **Same commands**: All `/ar:*` and `/pdf-extractor:*` commands work identically
-3. **Isolated sessions**: Claude and Gemini sessions don't interfere with each other
-4. **Shared safety**: File policies, command redirecting, and hooks work the same in both CLIs
+1. **Single install command**: `autorun --install` detects supported CLIs and installs for whichever are present
+2. **Same handlers**: Autorun and pdf-extractor commands use the same backing behavior across supported CLIs
+3. **Isolated sessions**: Supported CLI sessions don't interfere with each other
+4. **Shared safety**: File policies, command redirecting, and hooks work consistently across supported CLIs
 
 For more details, see [GEMINI.md](GEMINI.md) for Gemini-specific usage patterns.
 
@@ -649,7 +657,7 @@ All existing patterns without type prefixes default to literal matching. Existin
 
 ### Autorun Commands (Autonomous Execution)
 
-Start a task and walk away. Autorun keeps Claude/Gemini working through implement, evaluate, and verify so you don't have to type "continue" repeatedly:
+Start a task and walk away. Autorun keeps the supported agent working through implement, evaluate, and verify so you don't have to type "continue" repeatedly:
 
 - **/ar:go** or **/ar:run** \<prompt> - Start autonomous workflow with extended work sessions
   - Reduces manual "continue" prompts significantly
@@ -858,15 +866,16 @@ All legacy commands continue to work: `/afa`, `/afj`, `/afs`, `/afst`, `/autorun
 
 ## CLI Reference
 
-The `autorun` CLI command is available after installation for managing plugins, file policies, and task lifecycle outside of Claude Code/Gemini sessions.
+The `autorun` CLI command is available after installation for managing plugins, file policies, and task lifecycle outside of supported AI sessions.
 
 **Installation:**
 
 ```bash
-autorun --install                    # Register all plugins with Claude Code + Gemini
+autorun --install                    # Register plugins/hooks for installed supported CLIs
 autorun --install autorun            # Register only autorun plugin
 autorun --install --claude           # Register for Claude Code only
 autorun --install --gemini           # Register for Gemini CLI only
+autorun --install --codex            # Register for Codex CLI only
 autorun --install --force            # Force reinstall (development)
 autorun --install --tool             # Also run uv tool install for global CLI
 autorun --uninstall                  # Uninstall plugins and UV tools
@@ -1278,6 +1287,7 @@ git push origin feature/your-improvement
 - [Hooks API Reference](docs/hooks_api_reference.md) — Comprehensive hooks specification, event types, and response formats
 - [Claude Code Hooks API](docs/claude-code-hooks-api.md) — Claude Code-specific hooks behavior and bug workarounds
 - [Gemini CLI Hooks API](docs/gemini-cli-hooks-api.md) — Gemini CLI hooks compatibility and differences
+- [Codex CLI Hooks API](docs/codex-cli-hooks-api.md) — Codex hook schema, trust, and tool-surface differences
 
 **Project:**
 - [GitHub Repository](https://github.com/ahundt/autorun)
@@ -1286,4 +1296,3 @@ git push origin feature/your-improvement
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
-

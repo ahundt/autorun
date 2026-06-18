@@ -1,10 +1,12 @@
-# Hooks API Reference: Claude Code & Gemini CLI
+# Hooks API Reference: Claude Code, Gemini CLI & Codex CLI
 
-**Version:** 2.3
-**Generated:** 2026-02-12 / **Updated:** 2026-02-20
-**Purpose:** Comprehensive comparison of hook APIs across Claude Code and Gemini CLI, with emphasis on JSON I/O, tool blocking, directory layouts, and variable systems.
+**Version:** 2.4
+**Generated:** 2026-02-12 / **Updated:** 2026-06-18
+**Purpose:** Comprehensive comparison of hook APIs across Claude Code and Gemini CLI, with Codex CLI support documented in the focused Codex hook reference.
 
 **Key Enhancement (v2.2):** Detailed bug #4669 documentation with expected vs actual behavior, affected versions (v1.0.62+), and complete I/O pathway specifications for all tables.
+
+**Codex CLI support:** Autorun installs user-level Codex hooks at `~/.codex/hooks.json`; see [codex-cli-hooks-api.md](codex-cli-hooks-api.md) for Codex schemas, trust handling, command spelling, and tool-surface differences.
 
 ---
 
