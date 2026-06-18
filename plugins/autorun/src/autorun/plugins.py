@@ -737,6 +737,27 @@ def _apply_pending_transcript_policy_command(ctx: EventContext) -> str | None:
     return result
 
 
+def _format_transcript_policy_notice(result: str | None) -> str | None:
+    """Return a Codex-visible notice for transcript fallback command results."""
+    if not result:
+        return None
+    return f"Autorun processed latest Codex command: {result}"
+
+
+def _prepend_transcript_policy_notice(
+    notice: str | None,
+    message: str,
+    *,
+    separator: str = "\n",
+) -> str:
+    """Preserve the main safety message while surfacing transcript fallback status."""
+    if not notice:
+        return message
+    if not message:
+        return notice
+    return f"{notice}{separator}{message}"
+
+
 @app.command("/ar:reload")
 def handle_reload(ctx: EventContext) -> str:
     """Force reload of integration files."""
@@ -803,7 +824,9 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if cmd.strip().startswith("/ar:"):
         return ctx.allow()
 
-    _apply_pending_transcript_policy_command(ctx)
+    transcript_policy_notice = _format_transcript_policy_notice(
+        _apply_pending_transcript_policy_command(ctx)
+    )
 
     # Fingerprint for this hook invocation: identifies parallel invocations of the
     # same tool call in the same session. Constructed from session_id+tool+cmd so
@@ -833,7 +856,16 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 accessor.consume_allowed(i, consumed.to_dict())
                 label = consumed.status_label()
                 if label != "permanent":
-                    return ctx.respond("allow", f"Allowed '{sa.pattern}' ({label})")
+                    allowed_msg = f"Allowed '{sa.pattern}' ({label})"
+                    return ctx.respond(
+                        "allow",
+                        _prepend_transcript_policy_notice(
+                            transcript_policy_notice,
+                            allowed_msg,
+                        ),
+                    )
+                if transcript_policy_notice:
+                    return ctx.respond("allow", transcript_policy_notice)
                 return ctx.allow()
         # Lazy cleanup: remove expired entries on pass-through
         cleaned = [a for a in allows if ScopedAllow.from_dict(a).is_valid()]
@@ -979,10 +1011,18 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 if i not in set(to_allow_idx[:-1])
             ]
             combined = "\n".join(lines)
+        combined = _prepend_transcript_policy_notice(
+            transcript_policy_notice,
+            combined,
+            separator="\n\n",
+        )
         if deny_parts:
             return ctx.deny(combined)
         else:
             return ctx.respond("allow", combined)
+
+    if transcript_policy_notice:
+        return ctx.respond("allow", transcript_policy_notice)
 
     return None
 

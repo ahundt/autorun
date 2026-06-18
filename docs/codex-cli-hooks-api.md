@@ -101,6 +101,10 @@ Claude Code and Gemini CLI, but adapts the model-facing tool names to Codex:
 Claude/Gemini examples usually show `/ar:*`. In Codex, prefer `ar:*` or
 `ar <command>` (for example `ar:st` or `ar:ok git push`) because unknown slash
 commands can be intercepted before `UserPromptSubmit` hooks see them.
+When Codex does not deliver `UserPromptSubmit`, autorun's transcript fallback
+processes exact `ar:*` policy commands on the first later `PreToolUse` and
+returns a `systemMessage`/`additionalContext` notice there. This is the
+earliest reliable notification autorun can emit without blocking the tool.
 
 ## Trust model
 

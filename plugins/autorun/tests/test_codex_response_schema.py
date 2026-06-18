@@ -534,6 +534,37 @@ def test_codex_transcript_multiline_ar_ok_uses_only_first_line(tmp_path):
     assert ctx.session_allowed_patterns[-1]["pattern"] == "git push"
 
 
+def test_codex_transcript_ar_ok_notifies_on_first_later_safe_tool(tmp_path):
+    store = ThreadSafeDB()
+    session_id = f"codex-transcript-safe-tool-notice-{uuid.uuid4().hex}"
+    transcript = tmp_path / "rollout.jsonl"
+    _write_codex_rollout_user_messages(transcript, ["ar:ok 'git push'"])
+
+    ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "echo safe"},
+        cli_type="codex",
+        store=store,
+        transcript_path=str(transcript),
+    )
+
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert "permissionDecision" not in hso
+    assert "systemMessage" in response
+    assert "Autorun processed latest Codex command" in response["systemMessage"]
+    assert "Allowed" in response["systemMessage"]
+    assert "git push" in response["systemMessage"]
+    assert hso["additionalContext"] == response["systemMessage"]
+    assert ctx.session_allowed_patterns[-1]["pattern"] == "git push"
+    assert ctx.session_allowed_patterns[-1]["remaining_uses"] == 1
+
+
 def test_codex_transcript_ar_ok_fallback_does_not_replay_consumed_prompt(tmp_path):
     store = ThreadSafeDB()
     session_id = f"codex-transcript-no-replay-{uuid.uuid4().hex}"
