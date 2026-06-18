@@ -41,9 +41,12 @@ __all__ = [
     "command_matches_pattern",
     "command_tokens_for",
     "extract_commands",
+    "git_subcommand_index",
     "ParsedPattern",
     "ExtractedCommands",
     "BASHLEX_AVAILABLE",
+    "shell_command_from_tool_input",
+    "strip_transparent_command_wrappers",
 ]
 
 logger = logging.getLogger(__name__)
@@ -63,10 +66,22 @@ COMMAND_PREFIXES: Final[frozenset[str]] = frozenset({
     "chroot", "fakeroot", "firejail", "bubblewrap",
 })
 
+TRANSPARENT_COMMAND_WRAPPERS: Final[frozenset[str]] = frozenset({
+    # RTK wraps the real shell command for policy/observability, but it should
+    # not become part of autorun's command identity.
+    "rtk",
+})
+
 GIT_SUBCOMMANDS: Final[frozenset[str]] = frozenset({
     "add", "commit", "reset", "checkout", "stash", "clean",
     "push", "pull", "fetch", "merge", "rebase",
     "branch", "tag", "remote", "log", "diff", "status",
+})
+
+GIT_GLOBAL_OPTIONS_WITH_ARG: Final[frozenset[str]] = frozenset({
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace",
+    "--git-common-dir", "--super-prefix", "--exec-path",
+    "--attr-source", "--list-cmds", "--config-env",
 })
 
 SHELL_EXEC_COMMANDS: Final[frozenset[str]] = frozenset({
@@ -112,25 +127,15 @@ class ParsedPattern:
             return cls("", frozenset(), frozenset(), True)
 
         first = tokens[0]
-        is_git = first == "git"  # v8: Only apply GIT_SUBCOMMANDS for git
+        if first == "git":
+            return cls._from_git_tokens(tokens)
+
         cmd_parts, flags, positional = [first], set(), set()
-        seen_non_flag = False  # Track if we've seen any non-flag token
 
         for token in tokens[1:]:
             if token.startswith("-"):
-                if token.startswith("--"):
-                    flags.add(token)
-                elif len(token) > 2:
-                    flags.update(f"-{c}" for c in token[1:])
-                else:
-                    flags.add(token)
-            elif is_git and not seen_non_flag and token in GIT_SUBCOMMANDS:
-                # Only add FIRST non-flag token if it's a git subcommand
-                cmd_parts.append(token)
-                seen_non_flag = True
+                _add_flag_tokens(flags, token)
             else:
-                # Any other non-flag token (including git subcommands after first position)
-                seen_non_flag = True
                 positional.add(token)
 
         return cls(
@@ -138,6 +143,41 @@ class ParsedPattern:
             frozenset(flags),
             frozenset(positional),
             len(tokens) == 1
+        )
+
+    @classmethod
+    def _from_git_tokens(cls, tokens: list[str]) -> "ParsedPattern":
+        """Parse git commands with global options before the subcommand.
+
+        Git accepts forms such as `git -C /repo -c key=value push`. The
+        subcommand is still `push`, so block patterns like `git push` must match
+        after those global options are skipped.
+        """
+        cmd_parts, flags, positional = ["git"], set(), set()
+
+        sub_idx = git_subcommand_index(tokens)
+        _collect_git_global_flags(tokens, sub_idx, flags)
+
+        i = sub_idx
+        if i < len(tokens):
+            token = tokens[i]
+            if token in GIT_SUBCOMMANDS:
+                cmd_parts.append(token)
+            else:
+                positional.add(token)
+            i += 1
+
+        for token in tokens[i:]:
+            if token.startswith("-"):
+                _add_flag_tokens(flags, token)
+            else:
+                positional.add(token)
+
+        return cls(
+            " ".join(cmd_parts),
+            frozenset(flags),
+            frozenset(positional),
+            len(tokens) == 1,
         )
 
 
@@ -183,6 +223,91 @@ def _get_basename(path: str) -> str:
     return path[idx + 1:] if idx >= 0 else path
 
 
+def _add_flag_tokens(flags: set[str], token: str) -> None:
+    """Add a command-line flag, preserving the previous compact-short behavior."""
+    if token.startswith("--"):
+        flags.add(token)
+    elif len(token) > 2:
+        flags.update(f"-{c}" for c in token[1:])
+    else:
+        flags.add(token)
+
+
+def _git_option_head(token: str) -> str:
+    """Return the option name for `--opt=value`; otherwise the token itself."""
+    return token.split("=", 1)[0] if "=" in token else token
+
+
+def git_subcommand_index(tokens: list[str]) -> int:
+    """Return the index of git's subcommand after global options.
+
+    Precondition: `tokens[0]` is `git`. If no subcommand exists, returns
+    `len(tokens)`.
+    """
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            return i + 1
+        if token in GIT_GLOBAL_OPTIONS_WITH_ARG:
+            i += 2
+            continue
+        if _git_option_head(token) in GIT_GLOBAL_OPTIONS_WITH_ARG:
+            i += 1
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        return i
+    return i
+
+
+def _collect_git_global_flags(tokens: list[str], sub_idx: int, flags: set[str]) -> None:
+    """Collect only the global option names before `sub_idx`, not their values."""
+    i = 1
+    while i < sub_idx:
+        token = tokens[i]
+        if token == "--":
+            i += 1
+            continue
+        if token in GIT_GLOBAL_OPTIONS_WITH_ARG:
+            flags.add(token)
+            i += 2
+            continue
+        option_head = _git_option_head(token)
+        if option_head in GIT_GLOBAL_OPTIONS_WITH_ARG:
+            flags.add(option_head)
+            i += 1
+            continue
+        if token.startswith("-"):
+            _add_flag_tokens(flags, token)
+        i += 1
+
+
+def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
+    """Return tokens with leading transparent wrappers removed.
+
+    Unlike COMMAND_PREFIXES, transparent wrappers do not put the parser in
+    multi-pass mode. This keeps `rtk echo rm` safe while still recognizing
+    `rtk git ... push` as a git push.
+    """
+    i = 0
+    while i < len(tokens) and _get_basename(tokens[i]) in TRANSPARENT_COMMAND_WRAPPERS:
+        i += 1
+    return tokens[i:]
+
+
+def shell_command_from_tool_input(tool_input: object) -> str:
+    """Return the shell command string from Claude/Gemini/Codex-style inputs."""
+    if not isinstance(tool_input, dict):
+        return ""
+    for key in ("command", "cmd"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
 def _find_shell_exec_arg(cmd_name: str, tokens: list[str]) -> str | None:
     """Extract command string from 'sh -c "cmd"' patterns."""
     if cmd_name not in SHELL_EXEC_COMMANDS:
@@ -223,6 +348,10 @@ def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set
     - "echo rm" -> potential={echo} (echo is not a prefix, so rm is just an arg)
     - "cat && rm file" -> handled by _extract_recursive, each segment separately
     """
+    if not tokens:
+        return None, None, set()
+
+    tokens = strip_transparent_command_wrappers(tokens)
     if not tokens:
         return None, None, set()
 

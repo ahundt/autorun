@@ -616,6 +616,64 @@ class TestCheckBlockedCommandsIntegration:
             # Should be allow, not deny
             assert result.get("permissionDecision") == "allow" or "allow" in str(result)
 
+    def test_codex_rtk_wrapped_git_push_is_blocked(self):
+        """Codex Bash payloads must block wrapped pushes before the network call."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-codex-git-push",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={
+                "command": (
+                    "rtk git -C /Users/athundt/.claude/autorun "
+                    "-c push.followTags=false push --porcelain --no-follow-tags origin main:main"
+                )
+            },
+            cli_type="codex",
+            store=store,
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        assert "git push" in reason
+
+    def test_codex_exec_command_cmd_payload_is_blocked(self):
+        """Codex shell aliases using cmd input must use the same block logic."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-codex-exec-command",
+            event="PreToolUse",
+            tool_name="exec_command",
+            tool_input={"cmd": "rtk git -C /tmp/repo push origin main"},
+            cli_type="codex",
+            store=store,
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        assert "git push" in result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+
+    def test_rtk_wrapper_does_not_false_block_shell_arguments(self):
+        """Transparent wrappers must not make safe command arguments look executable."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id="test-rtk-safe-args",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "rtk echo rm"},
+            cli_type="codex",
+            store=store,
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is None
+
     def test_redirect_shown_in_message(self):
         """Blocked command should show redirect suggestion."""
         store = ThreadSafeDB()

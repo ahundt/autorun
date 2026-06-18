@@ -27,7 +27,6 @@ Plugins:
 - Plan Management: New/refine/update/process plan commands
 - AI Monitor Integration: External tmux observer (optional)
 """
-import hashlib
 import re
 import fnmatch
 import shlex
@@ -39,13 +38,17 @@ from typing import Optional, Dict
 from .core import app, EventContext, logger, format_command_for_cli, format_suggestion
 from .config import (
     CONFIG, DEFAULT_INTEGRATIONS,
-    BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
+    BASH_TOOLS, WRITE_TOOLS, FILE_TOOLS, PLAN_TOOLS,
     PATTERN_DISPLAY_MAX_LEN,
 )
 from .platforms import is_task_progress_tool, is_task_tool, platform_for
 from .session_manager import session_state
 from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
-from .command_detection import command_matches_pattern, command_tokens_for
+from .command_detection import (
+    command_matches_pattern,
+    command_tokens_for,
+    shell_command_from_tool_input,
+)
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
 
 # Import plan_export to register its @app.on() handlers with daemon
@@ -710,7 +713,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # Determine event type and command/path
     if ctx.tool_name in BASH_TOOLS:
         event_type = "bash"
-        cmd = ctx.tool_input.get("command", "")
+        cmd = shell_command_from_tool_input(ctx.tool_input)
     elif ctx.tool_name in FILE_TOOLS:
         event_type = "file"
         cmd = ctx.tool_input.get("file_path", "")
@@ -889,9 +892,14 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         combined = "\n\n".join(p for p in (deny_parts + warn_parts) if p)
         # Deduplicate "To allow" lines — keep only the last occurrence
         lines = combined.split("\n")
-        to_allow_idx = [i for i, l in enumerate(lines) if l.strip().startswith("To allow")]
+        to_allow_idx = [
+            i for i, line in enumerate(lines) if line.strip().startswith("To allow")
+        ]
         if len(to_allow_idx) > 1:
-            lines = [l for i, l in enumerate(lines) if i not in set(to_allow_idx[:-1])]
+            lines = [
+                line for i, line in enumerate(lines)
+                if i not in set(to_allow_idx[:-1])
+            ]
             combined = "\n".join(lines)
         if deny_parts:
             return ctx.deny(combined)

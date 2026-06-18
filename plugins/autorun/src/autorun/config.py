@@ -26,8 +26,11 @@ Usage:
     from autorun import CONFIG
 """
 
-# Tool name sets for different CLIs (Claude Code vs Gemini CLI) - v0.8.0
-BASH_TOOLS = {"Bash", "bash_command", "run_shell_command"}
+# Tool name sets for different CLIs (Claude Code, Gemini CLI, Codex CLI)
+BASH_TOOLS = {
+    "Bash", "bash_command", "run_shell_command",
+    "exec_command", "functions.exec_command", "shell",
+}
 WRITE_TOOLS = {"Write", "write_file"}
 EDIT_TOOLS = {"Edit", "edit_file", "replace"}
 FILE_TOOLS = WRITE_TOOLS | EDIT_TOOLS

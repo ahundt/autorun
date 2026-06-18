@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import IO, Literal, Optional
 
 from .config import CONFIG, detect_cli_type
+from .command_detection import shell_command_from_tool_input
 from .scoped_allow import (
     ScopedAllow, _PERMANENT_KEYWORDS,
     fingerprint_call, parse_scope_args, parse_duration,
@@ -519,7 +520,7 @@ class CacheGuard:
         tool_input = getattr(ctx, "tool_input", None) or {}
         if not isinstance(tool_input, dict):
             tool_input = {}
-        cmd = str(tool_input.get("command") or tool_input.get("file_path") or "")
+        cmd = shell_command_from_tool_input(tool_input) or str(tool_input.get("file_path") or "")
         call_id = fingerprint_call(self.session_id, tool_name, cmd)
         return _consume_by_call_id(self.session_id, call_id)
 

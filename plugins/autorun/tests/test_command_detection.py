@@ -153,6 +153,28 @@ def test_multiword_patterns(cmd: str, pattern: str, expected: bool) -> None:
     assert command_matches_pattern(cmd, pattern) is expected
 
 
+class TestWrappedCommandDetection:
+    """Regression coverage for transparent command wrappers and git global flags."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git -C /tmp/repo push origin main",
+        "git -c push.followTags=false push --porcelain origin main",
+        "rtk git -C /tmp/repo -c push.followTags=false push --porcelain --no-follow-tags origin main:main",
+    ])
+    def test_git_push_matches_through_global_options_and_rtk(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "git push") is True
+
+    @pytest.mark.parametrize("cmd,pattern", [
+        ("git -C /tmp/repo reset --hard HEAD~1", "git reset --hard"),
+        ("rtk git -C /tmp/repo clean -f", "git clean -f"),
+    ])
+    def test_destructive_git_patterns_match_after_global_options(self, cmd: str, pattern: str) -> None:
+        assert command_matches_pattern(cmd, pattern) is True
+
+    def test_rtk_wrapper_does_not_turn_arguments_into_commands(self) -> None:
+        assert command_matches_pattern("rtk echo rm", "rm") is False
+
+
 # ─── Edge Cases ───────────────────────────────────────────────────────────────
 
 def test_empty_inputs():
