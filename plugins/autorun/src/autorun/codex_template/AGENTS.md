@@ -22,6 +22,13 @@ supported by autorun when a harness passes them to hooks, but current Codex
 CLI may handle unknown slash commands before `UserPromptSubmit` hooks see
 them. In Codex, prefer `ar:*` or `ar <command>` forms.
 
+## Autorun skills
+
+Codex exposes skills through `/skills`, `$skill-name` mentions, and installed
+plugin selection such as `@autorun`. Autorun installs skills like
+`$mermaid-diagrams`, `$tmux-automation`, and `$ai-session-tools`, but Codex
+does not expose them as slash commands like `/mermaid`.
+
 ## Safety guardrails
 
 1. Prefer `trash` over `rm` for any path you did not just create.

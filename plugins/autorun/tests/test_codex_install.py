@@ -192,9 +192,15 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
         '[plugins."autorun@personal"]\n'
         'enabled = true\n'
     )
-    skill_dir = tmp_path / ".agents" / "skills" / "autorun"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("autorun skill")
+    skills_root = tmp_path / ".agents" / "skills"
+    for name in ("mermaid-diagrams", "parallel-subagent"):
+        skill_dir = skills_root / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: installed skill\n---\n",
+            encoding="utf-8",
+        )
+        (skill_dir / ".autorun-owned").write_text("", encoding="utf-8")
     marketplace_dir = tmp_path / ".agents" / "plugins"
     marketplace_dir.mkdir(parents=True)
     (marketplace_dir / "marketplace.json").write_text(json.dumps({
@@ -212,12 +218,22 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
             }
         ],
     }))
-    plugin_source = tmp_path / "plugins" / "autorun" / ".codex-plugin"
+    plugin_source_root = tmp_path / "plugins" / "autorun"
+    plugin_source = plugin_source_root / ".codex-plugin"
     plugin_source.mkdir(parents=True)
     (plugin_source / "plugin.json").write_text('{"name":"autorun","skills":"./skills/"}')
-    plugin_cache = tmp_path / ".codex" / "plugins" / "cache" / "personal" / "autorun" / "0.11.0" / ".codex-plugin"
+    plugin_cache_root = tmp_path / ".codex" / "plugins" / "cache" / "personal" / "autorun" / "0.11.0"
+    plugin_cache = plugin_cache_root / ".codex-plugin"
     plugin_cache.mkdir(parents=True)
     (plugin_cache / "plugin.json").write_text('{"name":"autorun","skills":"./skills/"}')
+    for root in (plugin_source_root, plugin_cache_root):
+        for name in ("mermaid-diagrams", "parallel-subagent"):
+            skill_dir = root / "skills" / name
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: bundled skill\n---\n",
+                encoding="utf-8",
+            )
 
     forge = tmp_path / ".forge"
     (forge / "commands").mkdir(parents=True)
@@ -228,6 +244,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     out = capsys.readouterr().out
     assert "Codex CLI:" in out
     assert "hooks.json: ✓ installed" in out
+    assert "skills: ✓ 2 user, 2 plugin source, 2 plugin cache" in out
     assert "plugin marketplace: ✓ installed, enabled" in out
     assert "ForgeCode:" in out
     assert "hooks: advisory only" in out
@@ -578,6 +595,35 @@ def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeyp
     assert plugin_source.exists()
     assert (plugin_source / ".codex-plugin" / "plugin.json").is_file()
     assert (plugin_source / "skills" / "cache" / "SKILL.md").is_file()
+
+
+def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monkeypatch):
+    """Codex plugin source must contain real SKILL.md files for link-backed skills.
+
+    Codex's plugin cache copier copies regular files and directories, but not
+    symbolic links. Autorun keeps a few skill entrypoints as meaningful
+    Markdown filenames with SKILL.md symlinks for cross-harness compatibility,
+    so the Codex plugin source copy must dereference those symlinks before
+    Codex installs the plugin.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["parallel-subagent"])
+    linked_skill = fake_marketplace / "plugins" / "autorun" / "skills" / "parallel-subagent"
+    skill_text = linked_skill / "FixStubbornBugsFastByParallelizing.md"
+    skill_text.write_text(
+        "---\nname: parallel-subagent\ndescription: link-backed skill\n---\n",
+        encoding="utf-8",
+    )
+    (linked_skill / "SKILL.md").unlink()
+    (linked_skill / "SKILL.md").symlink_to(skill_text.name)
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    copied_entrypoint = tmp_path / "plugins" / "autorun" / "skills" / "parallel-subagent" / "SKILL.md"
+    assert copied_entrypoint.is_file()
+    assert not copied_entrypoint.is_symlink()
+    assert "link-backed skill" in copied_entrypoint.read_text(encoding="utf-8")
 
 
 def test_install_for_codex_preserves_existing_personal_marketplace_entries(tmp_path, monkeypatch):

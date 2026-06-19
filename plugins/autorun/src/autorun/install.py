@@ -1765,11 +1765,17 @@ def _same_resolved_path(left: Path, right: Path) -> bool:
 
 
 def _copy_codex_plugin_source(plugin_dir: Path, target: Path) -> None:
-    """Copy the plugin source for platforms where directory symlinks fail."""
+    """Copy the plugin source with real files for Codex's plugin cache.
+
+    Codex's local plugin cache copier copies regular files and directories but
+    ignores symbolic links. Autorun keeps a few cross-harness skill entrypoints
+    as `SKILL.md` symlinks, so the personal Codex plugin source must
+    dereference those links before `codex plugin add autorun@personal` copies
+    the bundle into `~/.codex/plugins/cache/...`.
+    """
     shutil.copytree(
         plugin_dir,
         target,
-        symlinks=True,
         ignore=shutil.ignore_patterns(
             ".git",
             ".venv",
@@ -1802,9 +1808,10 @@ def _ensure_codex_plugin_source(plugin_dir: Path) -> tuple[bool, str]:
     """Materialize ~/plugins/autorun for Codex's implicit home marketplace.
 
     Codex resolves `./plugins/autorun` relative to the home marketplace root.
-    A symlink keeps local source installs fresh. The copy fallback is marked
-    as autorun-owned so re-installs can replace it without touching a
-    user-authored plugin directory with the same name.
+    The source is an autorun-owned copy instead of a symlink because Codex's
+    plugin cache copy path ignores link-backed `SKILL.md` files. Re-installs
+    replace only an autorun-owned path and never touch a user-authored plugin
+    directory with the same name.
     """
     manifest = plugin_dir / ".codex-plugin" / "plugin.json"
     if not manifest.is_file():
@@ -1813,8 +1820,9 @@ def _ensure_codex_plugin_source(plugin_dir: Path) -> tuple[bool, str]:
     target = _codex_plugin_source_dir()
     if target.is_symlink():
         if _same_resolved_path(target, plugin_dir):
-            return (True, "existing symlink")
-        return (False, f"user-owned symlink exists at {target}")
+            _remove_owned_codex_plugin_source(target)
+        else:
+            return (False, f"user-owned symlink exists at {target}")
 
     if target.exists():
         if not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file():
@@ -1822,13 +1830,8 @@ def _ensure_codex_plugin_source(plugin_dir: Path) -> tuple[bool, str]:
         _remove_owned_codex_plugin_source(target)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        target.symlink_to(plugin_dir.resolve(), target_is_directory=True)
-        return (True, "symlink")
-    except OSError as exc:
-        logger.debug(f"Could not symlink Codex plugin source, copying instead: {exc}")
-        _copy_codex_plugin_source(plugin_dir, target)
-        return (True, "copy")
+    _copy_codex_plugin_source(plugin_dir, target)
+    return (True, "copy")
 
 
 def _load_codex_personal_marketplace(path: Path) -> tuple[dict, str | None]:
@@ -2023,6 +2026,41 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
     section = text.split(section_header, 1)[1].split("\n[", 1)[0]
     enabled = any(line.strip() == "enabled = true" for line in section.splitlines())
     return (True, "✓ installed, enabled" if enabled else "✓ installed")
+
+
+def _count_codex_user_skills(skills_root: Path) -> int:
+    """Count autorun-owned user skills installed where Codex scans directly."""
+    if not skills_root.is_dir():
+        return 0
+    return sum(
+        1
+        for child in skills_root.iterdir()
+        if (
+            child.is_dir()
+            and (child / "SKILL.md").is_file()
+            and (child / _CODEX_SKILL_OWNED_MARKER).is_file()
+        )
+    )
+
+
+def _count_latest_codex_plugin_cache_skills() -> int:
+    """Count skills in the newest installed autorun Codex plugin cache entry."""
+    cache_root = (
+        Path.home()
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / _CODEX_PERSONAL_MARKETPLACE_NAME
+        / _CODEX_PLUGIN_NAME
+    )
+    if not cache_root.is_dir():
+        return 0
+    counts = [
+        _count_skill_dirs(child / "skills")
+        for child in cache_root.iterdir()
+        if child.is_dir()
+    ]
+    return max(counts, default=0)
 
 
 
@@ -3049,12 +3087,18 @@ def show_status() -> int:
     codex_agents = codex_dir / "AGENTS.md"
     print(f"  AGENTS.md: {'✓ installed' if codex_agents.is_file() else '✗ not installed'}")
     skills_root = Path.home() / ".agents" / "skills"
-    autorun_skills = sorted(skills_root.glob("*/SKILL.md")) if skills_root.is_dir() else []
-    autorun_skill_count = sum(
-        1 for skill in autorun_skills
-        if "autorun" in skill.read_text(encoding="utf-8", errors="ignore").lower()
+    user_skill_count = _count_codex_user_skills(skills_root)
+    plugin_source_skill_count = _count_skill_dirs(_codex_plugin_source_dir() / "skills")
+    plugin_cache_skill_count = _count_latest_codex_plugin_cache_skills()
+    skills_ok = user_skill_count > 0 and plugin_source_skill_count > 0
+    print(
+        f"  skills: {'✓' if skills_ok else '✗'} "
+        f"{user_skill_count} user, "
+        f"{plugin_source_skill_count} plugin source, "
+        f"{plugin_cache_skill_count} plugin cache"
     )
-    print(f"  skills: {'✓' if autorun_skill_count else '✗'} {autorun_skill_count} autorun-related")
+    if codex_ok and not skills_ok:
+        all_ok = False
     marketplace_ok, marketplace_status = _codex_plugin_marketplace_status()
     print(f"  plugin marketplace: {marketplace_status}")
     if codex_ok and not marketplace_ok:

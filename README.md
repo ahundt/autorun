@@ -197,7 +197,7 @@ claude plugin marketplace list
 
 Autorun installs Codex hooks at `~/.codex/hooks.json` and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, search/file-discovery guidance uses shell `rg -n` and `rg --files`, and file edits use `apply_patch`.
 
-Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`.
+Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
