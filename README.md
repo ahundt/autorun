@@ -195,7 +195,9 @@ claude plugin marketplace list
 
 #### Codex CLI Support
 
-Autorun installs Codex hooks at `~/.codex/hooks.json`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, and file guidance uses Codex's available shell inspection and `apply_patch` paths.
+Autorun installs Codex hooks at `~/.codex/hooks.json` and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, and file guidance uses Codex's available shell inspection and `apply_patch` paths.
+
+Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`.
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
@@ -1035,6 +1037,8 @@ tmux.send_keys("npm test", "my-test-session")      # Targets specific session
 autorun/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin manifest and metadata
+├── .codex-plugin/
+│   └── plugin.json          # Codex plugin manifest for packaged skills
 ├── agents/                    # Tmux and CLI automation agents
 ├── commands/                  # 77 slash command .md files + autorun entry point
 │   └── autorun              # Plugin command script (JSON stdin/stdout)

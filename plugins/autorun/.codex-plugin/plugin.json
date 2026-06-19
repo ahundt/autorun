@@ -1,0 +1,33 @@
+{
+  "name": "autorun",
+  "version": "0.11.0",
+  "description": "Lifecycle safety hooks and reusable automation skills for AI coding assistants",
+  "author": {
+    "name": "Andrew Hundt",
+    "email": "ATHundt@gmail.com",
+    "url": "https://github.com/ahundt/autorun"
+  },
+  "homepage": "https://github.com/ahundt/autorun#readme",
+  "repository": "https://github.com/ahundt/autorun",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "skills",
+    "hooks",
+    "autorun",
+    "automation",
+    "safety-guards"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Autorun",
+    "shortDescription": "Safety hooks and reusable automation workflows.",
+    "longDescription": "Autorun provides lifecycle hook enforcement through user-level Codex hooks plus reusable skills for task tracking, session recovery, cache protection, tmux automation, diagrams, and CLI demos.",
+    "developerName": "Andrew Hundt",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "websiteURL": "https://github.com/ahundt/autorun"
+  }
+}

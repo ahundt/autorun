@@ -69,11 +69,18 @@ error: hook returned invalid user prompt submit JSON output
 
 User-level: `~/.codex/hooks.json` (always active, no marketplace required).
 
-Plugin-bundled hooks would live under `~/.codex/plugins/<name>/.codex-plugin/plugin.json`
-but require `features.plugin_hooks = true` in the Codex config, which is
-**off by default in v0.133** ("Plugin hooks are off by default in this
-release."). Autorun chose user-level for consistency with the global
-install model for Claude (plugin manifest) and Gemini (extension manifest).
+Codex plugin packaging: `~/.agents/plugins/marketplace.json` lists an
+`autorun` plugin with local source `./plugins/autorun`, which resolves to
+`~/plugins/autorun`. That plugin source contains `.codex-plugin/plugin.json`
+and `skills/`, so Codex can discover autorun's skills through its native
+plugin marketplace path.
+
+Autorun deliberately does **not** put hooks in the Codex plugin manifest.
+Codex merges hooks from all active sources, so bundling the same enforcement
+hooks in the plugin would duplicate `PreToolUse`, `UserPromptSubmit`, `Stop`,
+and task lifecycle execution. User-level hooks remain the single Codex
+enforcement path; the plugin is for skills and future Codex-native package
+metadata.
 
 Path variables available inside hook commands:
 

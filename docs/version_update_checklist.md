@@ -78,6 +78,7 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `aix.toml` | `version = "X.Y.Z"` |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |
 | `docs/version_update_checklist.md` | `**Current Version: X.Y.Z**` at top |
+| `plugins/autorun/.codex-plugin/plugin.json` | Codex plugin package version |
 | `plugins/pdf-extractor/CLAUDE.md` | Section header |
 
 ### Skills (4+ files)

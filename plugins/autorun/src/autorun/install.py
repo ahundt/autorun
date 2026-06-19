@@ -37,6 +37,7 @@ del _sys
 import json
 import logging
 import os
+import argparse
 import shutil
 import subprocess
 import sys
@@ -1486,6 +1487,21 @@ def _autorun_plugin_dir(marketplace_root: Path, plugins: list[str]) -> Path | No
 
 
 _CODEX_AUTORUN_COMMAND_MARK = "/hooks/hook_entry.py --cli codex"
+_CODEX_PLUGIN_NAME = "autorun"
+_CODEX_PLUGIN_SOURCE_PATH = "./plugins/autorun"
+_CODEX_PLUGIN_OWNED_MARKER = ".autorun-owned"
+_CODEX_PERSONAL_MARKETPLACE_NAME = "personal"
+
+
+@dataclass(frozen=True, slots=True)
+class CodexPluginMarketplaceInstall:
+    """Result from publishing autorun's Codex plugin package locally."""
+
+    source_ready: bool
+    marketplace_ready: bool
+    skipped_user_owned_source: bool = False
+    skipped_conflicting_marketplace: bool = False
+    reason: str = ""
 
 
 def _build_codex_hook_block(plugin_dir: Path) -> dict:
@@ -1645,6 +1661,7 @@ def _install_for_codex(
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
     skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
+    plugin_marketplace = _install_codex_plugin_marketplace(plugin_dir)
 
     print()
     print("✓ Codex hooks installed at ~/.codex/hooks.json")
@@ -1657,6 +1674,10 @@ def _install_for_codex(
             f"  ({skills_skipped} user-authored skill(s) with matching names "
             f"left untouched)"
         )
+    if plugin_marketplace.marketplace_ready:
+        print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
+    elif plugin_marketplace.reason:
+        print(f"  Codex plugin marketplace skipped: {plugin_marketplace.reason}")
     print("  Next: run '/hooks' inside Codex CLI to trust the new hook hashes.")
     print("        (Codex silently skips hooks until they are approved.)")
     return (True, "success")
@@ -1710,6 +1731,299 @@ def _install_codex_skills(plugin_dir: Path) -> tuple[int, int]:
         )
         installed += 1
     return (installed, skipped)
+
+
+def _codex_personal_marketplace_path() -> Path:
+    """Return Codex's implicit home marketplace manifest path."""
+    return Path.home() / ".agents" / "plugins" / "marketplace.json"
+
+
+def _codex_plugin_source_dir() -> Path:
+    """Return the local plugin source path referenced by the home marketplace."""
+    return Path.home() / "plugins" / _CODEX_PLUGIN_NAME
+
+
+def _codex_plugin_marketplace_entry() -> dict:
+    """Build the marketplace entry Codex expects under ~/.agents/plugins/."""
+    return {
+        "name": _CODEX_PLUGIN_NAME,
+        "source": {"source": "local", "path": _CODEX_PLUGIN_SOURCE_PATH},
+        "policy": {
+            "installation": "AVAILABLE",
+            "authentication": "ON_INSTALL",
+        },
+        "category": "Productivity",
+    }
+
+
+def _same_resolved_path(left: Path, right: Path) -> bool:
+    """Compare paths after resolving symlinks; broken paths simply mismatch."""
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def _copy_codex_plugin_source(plugin_dir: Path, target: Path) -> None:
+    """Copy the plugin source for platforms where directory symlinks fail."""
+    shutil.copytree(
+        plugin_dir,
+        target,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            ".venv",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            "__pycache__",
+            "*.pyc",
+            "*.pyo",
+            ".coverage",
+            "htmlcov",
+        ),
+    )
+    (target / _CODEX_PLUGIN_OWNED_MARKER).write_text(
+        "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
+        "`autorun --install --codex` to recreate it.\n",
+        encoding="utf-8",
+    )
+
+
+def _remove_owned_codex_plugin_source(target: Path) -> None:
+    """Remove only a plugin source path autorun previously owned."""
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    else:
+        shutil.rmtree(target)
+
+
+def _ensure_codex_plugin_source(plugin_dir: Path) -> tuple[bool, str]:
+    """Materialize ~/plugins/autorun for Codex's implicit home marketplace.
+
+    Codex resolves `./plugins/autorun` relative to the home marketplace root.
+    A symlink keeps local source installs fresh. The copy fallback is marked
+    as autorun-owned so re-installs can replace it without touching a
+    user-authored plugin directory with the same name.
+    """
+    manifest = plugin_dir / ".codex-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return (False, f"missing Codex plugin manifest at {manifest}")
+
+    target = _codex_plugin_source_dir()
+    if target.is_symlink():
+        if _same_resolved_path(target, plugin_dir):
+            return (True, "existing symlink")
+        return (False, f"user-owned symlink exists at {target}")
+
+    if target.exists():
+        if not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file():
+            return (False, f"user-owned directory exists at {target}")
+        _remove_owned_codex_plugin_source(target)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.symlink_to(plugin_dir.resolve(), target_is_directory=True)
+        return (True, "symlink")
+    except OSError as exc:
+        logger.debug(f"Could not symlink Codex plugin source, copying instead: {exc}")
+        _copy_codex_plugin_source(plugin_dir, target)
+        return (True, "copy")
+
+
+def _load_codex_personal_marketplace(path: Path) -> tuple[dict, str | None]:
+    """Load or initialize ~/.agents/plugins/marketplace.json."""
+    if not path.is_file():
+        return (
+            {
+                "name": _CODEX_PERSONAL_MARKETPLACE_NAME,
+                "interface": {"displayName": "Personal"},
+                "plugins": [],
+            },
+            None,
+        )
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return ({}, f"{path} is not valid JSON: {exc}")
+
+    if not isinstance(data, dict):
+        return ({}, f"{path} must contain a JSON object")
+
+    data.setdefault("name", _CODEX_PERSONAL_MARKETPLACE_NAME)
+    interface = data.setdefault("interface", {})
+    if isinstance(interface, dict):
+        interface.setdefault("displayName", "Personal")
+    else:
+        data["interface"] = {"displayName": "Personal"}
+    plugins = data.setdefault("plugins", [])
+    if not isinstance(plugins, list):
+        return ({}, f"{path} plugins field must be a list")
+    return (data, None)
+
+
+def _upsert_codex_plugin_entry(marketplace: dict) -> tuple[dict, str | None]:
+    """Insert autorun's Codex plugin entry without overwriting conflicts."""
+    plugins = marketplace.get("plugins", [])
+    entry = _codex_plugin_marketplace_entry()
+    next_plugins: list[dict] = []
+    inserted = False
+
+    for plugin in plugins:
+        if not isinstance(plugin, dict) or plugin.get("name") != _CODEX_PLUGIN_NAME:
+            next_plugins.append(plugin)
+            continue
+
+        source = plugin.get("source")
+        if source != entry["source"]:
+            return (
+                marketplace,
+                f"existing marketplace entry {_CODEX_PLUGIN_NAME!r} uses {source!r}",
+            )
+        if not inserted:
+            next_plugins.append(entry)
+            inserted = True
+
+    if not inserted:
+        next_plugins.append(entry)
+
+    updated = dict(marketplace)
+    updated["plugins"] = next_plugins
+    return (updated, None)
+
+
+def _install_codex_plugin_marketplace(plugin_dir: Path) -> CodexPluginMarketplaceInstall:
+    """Publish autorun's skills as a Codex plugin in the home marketplace.
+
+    User-level hooks stay in ~/.codex/hooks.json so enforcement has a single
+    active source. The plugin package exists for Codex-native skill discovery,
+    install surfaces, and future MCP/app packaging.
+    """
+    source_ready, source_message = _ensure_codex_plugin_source(plugin_dir)
+    if not source_ready:
+        return CodexPluginMarketplaceInstall(
+            source_ready=False,
+            marketplace_ready=False,
+            skipped_user_owned_source="user-owned" in source_message,
+            reason=source_message,
+        )
+
+    path = _codex_personal_marketplace_path()
+    marketplace, error = _load_codex_personal_marketplace(path)
+    if error:
+        return CodexPluginMarketplaceInstall(
+            source_ready=True,
+            marketplace_ready=False,
+            reason=error,
+        )
+
+    marketplace, conflict = _upsert_codex_plugin_entry(marketplace)
+    if conflict:
+        return CodexPluginMarketplaceInstall(
+            source_ready=True,
+            marketplace_ready=False,
+            skipped_conflicting_marketplace=True,
+            reason=conflict,
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(marketplace, indent=2) + "\n", encoding="utf-8")
+    return CodexPluginMarketplaceInstall(
+        source_ready=True,
+        marketplace_ready=True,
+        reason=source_message,
+    )
+
+
+def _install_codex_plugin_with_cli(force: bool = False) -> CmdResult:
+    """Install the local autorun Codex plugin after marketplace publication."""
+    if not shutil.which("codex"):
+        return CmdResult(False, "codex CLI not found")
+
+    plugin_id = f"{_CODEX_PLUGIN_NAME}@{_CODEX_PERSONAL_MARKETPLACE_NAME}"
+    if force:
+        remove = run_cmd(["codex", "plugin", "remove", plugin_id], timeout=120)
+        if not (remove.ok or remove.has_text("not installed") or remove.has_text("not found")):
+            return remove
+
+    result = run_cmd(
+        ["codex", "plugin", "add", plugin_id],
+        timeout=120,
+    )
+    if result.ok or result.has_text("already"):
+        return CmdResult(True, result.output)
+    return result
+
+
+def _codex_plugin_marketplace_status() -> tuple[bool, str]:
+    """Return whether the Codex home marketplace exposes autorun."""
+    path = _codex_personal_marketplace_path()
+    if not path.is_file():
+        return (False, "✗ not installed")
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return (False, f"✗ unreadable ({exc})")
+
+    plugins = data.get("plugins", [])
+    if not isinstance(plugins, list):
+        return (False, "✗ incomplete (plugins field is not a list)")
+
+    entry = next(
+        (
+            plugin for plugin in plugins
+            if isinstance(plugin, dict) and plugin.get("name") == _CODEX_PLUGIN_NAME
+        ),
+        None,
+    )
+    if entry is None:
+        return (False, "✗ missing autorun entry")
+
+    if entry.get("source") != _codex_plugin_marketplace_entry()["source"]:
+        return (False, "✗ autorun entry points at unexpected source")
+
+    source_dir = _codex_plugin_source_dir()
+    if not (source_dir / ".codex-plugin" / "plugin.json").is_file():
+        return (False, "✗ plugin source missing .codex-plugin/plugin.json")
+
+    cache_root = (
+        Path.home()
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / _CODEX_PERSONAL_MARKETPLACE_NAME
+        / _CODEX_PLUGIN_NAME
+    )
+    installed = (
+        cache_root.is_dir()
+        and any(
+            (child / ".codex-plugin" / "plugin.json").is_file()
+            for child in cache_root.iterdir()
+            if child.is_dir()
+        )
+    )
+    if not installed:
+        return (True, "✓ available")
+
+    config = Path.home() / ".codex" / "config.toml"
+    if not config.is_file():
+        return (True, "✓ installed")
+
+    try:
+        text = config.read_text(encoding="utf-8")
+    except OSError:
+        return (True, "✓ installed")
+
+    section_header = f'[plugins."{_CODEX_PLUGIN_NAME}@{_CODEX_PERSONAL_MARKETPLACE_NAME}"]'
+    if section_header not in text:
+        return (True, "✓ installed")
+
+    section = text.split(section_header, 1)[1].split("\n[", 1)[0]
+    enabled = any(line.strip() == "enabled = true" for line in section.splitlines())
+    return (True, "✓ installed, enabled" if enabled else "✓ installed")
+
 
 
 _CODEX_AGENTS_START = "<!-- autorun:codex-agents-md:start -->"
@@ -2442,9 +2756,22 @@ def install_plugins(
 
     # Install for Codex CLI (user-level ~/.codex/hooks.json — always active)
     codex_success = False
+    codex_plugin_success = False
+    codex_plugin_msg = ""
     if "codex" in target_clis:
         codex_success, codex_msg = _install_for_codex(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and codex_success
+        if codex_success:
+            print()
+            print("Installing Codex plugin package...")
+            codex_plugin_result = _install_codex_plugin_with_cli(force=force)
+            codex_plugin_success = codex_plugin_result.ok
+            codex_plugin_msg = codex_plugin_result.output
+            if codex_plugin_success:
+                print("   autorun@personal installed/enabled")
+            else:
+                print(f"   Codex plugin add failed: {codex_plugin_msg}")
+            all_succeeded = all_succeeded and codex_plugin_success
 
     # Install for ForgeCode (template-only — commands + AGENTS.md, no hooks)
     forge_success = False
@@ -2500,6 +2827,10 @@ def install_plugins(
     if "codex" in target_clis:
         if codex_success:
             print("✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
+            if codex_plugin_success:
+                print("✓ Codex CLI: plugin installed as autorun@personal")
+            else:
+                print("✗ Codex CLI: plugin install failed")
         else:
             print("✗ Codex CLI: hooks install failed")
 
@@ -2724,6 +3055,10 @@ def show_status() -> int:
         if "autorun" in skill.read_text(encoding="utf-8", errors="ignore").lower()
     )
     print(f"  skills: {'✓' if autorun_skill_count else '✗'} {autorun_skill_count} autorun-related")
+    marketplace_ok, marketplace_status = _codex_plugin_marketplace_status()
+    print(f"  plugin marketplace: {marketplace_status}")
+    if codex_ok and not marketplace_ok:
+        all_ok = False
     if not codex_ok:
         print("  Install: https://developers.openai.com/codex/")
 
@@ -2983,16 +3318,78 @@ def install_main():
     """
     args = sys.argv[1:]
     mapped = _map_legacy_flags(args)
+    sys.exit(_install_module_main(mapped))
 
-    # Route to appropriate function based on mapped flags
-    if "--uninstall" in mapped:
-        sys.exit(uninstall_plugins())
-    elif "--status" in mapped:
-        sys.exit(show_status())
-    else:
-        force = "--force-install" in mapped
-        tool = "--tool" in mapped
-        sys.exit(install_plugins(force_install=force, install_tool=tool))
+
+def _create_install_module_parser() -> argparse.ArgumentParser:
+    """Create the direct install-module parser.
+
+    This supports the documented local development command:
+    `python -m plugins.autorun.src.autorun.install --install --codex`.
+    The primary user CLI remains autorun.__main__; this parser exists so
+    the module-level fallback does not silently ignore platform flags.
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m plugins.autorun.src.autorun.install",
+        description="Install autorun hooks, skills, and plugin assets.",
+    )
+    parser.add_argument("selection", nargs="?", default="all")
+    parser.add_argument("--install", action="store_true", help="Install selected plugins")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall selected plugins")
+    parser.add_argument("--status", action="store_true", help="Show installation status")
+    parser.add_argument("--force", "--force-install", dest="force", action="store_true")
+    parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
+    parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
+    parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
+    parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
+    parser.add_argument(
+        "--conductor",
+        action="store_true",
+        default=True,
+        help="Install Conductor extension for Gemini",
+    )
+    parser.add_argument(
+        "--no-conductor",
+        action="store_false",
+        dest="conductor",
+        help="Skip Conductor extension installation for Gemini",
+    )
+    parser.add_argument(
+        "--aix",
+        action="store_true",
+        dest="use_aix",
+        default=None,
+        help="Force AIX installation",
+    )
+    parser.add_argument(
+        "--no-aix",
+        action="store_false",
+        dest="use_aix",
+        help="Skip AIX installation",
+    )
+    return parser
+
+
+def _install_module_main(argv: list[str] | None = None) -> int:
+    """Entry point for `python -m plugins.autorun.src.autorun.install`."""
+    parser = _create_install_module_parser()
+    args = parser.parse_args(argv)
+
+    if args.uninstall:
+        return uninstall_plugins(args.selection)
+    if args.status:
+        return show_status()
+
+    return install_plugins(
+        args.selection,
+        tool=args.tool,
+        force=args.force,
+        claude_only=args.claude,
+        gemini_only=args.gemini,
+        codex_only=args.codex,
+        conductor=args.conductor,
+        use_aix=args.use_aix,
+    )
 
 
 if __name__ == "__main__":
@@ -3009,4 +3406,4 @@ if __name__ == "__main__":
     else:
         # Disable logging - add NullHandler to prevent default stderr handler
         logging.basicConfig(handlers=[logging.NullHandler()], level=logging.CRITICAL + 1)
-    sys.exit(install_plugins())
+    sys.exit(_install_module_main())

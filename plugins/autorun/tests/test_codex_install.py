@@ -21,6 +21,7 @@ from pathlib import Path
 
 from autorun.install import (
     CmdResult,
+    _install_codex_plugin_with_cli,
     _install_for_codex,
     detect_available_clis,
     determine_target_clis,
@@ -187,9 +188,36 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     }
     (codex_dir / "hooks.json").write_text(json.dumps(codex_hooks))
     (codex_dir / "AGENTS.md").write_text("autorun safety guidance")
+    (codex_dir / "config.toml").write_text(
+        '[plugins."autorun@personal"]\n'
+        'enabled = true\n'
+    )
     skill_dir = tmp_path / ".agents" / "skills" / "autorun"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("autorun skill")
+    marketplace_dir = tmp_path / ".agents" / "plugins"
+    marketplace_dir.mkdir(parents=True)
+    (marketplace_dir / "marketplace.json").write_text(json.dumps({
+        "name": "personal",
+        "interface": {"displayName": "Personal"},
+        "plugins": [
+            {
+                "name": "autorun",
+                "source": {"source": "local", "path": "./plugins/autorun"},
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+                "category": "Productivity",
+            }
+        ],
+    }))
+    plugin_source = tmp_path / "plugins" / "autorun" / ".codex-plugin"
+    plugin_source.mkdir(parents=True)
+    (plugin_source / "plugin.json").write_text('{"name":"autorun","skills":"./skills/"}')
+    plugin_cache = tmp_path / ".codex" / "plugins" / "cache" / "personal" / "autorun" / "0.11.0" / ".codex-plugin"
+    plugin_cache.mkdir(parents=True)
+    (plugin_cache / "plugin.json").write_text('{"name":"autorun","skills":"./skills/"}')
 
     forge = tmp_path / ".forge"
     (forge / "commands").mkdir(parents=True)
@@ -200,6 +228,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     out = capsys.readouterr().out
     assert "Codex CLI:" in out
     assert "hooks.json: ✓ installed" in out
+    assert "plugin marketplace: ✓ installed, enabled" in out
     assert "ForgeCode:" in out
     assert "hooks: advisory only" in out
 
@@ -402,6 +431,13 @@ def _make_fake_plugin_with_skills(tmp_path, skill_names):
     fake_marketplace = tmp_path / "marketplace"
     fake_plugin = fake_marketplace / "plugins" / "autorun"
     fake_plugin.mkdir(parents=True)
+    (fake_plugin / ".codex-plugin").mkdir()
+    (fake_plugin / ".codex-plugin" / "plugin.json").write_text(json.dumps({
+        "name": "autorun",
+        "version": "0.11.0",
+        "description": "test fixture autorun plugin",
+        "skills": "./skills/",
+    }))
     (fake_plugin / "hooks").mkdir()
     (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
     template = fake_plugin / "src" / "autorun" / "codex_template"
@@ -499,6 +535,153 @@ def test_install_for_codex_skills_replaces_stale_autorun_owned(tmp_path, monkeyp
     text = (skill_dir / "SKILL.md").read_text()
     assert "STALE CONTENT" not in text
     assert "test fixture skill" in text
+
+
+# ─── Codex plugin marketplace packaging ─────────────────────────────────────
+#
+# Codex can read direct user skills from ~/.agents/skills, but OpenAI's Codex
+# plugin docs and the Codex CLI source both treat plugins as the installable
+# distribution unit. Autorun should therefore publish its skill bundle as a
+# home marketplace plugin in addition to copying global skills for immediate
+# local availability.
+
+def _read_personal_marketplace(home: Path) -> dict:
+    return json.loads((home / ".agents" / "plugins" / "marketplace.json").read_text())
+
+
+def _autorun_marketplace_entry(marketplace: dict) -> dict:
+    entries = [p for p in marketplace.get("plugins", []) if p.get("name") == "autorun"]
+    assert len(entries) == 1
+    return entries[0]
+
+
+def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeypatch):
+    """Install must expose autorun as a Codex plugin, not only raw skills."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["autorun-maintainer", "cache"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    marketplace = _read_personal_marketplace(tmp_path)
+    assert marketplace["name"] == "personal"
+    assert marketplace["interface"]["displayName"] == "Personal"
+    entry = _autorun_marketplace_entry(marketplace)
+    assert entry["source"] == {"source": "local", "path": "./plugins/autorun"}
+    assert entry["policy"] == {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+    }
+    assert entry["category"] == "Productivity"
+
+    plugin_source = tmp_path / "plugins" / "autorun"
+    assert plugin_source.exists()
+    assert (plugin_source / ".codex-plugin" / "plugin.json").is_file()
+    assert (plugin_source / "skills" / "cache" / "SKILL.md").is_file()
+
+
+def test_install_for_codex_preserves_existing_personal_marketplace_entries(tmp_path, monkeypatch):
+    """Adding autorun must not remove unrelated home marketplace plugins."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    personal_dir = tmp_path / ".agents" / "plugins"
+    personal_dir.mkdir(parents=True)
+    (personal_dir / "marketplace.json").write_text(json.dumps({
+        "name": "personal",
+        "interface": {"displayName": "Personal"},
+        "plugins": [
+            {
+                "name": "existing",
+                "source": {"source": "local", "path": "./plugins/existing"},
+                "category": "Productivity",
+            }
+        ],
+    }, indent=2))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    marketplace = _read_personal_marketplace(tmp_path)
+    names = [entry["name"] for entry in marketplace["plugins"]]
+    assert names == ["existing", "autorun"]
+    assert _autorun_marketplace_entry(marketplace)["source"]["path"] == "./plugins/autorun"
+
+
+def test_install_for_codex_does_not_clobber_user_owned_personal_plugin_dir(tmp_path, monkeypatch):
+    """A user-authored ~/plugins/autorun directory must be left untouched."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    user_plugin = tmp_path / "plugins" / "autorun"
+    (user_plugin / ".codex-plugin").mkdir(parents=True)
+    user_manifest = user_plugin / ".codex-plugin" / "plugin.json"
+    user_manifest.write_text('{"name":"autorun","description":"USER OWNED"}\n')
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    assert ok
+
+    assert "USER OWNED" in user_manifest.read_text()
+    marketplace_path = tmp_path / ".agents" / "plugins" / "marketplace.json"
+    assert not marketplace_path.exists(), (
+        "autorun must not add a marketplace entry that points at a user-owned "
+        "~/plugins/autorun directory"
+    )
+
+
+def test_codex_plugin_manifest_exists_for_packaged_skills():
+    """The source plugin must include Codex's required manifest file."""
+    manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
+    data = json.loads(manifest.read_text())
+    assert data["name"] == "autorun"
+    assert data["skills"] == "./skills/"
+    assert "hooks" not in data, (
+        "Codex plugin packaging should not duplicate user-level hooks from "
+        "~/.codex/hooks.json"
+    )
+
+
+def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
+    """The real installer must install the local Codex plugin after packaging."""
+    calls = []
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary == "codex" else None,
+    )
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs.get("timeout")))
+        return CmdResult(True, "Added plugin `autorun` from marketplace `personal`.")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    result = _install_codex_plugin_with_cli()
+
+    assert result.ok
+    assert calls == [(["codex", "plugin", "add", "autorun@personal"], 120)]
+
+
+def test_install_codex_plugin_with_cli_force_refreshes_cache(monkeypatch):
+    """Force mode must refresh Codex's plugin cache copy before add."""
+    calls = []
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary == "codex" else None,
+    )
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs.get("timeout")))
+        return CmdResult(True, "ok")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    result = _install_codex_plugin_with_cli(force=True)
+
+    assert result.ok
+    assert calls == [
+        (["codex", "plugin", "remove", "autorun@personal"], 120),
+        (["codex", "plugin", "add", "autorun@personal"], 120),
+    ]
 
 
 def test_install_for_codex_agents_md_idempotent(tmp_path, monkeypatch):

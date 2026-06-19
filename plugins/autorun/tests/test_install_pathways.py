@@ -14,7 +14,6 @@ Each test verifies:
 - Expected behavior matches documentation
 """
 
-import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -165,6 +164,12 @@ class TestMapLegacyFlags:
         install = get_install_module()
         result = install._map_legacy_flags(["install", "--tool"])
         assert result == ["--install", "--tool"]
+
+    def test_map_install_with_codex(self):
+        """Verify 'install --codex' preserves the Codex-only flag."""
+        install = get_install_module()
+        result = install._map_legacy_flags(["install", "--codex"])
+        assert result == ["--install", "--codex"]
 
     def test_map_uninstall(self):
         """Verify 'uninstall' maps to '--uninstall'."""
@@ -432,6 +437,52 @@ class TestInstallMainAdapter:
         """Verify install_main is exported in __all__."""
         install = get_install_module()
         assert "install_main" in install.__all__
+
+    def test_install_module_main_codex_force_routes_to_install_plugins(self):
+        """Verify direct module install honors --codex and --force."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(["--install", "--codex", "--force"])
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=True,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=True,
+            conductor=True,
+            use_aix=None,
+        )
+
+    def test_install_main_legacy_codex_force_routes_to_install_plugins(self):
+        """Verify autorun-install install --force --codex honors both flags."""
+        install = get_install_module()
+
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                ["autorun-install", "install", "--force", "--codex"],
+            ),
+            mock.patch.object(install, "install_plugins", return_value=0) as mock_install,
+            pytest.raises(SystemExit) as exc,
+        ):
+            install.install_main()
+
+        assert exc.value.code == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=True,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=True,
+            conductor=True,
+            use_aix=None,
+        )
 
 
 class TestClaudeCommandIntegration:
