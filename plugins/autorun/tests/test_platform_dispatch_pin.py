@@ -228,8 +228,9 @@ def test_cli_tool_names_gemini_pin():
 
 def test_cli_tool_names_codex_pin():
     expected = {
-        "grep": "Grep", "glob": "Glob", "read": "shell file inspection",
-        "write": "Write", "edit": "apply_patch", "bash": "Bash", "ls": "LS",
+        "grep": "`rg -n` shell search", "glob": "`rg --files` shell listing",
+        "read": "shell file inspection", "write": "apply_patch",
+        "edit": "apply_patch", "bash": "Bash", "ls": "LS",
         "task_progress": "update_plan",
     }
     for k, v in expected.items():

@@ -195,7 +195,7 @@ claude plugin marketplace list
 
 #### Codex CLI Support
 
-Autorun installs Codex hooks at `~/.codex/hooks.json` and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, and file guidance uses Codex's available shell inspection and `apply_patch` paths.
+Autorun installs Codex hooks at `~/.codex/hooks.json` and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, search/file-discovery guidance uses shell `rg -n` and `rg --files`, and file edits use `apply_patch`.
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`.
 
@@ -361,7 +361,7 @@ graph TD
 
 **Policy Level 1: Strict Search** (`/afs`)
 - Blocks all new file creation via PreToolWrite hooks
-- Forces AI to modify existing files using Glob/Grep
+- Forces AI to modify existing files after platform-native search (`Glob`/`Grep` on Claude, `glob`/`grep_search` on Gemini, `rg --files`/`rg -n` on Codex)
 - Ideal for refactoring established codebases
 - Prevents pollution with experimental files
 
@@ -634,8 +634,8 @@ Three-tier policy system enforced via PreToolUse hooks:
 - `fdisk` → Partition warning, suggests GUI alternatives
 - `sed` → Suggests {edit} AI tool instead of bash sed for file modifications
 - `awk` → Suggests Python or {read} AI tool instead of awk for text processing
-- `grep` → Suggests {grep} AI tool instead (blocked when not in a pipe)
-- `find` → Suggests {glob} AI tool instead (blocked when not in a pipe)
+- `grep` → Suggests platform-native search instead (Claude `Grep`, Gemini `grep_search`, Codex `rg -n`; blocked when not in a pipe)
+- `find` → Suggests platform-native file discovery instead (Claude `Glob`, Gemini `glob`, Codex `rg --files`; blocked when not in a pipe)
 - `cat` → Suggests {read} AI tool instead (blocked when not in a pipe)
 - `head` → Suggests {read} AI tool with limit parameter (blocked when not in a pipe)
 - `tail` → Suggests {read} AI tool with offset parameter (blocked when not in a pipe)

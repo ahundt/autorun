@@ -106,15 +106,14 @@ def test_codex_get_cli_event_name_identity():
 # ─── Tool names (Claude-like hooks, Codex-specific model surface) ─────────────
 
 def test_codex_tool_names_match_current_model_surface():
-    """Codex shares some Claude hook names but not its Read/Edit model tools."""
+    """Codex shares shell hook matchers but not Claude's search/read/edit tools."""
     codex_tools = PLATFORMS["codex"].tool_names
-    claude_tools = PLATFORMS["claude"].tool_names
-    for key in ("grep", "glob", "write", "bash"):
-        assert codex_tools[key] == claude_tools[key], (
-            f"Codex tool_names[{key!r}] should stay aligned with Claude where hooks share names"
-        )
+    assert codex_tools["grep"] == "`rg -n` shell search"
+    assert codex_tools["glob"] == "`rg --files` shell listing"
     assert codex_tools["read"] == "shell file inspection"
+    assert codex_tools["write"] == "apply_patch"
     assert codex_tools["edit"] == "apply_patch"
+    assert codex_tools["bash"] == "Bash"
     assert PLATFORMS["codex"].native_shell_read_commands == frozenset({"cat", "head", "tail"})
 
 
@@ -144,7 +143,8 @@ def test_claude_and_gemini_keep_native_slash_command_prefixes():
 def test_codex_get_tool_names():
     from autorun.core import get_tool_names
     tools = get_tool_names("codex")
-    assert tools["grep"] == "Grep"
+    assert tools["grep"] == "`rg -n` shell search"
+    assert tools["glob"] == "`rg --files` shell listing"
     assert tools["bash"] == "Bash"
     assert tools["task_progress"] == "update_plan"
 
@@ -153,8 +153,27 @@ def test_codex_get_tool_names():
 
 def test_codex_format_suggestion_uses_codex_tool_surface():
     from autorun.core import format_suggestion
-    assert format_suggestion("Use {grep} then {edit}", "codex") == "Use Grep then apply_patch"
+    assert format_suggestion("Use {grep} then {edit}", "codex") == (
+        "Use `rg -n` shell search then apply_patch"
+    )
     assert format_suggestion("Use {read}", "codex") == "Use shell file inspection"
+
+
+def test_default_integration_platform_overrides_keep_claude_and_fix_codex_find():
+    from autorun.config import DEFAULT_INTEGRATIONS
+    from autorun.core import format_suggestion
+    from autorun.integrations import Integration
+
+    find = Integration.from_dict("find", DEFAULT_INTEGRATIONS["find"])
+
+    claude = format_suggestion(find.message_for_cli("claude"), "claude")
+    assert "Glob tool" in claude
+    assert "/ar:ok find" in claude
+
+    codex = format_suggestion(find.message_for_cli("codex"), "codex")
+    assert "`rg --files`" in codex
+    assert "Glob tool" not in codex
+    assert "ar:ok find" in codex
 
 
 def test_codex_formats_autorun_commands_with_platform_display_prefix():

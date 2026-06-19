@@ -381,8 +381,9 @@ Equivalent slash commands: /ar:a, /ar:allow, /afa""",
         help="Require written justification to create new files (CLI: file j, Slash: /ar:j)",
         description="""Set AutoFile policy to 'justify-create' mode.
 
-Claude must search for existing files first. If creating a new file, Claude must
-include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> explaining why.
+The active assistant must search for existing files first. If creating a new
+file, it must include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION>
+explaining why.
 This encourages modifying existing code rather than duplicating functionality.
 
 Good for established projects where you want to minimize unnecessary new files.
@@ -408,8 +409,8 @@ Equivalent slash commands: /ar:j, /ar:justify, /afj""",
         help="Block all new file creation - only modify existing (CLI: file f, Slash: /ar:f)",
         description="""Set AutoFile policy to 'strict-search' mode (strictest).
 
-Claude CANNOT create any new files. Can only modify existing files.
-Claude must use Glob/Grep to find existing files before making changes.
+The active assistant cannot create any new files. It can only modify existing files.
+It must use platform-native search to find existing files before making changes.
 
 This is the most restrictive mode - good when you want to prevent any
 accidental new file creation in a mature codebase.

@@ -47,6 +47,7 @@ from autorun.config import CONFIG, DEFAULT_INTEGRATIONS
 
 __all__ = [
     "Integration",
+    "IntegrationPlatformOverride",
     "load_all_integrations",
     "invalidate_caches",
     "check_when_predicate",
@@ -59,6 +60,15 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Integration Dataclass (Immutable for efficient caching)
 # =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationPlatformOverride:
+    """Per-platform replacement fields for one command integration."""
+
+    action: str | None = None
+    message: str | None = None
+    redirect: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +93,67 @@ class Integration:
     enabled: bool = True
     name: str = ""
     source: str = "default"                # "default" or "user"
+    platform_overrides: tuple[tuple[str, IntegrationPlatformOverride], ...] = ()
+
+    @staticmethod
+    def _redirect_from_config(config: dict) -> str | None:
+        """Extract redirect with backward compat for the old commands key."""
+        redirect = config.get("redirect")
+        if redirect:
+            return redirect
+        commands = config.get("commands")
+        if commands:
+            return commands[0] if isinstance(commands, list) else commands
+        return None
+
+    @classmethod
+    def _platform_overrides_from_config(
+        cls, config: dict
+    ) -> tuple[tuple[str, IntegrationPlatformOverride], ...]:
+        """Parse platform_overrides without leaking mutable config dicts."""
+        raw = config.get("platform_overrides") or {}
+        if not isinstance(raw, dict):
+            raise TypeError("platform_overrides must be a mapping of cli_type to fields")
+
+        overrides: list[tuple[str, IntegrationPlatformOverride]] = []
+        for cli_type, override in sorted(raw.items()):
+            if not isinstance(override, dict):
+                raise TypeError(f"platform_overrides[{cli_type!r}] must be a mapping")
+            overrides.append((
+                str(cli_type),
+                IntegrationPlatformOverride(
+                    action=override.get("action"),
+                    message=override.get("suggestion", override.get("message")),
+                    redirect=cls._redirect_from_config(override),
+                ),
+            ))
+        return tuple(overrides)
+
+    def _override_for_cli(self, cli_type: str | None) -> IntegrationPlatformOverride | None:
+        if not cli_type:
+            return None
+        for override_cli, override in self.platform_overrides:
+            if override_cli == cli_type:
+                return override
+        return None
+
+    def action_for_cli(self, cli_type: str | None) -> str:
+        override = self._override_for_cli(cli_type)
+        if override and override.action is not None:
+            return override.action
+        return self.action
+
+    def message_for_cli(self, cli_type: str | None) -> str:
+        override = self._override_for_cli(cli_type)
+        if override and override.message is not None:
+            return override.message
+        return self.message
+
+    def redirect_for_cli(self, cli_type: str | None) -> str | None:
+        override = self._override_for_cli(cli_type)
+        if override and override.redirect is not None:
+            return override.redirect
+        return self.redirect
 
     @classmethod
     def from_dict(cls, pattern: str, config: dict) -> Integration:
@@ -105,24 +176,18 @@ class Integration:
         elif isinstance(patterns, list):
             patterns = tuple(patterns)
 
-        # Extract redirect (backward compat: "commands" -> "redirect")
-        redirect = config.get("redirect")
-        if not redirect:
-            commands = config.get("commands")
-            if commands:
-                redirect = commands[0] if isinstance(commands, list) else commands
-
         return cls(
             patterns=patterns,
             action=config.get("action", "block"),
             message=config.get("suggestion", ""),
-            redirect=redirect,
+            redirect=cls._redirect_from_config(config),
             when=config.get("when", "always"),
             event=config.get("event", "bash"),
             tool_matcher=config.get("tool_matcher", "Bash"),
             conditions=tuple(config.get("conditions", [])),
             name=config.get("name", pattern),
-            source="default"
+            source="default",
+            platform_overrides=cls._platform_overrides_from_config(config),
         )
 
 
@@ -234,7 +299,7 @@ def load_all_integrations() -> list[Integration]:
                     tool_matcher=fm.get("tool_matcher", "Bash"),
                     conditions=tuple(fm.get("conditions", [])),
                     name=fm.get("name", md_file.stem),
-                    source="user"
+                    source="user",
                 )
                 # Validate and log warnings
                 for warn in _validate_integration(intg, str(md_file)):
@@ -361,18 +426,33 @@ def _validate_integration(intg: Integration, source: str) -> list[str]:
             )
 
     # Validate redirect template if present
-    if intg.redirect:
+    redirect_values = [("default", intg.redirect)]
+    redirect_values.extend(
+        (f"platform:{cli_type}", override.redirect)
+        for cli_type, override in intg.platform_overrides
+    )
+    for redirect_source, redirect in redirect_values:
+        if not redirect:
+            continue
         # Check for common template errors
-        if "{arg}" in intg.redirect and "{args}" not in intg.redirect:
+        if "{arg}" in redirect and "{args}" not in redirect:
             warnings.append(
-                f"[{source}] Redirect '{intg.redirect}' uses {{arg}} but should use {{args}}."
+                f"[{source}] Redirect '{redirect}' ({redirect_source}) uses "
+                "{arg} but should use {args}."
             )
         # Check for unbalanced braces
-        open_braces = intg.redirect.count("{")
-        close_braces = intg.redirect.count("}")
+        open_braces = redirect.count("{")
+        close_braces = redirect.count("}")
         if open_braces != close_braces:
             warnings.append(
-                f"[{source}] Redirect '{intg.redirect}' has unbalanced braces."
+                f"[{source}] Redirect '{redirect}' ({redirect_source}) has unbalanced braces."
+            )
+
+    for cli_type, override in intg.platform_overrides:
+        if override.action is not None and override.action not in {"block", "warn"}:
+            warnings.append(
+                f"[{source}] platform_overrides[{cli_type!r}] action "
+                f"{override.action!r} is not one of: block, warn."
             )
 
     return warnings

@@ -106,17 +106,19 @@ INTERNAL_TO_CLAUDE = dict(_PLATFORMS["claude"].internal_to_cli_events)
 INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].internal_to_cli_events)
 
 
-# === CLI TOOL NAME DISPATCH TABLE ===
-# Maps CLI type → {template_key: tool_name} for suggestion string substitution.
+# === CLI TOOL GUIDANCE DISPATCH TABLE ===
+# Maps CLI type → {template_key: model-facing guidance} for suggestion strings.
 # Template keys ({grep}, {read}, etc.) are used in DEFAULT_INTEGRATIONS suggestion
 # strings, parallel to the {args} substitution in Integration.redirect (plugins.py:531).
 # Adding a new CLI: add one entry here. No other changes required.
 #
-# THREE NAMING LAYERS (as of Claude Code CLI v2.1.47):
+# THREE GUIDANCE LAYERS:
 #
 #   1. API tool_name  — what the AI uses in its tool call (hooks key off this)
 #                       Claude Code: PascalCase  e.g. "Glob", "Grep", "Read"
 #                       Gemini CLI:  snake_case  e.g. "glob", "grep_search", "read_file"
+#                       Codex CLI:   shell/apply_patch/update_plan where no
+#                                    Claude-style search/read/write tool exists
 #                       Confirmed by hook matchers:
 #                         hooks/hooks.json                        PreToolUse  "Write|Edit|Bash|ExitPlanMode"
 #                         src/autorun/gemini_template/hooks/hooks.json
@@ -131,8 +133,9 @@ INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].internal_to_cli_events)
 #                         e.g. blocking "grep" (bash) and suggesting {grep} (AI tool)
 #                         These are different namespaces — "grep" bash ≠ "Grep" AI tool.
 #
-# The values in this table are API tool_names (layer 1), NOT CLI display names (layer 2).
-# Suggestions addressed to the AI must use API names so the AI calls the right tool.
+# The values in this table are model-facing strings. For Claude/Gemini they are
+# API tool_names (layer 1), NOT CLI display names (layer 2). For Codex they may
+# name shell commands such as `rg --files` when Codex has no dedicated model tool.
 # The UX mismatch (Claude "Glob" displayed as "Search") is cosmetic, not functional.
 CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
     name: dict(p.tool_names)
@@ -202,14 +205,15 @@ def format_commands_for_cli(text: str, cli_type: str | None) -> str:
 @lru_cache(maxsize=64)
 def format_suggestion(msg: str, cli_type: str) -> str:
     """Resolve {tool_key} placeholders in safety-guard suggestion strings to the
-    correct CLI-specific tool name, so the AI receives actionable instructions.
+    correct CLI-specific guidance, so the AI receives actionable instructions.
 
     WHY THIS EXISTS:
         Safety guards block bash commands (grep, find, cat, etc.) and suggest the
-        equivalent AI tool instead. Without this, Claude would be told "use Grep"
-        while Gemini (which calls it grep_search) would receive wrong instructions.
-        The daemon handles both CLIs on the same socket, so cli_type determines
-        which tool names to use per request.
+        equivalent AI tool or shell affordance instead. Without this, Claude
+        would be told "use Grep" while Gemini (which calls it grep_search) or
+        Codex (which should use rg/apply_patch/update_plan) would receive wrong
+        instructions. The daemon handles multiple CLIs on the same socket, so
+        cli_type determines which guidance to use per request.
 
     WHY lru_cache:
         The daemon is shared across all concurrent AI sessions (multiple Claude and
@@ -231,7 +235,7 @@ def format_suggestion(msg: str, cli_type: str) -> str:
         cli_type: CLI identifier ("claude", "gemini", or any future CLI).
 
     Returns:
-        msg with tool names resolved for cli_type. Unknown CLI or unknown
+        msg with guidance placeholders resolved for cli_type. Unknown CLI or unknown
         placeholder leaves msg unchanged.
     """
     for key, value in get_tool_names(cli_type).items():

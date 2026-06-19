@@ -142,11 +142,15 @@ _GEMINI_TOOLS = {
 }
 
 # Codex hook events use Claude-like shell/edit matcher names, but the current
-# Codex model-facing tool surface does not expose a generic Claude-style Read
-# tool. Keep suggestions pointed at what Codex can actually do here.
+# Codex model-facing tool surface does not expose Claude-style Grep/Glob/Read/
+# Write tools. Keep suggestions pointed at the shell inspection/search commands
+# and apply_patch path Codex can actually use.
 _CODEX_TOOLS = dict(_CLAUDE_TOOLS)
 _CODEX_TOOLS.update({
+    "grep": "`rg -n` shell search",
+    "glob": "`rg --files` shell listing",
     "read": "shell file inspection",
+    "write": "apply_patch",
     "edit": "apply_patch",
     "task_progress": "update_plan",
 })

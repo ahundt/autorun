@@ -70,7 +70,43 @@ PATTERN_DISPLAY_MAX_LEN = 50  # regex/command patterns in error messages (securi
 #   conditions: List of hookify-style conditions (AND-ed)
 #   enabled: Enable/disable integration (defaults to true)
 #   name: Debug identifier (defaults to pattern)
+#   platform_overrides: Per-cli replacements for action, suggestion, redirect
 # =============================================================================
+_CODEX_GREP_SUGGESTION = (
+    "Command blocked: grep\n"
+    "Use `rg -n` through the shell tool instead of bash grep command.\n\n"
+    "**Why:**\n"
+    "- Codex exposes shell search, not Claude's dedicated text-search tool\n"
+    "- `rg` is fast for repository text search\n"
+    "- Output stays easy to scan with file names and line numbers\n\n"
+    "**Example:**\n"
+    "Instead of: grep -r 'pattern' .\n"
+    "Use: `rg -n 'pattern' .`\n\n"
+    "**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n"
+    "**Commands:**\n"
+    "- Allow (default 1 use): /ar:ok grep\n"
+    "Scope: [N|5m|permanent] (default 1 use)\n"
+    "- Block globally: /ar:globalno grep"
+)
+
+_CODEX_FIND_SUGGESTION = (
+    "Use `rg --files` through the shell tool instead of find command.\n\n"
+    "**Why:**\n"
+    "- Codex exposes shell file listing, not Claude's dedicated file-search tool\n"
+    "- `rg --files` is fast for repository file discovery\n"
+    "- `-g` handles glob filters with simple syntax\n\n"
+    "**Example:**\n"
+    "Instead of: find . -name '*.py'\n"
+    "Use: `rg --files -g '*.py'`\n\n"
+    "Instead of: find . -type f -name '*test*'\n"
+    "Use: `rg --files -g '*test*'`\n\n"
+    "**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n"
+    "**Commands:**\n"
+    "- Allow (default 1 use): /ar:ok find\n"
+    "Scope: [N|5m|permanent] (default 1 use)\n"
+    "- Block globally: /ar:globalno find"
+)
+
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "action": "block",
@@ -146,18 +182,22 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow (default 1 use): /ar:ok fdisk\nScope: [N|5m|permanent] (default 1 use)",
     },
-    # Command-line tools that should use dedicated AI tools instead (v0.8.0)
-    # These block the BASH COMMAND (e.g. "grep") and suggest the AI TOOL (e.g. {grep}).
-    # These are distinct namespaces — bash "grep" ≠ AI tool "Grep"/"grep_search".
+    # Command-line tools that should use platform-native AI tools or shell
+    # affordances instead (v0.8.0)
+    # These block the BASH COMMAND (e.g. "grep") and suggest the platform-native
+    # route (e.g. {grep}). These are distinct namespaces: bash "grep" is not
+    # Claude "Grep", Gemini "grep_search", or Codex "`rg -n` shell search".
     #
     # Suggestion strings use {tool_key} format variables resolved by format_suggestion()
-    # in core.py to the correct API tool_name for the active CLI:
+    # in core.py to the correct model-facing guidance for the active CLI:
     #
     #   Claude Code CLI v2.1.47  — PascalCase API names (Grep, Glob, Read, Write, Edit)
     #                               Terminal renders Glob→"Search" but API name is "Glob"
     #   Gemini CLI               — snake_case API names (grep_search, glob, read_file, ...)
     #                               Confirmed by hooks.json BeforeTool matcher:
     #                               "write_file|run_shell_command|replace|read_file|glob|grep_search"
+    #   Codex CLI                — shell search/read paths plus apply_patch/update_plan
+    #                               where no Claude-style model tool exists
     "sed": {
         "action": "block",
         "suggestion": "Use the {edit} tool instead of sed for file modifications.\n\n**Why:**\n- {edit} tool is safer (validates exact string matches)\n- Better error messages\n- Integrates with your AI coding assistant's file tracking\n\n**Example:**\nInstead of: sed -i 's/old/new/g' file.txt\nUse: {edit} tool with old_string='old' and new_string='new'\n\n**Commands:**\n- Allow (default 1 use): /ar:ok sed\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno sed",
@@ -170,11 +210,13 @@ DEFAULT_INTEGRATIONS = {
     "grep": {
         "action": "block",
         "suggestion": "Command blocked: grep\nUse the {grep} tool instead of bash grep command.\n\n**Why:**\n- {grep} tool is optimized for your AI coding assistant\n- Better output formatting and context\n- Supports multiple output modes (content, files, count)\n- Built-in ripgrep integration\n\n**Example:**\nInstead of: grep -r 'pattern' .\nUse: {grep} tool with pattern='pattern'\n\n**Note:** grep in pipes IS allowed (e.g., `ps aux | grep python`, `git log | grep fix`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok grep\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno grep",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_GREP_SUGGESTION}},
         "when": "_not_in_pipe",
     },
     "find": {
         "action": "block",
         "suggestion": "Use the {glob} tool instead of find command.\n\n**Why:**\n- {glob} tool is faster for file pattern matching\n- Works with any codebase size\n- Simpler glob syntax vs find expressions\n- Returns results sorted by modification time\n\n**Example:**\nInstead of: find . -name '*.py'\nUse: {glob} tool with pattern='**/*.py'\n\nInstead of: find . -type f -name '*test*'\nUse: {glob} tool with pattern='**/*test*'\n\n**Note:** find in pipes IS allowed (e.g., `find . -name '*.py' | head -10`)\n\n**Commands:**\n- Allow (default 1 use): /ar:ok find\nScope: [N|5m|permanent] (default 1 use)\n- Block globally: /ar:globalno find",
+        "platform_overrides": {"codex": {"suggestion": _CODEX_FIND_SUGGESTION}},
         "when": "_not_in_pipe",
     },
     "cat": {
@@ -620,13 +662,13 @@ After every step and substep you must say "Wait," and execute this sequential th
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep} tools. NO new files.")
+        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep}. NO new files.")
     },
 
     # ─── Policy Blocked Messages ──────────────────────────────────────────────
     "policy_blocked": {
-        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality using the {glob} tool with patterns like "*related-topic*", 3) Use the {grep} tool to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files using the {glob} tool and {grep} tool related to your functionality, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
+        "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality with {glob} and patterns like "*related-topic*", 3) Use {grep} to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
+        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files related to your functionality with {glob} and {grep}, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
     },
 
     # ─── Command Mappings ─────────────────────────────────────────────────────

@@ -98,9 +98,10 @@ the session id arrives only through stdin JSON.
 ## Autorun behavior
 
 Autorun uses the same command handlers and safety policies for Codex as for
-Claude Code and Gemini CLI, but adapts the model-facing tool names to Codex:
+Claude Code and Gemini CLI, but adapts model-facing guidance to Codex:
 
 - Task progress maps to Codex's native `update_plan` checklist tool.
+- Search guidance uses shell `rg -n` for text search and `rg --files` for file discovery instead of Claude/Gemini search tool names.
 - File guidance uses shell file inspection for reads and `apply_patch` for edits.
 - Plain bounded `cat`, `head`, and `tail` reads are allowed for Codex; redirects,
   follow-mode `tail`, and prefixed forms such as `sudo cat` remain blocked.

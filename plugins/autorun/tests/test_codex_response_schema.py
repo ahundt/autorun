@@ -773,6 +773,22 @@ def test_codex_pretooluse_git_commit_rules_warning_is_valid_context():
     assert "additionalContext" in hso
 
 
+def test_codex_find_block_guides_to_rg_files_not_claude_glob():
+    ctx = _codex_context(
+        "PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "find . -name '*.py'"},
+    )
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    rendered = json.dumps(response)
+    assert "`rg --files`" in rendered
+    assert "Glob tool" not in rendered
+    assert "ar:ok find" in rendered
+
+
 def test_codex_pretooluse_updated_input_requires_allow_permission_decision():
     response = validate_hook_response(
         "PreToolUse",
