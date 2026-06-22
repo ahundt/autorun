@@ -1245,7 +1245,7 @@ class TestInstallForGeminiMarketplaceResolution:
     def test_strategy_0_checks_gemini_extension_json(self):
         """Strategy 0 verifies gemini-extension.json exists before adding to map."""
         content = INSTALL_PY.read_text(encoding="utf-8")
-        func = _extract_function(content, "_install_for_gemini")
+        func = _extract_function(content, "_install_gemini_family_extensions")
         # Both the marketplace_source_map building and the per-plugin loop check it
         assert func.count("gemini-extension.json") >= 2
 

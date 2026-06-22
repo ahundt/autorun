@@ -339,6 +339,7 @@ class TestCodexE2ERealMoney:
         assert run.completed.returncode == 0, f"Full output in: {run.log_path}\n{combined[-4000:]}"
 
     @pytest.mark.serial
+    @pytest.mark.timeout(180)
     def test_codex_ar_ok_allows_git_push_dry_run_in_real_cli(self, codex_cli_check, tmp_path):
         """Prove Codex can consume ar:ok and run the next git push tool call.
 

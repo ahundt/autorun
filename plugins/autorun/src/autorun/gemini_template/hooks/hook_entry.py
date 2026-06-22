@@ -42,6 +42,7 @@ from typing import NoReturn
 # daemon fallbacks and client disconnect churn under real CLI E2E load.
 HOOK_TIMEOUT_BY_CLI = {
     "gemini": 4,
+    "qwen": 4,
     "claude": 8,
     "codex": 8,
     "forgecode": 8,
@@ -57,7 +58,7 @@ BOOTSTRAP_MSG = (
 # =============================================================================
 
 
-_VALID_CLI_TYPES = ("claude", "gemini", "codex", "forgecode")
+_VALID_CLI_TYPES = ("claude", "gemini", "qwen", "codex", "forgecode")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 
 
@@ -84,7 +85,7 @@ def detect_cli_type(payload: dict | None = None) -> str:
         ~/.codex/hooks.json  : hook_entry.py --cli codex
 
     Returns:
-        str: one of "claude", "gemini", "codex", "forgecode"
+        str: one of "claude", "gemini", "qwen", "codex", "forgecode"
     """
     try:
         # Priority 1: Explicit --cli argument (most reliable - set by hooks.json)
@@ -112,6 +113,8 @@ def detect_cli_type(payload: dict | None = None) -> str:
             transcript_path = str(payload.get("transcript_path", ""))
             if ".codex" in transcript_path or "/codex/" in transcript_path:
                 return "codex"
+            if ".qwen" in transcript_path or "/qwen/" in transcript_path:
+                return "qwen"
             if ".gemini" in transcript_path or "/gemini/" in transcript_path:
                 return "gemini"
             if ".claude" in transcript_path or "/claude/" in transcript_path:
@@ -120,12 +123,16 @@ def detect_cli_type(payload: dict | None = None) -> str:
         # Platform-specific environment variables
         if os.environ.get("GEMINI_SESSION_ID"):
             return "gemini"
+        if os.environ.get("QWEN_SESSION_ID"):
+            return "qwen"
         if os.environ.get("CODEX_SESSION_ID"):
             return "codex"
         if os.environ.get("FORGE_CONFIG"):
             return "forgecode"
         if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
             return "gemini"
+        if os.environ.get("QWEN_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
+            return "qwen"
 
         # Default to Claude (safe fallback - preserves existing behavior)
         return "claude"
@@ -270,15 +277,16 @@ def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoRet
         print(json.dumps(response))
         sys.exit(0)
 
-    decision = "deny" if cli_type == "gemini" else "block"
+    schema_type = "permissive" if cli_type in {"gemini", "qwen"} else "strict"
+    decision = "deny" if schema_type == "permissive" else "block"
     response = {
         "decision": decision,
         "permissionDecision": "deny",
-        "reason": reason if cli_type == "gemini" else "",
+        "reason": reason if schema_type == "permissive" else "",
         "continue": True,
         "stopReason": "",
         "suppressOutput": False,
-        "systemMessage": reason if cli_type == "gemini" else "",
+        "systemMessage": reason if schema_type == "permissive" else "",
         "hookSpecificOutput": hook_specific,
     }
     print(json.dumps(response))

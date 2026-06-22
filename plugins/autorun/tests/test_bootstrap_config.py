@@ -455,6 +455,7 @@ class TestMainFunctionRouting:
             "all", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
+            qwen_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -472,6 +473,7 @@ class TestMainFunctionRouting:
             "all", tool=False, force=True,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
+            qwen_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -489,6 +491,7 @@ class TestMainFunctionRouting:
             "autorun,plan-export", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
+            qwen_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -506,6 +509,25 @@ class TestMainFunctionRouting:
             "all", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
+            qwen_only=False,
+            conductor=True, use_aix=None,
+        )
+        assert result == 0
+
+    def test_install_with_qwen_passes_qwen_only_flag(self):
+        """Test that --install --qwen targets Qwen Code installation."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--qwen"])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
+            qwen_only=True,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -523,6 +545,7 @@ class TestMainFunctionRouting:
             "all", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=True,
+            qwen_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0

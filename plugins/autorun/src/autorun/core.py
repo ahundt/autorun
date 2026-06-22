@@ -297,15 +297,13 @@ def get_cli_event_name(internal_event: str, cli_type: str) -> str:
 
     Args:
         internal_event: Normalized internal event name (e.g., "PreToolUse")
-        cli_type: Target CLI ("claude" or "gemini")
+        cli_type: Target CLI identifier from autorun.platforms
 
     Returns:
         CLI-specific event name (e.g., "BeforeTool" for Gemini, "PreToolUse" for Claude)
     """
-    if cli_type == "gemini":
-        return INTERNAL_TO_GEMINI.get(internal_event, internal_event)
-    else:
-        return INTERNAL_TO_CLAUDE.get(internal_event, internal_event)
+    platform = platform_for(cli_type)
+    return platform.internal_to_cli_events.get(internal_event, internal_event)
 
 
 def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> dict:
@@ -726,7 +724,7 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     Args:
         event: Normalized event name (e.g. PreToolUse, Stop)
         response: Dictionary to validate and filter
-        cli_type: Target CLI ("claude" or "gemini")
+        cli_type: Target CLI identifier from autorun.platforms
         
     Returns:
         Filtered dictionary containing only schema-compliant fields.
@@ -1244,7 +1242,7 @@ class EventContext:
         logger.debug(f"respond: event={self._event} decision={decision} to_human={to_human!r} to_ai={to_ai!r} cli_type={cli_type}")
         # This keeps both CLIs as first-class citizens by using the best available
         # blocking mechanism for each.
-        if decision == "ask" and cli_type == "gemini":
+        if decision == "ask" and platform and platform.schema_type == "permissive":
             decision = "deny"
 
         # Use the raw reason - final json.dumps() in the daemon/client will handle escaping.
@@ -1264,11 +1262,11 @@ class EventContext:
             # - hookSpecificOutput: { permissionDecision, permissionDecisionReason }
             top_decision = "block" if decision == "deny" else "approve"
             
-            if cli_type == "gemini":
-                # Gemini CLI uses standard allow/deny top-level decision.
+            if platform and platform.schema_type == "permissive":
+                # Gemini-family CLIs use standard allow/deny top-level decision.
                 # Map any blocking decision (deny, block, ask) to "deny".
                 top_decision = "allow" if decision == "allow" else "deny"
-                logger.debug(f"respond: gemini PreToolUse decision={decision} -> top_decision={top_decision}")
+                logger.debug(f"respond: {cli_type} PreToolUse decision={decision} -> top_decision={top_decision}")
             elif cli_type == "codex":
                 top_decision = "block" if decision != "allow" else "approve"
 
@@ -1423,8 +1421,8 @@ class EventContext:
             human_text = msg_reason
             ai_text = None
             if self._chain_notifications:
-                if cli_type == "gemini":
-                    # Gemini supports additionalContext for SessionStart!
+                if platform and platform.schema_type == "permissive":
+                    # Gemini-family CLIs support additionalContext for SessionStart.
                     human_notifs = [m for m, c in self._chain_notifications if c in ("human", "both")]
                     ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both")]
                     if human_notifs:
@@ -1448,8 +1446,8 @@ class EventContext:
                 "systemMessage": human_text,
             }
             
-            # Superset Capability: Context Injection for Gemini
-            if cli_type == "gemini" and ai_text:
+            # Superset Capability: Context Injection for Gemini-family CLIs
+            if platform and platform.schema_type == "permissive" and ai_text:
                 resp["hookSpecificOutput"] = {
                     "hookEventName": "SessionStart",
                     "additionalContext": ai_text

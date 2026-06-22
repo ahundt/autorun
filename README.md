@@ -8,12 +8,12 @@
 
 ## Key Features
 
-1. **Fewer Interruptions**: Claude, Gemini, or Codex keeps working without "continue" prompts so you can step away
+1. **Fewer Interruptions**: Claude, Gemini-family CLIs, Qwen, or Codex keeps working without "continue" prompts so you can step away
 2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written
 3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
 4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
 5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-6. **Works with Claude Code, Gemini CLI, and Codex CLI**: Same safety policies across supported harnesses
+6. **Works across AI coding harnesses**: Same safety policies across Claude Code, Gemini CLI, Antigravity, Qwen Code, Codex CLI, and ForgeCode
 7. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 8. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
@@ -55,7 +55,7 @@ autorun --install
 /ar:sos                  # Emergency stop
 ```
 
-> Works with **Claude Code**, **Gemini CLI**, and **Codex CLI** — see [Multi-CLI Support](#multi-cli-support-claude-code--gemini-cli--codex-cli).
+> Works with **Claude Code**, **Gemini CLI**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, and **ForgeCode** — see [Multi-CLI Support](#multi-cli-support).
 
 > Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`.
 
@@ -72,7 +72,7 @@ aise analyze                            # Full qualitative analysis
 - [Key Features](#key-features)
 - [Quick Start](#quick-start)
 - [UV Installation](#uv-installation-recommended)
-  - [Multi-CLI Support (Claude Code + Gemini CLI + Codex CLI)](#multi-cli-support-claude-code--gemini-cli--codex-cli)
+  - [Multi-CLI Support](#multi-cli-support)
 - [What autorun Does For You](#what-autorun-does-for-you)
 - [Why Byobu + tmux Integration](#why-byobu--tmux-integration)
 - [AutoFile Lifecycle Flow](#autofile-lifecycle-flow)
@@ -189,9 +189,9 @@ claude plugin marketplace list
 # Expected: "AutoFile policy: allow-all"
 ```
 
-### Multi-CLI Support (Claude Code + Gemini CLI + Codex CLI)
+### Multi-CLI Support
 
-**autorun supports Claude Code, Gemini CLI, and Codex CLI**, providing shared safety features, command handlers, and autonomous execution capabilities across supported harnesses.
+**autorun supports Claude Code, Gemini CLI, Google Antigravity, Qwen Code, Codex CLI, and ForgeCode**, providing shared safety features, command handlers, and autonomous execution capabilities across supported harnesses.
 
 #### Codex CLI Support
 
@@ -254,6 +254,16 @@ gemini extensions list
 gemini
 /ar:st
 # Expected: "AutoFile policy: allow-all"
+```
+
+#### Qwen Code Support
+
+Qwen Code uses a Gemini-derived extension surface (`qwen extensions install`, `qwen extensions list`, and extension hooks). Autorun reuses the Gemini extension template but rewrites installed Qwen hook commands to `--cli qwen`, so Qwen sessions get Qwen-specific detection and response handling while commands and skills stay single-owned.
+
+```bash
+brew install qwen-code
+autorun --install --qwen --force
+qwen extensions list
 ```
 
 #### Multi-Model Workflows
@@ -877,6 +887,7 @@ autorun --install                    # Register plugins/hooks for installed supp
 autorun --install autorun            # Register only autorun plugin
 autorun --install --claude           # Register for Claude Code only
 autorun --install --gemini           # Register for Gemini CLI only
+autorun --install --qwen             # Register for Qwen Code only
 autorun --install --codex            # Register for Codex CLI only
 autorun --install --force            # Force reinstall (development)
 autorun --install --tool             # Also run uv tool install for global CLI

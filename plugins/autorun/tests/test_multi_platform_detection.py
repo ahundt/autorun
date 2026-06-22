@@ -1,7 +1,7 @@
 """Tests for multi-platform CLI detection (_CLI_DETECTORS refactor).
 
 Verifies that detect_cli_type() and _CLI_DETECTORS correctly identify all
-four supported platforms: claude, gemini, codex, forgecode.
+supported platforms: claude, gemini, antigravity, qwen, codex, forgecode.
 
 Guards: config.py:detect_cli_type(), config.py:_CLI_DETECTORS
 """
@@ -25,6 +25,7 @@ def _clean_env(monkeypatch) -> None:
     for var in (
         "GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
         "ANTIGRAVITY_SESSION_ID", "ANTIGRAVITY_PROJECT_DIR", "AGY_SESSION_ID",
+        "QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE",
         "CODEX_SESSION_ID", "CODEX_PROJECT_DIR",
         "FORGE_CONFIG",
     ):
@@ -57,6 +58,11 @@ class TestCLIDetectorsStructure:
         from autorun.config import _CLI_DETECTORS
         names = [d[0] for d in _CLI_DETECTORS]
         assert "antigravity" in names, "_CLI_DETECTORS must include antigravity"
+
+    def test_cli_detectors_has_qwen(self):
+        from autorun.config import _CLI_DETECTORS
+        names = [d[0] for d in _CLI_DETECTORS]
+        assert "qwen" in names, "_CLI_DETECTORS must include qwen"
 
     def test_antigravity_detector_precedes_gemini(self):
         from autorun.config import _CLI_DETECTORS
@@ -108,6 +114,13 @@ class TestCLIDetectorsStructure:
         assert "FORGE_CONFIG" in env_vars, (
             "FORGE_CONFIG env var missing from forgecode detector"
         )
+
+    def test_qwen_detector_has_qwen_env_vars(self):
+        from autorun.config import _CLI_DETECTORS
+        qwen_entry = next(d for d in _CLI_DETECTORS if d[0] == "qwen")
+        _, _, _, _, env_vars = qwen_entry
+        assert "QWEN_SESSION_ID" in env_vars
+        assert "QWEN_PROJECT_DIR" in env_vars
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +271,31 @@ class TestAntigravityDetection:
         from autorun.config import detect_cli_type
         result = detect_cli_type(payload={"transcript_path": "/Users/me/.antigravity/session.json"})
         assert result == "antigravity"
+
+
+# ---------------------------------------------------------------------------
+# Qwen Code detection tests
+# ---------------------------------------------------------------------------
+
+class TestQwenDetection:
+    """Qwen Code platform detection."""
+
+    def test_qwen_session_id_env_returns_qwen(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("QWEN_SESSION_ID", "qwen-session")
+        from autorun.config import detect_cli_type
+        assert detect_cli_type() == "qwen"
+
+    def test_explicit_payload_qwen_returns_qwen(self, monkeypatch):
+        _clean_env(monkeypatch)
+        from autorun.config import detect_cli_type
+        assert detect_cli_type(payload={"cli_type": "qwen"}) == "qwen"
+
+    def test_qwen_home_path_hint_returns_qwen(self, monkeypatch):
+        _clean_env(monkeypatch)
+        from autorun.config import detect_cli_type
+        result = detect_cli_type(payload={"transcript_path": "/Users/me/.qwen/session.json"})
+        assert result == "qwen"
 
 
 # ---------------------------------------------------------------------------

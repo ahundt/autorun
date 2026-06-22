@@ -291,6 +291,39 @@ ANTIGRAVITY = register(Platform(
 ))
 
 
+QWEN = register(Platform(
+    name="qwen",
+    display_name="Qwen Code",
+    binary="qwen",
+    detect_env_vars=("QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE"),
+    detect_session_keys=("QWEN_SESSION_ID",),
+    detect_event_names=GEMINI.detect_event_names,
+    detect_path_hints=(".qwen",),
+    cli_to_internal_events=GEMINI.cli_to_internal_events,
+    internal_to_cli_events=GEMINI.internal_to_cli_events,
+    has_hooks=True,
+    schema_type="permissive",
+    has_exit2_workaround=False,
+    drops_additional_context=False,
+    config_dir="~/.qwen/",
+    template_dir="gemini_template",
+    hooks_path_var="${extensionPath}",
+    install_fn_name="_install_for_qwen",
+    list_cmd=("qwen", "extensions", "list"),
+    tool_names=_GEMINI_TOOLS,
+    task_management_style="bulk_todos",
+    task_create_tools=GEMINI.task_create_tools,
+    task_update_tools=GEMINI.task_update_tools,
+    task_review_tools=GEMINI.task_review_tools,
+    task_bulk_tools=GEMINI.task_bulk_tools,
+    command_prefixes=("/ar:",),
+    command_display_prefix="/ar:",
+    normal_allow_decision="allow",
+    block_decision="deny",
+    supports_additional_context_events=GEMINI.supports_additional_context_events,
+))
+
+
 CODEX = register(Platform(
     name="codex",
     display_name="Codex CLI",

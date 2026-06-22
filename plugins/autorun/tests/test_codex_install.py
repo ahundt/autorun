@@ -22,7 +22,9 @@ from pathlib import Path
 from autorun.install import (
     CmdResult,
     _aix_install_current_api,
+    _aix_platform_scope_for_backup_safety,
     _install_for_antigravity,
+    _install_for_qwen,
     _install_codex_plugin_with_cli,
     _install_for_codex,
     detect_available_clis,
@@ -42,12 +44,13 @@ def _read_codex_hooks(home: Path) -> dict:
 
 # ─── detect_available_clis includes all PLATFORMS ────────────────────────────
 
-def test_detect_available_clis_includes_codex_and_forgecode(monkeypatch):
+def test_detect_available_clis_includes_codex_qwen_and_forgecode(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda b: f"/usr/bin/{b}")
     avail = detect_available_clis()
     assert "claude" in avail
     assert "gemini" in avail
     assert "antigravity" in avail
+    assert "qwen" in avail
     assert "codex" in avail
     assert "forgecode" in avail
 
@@ -57,34 +60,42 @@ def test_determine_target_clis_default_returns_all_available():
         "claude": True,
         "gemini": True,
         "antigravity": True,
+        "qwen": True,
         "codex": True,
         "forgecode": False,
     }
     targets = determine_target_clis(False, False, available)
     assert "codex" in targets
     assert "antigravity" in targets
+    assert "qwen" in targets
     assert "forgecode" not in targets
 
 
 def test_determine_target_clis_codex_only():
-    available = {"claude": True, "gemini": True, "antigravity": True, "codex": True, "forgecode": True}
+    available = {"claude": True, "gemini": True, "antigravity": True, "qwen": True, "codex": True, "forgecode": True}
     assert determine_target_clis(False, False, available, codex_only=True) == ["codex"]
 
 
 def test_determine_target_clis_antigravity_only():
-    available = {"claude": True, "gemini": True, "antigravity": True, "codex": True, "forgecode": True}
+    available = {"claude": True, "gemini": True, "antigravity": True, "qwen": True, "codex": True, "forgecode": True}
     assert determine_target_clis(False, False, available, antigravity_only=True) == ["antigravity"]
 
 
+def test_determine_target_clis_qwen_only():
+    available = {"claude": True, "gemini": True, "antigravity": True, "qwen": True, "codex": True, "forgecode": True}
+    assert determine_target_clis(False, False, available, qwen_only=True) == ["qwen"]
+
+
 def test_determine_target_clis_multiple_selected_platforms():
-    available = {"claude": True, "gemini": True, "antigravity": True, "codex": True, "forgecode": True}
+    available = {"claude": True, "gemini": True, "antigravity": True, "qwen": True, "codex": True, "forgecode": True}
     assert determine_target_clis(
         True,
         False,
         available,
+        qwen_only=True,
         codex_only=True,
         antigravity_only=True,
-    ) == ["claude", "antigravity", "codex"]
+    ) == ["claude", "antigravity", "qwen", "codex"]
 
 
 def test_install_for_antigravity_imports_gemini_plugins(monkeypatch, tmp_path):
@@ -110,6 +121,61 @@ def test_install_for_antigravity_imports_gemini_plugins(monkeypatch, tmp_path):
     assert ("agy", "plugin", "list") in calls
 
 
+def test_install_for_qwen_rewrites_gemini_template_hook_cli(monkeypatch, tmp_path):
+    """Qwen install must materialize Gemini-family hooks with --cli qwen."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/qwen" if binary == "qwen" else None)
+
+    qwen_home = tmp_path / ".qwen"
+    installed = qwen_home / "extensions" / "ar"
+    installed.mkdir(parents=True)
+
+    marketplace = tmp_path / "marketplace"
+    plugin_dir = marketplace / "plugins" / "autorun"
+    template = plugin_dir / "src" / "autorun" / "gemini_template"
+    hooks_dir = template / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+    (hooks_dir / "hooks.json").write_text(
+        json.dumps({
+            "hooks": {
+                "BeforeTool": [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "uv run python ${extensionPath}/hooks/hook_entry.py --cli gemini",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }),
+        encoding="utf-8",
+    )
+    shared_hooks = plugin_dir / "hooks"
+    shared_hooks.mkdir(parents=True)
+    (shared_hooks / "hook_entry.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(tuple(cmd))
+        return CmdResult(True, "ok")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    ok, msg = _install_for_qwen(marketplace, ["autorun"], force=True)
+
+    assert ok, msg
+    assert ("qwen", "extensions", "uninstall", "ar") in calls
+    assert any(call[:3] == ("qwen", "extensions", "install") for call in calls)
+    hooks = json.loads((installed / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    assert "--cli qwen" in json.dumps(hooks)
+    assert "--cli gemini" not in json.dumps(hooks)
+
+
 def test_install_plugins_aix_success_still_runs_direct_platform_installers(monkeypatch, tmp_path):
     """AIX success must not bypass hook/app-specific direct installers."""
     calls: list[str] = []
@@ -124,6 +190,7 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
             "claude": True,
             "gemini": True,
             "antigravity": True,
+            "qwen": True,
             "codex": True,
             "forgecode": True,
         },
@@ -150,6 +217,7 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
     monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
     monkeypatch.setattr("autorun.install._install_for_gemini", mark("gemini"))
     monkeypatch.setattr("autorun.install._install_for_antigravity", mark("antigravity"))
+    monkeypatch.setattr("autorun.install._install_for_qwen", mark("qwen"))
     monkeypatch.setattr("autorun.install._install_for_codex", mark("codex"))
     monkeypatch.setattr("autorun.install._install_for_forgecode", mark("forgecode"))
     monkeypatch.setattr("autorun.install._install_codex_plugin_with_cli", lambda force=False: CmdResult(True, "ok"))
@@ -159,6 +227,7 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
     assert any(call.startswith("claude plugin marketplace add ") for call in calls)
     assert "gemini" in calls
     assert "antigravity" in calls
+    assert "qwen" in calls
     assert "codex" in calls
     assert "forgecode" in calls
 
@@ -201,11 +270,90 @@ path = "plugins/autorun/skills/tmux-automation/SKILL.md"
     assert ("aix", "status") in calls
 
 
+def test_aix_current_api_applies_platform_scope(monkeypatch, tmp_path):
+    """AIX current API must pass --platform flags after backup preflight scoping."""
+    repo = tmp_path
+    skill_dir = repo / "plugins" / "autorun" / "skills" / "tmux-automation"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tmux-automation\n---\n")
+    commands = repo / "plugins" / "autorun" / "commands"
+    commands.mkdir(parents=True)
+    (commands / "st.md").write_text("---\ndescription: status\n---\n")
+    (repo / "aix.toml").write_text(
+        """
+[[skills]]
+name = "tmux"
+path = "plugins/autorun/skills/tmux-automation/SKILL.md"
+""",
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(tuple(cmd))
+        return CmdResult(True, "ok")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    ok, msg = _aix_install_current_api(repo, force=True, platforms=["codex", "gemini"])
+
+    assert ok, msg
+    assert (
+        "aix",
+        "--platform",
+        "codex",
+        "--platform",
+        "gemini",
+        "skill",
+        "install",
+        "--file",
+        str(skill_dir),
+        "--force",
+    ) in calls
+    assert any(
+        call[:9] == (
+            "aix",
+            "--platform",
+            "codex",
+            "--platform",
+            "gemini",
+            "command",
+            "install",
+            "--file",
+            str(commands),
+        )
+        and "--platform" in call
+        for call in calls
+    )
+
+
+def test_aix_platform_scope_skips_claude_directory_symlink(monkeypatch, tmp_path):
+    """AIX preflight must exclude Claude when ~/.claude contains a directory symlink."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    claude_worktree = tmp_path / ".claude" / "worktrees" / "agent"
+    claude_worktree.mkdir(parents=True)
+    target = tmp_path / "commands-target"
+    target.mkdir()
+    (claude_worktree / "commands").symlink_to(target, target_is_directory=True)
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".gemini").mkdir()
+
+    safe, warnings = _aix_platform_scope_for_backup_safety()
+
+    assert safe == ["codex", "gemini"]
+    assert any("skipping AIX claude install" in warning for warning in warnings)
+
+
 def test_install_via_aix_uses_current_singular_api(monkeypatch):
     """install_via_aix() must prefer AIX 0.8.x `aix skill` commands."""
     calls: list[tuple[str, ...]] = []
 
     monkeypatch.setattr("autorun.install.detect_aix_installed", lambda: True)
+    monkeypatch.setattr(
+        "autorun.install._aix_platform_scope_for_backup_safety",
+        lambda: (["gemini"], []),
+    )
 
     def fake_run_cmd(cmd, *args, **kwargs):
         calls.append(tuple(cmd))
@@ -215,9 +363,9 @@ def test_install_via_aix_uses_current_singular_api(monkeypatch):
             return CmdResult(True, "Platform: Claude Code\nPlatform: Gemini CLI\n")
         if cmd == ["aix", "status"]:
             return CmdResult(True, "aix version 0.8.1")
-        if cmd[:4] == ["aix", "skill", "install", "--file"]:
+        if cmd[:6] == ["aix", "--platform", "gemini", "skill", "install", "--file"]:
             return CmdResult(True, "installed")
-        if cmd[:4] == ["aix", "command", "install", "--file"]:
+        if cmd[:6] == ["aix", "--platform", "gemini", "command", "install", "--file"]:
             return CmdResult(True, "installed")
         return CmdResult(True, "")
 
@@ -227,9 +375,34 @@ def test_install_via_aix_uses_current_singular_api(monkeypatch):
 
     assert ok, msg
     assert ("aix", "skill", "--help") in calls
-    assert any(call[:4] == ("aix", "skill", "install", "--file") for call in calls)
-    assert any(call[:4] == ("aix", "command", "install", "--file") for call in calls)
+    assert any(call[:6] == ("aix", "--platform", "gemini", "skill", "install", "--file") for call in calls)
+    assert any(call[:6] == ("aix", "--platform", "gemini", "command", "install", "--file") for call in calls)
     assert not any(call[:3] == ("aix", "skills", "install") for call in calls)
+
+
+def test_install_via_aix_skips_current_api_when_backup_roots_are_unsafe(monkeypatch):
+    """install_via_aix() must not invoke AIX install when backup preflight fails."""
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr("autorun.install.detect_aix_installed", lambda: True)
+    monkeypatch.setattr(
+        "autorun.install._aix_platform_scope_for_backup_safety",
+        lambda: (["gemini"], ["skipping AIX claude install because ~/.claude contains a directory symlink"]),
+    )
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(tuple(cmd))
+        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
+            return CmdResult(True, "help")
+        return CmdResult(True, "unexpected")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    ok, msg = install_via_aix(force=True)
+
+    assert not ok
+    assert "AIX 0.8.1 skipped" in msg
+    assert not any("install" in call for call in calls)
 
 
 # ─── _install_for_codex installation ─────────────────────────────────────────
@@ -336,7 +509,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     def fake_which(binary: str):
         return (
             f"/usr/bin/{binary}"
-            if binary in {"claude", "gemini", "agy", "aix", "codex", "autorun", "aise"}
+            if binary in {"claude", "gemini", "agy", "aix", "qwen", "codex", "autorun", "aise"}
             else None
         )
 
@@ -347,6 +520,8 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
             return CmdResult(True, "ar\npdf-extractor\nconductor\n")
         if cmd[:3] == ["agy", "plugin", "list"]:
             return CmdResult(True, "ar enabled\n")
+        if cmd[:3] == ["qwen", "extensions", "list"]:
+            return CmdResult(True, "ar\npdf-extractor\n")
         if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
             return CmdResult(True, "help\n")
         if cmd == ["aix", "skill", "list"]:
@@ -427,6 +602,9 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "Google Antigravity:" in out
     assert "agy CLI: found" in out
     assert "ar plugin: ✓ imported" in out
+    assert "Qwen Code:" in out
+    assert "qwen CLI: found" in out
+    assert "ar: ✓ installed" in out
     assert "AIX:" in out
     assert "aix CLI: found" in out
     assert "API: current skill/command" in out

@@ -478,8 +478,10 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
     # Stop-hook-specific fields for blocking stops
     if decision is not None:
         actual_decision = decision
-        if cli_type == "gemini" and decision == "block":
-            actual_decision = "deny"
+        from .platforms import get_platform
+        platform = get_platform(cli_type)
+        if platform:
+            actual_decision = platform.block_decision if decision == "block" else decision
         response["decision"] = actual_decision
     if reason is not None:
         response["reason"] = reason

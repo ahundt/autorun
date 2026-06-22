@@ -784,7 +784,7 @@ def detect_cli_type(payload: dict = None) -> str:
     7. Default: "claude"
 
     Returns:
-        str: one of "claude", "gemini", "codex", "forgecode"
+        str: one of "claude", "gemini", "antigravity", "qwen", "codex", "forgecode"
     """
     import os
 

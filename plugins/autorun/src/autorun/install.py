@@ -695,6 +695,7 @@ def determine_target_clis(
     available: dict[str, bool],
     codex_only: bool = False,
     antigravity_only: bool = False,
+    qwen_only: bool = False,
 ) -> list[str]:
     """Determine which CLIs to install for based on flags and availability.
 
@@ -703,6 +704,7 @@ def determine_target_clis(
         gemini_only: If True, include only Gemini CLI in install targets
         codex_only: If True, include only Codex CLI in install targets
         antigravity_only: If True, include only Antigravity CLI in install targets
+        qwen_only: If True, include only Qwen Code in install targets
         available: Dict of CLI availability from detect_available_clis()
 
     Returns:
@@ -719,6 +721,8 @@ def determine_target_clis(
         selected.append("gemini")
     if antigravity_only:
         selected.append("antigravity")
+    if qwen_only:
+        selected.append("qwen")
     if codex_only:
         selected.append("codex")
     if selected:
@@ -961,6 +965,7 @@ def _sync_gemini_extension_resources(
     plugin_dir: Path,
     ext_dir: Path,
     ext_name: str,
+    cli_name: str = "gemini",
 ) -> tuple[int, int]:
     """Materialize shared autorun resources into an installed Gemini extension.
 
@@ -982,6 +987,7 @@ def _sync_gemini_extension_resources(
 
     _copy_tree(gemini_src / "hooks", ext_dir / "hooks")
     _copy_hook_entry_to_gemini_ext(plugin_dir, ext_dir)
+    _set_gemini_family_hook_cli(ext_dir, cli_name)
 
     commands_generated = 0
     if _copy_tree(plugin_dir / "commands", ext_dir / "commands"):
@@ -992,6 +998,32 @@ def _sync_gemini_extension_resources(
         skills_synced = _count_skill_dirs(ext_dir / "skills")
 
     return (commands_generated, skills_synced)
+
+
+def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
+    """Set the explicit CLI identity in installed Gemini-family hook commands."""
+    if cli_name == "gemini":
+        return
+    hooks_json = ext_dir / "hooks" / "hooks.json"
+    if not hooks_json.is_file():
+        return
+    try:
+        data = json.loads(hooks_json.read_text(encoding="utf-8"))
+    except Exception:
+        text = hooks_json.read_text(encoding="utf-8")
+        hooks_json.write_text(text.replace("--cli gemini", f"--cli {cli_name}"), encoding="utf-8")
+        return
+
+    def rewrite(value):
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, str):
+            return value.replace("--cli gemini", f"--cli {cli_name}")
+        return value
+
+    hooks_json.write_text(json.dumps(rewrite(data), indent=2) + "\n", encoding="utf-8")
 
 
 def _migrate_legacy_layout(plugin_dir: Path) -> None:
@@ -1267,15 +1299,59 @@ def _install_for_gemini(
     Returns:
         Tuple of (success: bool, message: str)
     """
-    if not shutil.which("gemini"):
-        msg = "gemini CLI not found. Install from: npm install -g @google-labs/gemini-cli"
+    return _install_gemini_family_extensions(
+        marketplace_root=marketplace_root,
+        plugins=plugins,
+        force=force,
+        cli_name="gemini",
+        display_name="Gemini CLI",
+        config_dir=Path.home() / ".gemini",
+        install_hint="npm install -g @google-labs/gemini-cli",
+    )
+
+
+def _install_for_qwen(
+    marketplace_root: Path,
+    plugins: list[str],
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Install selected plugins for Qwen Code.
+
+    Qwen Code 0.18.5 exposes a Gemini-derived extension surface:
+    `qwen extensions install <path> --consent`, `qwen extensions list`, and
+    extension-scoped hooks. Reuse the Gemini template and resource sync path so
+    commands, hooks, and skills stay single-owned.
+    """
+    return _install_gemini_family_extensions(
+        marketplace_root=marketplace_root,
+        plugins=plugins,
+        force=force,
+        cli_name="qwen",
+        display_name="Qwen Code",
+        config_dir=Path.home() / ".qwen",
+        install_hint="brew install qwen-code",
+    )
+
+
+def _install_gemini_family_extensions(
+    *,
+    marketplace_root: Path,
+    plugins: list[str],
+    force: bool,
+    cli_name: str,
+    display_name: str,
+    config_dir: Path,
+    install_hint: str,
+) -> tuple[bool, str]:
+    """Install Gemini-compatible extensions into Gemini-family CLIs."""
+    if not shutil.which(cli_name):
+        msg = f"{cli_name} CLI not found. Install from: {install_hint}"
         print(msg)
         return (False, msg)
 
-    gemini_dir = Path.home() / ".gemini"
-    if not gemini_dir.exists():
-        print("~/.gemini/ directory not found. Run 'gemini' once to initialize.")
-        return (False, "~/.gemini/ not found")
+    if not config_dir.exists():
+        print(f"{config_dir}/ directory not found. Run '{cli_name}' once to initialize.")
+        return (False, f"{config_dir}/ not found")
 
     # Find all plugins in the marketplace
     # Strategy 1: marketplace_root contains plugins/ (workspace root)
@@ -1353,7 +1429,7 @@ def _install_for_gemini(
         return (False, f"No plugins found matching selection: {', '.join(plugins)} in {marketplace_root}")
 
     print()
-    print(f"Installing {len(plugins_to_install)} plugin(s) for Gemini CLI...")
+    print(f"Installing {len(plugins_to_install)} plugin(s) for {display_name}...")
 
     success_count = 0
     failed_plugins = []
@@ -1375,32 +1451,34 @@ def _install_for_gemini(
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 
-        # gemini extensions install expects a persistent source path. Gemini
-        # 0.28.2 creates absolute symlinks into that path, so the source must
+        # extensions install expects a persistent source path. Gemini
+        # 0.28.2 and Qwen Code 0.18.5 create absolute symlinks into that path,
+        # so the source must
         # not be a TemporaryDirectory. For autorun, gemini_src points at
         # plugins/autorun/src/autorun/gemini_template — a persistent repo path.
         # hook_entry.py lives outside the template (shared with Claude) and is
         # copied in after install completes via _copy_hook_entry_to_gemini_ext.
 
         if force:
-            run_cmd(["gemini", "extensions", "uninstall", ext_name])
+            run_cmd([cli_name, "extensions", "uninstall", ext_name])
 
         # Install directly from the persistent source path
-        result = run_cmd(["gemini", "extensions", "install", str(gemini_src), "--consent"])
+        result = run_cmd([cli_name, "extensions", "install", str(gemini_src), "--consent"])
 
         if result.ok or result.has_text("already installed"):
             print(f"   ✓ {ext_name} installed successfully")
-            installed_dir = gemini_dir / "extensions" / ext_name
+            installed_dir = config_dir / "extensions" / ext_name
             if installed_dir.is_dir():
                 n, skills_count = _sync_gemini_extension_resources(
                     plugin_dir,
                     installed_dir,
                     ext_name,
+                    cli_name,
                 )
                 if n > 0:
                     print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
                 if skills_count > 0:
-                    print(f"   ✓ Synced {skills_count} skill(s) for Gemini")
+                    print(f"   ✓ Synced {skills_count} skill(s) for {display_name}")
             success_count += 1
         else:
             print(f"   ✗ {ext_name} installation failed:")
@@ -1474,6 +1552,7 @@ def _substitute_claude_cache_paths(marketplace_root: Path, plugin_name: str) -> 
     cache_dirs: list[Path] = []
 
     plugin_dir = _resolve_plugin_dir(marketplace_root, plugin_name)
+    source_hook_entry = plugin_dir / "hooks" / "hook_entry.py" if plugin_dir else None
     if plugin_dir is not None:
         version = _read_plugin_version(plugin_dir)
         versioned_cache = cache_root / version
@@ -1491,6 +1570,10 @@ def _substitute_claude_cache_paths(marketplace_root: Path, plugin_name: str) -> 
             continue
         seen.add(resolved)
         _substitute_paths(cache_dir)
+        if source_hook_entry and source_hook_entry.is_file():
+            cached_hook_entry = cache_dir / "hooks" / "hook_entry.py"
+            if cached_hook_entry.parent.is_dir():
+                shutil.copy2(source_hook_entry, cached_hook_entry)
         repaired = True
     return repaired
 
@@ -2351,7 +2434,67 @@ def _aix_current_api_available() -> bool:
     return skill.ok and command.ok
 
 
-def _aix_install_current_api(plugin_root: Path, force: bool = False) -> tuple[bool, str]:
+def _aix_platform_scope_for_backup_safety() -> tuple[list[str], list[str]]:
+    """Return AIX platforms whose backup roots do not contain directory symlinks."""
+    backup_roots = {
+        "claude": Path.home() / ".claude",
+        "codex": Path.home() / ".codex",
+        "gemini": Path.home() / ".gemini",
+    }
+    safe_platforms: list[str] = []
+    warnings: list[str] = []
+
+    def _first_directory_symlink(root: Path) -> Path | None:
+        if not root.exists():
+            return None
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        entry_path = Path(entry.path)
+                        try:
+                            if entry.is_symlink():
+                                if entry.is_dir(follow_symlinks=True):
+                                    return entry_path
+                                continue
+                            if entry.is_dir(follow_symlinks=False):
+                                stack.append(entry_path)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return None
+
+    for platform_name, root in backup_roots.items():
+        unsafe = _first_directory_symlink(root)
+        if unsafe is None:
+            safe_platforms.append(platform_name)
+        else:
+            warnings.append(
+                f"skipping AIX {platform_name} install because {root} contains "
+                f"a directory symlink that AIX 0.8.1 cannot back up: {unsafe}"
+            )
+
+    return safe_platforms, warnings
+
+
+def _aix_platform_flag_args(platforms: list[str] | None) -> list[str]:
+    if not platforms:
+        return []
+    args: list[str] = []
+    for platform_name in platforms:
+        args.extend(["--platform", platform_name])
+    return args
+
+
+def _aix_install_current_api(
+    plugin_root: Path,
+    force: bool = False,
+    platforms: list[str] | None = None,
+    preflight_warnings: list[str] | None = None,
+) -> tuple[bool, str]:
     """Install autorun skills and commands through AIX 0.8+ singular commands."""
     aix_manifest = plugin_root / "aix.toml"
     if not aix_manifest.exists():
@@ -2364,8 +2507,13 @@ def _aix_install_current_api(plugin_root: Path, force: bool = False) -> tuple[bo
         return (False, f"AIX manifest unreadable: {exc}")
 
     failures: list[str] = []
-    skipped: list[str] = []
+    skipped: list[str] = list(preflight_warnings or [])
     installed = 0
+    platform_args = _aix_platform_flag_args(platforms)
+
+    if platforms == []:
+        detail = "\n".join(skipped) if skipped else "AIX current API has no backup-safe platforms to install"
+        return (False, detail)
 
     def _is_aix_backup_failure(output: str) -> bool:
         return (
@@ -2387,7 +2535,7 @@ def _aix_install_current_api(plugin_root: Path, force: bool = False) -> tuple[bo
         if not validate.ok:
             skipped.append(f"skipped AIX-invalid skill {skill_dir.name}: {validate.output}")
             continue
-        cmd = ["aix", "skill", "install", "--file", str(skill_dir)]
+        cmd = ["aix", *platform_args, "skill", "install", "--file", str(skill_dir)]
         if force:
             cmd.append("--force")
         result = run_cmd(cmd, timeout=120)
@@ -2411,7 +2559,7 @@ def _aix_install_current_api(plugin_root: Path, force: bool = False) -> tuple[bo
         for command_dir in command_dirs:
             if not command_dir.is_dir():
                 continue
-            cmd = ["aix", "command", "install", "--file", str(command_dir)]
+            cmd = ["aix", *platform_args, "command", "install", "--file", str(command_dir)]
             if force:
                 cmd.append("--force")
             result = run_cmd(cmd, timeout=120)
@@ -2474,7 +2622,23 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
         return (False, f"AIX manifest not found: {aix_manifest}")
 
     if _aix_current_api_available():
-        result_ok, result_output = _aix_install_current_api(plugin_root, force=force)
+        safe_platforms, aix_warnings = _aix_platform_scope_for_backup_safety()
+        if aix_warnings:
+            for warning in aix_warnings:
+                print(f"   ⚠️  {warning}")
+            result_ok = False
+            result_output = (
+                "AIX 0.8.1 skipped because its backup step still traverses unsafe "
+                "platform roots even when --platform is supplied.\n"
+                + "\n".join(aix_warnings)
+            )
+        else:
+            result_ok, result_output = _aix_install_current_api(
+                plugin_root,
+                force=force,
+                platforms=safe_platforms,
+                preflight_warnings=aix_warnings,
+            )
         result = CmdResult(result_ok, result_output)
     else:
         # Compatibility with older AIX builds that used plural `skills`.
@@ -2724,6 +2888,7 @@ def install_plugins(
     gemini_only: bool = False,
     codex_only: bool = False,
     antigravity_only: bool = False,
+    qwen_only: bool = False,
     conductor: bool = True,
     use_aix: bool = None,  # NEW: Auto-detect AIX if None (default behavior)
 ) -> int:
@@ -2740,6 +2905,7 @@ def install_plugins(
         gemini_only: Install only for Gemini CLI (default: False)
         codex_only: Install only for Codex CLI (default: False)
         antigravity_only: Install only for Google Antigravity CLI (default: False)
+        qwen_only: Install only for Qwen Code (default: False)
         conductor: Install Conductor extension for Gemini (default: True)
         use_aix: Use AIX for installation (None = auto-detect, True = force use, False = skip)
 
@@ -2751,6 +2917,7 @@ def install_plugins(
         - --claude: Installs only for Claude Code (error if not available)
         - --gemini: Installs only for Gemini CLI (error if not available)
         - --antigravity: Imports Gemini extensions into Google Antigravity only
+        - --qwen: Installs only for Qwen Code (error if not available)
         - --codex: Installs only for Codex CLI (error if not available)
         - Multiple platform flags: Installs for all selected CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
@@ -2812,7 +2979,7 @@ def install_plugins(
     if use_aix is None:
         use_aix = detect_aix_installed()  # Auto-detect by default
 
-    if use_aix and not (claude_only or gemini_only or codex_only or antigravity_only):
+    if use_aix and not (claude_only or gemini_only or codex_only or antigravity_only or qwen_only):
         aix_success, aix_msg = install_via_aix(force)
         if aix_success:
             print("\n✓ Installation via AIX completed successfully")
@@ -2837,6 +3004,7 @@ def install_plugins(
             available,
             codex_only=codex_only,
             antigravity_only=antigravity_only,
+            qwen_only=qwen_only,
         )
     except ValueError as e:
         print(f"Error: {e}")
@@ -2854,6 +3022,9 @@ def install_plugins(
         if antigravity_only and not available["antigravity"]:
             print("   Antigravity CLI not found. Install from:")
             print("   brew install --cask antigravity-cli")
+        if qwen_only and not available["qwen"]:
+            print("   Qwen Code not found. Install from:")
+            print("   brew install qwen-code")
         if codex_only and not available["codex"]:
             print("   Codex CLI not found. Install from:")
             print("   https://developers.openai.com/codex/")
@@ -2918,6 +3089,7 @@ def install_plugins(
     claude_success = False
     gemini_success = False
     antigravity_success = False
+    qwen_success = False
 
     # Install for Claude Code
     if "claude" in target_clis:
@@ -3009,6 +3181,12 @@ def install_plugins(
             print(f"   Antigravity import failed: {antigravity_msg}")
         all_succeeded = all_succeeded and antigravity_success
 
+    if "qwen" in target_clis:
+        qwen_success, qwen_msg = _install_for_qwen(marketplace_root, plugins, force)
+        if not qwen_success:
+            print(f"   Qwen Code install failed: {qwen_msg}")
+        all_succeeded = all_succeeded and qwen_success
+
     # Install for Codex CLI (user-level ~/.codex/hooks.json — always active)
     codex_success = False
     codex_plugin_success = False
@@ -3085,6 +3263,12 @@ def install_plugins(
         else:
             print("✗ Google Antigravity: import failed")
 
+    if "qwen" in target_clis:
+        if qwen_success:
+            print(f"✓ Qwen Code: Plugins installed ({', '.join(plugins)})")
+        else:
+            print("✗ Qwen Code: Installation failed")
+
     if "codex" in target_clis:
         if codex_success:
             print("✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
@@ -3109,6 +3293,8 @@ def install_plugins(
         print("  /conductor:*      - Conductor plan mode (Gemini only)")
     if "antigravity" in target_clis:
         print("  agy plugin list   - verify imported Antigravity plugins")
+    if "qwen" in target_clis:
+        print("  qwen extensions list - verify installed Qwen extensions")
     print()
     print("Run '/help' to see all available commands.")
 
@@ -3361,6 +3547,27 @@ def show_status() -> int:
     else:
         print("  Install CLI: brew install --cask antigravity-cli")
 
+    # Check Qwen Code Gemini-compatible extension surface.
+    print()
+    print("-" * 60)
+    print("Qwen Code:")
+
+    qwen_ok = shutil.which("qwen") is not None
+    print(f"  qwen CLI: {'found' if qwen_ok else 'not found'}")
+    if qwen_ok:
+        result = run_cmd(["qwen", "extensions", "list"], timeout=30)
+        if result.ok:
+            for plugin in ("ar", "pdf-extractor"):
+                is_installed = plugin in result.output
+                print(f"  {plugin}: {'✓ installed' if is_installed else '✗ not installed'}")
+            if "ar" not in result.output:
+                all_ok = False
+        else:
+            print(f"  extensions list failed: {result.output}")
+            all_ok = False
+    else:
+        print("  Install: brew install qwen-code")
+
     # Check AIX resource translation layer.
     print()
     print("-" * 60)
@@ -3525,7 +3732,7 @@ def perform_self_update(method: str = "auto") -> CmdResult:
     if method == "aix":
         if _aix_current_api_available():
             ok, msg = install_via_aix(force=True)
-            if not ok:
+            if not ok and "AIX 0.8.1 skipped" not in msg:
                 return CmdResult(False, msg)
             runner = get_python_runner()
             direct = run_cmd(
@@ -3533,7 +3740,8 @@ def perform_self_update(method: str = "auto") -> CmdResult:
                 timeout=300,
             )
             if direct.ok:
-                return CmdResult(True, f"{msg}\n{direct.output}".strip())
+                prefix = msg if ok else f"{msg}\nDirect installer completed after AIX skip."
+                return CmdResult(True, f"{prefix}\n{direct.output}".strip())
             return direct
         return run_cmd(["aix", "skills", "update", "autorun"], timeout=120)
 
@@ -3668,6 +3876,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
     parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
     parser.add_argument("--antigravity", action="store_true", help="Install for Google Antigravity CLI only")
+    parser.add_argument("--qwen", action="store_true", help="Install for Qwen Code only")
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
         "--conductor",
@@ -3715,6 +3924,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         gemini_only=args.gemini,
         codex_only=args.codex,
         antigravity_only=args.antigravity,
+        qwen_only=args.qwen,
         conductor=args.conductor,
         use_aix=args.use_aix,
     )

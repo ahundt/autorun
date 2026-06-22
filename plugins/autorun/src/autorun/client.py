@@ -56,6 +56,7 @@ DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _DAEMON_RESPONSE_TIMEOUT_BY_CLI = {
     "gemini": 3.5,
+    "qwen": 3.5,
     "claude": 6.5,
     "codex": 6.5,
     "forgecode": 6.5,
@@ -79,7 +80,7 @@ def _hook_platform_process_markers() -> tuple[str, ...]:
         markers.add("claude-code")
         return tuple(sorted(markers, key=len, reverse=True))
     except Exception:
-        return ("claude-code", "forgecode", "claude", "gemini", "codex", "forge")
+        return ("claude-code", "forgecode", "claude", "gemini", "qwen", "codex", "forge")
 
 
 def is_tool_gate_event(event: str) -> bool:
@@ -94,10 +95,14 @@ def daemon_response_timeout_for_cli(cli_type: str) -> float:
 
 def _hook_specific_event_name(event: str, cli_type: str) -> str:
     """Return the platform event name used inside hookSpecificOutput."""
-    if cli_type == "gemini" and event == "PreToolUse":
-        return "BeforeTool"
-    if cli_type != "gemini" and event == "BeforeTool":
-        return "PreToolUse"
+    try:
+        from .platforms import platform_for
+
+        platform = platform_for(cli_type)
+        return platform.internal_to_cli_events.get(event, event)
+    except Exception:
+        if event == "BeforeTool":
+            return "PreToolUse"
     return event
 
 
@@ -132,7 +137,14 @@ def build_daemon_failure_response(event: str, cli_type: str, message: str) -> di
             "hookSpecificOutput": hook_specific,
         }
 
-    if cli_type == "gemini":
+    try:
+        from .platforms import platform_for
+
+        schema_type = platform_for(cli_type).schema_type
+    except Exception:
+        schema_type = "strict"
+
+    if schema_type == "permissive":
         return {
             "decision": "deny",
             "reason": reason,
@@ -186,7 +198,7 @@ def output_hook_response(response: dict | str, event: str = "unknown",
     Args:
         response: Response dict OR raw string (for fallback cases)
         event: Normalized event name (e.g., PreToolUse)
-        cli_type: Target CLI ("claude" or "gemini")
+        cli_type: Target CLI identifier from autorun.platforms
         source: Source ("daemon", "daemon-raw", "buffer-error", "exception")
 
     Returns:
@@ -206,8 +218,14 @@ def output_hook_response(response: dict | str, event: str = "unknown",
     # Reference: Issue #10936 — any stderr at exit 0 shows as "Hook Error" in UI,
     # so we also avoid all stderr here. Just exit 0 silently.
     if not response:
-        if cli_type == "gemini":
-            # Gemini CLI expects valid JSON if a hook is registered
+        try:
+            from .platforms import platform_for
+
+            schema_type = platform_for(cli_type).schema_type
+        except Exception:
+            schema_type = "strict"
+        if schema_type == "permissive":
+            # Gemini-family CLIs expect valid JSON if a hook is registered
             print(json.dumps({"continue": True}))
         sys.exit(0)
 
