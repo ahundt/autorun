@@ -42,7 +42,6 @@ def get_hook_entry_module():
 def sample_hooks_json():
     """Sample hooks.json content without --no-bootstrap flag."""
     return {
-        "description": "autorun v0.7 - unified daemon-based hook handler",
         "hooks": {
             "UserPromptSubmit": [
                 {
@@ -87,7 +86,6 @@ def sample_hooks_json():
 def sample_hooks_json_disabled():
     """Sample hooks.json content WITH --no-bootstrap flag."""
     return {
-        "description": "autorun v0.7 - unified daemon-based hook handler",
         "hooks": {
             "UserPromptSubmit": [
                 {
@@ -242,8 +240,7 @@ class TestSetBootstrapConfig:
         modified_data = json.loads(modified_content)
 
         # Structure should be preserved
-        assert "description" in modified_data
-        assert "hooks" in modified_data
+        assert set(modified_data) == {"hooks"}
         assert set(modified_data["hooks"].keys()) == set(original_data["hooks"].keys())
 
 
@@ -443,7 +440,7 @@ class TestMainFunctionRouting:
         assert result == 0
         captured = capsys.readouterr()
         assert "autorun" in captured.out
-        assert "0.11.0" in captured.out
+        assert "0.12.0" in captured.out
 
     def test_install_calls_install_plugins(self):
         """Test that --install calls install_plugins function."""

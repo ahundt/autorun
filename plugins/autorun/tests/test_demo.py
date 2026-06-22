@@ -140,6 +140,9 @@ except ImportError:
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 ENABLE_REAL_MONEY = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
+ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR = (
+    os.environ.get("AUTORUN_ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS", "0") == "1"
+)
 
 # When True, pause() and type_cmd() use real delays for watchable demo playback.
 # Set to True by --live/--record CLI flags. Stays False during pytest runs.
@@ -1995,6 +1998,14 @@ class TestDemoRealMoney:
             session.exit_claude()
             session.destroy()
 
+    @pytest.mark.skipif(
+        not ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR,
+        reason=(
+            "Set AUTORUN_ENABLE_SLOW_CLAUDE_MODEL_BEHAVIOR_TESTS=1 to run "
+            "prompt-dependent Claude TUI diagnostics. Hook-level grep blocking "
+            "is covered by TestDemoFree."
+        ),
+    )
     def test_live_grep_redirected(self, tmp_path):
         """Real Claude session tries grep in bash; autorun blocks it and redirects.
 

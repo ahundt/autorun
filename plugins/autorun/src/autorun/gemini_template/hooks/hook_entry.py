@@ -66,21 +66,21 @@ def hook_timeout_for_cli(cli_type: str) -> int:
     return HOOK_TIMEOUT_BY_CLI.get(cli_type, HOOK_TIMEOUT_BY_CLI["claude"])
 
 
-def detect_cli_type() -> str:
+def detect_cli_type(payload: dict | None = None) -> str:
     """Detect which CLI is calling the hook.
 
     Detection priority:
     1. --cli <type> argument in sys.argv (explicit, set by hooks.json files)
-    2. GEMINI_SESSION_ID env var
-    3. CODEX_SESSION_ID env var
-    4. FORGE_CONFIG env var
+    2. cli_type/source in the hook payload
+    3. Platform-specific payload path/event hints
+    4. Platform-specific environment variables
     5. GEMINI_PROJECT_DIR present without CLAUDE_PROJECT_DIR
     6. Default to "claude"
 
-    The hooks files pass --cli explicitly so all CLIs can call the shared
-    daemon simultaneously without ambiguity:
+    Platform-specific hook files may pass --cli explicitly, but plugin hooks
+    loaded by multiple harnesses must be able to infer the caller from payload:
         hooks.json   (Gemini): hook_entry.py --cli gemini
-        claude-hooks.json    : hook_entry.py --cli claude
+        hooks.json   (Claude/Codex plugin): hook_entry.py
         ~/.codex/hooks.json  : hook_entry.py --cli codex
 
     Returns:
@@ -98,7 +98,26 @@ def detect_cli_type() -> str:
                 if value in _VALID_CLI_TYPES:
                     return value
 
-        # Priority 2-4: Platform-specific environment variables
+        if payload:
+            explicit = payload.get("cli_type") or payload.get("source")
+            if explicit in _VALID_CLI_TYPES:
+                return explicit
+
+            event_name = payload.get("hook_event_name")
+            if event_name in {"BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent", "SessionEnd"}:
+                return "gemini"
+            if event_name in {"PermissionRequest"}:
+                return "forgecode"
+
+            transcript_path = str(payload.get("transcript_path", ""))
+            if ".codex" in transcript_path or "/codex/" in transcript_path:
+                return "codex"
+            if ".gemini" in transcript_path or "/gemini/" in transcript_path:
+                return "gemini"
+            if ".claude" in transcript_path or "/claude/" in transcript_path:
+                return "claude"
+
+        # Platform-specific environment variables
         if os.environ.get("GEMINI_SESSION_ID"):
             return "gemini"
         if os.environ.get("CODEX_SESSION_ID"):
@@ -674,9 +693,11 @@ def main() -> None:
 
     log_debug("=" * 80)
     event_name = "unknown"
+    payload_for_detection = None
     if stdin_data:
         try:
-            event_name = json.loads(stdin_data).get('hook_event_name', 'unknown')
+            payload_for_detection = json.loads(stdin_data)
+            event_name = payload_for_detection.get('hook_event_name', 'unknown')
         except json.JSONDecodeError:
             pass
     
@@ -685,15 +706,15 @@ def main() -> None:
 
     autorun_bin = get_autorun_bin()
     log_debug(f"Selected binary: {autorun_bin}")
-    cli_type = detect_cli_type()
+    cli_type = detect_cli_type(payload_for_detection)
     log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
     log_debug(f"Env GEMINI_PROJECT_DIR: {os.environ.get('GEMINI_PROJECT_DIR')}")
     log_debug(f"Env CLAUDE_PROJECT_DIR: {os.environ.get('CLAUDE_PROJECT_DIR')}")
 
     # Inject cli_type into stdin payload so daemon gets explicit CLI identity.
-    # This allows both CLIs to call the shared daemon simultaneously without
-    # ambiguity — each hook file passes --cli gemini or --cli claude.
+    # This allows all harnesses to call the shared daemon simultaneously without
+    # ambiguity, including plugin hooks that are shared by Claude and Codex.
     if stdin_data and cli_type:
         try:
             payload = json.loads(stdin_data)

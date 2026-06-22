@@ -1,6 +1,6 @@
 {
   "name": "ar",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Autonomous execution, file policies, safety guards for AI coding assistants",
   "author": {
     "name": "Andrew Hundt <athundt@gmail.com>",

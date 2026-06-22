@@ -18,10 +18,12 @@ Requirements sourced from:
 - notes/2026_02_09_2330_clautorun_install_paths_reference.md
 """
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -89,6 +91,7 @@ GEMINI_EXT_JSON = GEMINI_TEMPLATE_DIR / "gemini-extension.json"
 INSTALL_PY = PLUGIN_ROOT / "src" / "autorun" / "install.py"
 CORE_PY = PLUGIN_ROOT / "src" / "autorun" / "core.py"
 MAIN_PY = PLUGIN_ROOT / "src" / "autorun" / "main.py"
+REPO_ROOT = PLUGIN_ROOT.parent.parent
 
 # Expected hook events per platform
 CLAUDE_HOOK_EVENTS = {
@@ -148,8 +151,10 @@ class TestClaudeHooksJson:
     def test_valid_json(self):
         data = load_hooks_json(HOOKS_JSON)
         assert isinstance(data, dict)
-        assert "hooks" in data
-        assert "description" in data
+        assert set(data) == {"hooks"}, (
+            "Codex plugin hooks/hooks.json is parsed as HooksFile with "
+            "deny_unknown_fields; metadata belongs in .claude-plugin/plugin.json"
+        )
 
     def test_uses_claude_path_variable(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -228,6 +233,16 @@ class TestClaudeHooksJson:
         commands = extract_all_commands(data)
         for cmd in commands:
             assert "hook_entry.py" in cmd
+
+    def test_default_plugin_hooks_do_not_force_claude_cli(self):
+        """Codex plugin loading also parses hooks/hooks.json, so it must auto-detect."""
+        data = load_hooks_json(HOOKS_JSON)
+        commands = extract_all_commands(data)
+        for cmd in commands:
+            assert "--cli claude" not in cmd, (
+                "hooks/hooks.json is shared by Claude and Codex plugin loading; "
+                "forcing Claude makes Codex PreToolUse emit Claude-shaped blocks"
+            )
 
 
 # =============================================================================
@@ -443,13 +458,51 @@ class TestManifestFiles:
         assert manifest.get("contextFileName") == "GEMINI.md"
 
     def test_version_consistency(self):
+        """Release-facing version numbers must match the autorun package."""
+        root_pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        plugin_pyproject = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        aix_toml = tomllib.loads((REPO_ROOT / "aix.toml").read_text(encoding="utf-8"))
+        expected = plugin_pyproject["project"]["version"]
+
         with open(PLUGIN_JSON, encoding="utf-8") as f:
             claude_manifest = json.load(f)
         with open(GEMINI_EXT_JSON, encoding="utf-8") as f:
             gemini_manifest = json.load(f)
-        assert claude_manifest.get("version") == gemini_manifest.get("version"), \
-            f"Version mismatch: Claude={claude_manifest.get('version')}, " \
-            f"Gemini={gemini_manifest.get('version')}"
+        codex_manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        metadata = json.loads((PLUGIN_ROOT / "src" / "autorun" / "metadata.json").read_text(encoding="utf-8"))
+        marketplace = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        workspace_init = (REPO_ROOT / "src" / "autorun_workspace" / "__init__.py").read_text(encoding="utf-8")
+        autorun_init = (PLUGIN_ROOT / "src" / "autorun" / "__init__.py").read_text(encoding="utf-8")
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        skill_versions = [
+            (PLUGIN_ROOT / "skills" / "ai-session-tools" / "SKILL.md").read_text(encoding="utf-8"),
+            (PLUGIN_ROOT / "skills" / "claude-session-tools" / "SKILL.md").read_text(encoding="utf-8"),
+        ]
+
+        actual = {
+            "workspace pyproject.toml": root_pyproject["project"]["version"],
+            "aix.toml": aix_toml["package"]["version"],
+            "plugins/autorun/pyproject.toml": expected,
+            ".claude-plugin/plugin.json": claude_manifest.get("version"),
+            ".codex-plugin/plugin.json": codex_manifest.get("version"),
+            "gemini-extension.json": gemini_manifest.get("version"),
+            "metadata.json": metadata.get("version"),
+            "workspace __version__": f'__version__ = "{expected}"' in workspace_init,
+            "autorun __version__": f'__version__ = "{expected}"' in autorun_init,
+            "README expected output": f"autorun-workspace@{expected}" in readme,
+            "ai-session-tools skill": f'version: "{expected}"' in skill_versions[0],
+            "claude-session-tools skill": f'version: "{expected}"' in skill_versions[1],
+        }
+        for plugin in marketplace.get("plugins", []):
+            if plugin.get("name") in {"ar", "pdf-extractor"}:
+                actual[f"marketplace {plugin['name']}"] = plugin.get("version")
+
+        mismatches = {
+            name: value
+            for name, value in actual.items()
+            if value is not True and value != expected
+        }
+        assert not mismatches, f"Release version mismatch against {expected}: {mismatches}"
 
 
 # =============================================================================
@@ -544,6 +597,21 @@ class TestHookEntryDualPlatform:
         )
         assert result.stdout.strip() == "gemini", \
             f"Expected 'gemini', got: {result.stdout.strip()}, stderr: {result.stderr}"
+
+    def test_detect_cli_type_codex_payload_without_cli_arg(self, monkeypatch):
+        """Plugin cache hooks may be invoked by Codex without ~/.codex/hooks.json."""
+        spec = importlib.util.spec_from_file_location("autorun_hook_entry_test", HOOK_ENTRY_PY)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        monkeypatch.setattr(module.sys, "argv", ["hook_entry.py"])
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "transcript_path": "/Users/example/.codex/sessions/rollout.jsonl",
+        }
+
+        assert module.detect_cli_type(payload) == "codex"
 
     def test_fail_open_returns_valid_json(self):
         env = os.environ.copy()

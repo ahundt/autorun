@@ -1099,16 +1099,17 @@ class TestAllLocationsSync:
         hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
         content = hooks_json.read_text(encoding="utf-8")
 
-        assert "unified daemon-based hook handler" in content, \
-            "Source hooks.json has wrong format. Should be Claude Code, not Gemini. " \
-            "Restore from: ~/.claude/plugins/cache/autorun/ar/0.11.0/hooks/hooks.json"
-
         assert "PreToolUse" in content, \
             "Must have Claude Code event names (not Gemini's BeforeTool)"
         assert "${CLAUDE_PLUGIN_ROOT}" in content, \
             "Must use Claude Code variables (not Gemini's ${extensionPath})"
         assert "run_shell_command" not in content, \
             "Must NOT use Gemini tool names (run_shell_command) in Claude hooks"
+        hooks_data = json.loads(content)
+        assert set(hooks_data) == {"hooks"}, (
+            "Codex plugin loading parses hooks/hooks.json with a strict schema; "
+            "metadata such as description belongs in plugin.json"
+        )
 
     def test_cache_matches_source_hook_entry(self):
         """Location 4: Claude Code cache hook_entry.py must match source."""

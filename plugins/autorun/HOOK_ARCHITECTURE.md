@@ -1,6 +1,6 @@
 # Hook Architecture Documentation
 
-**Version**: 0.11.0
+**Version**: 0.12.0
 **Last Updated**: 2026-04-19
 **Status**: Complete for Claude Code and Gemini CLI (post split-root refactor for bugs #24115/#14449)
 
@@ -254,7 +254,7 @@ autorun/                                      ← repo root / workspace
   │  ${CLAUDE_PLUGIN_   │            │  ${extensionPath}/  │
   │   ROOT}/hooks/      │            │   hooks/            │
   │  hook_entry.py      │            │  hook_entry.py      │
-  │  --cli claude       │            │  --cli gemini       │
+  │  (auto-detect)      │            │  --cli gemini       │
   └─────────┬───────────┘            └─────────┬───────────┘
             │                                    │
             └──────────────┬─────────────────────┘
@@ -337,7 +337,6 @@ fixed upstream:
 
 ```json
 {
-  "description": "autorun v0.8 - unified daemon-based hook handler",
   "hooks": {
     "PreToolUse": [
       {
@@ -387,6 +386,8 @@ fixed upstream:
 - Environment variable: `${CLAUDE_PLUGIN_ROOT}` (set by Claude Code)
 - Tool names: `Write`, `Bash`, `Edit`, `ExitPlanMode`, `TaskCreate`
 - Timeout: 10 seconds (seconds, not milliseconds)
+- Top-level keys: Codex parses plugin `hooks/hooks.json` as a strict hooks
+  config, so metadata such as `description` belongs in `.claude-plugin/plugin.json`
 
 ### Gemini CLI Format (`plugins/autorun/src/autorun/gemini_template/hooks/hooks.json`)
 
@@ -1047,6 +1048,6 @@ tmux.send_keys('gemini', session_name)
 
 ---
 
-**Version**: 0.11.0
+**Version**: 0.12.0
 **Maintainer**: autorun project
 **Last Verified**: 2026-02-10 with Gemini CLI v0.28.0 and Claude Code

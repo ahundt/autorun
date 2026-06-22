@@ -534,6 +534,44 @@ def test_codex_transcript_multiline_ar_ok_uses_only_first_line(tmp_path):
     assert ctx.session_allowed_patterns[-1]["pattern"] == "git push"
 
 
+def test_codex_native_multiline_ar_ok_uses_only_first_line():
+    store = ThreadSafeDB()
+    session_id = f"codex-native-multiline-allow-{uuid.uuid4().hex}"
+    prompt = "\n".join(
+        [
+            "ar:ok git push",
+            "Use the shell tool to run exactly:",
+            "git push --dry-run no-such-remote HEAD",
+        ]
+    )
+    prompt_ctx = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        cli_type="codex",
+        store=store,
+    )
+
+    prompt_response = plugins.app.dispatch(prompt_ctx)
+
+    assert_codex_response_valid("UserPromptSubmit", prompt_response)
+    assert prompt_ctx.session_allowed_patterns[-1]["pattern"] == "git push"
+
+    tool_ctx = EventContext(
+        session_id=session_id,
+        event="PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "git push --dry-run no-such-remote HEAD"},
+        cli_type="codex",
+        store=store,
+    )
+    tool_response = plugins.check_blocked_commands(tool_ctx)
+
+    assert tool_response is not None
+    assert_codex_response_valid("PreToolUse", tool_response)
+    assert "Allowed 'git push'" in json.dumps(tool_response)
+
+
 def test_codex_transcript_ar_ok_notifies_on_first_later_safe_tool(tmp_path):
     store = ThreadSafeDB()
     session_id = f"codex-transcript-safe-tool-notice-{uuid.uuid4().hex}"

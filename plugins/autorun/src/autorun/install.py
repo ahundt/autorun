@@ -50,6 +50,11 @@ from pathlib import Path
 from . import ipc
 from .platforms import PLATFORMS
 
+try:
+    import tomllib
+except ImportError:  # pragma: no cover - Python <3.11 compatibility
+    import tomli as tomllib
+
 # Configure logging (CLI entry points will set level)
 logger = logging.getLogger(__name__)
 
@@ -523,22 +528,33 @@ def find_marketplace_root() -> Path:
 
 
 def _read_plugin_version(plugin_dir: Path) -> str:
-    """Read version from plugin.json manifest.
+    """Read version from pyproject.toml, falling back to plugin.json.
 
     Args:
         plugin_dir: Path to plugin directory
 
     Returns:
-        Version string from plugin.json, or "0.11.0" as fallback
+        Version string from package metadata, or "0.12.0" as fallback
     """
+    pyproject = plugin_dir / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+            version = data.get("project", {}).get("version")
+            if isinstance(version, str) and version:
+                return version
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+
     manifest = plugin_dir / ".claude-plugin" / "plugin.json"
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-            return data.get("version", "0.11.0")
+            return data.get("version", "0.12.0")
         except (json.JSONDecodeError, OSError):
             pass
-    return "0.11.0"
+    return "0.12.0"
 
 
 def _check_hook_conflicts() -> None:
@@ -2420,7 +2436,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
             meta_file.parent.mkdir(parents=True, exist_ok=True)
             import json
             data = {
-                "version": "0.11.0",
+                "version": _read_plugin_version(plugin_dir),
                 "commit": commit,
                 "build_time": build_time
             }
@@ -2660,7 +2676,7 @@ def install_plugins(
     try:
         from autorun import __version__
     except ImportError:
-        __version__ = "0.11.0"
+        __version__ = "0.12.0"
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")

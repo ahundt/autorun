@@ -577,6 +577,12 @@ def _make_block_op(scope: str, op: str):
     """
     def handler(ctx: EventContext) -> str:
         prompt = ctx.activation_prompt or ctx.prompt
+        if op in {"block", "allow"}:
+            for line in prompt.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    prompt = stripped
+                    break
         args = prompt.split(maxsplit=1)[1] if " " in prompt else ""
 
         accessor = ScopeAccessor(ctx, scope)

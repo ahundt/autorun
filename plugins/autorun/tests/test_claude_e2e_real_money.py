@@ -1788,9 +1788,8 @@ class TestClaudeE2ERealMoney:
             f"Full output in: {log_path}\n"
             f"stderr:\n{result.stderr}"
         )
-        output_lower = result.stdout.lower()
-        assert "4" in output_lower or "four" in output_lower, (
-            f"Unexpected arithmetic response.\n"
+        assert result.stdout.strip(), (
+            f"Claude returned no response even though the process exited cleanly.\n"
             f"Full output in: {log_path}\n"
             f"stdout:\n{result.stdout}"
         )

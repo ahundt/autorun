@@ -17,6 +17,22 @@ try:
 except ImportError:
     import tomli as tomllib
 
+
+def _read_plugin_version(plugin_dir: Path) -> str | None:
+    """Return the plugin package version used by generated harness manifests."""
+    pyproject = plugin_dir / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+            version = data.get("project", {}).get("version")
+            if isinstance(version, str) and version:
+                return version
+        except Exception:
+            pass
+    return None
+
+
 def generate_manifests(plugin_dir: Path):
     """Generate platform-specific manifests from aix.toml."""
     aix_path = plugin_dir.parent.parent / "aix.toml"
@@ -31,6 +47,7 @@ def generate_manifests(plugin_dir: Path):
         aix_data = tomllib.load(f)
 
     pkg = aix_data.get("package", {})
+    version = _read_plugin_version(plugin_dir) or pkg.get("version", "0.12.0")
 
     # 1. Base Manifest Data (shared fields). Claude uses the default hooks path
     # (hooks/hooks.json) and therefore declares no explicit "hooks" field.
@@ -40,7 +57,7 @@ def generate_manifests(plugin_dir: Path):
     # does not check — still, keep it out of the plugin root for consistency).
     manifest = {
         "name": "ar",
-        "version": pkg.get("version", "0.11.0"),
+        "version": version,
         "description": pkg.get("description", ""),
         "author": {
             "name": pkg.get("authors", ["autorun contributors"])[0],

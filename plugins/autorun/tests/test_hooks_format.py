@@ -56,10 +56,10 @@ def test_source_hooks_json_is_claude_format():
     with open(hooks_file, encoding="utf-8") as f:
         hooks_data = json.load(f)
 
-    # Check description mentions Claude or daemon
-    description = hooks_data.get("description", "")
-    assert "daemon" in description.lower() or "claude" in description.lower(), \
-        f"Description should mention daemon or Claude, got: {description}"
+    assert set(hooks_data) == {"hooks"}, (
+        "Codex plugin loading parses hooks/hooks.json with a strict HooksFile "
+        "schema; metadata such as description belongs in plugin.json"
+    )
 
     # Check uses CLAUDE_PLUGIN_ROOT not extensionPath
     hooks_json_str = json.dumps(hooks_data)

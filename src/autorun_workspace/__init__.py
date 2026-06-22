@@ -22,4 +22,4 @@ is provided by the plugins:
 For CLI usage, run: autorun --help
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
