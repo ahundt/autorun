@@ -493,6 +493,13 @@ class TestManifestFiles:
             "ai-session-tools skill": f'version: "{expected}"' in skill_versions[0],
             "claude-session-tools skill": f'version: "{expected}"' in skill_versions[1],
         }
+        assert aix_toml["platforms"]["antigravity"] is True
+        assert aix_toml["install"]["antigravity"]["post_install"] == [
+            "autorun",
+            "--install",
+            "--antigravity",
+        ]
+        assert "live_backend" not in aix_toml.get("install", {}).get("gemini_cli", {})
         for plugin in marketplace.get("plugins", []):
             if plugin.get("name") in {"ar", "pdf-extractor"}:
                 actual[f"marketplace {plugin['name']}"] = plugin.get("version")

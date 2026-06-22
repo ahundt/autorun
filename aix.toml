@@ -10,6 +10,7 @@ repository = "https://github.com/ahundt/autorun"
 [platforms]
 claude_code = true
 gemini_cli = true
+antigravity = true
 opencode = true   # Experimental
 codex_cli = true  # Experimental
 
@@ -126,6 +127,10 @@ post_install = ["autorun", "--install"]  # Ensures hooks registered
 [install.gemini_cli]
 command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]
 post_install = ["autorun", "--install", "--gemini", "--conductor"]  # Ensures hooks + Conductor
+
+[install.antigravity]
+command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]
+post_install = ["autorun", "--install", "--antigravity"]  # Imports Gemini ar plugin through agy
 
 [install.opencode]
 command = ["uv", "pip", "install", "git+https://github.com/ahundt/autorun.git"]

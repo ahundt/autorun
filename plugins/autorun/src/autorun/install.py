@@ -693,6 +693,7 @@ def determine_target_clis(
     gemini_only: bool,
     available: dict[str, bool],
     codex_only: bool = False,
+    antigravity_only: bool = False,
 ) -> list[str]:
     """Determine which CLIs to install for based on flags and availability.
 
@@ -700,6 +701,7 @@ def determine_target_clis(
         claude_only: If True, include only Claude Code in install targets
         gemini_only: If True, include only Gemini CLI in install targets
         codex_only: If True, include only Codex CLI in install targets
+        antigravity_only: If True, include only Antigravity CLI in install targets
         available: Dict of CLI availability from detect_available_clis()
 
     Returns:
@@ -714,6 +716,8 @@ def determine_target_clis(
         selected.append("claude")
     if gemini_only:
         selected.append("gemini")
+    if antigravity_only:
+        selected.append("antigravity")
     if codex_only:
         selected.append("codex")
     if selected:
@@ -2044,6 +2048,20 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
     return (True, "✓ installed, enabled" if enabled else "✓ installed")
 
 
+def _platform_app_status(platform_name: str) -> tuple[bool, str]:
+    """Return whether a platform desktop app is installed and where it was found."""
+    platform = PLATFORMS.get(platform_name)
+    if platform is None:
+        return (False, "unknown platform")
+    for raw_path in platform.app_paths:
+        path = Path(raw_path).expanduser()
+        if path.exists():
+            return (True, str(path))
+    if platform.app_paths:
+        return (False, ", ".join(platform.app_paths))
+    return (False, "no app path configured")
+
+
 def _count_codex_user_skills(skills_root: Path) -> int:
     """Count autorun-owned user skills installed where Codex scans directly."""
     if not skills_root.is_dir():
@@ -2253,6 +2271,42 @@ def _verify_conductor_installation() -> bool:
     return result.ok and "conductor" in result.output
 
 
+def _install_for_antigravity(
+    marketplace_root: Path,
+    plugins: list[str],
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Install autorun into Google Antigravity through its Gemini importer.
+
+    `agy plugin import gemini` is the documented local migration surface exposed
+    by `agy plugin help`; local verification on 2026-06-22 with `agy` 1.0.10
+    imports the existing Gemini `ar` extension with skills, commands, and hooks.
+    The native `agy plugin install <target>` schema expects a plugin.json bundle,
+    so direct native bundles remain a separate 0.13.0 acceptance item.
+    """
+    del marketplace_root, force  # The importer reads installed Gemini extensions.
+
+    if "autorun" not in plugins and "ar" not in plugins:
+        return (True, "no autorun plugin selected")
+    if not shutil.which("agy"):
+        return (False, "agy CLI not found")
+
+    print()
+    print("Importing Gemini autorun extension into Google Antigravity...")
+    result = run_cmd(["agy", "plugin", "import", "gemini"], timeout=120)
+    if not result.ok:
+        return (False, result.output)
+
+    verify = run_cmd(["agy", "plugin", "list"], timeout=30)
+    if not verify.ok:
+        return (False, f"agy plugin import succeeded, but list failed: {verify.output}")
+    if '"name": "ar"' not in verify.output and "ar" not in verify.output:
+        return (False, "agy plugin list did not report imported ar plugin")
+
+    print("   Antigravity ar plugin imported from Gemini CLI")
+    return (True, "success")
+
+
 # =============================================================================
 # AIX Integration - Unified Multi-Platform Installation
 # =============================================================================
@@ -2273,7 +2327,7 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
     """Install autorun locally using AIX if available.
 
     AIX provides unified installation across Claude Code, Gemini CLI,
-    OpenCode, and Codex CLI platforms.
+    Google Antigravity, OpenCode, and Codex CLI platforms.
 
     CRITICAL: This performs LOCAL installation only (aix skills install .).
     Does NOT publish to public AIX registry - that requires manual user action.
@@ -2319,6 +2373,9 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
             if "gemini_cli" in verify_result.output:
                 print("   • Gemini CLI")
                 installed_platforms.append("gemini")
+            if "antigravity" in verify_result.output:
+                print("   • Google Antigravity")
+                installed_platforms.append("antigravity")
             if "opencode" in verify_result.output:
                 print("   • OpenCode")
                 installed_platforms.append("opencode")
@@ -2540,6 +2597,7 @@ def install_plugins(
     claude_only: bool = False,
     gemini_only: bool = False,
     codex_only: bool = False,
+    antigravity_only: bool = False,
     conductor: bool = True,
     use_aix: bool = None,  # NEW: Auto-detect AIX if None (default behavior)
 ) -> int:
@@ -2555,6 +2613,7 @@ def install_plugins(
         claude_only: Install only for Claude Code (default: False)
         gemini_only: Install only for Gemini CLI (default: False)
         codex_only: Install only for Codex CLI (default: False)
+        antigravity_only: Install only for Google Antigravity CLI (default: False)
         conductor: Install Conductor extension for Gemini (default: True)
         use_aix: Use AIX for installation (None = auto-detect, True = force use, False = skip)
 
@@ -2565,6 +2624,7 @@ def install_plugins(
         - Default (no CLI flags): Installs for all available CLIs with maximum capability
         - --claude: Installs only for Claude Code (error if not available)
         - --gemini: Installs only for Gemini CLI (error if not available)
+        - --antigravity: Imports Gemini extensions into Google Antigravity only
         - --codex: Installs only for Codex CLI (error if not available)
         - Multiple platform flags: Installs for all selected CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
@@ -2626,7 +2686,7 @@ def install_plugins(
     if use_aix is None:
         use_aix = detect_aix_installed()  # Auto-detect by default
 
-    if use_aix and not (claude_only or gemini_only or codex_only):
+    if use_aix and not (claude_only or gemini_only or codex_only or antigravity_only):
         aix_success, aix_msg = install_via_aix(force)
         if aix_success:
             print("\n✓ Installation via AIX completed successfully")
@@ -2646,7 +2706,13 @@ def install_plugins(
     available = detect_available_clis()
 
     try:
-        target_clis = determine_target_clis(claude_only, gemini_only, available, codex_only=codex_only)
+        target_clis = determine_target_clis(
+            claude_only,
+            gemini_only,
+            available,
+            codex_only=codex_only,
+            antigravity_only=antigravity_only,
+        )
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -2660,6 +2726,9 @@ def install_plugins(
         if gemini_only and not available["gemini"]:
             print("   Gemini CLI not found. Install from:")
             print("   npm install -g @google-labs/gemini-cli")
+        if antigravity_only and not available["antigravity"]:
+            print("   Antigravity CLI not found. Install from:")
+            print("   brew install --cask antigravity-cli")
         if codex_only and not available["codex"]:
             print("   Codex CLI not found. Install from:")
             print("   https://developers.openai.com/codex/")
@@ -2723,6 +2792,7 @@ def install_plugins(
     claude_failed: list[str] = []
     claude_success = False
     gemini_success = False
+    antigravity_success = False
 
     # Install for Claude Code
     if "claude" in target_clis:
@@ -2808,6 +2878,12 @@ def install_plugins(
             # Note: Conductor failure doesn't affect overall success
             # (it's an optional enhancement)
 
+    if "antigravity" in target_clis:
+        antigravity_success, antigravity_msg = _install_for_antigravity(marketplace_root, plugins, force)
+        if not antigravity_success:
+            print(f"   Antigravity import failed: {antigravity_msg}")
+        all_succeeded = all_succeeded and antigravity_success
+
     # Install for Codex CLI (user-level ~/.codex/hooks.json — always active)
     codex_success = False
     codex_plugin_success = False
@@ -2878,6 +2954,12 @@ def install_plugins(
         else:
             print("✗ Gemini CLI: Installation failed")
 
+    if "antigravity" in target_clis:
+        if antigravity_success:
+            print("✓ Google Antigravity: imported Gemini ar plugin with commands, skills, and hooks")
+        else:
+            print("✗ Google Antigravity: import failed")
+
     if "codex" in target_clis:
         if codex_success:
             print("✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
@@ -2900,6 +2982,8 @@ def install_plugins(
     print("  /pdf-extractor:*  - PDF extraction commands")
     if "gemini" in target_clis and conductor:
         print("  /conductor:*      - Conductor plan mode (Gemini only)")
+    if "antigravity" in target_clis:
+        print("  agy plugin list   - verify imported Antigravity plugins")
     print()
     print("Run '/help' to see all available commands.")
 
@@ -2979,6 +3063,8 @@ def show_status() -> int:
         print("  claude CLI: found")
     else:
         print("  claude CLI: not found")
+    claude_app_ok, claude_app_status = _platform_app_status("claude")
+    print(f"  Claude app: {'✓ installed' if claude_app_ok else '✗ not found'} ({claude_app_status})")
 
     if not claude_ok:
         print()
@@ -3121,6 +3207,34 @@ def show_status() -> int:
         all_ok = False
     if not codex_ok:
         print("  Install: https://developers.openai.com/codex/")
+
+    codex_app_ok, codex_app_status = _platform_app_status("codex")
+    print(f"  Codex app: {'✓ installed' if codex_app_ok else '✗ not found'} ({codex_app_status})")
+
+    # Check Antigravity app/CLI successor surface.
+    print()
+    print("-" * 60)
+    print("Google Antigravity:")
+
+    antigravity_ok = shutil.which("agy") is not None
+    print(f"  agy CLI: {'found' if antigravity_ok else 'not found'}")
+    antigravity_app_ok, antigravity_app_status = _platform_app_status("antigravity")
+    print(
+        f"  Antigravity app: "
+        f"{'✓ installed' if antigravity_app_ok else '✗ not found'} ({antigravity_app_status})"
+    )
+    if antigravity_ok:
+        result = run_cmd(["agy", "plugin", "list"], timeout=30)
+        if result.ok:
+            has_ar = '"name": "ar"' in result.output or "ar" in result.output
+            print(f"  ar plugin: {'✓ imported' if has_ar else '✗ not imported'}")
+            if not has_ar:
+                all_ok = False
+        else:
+            print(f"  plugins: ✗ list failed: {result.output}")
+            all_ok = False
+    else:
+        print("  Install CLI: brew install --cask antigravity-cli")
 
     # Check ForgeCode advisory install.
     print()
@@ -3401,6 +3515,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
     parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
+    parser.add_argument("--antigravity", action="store_true", help="Install for Google Antigravity CLI only")
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
         "--conductor",
@@ -3447,6 +3562,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         claude_only=args.claude,
         gemini_only=args.gemini,
         codex_only=args.codex,
+        antigravity_only=args.antigravity,
         conductor=args.conductor,
         use_aix=args.use_aix,
     )

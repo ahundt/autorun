@@ -2,7 +2,7 @@
 
 These tests pin the Platform abstraction's INVARIANTS (immutability,
 single source of truth, multi-process/thread/session safety) for the
-4 currently-shipped platforms: Claude, Gemini, Codex, ForgeCode.
+currently-shipped platforms: Claude, Gemini, Antigravity, Codex, ForgeCode.
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from autorun.platforms import (
 
 # ─── Registry shape ───────────────────────────────────────────────────────────
 
-def test_registry_contains_all_four_platforms():
-    for name in ("claude", "gemini", "codex", "forgecode"):
+def test_registry_contains_supported_platforms():
+    for name in ("claude", "gemini", "antigravity", "codex", "forgecode"):
         assert name in PLATFORMS, f"PLATFORMS missing {name!r}"
 
 
@@ -43,14 +43,14 @@ def test_detection_platforms_excludes_claude():
     """Claude is the fallback default — not part of positive detection iteration."""
     names = [p.name for p in detection_platforms()]
     assert "claude" not in names
-    assert {"gemini", "codex", "forgecode"}.issubset(set(names))
+    assert {"gemini", "antigravity", "codex", "forgecode"}.issubset(set(names))
 
 
 def test_hook_platforms_excludes_forgecode():
     """ForgeCode has no external hooks — should not appear in hook-capable list."""
     names = [p.name for p in hook_platforms()]
     assert "forgecode" not in names
-    assert {"claude", "gemini", "codex"}.issubset(set(names))
+    assert {"claude", "gemini", "antigravity", "codex"}.issubset(set(names))
 
 
 # ─── Immutability (multi-thread / multi-session safety) ───────────────────────
@@ -92,6 +92,8 @@ def test_claude_platform_fields():
     assert p.has_exit2_workaround is True
     assert p.drops_additional_context is True
     assert "Grep" in p.tool_names.values()
+    assert "/Applications/Claude.app" in p.app_paths
+    assert "com.anthropic.claudefordesktop" in p.app_bundle_ids
 
 
 def test_gemini_platform_fields():
@@ -104,6 +106,18 @@ def test_gemini_platform_fields():
     assert "BeforeTool" in p.detect_event_names
 
 
+def test_antigravity_platform_fields():
+    p = PLATFORMS["antigravity"]
+    assert p.binary == "agy"
+    assert p.has_hooks is True
+    assert p.schema_type == "permissive"
+    assert p.list_cmd == ("agy", "plugin", "list")
+    assert ".gemini/antigravity-cli" in p.detect_path_hints
+    assert "/Applications/Antigravity.app" in p.app_paths
+    assert "com.google.antigravity" in p.app_bundle_ids
+    assert p.task_management_style == "bulk_todos"
+
+
 def test_codex_platform_fields():
     p = PLATFORMS["codex"]
     assert p.binary == "codex"
@@ -111,6 +125,8 @@ def test_codex_platform_fields():
     assert p.schema_type == "strict"  # same JSON schema as Claude
     assert p.has_exit2_workaround is False
     assert p.drops_additional_context is False
+    assert "/Applications/Codex.app" in p.app_paths
+    assert "com.openai.codex" in p.app_bundle_ids
 
 
 def test_forgecode_platform_fields():
@@ -131,7 +147,7 @@ def test_concurrent_get_platform_is_safe():
 
     def worker(i: int):
         try:
-            p = get_platform(("claude", "gemini", "codex", "forgecode")[i % 4])
+            p = get_platform(("claude", "gemini", "antigravity", "codex", "forgecode")[i % 5])
             results[i] = p.name
         except Exception as exc:  # pragma: no cover — defensive
             errors.append(exc)

@@ -104,6 +104,8 @@ class Platform:
     hooks_path_var: str = ""
     install_fn_name: str = ""
     list_cmd: tuple[str, ...] = ()
+    app_bundle_ids: tuple[str, ...] = ()
+    app_paths: tuple[str, ...] = ()
 
 
 # === Registry ==============================================================
@@ -174,6 +176,8 @@ CLAUDE = register(Platform(
     hooks_path_var="${CLAUDE_PLUGIN_ROOT}",
     install_fn_name="_install_for_claude",
     list_cmd=("claude", "plugin", "list"),
+    app_bundle_ids=("com.anthropic.claudefordesktop",),
+    app_paths=("/Applications/Claude.app",),
     tool_names=_CLAUDE_TOOLS,
     task_management_style="task_tools",
     task_create_tools=frozenset({"TaskCreate"}),
@@ -250,6 +254,43 @@ GEMINI = register(Platform(
 ))
 
 
+ANTIGRAVITY = register(Platform(
+    name="antigravity",
+    display_name="Google Antigravity",
+    binary="agy",
+    detect_env_vars=(
+        "ANTIGRAVITY_SESSION_ID",
+        "ANTIGRAVITY_PROJECT_DIR",
+        "AGY_SESSION_ID",
+    ),
+    detect_session_keys=("ANTIGRAVITY_SESSION_ID", "AGY_SESSION_ID"),
+    detect_event_names=frozenset(),
+    detect_path_hints=(".antigravity", ".gemini/antigravity", ".gemini/antigravity-cli"),
+    cli_to_internal_events=GEMINI.cli_to_internal_events,
+    internal_to_cli_events=GEMINI.internal_to_cli_events,
+    has_hooks=True,
+    schema_type="permissive",
+    has_exit2_workaround=False,
+    drops_additional_context=False,
+    config_dir="~/.gemini/antigravity-cli/",
+    template_dir="gemini_template",
+    hooks_path_var="${extensionPath}",
+    install_fn_name="_install_for_antigravity",
+    list_cmd=("agy", "plugin", "list"),
+    tool_names=_GEMINI_TOOLS,
+    task_management_style="bulk_todos",
+    task_create_tools=GEMINI.task_create_tools,
+    task_update_tools=GEMINI.task_update_tools,
+    task_review_tools=GEMINI.task_review_tools,
+    task_bulk_tools=GEMINI.task_bulk_tools,
+    normal_allow_decision="allow",
+    block_decision="deny",
+    supports_additional_context_events=GEMINI.supports_additional_context_events,
+    app_bundle_ids=("com.google.antigravity",),
+    app_paths=("/Applications/Antigravity.app",),
+))
+
+
 CODEX = register(Platform(
     name="codex",
     display_name="Codex CLI",
@@ -266,6 +307,8 @@ CODEX = register(Platform(
     hooks_path_var="${PLUGIN_ROOT}",  # ${CLAUDE_PLUGIN_ROOT} also set as compat
     install_fn_name="_install_for_codex",
     list_cmd=("codex", "plugin", "list"),
+    app_bundle_ids=("com.openai.codex",),
+    app_paths=("/Applications/Codex.app",),
     tool_names=_CODEX_TOOLS,
     native_shell_read_commands=frozenset({"cat", "head", "tail"}),
     task_management_style="plan_checklist",
@@ -324,7 +367,11 @@ def detection_platforms() -> list[Platform]:
 
     Claude is the fallback default so it's excluded from positive detection.
     """
-    return [p for p in PLATFORMS.values() if p.name != "claude"]
+    priority = {"antigravity": -10}
+    return sorted(
+        (p for p in PLATFORMS.values() if p.name != "claude"),
+        key=lambda p: priority.get(p.name, 0),
+    )
 
 
 def platform_for(name: str | None) -> Platform:

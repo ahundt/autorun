@@ -21,6 +21,7 @@ from pathlib import Path
 
 from autorun.install import (
     CmdResult,
+    _install_for_antigravity,
     _install_codex_plugin_with_cli,
     _install_for_codex,
     detect_available_clis,
@@ -43,25 +44,67 @@ def test_detect_available_clis_includes_codex_and_forgecode(monkeypatch):
     avail = detect_available_clis()
     assert "claude" in avail
     assert "gemini" in avail
+    assert "antigravity" in avail
     assert "codex" in avail
     assert "forgecode" in avail
 
 
 def test_determine_target_clis_default_returns_all_available():
-    available = {"claude": True, "gemini": True, "codex": True, "forgecode": False}
+    available = {
+        "claude": True,
+        "gemini": True,
+        "antigravity": True,
+        "codex": True,
+        "forgecode": False,
+    }
     targets = determine_target_clis(False, False, available)
     assert "codex" in targets
+    assert "antigravity" in targets
     assert "forgecode" not in targets
 
 
 def test_determine_target_clis_codex_only():
-    available = {"claude": True, "gemini": True, "codex": True, "forgecode": True}
+    available = {"claude": True, "gemini": True, "antigravity": True, "codex": True, "forgecode": True}
     assert determine_target_clis(False, False, available, codex_only=True) == ["codex"]
 
 
+def test_determine_target_clis_antigravity_only():
+    available = {"claude": True, "gemini": True, "antigravity": True, "codex": True, "forgecode": True}
+    assert determine_target_clis(False, False, available, antigravity_only=True) == ["antigravity"]
+
+
 def test_determine_target_clis_multiple_selected_platforms():
-    available = {"claude": True, "gemini": True, "codex": True, "forgecode": True}
-    assert determine_target_clis(True, False, available, codex_only=True) == ["claude", "codex"]
+    available = {"claude": True, "gemini": True, "antigravity": True, "codex": True, "forgecode": True}
+    assert determine_target_clis(
+        True,
+        False,
+        available,
+        codex_only=True,
+        antigravity_only=True,
+    ) == ["claude", "antigravity", "codex"]
+
+
+def test_install_for_antigravity_imports_gemini_plugins(monkeypatch, tmp_path):
+    """Antigravity install preserves Gemini ar hooks through agy importer."""
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/agy" if binary == "agy" else None)
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(tuple(cmd))
+        if cmd == ["agy", "plugin", "import", "gemini"]:
+            return CmdResult(True, "[ok] ar\nhooks : 2 processed\n")
+        if cmd == ["agy", "plugin", "list"]:
+            return CmdResult(True, '{"imports":[{"name":"ar","components":["skills","commands","hooks"]}]}')
+        return CmdResult(False, f"unexpected command: {cmd!r}")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    ok, msg = _install_for_antigravity(tmp_path, ["autorun"], force=True)
+
+    assert ok, msg
+    assert ("agy", "plugin", "import", "gemini") in calls
+    assert ("agy", "plugin", "list") in calls
 
 
 # ─── _install_for_codex installation ─────────────────────────────────────────
@@ -166,13 +209,19 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     monkeypatch.setattr("autorun.install._check_uv_env", lambda _p: CmdResult(True, "OK"))
 
     def fake_which(binary: str):
-        return f"/usr/bin/{binary}" if binary in {"claude", "gemini", "codex", "autorun", "aise"} else None
+        return (
+            f"/usr/bin/{binary}"
+            if binary in {"claude", "gemini", "agy", "codex", "autorun", "aise"}
+            else None
+        )
 
     def fake_run_cmd(cmd, *args, **kwargs):
         if cmd[:3] == ["claude", "plugin", "list"]:
             return CmdResult(True, "autorun enabled\npdf-extractor enabled\n")
         if cmd[:3] == ["gemini", "extensions", "list"]:
             return CmdResult(True, "ar\npdf-extractor\nconductor\n")
+        if cmd[:3] == ["agy", "plugin", "list"]:
+            return CmdResult(True, "ar enabled\n")
         return CmdResult(True, "")
 
     monkeypatch.setattr("shutil.which", fake_which)
@@ -246,6 +295,9 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "hooks.json: ✓ installed" in out
     assert "skills: ✓ 2 user, 2 plugin source, 2 plugin cache" in out
     assert "plugin marketplace: ✓ installed, enabled" in out
+    assert "Google Antigravity:" in out
+    assert "agy CLI: found" in out
+    assert "ar plugin: ✓ imported" in out
     assert "ForgeCode:" in out
     assert "hooks: advisory only" in out
 

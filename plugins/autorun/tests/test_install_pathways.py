@@ -453,6 +453,27 @@ class TestInstallMainAdapter:
             claude_only=False,
             gemini_only=False,
             codex_only=True,
+            antigravity_only=False,
+            conductor=True,
+            use_aix=None,
+        )
+
+    def test_install_module_main_antigravity_force_routes_to_install_plugins(self):
+        """Verify direct module install honors --antigravity and --force."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(["--install", "--antigravity", "--force"])
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=True,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=False,
+            antigravity_only=True,
             conductor=True,
             use_aix=None,
         )
@@ -480,6 +501,7 @@ class TestInstallMainAdapter:
             claude_only=False,
             gemini_only=False,
             codex_only=True,
+            antigravity_only=False,
             conductor=True,
             use_aix=None,
         )

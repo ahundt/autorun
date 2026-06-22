@@ -247,6 +247,11 @@ For more information: https://github.com/ahundt/autorun
         help="Install for Gemini CLI only (default: install for both CLIs if available)",
     )
     install_group.add_argument(
+        "--antigravity",
+        action="store_true",
+        help="Install for Google Antigravity CLI only (imports Gemini plugins through agy)",
+    )
+    install_group.add_argument(
         "--codex",
         action="store_true",
         help="Install for Codex CLI only (default: install for all available CLIs)",
@@ -289,9 +294,9 @@ For more information: https://github.com/ahundt/autorun
     hook_group = parser.add_argument_group("Hook Integration")
     hook_group.add_argument(
         "--cli",
-        choices=["claude", "gemini", "codex"],
+        choices=["claude", "gemini", "antigravity", "codex"],
         default=None,
-        help="CLI type calling this invocation (claude, gemini, or codex). "
+        help="CLI type calling this invocation (claude, gemini, antigravity, or codex). "
              "Passed by hook_entry.py so every pathway receives CLI identity. "
              "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )
@@ -750,6 +755,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             claude_only=args.claude,
             gemini_only=args.gemini,
             codex_only=args.codex,
+            antigravity_only=args.antigravity,
             conductor=args.conductor,
             use_aix=args.aix if hasattr(args, 'aix') else None,  # NEW: Auto-detect if None
         )

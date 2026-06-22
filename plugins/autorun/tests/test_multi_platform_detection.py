@@ -24,6 +24,7 @@ def _clean_env(monkeypatch) -> None:
     """Remove all platform env vars so tests start from a clean state."""
     for var in (
         "GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
+        "ANTIGRAVITY_SESSION_ID", "ANTIGRAVITY_PROJECT_DIR", "AGY_SESSION_ID",
         "CODEX_SESSION_ID", "CODEX_PROJECT_DIR",
         "FORGE_CONFIG",
     ):
@@ -51,6 +52,19 @@ class TestCLIDetectorsStructure:
         from autorun.config import _CLI_DETECTORS
         names = [d[0] for d in _CLI_DETECTORS]
         assert "codex" in names, "_CLI_DETECTORS must include codex"
+
+    def test_cli_detectors_has_antigravity(self):
+        from autorun.config import _CLI_DETECTORS
+        names = [d[0] for d in _CLI_DETECTORS]
+        assert "antigravity" in names, "_CLI_DETECTORS must include antigravity"
+
+    def test_antigravity_detector_precedes_gemini(self):
+        from autorun.config import _CLI_DETECTORS
+        names = [d[0] for d in _CLI_DETECTORS]
+        assert names.index("antigravity") < names.index("gemini"), (
+            "Antigravity path hints include .gemini/antigravity-cli and must "
+            "be checked before Gemini's generic .gemini hint"
+        )
 
     def test_cli_detectors_has_forgecode(self):
         from autorun.config import _CLI_DETECTORS
@@ -205,6 +219,45 @@ class TestCodexDetection:
         monkeypatch.setenv("CODEX_SESSION_ID", "codex-session")
         from autorun.config import detect_cli_type
         assert detect_cli_type(payload={"cli_type": "gemini"}) == "gemini"
+
+
+# ---------------------------------------------------------------------------
+# Antigravity detection tests
+# ---------------------------------------------------------------------------
+
+class TestAntigravityDetection:
+    """Google Antigravity platform detection."""
+
+    def test_antigravity_session_id_env_returns_antigravity(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("ANTIGRAVITY_SESSION_ID", "agy-session")
+        from autorun.config import detect_cli_type
+        assert detect_cli_type() == "antigravity"
+
+    def test_agy_session_id_env_returns_antigravity(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("AGY_SESSION_ID", "agy-session")
+        from autorun.config import detect_cli_type
+        assert detect_cli_type() == "antigravity"
+
+    def test_explicit_payload_antigravity_returns_antigravity(self, monkeypatch):
+        _clean_env(monkeypatch)
+        from autorun.config import detect_cli_type
+        assert detect_cli_type(payload={"cli_type": "antigravity"}) == "antigravity"
+
+    def test_antigravity_cli_path_hint_beats_gemini(self, monkeypatch):
+        _clean_env(monkeypatch)
+        from autorun.config import detect_cli_type
+        result = detect_cli_type(
+            payload={"transcript_path": "/Users/me/.gemini/antigravity-cli/session.json"}
+        )
+        assert result == "antigravity"
+
+    def test_antigravity_home_path_hint_returns_antigravity(self, monkeypatch):
+        _clean_env(monkeypatch)
+        from autorun.config import detect_cli_type
+        result = detect_cli_type(payload={"transcript_path": "/Users/me/.antigravity/session.json"})
+        assert result == "antigravity"
 
 
 # ---------------------------------------------------------------------------

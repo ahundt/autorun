@@ -454,6 +454,7 @@ class TestMainFunctionRouting:
         mock_install.assert_called_once_with(
             "all", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -470,6 +471,7 @@ class TestMainFunctionRouting:
         mock_install.assert_called_once_with(
             "all", tool=False, force=True,
             claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -486,6 +488,7 @@ class TestMainFunctionRouting:
         mock_install.assert_called_once_with(
             "autorun,plan-export", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
             conductor=True, use_aix=None,
         )
         assert result == 0
@@ -502,6 +505,24 @@ class TestMainFunctionRouting:
         mock_install.assert_called_once_with(
             "all", tool=False, force=False,
             claude_only=False, gemini_only=False, codex_only=True,
+            antigravity_only=False,
+            conductor=True, use_aix=None,
+        )
+        assert result == 0
+
+    def test_install_with_antigravity_passes_antigravity_only_flag(self):
+        """Test that --install --antigravity targets Antigravity CLI installation."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--antigravity"])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=True,
             conductor=True, use_aix=None,
         )
         assert result == 0
