@@ -462,6 +462,61 @@ class TestPipeDetectionComprehensive:
         assert permission == "allow", \
             "Pipe with subshell blocked incorrectly"
 
+    def test_compound_for_loop_git_show_grep_head_pipeline(self):
+        """grep/head in git-show pipelines inside a for loop are scoped as pipes."""
+        cmd = '''cd /Users/athundt/source/general/processtree/processtree-rs/.claude/worktrees/agent-ad441b24cfefc8af7
+for f in crates/ui/src/state/metric_history.rs crates/ui/src/state/row_state.rs; do
+  echo "===== $f ====="
+  echo "--- Did a #[cfg(test)] mod tests ALREADY exist in parent bbaf38f? ---"
+  git show bbaf38f:"$f" | grep -nE "#\\[cfg\\(test\\)\\]|mod tests" || echo "  NO cfg(test) in parent — additions may be ungated prod code!"
+  echo "--- Current file: location of #[cfg(test)] vs the added helper fns ---"
+  git show 7cff33e:"$f" | grep -nE "#\\[cfg\\(test\\)\\]|^mod tests|fn metrics_with_gpu_power_temp|fn tree\\(|^pub fn|^impl " | head -15
+done'''
+        ctx = create_test_context(
+            tool_name="bash_command",
+            tool_input={"command": cmd}
+        )
+
+        result = _pretooluse(ctx)
+
+        hook_output = result.get("hookSpecificOutput", {})
+        permission = hook_output.get("permissionDecision", "allow")
+
+        assert permission == "allow", (
+            "grep/head inside git-show pipelines in a compound for loop were "
+            "incorrectly blocked"
+        )
+
+    def test_direct_grep_blocks_with_unrelated_head_pipeline(self):
+        """A direct grep remains blocked even when another command is piped."""
+        ctx = create_test_context(
+            tool_name="bash_command",
+            tool_input={"command": "grep pattern file.txt; git log | head -5"}
+        )
+
+        result = _pretooluse(ctx)
+        hook_output = result.get("hookSpecificOutput", {})
+        reason = hook_output.get("permissionDecisionReason", "")
+
+        assert hook_output.get("permissionDecision") == "deny"
+        assert "Command blocked: grep" in reason
+        assert "Command blocked: head" not in reason
+
+    def test_direct_head_blocks_with_unrelated_grep_pipeline(self):
+        """A direct head remains blocked even when grep is a pipeline stage."""
+        ctx = create_test_context(
+            tool_name="bash_command",
+            tool_input={"command": "git show HEAD:README.md | grep autorun; head -5 README.md"}
+        )
+
+        result = _pretooluse(ctx)
+        hook_output = result.get("hookSpecificOutput", {})
+        reason = hook_output.get("permissionDecisionReason", "")
+
+        assert hook_output.get("permissionDecision") == "deny"
+        assert "Command blocked: head" in reason
+        assert "Command blocked: grep" not in reason
+
 
 class TestHookResponseFormatCompliance:
     """Test hook response format matches specification."""

@@ -621,11 +621,14 @@ def _make_block_op(scope: str, op: str):
                 return f"❌ Error: {e}"
 
             ttl, uses, explicit_permanent = parse_scope_args(desc)
-            if not explicit_permanent and ttl is None and uses is None:
-                uses = 1  # Safe default: 1 use
+            default_scope = not explicit_permanent and ttl is None and uses is None
+            if default_scope:
+                uses = 1  # Safe default: one user-visible command
+            grace_seconds = 5.0 if default_scope and ctx.cli_type == "codex" else None
             sa = ScopedAllow(
                 pattern=pattern, pattern_type=ptype,
                 granted_at=time.time(), ttl_seconds=ttl, remaining_uses=uses,
+                grace_seconds=grace_seconds,
             )
             allows = accessor.get_allowed()
             # Replace existing entry for same pattern (update scope)
@@ -847,7 +850,8 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # is_valid uses the stored last_call_id to verify fingerprint-match before granting grace.
     # consume stores call_id so the next parallel invocation can verify it.
     from .scoped_allow import fingerprint_call
-    call_id = fingerprint_call(ctx.session_id, ctx.tool_name, cmd)
+    fingerprint_session = "codex" if ctx.cli_type == "codex" else ctx.session_id
+    call_id = fingerprint_call(fingerprint_session, ctx.tool_name, cmd)
 
     # TIER 1: Allows (short-circuit, first match wins — explicit allow overrides everything)
     for scope_name in ("session", "global"):
@@ -948,14 +952,6 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                 if ctx.tool_name not in expanded:
                     continue
 
-            # Check when predicate
-            try:
-                if not check_when_predicate(intg.when, ctx):
-                    continue
-            except Exception as e:
-                logger.warning(f"When predicate '{intg.when}' failed: {e}")
-                continue  # Skip on error
-
             # Check hookify conditions (AND-ed)
             if intg.conditions:
                 try:
@@ -969,6 +965,16 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
             for pattern in intg.patterns:
                 try:
                     if command_matches_pattern(cmd, pattern):  # O(1) cached
+                        # Evaluate predicates after the concrete pattern match.
+                        # Pattern-aware predicates such as _not_in_pipe need to
+                        # decide on the matched command occurrence, not on the
+                        # entire shell script.
+                        try:
+                            if not check_when_predicate(intg.when, ctx, pattern):
+                                break
+                        except Exception as e:
+                            logger.warning(f"When predicate '{intg.when}' failed: {e}")
+                            break
                         if _default_integration_allows_native_shell_read(
                             ctx, pattern, cmd, intg.source
                         ):

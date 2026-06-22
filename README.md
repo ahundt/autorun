@@ -929,6 +929,7 @@ autorun --conductor                  # Install Conductor extension for Gemini (d
 autorun --no-conductor               # Skip Conductor extension
 autorun --aix                        # Force AIX installation (local only)
 autorun --no-aix                     # Skip AIX even if installed
+autorun --antigravity                # Import Gemini ar plugin into Google Antigravity
 autorun --cli claude                 # Set CLI type (used internally by hooks)
 ```
 

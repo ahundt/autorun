@@ -885,6 +885,27 @@ class TestAllowPatternsSystem:
         assert "1 use remaining" in result
         assert "'git push'" in result
 
+    def test_codex_ar_ok_default_has_duplicate_hook_grace(self):
+        """Codex default allow keeps one use plus duplicate-hook grace."""
+        import uuid
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-codex-ok-hint-{uuid.uuid4().hex[:8]}",
+            event="UserPromptSubmit",
+            prompt="ar:ok git push",
+            store=store,
+            cli_type="codex",
+        )
+        ctx.activation_prompt = "/ar:ok git push"
+
+        result = app.command_handlers["/ar:ok"](ctx)
+
+        assert "1 use remaining" in result
+        allows = ctx.session_allowed_patterns or []
+        assert allows[-1]["pattern"] == "git push"
+        assert allows[-1]["remaining_uses"] == 1
+        assert allows[-1]["grace_seconds"] == 5.0
+
     def test_ar_no_removes_pattern_from_allows(self):
         """/ar:no is the inverse of /ar:ok: removes pattern from allows list."""
         import uuid

@@ -154,6 +154,23 @@ class TestPipeDetectionRealWorld:
                 f"_not_in_pipe() returned: {result}"
             )
 
+    def test_compound_for_loop_git_show_grep_head_pipeline(self):
+        """grep/head inside git-show pipelines in a for loop should be allowed."""
+        cmd = '''cd /Users/athundt/source/general/processtree/processtree-rs/.claude/worktrees/agent-ad441b24cfefc8af7
+for f in crates/ui/src/state/metric_history.rs crates/ui/src/state/row_state.rs; do
+  echo "===== $f ====="
+  echo "--- Did a #[cfg(test)] mod tests ALREADY exist in parent bbaf38f? ---"
+  git show bbaf38f:"$f" | grep -nE "#\\[cfg\\(test\\)\\]|mod tests" || echo "  NO cfg(test) in parent — additions may be ungated prod code!"
+  echo "--- Current file: location of #[cfg(test)] vs the added helper fns ---"
+  git show 7cff33e:"$f" | grep -nE "#\\[cfg\\(test\\)\\]|^mod tests|fn metrics_with_gpu_power_temp|fn tree\\(|^pub fn|^impl " | head -15
+done'''
+        ctx = create_mock_context(cmd)
+        result = _not_in_pipe(ctx)
+        assert result is False, (
+            "grep/head are pipeline stages inside the compound for loop and "
+            "must not be blocked as standalone file reads"
+        )
+
 
 if __name__ == '__main__':
     import pytest

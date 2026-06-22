@@ -358,7 +358,6 @@ class TestCodexE2ERealMoney:
         combined = run.combined_output
 
         forbidden_fragments = [
-            "AUTORUN_BLOCKED",
             "Blocked: git push requires explicit user permission",
             "PreToolUse hook (failed)",
             "unsupported permissionDecision:allow",
@@ -366,6 +365,12 @@ class TestCodexE2ERealMoney:
         ]
         for fragment in forbidden_fragments:
             assert fragment not in combined, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        assert run.last_message.strip() != "AUTORUN_BLOCKED", (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
+        assert run.last_message.strip() == "COMMAND_RAN", (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
         assert "COMMAND_RAN" in combined, f"Full output in: {run.log_path}\n{combined[-4000:]}"
         assert "no-such-remote" in combined, f"Full output in: {run.log_path}\n{combined[-4000:]}"
         assert run.completed.returncode == 0, f"Full output in: {run.log_path}\n{combined[-4000:]}"

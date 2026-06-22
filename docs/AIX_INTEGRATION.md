@@ -10,6 +10,12 @@
 - OpenCode
 - Codex CLI
 
+As of AIX 0.8.1, the CLI uses singular resource commands such as
+`aix skill install` and `aix command install`. Autorun treats AIX as a
+resource translation layer for skills and commands; direct autorun installers
+still run afterward to set up hooks, desktop-app-adjacent files, plugin caches,
+and Antigravity imports.
+
 ## Critical: Hook Registration
 
 **Hooks are essential for autorun functionality.** They power:
@@ -20,12 +26,15 @@
 
 ### AIX + Hooks: How It Works
 
-AIX may not fully understand Claude Code/Gemini CLI hook systems. **Autorun handles this automatically:**
+AIX does not fully manage Claude Code, Gemini CLI, Codex, or Antigravity hook
+trust/cache details. **Autorun handles this automatically:**
 
-1. **AIX Installation**: Runs `autorun --install` in post_install hooks
-2. **Hook Registration**: `autorun --install` registers hooks with each CLI
-3. **Bootstrap Fallback**: If hooks fail to register, autorun auto-detects on first use
-4. **Background Fix**: Bootstrap mechanism runs in background, registers hooks automatically
+1. **AIX Installation**: `autorun --install --aix` installs skills/commands through AIX.
+2. **Direct Installation**: the same command continues into direct Claude, Gemini,
+   Codex, Antigravity, and ForgeCode installers.
+3. **Hook Registration**: direct installers register hooks and plugin/cache assets.
+4. **Bootstrap Fallback**: if hooks fail to register, autorun auto-detects on first use.
+5. **Background Fix**: bootstrap runs in background and registers hooks automatically.
 
 **You don't need to do anything** - hooks will work correctly either way.
 
@@ -58,30 +67,33 @@ aix --version
 ### Install autorun via AIX
 
 ```bash
-# Install from GitHub
-aix skills install ahundt/autorun
+# Install from this repository clone
+autorun --install --aix
 
-# AIX auto-detects and installs for ALL available platforms
+# AIX installs skills/commands, then autorun direct installers finish setup
 # Example output:
-# ✓ Installed to Claude Code
-# ✓ Installed to Gemini CLI (+ Conductor extension)
-# ✓ Installed to OpenCode
+# ✓ Installation via AIX completed successfully
+# Continuing with direct platform installers to verify hooks, apps, skills, and plugin caches
+# ✓ Claude Code: Installed ...
+# ✓ Gemini CLI: Plugins installed ...
+# ✓ Google Antigravity: imported Gemini ar plugin with commands, skills, and hooks
+# ✓ Codex CLI: hooks installed ...
+# ✓ ForgeCode: commands + AGENTS.md installed
 #
-# Verifying hook registration...
-# ✓ Claude Code hooks registered
-# ✓ Gemini CLI hooks registered
 ```
 
 ### Verify Installation
 
 ```bash
 # List installed skills
-aix skills list
-# Should show: autorun (v0.8.0)
+aix skill list
+# Should show autorun-owned skills such as ai-session-tools or tmux-automation
 
 # Check platform-specific installations
 claude plugin list | grep autorun
 gemini extensions list | grep autorun
+codex plugin list | grep autorun
+agy plugin list
 ```
 
 ## Direct Installation (Alternative)
@@ -98,8 +110,10 @@ uv pip install .
 
 # Register with platforms
 autorun --install                # All detected platforms
-autorun --install --claude-only  # Claude Code only
-autorun --install --gemini-only  # Gemini CLI only
+autorun --install --claude       # Claude Code only
+autorun --install --gemini       # Gemini CLI only
+autorun --install --codex        # Codex CLI only
+autorun --install --antigravity  # Antigravity CLI import only
 ```
 
 ## Managing autorun via AIX
@@ -107,31 +121,33 @@ autorun --install --gemini-only  # Gemini CLI only
 ### Update
 
 ```bash
-# Update autorun across ALL platforms
-aix skills update autorun
+# Refresh AIX resources and direct platform setup
+autorun --update --update-method aix
 
-# Update all skills
-aix skills update
+# Inspect installed resources
+aix skill list
+aix command list
 ```
 
 ### Uninstall
 
 ```bash
-# Remove from ALL platforms
-aix skills remove autorun
+# Remove individual AIX-managed skills or commands
+aix skill remove ai-session-tools --force
+aix command remove st --force
 
 # Platform-specific removal
-aix skills remove autorun --platform claude_code
+aix skill remove ai-session-tools --platform claude --force
 ```
 
 ### Configuration
 
 ```bash
 # Show autorun info
-aix skills info autorun
+aix skill show ai-session-tools
 
 # View available commands
-aix skills info autorun --commands
+aix command list
 ```
 
 ## AIX vs Direct Installation
@@ -139,25 +155,25 @@ aix skills info autorun --commands
 | Feature | AIX | Direct |
 |---------|-----|--------|
 | **Multi-platform** | ✅ Auto-detects all CLIs | ⚠️ Manual flags required |
-| **Updates** | ✅ `aix skills update` | ⚠️ Per-platform commands |
-| **Uninstall** | ✅ `aix skills remove` | ⚠️ Manual cleanup |
+| **Updates** | ⚠️ resource refresh via `autorun --update --update-method aix` | ✅ full direct setup |
+| **Uninstall** | ⚠️ per-resource `aix skill remove` / `aix command remove` | ⚠️ manual cleanup |
 | **Community registry** | ✅ Share via AIX registry | ❌ GitHub only |
 | **Version management** | ✅ Built-in | ⚠️ Manual git tags |
-| **Hook registration** | ✅ Auto via post_install + bootstrap | ✅ Direct via --install |
+| **Hook registration** | ❌ handled by direct autorun installers | ✅ Direct via --install |
 | **Development mode** | ⚠️ Limited | ✅ Full flexibility |
 
 ## Hook Registration Deep Dive
 
 ### How Hooks Get Registered
 
-1. **Via AIX** (automatic):
+1. **Via AIX plus direct install**:
    ```toml
    # aix.toml defines post_install
    [install.claude_code]
    post_install = ["autorun", "--install"]
    ```
-   - AIX runs `autorun --install` after package installation
-   - This registers hooks in `~/.claude/hooks.json`
+   - AIX installs translated skills/commands
+   - Autorun direct installers then register hooks and caches
 
 2. **Via Bootstrap** (automatic fallback):
    - If hooks aren't registered, first hook invocation detects this
@@ -199,7 +215,8 @@ AIX may not fully support:
    - **Solution**: Native extension manifest handles this
 3. **Agent Definitions**: Agents may need platform-specific customization
    - **Solution**: Native extension manifest includes agents
-4. **Development Workflow**: Local edits require `aix skills reload`
+4. **Development Workflow**: AIX 0.8.1 has no `aix skill reload`; rerun
+   `autorun --install --aix --force`
    - **Solution**: Use direct installation for development
 
 **Recommendation:**
@@ -213,17 +230,17 @@ AIX may not fully support:
 git clone https://github.com/ahundt/autorun.git
 cd autorun
 
-# Install in dev mode
-aix skills install . --dev-mode
+# Install translated skills/commands plus direct hook/plugin setup
+autorun --install --aix --force
 
 # Make changes to code
 # Edit plugins/autorun/src/autorun/main.py
 
-# Reload changes across platforms
-aix skills reload autorun
+# Re-run setup after changes
+autorun --install --aix --force
 
 # Test on specific platform
-aix test autorun --platform gemini_cli
+autorun --status
 
 # Publish updates (MANUAL - not automatic)
 git push
@@ -235,7 +252,8 @@ git push
 
 ## Conductor Integration (Gemini CLI)
 
-When installing via AIX for Gemini CLI, Conductor extension is automatically installed to provide plan mode functionality:
+When installing through `autorun --install --aix`, the direct Gemini installer
+still installs Conductor for Gemini CLI:
 
 ```bash
 # AIX automatically runs in post_install:

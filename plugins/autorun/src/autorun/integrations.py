@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Final
 
 from .command_detection import (
+    COMMAND_PREFIXES,
     command_tokens_for,
     git_subcommand_index,
     shell_command_from_tool_input,
@@ -463,45 +464,94 @@ def _validate_integration(intg: Integration, source: str) -> list[str]:
 # =============================================================================
 
 
-def check_when_predicate(when: str, ctx: any) -> bool:
+_NO_MATCHED_PATTERN: Final[object] = object()
+_PIPE_AWARE_READ_COMMANDS: Final[frozenset[str]] = frozenset({
+    "grep", "find", "cat", "head", "tail",
+})
+
+
+def _set_current_pattern(ctx: any, pattern: str | None) -> tuple[dict | None, object]:
+    """Store the matched pattern for predicates without persisting session state."""
+    if pattern is None:
+        return None, _NO_MATCHED_PATTERN
+    try:
+        state = object.__getattribute__(ctx, "_state")
+        previous = state.get("_autorun_current_pattern", _NO_MATCHED_PATTERN)
+        state["_autorun_current_pattern"] = pattern
+        return state, previous
+    except Exception:
+        previous = getattr(ctx, "_autorun_current_pattern", _NO_MATCHED_PATTERN)
+        try:
+            setattr(ctx, "_autorun_current_pattern", pattern)
+        except Exception:
+            return None, _NO_MATCHED_PATTERN
+        return None, previous
+
+
+def _restore_current_pattern(ctx: any, state: dict | None, previous: object) -> None:
+    """Restore the matched-pattern marker after one predicate evaluation."""
+    try:
+        if state is not None:
+            if previous is _NO_MATCHED_PATTERN:
+                state.pop("_autorun_current_pattern", None)
+            else:
+                state["_autorun_current_pattern"] = previous
+        elif previous is _NO_MATCHED_PATTERN:
+            try:
+                delattr(ctx, "_autorun_current_pattern")
+            except Exception:
+                pass
+        else:
+            setattr(ctx, "_autorun_current_pattern", previous)
+    except Exception:
+        pass
+
+
+def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> bool:
     """
     Check when predicate. O(1) for Python, O(cmd) for bash.
 
     Args:
         when: Predicate name or bash command
         ctx: Event context (not used for most predicates)
+        pattern: Matched integration pattern, when known. Pattern-aware
+            predicates use this to avoid command-wide false positives.
 
     Returns:
         True if condition met, False otherwise
     """
-    if when == "always":
-        return True
-
-    # Try Python predicate first (fastest)
-    pred_func = _WHEN_PREDICATES.get(when)
-    if pred_func:
-        try:
-            return pred_func(ctx)
-        except Exception as e:
-            logger.warning(f"When predicate '{when}' failed: {e}")
-            return False
-
-    # Fallback: run as bash command
+    state, previous = _set_current_pattern(ctx, pattern)
     try:
-        result = subprocess.run(
-            when,
-            shell=True,
-            capture_output=True,
-            timeout=2,
-            text=True
-        )
-        return result.returncode == 0
-    except subprocess.TimeoutExpired:
-        logger.warning(f"When predicate '{when}' timed out")
-        return False
-    except Exception as e:
-        logger.warning(f"When predicate '{when}' error: {e}")
-        return False
+        if when == "always":
+            return True
+
+        # Try Python predicate first (fastest)
+        pred_func = _WHEN_PREDICATES.get(when)
+        if pred_func:
+            try:
+                return pred_func(ctx)
+            except Exception as e:
+                logger.warning(f"When predicate '{when}' failed: {e}")
+                return False
+
+        # Fallback: run as bash command
+        try:
+            result = subprocess.run(
+                when,
+                shell=True,
+                capture_output=True,
+                timeout=2,
+                text=True
+            )
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            logger.warning(f"When predicate '{when}' timed out")
+            return False
+        except Exception as e:
+            logger.warning(f"When predicate '{when}' error: {e}")
+            return False
+    finally:
+        _restore_current_pattern(ctx, state, previous)
 
 
 def _has_uncommitted_changes(ctx: any) -> bool:
@@ -821,6 +871,37 @@ def _checkout_targets_file_with_changes(ctx: any) -> bool:
         return True
 
 
+def _command_has_file_args(tokens: list[str], pattern: str | None = None) -> bool:
+    """Return whether a read-like shell command has non-flag arguments."""
+    tokens = _tokens_from_read_command(tokens, pattern)
+    if not tokens:
+        return False
+    return any(t for t in tokens[1:] if t != "--" and not t.startswith("-"))
+
+
+def _tokens_from_read_command(tokens: list[str], pattern: str | None) -> list[str]:
+    """Return tokens starting at the matched read command, after safe wrappers."""
+    stripped = strip_transparent_command_wrappers(tokens)
+    if not stripped:
+        return []
+    first = os.path.basename(stripped[0])
+    if pattern is None:
+        if first in _PIPE_AWARE_READ_COMMANDS:
+            return stripped
+        if first in COMMAND_PREFIXES:
+            for i, token in enumerate(stripped[1:], start=1):
+                if os.path.basename(token) in _PIPE_AWARE_READ_COMMANDS:
+                    return stripped[i:]
+        return []
+    if first == pattern:
+        return stripped
+    if first in COMMAND_PREFIXES:
+        for i, token in enumerate(stripped[1:], start=1):
+            if os.path.basename(token) == pattern:
+                return stripped[i:]
+    return []
+
+
 def _not_in_pipe(ctx: any) -> bool:
     """
     Check if command is NOT in a pipe context (should block for direct file operations).
@@ -849,25 +930,67 @@ def _not_in_pipe(ctx: any) -> bool:
         if not cmd:
             return False  # No command, allow
 
+        current_pattern = getattr(ctx, "_autorun_current_pattern", None)
+        if not isinstance(current_pattern, str) or not current_pattern:
+            current_pattern = None
+
         # Try bashlex for robust pipe detection (handles quotes, complex syntax)
         try:
             import bashlex
             parts = bashlex.parse(cmd)
 
-            # Check if any part is a pipeline
-            def has_pipeline(node):
-                if node.kind == 'pipeline':
-                    return True
-                # Recursively check children
-                for child in getattr(node, 'parts', []):
-                    if has_pipeline(child):
+            matched_any = False
+
+            def command_words(node) -> list[str]:
+                words = []
+                for child in getattr(node, "parts", []) or []:
+                    if getattr(child, "kind", None) == "word":
+                        words.append(getattr(child, "word", ""))
+                return words
+
+            def child_nodes(node):
+                for attr in ("parts", "list", "command"):
+                    value = getattr(node, attr, None)
+                    if not value:
+                        continue
+                    if isinstance(value, (list, tuple)):
+                        yield from value
+                    else:
+                        yield value
+
+            def direct_matched_file_read(node, in_pipeline: bool = False) -> bool:
+                nonlocal matched_any
+                kind = getattr(node, "kind", None)
+                child_in_pipeline = in_pipeline or kind == "pipeline"
+
+                if kind == "command":
+                    tokens = command_words(node)
+                    stripped = _tokens_from_read_command(tokens, current_pattern)
+                    if stripped:
+                        cmd_name = os.path.basename(stripped[0])
+                        if (
+                            (current_pattern is None and cmd_name in _PIPE_AWARE_READ_COMMANDS)
+                            or cmd_name == current_pattern
+                        ):
+                            matched_any = True
+                            if not child_in_pipeline and _command_has_file_args(
+                                stripped, current_pattern
+                            ):
+                                return True
+
+                # Recursively check bashlex child containers. Pipelines inside
+                # compound loops live under `list`, not `parts`.
+                for child in child_nodes(node):
+                    if direct_matched_file_read(child, child_in_pipeline):
                         return True
                 return False
 
-            # If any part has a pipeline, allow the command
+            # Block only when the matched read-like command occurs outside a pipe.
             for part in parts:
-                if has_pipeline(part):
-                    return False  # In pipe - allow
+                if direct_matched_file_read(part):
+                    return True
+            if matched_any:
+                return False
 
         except (ImportError, Exception) as e:
             # Bashlex not available or parse error - fall back to simple check
@@ -900,12 +1023,16 @@ def _not_in_pipe(ctx: any) -> bool:
 
         # Skip command name and flags
         # Any non-flag argument is potentially a file argument
-        file_args = [
-            t for t in tokens[1:]
-            if not t.startswith("-")
-        ]
+        if current_pattern is None:
+            direct_tokens = strip_transparent_command_wrappers(tokens)
+            has_file_args = any(
+                t for t in direct_tokens[1:]
+                if t != "--" and not t.startswith("-")
+            )
+        else:
+            has_file_args = _command_has_file_args(tokens, current_pattern)
 
-        if file_args:
+        if has_file_args:
             # Has file arguments - block (return True)
             return True
         else:

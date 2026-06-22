@@ -137,6 +137,7 @@ class ScopedAllow:
     remaining_uses: int | None = None
     consumed_at: float = 0.0     # Timestamp of last consume(); enables grace period
     last_call_id: str = ""       # Fingerprint of the call that consumed this allow
+    grace_seconds: float | None = None
 
     def is_valid(self, call_id: str = "") -> bool:
         """Check if this allow is still active (not expired/exhausted).
@@ -158,7 +159,12 @@ class ScopedAllow:
                 return False
         if self.remaining_uses is not None:
             if self.remaining_uses <= 0:
-                if self.consumed_at > 0 and (time.time() - self.consumed_at) < _PARALLEL_GRACE_SECONDS:
+                grace_seconds = (
+                    self.grace_seconds
+                    if self.grace_seconds is not None
+                    else _PARALLEL_GRACE_SECONDS
+                )
+                if self.consumed_at > 0 and (time.time() - self.consumed_at) < grace_seconds:
                     # If we have a stored fingerprint and a caller fingerprint, they must match.
                     # This prevents a global allow's grace from being claimed by a different session.
                     # Falls back to time-only if either fingerprint is absent (legacy state).
@@ -207,6 +213,8 @@ class ScopedAllow:
             d["consumed_at"] = self.consumed_at
         if self.last_call_id:
             d["last_call_id"] = self.last_call_id
+        if self.grace_seconds is not None:
+            d["grace_seconds"] = self.grace_seconds
         return d
 
     @classmethod
@@ -221,6 +229,7 @@ class ScopedAllow:
             remaining_uses=d.get("remaining_uses"),
             consumed_at=d.get("consumed_at", 0.0),
             last_call_id=d.get("last_call_id", ""),
+            grace_seconds=d.get("grace_seconds"),
         )
 
     def status_label(self) -> str:

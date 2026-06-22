@@ -111,7 +111,8 @@ path = "plugins/autorun/hooks/hooks.json"
 path = "plugins/autorun/src/autorun/gemini_template/hooks/hooks.json"
 
 # Installation hooks (custom AIX extension)
-# CRITICAL: Only performs LOCAL installation (aix skills install .)
+# CRITICAL: Only performs LOCAL installation (AIX 0.8 uses `aix skill install`
+# and `aix command install` for resource-level setup).
 # Does NOT publish to public AIX registry
 #
 # HOOK REGISTRATION: post_install runs "autorun --install" to ensure hooks

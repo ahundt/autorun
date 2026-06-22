@@ -267,7 +267,8 @@ Option 2: Local Development from Source
 
 Option 3: AIX Multi-Platform Install
   # Installs for all detected CLIs (Claude, Gemini, OpenCode, Codex)
-  aix skills install ahundt/autorun
+  brew install thoreinstein/tap/aix
+  autorun --install --aix
 
 ━━━ TROUBLESHOOTING ━━━
 
@@ -2323,14 +2324,134 @@ def detect_aix_installed() -> bool:
     return shutil.which("aix") is not None
 
 
+def detect_aix_manages_autorun() -> bool:
+    """Return True when AIX has autorun-owned resources installed."""
+    if not detect_aix_installed():
+        return False
+    result = run_cmd(["aix", "skill", "list"], timeout=10)
+    if not result.ok:
+        result = run_cmd(["aix", "skills", "list"], timeout=10)
+    if not result.ok:
+        return False
+    markers = (
+        "tmux-automation",
+        "parallel_process_subagent_execution",
+        "ai_session_tools",
+        "claude_session_tools",
+        "ai-session-tools",
+        "claude-session-tools",
+    )
+    return any(marker in result.output for marker in markers)
+
+
+def _aix_current_api_available() -> bool:
+    """Return True when AIX exposes singular `skill`/`command` subcommands."""
+    skill = run_cmd(["aix", "skill", "--help"], timeout=10)
+    command = run_cmd(["aix", "command", "--help"], timeout=10)
+    return skill.ok and command.ok
+
+
+def _aix_install_current_api(plugin_root: Path, force: bool = False) -> tuple[bool, str]:
+    """Install autorun skills and commands through AIX 0.8+ singular commands."""
+    aix_manifest = plugin_root / "aix.toml"
+    if not aix_manifest.exists():
+        return (False, f"AIX manifest not found: {aix_manifest}")
+
+    try:
+        with open(aix_manifest, "rb") as f:
+            aix_data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return (False, f"AIX manifest unreadable: {exc}")
+
+    failures: list[str] = []
+    skipped: list[str] = []
+    installed = 0
+
+    def _is_aix_backup_failure(output: str) -> bool:
+        return (
+            "backing up Claude Code before install" in output
+            and "is a directory" in output
+        )
+
+    for skill in aix_data.get("skills", []):
+        raw_path = skill.get("path")
+        if not isinstance(raw_path, str):
+            continue
+        skill_file = plugin_root / raw_path
+        skill_dir = skill_file.parent if skill_file.name == "SKILL.md" else skill_file
+        skill_dir = skill_dir.resolve()
+        if not skill_dir.is_dir():
+            failures.append(f"missing skill dir: {skill_dir}")
+            continue
+        validate = run_cmd(["aix", "skill", "validate", str(skill_dir)], timeout=30)
+        if not validate.ok:
+            skipped.append(f"skipped AIX-invalid skill {skill_dir.name}: {validate.output}")
+            continue
+        cmd = ["aix", "skill", "install", "--file", str(skill_dir)]
+        if force:
+            cmd.append("--force")
+        result = run_cmd(cmd, timeout=120)
+        if result.ok or result.has_text("already installed"):
+            installed += 1
+        elif _is_aix_backup_failure(result.output):
+            failures.append(
+                "AIX 0.8.1 Claude backup failed on a directory symlink under ~/.claude; "
+                "direct autorun installers will continue. "
+                f"Original output: {result.output}"
+            )
+            break
+        else:
+            failures.append(f"{' '.join(cmd)}: {result.output}")
+
+    if not failures:
+        command_dirs = [
+            plugin_root / "plugins" / "autorun" / "commands",
+            plugin_root / "plugins" / "pdf-extractor" / "commands",
+        ]
+        for command_dir in command_dirs:
+            if not command_dir.is_dir():
+                continue
+            cmd = ["aix", "command", "install", "--file", str(command_dir)]
+            if force:
+                cmd.append("--force")
+            result = run_cmd(cmd, timeout=120)
+            if result.ok or result.has_text("already installed"):
+                installed += 1
+            elif _is_aix_backup_failure(result.output):
+                failures.append(
+                    "AIX 0.8.1 Claude backup failed on a directory symlink under ~/.claude; "
+                    "direct autorun installers will continue. "
+                    f"Original output: {result.output}"
+                )
+                break
+            else:
+                failures.append(f"{' '.join(cmd)}: {result.output}")
+
+    status = run_cmd(["aix", "status"], timeout=30)
+    if status.ok:
+        print(status.output)
+
+    if failures:
+        detail = "\n".join([*skipped, *failures])
+        return (False, detail)
+    if installed == 0:
+        detail = "\n".join(skipped) if skipped else "AIX current API found no skills or commands to install"
+        return (False, detail)
+    detail = f"installed {installed} AIX skill/command resources"
+    if skipped:
+        detail = f"{detail}\n" + "\n".join(skipped)
+    return (True, detail)
+
+
 def install_via_aix(force: bool = False) -> tuple[bool, str]:
     """Install autorun locally using AIX if available.
 
     AIX provides unified installation across Claude Code, Gemini CLI,
     Google Antigravity, OpenCode, and Codex CLI platforms.
 
-    CRITICAL: This performs LOCAL installation only (aix skills install .).
-    Does NOT publish to public AIX registry - that requires manual user action.
+    CRITICAL: This performs LOCAL installation only. AIX 0.8+ installs
+    skills/commands with `aix skill install` and `aix command install`; direct
+    autorun installers still register hooks, apps, and plugin caches.
 
     Args:
         force: Force reinstall even if already installed
@@ -2345,25 +2466,30 @@ def install_via_aix(force: bool = False) -> tuple[bool, str]:
     print("Installing autorun via AIX...")
     print("AIX will auto-detect and install for all available platforms")
 
-    # Get repository root (2 levels up from plugin directory)
-    plugin_root = Path(__file__).parent.parent.parent.parent
+    # Get repository root from plugins/autorun/src/autorun/install.py.
+    plugin_root = Path(__file__).resolve().parents[4]
     aix_manifest = plugin_root / "aix.toml"
 
     if not aix_manifest.exists():
         return (False, f"AIX manifest not found: {aix_manifest}")
 
-    # Install via AIX (LOCAL installation only)
-    cmd = ["aix", "skills", "install", str(plugin_root)]
-    if force:
-        cmd.append("--force")
-
-    result = run_cmd(cmd)
+    if _aix_current_api_available():
+        result_ok, result_output = _aix_install_current_api(plugin_root, force=force)
+        result = CmdResult(result_ok, result_output)
+    else:
+        # Compatibility with older AIX builds that used plural `skills`.
+        cmd = ["aix", "skills", "install", str(plugin_root)]
+        if force:
+            cmd.append("--force")
+        result = run_cmd(cmd)
 
     if result.ok or result.has_text("already installed"):
         print("   ✓ autorun installed via AIX")
 
         # Verify which platforms were installed
-        verify_result = run_cmd(["aix", "skills", "list"])
+        verify_result = run_cmd(["aix", "skill", "list"])
+        if not verify_result.ok:
+            verify_result = run_cmd(["aix", "skills", "list"])
         installed_platforms = []
         if verify_result.ok:
             print("\n   Installed on platforms:")
@@ -2682,7 +2808,7 @@ def install_plugins(
         return 1
 
     # NEW: Auto-detect AIX and use for local installation if available
-    # CRITICAL: Only does LOCAL install (aix skills install .), never publishes
+    # CRITICAL: Only does LOCAL install via AIX, never publishes.
     if use_aix is None:
         use_aix = detect_aix_installed()  # Auto-detect by default
 
@@ -2690,8 +2816,7 @@ def install_plugins(
         aix_success, aix_msg = install_via_aix(force)
         if aix_success:
             print("\n✓ Installation via AIX completed successfully")
-            print("Run `aix skills list` to see all installed platforms")
-            return 0
+            print("Continuing with direct platform installers to verify hooks, apps, skills, and plugin caches")
         else:
             print(f"\n⚠️  AIX installation failed: {aix_msg}")
             print("Falling back to direct installation...")
@@ -3236,6 +3361,21 @@ def show_status() -> int:
     else:
         print("  Install CLI: brew install --cask antigravity-cli")
 
+    # Check AIX resource translation layer.
+    print()
+    print("-" * 60)
+    print("AIX:")
+
+    aix_ok = shutil.which("aix") is not None
+    print(f"  aix CLI: {'found' if aix_ok else 'not found'}")
+    if aix_ok:
+        current_api = _aix_current_api_available()
+        print(f"  API: {'current skill/command' if current_api else 'legacy skills'}")
+        manages = detect_aix_manages_autorun()
+        print(f"  autorun resources: {'✓ installed' if manages else '✗ not detected'}")
+    else:
+        print("  Install: brew install thoreinstein/tap/aix")
+
     # Check ForgeCode advisory install.
     print()
     print("-" * 60)
@@ -3327,8 +3467,8 @@ class UpdateStrategy:
         Returns:
             UpdateStrategy with detected method and CLI
         """
-        # Try AIX first (highest priority)
-        if detect_aix_installed():
+        # Try AIX first only when it actually manages autorun resources.
+        if detect_aix_manages_autorun():
             return UpdateStrategy("aix", None)
 
         # Try plugin systems
@@ -3383,6 +3523,18 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 
     # Strategy pattern - each method is a separate handler
     if method == "aix":
+        if _aix_current_api_available():
+            ok, msg = install_via_aix(force=True)
+            if not ok:
+                return CmdResult(False, msg)
+            runner = get_python_runner()
+            direct = run_cmd(
+                [*runner, "-m", "autorun", "--install", "--force", "--no-aix"],
+                timeout=300,
+            )
+            if direct.ok:
+                return CmdResult(True, f"{msg}\n{direct.output}".strip())
+            return direct
         return run_cmd(["aix", "skills", "update", "autorun"], timeout=120)
 
     elif method == "plugin":

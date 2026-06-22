@@ -21,11 +21,14 @@ from pathlib import Path
 
 from autorun.install import (
     CmdResult,
+    _aix_install_current_api,
     _install_for_antigravity,
     _install_codex_plugin_with_cli,
     _install_for_codex,
     detect_available_clis,
     determine_target_clis,
+    install_plugins,
+    install_via_aix,
     show_status,
 )
 
@@ -105,6 +108,128 @@ def test_install_for_antigravity_imports_gemini_plugins(monkeypatch, tmp_path):
     assert ok, msg
     assert ("agy", "plugin", "import", "gemini") in calls
     assert ("agy", "plugin", "list") in calls
+
+
+def test_install_plugins_aix_success_still_runs_direct_platform_installers(monkeypatch, tmp_path):
+    """AIX success must not bypass hook/app-specific direct installers."""
+    calls: list[str] = []
+
+    monkeypatch.setattr("autorun.install.find_marketplace_root", lambda: tmp_path)
+    monkeypatch.setattr("autorun.install._update_package_metadata", lambda _plugin_root: None)
+    monkeypatch.setattr("autorun.aix_manifest.generate_manifests", lambda _plugin_root: None)
+    monkeypatch.setattr("autorun.install._parse_selection", lambda _selection: ["ar"])
+    monkeypatch.setattr(
+        "autorun.install.detect_available_clis",
+        lambda: {
+            "claude": True,
+            "gemini": True,
+            "antigravity": True,
+            "codex": True,
+            "forgecode": True,
+        },
+    )
+    monkeypatch.setattr("autorun.install._check_uv_env", lambda _plugin_dir: CmdResult(True, "OK"))
+    monkeypatch.setattr("autorun.install._sync_dependencies", lambda: CmdResult(True, "synced"))
+    monkeypatch.setattr("autorun.install._install_pdf_deps", lambda: CmdResult(True, "skipping"))
+    monkeypatch.setattr("autorun.install._check_hook_conflicts", lambda: None)
+    monkeypatch.setattr("autorun.install._restart_daemon_if_running", lambda: None)
+    monkeypatch.setattr("shutil.which", lambda binary: f"/usr/bin/{binary}")
+    monkeypatch.setattr("autorun.install.install_via_aix", lambda force=False: (True, "success"))
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(" ".join(cmd))
+        return CmdResult(True, "")
+
+    def mark(name):
+        def _inner(*args, **kwargs):
+            calls.append(name)
+            return (True, "success")
+
+        return _inner
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("autorun.install._install_for_gemini", mark("gemini"))
+    monkeypatch.setattr("autorun.install._install_for_antigravity", mark("antigravity"))
+    monkeypatch.setattr("autorun.install._install_for_codex", mark("codex"))
+    monkeypatch.setattr("autorun.install._install_for_forgecode", mark("forgecode"))
+    monkeypatch.setattr("autorun.install._install_codex_plugin_with_cli", lambda force=False: CmdResult(True, "ok"))
+
+    assert install_plugins("all", force=True, use_aix=True) == 0
+
+    assert any(call.startswith("claude plugin marketplace add ") for call in calls)
+    assert "gemini" in calls
+    assert "antigravity" in calls
+    assert "codex" in calls
+    assert "forgecode" in calls
+
+
+def test_aix_current_api_installs_skills_and_command_dirs(monkeypatch, tmp_path):
+    """AIX 0.8.x uses singular skill/command install commands."""
+    repo = tmp_path
+    skill_dir = repo / "plugins" / "autorun" / "skills" / "tmux-automation"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tmux-automation\n---\n")
+    autorun_commands = repo / "plugins" / "autorun" / "commands"
+    pdf_commands = repo / "plugins" / "pdf-extractor" / "commands"
+    autorun_commands.mkdir(parents=True)
+    pdf_commands.mkdir(parents=True)
+    (autorun_commands / "st.md").write_text("---\ndescription: status\n---\n")
+    (pdf_commands / "extract.md").write_text("---\ndescription: extract\n---\n")
+    (repo / "aix.toml").write_text(
+        """
+[[skills]]
+name = "tmux"
+path = "plugins/autorun/skills/tmux-automation/SKILL.md"
+""",
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(tuple(cmd))
+        return CmdResult(True, "ok")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    ok, msg = _aix_install_current_api(repo, force=True)
+
+    assert ok, msg
+    assert ("aix", "skill", "install", "--file", str(skill_dir), "--force") in calls
+    assert ("aix", "command", "install", "--file", str(autorun_commands), "--force") in calls
+    assert ("aix", "command", "install", "--file", str(pdf_commands), "--force") in calls
+    assert ("aix", "status") in calls
+
+
+def test_install_via_aix_uses_current_singular_api(monkeypatch):
+    """install_via_aix() must prefer AIX 0.8.x `aix skill` commands."""
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr("autorun.install.detect_aix_installed", lambda: True)
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append(tuple(cmd))
+        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
+            return CmdResult(True, "help")
+        if cmd == ["aix", "skill", "list"]:
+            return CmdResult(True, "Platform: Claude Code\nPlatform: Gemini CLI\n")
+        if cmd == ["aix", "status"]:
+            return CmdResult(True, "aix version 0.8.1")
+        if cmd[:4] == ["aix", "skill", "install", "--file"]:
+            return CmdResult(True, "installed")
+        if cmd[:4] == ["aix", "command", "install", "--file"]:
+            return CmdResult(True, "installed")
+        return CmdResult(True, "")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    ok, msg = install_via_aix(force=True)
+
+    assert ok, msg
+    assert ("aix", "skill", "--help") in calls
+    assert any(call[:4] == ("aix", "skill", "install", "--file") for call in calls)
+    assert any(call[:4] == ("aix", "command", "install", "--file") for call in calls)
+    assert not any(call[:3] == ("aix", "skills", "install") for call in calls)
 
 
 # ─── _install_for_codex installation ─────────────────────────────────────────
@@ -211,7 +336,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     def fake_which(binary: str):
         return (
             f"/usr/bin/{binary}"
-            if binary in {"claude", "gemini", "agy", "codex", "autorun", "aise"}
+            if binary in {"claude", "gemini", "agy", "aix", "codex", "autorun", "aise"}
             else None
         )
 
@@ -222,6 +347,10 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
             return CmdResult(True, "ar\npdf-extractor\nconductor\n")
         if cmd[:3] == ["agy", "plugin", "list"]:
             return CmdResult(True, "ar enabled\n")
+        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
+            return CmdResult(True, "help\n")
+        if cmd == ["aix", "skill", "list"]:
+            return CmdResult(True, "ai-session-tools\ntmux-automation\n")
         return CmdResult(True, "")
 
     monkeypatch.setattr("shutil.which", fake_which)
@@ -298,6 +427,10 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "Google Antigravity:" in out
     assert "agy CLI: found" in out
     assert "ar plugin: ✓ imported" in out
+    assert "AIX:" in out
+    assert "aix CLI: found" in out
+    assert "API: current skill/command" in out
+    assert "autorun resources: ✓ installed" in out
     assert "ForgeCode:" in out
     assert "hooks: advisory only" in out
 

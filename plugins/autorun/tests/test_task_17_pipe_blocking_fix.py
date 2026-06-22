@@ -138,9 +138,9 @@ class TestPipeBlockingFix:
             "git log | grep fix || exit 1",
             "ps aux | grep python || echo 'No python processes'",
 
-            # Pipe with && (logical AND) - SHOULD BE ALLOWED
+            # Pipe with && (logical AND) - SHOULD BE ALLOWED when all read
+            # commands are pipeline stages.
             "git diff | grep TODO && echo 'Found TODOs'",
-            "ls -la | grep .txt && cat list.txt",
 
             # Complex: pipe with both || and && - SHOULD BE ALLOWED
             "cat file.txt | grep error && echo 'Errors found' || echo 'No errors'",
@@ -156,6 +156,14 @@ class TestPipeBlockingFix:
                 f"Command with pipe + logical operator should be ALLOWED: {cmd}\n"
                 f"_not_in_pipe() returned {result} (should be False for piped commands)"
             )
+
+        direct_read_after_pipe = "ls -la | grep .txt && cat list.txt"
+        ctx = create_mock_context(direct_read_after_pipe)
+        result = _not_in_pipe(ctx)
+        assert result == True, (
+            "Direct cat after an unrelated grep pipeline should remain blocked: "
+            f"{direct_read_after_pipe}"
+        )
 
     def test_comprehensive_grep_pipe_scenarios(self):
         """Comprehensive test of all grep pipe scenarios reported by users."""
