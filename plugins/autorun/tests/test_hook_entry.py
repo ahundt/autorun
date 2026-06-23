@@ -113,9 +113,19 @@ class TestHookEntryExecutionPriority:
         """Gemini keeps a 4s budget; Claude/Codex can use their larger hook budgets."""
         hook_entry = load_hook_entry_module()
         assert hook_entry.hook_timeout_for_cli("gemini") == 4
+        assert hook_entry.hook_timeout_for_cli("qwen") == 4
         assert hook_entry.hook_timeout_for_cli("claude") >= 8
         assert hook_entry.hook_timeout_for_cli("codex") >= 8
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
+
+    def test_qwen_project_dir_precedes_gemini_compat_env(self, monkeypatch):
+        """Qwen hooks must not inherit a stale Gemini-compatible project root."""
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setenv("QWEN_PROJECT_DIR", "/tmp/qwen-project")
+        monkeypatch.setenv("GEMINI_PROJECT_DIR", "/tmp/gemini-project")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/tmp/claude-project")
+
+        assert hook_entry.get_project_dir() == "/tmp/qwen-project"
 
 
 # =============================================================================

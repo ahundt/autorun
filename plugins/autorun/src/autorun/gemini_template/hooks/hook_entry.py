@@ -150,7 +150,13 @@ def get_project_dir() -> str:
     Safety: Multiple fallbacks ensure we always return a valid path.
     """
     try:
-        # Try Gemini first (more specific)
+        # Qwen can carry Gemini-compatible env in mixed extension setups; prefer
+        # the native Qwen project root when it is present.
+        project_dir = os.environ.get("QWEN_PROJECT_DIR")
+        if project_dir:
+            return project_dir
+
+        # Try Gemini before Claude for Gemini-family hooks.
         project_dir = os.environ.get("GEMINI_PROJECT_DIR")
         if project_dir:
             return project_dir
@@ -718,6 +724,8 @@ def main() -> None:
     log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
     log_debug(f"Env GEMINI_PROJECT_DIR: {os.environ.get('GEMINI_PROJECT_DIR')}")
+    log_debug(f"Env QWEN_SESSION_ID: {os.environ.get('QWEN_SESSION_ID')}")
+    log_debug(f"Env QWEN_PROJECT_DIR: {os.environ.get('QWEN_PROJECT_DIR')}")
     log_debug(f"Env CLAUDE_PROJECT_DIR: {os.environ.get('CLAUDE_PROJECT_DIR')}")
 
     # Inject cli_type into stdin payload so daemon gets explicit CLI identity.

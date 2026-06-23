@@ -266,6 +266,20 @@ autorun --install --qwen --force
 qwen extensions list
 ```
 
+For Z.AI GLM-5.2 through Qwen Code, use Qwen's OpenAI-compatible auth path
+and the Z.AI coding-plan endpoint:
+
+```bash
+OPENAI_BASE_URL="https://api.z.ai/api/coding/paas/v4" \
+OPENAI_API_KEY="$Z_AI_AUTH_TOKEN" \
+OPENAI_MODEL="${Z_AI_MODEL:-glm-5.2}" \
+qwen --auth-type openai --model "${Z_AI_MODEL:-glm-5.2}"
+```
+
+The local Claude aliases can keep using `ANTHROPIC_AUTH_TOKEN` and
+`Z_AI_BASE_URL=https://api.z.ai/api/anthropic`; Qwen's verified GLM-5.2 route
+maps the same `Z_AI_AUTH_TOKEN` secret to `OPENAI_API_KEY` instead.
+
 #### Multi-Model Workflows
 
 Use autorun's safety features across supported CLIs:
