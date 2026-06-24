@@ -67,7 +67,8 @@ error: hook returned invalid user prompt submit JSON output
 
 ## Where autorun installs hooks
 
-User-level: `~/.codex/hooks.json` (always active, no marketplace required).
+User-level: `~/.codex/hooks.json` (default, always active, no marketplace
+required).
 
 Codex plugin packaging: `~/.agents/plugins/marketplace.json` lists an
 `autorun` plugin with local source `./plugins/autorun`, which resolves to
@@ -75,12 +76,20 @@ Codex plugin packaging: `~/.agents/plugins/marketplace.json` lists an
 and `skills/`, so Codex can discover autorun's skills through its native
 plugin marketplace path.
 
-Autorun deliberately does **not** put hooks in the Codex plugin manifest.
-Codex merges hooks from all active sources, so bundling the same enforcement
-hooks in the plugin would duplicate `PreToolUse`, `UserPromptSubmit`, `Stop`,
-and task lifecycle execution. User-level hooks remain the single Codex
-enforcement path; the plugin is for skills and future Codex-native package
-metadata.
+Autorun makes the Codex hook source explicit with
+`--codex-hook-source user|plugin|both|none`. The default is `user`, which keeps
+enforcement in `~/.codex/hooks.json` and packages the Codex plugin for skills
+and metadata only. `plugin` mode generates a Codex-specific
+`hooks/hooks.json` with `--cli codex` and removes autorun's user-level hooks.
+`both` intentionally installs both sources. Avoid accidental user+plugin
+duplicates: Codex merges hooks from all active sources, so duplicate
+`PreToolUse`, `UserPromptSubmit`, `Stop`, and task lifecycle hooks all run.
+
+The local development plugin identity is `autorun@personal`: `autorun` is the
+plugin name and `personal` is the generated local marketplace name. Repo-backed
+installs use `.agents/plugins/marketplace.json` from `ahundt/autorun`, whose
+marketplace name is `ahundt-autorun`, so the plugin identity is
+`autorun@ahundt-autorun`.
 
 Path variables available inside hook commands:
 

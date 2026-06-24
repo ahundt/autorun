@@ -1595,7 +1595,10 @@ _CODEX_PLUGIN_NAME = "autorun"
 _CODEX_PLUGIN_SOURCE_PATH = "./plugins/autorun"
 _CODEX_PLUGIN_OWNED_MARKER = ".autorun-owned"
 _CODEX_PERSONAL_MARKETPLACE_NAME = "personal"
+_CODEX_GITHUB_MARKETPLACE_NAME = "ahundt-autorun"
+_CODEX_GITHUB_MARKETPLACE_SOURCE = "ahundt/autorun"
 _CODEX_HOOK_SOURCE_CHOICES = ("user", "plugin", "both", "none")
+_CODEX_PLUGIN_MARKETPLACE_CHOICES = ("personal", "github")
 
 
 def _codex_hook_source_from_env(default: str = "user") -> str:
@@ -1606,12 +1609,26 @@ def _codex_hook_source_from_env(default: str = "user") -> str:
     return value
 
 
+def _codex_plugin_marketplace_from_env(default: str = "personal") -> str:
+    """Return the Codex plugin marketplace mode selected by env or default."""
+    value = os.environ.get("AUTORUN_CODEX_PLUGIN_MARKETPLACE", default).strip().lower()
+    if value not in _CODEX_PLUGIN_MARKETPLACE_CHOICES:
+        return default
+    return value
+
+
 def _codex_uses_user_hooks(codex_hook_source: str) -> bool:
     return codex_hook_source in {"user", "both"}
 
 
 def _codex_uses_plugin_hooks(codex_hook_source: str) -> bool:
     return codex_hook_source in {"plugin", "both"}
+
+
+def _codex_plugin_marketplace_name(codex_plugin_marketplace: str) -> str:
+    if codex_plugin_marketplace == "github":
+        return _CODEX_GITHUB_MARKETPLACE_NAME
+    return _CODEX_PERSONAL_MARKETPLACE_NAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -1744,6 +1761,7 @@ def _install_for_codex(
     plugins: list[str],
     force: bool = False,
     codex_hook_source: str = "user",
+    codex_plugin_marketplace: str = "personal",
 ) -> tuple[bool, str]:
     """Install autorun for Codex with an explicit hook source mode.
 
@@ -1762,11 +1780,19 @@ def _install_for_codex(
         force: Reserved for parity with other installers; merge logic is
                idempotent so force has no effect here today.
         codex_hook_source: user, plugin, both, or none
+        codex_plugin_marketplace: personal or github
 
     Returns:
         Tuple of (success: bool, message: str)
     """
     codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
+    codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    if codex_plugin_marketplace == "github" and _codex_uses_plugin_hooks(codex_hook_source):
+        return (
+            False,
+            "Codex github marketplace mode cannot package runtime-generated plugin hooks; "
+            "use --codex-hook-source user or --codex-plugin-marketplace personal",
+        )
     plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
@@ -1792,10 +1818,17 @@ def _install_for_codex(
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
     skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
-    plugin_marketplace = _install_codex_plugin_marketplace(
-        plugin_dir,
-        include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
-    )
+    if codex_plugin_marketplace == "personal":
+        plugin_marketplace = _install_codex_plugin_marketplace(
+            plugin_dir,
+            include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
+        )
+    else:
+        plugin_marketplace = CodexPluginMarketplaceInstall(
+            source_ready=True,
+            marketplace_ready=True,
+            reason=f"github:{_CODEX_GITHUB_MARKETPLACE_SOURCE}",
+        )
 
     print()
     if _codex_uses_user_hooks(codex_hook_source):
@@ -1814,7 +1847,10 @@ def _install_for_codex(
             f"left untouched)"
         )
     if plugin_marketplace.marketplace_ready:
-        print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
+        if codex_plugin_marketplace == "personal":
+            print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
+        else:
+            print(f"✓ Codex GitHub marketplace selected: {_CODEX_GITHUB_MARKETPLACE_SOURCE}")
     elif plugin_marketplace.reason:
         print(f"  Codex plugin marketplace skipped: {plugin_marketplace.reason}")
     if codex_hook_source != "none":
@@ -2151,12 +2187,26 @@ def _install_codex_plugin_marketplace(
     )
 
 
-def _install_codex_plugin_with_cli(force: bool = False) -> CmdResult:
-    """Install the local autorun Codex plugin after marketplace publication."""
+def _install_codex_plugin_with_cli(
+    force: bool = False,
+    *,
+    marketplace_name: str = _CODEX_PERSONAL_MARKETPLACE_NAME,
+    marketplace_source: str | None = None,
+) -> CmdResult:
+    """Install the autorun Codex plugin after marketplace publication."""
     if not shutil.which("codex"):
         return CmdResult(False, "codex CLI not found")
 
-    plugin_id = f"{_CODEX_PLUGIN_NAME}@{_CODEX_PERSONAL_MARKETPLACE_NAME}"
+    if marketplace_source:
+        market = run_cmd(["codex", "plugin", "marketplace", "add", marketplace_source], timeout=120)
+        if not (market.ok or market.has_text("already")):
+            return market
+        if force:
+            upgrade = run_cmd(["codex", "plugin", "marketplace", "upgrade", marketplace_name], timeout=120)
+            if not (upgrade.ok or upgrade.has_text("already")):
+                return upgrade
+
+    plugin_id = f"{_CODEX_PLUGIN_NAME}@{marketplace_name}"
     remove = run_cmd(["codex", "plugin", "remove", plugin_id], timeout=120)
     if not (remove.ok or remove.has_text("not installed") or remove.has_text("not found")):
         return remove
@@ -3023,6 +3073,7 @@ def install_plugins(
     conductor: bool = True,
     use_aix: bool = None,  # NEW: Auto-detect AIX if None (default behavior)
     codex_hook_source: str = "user",
+    codex_plugin_marketplace: str = "personal",
 ) -> int:
     """Install and enable plugins for Claude Code and/or Gemini CLI.
 
@@ -3041,6 +3092,7 @@ def install_plugins(
         conductor: Install Conductor extension for Gemini (default: True)
         use_aix: Use AIX for installation (None = auto-detect, True = force use, False = skip)
         codex_hook_source: Codex hook source: user, plugin, both, or none
+        codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
 
     Returns:
         Exit code: 0 = success, 1 = failure
@@ -3101,6 +3153,7 @@ def install_plugins(
     print(f"Commit: {__commit__}")
     print(f"Build Time: {__build_time__}")
     codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
+    codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
 
     # Python version check
     if sys.version_info < (3, 10):
@@ -3333,16 +3386,27 @@ def install_plugins(
             plugins,
             force,
             codex_hook_source=codex_hook_source,
+            codex_plugin_marketplace=codex_plugin_marketplace,
         )
         all_succeeded = all_succeeded and codex_success
         if codex_success:
             print()
             print("Installing Codex plugin package...")
-            codex_plugin_result = _install_codex_plugin_with_cli(force=force)
+            codex_plugin_marketplace_name = _codex_plugin_marketplace_name(codex_plugin_marketplace)
+            codex_plugin_marketplace_source = (
+                _CODEX_GITHUB_MARKETPLACE_SOURCE
+                if codex_plugin_marketplace == "github"
+                else None
+            )
+            codex_plugin_result = _install_codex_plugin_with_cli(
+                force=force,
+                marketplace_name=codex_plugin_marketplace_name,
+                marketplace_source=codex_plugin_marketplace_source,
+            )
             codex_plugin_success = codex_plugin_result.ok
             codex_plugin_msg = codex_plugin_result.output
             if codex_plugin_success:
-                print("   autorun@personal installed/enabled")
+                print(f"   autorun@{codex_plugin_marketplace_name} installed/enabled")
             else:
                 print(f"   Codex plugin add failed: {codex_plugin_msg}")
             all_succeeded = all_succeeded and codex_plugin_success
@@ -3423,7 +3487,10 @@ def install_plugins(
             if codex_hook_source != "none":
                 print("  Run /hooks inside Codex to trust hook definitions")
             if codex_plugin_success:
-                print("✓ Codex CLI: plugin installed as autorun@personal")
+                print(
+                    "✓ Codex CLI: plugin installed as "
+                    f"autorun@{_codex_plugin_marketplace_name(codex_plugin_marketplace)}"
+                )
             else:
                 print("✗ Codex CLI: plugin install failed")
         else:
@@ -4039,6 +4106,17 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--codex-plugin-marketplace",
+        choices=_CODEX_PLUGIN_MARKETPLACE_CHOICES,
+        default="personal",
+        help=(
+            "Codex plugin marketplace mode: personal writes ~/.agents/plugins/"
+            "marketplace.json and installs autorun@personal; github adds "
+            "ahundt/autorun and installs autorun@ahundt-autorun. "
+            "Default: personal. AUTORUN_CODEX_PLUGIN_MARKETPLACE can also set this."
+        ),
+    )
+    parser.add_argument(
         "--conductor",
         action="store_true",
         default=True,
@@ -4088,6 +4166,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         conductor=args.conductor,
         use_aix=args.use_aix,
         codex_hook_source=args.codex_hook_source,
+        codex_plugin_marketplace=args.codex_plugin_marketplace,
     )
 
 

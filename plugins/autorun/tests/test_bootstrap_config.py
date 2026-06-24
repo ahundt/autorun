@@ -456,7 +456,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user",
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -474,7 +474,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user",
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -492,7 +492,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user",
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -510,7 +510,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user",
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -528,7 +528,25 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="plugin",
+            conductor=True, use_aix=None, codex_hook_source="plugin", codex_plugin_marketplace="personal",
+        )
+        assert result == 0
+
+    def test_install_with_codex_plugin_marketplace_passes_github_mode(self):
+        """Test that --codex-plugin-marketplace routes the Codex marketplace mode."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--codex", "--codex-plugin-marketplace", "github"])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=True,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="github",
         )
         assert result == 0
 
@@ -546,7 +564,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=True,
-            conductor=True, use_aix=None, codex_hook_source="user",
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -564,7 +582,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=True,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user",
+            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 

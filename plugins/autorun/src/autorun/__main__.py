@@ -272,6 +272,17 @@ For more information: https://github.com/ahundt/autorun
         ),
     )
     install_group.add_argument(
+        "--codex-plugin-marketplace",
+        choices=["personal", "github"],
+        default="personal",
+        help=(
+            "Codex plugin marketplace mode: personal installs autorun@personal "
+            "from a local personal marketplace; github adds ahundt/autorun "
+            "and installs autorun@ahundt-autorun. Default: personal. "
+            "AUTORUN_CODEX_PLUGIN_MARKETPLACE can also set this."
+        ),
+    )
+    install_group.add_argument(
         "--conductor",
         action="store_true",
         default=True,
@@ -775,6 +786,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             conductor=args.conductor,
             use_aix=args.aix if hasattr(args, 'aix') else None,  # NEW: Auto-detect if None
             codex_hook_source=args.codex_hook_source,
+            codex_plugin_marketplace=args.codex_plugin_marketplace,
         )
 
     # Status mode

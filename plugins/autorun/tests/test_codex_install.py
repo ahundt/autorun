@@ -220,7 +220,10 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
     monkeypatch.setattr("autorun.install._install_for_qwen", mark("qwen"))
     monkeypatch.setattr("autorun.install._install_for_codex", mark("codex"))
     monkeypatch.setattr("autorun.install._install_for_forgecode", mark("forgecode"))
-    monkeypatch.setattr("autorun.install._install_codex_plugin_with_cli", lambda force=False: CmdResult(True, "ok"))
+    monkeypatch.setattr(
+        "autorun.install._install_codex_plugin_with_cli",
+        lambda force=False, **_kwargs: CmdResult(True, "ok"),
+    )
 
     assert install_plugins("all", force=True, use_aix=True) == 0
 
@@ -1093,6 +1096,23 @@ def test_install_for_codex_none_hook_source_removes_user_and_plugin_hooks(tmp_pa
     assert not (tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json").exists()
 
 
+def test_install_for_codex_rejects_github_plugin_hook_source(tmp_path, monkeypatch):
+    """GitHub marketplace mode cannot package locally generated plugin hooks."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, msg = _install_for_codex(
+        fake_marketplace,
+        ["autorun"],
+        force=False,
+        codex_hook_source="plugin",
+        codex_plugin_marketplace="github",
+    )
+
+    assert not ok
+    assert "cannot package runtime-generated plugin hooks" in msg
+
+
 def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monkeypatch):
     """Codex plugin source must contain real SKILL.md files for link-backed skills.
 
@@ -1181,6 +1201,17 @@ def test_codex_plugin_manifest_exists_for_packaged_skills():
     )
 
 
+def test_repo_codex_marketplace_targets_autorun_plugin():
+    """GitHub marketplace installs need a repo-scoped Codex marketplace file."""
+    marketplace = Path(__file__).parents[3] / ".agents" / "plugins" / "marketplace.json"
+    data = json.loads(marketplace.read_text(encoding="utf-8"))
+    assert data["name"] == "ahundt-autorun"
+    assert data["interface"]["displayName"] == "ahundt/autorun"
+    entries = [plugin for plugin in data["plugins"] if plugin["name"] == "autorun"]
+    assert len(entries) == 1
+    assert entries[0]["source"] == {"source": "local", "path": "./plugins/autorun"}
+
+
 def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
     """The real installer must refresh and install the local Codex plugin."""
     calls = []
@@ -1202,6 +1233,34 @@ def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
     assert calls == [
         (["codex", "plugin", "remove", "autorun@personal"], 120),
         (["codex", "plugin", "add", "autorun@personal"], 120),
+    ]
+
+
+def test_install_codex_plugin_with_cli_uses_github_marketplace(monkeypatch):
+    """GitHub mode must add ahundt/autorun then install autorun@ahundt-autorun."""
+    calls = []
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary == "codex" else None,
+    )
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs.get("timeout")))
+        return CmdResult(True, "ok")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    result = _install_codex_plugin_with_cli(
+        marketplace_name="ahundt-autorun",
+        marketplace_source="ahundt/autorun",
+    )
+
+    assert result.ok
+    assert calls == [
+        (["codex", "plugin", "marketplace", "add", "ahundt/autorun"], 120),
+        (["codex", "plugin", "remove", "autorun@ahundt-autorun"], 120),
+        (["codex", "plugin", "add", "autorun@ahundt-autorun"], 120),
     ]
 
 

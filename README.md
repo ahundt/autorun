@@ -204,9 +204,13 @@ autorun --install --codex --codex-hook-source user    # default: ~/.codex/hooks.
 autorun --install --codex --codex-hook-source plugin  # autorun@personal bundled hooks only
 autorun --install --codex --codex-hook-source both    # install both sources intentionally
 autorun --install --codex --codex-hook-source none    # remove autorun Codex hooks, keep skills/guidance
+autorun --install --codex --codex-plugin-marketplace github
+                                                        # install plugin from ahundt/autorun as autorun@ahundt-autorun
 ```
 
-`AUTORUN_CODEX_HOOK_SOURCE` can set the same mode for unattended reinstalls. Reinstalls refresh `autorun@personal` so changing between `user`, `plugin`, `both`, and `none` clears stale hook files from previous cache versions instead of leaving duplicate PreToolUse/PostToolUse hooks behind.
+`AUTORUN_CODEX_HOOK_SOURCE` can set the same mode for unattended reinstalls. Reinstalls refresh the selected Codex plugin (`autorun@personal` or `autorun@ahundt-autorun`) so changing modes clears stale hook files from previous cache versions instead of leaving duplicate PreToolUse/PostToolUse hooks behind.
+
+`autorun@personal` is the local development plugin identity: `autorun` is the plugin name and `personal` is the generated local marketplace name in `~/.agents/plugins/marketplace.json`. For repo-backed Codex installs, the repository ships `.agents/plugins/marketplace.json` with marketplace name `ahundt-autorun`; use `--codex-plugin-marketplace github` to add `ahundt/autorun` through `codex plugin marketplace add` and install `autorun@ahundt-autorun`.
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 
@@ -916,6 +920,8 @@ autorun --install --qwen             # Register for Qwen Code only
 autorun --install --codex            # Register for Codex CLI only
 autorun --install --codex --codex-hook-source plugin
                                       # Package Codex hooks in autorun@personal instead of ~/.codex/hooks.json
+autorun --install --codex --codex-plugin-marketplace github
+                                      # Install Codex plugin from ahundt/autorun as autorun@ahundt-autorun
 autorun --install --force            # Force reinstall (development)
 autorun --install --tool             # Also run uv tool install for global CLI
 autorun --uninstall                  # Uninstall plugins and UV tools
