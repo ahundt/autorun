@@ -294,21 +294,6 @@ For more information: https://github.com/ahundt/autorun
         dest="conductor",
         help="Skip Conductor extension installation for Gemini",
     )
-    # AIX auto-detection: Will use AIX for local installation if available
-    # CRITICAL: Only does LOCAL installation, never publishes to public registry
-    install_group.add_argument(
-        "--aix",
-        action="store_true",
-        default=None,
-        help="Force use of AIX for installation (auto-detects if not specified). "
-             "Only performs LOCAL installation, never publishes publicly.",
-    )
-    install_group.add_argument(
-        "--no-aix",
-        action="store_false",
-        dest="aix",
-        help="Skip AIX even if installed (use direct installation instead)",
-    )
     install_group.add_argument(
         "--uninstall",
         "-u",
@@ -364,7 +349,7 @@ For more information: https://github.com/ahundt/autorun
     )
     update_group.add_argument(
         "--update-method",
-        choices=["auto", "plugin", "uv", "pip", "aix"],
+        choices=["auto", "plugin", "uv", "pip"],
         default="auto",
         help="Force specific update method (default: auto-detect)",
     )
@@ -784,7 +769,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             antigravity_only=args.antigravity,
             qwen_only=args.qwen,
             conductor=args.conductor,
-            use_aix=args.aix if hasattr(args, 'aix') else None,  # NEW: Auto-detect if None
             codex_hook_source=args.codex_hook_source,
             codex_plugin_marketplace=args.codex_plugin_marketplace,
         )

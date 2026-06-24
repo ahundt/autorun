@@ -138,21 +138,6 @@ class TestSemverComparison:
 class TestUpdateStrategyDetection:
     """Test UpdateStrategy.detect() auto-detection logic."""
 
-    def test_update_strategy_detects_aix(self):
-        """Test: UpdateStrategy.detect() prefers AIX when available.
-
-        AIX has highest priority for updates.
-        """
-        # Arrange
-        with patch("autorun.install.detect_aix_manages_autorun", return_value=True):
-            # Act
-            from autorun.install import UpdateStrategy
-            strategy = UpdateStrategy.detect()
-
-            # Assert
-            assert strategy.method == "aix"
-            assert strategy.cli is None
-
     def test_update_strategy_detects_claude_plugin(self):
         """Test: UpdateStrategy.detect() detects Claude Code plugin install."""
         # Arrange
@@ -160,16 +145,15 @@ class TestUpdateStrategyDetection:
         mock_result.ok = True
         mock_result.output = "autorun (installed)"
 
-        with patch("autorun.install.detect_aix_manages_autorun", return_value=False):
-            with patch("shutil.which", side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None):
-                with patch("autorun.install.run_cmd", return_value=mock_result):
-                    # Act
-                    from autorun.install import UpdateStrategy
-                    strategy = UpdateStrategy.detect()
+        with patch("shutil.which", side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None):
+            with patch("autorun.install.run_cmd", return_value=mock_result):
+                # Act
+                from autorun.install import UpdateStrategy
+                strategy = UpdateStrategy.detect()
 
-                    # Assert
-                    assert strategy.method == "plugin"
-                    assert strategy.cli == "claude"
+                # Assert
+                assert strategy.method == "plugin"
+                assert strategy.cli == "claude"
 
     def test_update_strategy_detects_gemini_plugin(self):
         """Test: UpdateStrategy.detect() detects Gemini CLI plugin install."""
@@ -178,44 +162,41 @@ class TestUpdateStrategyDetection:
         mock_result.ok = True
         mock_result.output = "ar@0.10.1 - autorun extension"
 
-        with patch("autorun.install.detect_aix_manages_autorun", return_value=False):
-            with patch("shutil.which", side_effect=lambda x: "/usr/bin/gemini" if x == "gemini" else None):
-                with patch("autorun.install.run_cmd", return_value=mock_result):
-                    # Act
-                    from autorun.install import UpdateStrategy
-                    strategy = UpdateStrategy.detect()
+        with patch("shutil.which", side_effect=lambda x: "/usr/bin/gemini" if x == "gemini" else None):
+            with patch("autorun.install.run_cmd", return_value=mock_result):
+                # Act
+                from autorun.install import UpdateStrategy
+                strategy = UpdateStrategy.detect()
 
-                    # Assert
-                    assert strategy.method == "plugin"
-                    assert strategy.cli == "gemini"
+                # Assert
+                assert strategy.method == "plugin"
+                assert strategy.cli == "gemini"
 
     def test_update_strategy_falls_back_to_uv(self):
         """Test: UpdateStrategy.detect() falls back to UV when plugins not found."""
         # Arrange
-        with patch("autorun.install.detect_aix_manages_autorun", return_value=False):
-            with patch("shutil.which", return_value=None):  # No CLIs
-                with patch("autorun.install.has_uv", return_value=True):
-                    # Act
-                    from autorun.install import UpdateStrategy
-                    strategy = UpdateStrategy.detect()
+        with patch("shutil.which", return_value=None):  # No CLIs
+            with patch("autorun.install.has_uv", return_value=True):
+                # Act
+                from autorun.install import UpdateStrategy
+                strategy = UpdateStrategy.detect()
 
-                    # Assert
-                    assert strategy.method == "uv"
-                    assert strategy.cli is None
+                # Assert
+                assert strategy.method == "uv"
+                assert strategy.cli is None
 
     def test_update_strategy_falls_back_to_pip(self):
         """Test: UpdateStrategy.detect() falls back to pip when UV unavailable."""
         # Arrange
-        with patch("autorun.install.detect_aix_manages_autorun", return_value=False):
-            with patch("shutil.which", return_value=None):
-                with patch("autorun.install.has_uv", return_value=False):
-                    # Act
-                    from autorun.install import UpdateStrategy
-                    strategy = UpdateStrategy.detect()
+        with patch("shutil.which", return_value=None):
+            with patch("autorun.install.has_uv", return_value=False):
+                # Act
+                from autorun.install import UpdateStrategy
+                strategy = UpdateStrategy.detect()
 
-                    # Assert
-                    assert strategy.method == "pip"
-                    assert strategy.cli is None
+                # Assert
+                assert strategy.method == "pip"
+                assert strategy.cli is None
 
 
 class TestPerformSelfUpdate:
@@ -233,27 +214,6 @@ class TestPerformSelfUpdate:
             assert result.ok is True
             assert "Already on latest version" in result.output
             assert "0.10.1" in result.output
-
-    def test_perform_self_update_via_current_aix(self):
-        """Test: perform_self_update() refreshes AIX resources plus direct hooks."""
-        direct_result = MagicMock()
-        direct_result.ok = True
-        direct_result.output = "direct install ok"
-
-        with patch("autorun.install.check_for_updates", return_value=(True, "0.10.1", "0.11.0")):
-            with patch("autorun.install._aix_current_api_available", return_value=True):
-                with patch("autorun.install.install_via_aix", return_value=(True, "aix install ok")) as mock_aix:
-                    with patch("autorun.install.get_python_runner", return_value=["uv", "run", "python"]):
-                        with patch("autorun.install.run_cmd", return_value=direct_result) as mock_run:
-                            from autorun.install import perform_self_update
-                            result = perform_self_update(method="aix")
-
-        assert result.ok is True
-        mock_aix.assert_called_once_with(force=True)
-        mock_run.assert_called_once_with(
-            ["uv", "run", "python", "-m", "autorun", "--install", "--force", "--no-aix"],
-            timeout=300,
-        )
 
     def test_perform_self_update_via_uv(self):
         """Test: perform_self_update() executes UV update + re-register."""
@@ -302,7 +262,7 @@ class TestPerformSelfUpdate:
         """Test: perform_self_update() auto-detects installation method when method='auto'."""
         # Arrange
         mock_strategy = MagicMock()
-        mock_strategy.method = "aix"
+        mock_strategy.method = "uv"
         mock_strategy.cli = None
 
         mock_result = MagicMock()

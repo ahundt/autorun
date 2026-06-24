@@ -102,8 +102,7 @@ on CLI type except at the boundary.
 │           └─ main()                 — routes to daemon via Unix socket       │
 │                                                                              │
 │         (The same file lives at <template>/hooks/hook_entry.py byte-for-     │
-│          byte — aix_manifest.generate_manifests shutil.copy2's it on every   │
-│          install. test_template_hook_entry_matches_canonical pins drift.)    │
+│          byte. test_template_hook_entry_matches_canonical pins drift.)       │
 │                            │                                                 │
 │                            ▼  JSON over Unix socket (ipc.py)                 │
 │                                                                              │
@@ -177,7 +176,7 @@ autorun/                                      ← repo root / workspace
 │   │   │           ├── hooks.json              ← Gemini events ONLY
 │   │   │           │  (BeforeTool, AfterTool, ...)
 │   │   │           └── hook_entry.py  ← synced copy of canonical
-│   │   │              (kept byte-identical by aix_manifest.generate_manifests)
+│   │   │              (kept byte-identical by tests)
 │   │   ├── commands/                           ← shared /ar:* commands
 │   │   ├── skills/                             ← shared skills
 │   │   └── tests/
@@ -204,10 +203,9 @@ autorun/                                      ← repo root / workspace
         │     <repo>/plugins/autorun          │
         │  3. _update_package_metadata(plugin_root)
         │     → <plugin>/src/autorun/metadata.json
-        │  4. aix_manifest.generate_manifests(plugin_root)
-        │     → regenerates plugin.json & template/gemini-extension.json
-        │     → syncs hook_entry.py into template (drift-proof)
-        │     → cleans legacy gemini-extension.json at plugin root
+│  4. Verify committed Claude and Gemini manifests/templates
+│     → plugin.json & template/gemini-extension.json stay in source control
+│     → hook_entry.py template drift is pinned by tests
         └─────────────────────────────────────┘
                         │
               ┌─────────┴─────────┐
@@ -292,7 +290,7 @@ autorun/                                      ← repo root / workspace
 |---------|--------------------|-----------------------|
 | Claude scans `hooks/` from marketplace source ([#24115](https://github.com/anthropics/claude-code/issues/24115)) | Gemini events in `plugins/autorun/hooks/` → Zod `invalid_key` → `claude plugin list: ✘ failed to load` | Keep `plugins/autorun/hooks/` Claude-only |
 | Gemini hardcodes `<ext>/hooks/hooks.json` ([#14449](https://github.com/google-gemini/gemini-cli/issues/14449)) | Can't redirect Gemini to a non-conflicting path | Materialize `~/.gemini/extensions/ar/` from `gemini_template/` |
-| Need single hook_entry.py for dual CLI | Code drift between CLIs | One canonical file; aix_manifest syncs template copy; `--cli` flag routes at runtime |
+| Need single hook_entry.py for dual CLI | Code drift between CLIs | One canonical file; tests pin the template copy; `--cli` flag routes at runtime |
 | Pathway 2/6 (direct `gemini extensions install` from GitHub URL or `.`) needs a Gemini-readable manifest at a predictable location | Gemini fails to install without `autorun --install` follow-up | Committed symlinks at repo root → resolve into template |
 
 ### Deletion Runbook
@@ -316,7 +314,6 @@ fixed upstream:
 6. Delete the `plugins/autorun/src/autorun/gemini_template/` directory.
 7. Remove the repo-root shim symlinks (`./gemini-extension.json`, `./hooks/`).
 8. Remove both CONFIG keys from `plugins/autorun/src/autorun/config.py`.
-9. Remove the cleanup block in `aix_manifest.py` that wipes legacy files.
 
 ---
 

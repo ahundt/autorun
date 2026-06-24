@@ -21,8 +21,6 @@ from pathlib import Path
 
 from autorun.install import (
     CmdResult,
-    _aix_install_current_api,
-    _aix_platform_scope_for_backup_safety,
     _install_for_antigravity,
     _install_for_qwen,
     _install_codex_plugin_with_cli,
@@ -30,7 +28,6 @@ from autorun.install import (
     detect_available_clis,
     determine_target_clis,
     install_plugins,
-    install_via_aix,
     show_status,
 )
 
@@ -176,13 +173,12 @@ def test_install_for_qwen_rewrites_gemini_template_hook_cli(monkeypatch, tmp_pat
     assert "--cli gemini" not in json.dumps(hooks)
 
 
-def test_install_plugins_aix_success_still_runs_direct_platform_installers(monkeypatch, tmp_path):
-    """AIX success must not bypass hook/app-specific direct installers."""
+def test_install_plugins_runs_direct_platform_installers(monkeypatch, tmp_path):
+    """Default install must register hook/app-specific direct installers."""
     calls: list[str] = []
 
     monkeypatch.setattr("autorun.install.find_marketplace_root", lambda: tmp_path)
     monkeypatch.setattr("autorun.install._update_package_metadata", lambda _plugin_root: None)
-    monkeypatch.setattr("autorun.aix_manifest.generate_manifests", lambda _plugin_root: None)
     monkeypatch.setattr("autorun.install._parse_selection", lambda _selection: ["ar"])
     monkeypatch.setattr(
         "autorun.install.detect_available_clis",
@@ -201,7 +197,6 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
     monkeypatch.setattr("autorun.install._check_hook_conflicts", lambda: None)
     monkeypatch.setattr("autorun.install._restart_daemon_if_running", lambda: None)
     monkeypatch.setattr("shutil.which", lambda binary: f"/usr/bin/{binary}")
-    monkeypatch.setattr("autorun.install.install_via_aix", lambda force=False: (True, "success"))
 
     def fake_run_cmd(cmd, *args, **kwargs):
         calls.append(" ".join(cmd))
@@ -225,7 +220,7 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
         lambda force=False, **_kwargs: CmdResult(True, "ok"),
     )
 
-    assert install_plugins("all", force=True, use_aix=True) == 0
+    assert install_plugins("all", force=True) == 0
 
     assert any(call.startswith("claude plugin marketplace add ") for call in calls)
     assert "gemini" in calls
@@ -233,179 +228,6 @@ def test_install_plugins_aix_success_still_runs_direct_platform_installers(monke
     assert "qwen" in calls
     assert "codex" in calls
     assert "forgecode" in calls
-
-
-def test_aix_current_api_installs_skills_and_command_dirs(monkeypatch, tmp_path):
-    """AIX 0.8.x uses singular skill/command install commands."""
-    repo = tmp_path
-    skill_dir = repo / "plugins" / "autorun" / "skills" / "tmux-automation"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tmux-automation\n---\n")
-    autorun_commands = repo / "plugins" / "autorun" / "commands"
-    pdf_commands = repo / "plugins" / "pdf-extractor" / "commands"
-    autorun_commands.mkdir(parents=True)
-    pdf_commands.mkdir(parents=True)
-    (autorun_commands / "st.md").write_text("---\ndescription: status\n---\n")
-    (pdf_commands / "extract.md").write_text("---\ndescription: extract\n---\n")
-    (repo / "aix.toml").write_text(
-        """
-[[skills]]
-name = "tmux"
-path = "plugins/autorun/skills/tmux-automation/SKILL.md"
-""",
-        encoding="utf-8",
-    )
-
-    calls: list[tuple[str, ...]] = []
-
-    def fake_run_cmd(cmd, *args, **kwargs):
-        calls.append(tuple(cmd))
-        return CmdResult(True, "ok")
-
-    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
-
-    ok, msg = _aix_install_current_api(repo, force=True)
-
-    assert ok, msg
-    assert ("aix", "skill", "install", "--file", str(skill_dir), "--force") in calls
-    assert ("aix", "command", "install", "--file", str(autorun_commands), "--force") in calls
-    assert ("aix", "command", "install", "--file", str(pdf_commands), "--force") in calls
-    assert ("aix", "status") in calls
-
-
-def test_aix_current_api_applies_platform_scope(monkeypatch, tmp_path):
-    """AIX current API must pass --platform flags after backup preflight scoping."""
-    repo = tmp_path
-    skill_dir = repo / "plugins" / "autorun" / "skills" / "tmux-automation"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tmux-automation\n---\n")
-    commands = repo / "plugins" / "autorun" / "commands"
-    commands.mkdir(parents=True)
-    (commands / "st.md").write_text("---\ndescription: status\n---\n")
-    (repo / "aix.toml").write_text(
-        """
-[[skills]]
-name = "tmux"
-path = "plugins/autorun/skills/tmux-automation/SKILL.md"
-""",
-        encoding="utf-8",
-    )
-
-    calls: list[tuple[str, ...]] = []
-
-    def fake_run_cmd(cmd, *args, **kwargs):
-        calls.append(tuple(cmd))
-        return CmdResult(True, "ok")
-
-    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
-
-    ok, msg = _aix_install_current_api(repo, force=True, platforms=["codex", "gemini"])
-
-    assert ok, msg
-    assert (
-        "aix",
-        "--platform",
-        "codex",
-        "--platform",
-        "gemini",
-        "skill",
-        "install",
-        "--file",
-        str(skill_dir),
-        "--force",
-    ) in calls
-    assert any(
-        call[:9] == (
-            "aix",
-            "--platform",
-            "codex",
-            "--platform",
-            "gemini",
-            "command",
-            "install",
-            "--file",
-            str(commands),
-        )
-        and "--platform" in call
-        for call in calls
-    )
-
-
-def test_aix_platform_scope_skips_claude_directory_symlink(monkeypatch, tmp_path):
-    """AIX preflight must exclude Claude when ~/.claude contains a directory symlink."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    claude_worktree = tmp_path / ".claude" / "worktrees" / "agent"
-    claude_worktree.mkdir(parents=True)
-    target = tmp_path / "commands-target"
-    target.mkdir()
-    (claude_worktree / "commands").symlink_to(target, target_is_directory=True)
-    (tmp_path / ".codex").mkdir()
-    (tmp_path / ".gemini").mkdir()
-
-    safe, warnings = _aix_platform_scope_for_backup_safety()
-
-    assert safe == ["codex", "gemini"]
-    assert any("skipping AIX claude install" in warning for warning in warnings)
-
-
-def test_install_via_aix_uses_current_singular_api(monkeypatch):
-    """install_via_aix() must prefer AIX 0.8.x `aix skill` commands."""
-    calls: list[tuple[str, ...]] = []
-
-    monkeypatch.setattr("autorun.install.detect_aix_installed", lambda: True)
-    monkeypatch.setattr(
-        "autorun.install._aix_platform_scope_for_backup_safety",
-        lambda: (["gemini"], []),
-    )
-
-    def fake_run_cmd(cmd, *args, **kwargs):
-        calls.append(tuple(cmd))
-        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
-            return CmdResult(True, "help")
-        if cmd == ["aix", "skill", "list"]:
-            return CmdResult(True, "Platform: Claude Code\nPlatform: Gemini CLI\n")
-        if cmd == ["aix", "status"]:
-            return CmdResult(True, "aix version 0.8.1")
-        if cmd[:6] == ["aix", "--platform", "gemini", "skill", "install", "--file"]:
-            return CmdResult(True, "installed")
-        if cmd[:6] == ["aix", "--platform", "gemini", "command", "install", "--file"]:
-            return CmdResult(True, "installed")
-        return CmdResult(True, "")
-
-    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
-
-    ok, msg = install_via_aix(force=True)
-
-    assert ok, msg
-    assert ("aix", "skill", "--help") in calls
-    assert any(call[:6] == ("aix", "--platform", "gemini", "skill", "install", "--file") for call in calls)
-    assert any(call[:6] == ("aix", "--platform", "gemini", "command", "install", "--file") for call in calls)
-    assert not any(call[:3] == ("aix", "skills", "install") for call in calls)
-
-
-def test_install_via_aix_skips_current_api_when_backup_roots_are_unsafe(monkeypatch):
-    """install_via_aix() must not invoke AIX install when backup preflight fails."""
-    calls: list[tuple[str, ...]] = []
-
-    monkeypatch.setattr("autorun.install.detect_aix_installed", lambda: True)
-    monkeypatch.setattr(
-        "autorun.install._aix_platform_scope_for_backup_safety",
-        lambda: (["gemini"], ["skipping AIX claude install because ~/.claude contains a directory symlink"]),
-    )
-
-    def fake_run_cmd(cmd, *args, **kwargs):
-        calls.append(tuple(cmd))
-        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
-            return CmdResult(True, "help")
-        return CmdResult(True, "unexpected")
-
-    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
-
-    ok, msg = install_via_aix(force=True)
-
-    assert not ok
-    assert "AIX 0.8.1 skipped" in msg
-    assert not any("install" in call for call in calls)
 
 
 # ─── _install_for_codex installation ─────────────────────────────────────────
@@ -525,10 +347,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
             return CmdResult(True, "ar enabled\n")
         if cmd[:3] == ["qwen", "extensions", "list"]:
             return CmdResult(True, "ar\npdf-extractor\n")
-        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
-            return CmdResult(True, "help\n")
-        if cmd == ["aix", "skill", "list"]:
-            return CmdResult(True, "ai-session-tools\ntmux-automation\n")
+        assert cmd[0] != "aix", f"status should not query AIX: {cmd!r}"
         return CmdResult(True, "")
 
     monkeypatch.setattr("shutil.which", fake_which)
@@ -608,50 +427,9 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "Qwen Code:" in out
     assert "qwen CLI: found" in out
     assert "ar: ✓ installed" in out
-    assert "AIX:" in out
-    assert "aix CLI: found" in out
-    assert "API: current skill/command" in out
-    assert "autorun resources: ✓ installed" in out
+    assert "AIX:" not in out
     assert "ForgeCode:" in out
     assert "hooks: advisory only" in out
-
-
-def test_show_status_reports_aix_backup_blockers(tmp_path, monkeypatch, capsys):
-    """Status must show why AIX resources are absent when backup roots are unsafe."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr("autorun.install.find_marketplace_root", lambda: tmp_path)
-    monkeypatch.setattr("autorun.install._check_uv_env", lambda _p: CmdResult(True, "OK"))
-    monkeypatch.setattr("autorun.install.detect_aix_manages_autorun", lambda: False)
-    monkeypatch.setattr(
-        "autorun.install._aix_platform_scope_for_backup_safety",
-        lambda: (
-            ["gemini"],
-            [
-                "skipping AIX claude install because /tmp/.claude contains a directory symlink: /tmp/.claude/link",
-                "skipping AIX codex install because /tmp/.codex contains a directory symlink: /tmp/.codex/link",
-            ],
-        ),
-    )
-
-    def fake_which(binary: str):
-        return f"/usr/bin/{binary}" if binary in {"aix", "claude", "autorun", "aise"} else None
-
-    def fake_run_cmd(cmd, *args, **kwargs):
-        if cmd[:3] == ["claude", "plugin", "list"]:
-            return CmdResult(True, "autorun enabled\npdf-extractor enabled\n")
-        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
-            return CmdResult(True, "help\n")
-        return CmdResult(True, "")
-
-    monkeypatch.setattr("shutil.which", fake_which)
-    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
-
-    assert show_status() == 0
-    out = capsys.readouterr().out
-    assert "AIX:" in out
-    assert "autorun resources: ✗ not detected" in out
-    assert "blocker: skipping AIX claude install" in out
-    assert "blocker: skipping AIX codex install" in out
 
 
 # ─── Hot-fix regression tests: schema correctness + path resolution ──────────

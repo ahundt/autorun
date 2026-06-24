@@ -56,7 +56,6 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/autorun/src/autorun/__init__.py` | `__version__ = "X.Y.Z"` | |
 | `plugins/autorun/src/autorun/install.py` | 5 references: 2 fallback defaults, 1 print, 1 config dict, 1 `__version__` fallback | |
 | `plugins/autorun/src/autorun/metadata.json` | `"version": "X.Y.Z"` | Build artifact — stale commit hash is OK |
-| `plugins/autorun/src/autorun/aix_manifest.py` | Fallback version in `pkg.get("version", "X.Y.Z")` | |
 | `plugins/autorun/gemini-extension.json` | `"version": "X.Y.Z"` | |
 
 ### pdf-extractor Plugin (4+ files)
@@ -75,7 +74,6 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `README.md` | Section headers, install verification examples |
 | `CLAUDE.md` | Section header `## autorun Plugin (vX.Y.Z)` |
 | `GEMINI.md` | Install verification examples (8 refs) |
-| `aix.toml` | `version = "X.Y.Z"` |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |
 | `docs/version_update_checklist.md` | `**Current Version: X.Y.Z**` at top |
 | `plugins/autorun/.codex-plugin/plugin.json` | Codex plugin package version |

@@ -456,7 +456,7 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user", codex_plugin_marketplace="personal",
         )
 
     def test_install_module_main_codex_hook_source_routes_to_install_plugins(self):
@@ -479,7 +479,6 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            use_aix=None,
             codex_hook_source="plugin", codex_plugin_marketplace="personal",
         )
 
@@ -503,7 +502,6 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            use_aix=None,
             codex_hook_source="user",
             codex_plugin_marketplace="github",
         )
@@ -526,7 +524,7 @@ class TestInstallMainAdapter:
             antigravity_only=True,
             qwen_only=False,
             conductor=True,
-            use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user", codex_plugin_marketplace="personal",
         )
 
     def test_install_module_main_qwen_force_routes_to_install_plugins(self):
@@ -547,7 +545,7 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=True,
             conductor=True,
-            use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user", codex_plugin_marketplace="personal",
         )
 
     def test_install_main_legacy_codex_force_routes_to_install_plugins(self):
@@ -576,7 +574,7 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user", codex_plugin_marketplace="personal",
         )
 
 

@@ -461,7 +461,6 @@ class TestManifestFiles:
         """Release-facing version numbers must match the autorun package."""
         root_pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         plugin_pyproject = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        aix_toml = tomllib.loads((REPO_ROOT / "aix.toml").read_text(encoding="utf-8"))
         expected = plugin_pyproject["project"]["version"]
 
         with open(PLUGIN_JSON, encoding="utf-8") as f:
@@ -481,7 +480,6 @@ class TestManifestFiles:
 
         actual = {
             "workspace pyproject.toml": root_pyproject["project"]["version"],
-            "aix.toml": aix_toml["package"]["version"],
             "plugins/autorun/pyproject.toml": expected,
             ".claude-plugin/plugin.json": claude_manifest.get("version"),
             ".codex-plugin/plugin.json": codex_manifest.get("version"),
@@ -493,13 +491,6 @@ class TestManifestFiles:
             "ai-session-tools skill": f'version: "{expected}"' in skill_versions[0],
             "claude-session-tools skill": f'version: "{expected}"' in skill_versions[1],
         }
-        assert aix_toml["platforms"]["antigravity"] is True
-        assert aix_toml["install"]["antigravity"]["post_install"] == [
-            "autorun",
-            "--install",
-            "--antigravity",
-        ]
-        assert "live_backend" not in aix_toml.get("install", {}).get("gemini_cli", {})
         for plugin in marketplace.get("plugins", []):
             if plugin.get("name") in {"ar", "pdf-extractor"}:
                 actual[f"marketplace {plugin['name']}"] = plugin.get("version")
@@ -1018,9 +1009,10 @@ class TestInstallPathwayDetection:
         assert "_install_for_gemini" in content
         assert '"claude", "plugin"' in content
 
-    def test_install_aix_detection(self):
+    def test_install_does_not_expose_aix_flags(self):
         content = INSTALL_PY.read_text(encoding="utf-8")
-        assert "aix" in content.lower()
+        assert "--aix" not in content
+        assert "--no-aix" not in content
 
 
 # =============================================================================

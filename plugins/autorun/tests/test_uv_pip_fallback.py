@@ -113,7 +113,7 @@ class TestUVPipFallback:
             assert "pip install" in error_msg  # Fallback also shown
             assert "Option 1:" in error_msg
             assert "Option 2:" in error_msg
-            assert "Option 3:" in error_msg
+            assert "Option 3:" not in error_msg
             assert "TROUBLESHOOTING" in error_msg
 
     def test_error_formatter_marketplace_not_found_without_uv(self):

@@ -456,7 +456,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -474,7 +474,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -492,7 +492,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -510,7 +510,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -528,7 +528,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="plugin", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="plugin", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -546,7 +546,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="github",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="github",
         )
         assert result == 0
 
@@ -564,7 +564,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=True,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 
@@ -582,7 +582,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=True,
             qwen_only=False,
-            conductor=True, use_aix=None, codex_hook_source="user", codex_plugin_marketplace="personal",
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
         )
         assert result == 0
 

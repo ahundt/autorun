@@ -940,7 +940,7 @@ autorun --help                       # Full help with all options
 ```bash
 autorun --restart-daemon             # Restart the autorun daemon
 autorun --update                     # Check for and install updates
-autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip|aix)
+autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip)
 autorun --no-bootstrap               # Disable automatic bootstrap in hooks
 autorun --enable-bootstrap           # Re-enable automatic bootstrap
 ```
@@ -971,8 +971,6 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|always|never
 autorun --conductor                  # Install Conductor extension for Gemini (default)
 autorun --no-conductor               # Skip Conductor extension
-autorun --aix                        # Force AIX installation (local only)
-autorun --no-aix                     # Skip AIX even if installed
 autorun --antigravity                # Import Gemini ar plugin into Google Antigravity
 autorun --cli claude                 # Set CLI type (used internally by hooks)
 ```
