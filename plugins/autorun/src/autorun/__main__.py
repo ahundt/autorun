@@ -262,6 +262,16 @@ For more information: https://github.com/ahundt/autorun
         help="Install for Codex CLI only (default: install for all available CLIs)",
     )
     install_group.add_argument(
+        "--codex-hook-source",
+        choices=["user", "plugin", "both", "none"],
+        default="user",
+        help=(
+            "Codex hook install source: user (~/.codex/hooks.json), plugin "
+            "(autorun@personal bundled hooks), both, or none. Default: user. "
+            "AUTORUN_CODEX_HOOK_SOURCE can also set this."
+        ),
+    )
+    install_group.add_argument(
         "--conductor",
         action="store_true",
         default=True,
@@ -764,6 +774,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             qwen_only=args.qwen,
             conductor=args.conductor,
             use_aix=args.aix if hasattr(args, 'aix') else None,  # NEW: Auto-detect if None
+            codex_hook_source=args.codex_hook_source,
         )
 
     # Status mode

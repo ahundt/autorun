@@ -936,9 +936,24 @@ def _autorun_marketplace_entry(marketplace: dict) -> dict:
 
 
 def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeypatch):
-    """Install must expose autorun as a Codex plugin, not only raw skills."""
+    """Default install exposes a skills plugin without plugin-bundled hooks."""
     monkeypatch.setenv("HOME", str(tmp_path))
     fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["autorun-maintainer", "cache"])
+    fake_hooks = fake_marketplace / "plugins" / "autorun" / "hooks" / "hooks.json"
+    fake_hooks.write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "uv run python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
+                        }
+                    ]
+                }
+            ]
+        }
+    }))
 
     ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
     assert ok
@@ -958,6 +973,124 @@ def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeyp
     assert plugin_source.exists()
     assert (plugin_source / ".codex-plugin" / "plugin.json").is_file()
     assert (plugin_source / "skills" / "cache" / "SKILL.md").is_file()
+    assert not (plugin_source / "hooks" / "hooks.json").exists(), (
+        "Codex plugin packaging must not copy hooks/hooks.json. Codex loads "
+        "plugin-bundled hooks alongside ~/.codex/hooks.json, so copying the "
+        "Claude plugin hook file creates duplicate PreToolUse/PostToolUse "
+        "policy hooks."
+    )
+    assert not (plugin_source / "hooks" / "hook_entry.py").exists(), (
+        "The Codex plugin package is skills-only; hook_entry.py runs from "
+        "~/.codex/hooks.json's absolute user-level command."
+    )
+
+
+def test_install_for_codex_plugin_hook_source_packages_codex_hooks_only(tmp_path, monkeypatch):
+    """Plugin hook mode packages Codex hooks and removes user-level autorun hooks."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "uv run python /old/hooks/hook_entry.py --cli codex",
+                        }
+                    ]
+                }
+            ]
+        }
+    }))
+
+    ok, _msg = _install_for_codex(
+        fake_marketplace,
+        ["autorun"],
+        force=False,
+        codex_hook_source="plugin",
+    )
+    assert ok
+
+    user_hooks = _read_codex_hooks(tmp_path)
+    assert "hook_entry.py --cli codex" not in json.dumps(user_hooks)
+    plugin_source = tmp_path / "plugins" / "autorun"
+    plugin_hooks = plugin_source / "hooks" / "hooks.json"
+    assert plugin_hooks.is_file()
+    assert (plugin_source / "hooks" / "hook_entry.py").is_file()
+    plugin_text = plugin_hooks.read_text(encoding="utf-8")
+    assert "--cli codex" in plugin_text
+    assert "CLAUDE_PLUGIN_ROOT" in plugin_text
+    assert "PreToolUse" in plugin_text
+    assert "PostToolUse" in plugin_text
+
+
+def test_install_for_codex_both_hook_source_installs_user_and_plugin_hooks(tmp_path, monkeypatch):
+    """Both mode intentionally installs user-level and plugin-bundled hooks."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(
+        fake_marketplace,
+        ["autorun"],
+        force=False,
+        codex_hook_source="both",
+    )
+    assert ok
+
+    user_hooks = _read_codex_hooks(tmp_path)
+    assert "hook_entry.py --cli codex" in json.dumps(user_hooks)
+    plugin_hooks = tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json"
+    assert plugin_hooks.is_file()
+    assert "--cli codex" in plugin_hooks.read_text(encoding="utf-8")
+
+
+def test_install_for_codex_none_hook_source_removes_user_and_plugin_hooks(tmp_path, monkeypatch):
+    """None mode leaves skills/plugin assets installed without Codex hooks."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "uv run python /old/hooks/hook_entry.py --cli codex",
+                        }
+                    ]
+                }
+            ],
+            "PostToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "user-post-tool-use.sh",
+                        }
+                    ]
+                }
+            ],
+        }
+    }))
+
+    ok, _msg = _install_for_codex(
+        fake_marketplace,
+        ["autorun"],
+        force=False,
+        codex_hook_source="none",
+    )
+    assert ok
+
+    hooks = _read_codex_hooks(tmp_path)
+    serialized = json.dumps(hooks)
+    assert "hook_entry.py --cli codex" not in serialized
+    assert "user-post-tool-use.sh" in serialized
+    assert not (tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json").exists()
 
 
 def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monkeypatch):
@@ -1049,7 +1182,7 @@ def test_codex_plugin_manifest_exists_for_packaged_skills():
 
 
 def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
-    """The real installer must install the local Codex plugin after packaging."""
+    """The real installer must refresh and install the local Codex plugin."""
     calls = []
 
     monkeypatch.setattr(
@@ -1066,7 +1199,10 @@ def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
     result = _install_codex_plugin_with_cli()
 
     assert result.ok
-    assert calls == [(["codex", "plugin", "add", "autorun@personal"], 120)]
+    assert calls == [
+        (["codex", "plugin", "remove", "autorun@personal"], 120),
+        (["codex", "plugin", "add", "autorun@personal"], 120),
+    ]
 
 
 def test_install_codex_plugin_with_cli_force_refreshes_cache(monkeypatch):
@@ -1091,6 +1227,99 @@ def test_install_codex_plugin_with_cli_force_refreshes_cache(monkeypatch):
         (["codex", "plugin", "remove", "autorun@personal"], 120),
         (["codex", "plugin", "add", "autorun@personal"], 120),
     ]
+
+
+def test_install_codex_plugin_with_cli_refreshes_cache_by_default(monkeypatch):
+    """Normal installs must refresh Codex's cache so removed hooks disappear."""
+    calls = []
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary == "codex" else None,
+    )
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs.get("timeout")))
+        if cmd[:3] == ["codex", "plugin", "remove"]:
+            return CmdResult(True, "Removed plugin `autorun`.")
+        if cmd[:3] == ["codex", "plugin", "add"]:
+            return CmdResult(True, "Added plugin `autorun` from marketplace `personal`.")
+        return CmdResult(False, "unexpected")
+
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    result = _install_codex_plugin_with_cli(force=False)
+
+    assert result.ok
+    assert calls == [
+        (["codex", "plugin", "remove", "autorun@personal"], 120),
+        (["codex", "plugin", "add", "autorun@personal"], 120),
+    ]
+
+
+def test_codex_plugin_marketplace_status_flags_cached_plugin_hooks(tmp_path, monkeypatch):
+    """Status must flag simultaneous user and plugin autorun hooks."""
+    from autorun.install import _codex_plugin_marketplace_status
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    marketplace_dir = tmp_path / ".agents" / "plugins"
+    marketplace_dir.mkdir(parents=True)
+    (marketplace_dir / "marketplace.json").write_text(json.dumps({
+        "name": "personal",
+        "interface": {"displayName": "Personal"},
+        "plugins": [
+            {
+                "name": "autorun",
+                "source": {"source": "local", "path": "./plugins/autorun"},
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+                "category": "Productivity",
+            }
+        ],
+    }))
+    source_manifest = tmp_path / "plugins" / "autorun" / ".codex-plugin" / "plugin.json"
+    source_manifest.parent.mkdir(parents=True)
+    source_manifest.write_text('{"name":"autorun","skills":"./skills/"}')
+    codex_hooks = tmp_path / ".codex" / "hooks.json"
+    codex_hooks.parent.mkdir(parents=True)
+    codex_hooks.write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "uv run python /x/hooks/hook_entry.py --cli codex",
+                        }
+                    ]
+                }
+            ]
+        }
+    }))
+    cache_manifest = (
+        tmp_path
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / "personal"
+        / "autorun"
+        / "0.12.0"
+        / ".codex-plugin"
+        / "plugin.json"
+    )
+    cache_manifest.parent.mkdir(parents=True)
+    cache_manifest.write_text('{"name":"autorun","skills":"./skills/"}')
+    cache_hooks = cache_manifest.parents[1] / "hooks" / "hooks.json"
+    cache_hooks.parent.mkdir()
+    cache_hooks.write_text('{"hooks":{"PreToolUse":[{"hooks":[]}]}}')
+
+    ok, status = _codex_plugin_marketplace_status()
+
+    assert not ok
+    assert "duplicate user and plugin hooks" in status
+    assert "0.12.0" in status
 
 
 def test_install_for_codex_agents_md_idempotent(tmp_path, monkeypatch):

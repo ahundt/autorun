@@ -456,7 +456,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None,
+            conductor=True, use_aix=None, codex_hook_source="user",
         )
         assert result == 0
 
@@ -474,7 +474,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None,
+            conductor=True, use_aix=None, codex_hook_source="user",
         )
         assert result == 0
 
@@ -492,7 +492,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None,
+            conductor=True, use_aix=None, codex_hook_source="user",
         )
         assert result == 0
 
@@ -510,7 +510,25 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, use_aix=None,
+            conductor=True, use_aix=None, codex_hook_source="user",
+        )
+        assert result == 0
+
+    def test_install_with_codex_hook_source_passes_plugin_mode(self):
+        """Test that --codex-hook-source routes the Codex hook source mode."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--codex", "--codex-hook-source", "plugin"])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=True,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True, use_aix=None, codex_hook_source="plugin",
         )
         assert result == 0
 
@@ -528,7 +546,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=True,
-            conductor=True, use_aix=None,
+            conductor=True, use_aix=None, codex_hook_source="user",
         )
         assert result == 0
 
@@ -546,7 +564,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=True,
             qwen_only=False,
-            conductor=True, use_aix=None,
+            conductor=True, use_aix=None, codex_hook_source="user",
         )
         assert result == 0
 

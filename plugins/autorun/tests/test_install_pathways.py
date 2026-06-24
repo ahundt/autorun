@@ -456,7 +456,31 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
+            use_aix=None, codex_hook_source="user",
+        )
+
+    def test_install_module_main_codex_hook_source_routes_to_install_plugins(self):
+        """Verify direct module install honors --codex-hook-source."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(
+                ["--install", "--codex", "--codex-hook-source", "plugin"]
+            )
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=False,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=True,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True,
             use_aix=None,
+            codex_hook_source="plugin",
         )
 
     def test_install_module_main_antigravity_force_routes_to_install_plugins(self):
@@ -477,7 +501,7 @@ class TestInstallMainAdapter:
             antigravity_only=True,
             qwen_only=False,
             conductor=True,
-            use_aix=None,
+            use_aix=None, codex_hook_source="user",
         )
 
     def test_install_module_main_qwen_force_routes_to_install_plugins(self):
@@ -498,7 +522,7 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=True,
             conductor=True,
-            use_aix=None,
+            use_aix=None, codex_hook_source="user",
         )
 
     def test_install_main_legacy_codex_force_routes_to_install_plugins(self):
@@ -527,7 +551,7 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            use_aix=None,
+            use_aix=None, codex_hook_source="user",
         )
 
 

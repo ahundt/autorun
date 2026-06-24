@@ -1595,6 +1595,23 @@ _CODEX_PLUGIN_NAME = "autorun"
 _CODEX_PLUGIN_SOURCE_PATH = "./plugins/autorun"
 _CODEX_PLUGIN_OWNED_MARKER = ".autorun-owned"
 _CODEX_PERSONAL_MARKETPLACE_NAME = "personal"
+_CODEX_HOOK_SOURCE_CHOICES = ("user", "plugin", "both", "none")
+
+
+def _codex_hook_source_from_env(default: str = "user") -> str:
+    """Return the Codex hook install source selected by env or default."""
+    value = os.environ.get("AUTORUN_CODEX_HOOK_SOURCE", default).strip().lower()
+    if value not in _CODEX_HOOK_SOURCE_CHOICES:
+        return default
+    return value
+
+
+def _codex_uses_user_hooks(codex_hook_source: str) -> bool:
+    return codex_hook_source in {"user", "both"}
+
+
+def _codex_uses_plugin_hooks(codex_hook_source: str) -> bool:
+    return codex_hook_source in {"plugin", "both"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1726,13 +1743,17 @@ def _install_for_codex(
     marketplace_root: Path,
     plugins: list[str],
     force: bool = False,
+    codex_hook_source: str = "user",
 ) -> tuple[bool, str]:
-    """Install autorun hooks at ~/.codex/hooks.json (user-level, always active).
+    """Install autorun for Codex with an explicit hook source mode.
 
-    Codex's user-level hooks file is always active and bypasses the
-    `features.plugin_hooks=true` opt-in required for plugin-bundled hooks.
-    This mirrors autorun's "install once globally" model for Claude
-    (via the plugin manifest) and Gemini (via the extension manifest).
+    Codex loads all matching hook sources concurrently. Autorun therefore
+    installs exactly the selected source by default:
+
+    - user: ~/.codex/hooks.json only (default, stable global enforcement)
+    - plugin: autorun@personal bundled hooks only
+    - both: both sources, intentionally duplicate/concurrent
+    - none: no Codex hooks, plugin/skills/advisory files only
 
     Args:
         marketplace_root: Path to marketplace root directory (plugin directory)
@@ -1740,10 +1761,12 @@ def _install_for_codex(
                  for Codex hook integration; others are no-ops)
         force: Reserved for parity with other installers; merge logic is
                idempotent so force has no effect here today.
+        codex_hook_source: user, plugin, both, or none
 
     Returns:
         Tuple of (success: bool, message: str)
     """
+    codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
     plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
@@ -1759,16 +1782,28 @@ def _install_for_codex(
         except Exception as exc:  # malformed file — surface but don't clobber
             return (False, f"~/.codex/hooks.json is not valid JSON: {exc}")
 
-    autorun_block = _build_codex_hook_block(plugin_dir)
+    autorun_block = (
+        _build_codex_hook_block(plugin_dir)
+        if _codex_uses_user_hooks(codex_hook_source)
+        else {}
+    )
     merged = _merge_codex_hooks(existing, autorun_block)
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
     skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
-    plugin_marketplace = _install_codex_plugin_marketplace(plugin_dir)
+    plugin_marketplace = _install_codex_plugin_marketplace(
+        plugin_dir,
+        include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
+    )
 
     print()
-    print("✓ Codex hooks installed at ~/.codex/hooks.json")
+    if _codex_uses_user_hooks(codex_hook_source):
+        print("✓ Codex user hooks installed at ~/.codex/hooks.json")
+    else:
+        print("✓ Codex user hooks removed from ~/.codex/hooks.json")
+    if _codex_uses_plugin_hooks(codex_hook_source):
+        print("✓ Codex plugin hooks packaged in autorun@personal")
     if agents_written:
         print("✓ Advisory safety guidance written to ~/.codex/AGENTS.md")
     if skills_installed:
@@ -1782,8 +1817,9 @@ def _install_for_codex(
         print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
     elif plugin_marketplace.reason:
         print(f"  Codex plugin marketplace skipped: {plugin_marketplace.reason}")
-    print("  Next: run '/hooks' inside Codex CLI to trust the new hook hashes.")
-    print("        (Codex silently skips hooks until they are approved.)")
+    if codex_hook_source != "none":
+        print("  Next: run '/hooks' inside Codex CLI to trust the new hook hashes.")
+        print("        (Codex silently skips hooks until they are approved.)")
     return (True, "success")
 
 
@@ -1868,14 +1904,72 @@ def _same_resolved_path(left: Path, right: Path) -> bool:
         return False
 
 
-def _copy_codex_plugin_source(plugin_dir: Path, target: Path) -> None:
-    """Copy the plugin source with real files for Codex's plugin cache.
+def _codex_plugin_hook_command() -> str:
+    """Return the command used by plugin-bundled Codex lifecycle hooks.
+
+    Codex substitutes `${CLAUDE_PLUGIN_ROOT}` for plugin-bundled hooks in the
+    current local marketplace cache path. Keep the command self-identifying
+    with `--cli codex` so the shared hook wrapper never has to infer Codex
+    from a Claude-format hook file.
+    """
+    return (
+        "AUTORUN_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT} "
+        "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} "
+        "python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli codex"
+    )
+
+
+def _build_codex_plugin_hooks_json() -> dict:
+    """Build Codex plugin-bundled hooks/hooks.json."""
+    entry = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": _codex_plugin_hook_command(),
+                "timeout": 10,
+            }
+        ]
+    }
+    return {
+        "hooks": {
+            "PreToolUse": [entry],
+            "PostToolUse": [entry],
+            "UserPromptSubmit": [entry],
+            "SessionStart": [entry],
+            "Stop": [entry],
+            "SubagentStop": [entry],
+        }
+    }
+
+
+def _write_codex_plugin_hooks(plugin_dir: Path, target: Path) -> None:
+    """Write the optional plugin-bundled Codex hook entrypoint and config."""
+    hooks_dir = target / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(plugin_dir / "hooks" / "hook_entry.py", hooks_dir / "hook_entry.py")
+    (hooks_dir / "hooks.json").write_text(
+        json.dumps(_build_codex_plugin_hooks_json(), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _copy_codex_plugin_source(
+    plugin_dir: Path,
+    target: Path,
+    *,
+    include_hooks: bool = False,
+) -> None:
+    """Copy the Codex plugin source with selected hook packaging.
 
     Codex's local plugin cache copier copies regular files and directories but
     ignores symbolic links. Autorun keeps a few cross-harness skill entrypoints
     as `SKILL.md` symlinks, so the personal Codex plugin source must
     dereference those links before `codex plugin add autorun@personal` copies
     the bundle into `~/.codex/plugins/cache/...`.
+
+    Codex loads plugin-bundled `hooks/hooks.json` alongside user hooks, so
+    plugin hooks are generated only when explicitly selected and always use a
+    Codex-specific command with `--cli codex`.
     """
     shutil.copytree(
         plugin_dir,
@@ -1891,8 +1985,11 @@ def _copy_codex_plugin_source(plugin_dir: Path, target: Path) -> None:
             "*.pyo",
             ".coverage",
             "htmlcov",
+            "hooks",
         ),
     )
+    if include_hooks:
+        _write_codex_plugin_hooks(plugin_dir, target)
     (target / _CODEX_PLUGIN_OWNED_MARKER).write_text(
         "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
         "`autorun --install --codex` to recreate it.\n",
@@ -1908,7 +2005,11 @@ def _remove_owned_codex_plugin_source(target: Path) -> None:
         shutil.rmtree(target)
 
 
-def _ensure_codex_plugin_source(plugin_dir: Path) -> tuple[bool, str]:
+def _ensure_codex_plugin_source(
+    plugin_dir: Path,
+    *,
+    include_hooks: bool = False,
+) -> tuple[bool, str]:
     """Materialize ~/plugins/autorun for Codex's implicit home marketplace.
 
     Codex resolves `./plugins/autorun` relative to the home marketplace root.
@@ -1934,7 +2035,7 @@ def _ensure_codex_plugin_source(plugin_dir: Path) -> tuple[bool, str]:
         _remove_owned_codex_plugin_source(target)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    _copy_codex_plugin_source(plugin_dir, target)
+    _copy_codex_plugin_source(plugin_dir, target, include_hooks=include_hooks)
     return (True, "copy")
 
 
@@ -2000,14 +2101,21 @@ def _upsert_codex_plugin_entry(marketplace: dict) -> tuple[dict, str | None]:
     return (updated, None)
 
 
-def _install_codex_plugin_marketplace(plugin_dir: Path) -> CodexPluginMarketplaceInstall:
-    """Publish autorun's skills as a Codex plugin in the home marketplace.
+def _install_codex_plugin_marketplace(
+    plugin_dir: Path,
+    *,
+    include_hooks: bool = False,
+) -> CodexPluginMarketplaceInstall:
+    """Publish autorun as a Codex plugin in the home marketplace.
 
-    User-level hooks stay in ~/.codex/hooks.json so enforcement has a single
-    active source. The plugin package exists for Codex-native skill discovery,
-    install surfaces, and future MCP/app packaging.
+    By default the plugin package exists for Codex-native skill discovery,
+    install surfaces, and future MCP/app packaging. When the caller selects
+    plugin hooks, this also packages Codex-specific lifecycle hooks.
     """
-    source_ready, source_message = _ensure_codex_plugin_source(plugin_dir)
+    source_ready, source_message = _ensure_codex_plugin_source(
+        plugin_dir,
+        include_hooks=include_hooks,
+    )
     if not source_ready:
         return CodexPluginMarketplaceInstall(
             source_ready=False,
@@ -2049,10 +2157,9 @@ def _install_codex_plugin_with_cli(force: bool = False) -> CmdResult:
         return CmdResult(False, "codex CLI not found")
 
     plugin_id = f"{_CODEX_PLUGIN_NAME}@{_CODEX_PERSONAL_MARKETPLACE_NAME}"
-    if force:
-        remove = run_cmd(["codex", "plugin", "remove", plugin_id], timeout=120)
-        if not (remove.ok or remove.has_text("not installed") or remove.has_text("not found")):
-            return remove
+    remove = run_cmd(["codex", "plugin", "remove", plugin_id], timeout=120)
+    if not (remove.ok or remove.has_text("not installed") or remove.has_text("not found")):
+        return remove
 
     result = run_cmd(
         ["codex", "plugin", "add", plugin_id],
@@ -2061,6 +2168,18 @@ def _install_codex_plugin_with_cli(force: bool = False) -> CmdResult:
     if result.ok or result.has_text("already"):
         return CmdResult(True, result.output)
     return result
+
+
+def _codex_user_hooks_have_autorun() -> bool:
+    """Return True when ~/.codex/hooks.json contains autorun's user hooks."""
+    hooks_path = Path.home() / ".codex" / "hooks.json"
+    if not hooks_path.is_file():
+        return False
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return _CODEX_AUTORUN_COMMAND_MARK in json.dumps(data.get("hooks", {}))
 
 
 def _codex_plugin_marketplace_status() -> tuple[bool, str]:
@@ -2113,6 +2232,18 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
     )
     if not installed:
         return (True, "✓ available")
+
+    plugin_hook_caches = [
+        child
+        for child in cache_root.iterdir()
+        if child.is_dir() and (child / "hooks" / "hooks.json").is_file()
+    ]
+    if plugin_hook_caches and _codex_user_hooks_have_autorun():
+        versions = ", ".join(sorted(child.name for child in plugin_hook_caches))
+        return (
+            False,
+            f"✗ installed with duplicate user and plugin hooks in cache version(s): {versions}",
+        )
 
     config = Path.home() / ".codex" / "config.toml"
     if not config.is_file():
@@ -2891,6 +3022,7 @@ def install_plugins(
     qwen_only: bool = False,
     conductor: bool = True,
     use_aix: bool = None,  # NEW: Auto-detect AIX if None (default behavior)
+    codex_hook_source: str = "user",
 ) -> int:
     """Install and enable plugins for Claude Code and/or Gemini CLI.
 
@@ -2908,6 +3040,7 @@ def install_plugins(
         qwen_only: Install only for Qwen Code (default: False)
         conductor: Install Conductor extension for Gemini (default: True)
         use_aix: Use AIX for installation (None = auto-detect, True = force use, False = skip)
+        codex_hook_source: Codex hook source: user, plugin, both, or none
 
     Returns:
         Exit code: 0 = success, 1 = failure
@@ -2967,6 +3100,7 @@ def install_plugins(
     print(f"autorun v{__version__}")
     print(f"Commit: {__commit__}")
     print(f"Build Time: {__build_time__}")
+    codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
 
     # Python version check
     if sys.version_info < (3, 10):
@@ -3187,12 +3321,19 @@ def install_plugins(
             print(f"   Qwen Code install failed: {qwen_msg}")
         all_succeeded = all_succeeded and qwen_success
 
-    # Install for Codex CLI (user-level ~/.codex/hooks.json — always active)
+    # Install for Codex CLI. Codex hook sources are explicit because user-level
+    # hooks and plugin-bundled hooks run side by side instead of replacing each
+    # other.
     codex_success = False
     codex_plugin_success = False
     codex_plugin_msg = ""
     if "codex" in target_clis:
-        codex_success, codex_msg = _install_for_codex(marketplace_root, plugins, force)
+        codex_success, codex_msg = _install_for_codex(
+            marketplace_root,
+            plugins,
+            force,
+            codex_hook_source=codex_hook_source,
+        )
         all_succeeded = all_succeeded and codex_success
         if codex_success:
             print()
@@ -3271,7 +3412,16 @@ def install_plugins(
 
     if "codex" in target_clis:
         if codex_success:
-            print("✓ Codex CLI: hooks installed at ~/.codex/hooks.json (run /hooks inside Codex to trust)")
+            if codex_hook_source == "user":
+                print("✓ Codex CLI: user hooks installed at ~/.codex/hooks.json")
+            elif codex_hook_source == "plugin":
+                print("✓ Codex CLI: plugin hooks packaged in autorun@personal")
+            elif codex_hook_source == "both":
+                print("✓ Codex CLI: user hooks and plugin hooks installed")
+            else:
+                print("✓ Codex CLI: hooks removed; skills and guidance installed")
+            if codex_hook_source != "none":
+                print("  Run /hooks inside Codex to trust hook definitions")
             if codex_plugin_success:
                 print("✓ Codex CLI: plugin installed as autorun@personal")
             else:
@@ -3879,6 +4029,16 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qwen", action="store_true", help="Install for Qwen Code only")
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
+        "--codex-hook-source",
+        choices=_CODEX_HOOK_SOURCE_CHOICES,
+        default="user",
+        help=(
+            "Codex hook install source: user (~/.codex/hooks.json), plugin "
+            "(autorun@personal bundled hooks), both, or none. "
+            "Default: user. AUTORUN_CODEX_HOOK_SOURCE can also set this."
+        ),
+    )
+    parser.add_argument(
         "--conductor",
         action="store_true",
         default=True,
@@ -3927,6 +4087,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         qwen_only=args.qwen,
         conductor=args.conductor,
         use_aix=args.use_aix,
+        codex_hook_source=args.codex_hook_source,
     )
 
 

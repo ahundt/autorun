@@ -195,7 +195,18 @@ claude plugin marketplace list
 
 #### Codex CLI Support
 
-Autorun installs Codex hooks at `~/.codex/hooks.json` and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, search/file-discovery guidance uses shell `rg -n` and `rg --files`, and file edits use `apply_patch`.
+Autorun installs Codex hooks at `~/.codex/hooks.json` by default and exposes its skill bundle as a local Codex plugin through `~/.agents/plugins/marketplace.json` with source `~/plugins/autorun`. After install, run `/hooks` inside Codex if prompted so Codex trusts the hook hashes. Codex task progress maps to the native `update_plan` checklist tool, search/file-discovery guidance uses shell `rg -n` and `rg --files`, and file edits use `apply_patch`.
+
+Codex loads matching hooks from every active source, including user config and plugin bundles. Autorun therefore makes the hook source explicit during installation:
+
+```bash
+autorun --install --codex --codex-hook-source user    # default: ~/.codex/hooks.json only
+autorun --install --codex --codex-hook-source plugin  # autorun@personal bundled hooks only
+autorun --install --codex --codex-hook-source both    # install both sources intentionally
+autorun --install --codex --codex-hook-source none    # remove autorun Codex hooks, keep skills/guidance
+```
+
+`AUTORUN_CODEX_HOOK_SOURCE` can set the same mode for unattended reinstalls. Reinstalls refresh `autorun@personal` so changing between `user`, `plugin`, `both`, and `none` clears stale hook files from previous cache versions instead of leaving duplicate PreToolUse/PostToolUse hooks behind.
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 
@@ -903,6 +914,8 @@ autorun --install --claude           # Register for Claude Code only
 autorun --install --gemini           # Register for Gemini CLI only
 autorun --install --qwen             # Register for Qwen Code only
 autorun --install --codex            # Register for Codex CLI only
+autorun --install --codex --codex-hook-source plugin
+                                      # Package Codex hooks in autorun@personal instead of ~/.codex/hooks.json
 autorun --install --force            # Force reinstall (development)
 autorun --install --tool             # Also run uv tool install for global CLI
 autorun --uninstall                  # Uninstall plugins and UV tools
