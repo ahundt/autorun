@@ -3797,6 +3797,10 @@ def show_status() -> int:
         print(f"  API: {'current skill/command' if current_api else 'legacy skills'}")
         manages = detect_aix_manages_autorun()
         print(f"  autorun resources: {'✓ installed' if manages else '✗ not detected'}")
+        if current_api and not manages:
+            _, warnings = _aix_platform_scope_for_backup_safety()
+            for warning in warnings:
+                print(f"  blocker: {warning}")
     else:
         print("  Install: brew install thoreinstein/tap/aix")
 

@@ -616,6 +616,44 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "hooks: advisory only" in out
 
 
+def test_show_status_reports_aix_backup_blockers(tmp_path, monkeypatch, capsys):
+    """Status must show why AIX resources are absent when backup roots are unsafe."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("autorun.install.find_marketplace_root", lambda: tmp_path)
+    monkeypatch.setattr("autorun.install._check_uv_env", lambda _p: CmdResult(True, "OK"))
+    monkeypatch.setattr("autorun.install.detect_aix_manages_autorun", lambda: False)
+    monkeypatch.setattr(
+        "autorun.install._aix_platform_scope_for_backup_safety",
+        lambda: (
+            ["gemini"],
+            [
+                "skipping AIX claude install because /tmp/.claude contains a directory symlink: /tmp/.claude/link",
+                "skipping AIX codex install because /tmp/.codex contains a directory symlink: /tmp/.codex/link",
+            ],
+        ),
+    )
+
+    def fake_which(binary: str):
+        return f"/usr/bin/{binary}" if binary in {"aix", "claude", "autorun", "aise"} else None
+
+    def fake_run_cmd(cmd, *args, **kwargs):
+        if cmd[:3] == ["claude", "plugin", "list"]:
+            return CmdResult(True, "autorun enabled\npdf-extractor enabled\n")
+        if cmd == ["aix", "skill", "--help"] or cmd == ["aix", "command", "--help"]:
+            return CmdResult(True, "help\n")
+        return CmdResult(True, "")
+
+    monkeypatch.setattr("shutil.which", fake_which)
+    monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
+
+    assert show_status() == 0
+    out = capsys.readouterr().out
+    assert "AIX:" in out
+    assert "autorun resources: ✗ not detected" in out
+    assert "blocker: skipping AIX claude install" in out
+    assert "blocker: skipping AIX codex install" in out
+
+
 # ─── Hot-fix regression tests: schema correctness + path resolution ──────────
 
 def _iter_command_strings(hooks_json: dict):
