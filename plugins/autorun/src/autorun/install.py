@@ -1595,7 +1595,7 @@ _CODEX_PLUGIN_NAME = "autorun"
 _CODEX_PLUGIN_SOURCE_PATH = "./plugins/autorun"
 _CODEX_PLUGIN_OWNED_MARKER = ".autorun-owned"
 _CODEX_PERSONAL_MARKETPLACE_NAME = "personal"
-_CODEX_GITHUB_MARKETPLACE_NAME = "ahundt-autorun"
+_CODEX_GITHUB_MARKETPLACE_NAME = "autorun"
 _CODEX_GITHUB_MARKETPLACE_SOURCE = "ahundt/autorun"
 _CODEX_HOOK_SOURCE_CHOICES = ("user", "plugin", "both", "none")
 _CODEX_PLUGIN_MARKETPLACE_CHOICES = ("personal", "github")
@@ -4112,7 +4112,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         help=(
             "Codex plugin marketplace mode: personal writes ~/.agents/plugins/"
             "marketplace.json and installs autorun@personal; github adds "
-            "ahundt/autorun and installs autorun@ahundt-autorun. "
+            "ahundt/autorun and installs autorun@autorun. "
             "Default: personal. AUTORUN_CODEX_PLUGIN_MARKETPLACE can also set this."
         ),
     )

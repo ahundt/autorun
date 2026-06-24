@@ -1205,7 +1205,7 @@ def test_repo_codex_marketplace_targets_autorun_plugin():
     """GitHub marketplace installs need a repo-scoped Codex marketplace file."""
     marketplace = Path(__file__).parents[3] / ".agents" / "plugins" / "marketplace.json"
     data = json.loads(marketplace.read_text(encoding="utf-8"))
-    assert data["name"] == "ahundt-autorun"
+    assert data["name"] == "autorun"
     assert data["interface"]["displayName"] == "ahundt/autorun"
     entries = [plugin for plugin in data["plugins"] if plugin["name"] == "autorun"]
     assert len(entries) == 1
@@ -1237,7 +1237,7 @@ def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
 
 
 def test_install_codex_plugin_with_cli_uses_github_marketplace(monkeypatch):
-    """GitHub mode must add ahundt/autorun then install autorun@ahundt-autorun."""
+    """GitHub mode must add ahundt/autorun then install autorun@autorun."""
     calls = []
 
     monkeypatch.setattr(
@@ -1252,15 +1252,15 @@ def test_install_codex_plugin_with_cli_uses_github_marketplace(monkeypatch):
     monkeypatch.setattr("autorun.install.run_cmd", fake_run_cmd)
 
     result = _install_codex_plugin_with_cli(
-        marketplace_name="ahundt-autorun",
+        marketplace_name="autorun",
         marketplace_source="ahundt/autorun",
     )
 
     assert result.ok
     assert calls == [
         (["codex", "plugin", "marketplace", "add", "ahundt/autorun"], 120),
-        (["codex", "plugin", "remove", "autorun@ahundt-autorun"], 120),
-        (["codex", "plugin", "add", "autorun@ahundt-autorun"], 120),
+        (["codex", "plugin", "remove", "autorun@autorun"], 120),
+        (["codex", "plugin", "add", "autorun@autorun"], 120),
     ]
 
 

@@ -278,7 +278,7 @@ For more information: https://github.com/ahundt/autorun
         help=(
             "Codex plugin marketplace mode: personal installs autorun@personal "
             "from a local personal marketplace; github adds ahundt/autorun "
-            "and installs autorun@ahundt-autorun. Default: personal. "
+            "and installs autorun@autorun. Default: personal. "
             "AUTORUN_CODEX_PLUGIN_MARKETPLACE can also set this."
         ),
     )
