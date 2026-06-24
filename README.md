@@ -210,7 +210,7 @@ autorun --install --codex --codex-plugin-marketplace github
 
 `AUTORUN_CODEX_HOOK_SOURCE` can set the same mode for unattended reinstalls. Reinstalls refresh the selected Codex plugin (`autorun@personal` or `autorun@autorun`) so changing modes clears stale hook files from previous cache versions instead of leaving duplicate PreToolUse/PostToolUse hooks behind.
 
-`autorun@personal` is the local development plugin identity: `autorun` is the plugin name and `personal` is the generated local marketplace name in `~/.agents/plugins/marketplace.json`. For repo-backed Codex installs, the repository ships `.agents/plugins/marketplace.json` with marketplace name `autorun`; use `--codex-plugin-marketplace github` to add `ahundt/autorun` through `codex plugin marketplace add` and install `autorun@autorun`.
+`autorun@personal` is the local development plugin identity: `autorun` is the plugin name and `personal` is the generated local marketplace name in `~/.agents/plugins/marketplace.json`. For repo-backed Codex installs, the repository ships `.agents/plugins/marketplace.json` with marketplace name `autorun` and display name `Autorun`; use `--codex-plugin-marketplace github` to add `ahundt/autorun` through `codex plugin marketplace add` and install `autorun@autorun`.
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 

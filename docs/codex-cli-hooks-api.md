@@ -88,7 +88,7 @@ duplicates: Codex merges hooks from all active sources, so duplicate
 The local development plugin identity is `autorun@personal`: `autorun` is the
 plugin name and `personal` is the generated local marketplace name. Repo-backed
 installs use `.agents/plugins/marketplace.json` from `ahundt/autorun`, whose
-marketplace name is `autorun`, so the plugin identity is
+display name is `Autorun` and whose marketplace name is `autorun`, so the plugin identity is
 `autorun@autorun`.
 
 Path variables available inside hook commands:

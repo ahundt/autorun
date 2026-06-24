@@ -1206,7 +1206,7 @@ def test_repo_codex_marketplace_targets_autorun_plugin():
     marketplace = Path(__file__).parents[3] / ".agents" / "plugins" / "marketplace.json"
     data = json.loads(marketplace.read_text(encoding="utf-8"))
     assert data["name"] == "autorun"
-    assert data["interface"]["displayName"] == "ahundt/autorun"
+    assert data["interface"]["displayName"] == "Autorun"
     entries = [plugin for plugin in data["plugins"] if plugin["name"] == "autorun"]
     assert len(entries) == 1
     assert entries[0]["source"] == {"source": "local", "path": "./plugins/autorun"}

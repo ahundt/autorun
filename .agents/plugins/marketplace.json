@@ -1,7 +1,7 @@
 {
   "name": "autorun",
   "interface": {
-    "displayName": "ahundt/autorun"
+    "displayName": "Autorun"
   },
   "plugins": [
     {
