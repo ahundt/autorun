@@ -716,3 +716,33 @@ class TestEnforcementLazyCleanup:
         # Expired entry should have been cleaned up
         allows = ctx.session_allowed_patterns or []
         assert len(allows) == 0
+
+
+class TestQuotedRegexGrantRoundTrip:
+    """End-to-end: a QUOTED `/ar:ok 'regex:...'` grant must bypass a block.
+
+    Regression for the parser bug where the leading quote hid the regex: prefix,
+    so the grant was stored as a literal `regex:...` and never matched.
+    """
+
+    def test_quoted_regex_allow_bypasses_block(self):
+        sid = f"test-qregex-{time.time()}"
+        store = ThreadSafeDB()
+
+        def decision(cmd):
+            ctx = EventContext(session_id=sid, event="PreToolUse", tool_name="Bash",
+                               tool_input={"command": cmd}, store=store)
+            r = plugins.app.dispatch(ctx)
+            return (r or {}).get("hookSpecificOutput", {}).get("permissionDecision", "")
+
+        # git push is a default-blocked consent gate.
+        assert decision("git push origin main") == "deny"
+
+        # Grant via a QUOTED regex allow (the previously-broken form).
+        grant = EventContext(session_id=sid, event="UserPromptSubmit",
+                             prompt="/ar:ok 'regex:git push|git commit' perm", store=store)
+        plugins.app.dispatch(grant)
+
+        # Now allowed; an unrelated blocked command is still blocked.
+        assert decision("git push origin main") != "deny"
+        assert decision("rm -rf /tmp/x") == "deny"
