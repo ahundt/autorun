@@ -229,6 +229,43 @@ class TestCommandBlockingPlugin:
         assert desc == "dangerous delete command"
         assert ptype == "literal"
 
+    def test_parse_args_quoted_regex_prefix(self):
+        """REGRESSION: a quoted regex: prefix must be detected, not kept literal.
+
+        The raw-args prefix check runs before shlex strips the quotes, so
+        'regex:...' (leading quote) was previously parsed as a literal whose
+        text still contained the 'regex:' prefix.
+        """
+        pattern, desc, ptype = plugins._parse_args("'regex:rm.*rf'")
+        assert ptype == "regex"
+        assert pattern == "rm.*rf"
+
+    def test_parse_args_quoted_glob_prefix(self):
+        pattern, desc, ptype = plugins._parse_args("'glob:*.tmp'")
+        assert ptype == "glob"
+        assert pattern == "*.tmp"
+
+    def test_parse_allow_args_quoted_regex_prefix(self):
+        """REGRESSION: /ar:ok 'regex:...' must parse as a regex grant."""
+        pattern, desc, ptype = plugins._parse_allow_args("'regex:version|Cargo.toml' perm")
+        assert ptype == "regex"
+        assert pattern == "version|Cargo.toml"
+        assert desc == "perm"
+
+    def test_parse_allow_args_unquoted_regex_still_works(self):
+        """The previously-working unquoted form must keep working."""
+        pattern, desc, ptype = plugins._parse_allow_args("regex:version|Cargo.toml perm")
+        assert ptype == "regex"
+        assert pattern == "version|Cargo.toml"
+        assert desc == "perm"
+
+    def test_parse_allow_args_quoted_literal_unaffected(self):
+        """A quoted literal without a prefix stays literal (no false detection)."""
+        pattern, desc, ptype = plugins._parse_allow_args("'cargo set-version' perm")
+        assert ptype == "literal"
+        assert pattern == "cargo set-version"
+        assert desc == "perm"
+
     def test_check_blocked_commands_allows_non_bash(self):
         """check_blocked_commands should allow non-Bash tools."""
         ctx = EventContext(session_id="test", event="PreToolUse", tool_name="Read")

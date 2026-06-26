@@ -61,6 +61,21 @@ class TestParsePatternAndDescription:
         assert description == "unsafe exec function"
         assert pattern_type == "regex"
 
+    def test_quoted_regex_prefix(self):
+        """REGRESSION: a quoted regex: prefix must be detected, not kept literal.
+
+        The prefix check runs on the raw args before shlex strips the quotes, so
+        'regex:...' (leading quote) was parsed as a literal containing 'regex:'.
+        """
+        pattern, description, pattern_type = parse_pattern_and_description("'regex:exec.*'")
+        assert pattern == "exec.*"
+        assert pattern_type == "regex"
+
+    def test_quoted_glob_prefix(self):
+        pattern, description, pattern_type = parse_pattern_and_description("'glob:*.tmp'")
+        assert pattern == "*.tmp"
+        assert pattern_type == "glob"
+
     def test_glob_prefix(self):
         """Test glob: prefix for glob patterns."""
         pattern, description, pattern_type = parse_pattern_and_description("glob:*.tmp")

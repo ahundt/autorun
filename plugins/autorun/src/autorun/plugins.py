@@ -384,6 +384,22 @@ def _extract_pattern_type(args: str) -> tuple[str, str]:
     return "literal", args
 
 
+def _resolve_quoted_prefix(pattern: str, ptype: str) -> tuple[str, str]:
+    """Re-detect a regex:/glob: prefix that a surrounding quote hid initially.
+
+    The prefix check in _parse_args/_parse_allow_args runs on the RAW arg string,
+    which for a quoted pattern (`'regex:foo'`) starts with the quote char — so the
+    prefix is missed and shlex then leaves `regex:foo` as a literal. After shlex
+    has stripped the quotes we re-check the unquoted pattern token here, so
+    `/ar:ok 'regex:foo'` behaves the same as `/ar:ok regex:foo`. No-op when a
+    prefix was already detected, or for an ordinary literal pattern.
+    """
+    if ptype == "literal":
+        new_ptype, new_pattern = _extract_pattern_type(pattern)
+        return new_pattern, new_ptype
+    return pattern, ptype
+
+
 def _auto_detect_regex(pattern: str, ptype: str) -> tuple[str, str]:
     """Preserve /regex/ shorthand detection for parsed command patterns."""
     if ptype == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
@@ -425,6 +441,7 @@ def _parse_args(args: str) -> tuple:
         raise ValueError("No pattern provided")
 
     pattern = parts[0]
+    pattern, ptype = _resolve_quoted_prefix(pattern, ptype)
     pattern, ptype = _auto_detect_regex(pattern, ptype)
 
     desc = " ".join(parts[1:]) if len(parts) > 1 else None
@@ -466,6 +483,7 @@ def _parse_allow_args(args: str) -> tuple:
         raise ValueError("No pattern provided")
 
     pattern = " ".join(parts)
+    pattern, ptype = _resolve_quoted_prefix(pattern, ptype)
     pattern, ptype = _auto_detect_regex(pattern, ptype)
     scope_args = leading_scope + trailing_scope
     desc = " ".join(scope_args) if scope_args else None

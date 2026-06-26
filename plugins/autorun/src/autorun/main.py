@@ -255,6 +255,18 @@ def parse_pattern_and_description(args: str) -> tuple[str, str | None, str]:
 
     pattern = parts[0]
 
+    # Re-check the prefix on the unquoted first token: the raw-args checks above
+    # run before shlex strips quotes, so a quoted pattern like 'regex:foo' (leading
+    # quote) is missed there and arrives here as the literal 'regex:foo'. This makes
+    # /ar:no 'regex:foo' behave the same as /ar:no regex:foo.
+    if pattern_type == "literal":
+        if pattern.startswith("regex:"):
+            pattern_type = "regex"
+            pattern = pattern[6:].lstrip()
+        elif pattern.startswith("glob:"):
+            pattern_type = "glob"
+            pattern = pattern[5:].lstrip()
+
     # Check for /pattern/ regex syntax (auto-detect) on first token
     # This must happen after splitting to handle descriptions correctly
     if pattern_type == "literal" and pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
