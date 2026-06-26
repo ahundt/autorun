@@ -2493,3 +2493,90 @@ class TestVersionBumpGuard:
 
         # 4) A normal command is unaffected (the grant does not over-broaden).
         assert decision("Bash", {"command": "cargo build"}) != "deny"
+
+
+class TestPublishGuard:
+    """Publish/release consent gate: blocks publishing a package to a registry
+    without explicit user consent (cargo/npm/twine/etc. publishes are public and
+    often irreversible). Same keep-running + /ar:ok escape + toggle as the
+    version-bump guard."""
+
+    def test_entry_present_and_blocks_by_default(self):
+        assert "publish-command" in DEFAULT_INTEGRATIONS
+        assert DEFAULT_INTEGRATIONS["publish-command"]["action"] == "block"
+
+    def test_message_keeps_ai_running_and_offers_consent(self):
+        msg = DEFAULT_INTEGRATIONS["publish-command"]["suggestion"]
+        assert "do NOT stop" in msg or "Keep going" in msg
+        assert "/ar:ok" in msg
+        assert "AUTORUN_PUBLISH_GUARD_ENABLED" in msg
+
+    @pytest.mark.parametrize("cmd", [
+        "npm publish", "yarn publish", "pnpm publish --access public",
+        "cargo publish", "poetry publish", "uv publish", "hatch publish",
+        "flit publish", "twine upload dist/*", "gem push pkg.gem",
+        "mvn deploy", "gradle publish", "dotnet nuget push pkg.nupkg",
+        "docker push myimage:latest",
+    ])
+    def test_patterns_match_publish_commands(self, cmd):
+        from autorun.command_detection import command_matches_pattern
+        patterns = DEFAULT_INTEGRATIONS["publish-command"]["patterns"]
+        assert any(command_matches_pattern(cmd, p) for p in patterns), cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "cargo build", "npm install", "npm run build", "docker build .",
+        "docker run img", "git push origin main", "cargo test", "uv sync",
+    ])
+    def test_patterns_ignore_non_publish_commands(self, cmd):
+        from autorun.command_detection import command_matches_pattern
+        patterns = DEFAULT_INTEGRATIONS["publish-command"]["patterns"]
+        assert not any(command_matches_pattern(cmd, p) for p in patterns), cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "cargo publish", "npm publish", "twine upload dist/*",
+        "gem push x.gem", "docker push img", "dotnet nuget push x", "mvn deploy",
+    ])
+    def test_regex_oneshot_covers_publishes(self, cmd):
+        import re
+        from autorun.config import _PUBLISH_ALLOW_REGEX
+        assert re.search(_PUBLISH_ALLOW_REGEX, cmd), cmd
+
+    @pytest.mark.parametrize("cmd", ["git push origin main", "docker build .", "cargo build"])
+    def test_regex_oneshot_excludes_non_publishes(self, cmd):
+        import re
+        from autorun.config import _PUBLISH_ALLOW_REGEX
+        assert not re.search(_PUBLISH_ALLOW_REGEX, cmd), cmd
+
+    @pytest.mark.parametrize("val,expected", [
+        (None, True), ("true", True), ("on", True),
+        ("false", False), ("0", False), ("off", False), ("never", False),
+    ])
+    def test_toggle_helper(self, monkeypatch, val, expected):
+        from autorun.config import _publish_guard_enabled
+        if val is None:
+            monkeypatch.delenv("AUTORUN_PUBLISH_GUARD_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("AUTORUN_PUBLISH_GUARD_ENABLED", val)
+        assert _publish_guard_enabled() is expected
+
+    def test_consent_grant_round_trip(self):
+        """block -> /ar:ok 'cargo publish' grant -> allow."""
+        import time
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun import plugins
+
+        sid = f"test-pub-{time.time()}"
+        store = ThreadSafeDB()
+
+        def decision(cmd):
+            ctx = EventContext(session_id=sid, event="PreToolUse", tool_name="Bash",
+                               tool_input={"command": cmd}, store=store)
+            r = plugins.app.dispatch(ctx)
+            return (r or {}).get("hookSpecificOutput", {}).get("permissionDecision", "")
+
+        assert decision("cargo publish") == "deny"
+        grant = EventContext(session_id=sid, event="UserPromptSubmit",
+                             prompt="/ar:ok 'cargo publish' perm", store=store)
+        plugins.app.dispatch(grant)
+        assert decision("cargo publish") != "deny"
+        assert decision("npm publish") == "deny"  # different command still blocked

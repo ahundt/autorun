@@ -151,6 +151,27 @@ _VERSION_BUMP_ALLOW_HINT = (
     "restart the daemon (autorun --restart-daemon)."
 )
 
+# One-shot `/ar:ok` regex that bypasses every publish integration in one grant.
+# `publish` (substring) covers npm/cargo/poetry/uv/hatch/flit/gradle publish;
+# `upload` covers twine; the rest are explicit so `git push` (its own gate) is
+# NOT caught. Verified in tests.
+_PUBLISH_ALLOW_REGEX = r"publish|upload|gem push|docker push|nuget push|mvn deploy"
+
+_PUBLISH_ALLOW_HINT = (
+    "\n\nKeep going on your other tasks — do NOT stop or get stuck on this. "
+    "Publishing is public and usually irreversible (a released version cannot be "
+    "unpublished). When a release is actually wanted, tell the user it is ready "
+    "and ask them to confirm.\n\n"
+    "If the user consents, grant permission with /ar:ok, e.g.:\n"
+    "  /ar:ok 'cargo publish'   — allow that exact command (quote commands with spaces)\n"
+    "  /ar:ok regex:" + _PUBLISH_ALLOW_REGEX + " perm   — allow ALL publishes this "
+    "session (leave the regex UNQUOTED)\n"
+    "Add a scope: N (uses) | 5m (time window) | permanent. Use /ar:globalok to "
+    "persist the grant across sessions.\n"
+    "Disable the guard entirely: set AUTORUN_PUBLISH_GUARD_ENABLED=false and "
+    "restart the daemon (autorun --restart-daemon)."
+)
+
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "action": "block",
@@ -429,6 +450,24 @@ DEFAULT_INTEGRATIONS = {
             "which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT
         ),
     },
+    # ─── Publishing a package/release requires explicit consent ───────────────
+    # Publishes are public and usually irreversible (a released version cannot be
+    # unpublished). Bash-only and cross-backend. gh release create / gh repo
+    # create / git push already have their own consent gates above.
+    "publish-command": {
+        "action": "block",
+        "patterns": [
+            "npm publish", "yarn publish", "pnpm publish",
+            "cargo publish", "poetry publish", "uv publish", "hatch publish",
+            "flit publish", "twine upload", "gem push", "mvn deploy",
+            "gradle publish", "dotnet nuget push", "docker push",
+        ],
+        "name": "publish-command",
+        "suggestion": (
+            "Blocked: publishing a package/release to a registry requires explicit "
+            "user consent. The user has not asked to publish." + _PUBLISH_ALLOW_HINT
+        ),
+    },
 }
 
 
@@ -454,6 +493,23 @@ if not _version_bump_guard_enabled():
         "version-bump-manifest-write",
     ):
         DEFAULT_INTEGRATIONS.pop(_key, None)
+
+
+# ─── Publish consent guard toggle ─────────────────────────────────────────────
+# Enabled by default. Disable globally with the env var, then restart the daemon;
+# allow per-use at runtime with `/ar:ok 'cargo publish'` / `/ar:globalok`. Values:
+#   true|1|yes|on|always (default) — guard active
+#   false|0|no|off|never           — guard removed
+def _publish_guard_enabled() -> bool:
+    import os
+    val = os.environ.get("AUTORUN_PUBLISH_GUARD_ENABLED")
+    if val is not None:
+        return val.strip().lower() not in {"false", "0", "no", "off", "never"}
+    return True
+
+
+if not _publish_guard_enabled():
+    DEFAULT_INTEGRATIONS.pop("publish-command", None)
 
 
 # Configuration - Three-stage completion system with clear instruction/confirmation naming
