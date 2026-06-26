@@ -107,6 +107,50 @@ _CODEX_FIND_SUGGESTION = (
     "- Block globally: /ar:globalno find"
 )
 
+# Detects a package-version assignment in edited file content (used by the
+# version-bump consent guard's `file` integrations). Matches the version FIELD
+# being set — not a dependency's version constraint. Covers:
+#   TOML/cfg/gradle/py:  version = "1.2.3" | version = 1.2.3 | __version__ = "1.2.3"
+#   YAML (Chart/pubspec): version: 1.2.3
+#   JSON (package.json):  "version": "1.2.3"
+#   Maven (pom.xml):      <version>1.2.3</version>
+# Anchored at line start so `tokio = { version = "1.40" }`, `min_version`, and
+# `api_version` do NOT match (verified). `(?m)` makes ^ match each line.
+_VERSION_ASSIGNMENT_RE = (
+    r'(?m)^[ \t]*(?:__)?version(?:__)?[ \t]*[:=][ \t]*["\']?\d+\.\d+'
+    r'|"version"[ \t]*:[ \t]*"\d+\.\d+'
+    r'|<version>\s*\d+\.\d+'
+)
+
+# One-shot `/ar:ok` regex that bypasses EVERY version-bump integration in a
+# single grant. TIER 1 allows are matched (via _match) against `cmd`, which is
+# the shell command for bash events and the file_path for file events — so the
+# allow pattern must cover BOTH. `version` (substring) catches `npm version` /
+# `cargo set-version`; the manifest alternatives catch the file_path of edits.
+# NOTE: a bare literal `/ar:ok 'version'` does NOT work (`version` is not a whole
+# word in `set-version` and never appears in a manifest path), and the `regex:`
+# prefix must be UNQUOTED — `/ar:ok 'regex:...'` is parsed as a literal whose
+# text includes "regex:" (the quote defeats prefix detection). Verified in tests.
+_VERSION_BUMP_ALLOW_REGEX = r"version|Cargo.toml|package.json|pyproject.toml"
+
+# Shared message tail for the version-bump consent guard. Tells the AI to keep
+# working (autonomous runs are redirected, not halted) and exactly how the user
+# can grant permission with autorun's /ar:ok scoped-permission command.
+_VERSION_BUMP_ALLOW_HINT = (
+    "\n\nKeep going on your other tasks — do NOT stop or get stuck on this. "
+    "When a release is actually needed, tell the user the change is ready and "
+    "ask which part to bump (major/minor/patch).\n\n"
+    "If the user consents, grant permission with /ar:ok, e.g.:\n"
+    "  /ar:ok 'cargo set-version'   — allow that exact command (quote commands with spaces)\n"
+    "  /ar:ok 'Cargo.toml'          — allow edits to that manifest\n"
+    "  /ar:ok regex:" + _VERSION_BUMP_ALLOW_REGEX + " perm   — allow ALL version "
+    "bumps this session (leave the regex UNQUOTED)\n"
+    "Add a scope: N (uses) | 5m (time window) | permanent. Use /ar:globalok to "
+    "persist the grant across sessions.\n"
+    "Disable the guard entirely: set AUTORUN_VERSION_BUMP_GUARD_ENABLED=false and "
+    "restart the daemon (autorun --restart-daemon)."
+)
+
 DEFAULT_INTEGRATIONS = {
     "rm": {
         "action": "block",
@@ -326,7 +370,90 @@ DEFAULT_INTEGRATIONS = {
         "action": "warn",
         "suggestion": "Git commit rules: 1) Concrete terms (specific file paths, exact error messages) 2) No vague language ('improve', 'enhance', 'update') 3) Include technical details (line numbers, function names, test results) 4) Reference specific sources when making claims 5) No transient internal AI session details (plan phases, task IDs, CI run numbers, session references)",
     },
+    # ─── Version bumps require explicit user consent ──────────────────────────
+    # Cross-backend (claude/codex/gemini). One bash guard for version-bump CLIs
+    # plus two file guards for direct manifest edits (Edit vs Write route via the
+    # condition field: new_string vs content — hookify is not importable, so
+    # conditions read raw tool_input keys). action=block, but the message tells
+    # the AI to KEEP WORKING so autonomous runs are redirected, not halted —
+    # same consent-gate pattern as `git push` / `gh release create` above.
+    # Toggle: AUTORUN_VERSION_BUMP_GUARD_ENABLED env var (see below the dict).
+    "version-bump-command": {
+        "action": "block",
+        "patterns": [
+            "npm version", "yarn version", "pnpm version",
+            "cargo set-version", "poetry version", "uv version",
+            "hatch version", "bump2version", "bumpversion", "mvn versions:set",
+        ],
+        "name": "version-bump-command",
+        "suggestion": (
+            "Blocked: bumping the package version requires explicit user consent. "
+            "The user has not asked for a version bump." + _VERSION_BUMP_ALLOW_HINT
+        ),
+    },
+    "version-bump-manifest-edit": {
+        "action": "block",
+        "event": "file",
+        "tool_matcher": "Edit|Write",
+        "patterns": [
+            "Cargo.toml", "package.json", "pyproject.toml", "setup.py",
+            "setup.cfg", "build.gradle", "build.gradle.kts", "pom.xml",
+            "composer.json", "Chart.yaml", "pubspec.yaml",
+        ],
+        "name": "version-bump-manifest-edit",
+        "conditions": [
+            {"field": "new_string", "operator": "regex_match",
+             "pattern": _VERSION_ASSIGNMENT_RE},
+        ],
+        "suggestion": (
+            "Blocked: this edit changes the package version field in a manifest, "
+            "which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT
+        ),
+    },
+    "version-bump-manifest-write": {
+        "action": "block",
+        "event": "file",
+        "tool_matcher": "Edit|Write",
+        "patterns": [
+            "Cargo.toml", "package.json", "pyproject.toml", "setup.py",
+            "setup.cfg", "build.gradle", "build.gradle.kts", "pom.xml",
+            "composer.json", "Chart.yaml", "pubspec.yaml",
+        ],
+        "name": "version-bump-manifest-write",
+        "conditions": [
+            {"field": "content", "operator": "regex_match",
+             "pattern": _VERSION_ASSIGNMENT_RE},
+        ],
+        "suggestion": (
+            "Blocked: this write sets the package version field in a manifest, "
+            "which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT
+        ),
+    },
 }
+
+
+# ─── Version-bump consent guard toggle ────────────────────────────────────────
+# The three integrations above are enabled by default (like the other safety
+# guards). Disable globally with the env var, then restart the daemon
+# (`autorun --restart-daemon`); allow per-use at runtime with `/ar:ok 'version'`
+# or `/ar:globalok 'version'` (the standard integrations interface). Values:
+#   true|1|yes|on|always (default) — guard active
+#   false|0|no|off|never           — guard removed
+def _version_bump_guard_enabled() -> bool:
+    import os
+    val = os.environ.get("AUTORUN_VERSION_BUMP_GUARD_ENABLED")
+    if val is not None:
+        return val.strip().lower() not in {"false", "0", "no", "off", "never"}
+    return True
+
+
+if not _version_bump_guard_enabled():
+    for _key in (
+        "version-bump-command",
+        "version-bump-manifest-edit",
+        "version-bump-manifest-write",
+    ):
+        DEFAULT_INTEGRATIONS.pop(_key, None)
 
 
 # Configuration - Three-stage completion system with clear instruction/confirmation naming

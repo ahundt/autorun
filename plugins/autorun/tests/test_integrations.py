@@ -2280,3 +2280,216 @@ class TestLegacySymbolExport:
         from autorun.integrations import _WHEN_PREDICATES
         for new in ("_repo_differs_from_head", "_file_differs_from_ref"):
             assert new in _WHEN_PREDICATES, f"missing new key: {new}"
+
+
+class TestVersionBumpGuard:
+    """Version-bump consent guard: bash CLIs + manifest file edits (cross-backend).
+
+    Blocks unconsented version bumps but keeps the AI running (the message tells
+    it to continue other work). Toggle via AUTORUN_VERSION_BUMP_GUARD_ENABLED.
+    """
+
+    def test_entries_present_and_block_by_default(self):
+        for key in ("version-bump-command", "version-bump-manifest-edit",
+                    "version-bump-manifest-write"):
+            assert key in DEFAULT_INTEGRATIONS, f"missing {key}"
+            assert DEFAULT_INTEGRATIONS[key]["action"] == "block"
+
+    def test_message_keeps_ai_running_and_offers_consent(self):
+        # The block must not derail autonomous runs: it tells the AI to continue
+        # and documents the /ar:ok consent escape (the "keep running" requirement).
+        msg = DEFAULT_INTEGRATIONS["version-bump-command"]["suggestion"]
+        assert "do NOT stop" in msg or "Keep going" in msg
+        assert "/ar:ok" in msg
+        assert "AUTORUN_VERSION_BUMP_GUARD_ENABLED" in msg
+
+    @pytest.mark.parametrize("cmd", [
+        "npm version patch", "yarn version", "pnpm version major",
+        "cargo set-version 0.4.2", "poetry version minor", "uv version --bump patch",
+        "hatch version 1.2.3", "bump2version patch", "bumpversion minor",
+        "mvn versions:set -DnewVersion=2.0",
+    ])
+    def test_bash_patterns_match_bump_commands(self, cmd):
+        from autorun.command_detection import command_matches_pattern
+        patterns = DEFAULT_INTEGRATIONS["version-bump-command"]["patterns"]
+        assert any(command_matches_pattern(cmd, p) for p in patterns), cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "cargo build", "cargo test", "npm install", "npm run build",
+        "poetry install", "uv sync", "uv run pytest", "git status",
+    ])
+    def test_bash_patterns_ignore_non_bump_commands(self, cmd):
+        from autorun.command_detection import command_matches_pattern
+        patterns = DEFAULT_INTEGRATIONS["version-bump-command"]["patterns"]
+        assert not any(command_matches_pattern(cmd, p) for p in patterns), cmd
+
+    @pytest.mark.parametrize("path,pattern", [
+        ("/u/proj/Cargo.toml", "Cargo.toml"),
+        ("/u/proj/package.json", "package.json"),
+        ("/u/proj/pyproject.toml", "pyproject.toml"),
+    ])
+    def test_file_patterns_match_manifest_basename(self, path, pattern):
+        from autorun.command_detection import command_matches_pattern
+        patterns = DEFAULT_INTEGRATIONS["version-bump-manifest-edit"]["patterns"]
+        assert pattern in patterns
+        assert command_matches_pattern(path, pattern)
+
+    @pytest.mark.parametrize("new_string", [
+        'version = "0.4.2"', "version = '1.0.0'", 'version = 1.2.3',
+        '__version__ = "2.3.4"', '  "version": "1.2.3"', 'version: 1.4.0',
+        '<version>3.2.1</version>',
+    ])
+    def test_edit_condition_matches_version_assignment(self, new_string):
+        # version-bump-manifest-edit reads tool_input["new_string"] (Edit/replace).
+        conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-edit"]["conditions"])
+        ctx = MagicMock(tool_name="Edit",
+                        tool_input={"file_path": "/p/Cargo.toml", "new_string": new_string})
+        assert check_conditions(conds, ctx) is True, new_string
+
+    @pytest.mark.parametrize("new_string", [
+        'serde = "1.0.200"', 'name = "mypkg"', 'tokio = { version = "1.40" }',
+        'min_version = "3.8"', 'api_version = 2', 'let version = "0.4.2";',
+    ])
+    def test_edit_condition_ignores_non_version_edits(self, new_string):
+        conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-edit"]["conditions"])
+        ctx = MagicMock(tool_name="Edit",
+                        tool_input={"file_path": "/p/Cargo.toml", "new_string": new_string})
+        assert check_conditions(conds, ctx) is False, new_string
+
+    def test_write_condition_matches_version_in_content(self):
+        # version-bump-manifest-write reads tool_input["content"] (Write/write_file).
+        conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-write"]["conditions"])
+        ctx = MagicMock(tool_name="Write",
+                        tool_input={"file_path": "/p/package.json",
+                                    "content": '{\n  "name": "x",\n  "version": "1.2.3"\n}'})
+        assert check_conditions(conds, ctx) is True
+
+    def test_edit_condition_does_not_match_write_only_field(self):
+        # An Edit call has no "content"; the write-integration's condition must fail
+        # so the two integrations route Edit->edit, Write->write (no double-fire).
+        conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-write"]["conditions"])
+        ctx = MagicMock(tool_name="Edit",
+                        tool_input={"file_path": "/p/Cargo.toml", "new_string": 'version = "0.4.2"'})
+        assert check_conditions(conds, ctx) is False
+
+    @pytest.mark.parametrize("val,expected", [
+        (None, True), ("", True), ("true", True), ("1", True), ("on", True),
+        ("always", True), ("false", False), ("0", False), ("no", False),
+        ("off", False), ("never", False), ("FALSE", False),
+    ])
+    def test_toggle_helper(self, monkeypatch, val, expected):
+        from autorun.config import _version_bump_guard_enabled
+        if val is None:
+            monkeypatch.delenv("AUTORUN_VERSION_BUMP_GUARD_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("AUTORUN_VERSION_BUMP_GUARD_ENABLED", val)
+        assert _version_bump_guard_enabled() is expected
+
+    # ── Consent / permission grant (the /ar:ok escape) ───────────────────────
+    # TIER 1 allows are matched (via plugins._match) against `cmd`, which is the
+    # shell command for bash events and the file_path for file events. These
+    # tests pin down exactly which /ar:ok patterns actually grant permission, so
+    # the in-message guidance stays correct.
+
+    @pytest.mark.parametrize("cmd,pattern", [
+        ("cargo set-version 9.9.9", "cargo set-version"),
+        ("npm version patch", "npm version"),
+        ("uv version --bump minor", "uv version"),
+    ])
+    def test_literal_allow_grants_per_command(self, cmd, pattern):
+        from autorun.plugins import _match
+        assert _match(cmd, pattern, "literal") is True
+
+    @pytest.mark.parametrize("file_path,pattern", [
+        ("/u/proj/Cargo.toml", "Cargo.toml"),
+        ("/u/proj/package.json", "package.json"),
+        ("/u/proj/pyproject.toml", "pyproject.toml"),
+    ])
+    def test_literal_allow_grants_per_manifest(self, file_path, pattern):
+        # For file events cmd == file_path, so /ar:ok '<manifest>' bypasses it.
+        from autorun.plugins import _match
+        assert _match(file_path, pattern, "literal") is True
+
+    @pytest.mark.parametrize("cmd", [
+        "cargo set-version 9.9.9", "/u/proj/Cargo.toml", "/u/proj/package.json",
+    ])
+    def test_bare_version_literal_does_not_grant(self, cmd):
+        # Regression guard: a literal `/ar:ok 'version'` must NOT be advertised —
+        # `version` is not a whole word in `set-version` and is absent from
+        # manifest paths, so it grants nothing. The regex form is required.
+        from autorun.plugins import _match
+        assert _match(cmd, "version", "literal") is False
+
+    @pytest.mark.parametrize("cmd", [
+        "cargo set-version 9.9.9", "npm version patch", "poetry version minor",
+        "/u/proj/Cargo.toml", "/u/proj/package.json", "/u/proj/pyproject.toml",
+    ])
+    def test_regex_oneshot_allow_grants_all_bumps(self, cmd):
+        # The documented unified grant: /ar:ok 'regex:<...>' bypasses every
+        # version-bump integration (bash + file) in one command.
+        from autorun.plugins import _match
+        from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+        assert _match(cmd, _VERSION_BUMP_ALLOW_REGEX, "regex") is True
+
+    @pytest.mark.parametrize("cmd", [
+        "cargo build", "npm install", "uv run pytest", "/u/proj/src/main.rs",
+    ])
+    def test_regex_oneshot_allow_does_not_overreach(self, cmd):
+        from autorun.plugins import _match
+        from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+        assert _match(cmd, _VERSION_BUMP_ALLOW_REGEX, "regex") is False
+
+    def test_hint_documents_consent_mechanism(self):
+        from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+        msg = DEFAULT_INTEGRATIONS["version-bump-command"]["suggestion"]
+        # Correct, working escape forms must be present; the broken bare-literal
+        # 'version' hint must NOT be.
+        # The regex one-shot must be UNQUOTED (quoting defeats the regex: prefix).
+        assert "/ar:ok regex:" + _VERSION_BUMP_ALLOW_REGEX in msg
+        assert "'regex:" not in msg, "regex: form must not be quoted in the hint"
+        assert "/ar:ok 'cargo set-version'" in msg
+        assert "/ar:globalok" in msg
+        assert "/ar:ok 'version'\n" not in msg and "/ar:ok 'version' " not in msg
+
+    def test_consent_grant_round_trip_via_ar_ok(self):
+        """block -> real /ar:ok 'regex:...' grant -> allow, for bash AND file.
+
+        Drives the actual /ar:ok command parser (plugins.app.dispatch on a
+        UserPromptSubmit) then the PreToolUse enforcement, proving the documented
+        permission escape works end-to-end through the live pipeline.
+        """
+        import time
+        from autorun.core import EventContext, ThreadSafeDB
+        from autorun import plugins
+        from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+
+        sid = f"test-vbump-{time.time()}"
+        store = ThreadSafeDB()
+
+        def decision(tool, tool_input):
+            ctx = EventContext(session_id=sid, event="PreToolUse",
+                               tool_name=tool, tool_input=tool_input, store=store)
+            r = plugins.app.dispatch(ctx)
+            return (r or {}).get("hookSpecificOutput", {}).get("permissionDecision", "")
+
+        bump_cmd = ("Bash", {"command": "cargo set-version 9.9.9"})
+        bump_file = ("Edit", {"file_path": "/p/Cargo.toml",
+                              "new_string": 'version = "0.4.2"'})
+
+        # 1) No grant -> both blocked.
+        assert decision(*bump_cmd) == "deny"
+        assert decision(*bump_file) == "deny"
+
+        # 2) Grant the unified regex allow for the rest of the session.
+        #    The regex: prefix must be UNQUOTED (quoting makes it a literal).
+        grant = EventContext(
+            session_id=sid, event="UserPromptSubmit",
+            prompt=f"/ar:ok regex:{_VERSION_BUMP_ALLOW_REGEX} perm", store=store)
+        plugins.app.dispatch(grant)
+
+        # 3) Both the bash bump and the manifest edit are now allowed.
+        assert decision(*bump_cmd) != "deny"
+        assert decision(*bump_file) != "deny"
+
+        # 4) A normal command is unaffected (the grant does not over-broaden).
+        assert decision("Bash", {"command": "cargo build"}) != "deny"
