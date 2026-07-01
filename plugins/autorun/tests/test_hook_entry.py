@@ -6,6 +6,7 @@ Tests for hooks/hook_entry.py and daemon.py bootstrap
 TDD-driven tests for hook entry point and daemon bootstrap functionality.
 """
 import json
+import io
 import os
 import shutil
 import subprocess
@@ -110,12 +111,12 @@ class TestHookEntryExecutionPriority:
         assert "HOOK_TIMEOUT" in content
 
     def test_hook_timeout_is_platform_specific(self):
-        """Gemini keeps a 4s budget; Claude/Codex can use their larger hook budgets."""
+        """Inner CLI budgets must leave room inside each harness timeout."""
         hook_entry = load_hook_entry_module()
-        assert hook_entry.hook_timeout_for_cli("gemini") == 4
-        assert hook_entry.hook_timeout_for_cli("qwen") == 4
-        assert hook_entry.hook_timeout_for_cli("claude") >= 8
-        assert hook_entry.hook_timeout_for_cli("codex") >= 8
+        assert hook_entry.hook_timeout_for_cli("gemini") <= 3.5
+        assert hook_entry.hook_timeout_for_cli("qwen") <= 3.5
+        assert 4 <= hook_entry.hook_timeout_for_cli("claude") <= 5.5
+        assert 4 <= hook_entry.hook_timeout_for_cli("codex") <= 5.5
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
 
     def test_qwen_project_dir_precedes_gemini_compat_env(self, monkeypatch):
@@ -366,6 +367,75 @@ class TestTryCliRobustness:
             module.run_fallback()
 
         assert exc.value.code == 0
+
+    def test_main_does_not_run_fallback_after_cli_timeout_for_prompt(self, tmp_path, monkeypatch, capsys):
+        """Prompt hooks must fail open promptly after CLI timeout without fallback."""
+        module = load_hook_entry_module()
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text("#!/bin/sh\nsleep 99\n", encoding="utf-8")
+        fake_autorun.chmod(0o755)
+
+        def timeout_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 0))
+
+        def forbidden_fallback():
+            pytest.fail("run_fallback() must not run after CLI timeout")
+
+        monkeypatch.setattr(module, "get_autorun_bin", lambda: fake_autorun)
+        monkeypatch.setattr(module.subprocess, "run", timeout_run)
+        monkeypatch.setattr(module, "run_fallback", forbidden_fallback)
+        monkeypatch.setattr(module.sys, "argv", ["hook_entry.py", "--cli", "claude"])
+        monkeypatch.setattr(
+            module.sys,
+            "stdin",
+            io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "hello"})),
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            module.main()
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 0
+        output = json.loads(captured.out)
+        assert output["continue"] is True
+        assert "timed out" in output.get("systemMessage", "")
+        assert captured.err == ""
+
+    def test_main_fails_closed_after_cli_timeout_for_tool_gate(self, tmp_path, monkeypatch, capsys):
+        """Permission gates must fail closed promptly after CLI timeout without fallback."""
+        module = load_hook_entry_module()
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text("#!/bin/sh\nsleep 99\n", encoding="utf-8")
+        fake_autorun.chmod(0o755)
+
+        def timeout_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 0))
+
+        def forbidden_fallback():
+            pytest.fail("run_fallback() must not run after CLI timeout")
+
+        monkeypatch.setattr(module, "get_autorun_bin", lambda: fake_autorun)
+        monkeypatch.setattr(module.subprocess, "run", timeout_run)
+        monkeypatch.setattr(module, "run_fallback", forbidden_fallback)
+        monkeypatch.setattr(module.sys, "argv", ["hook_entry.py", "--cli", "claude"])
+        monkeypatch.setattr(
+            module.sys,
+            "stdin",
+            io.StringIO(json.dumps({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo ok"},
+            })),
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            module.main()
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 2
+        output = json.loads(captured.out)
+        assert output.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        assert "timed out" in captured.err
 
     def test_hook_rm_blocked_no_stderr(self):
         """Full e2e: hook_entry.py blocks rm with exit code 2.

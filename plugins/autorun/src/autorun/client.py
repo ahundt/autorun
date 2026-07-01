@@ -55,11 +55,11 @@ from . import ipc
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _DAEMON_RESPONSE_TIMEOUT_BY_CLI = {
-    "gemini": 3.5,
-    "qwen": 3.5,
-    "claude": 6.5,
-    "codex": 6.5,
-    "forgecode": 6.5,
+    "gemini": 2.5,
+    "qwen": 2.5,
+    "claude": 4.0,
+    "codex": 4.0,
+    "forgecode": 4.0,
 }
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
 

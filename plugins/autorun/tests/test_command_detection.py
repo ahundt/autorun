@@ -160,19 +160,53 @@ class TestWrappedCommandDetection:
         "git -C /tmp/repo push origin main",
         "git -c push.followTags=false push --porcelain origin main",
         "rtk git -C /tmp/repo -c push.followTags=false push --porcelain --no-follow-tags origin main:main",
+        "rtk --verbose git -C /tmp/repo push origin main",
+        "rtk --skip-env git push origin main",
+        "tsb git push origin main",
+        "tsb --ai git push origin main",
+        "tsb --sandbox restrictive-open git push origin main",
+        "tsb -s restrictive-open git push origin main",
+        "tsb --mount /tmp:ro --add-read-path /data git push origin main",
+        "tsb -- git push origin main",
+        "timeout 10 git push origin main",
+        "env FOO=1 git push origin main",
+        "env -u FOO git push origin main",
     ])
-    def test_git_push_matches_through_global_options_and_rtk(self, cmd: str) -> None:
+    def test_git_push_matches_through_global_options_and_wrappers(self, cmd: str) -> None:
         assert command_matches_pattern(cmd, "git push") is True
 
     @pytest.mark.parametrize("cmd,pattern", [
         ("git -C /tmp/repo reset --hard HEAD~1", "git reset --hard"),
         ("rtk git -C /tmp/repo clean -f", "git clean -f"),
+        ("rtk --verbose git -C /tmp/repo clean -f", "git clean -f"),
+        ("tsb --ai git -C /tmp/repo clean -f", "git clean -f"),
+        ("sudo -u root rm -rf /tmp/target", "rm -rf"),
+        ("timeout 10 rm -rf /tmp/target", "rm -rf"),
+        ("env FOO=1 rm -rf /tmp/target", "rm -rf"),
     ])
     def test_destructive_git_patterns_match_after_global_options(self, cmd: str, pattern: str) -> None:
         assert command_matches_pattern(cmd, pattern) is True
 
-    def test_rtk_wrapper_does_not_turn_arguments_into_commands(self) -> None:
-        assert command_matches_pattern("rtk echo rm", "rm") is False
+    @pytest.mark.parametrize("cmd", [
+        "rtk echo rm",
+        "rtk --verbose echo rm",
+        "tsb echo rm",
+        "tsb --ai echo rm",
+        "timeout 10 echo rm",
+        "env FOO=1 echo rm",
+    ])
+    def test_wrappers_do_not_turn_arguments_into_commands(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "rm") is False
+
+    @pytest.mark.parametrize("cmd", [
+        "tsb --help",
+        "tsb --version",
+        "rtk --help",
+        "rtk --version",
+    ])
+    def test_wrapper_help_invocations_are_not_inner_commands(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "git push") is False
+        assert command_matches_pattern(cmd, "rm") is False
 
 
 # ─── Edge Cases ───────────────────────────────────────────────────────────────
@@ -193,10 +227,10 @@ def test_git_not_matches_git_lfs():
     assert "git" not in names
 
 
-# ─── v7: Multi-Pass Detection Tests ───────────────────────────────────────────
+# ─── Prefix/Wrapper Detection Tests ───────────────────────────────────────────
 
 class TestMultiPassDetection:
-    """v7: Tests for prefix-with-flags handling."""
+    """Tests for prefix-with-flags handling."""
 
     @pytest.mark.parametrize("cmd", [
         "sudo -u root rm file",
@@ -209,23 +243,12 @@ class TestMultiPassDetection:
         assert command_matches_pattern(cmd, "rm") is True
 
     def test_all_potential_commands_collected(self):
-        """v7: all_potential should include commands found after prefixes.
-
-        Multi-pass detection for prefix commands (sudo, env, etc.) includes
-        ALL subsequent non-flag tokens as potential commands. This catches
-        cases like "sudo -u root rm file" where rm is the actual command.
-
-        Trade-off: We also include arguments like "file.txt" but that's
-        acceptable because they won't match any dangerous pattern.
-        """
+        """Only the unwrapped command should be a potential command."""
         from autorun.command_detection import _extract_impl
         result = _extract_impl("sudo -u root rm file.txt")
-        # Must include rm (the actual dangerous command)
         assert "rm" in result.all_potential
-        # Multi-pass mode includes all tokens after prefix (root, rm, file.txt)
-        # This is by design - rm MUST be caught even with args between sudo and rm
-        assert "root" in result.all_potential  # sudo's -u argument
-        assert "file.txt" in result.all_potential  # rm's argument (harmless)
+        assert "root" not in result.all_potential
+        assert "file.txt" not in result.all_potential
 
 
 # ─── v7: Recursive Shell -c Tests ─────────────────────────────────────────────
@@ -268,14 +291,11 @@ class TestV8EdgeCases:
         # rm -- -rf means delete file named "-rf"
         names, _ = extract_commands("rm -- -rf")
         assert "rm" in names
-        # rm is the command, and after --, -rf is treated as a potential command/file
+        # rm is the command. Operands after -- remain arguments, not commands.
         from autorun.command_detection import _extract_cached
         result = _extract_cached("rm -- -rf")
-        # The primary command (rm) should be in potential
         assert "rm" in result.all_potential
-        # After --, tokens are included in potential (since they could be files
-        # that happen to match command names in edge cases)
-        assert "-rf" in result.all_potential
+        assert "-rf" not in result.all_potential
 
     def test_git_subcommands_scoped(self):
         """v8: GIT_SUBCOMMANDS only applies to git commands."""

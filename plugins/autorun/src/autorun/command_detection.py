@@ -18,7 +18,7 @@
 Robust command detection using bashlex AST parsing.
 
 v8 Features:
-- Multi-pass detection: catches rm in "sudo -u root rm file"
+- Wrapper-spec detection: catches child commands in rtk/tsb/sudo/env/timeout
 - Recursive shell -c parsing: catches rm in "sh -c 'rm file'"
 - HOT PATH caching: `_extract_cached` for command_matches_pattern
 - End-of-options (--) handling
@@ -54,22 +54,12 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-# v8: Removed exec/xargs (complex semantics), added sandboxing tools
+# v8: Kept for backward-compatible imports and generic best-effort fallback.
 COMMAND_PREFIXES: Final[frozenset[str]] = frozenset({
-    # Privilege escalation
     "sudo", "su", "doas", "pkexec", "gksudo", "kdesudo",
-    # Environment modification
     "env", "nice", "nohup", "time", "timeout", "ionice",
-    # Debugging/tracing
     "strace", "ltrace", "watch",
-    # Sandboxing
     "chroot", "fakeroot", "firejail", "bubblewrap",
-})
-
-TRANSPARENT_COMMAND_WRAPPERS: Final[frozenset[str]] = frozenset({
-    # RTK wraps the real shell command for policy/observability, but it should
-    # not become part of autorun's command identity.
-    "rtk",
 })
 
 GIT_SUBCOMMANDS: Final[frozenset[str]] = frozenset({
@@ -182,6 +172,23 @@ class ParsedPattern:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandWrapperSpec:
+    """Grammar for wrappers/prefixes whose argv contains another command.
+
+    The parser is intentionally explicit. Arbitrary wrapper inference creates
+    safety bugs in both directions: bypasses (`tsb git push`) and false
+    positives (`echo rm`). Each spec declares which wrapper options consume
+    values and whether fixed positional operands appear before the child
+    command.
+    """
+
+    flags_with_arg: frozenset[str] = frozenset()
+    stop_flags: frozenset[str] = frozenset()
+    leading_positional_count: int = 0
+    skip_env_assignments: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractedCommands:
     """Immutable extraction result with all potential commands."""
     names: frozenset[str]
@@ -238,6 +245,94 @@ def _git_option_head(token: str) -> str:
     return token.split("=", 1)[0] if "=" in token else token
 
 
+_RTK_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset(),
+    stop_flags=frozenset({"-h", "--help", "-V", "--version"}),
+)
+
+_TSB_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-s", "--sandbox",
+        "-p", "--profile",
+        "-e", "--env",
+        "--mount",
+        "--add-read-path",
+        "--add-write-path",
+        "--allow-file",
+    }),
+    stop_flags=frozenset({"-h", "--help", "-V", "--version"}),
+)
+
+_SUDO_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-u", "--user",
+        "-g", "--group",
+        "-h", "--host",
+        "-p", "--prompt",
+        "-C", "--close-from",
+        "-T", "--command-timeout",
+        "-U", "--other-user",
+    }),
+    stop_flags=frozenset({"-h", "--help", "-V", "--version", "-l", "--list", "-v", "--validate", "-k", "--reset-timestamp"}),
+)
+
+_ENV_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "-u", "--unset",
+        "-C", "--chdir",
+        "-S", "--split-string",
+        "--ignore-signal",
+        "--block-signal",
+        "--default-signal",
+    }),
+    stop_flags=frozenset({"-h", "--help", "--version"}),
+    skip_env_assignments=True,
+)
+
+_TIMEOUT_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({"-k", "--kill-after", "-s", "--signal"}),
+    stop_flags=frozenset({"--help", "--version"}),
+    leading_positional_count=1,
+)
+
+_NICE_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({"-n", "--adjustment"}),
+    stop_flags=frozenset({"--help", "--version"}),
+)
+
+_IONICE_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({"-c", "--class", "-n", "--classdata"}),
+    stop_flags=frozenset({"-h", "--help", "-V", "--version"}),
+)
+
+_CHROOT_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
+    flags_with_arg=frozenset({
+        "--groups",
+        "--userspec",
+        "--skip-chdir",
+    }),
+    stop_flags=frozenset({"--help", "--version"}),
+    leading_positional_count=1,
+)
+
+_TRANSPARENT_WRAPPER_SPECS: Final[dict[str, CommandWrapperSpec]] = {
+    # RTK wraps command output for token savings while preserving child command
+    # semantics from autorun's safety perspective.
+    "rtk": _RTK_WRAPPER_SPEC,
+    # tsb is Task SandBox: `tsb [options] <command> [args...]`.
+    "tsb": _TSB_WRAPPER_SPEC,
+    # Common shell prefixes with operands before the child command.
+    "sudo": _SUDO_WRAPPER_SPEC,
+    "env": _ENV_WRAPPER_SPEC,
+    "timeout": _TIMEOUT_WRAPPER_SPEC,
+    "nice": _NICE_WRAPPER_SPEC,
+    "ionice": _IONICE_WRAPPER_SPEC,
+    "chroot": _CHROOT_WRAPPER_SPEC,
+}
+
+TRANSPARENT_COMMAND_WRAPPERS: Final[frozenset[str]] = frozenset(_TRANSPARENT_WRAPPER_SPECS)
+
+
 def git_subcommand_index(tokens: list[str]) -> int:
     """Return the index of git's subcommand after global options.
 
@@ -284,17 +379,67 @@ def _collect_git_global_flags(tokens: list[str], sub_idx: int, flags: set[str]) 
         i += 1
 
 
+def _is_env_assignment(token: str) -> bool:
+    """Return whether token is a shell-style NAME=value assignment."""
+    name, sep, _value = token.partition("=")
+    return bool(sep) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
+
+
+def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str]:
+    """Strip one leading wrapper invocation according to its explicit grammar."""
+    rest = tokens[1:]
+    i = 0
+    leading_positional_remaining = spec.leading_positional_count
+
+    while i < len(rest):
+        token = rest[i]
+        option_head = _git_option_head(token)
+
+        if token == "--":
+            return rest[i + 1:]
+
+        if token in spec.stop_flags or option_head in spec.stop_flags:
+            return []
+
+        if spec.skip_env_assignments and _is_env_assignment(token):
+            i += 1
+            continue
+
+        if token.startswith("-"):
+            if token in spec.flags_with_arg or option_head in spec.flags_with_arg:
+                i += 1
+                if "=" not in token and i < len(rest):
+                    i += 1
+            else:
+                i += 1
+            continue
+
+        if leading_positional_remaining > 0:
+            leading_positional_remaining -= 1
+            i += 1
+            continue
+
+        return rest[i:]
+
+    return []
+
+
 def strip_transparent_command_wrappers(tokens: list[str]) -> list[str]:
     """Return tokens with leading transparent wrappers removed.
 
-    Unlike COMMAND_PREFIXES, transparent wrappers do not put the parser in
-    multi-pass mode. This keeps `rtk echo rm` safe while still recognizing
-    `rtk git ... push` as a git push.
+    Wrappers are stripped by explicit argv grammar. This keeps `rtk echo rm`
+    and `tsb echo rm` safe while still recognizing wrapped `git push`.
     """
-    i = 0
-    while i < len(tokens) and _get_basename(tokens[i]) in TRANSPARENT_COMMAND_WRAPPERS:
-        i += 1
-    return tokens[i:]
+    stripped = list(tokens)
+    while stripped:
+        spec = _TRANSPARENT_WRAPPER_SPECS.get(_get_basename(stripped[0]))
+        if spec is None:
+            break
+        next_tokens = _strip_wrapper_once(stripped, spec)
+        if next_tokens == stripped:
+            break
+        stripped = next_tokens
+    return stripped
 
 
 def shell_command_from_tool_input(tool_input: object) -> str:
@@ -332,19 +477,17 @@ def _shlex_split_safe(segment: str) -> list[str]:
 
 def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set[str]]:
     """
-    v8: Extract with end-of-options (--) handling and multi-pass detection.
+    Extract command identity after explicit wrapper normalization.
 
     Returns (primary_command, full_string, all_potential_commands).
 
     Logic for all_potential:
-    - If first command is a prefix (sudo, env), ALL subsequent non-flag tokens
-      are potential commands (multi-pass detection for "sudo -u root rm")
-    - If first command is NOT a prefix, only that command is in potential
-      (prevents false positives like "echo rm" blocking rm)
-    - Exception: -- marker resets, tokens after it are included
+    - Leading transparent wrappers are stripped with explicit argv grammars.
+    - Only the resulting command token is potential.
+    - Command operands remain operands, including values after `--`.
 
     Examples:
-    - "sudo -u root rm file" -> potential={root, rm, file} (multi-pass, rm will match)
+    - "sudo -u root rm file" -> potential={rm}
     - "echo rm" -> potential={echo} (echo is not a prefix, so rm is just an arg)
     - "cat && rm file" -> handled by _extract_recursive, each segment separately
     """
@@ -355,43 +498,12 @@ def _extract_from_tokens(tokens: list[str]) -> tuple[str | None, str | None, set
     if not tokens:
         return None, None, set()
 
-    potential: set[str] = set()
-    cmd_idx: int | None = None
-    end_of_opts = False
-    saw_prefix = False  # Did we see a prefix command? If so, enable multi-pass
-
-    for i, token in enumerate(tokens):
-        # v8: Handle -- end-of-options marker
-        if token == "--":
-            end_of_opts = True
-            continue
-        # Skip flags only before --
-        if not end_of_opts and token.startswith("-"):
-            continue
-
-        basename = _get_basename(token)
-
-        if cmd_idx is None:
-            # Looking for the primary command
-            if basename in COMMAND_PREFIXES:
-                saw_prefix = True
-                continue
-            # Found a non-prefix token - this is a potential command
-            cmd_idx = i
-            potential.add(basename)
-        elif saw_prefix:
-            # Multi-pass mode: we saw a prefix, so all subsequent non-flag tokens
-            # are potential commands (handles "sudo -u root rm file")
-            potential.add(basename)
-        elif end_of_opts:
-            # After --, tokens could be filenames that match command patterns
-            potential.add(basename)
-        # else: regular command without prefix, don't add arguments to potential
-
-    if cmd_idx is None:
+    cmd_idx = 0
+    if not tokens:
         return None, None, set()
 
     cmd_name = _get_basename(tokens[cmd_idx])
+    potential = {cmd_name}
     # v8: Build command string more efficiently
     rest = tokens[cmd_idx + 1:]
     cmd_string = f"{cmd_name} {' '.join(rest)}" if rest else cmd_name
@@ -474,7 +586,7 @@ def command_tokens_for(
 
 if BASHLEX_AVAILABLE:
     class CommandVisitor(bashlex_ast.nodevisitor):
-        """AST visitor with multi-pass and recursive shell -c parsing."""
+        """AST visitor with wrapper-aware and recursive shell -c parsing."""
         __slots__ = ("names", "strings", "potential", "depth")
 
         def __init__(self, depth: int = 0) -> None:

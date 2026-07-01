@@ -26,6 +26,8 @@ Tests for:
 
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from autorun.core import app, EventContext, ThreadSafeDB
 from autorun.config import CONFIG
 from autorun import plugins
@@ -695,6 +697,32 @@ class TestCheckBlockedCommandsIntegration:
         assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
         assert "git push" in result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 
+    @pytest.mark.parametrize("cli_type", ["claude", "gemini", "codex"])
+    @pytest.mark.parametrize("command", [
+        "tsb --ai git push origin main",
+        "tsb --mount /tmp:ro --add-read-path /data git push origin main",
+        "timeout 10 git push origin main",
+        "env FOO=1 git push origin main",
+        "sudo -u root git push origin main",
+    ])
+    def test_wrapped_git_push_is_blocked_across_clis(self, cli_type, command):
+        """Wrapped remote writes must be blocked before child process execution."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-wrapped-git-push-{cli_type}",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            cli_type=cli_type,
+            store=store,
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is not None
+        assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        assert "git push" in result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+
     def test_rtk_wrapper_does_not_false_block_shell_arguments(self):
         """Transparent wrappers must not make safe command arguments look executable."""
         store = ThreadSafeDB()
@@ -704,6 +732,29 @@ class TestCheckBlockedCommandsIntegration:
             tool_name="Bash",
             tool_input={"command": "rtk echo rm"},
             cli_type="codex",
+            store=store,
+        )
+
+        result = plugins.check_blocked_commands(ctx)
+
+        assert result is None
+
+    @pytest.mark.parametrize("cli_type", ["claude", "gemini", "codex"])
+    @pytest.mark.parametrize("command", [
+        "rtk echo rm",
+        "tsb --ai echo rm",
+        "timeout 10 echo rm",
+        "env FOO=1 echo rm",
+    ])
+    def test_wrappers_do_not_false_block_shell_arguments_across_clis(self, cli_type, command):
+        """Wrapper grammars must not make safe shell arguments executable."""
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"test-wrapped-safe-args-{cli_type}",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            cli_type=cli_type,
             store=store,
         )
 

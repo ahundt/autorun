@@ -19,6 +19,7 @@ Usage:
     exit_code = restart_daemon()
 """
 import os
+import shutil
 import sys
 import time
 import subprocess
@@ -228,6 +229,45 @@ def _check_conflicting_packages() -> None:
         print(f"  ⚠️ Could not check for installed packages: {e}")
 
 
+def _python_in_venv_bin(bin_dir: Path) -> Path | None:
+    """Return a Python executable from a virtualenv bin directory."""
+    for name in ("python3", "python"):
+        candidate = bin_dir / name
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _daemon_python_for_src(src_dir: Path) -> Path:
+    """Return the interpreter that should own the daemon for this source tree."""
+    plugin_root = src_dir.parent
+    workspace_root = plugin_root.parent.parent
+
+    # Match hook_entry.py: prefer venvs that can actually provide the autorun
+    # console script. The workspace venv is common for local marketplace installs.
+    for root in (workspace_root, plugin_root):
+        bin_dir = root / ".venv" / "bin"
+        if (bin_dir / "autorun").exists():
+            python = _python_in_venv_bin(bin_dir)
+            if python:
+                return python
+
+    autorun_bin = shutil.which("autorun")
+    if autorun_bin:
+        bin_dir = Path(autorun_bin).resolve().parent
+        if bin_dir.parent.name == ".venv":
+            python = _python_in_venv_bin(bin_dir)
+            if python:
+                return python
+
+    for root in (plugin_root, workspace_root):
+        python = _python_in_venv_bin(root / ".venv" / "bin")
+        if python:
+            return python
+
+    return Path(sys.executable)
+
+
 def _start_daemon(src_dir: Path) -> bool:
     """Start a fresh daemon process with detailed diagnostic logging.
 
@@ -262,9 +302,10 @@ def _start_daemon(src_dir: Path) -> bool:
 
     # Redirect stdout/stderr to a log file for debug visibility
     log_path = ipc.AUTORUN_CONFIG_DIR / "daemon_startup.log"
+    daemon_python = _daemon_python_for_src(src_dir)
     with open(log_path, "w", encoding="utf-8") as startup_log:
         subprocess.Popen(
-            [sys.executable, "-c", daemon_code],
+            [str(daemon_python), "-c", daemon_code],
             stdout=startup_log,
             stderr=startup_log,
             start_new_session=True,

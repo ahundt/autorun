@@ -315,6 +315,28 @@ class TestPsutilProcessLifecycle:
             mock_proc.terminate.assert_called_once()
             mock_proc.kill.assert_called_once()
 
+    def test_daemon_python_prefers_workspace_venv_with_autorun(self, tmp_path):
+        """Restarts must spawn the venv Python whose bin dir contains autorun."""
+        from autorun.restart_daemon import _daemon_python_for_src
+
+        workspace_root = tmp_path / "workspace"
+        plugin_root = workspace_root / "plugins" / "autorun"
+        src_dir = plugin_root / "src"
+        workspace_venv_bin = workspace_root / ".venv" / "bin"
+        package_venv_bin = plugin_root / ".venv" / "bin"
+        workspace_venv_bin.mkdir(parents=True)
+        package_venv_bin.mkdir(parents=True)
+        src_dir.mkdir(parents=True)
+
+        workspace_python = workspace_venv_bin / "python3"
+        workspace_autorun = workspace_venv_bin / "autorun"
+        package_python = package_venv_bin / "python3"
+        for path in (workspace_python, workspace_autorun, package_python):
+            path.write_text("#!/bin/sh\n", encoding="utf-8")
+            path.chmod(0o755)
+
+        assert _daemon_python_for_src(src_dir) == workspace_python
+
     def test_get_daemon_pid_fallback_process_discovery(self):
         """get_daemon_pid() discovers daemon by cmdline when daemon.lock is missing."""
         from autorun.restart_daemon import get_daemon_pid

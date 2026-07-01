@@ -41,11 +41,11 @@ from typing import NoReturn
 # Code and Codex allow more room; using one global 4s timeout caused avoidable
 # daemon fallbacks and client disconnect churn under real CLI E2E load.
 HOOK_TIMEOUT_BY_CLI = {
-    "gemini": 4,
-    "qwen": 4,
-    "claude": 8,
-    "codex": 8,
-    "forgecode": 8,
+    "gemini": 3.0,
+    "qwen": 3.0,
+    "claude": 5.0,
+    "codex": 5.0,
+    "forgecode": 5.0,
 }
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
@@ -300,6 +300,19 @@ def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoRet
         print(reason, file=sys.stderr)
         sys.exit(2)
     sys.exit(0)
+
+
+def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
+    """Return promptly when the fast CLI path times out.
+
+    The outer harness timeout is short. Running the direct-import fallback after
+    the CLI already consumed its budget can make Claude/Codex discard output.
+    """
+    timeout = hook_timeout_for_cli(cli_type)
+    message = f"autorun CLI timed out after {timeout:g}s"
+    if is_tool_gate_event(event_name):
+        fail_closed_tool_gate(message, cli_type, event_name)
+    fail_open(message)
 
 
 # =============================================================================
@@ -821,6 +834,7 @@ def main() -> None:
                 sys.exit(result.returncode)
         except subprocess.TimeoutExpired:
             log_debug("✗ CLI timed out")
+            fail_after_cli_timeout(cli_type, event_name)
         except Exception as e:
             log_debug(f"✗ CLI exception: {e}")
 
