@@ -34,7 +34,6 @@ import signal
 import subprocess
 import time
 import copy
-import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,11 +45,11 @@ from .session_manager import session_state
 from .config import CONFIG
 from .platforms import PLATFORMS as _PLATFORMS, hook_platforms, platform_for
 from . import ipc
+from .logging_utils import get_logger
 
 # === CONFIGURATION ===
 ipc.ensure_config_dir()
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
-LOG_FILE = ipc.AUTORUN_LOG_FILE
 IDLE_TIMEOUT = 1800  # 30 minutes
 
 # Buffer size for reading hook payloads (asyncio default is 64KB = 2^16)
@@ -74,12 +73,10 @@ else:
     READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)
 
 # === LOGGING ===
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s'
-)
-logger = logging.getLogger("autorun")
+# Keep package import side-effect-light. Metadata commands such as
+# `autorun --version` import this module indirectly and must not require write
+# access to ~/.autorun/daemon.log. Daemon entry points opt into file logging.
+logger = get_logger("autorun")
 
 
 CANONICAL_COMMAND_PREFIX = "/ar:"

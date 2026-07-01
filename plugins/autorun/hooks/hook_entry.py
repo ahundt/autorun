@@ -52,6 +52,51 @@ BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
 BOOTSTRAP_MSG = (
     "autorun deps not installed. Run: uv pip install autorun && autorun --install"
 )
+DEBUG_LOG_MAX_BYTES = 1_000_000
+DEBUG_VALUE_MAX_CHARS = 4_000
+
+
+def _debug_log_path() -> Path:
+    """Return the bounded hook debug log path."""
+    return Path.home() / ".autorun" / "hook_entry_debug.log"
+
+
+def _short_debug_value(value: str, limit: int = DEBUG_VALUE_MAX_CHARS) -> str:
+    """Return a bounded debug string so hook logging cannot dominate runtime."""
+    if len(value) <= limit:
+        return value
+    half = max(1, limit // 2)
+    omitted = len(value) - (half * 2)
+    return (
+        value[:half]
+        + f"\n... <omitted {omitted} chars from hook debug log> ...\n"
+        + value[-half:]
+    )
+
+
+def _append_debug_log(message: str) -> None:
+    """Append to hook debug log with a small rotation cap.
+
+    Hook entry runs inside strict harness timeouts. Debug logging must never
+    append unbounded stdout/stderr payloads or force large-file writes.
+    """
+    try:
+        debug_log = _debug_log_path()
+        debug_log.parent.mkdir(exist_ok=True)
+        if debug_log.exists() and debug_log.stat().st_size > DEBUG_LOG_MAX_BYTES:
+            rotated = debug_log.with_suffix(debug_log.suffix + ".1")
+            try:
+                rotated.unlink(missing_ok=True)
+            except TypeError:
+                if rotated.exists():
+                    rotated.unlink()
+            debug_log.replace(rotated)
+        with open(debug_log, "a", encoding="utf-8") as f:
+            f.write(message)
+            if not message.endswith("\n"):
+                f.write("\n")
+    except Exception:
+        pass
 
 # =============================================================================
 # CLI Detection (dual Claude Code / Gemini CLI support)
@@ -393,19 +438,23 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
 
         # Debug logging (ALWAYS enabled to diagnose hook issues)
         try:
-            from pathlib import Path as DebugPath
-            debug_log = DebugPath.home() / ".autorun" / "hook_entry_debug.log"
-            with open(debug_log, 'a') as f:
-                f.write(f"CLI exit code: {result.returncode}\n")
-                f.write(f"CLI stdout ({len(result.stdout)} bytes):\n{result.stdout}\n")
-                f.write(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr}\n")
-                # Validate JSON
-                try:
-                    import json
-                    json.loads(result.stdout)
-                    f.write("✓ JSON valid\n")
-                except json.JSONDecodeError as e:
-                    f.write(f"✗ JSON INVALID: {e}\n")
+            lines = [
+                f"CLI exit code: {result.returncode}",
+                (
+                    f"CLI stdout ({len(result.stdout)} bytes):\n"
+                    f"{_short_debug_value(result.stdout)}"
+                ),
+                (
+                    f"CLI stderr ({len(result.stderr)} bytes):\n"
+                    f"{_short_debug_value(result.stderr)}"
+                ),
+            ]
+            try:
+                json.loads(result.stdout)
+                lines.append("JSON valid")
+            except json.JSONDecodeError as e:
+                lines.append(f"JSON invalid: {e}")
+            _append_debug_log("\n".join(lines))
         except Exception:
             pass  # Never fail hook due to debug logging
 
@@ -709,14 +758,8 @@ def main() -> None:
 
     # Debug logging (ALWAYS enabled to diagnose hook issues)
     def log_debug(msg: str):
-        try:
-            debug_log = Path.home() / ".autorun" / "hook_entry_debug.log"
-            debug_log.parent.mkdir(exist_ok=True)
-            with open(debug_log, 'a') as f:
-                import datetime
-                f.write(f"[{datetime.datetime.now()}] {msg}\n")
-        except Exception:
-            pass
+        import datetime
+        _append_debug_log(f"[{datetime.datetime.now()}] {msg}")
 
     log_debug("=" * 80)
     event_name = "unknown"

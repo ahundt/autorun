@@ -44,6 +44,7 @@ import time
 from pathlib import Path
 
 from .core import app, AutorunDaemon, logger
+from .logging_utils import configure_file_logging
 
 
 # =============================================================================
@@ -289,6 +290,8 @@ def main():
     2. Create and start the daemon
     3. Handle any startup errors
     """
+    configure_file_logging("autorun")
+
     # Bootstrap optional dependencies in background (non-blocking)
     _bootstrap_optional_deps()
 

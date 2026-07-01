@@ -538,6 +538,45 @@ class TestCodeQuality:
             )
 
     @pytest.mark.unit
+    def test_version_command_does_not_write_daemon_log_at_import(self, tmp_path):
+        """`autorun --version` must not require daemon log write access.
+
+        The console script imports `autorun.__main__`, which imports the package
+        first. A previous core.py module-level FileHandler crashed before
+        argument parsing whenever ~/.autorun/daemon.log was unwritable.
+        """
+        import os
+        import subprocess
+
+        autorun_home = tmp_path / "autorun-home"
+        autorun_home.mkdir()
+        autorun_home.chmod(0o500)
+
+        src_dir = Path(__file__).parent.parent / "src"
+        env = os.environ.copy()
+        env["AUTORUN_HOME"] = str(autorun_home)
+        env["PYTHONPATH"] = (
+            str(src_dir)
+            if not env.get("PYTHONPATH")
+            else f"{src_dir}{os.pathsep}{env['PYTHONPATH']}"
+        )
+
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "autorun", "--version"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=10,
+            )
+        finally:
+            autorun_home.chmod(0o700)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("autorun ")
+        assert not (autorun_home / "daemon.log").exists()
+
+    @pytest.mark.unit
     def test_no_print_to_stderr_anywhere(self):
         """Test that NO Python files have print(..., file=sys.stderr).
 

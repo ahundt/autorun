@@ -16,12 +16,63 @@ Usage:
 """
 import logging
 import os
-from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
 from . import ipc
 
 LOG_FILE = ipc.AUTORUN_LOG_FILE
 DEBUG_ENABLED = os.environ.get('AUTORUN_DEBUG') == '1'
+
+
+def _has_non_null_handler(logger: logging.Logger) -> bool:
+    """Return True when logger already has a real output handler."""
+    return any(not isinstance(handler, logging.NullHandler) for handler in logger.handlers)
+
+
+def configure_file_logging(
+    name: str = "autorun",
+    *,
+    level: int = logging.INFO,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 3,
+) -> logging.Logger:
+    """Configure rotating file logging for long-running daemon processes.
+
+    Importing autorun must stay side-effect-light: commands like
+    ``autorun --version`` should not require write access to ~/.autorun. Daemon
+    entry points call this function explicitly when file logging is useful.
+    If the log path is unavailable, fall back to a NullHandler instead of
+    crashing a hook or metadata command.
+    """
+    logger = logging.getLogger(name)
+
+    if _has_non_null_handler(logger):
+        logger.setLevel(level)
+        logger.propagate = True
+        return logger
+
+    logger.handlers = [
+        handler for handler in logger.handlers
+        if not isinstance(handler, logging.NullHandler)
+    ]
+
+    try:
+        ipc.ensure_config_dir()
+        handler = RotatingFileHandler(LOG_FILE, maxBytes=max_bytes, backupCount=backup_count)
+    except OSError:
+        handler = logging.NullHandler()
+        logger.setLevel(logging.CRITICAL + 1)
+        if not logger.handlers:
+            logger.addHandler(handler)
+        return logger
+
+    handler.setFormatter(
+        logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    )
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.propagate = True
+    return logger
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -47,16 +98,21 @@ def get_logger(name: str) -> logging.Logger:
     if not logger.handlers:
         if DEBUG_ENABLED:
             # Debug enabled - log to file
-            from logging.handlers import RotatingFileHandler
             handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3)
             handler.setFormatter(
                 logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
             )
             logger.addHandler(handler)
             logger.setLevel(logging.DEBUG)
+            logger.propagate = True
         else:
             # Debug disabled - add null handler to prevent default stderr handler
             logger.addHandler(logging.NullHandler())
-            logger.setLevel(logging.CRITICAL + 1)  # Effectively disabled
+            # Do not raise the logger level here. Tests and callers still need
+            # warning/error records to be observable through explicit handlers
+            # such as pytest caplog, while NullHandler keeps ordinary imports
+            # from writing to stderr or daemon.log.
+            logger.setLevel(logging.NOTSET)
+            logger.propagate = True
 
     return logger

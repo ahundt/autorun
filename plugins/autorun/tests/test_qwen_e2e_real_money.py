@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,18 @@ ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MO
 PLUGIN_ROOT = Path(__file__).parent.parent
 REPO_ROOT = PLUGIN_ROOT.parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_TRAILING_STYLE_RE = re.compile(r"(?:\[[0-9;]*m\]?)+$")
+
+
+def _clean_zai_model(value: str | None) -> str:
+    """Normalize a shell-provided Z.AI model id without exposing secrets."""
+    model = (value or "glm-5.2").strip() or "glm-5.2"
+    model = _ANSI_ESCAPE_RE.sub("", model).strip()
+    # Some shell prompt/theme integrations can leave a literal "[1m" suffix
+    # when exporting copied text. Z.AI treats that as part of the model id.
+    model = _TRAILING_STYLE_RE.sub("", model).strip()
+    return model or "glm-5.2"
 
 
 def _find_qwen_hook_script() -> Path:
@@ -63,7 +76,7 @@ def _qwen_zai_openai_env() -> dict[str, str]:
     env = os.environ.copy()
     base_url = env.get("Z_AI_BASE_URL", "").strip()
     auth_token = env.get("Z_AI_AUTH_TOKEN", "").strip()
-    model = env.get("Z_AI_MODEL", "glm-5.2").strip() or "glm-5.2"
+    model = _clean_zai_model(env.get("Z_AI_MODEL"))
 
     env["OPENAI_BASE_URL"] = _derive_zai_coding_base_url(base_url)
     env["OPENAI_API_KEY"] = auth_token
@@ -117,6 +130,19 @@ def test_qwen_zai_env_maps_token_to_openai_api_key(monkeypatch):
     assert "ANTHROPIC_API_KEY" not in env
 
 
+def test_qwen_zai_env_strips_style_suffix_from_model(monkeypatch):
+    """Do not forward copied ANSI/style suffixes as part of Z.AI model ids."""
+    monkeypatch.setenv("Z_AI_BASE_URL", "https://api.z.ai/api/anthropic")
+    monkeypatch.setenv("Z_AI_AUTH_TOKEN", "placeholder-token-for-test")
+    monkeypatch.setenv("Z_AI_MODEL", "glm-5.2[1m]")
+
+    env = _qwen_zai_openai_env()
+
+    assert env["OPENAI_MODEL"] == "glm-5.2"
+    assert env["QWEN_MODEL"] == "glm-5.2"
+    assert _clean_zai_model("glm-5.2[1m") == "glm-5.2"
+
+
 def test_qwen_before_tool_denies_dangerous_shell_command_without_daemon():
     """Qwen hook entry returns permissive deny JSON for blocked shell commands."""
     payload = {
@@ -158,7 +184,7 @@ def test_qwen_zai_glm52_basic_response_real_money():
     if missing:
         pytest.skip(f"Missing Z.AI env vars for Qwen live test: {', '.join(missing)}")
 
-    model = os.environ.get("Z_AI_MODEL", "glm-5.2").strip() or "glm-5.2"
+    model = _clean_zai_model(os.environ.get("Z_AI_MODEL"))
     marker = "QWEN_ZAI_GLM52_OK"
     prompt = f"Reply with exactly {marker} and no other text."
     result = subprocess.run(

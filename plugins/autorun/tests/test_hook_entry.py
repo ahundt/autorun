@@ -128,6 +128,36 @@ class TestHookEntryExecutionPriority:
 
         assert hook_entry.get_project_dir() == "/tmp/qwen-project"
 
+    def test_debug_values_are_truncated(self):
+        """Hook debug logging must not store huge subprocess output."""
+        hook_entry = load_hook_entry_module()
+        value = "a" * 5000
+
+        shortened = hook_entry._short_debug_value(value, limit=100)
+
+        assert len(shortened) < 300
+        assert "omitted" in shortened
+        assert shortened.startswith("a" * 50)
+        assert shortened.endswith("a" * 50)
+
+    def test_debug_log_rotates_before_append(self, tmp_path, monkeypatch):
+        """A large hook debug log must be rotated before appending."""
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(hook_entry, "DEBUG_LOG_MAX_BYTES", 100)
+
+        log_dir = tmp_path / ".autorun"
+        log_dir.mkdir()
+        active_log = log_dir / "hook_entry_debug.log"
+        active_log.write_text("x" * 200, encoding="utf-8")
+
+        hook_entry._append_debug_log("new bounded entry")
+
+        rotated_log = log_dir / "hook_entry_debug.log.1"
+        assert rotated_log.exists()
+        assert rotated_log.read_text(encoding="utf-8") == "x" * 200
+        assert active_log.read_text(encoding="utf-8") == "new bounded entry\n"
+
 
 # =============================================================================
 # Test: hook_entry.py Fail-Open Behavior
