@@ -49,7 +49,7 @@ from datetime import datetime
 
 from . import ipc
 from .core import EventContext, format_command_for_cli, logger
-from .session_manager import session_state  # REUSE - no custom persistence code
+from .session_manager import DEFAULT_SESSION_TIMEOUT, session_state  # REUSE - no custom persistence code
 from .config import (
     CONFIG,
     LOG_SNIPPET_MAX_LEN,
@@ -146,6 +146,8 @@ class TaskLifecycleConfig:
     ghost_clear_enabled: bool = True
     ghost_clear_min_consecutive_blocks: int = 2
     ghost_clear_hash_length: int = 12
+    state_lock_timeout_seconds: float = DEFAULT_SESSION_TIMEOUT
+    hook_state_lock_timeout_seconds: float = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.25))
 
     @classmethod
     def load(cls) -> "TaskLifecycleConfig":
@@ -155,6 +157,12 @@ class TaskLifecycleConfig:
                 data = json.loads(CONFIG_PATH.read_text())
                 if "storage_dir" in data and isinstance(data["storage_dir"], str):
                     data["storage_dir"] = Path(data["storage_dir"])
+                try:
+                    state_timeout = float(data.get("state_lock_timeout_seconds", DEFAULT_SESSION_TIMEOUT))
+                except (TypeError, ValueError):
+                    state_timeout = DEFAULT_SESSION_TIMEOUT
+                if state_timeout < DEFAULT_SESSION_TIMEOUT:
+                    data["state_lock_timeout_seconds"] = DEFAULT_SESSION_TIMEOUT
                 return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -299,6 +307,11 @@ class TaskLifecycle:
 
         # Config
         self.config = config or TaskLifecycleConfig.load()
+        self._state_lock_timeout = (
+            self.config.hook_state_lock_timeout_seconds
+            if ctx is not None
+            else self.config.state_lock_timeout_seconds
+        )
 
         # Global key for session state (per-session isolation)
         self.global_key = f"__task_lifecycle__{self.session_id}"
@@ -308,6 +321,10 @@ class TaskLifecycle:
         self.audit_log.parent.mkdir(parents=True, exist_ok=True)
 
     # === State Access (REUSES session_state() - DRY) ===
+
+    def _session_state(self):
+        """Open this task lifecycle session with the configured hook lock budget."""
+        return session_state(self.global_key, timeout=self._state_lock_timeout)
 
     def _migrate_if_needed(self, state: Dict) -> None:
         """Migrate stored state to current schema version (lazy self-healing).
@@ -369,7 +386,7 @@ class TaskLifecycle:
     @property
     def tasks(self) -> Dict[str, Dict]:
         """Get tasks dict aggregated from internal store and Conductor (Gemini)."""
-        with session_state(self.global_key) as state:
+        with self._session_state() as state:
             self._migrate_if_needed(state)
             tasks = dict(state.get("tasks", {}))
 
@@ -429,7 +446,7 @@ class TaskLifecycle:
 
     def atomic_update_tasks(self, updater: Callable[[Dict], None]) -> None:
         """Atomically update tasks. updater(tasks) modifies in-place."""
-        with session_state(self.global_key) as state:
+        with self._session_state() as state:
             self._migrate_if_needed(state)
             tasks = state.get("tasks", {})
             updater(tasks)
@@ -438,12 +455,12 @@ class TaskLifecycle:
     @property
     def plan_tasks_map(self) -> Dict[str, List[str]]:
         """Get plan->tasks mapping."""
-        with session_state(self.global_key) as state:
+        with self._session_state() as state:
             return dict(state.get("plan_tasks_map", {}))
 
     def atomic_update_plan_tasks_map(self, updater: Callable[[Dict], None]) -> None:
         """Atomically update plan_tasks_map."""
-        with session_state(self.global_key) as state:
+        with self._session_state() as state:
             plan_map = state.get("plan_tasks_map", {})
             updater(plan_map)
             state["plan_tasks_map"] = plan_map
@@ -451,7 +468,7 @@ class TaskLifecycle:
     @property
     def session_metadata(self) -> Dict:
         """Get session metadata."""
-        with session_state(self.global_key) as state:
+        with self._session_state() as state:
             if "session_metadata" not in state:
                 state["session_metadata"] = {
                     'session_id': self.session_id,
@@ -463,7 +480,7 @@ class TaskLifecycle:
 
     def atomic_update_metadata(self, updater: Callable[[Dict], None]) -> None:
         """Atomically update session_metadata."""
-        with session_state(self.global_key) as state:
+        with self._session_state() as state:
             metadata = state.get("session_metadata", {
                 'session_id': self.session_id,
                 'created_at': time.time(),
@@ -1705,41 +1722,50 @@ class TaskLifecycle:
 
             archived = cleared = skip_active = skip_incomplete = skip_young = errors = 0
 
-            # Step 2: Process each session with safety checks
+            # Step 2: Process sessions from one shared-state snapshot, then
+            # bulk-delete eligible prefixes in one atomic save. The old
+            # per-session loop rewrote daemon_state.json once per session; with
+            # thousands of historical task sessions that made GC itself slow
+            # enough to contend with live hooks.
             error_details = []
+            candidates: dict[str, dict] = {}
+            clear_sids: list[str] = []
 
-            for sid in sorted(sids):
-                # Safety check 1: Never GC current active session
-                # Even if it has zero tasks or all completed, active session is OFF LIMITS
-                if sid == current:
-                    skip_active += 1
-                    if dry_run:
-                        print(f"  PROTECT {sid[:12]}... (current session - never GC active)")
-                    continue
+            from .session_manager import all_session_state
 
-                global_key = f"__task_lifecycle__{sid}"
+            try:
+                with all_session_state(timeout=2.0, write=False) as raw:
+                    for sid in sorted(sids):
+                        if sid == current:
+                            skip_active += 1
+                            if dry_run:
+                                print(f"  PROTECT {sid[:12]}... (current session - never GC active)")
+                            continue
 
-                try:
-                    # CRITICAL LOCKING: Use session_state() for SessionLock coordination.
-                    # This prevents race conditions with daemon writing to same store.
-                    # Direct file access would bypass locking and corrupt data.
-                    #
-                    # Timeout 2s = fail fast if daemon holds lock (indicates session active).
-                    with session_state(global_key, timeout=2.0) as state:
-                        tasks = state.get("tasks", {})
+                        prefix = f"__task_lifecycle__{sid}/"
+                        state_snapshot = {
+                            key[len(prefix):]: value
+                            for key, value in raw.items()
+                            if key.startswith(prefix)
+                        }
+                        tasks = state_snapshot.get("tasks", {})
 
-                        # Skip incomplete
-                        incomplete = [t for t in tasks.values()
-                                      if t.get("status") not in cls.NON_BLOCKING_STATUSES]
+                        incomplete = [
+                            t for t in tasks.values()
+                            if isinstance(t, dict)
+                            and t.get("status") not in cls.NON_BLOCKING_STATUSES
+                        ]
                         if incomplete:
                             skip_incomplete += 1
                             if dry_run:
                                 print(f"  SKIP    {sid[:12]}... ({len(incomplete)} incomplete)")
                             continue
 
-                        # Skip young (respect TTL)
                         if tasks:
-                            newest = max(t.get("updated_at", 0) for t in tasks.values())
+                            newest = max(
+                                (t.get("updated_at", 0) for t in tasks.values() if isinstance(t, dict)),
+                                default=0,
+                            )
                             age = time.time() - newest
                             if age < ttl_seconds:
                                 skip_young += 1
@@ -1750,40 +1776,63 @@ class TaskLifecycle:
                         if dry_run:
                             label = "ARCHIVE+" if archive and tasks else ""
                             print(f"  {label}CLEAR  {sid[:12]}... ({len(tasks)} tasks)")
+                            if archive and tasks:
+                                archived += 1
                             cleared += 1
                             continue
 
-                        # Archive to JSON (within lock)
-                        if archive and tasks:
-                            archive_dir.mkdir(parents=True, exist_ok=True)
-                            (archive_dir / f"{sid}.json").write_text(
-                                json.dumps({
-                                    "session_id": sid,
-                                    "archived_at": time.time(),
-                                    "schema_version": state.get("schema_version", 1),
-                                    "session_metadata": state.get("session_metadata", {}),
-                                    "tasks": tasks,
-                                }, indent=2, default=str))
-                            archived += 1
+                        candidates[sid] = state_snapshot
+                        clear_sids.append(sid)
 
-                        # Clear state (within lock)
-                        state.clear()
+                if not dry_run:
+                    if archive:
+                        archive_dir.mkdir(parents=True, exist_ok=True)
+                    for sid, state_snapshot in candidates.items():
+                        tasks = state_snapshot.get("tasks", {})
+                        try:
+                            if archive and tasks:
+                                (archive_dir / f"{sid}.json").write_text(
+                                    json.dumps({
+                                        "session_id": sid,
+                                        "archived_at": time.time(),
+                                        "schema_version": state_snapshot.get("schema_version", 1),
+                                        "session_metadata": state_snapshot.get("session_metadata", {}),
+                                        "tasks": tasks,
+                                    }, indent=2, default=str),
+                                    encoding="utf-8",
+                                )
+                                archived += 1
+                        except PermissionError as e:
+                            errors += 1
+                            error_details.append((sid, "Permission", str(e)[:LOG_SNIPPET_MAX_LEN]))
+                            print(f"  ERROR   {sid[:12]}... Permission denied")
+                            clear_sids.remove(sid)
+                        except Exception as e:
+                            errors += 1
+                            error_details.append((sid, type(e).__name__, str(e)[:LOG_SNIPPET_MAX_LEN]))
+                            print(f"  ERROR   {sid[:12]}... {type(e).__name__}: {e}")
+                            clear_sids.remove(sid)
 
-                    # Clean audit dir
-                    audit_dir = config.storage_dir / sid
-                    if audit_dir.exists():
-                        shutil.rmtree(audit_dir, ignore_errors=True)
+                    if clear_sids:
+                        clear_set = set(clear_sids)
+                        with all_session_state(timeout=10.0, write=True) as raw:
+                            for sid in sorted(clear_set):
+                                prefix = f"__task_lifecycle__{sid}/"
+                                for key in [k for k in raw if k.startswith(prefix)]:
+                                    del raw[key]
+                                audit_dir = config.storage_dir / sid
+                                if audit_dir.exists():
+                                    shutil.rmtree(audit_dir, ignore_errors=True)
+                                cleared += 1
 
-                    cleared += 1
-
-                except PermissionError as e:
-                    errors += 1
-                    error_details.append((sid, "Permission", str(e)[:LOG_SNIPPET_MAX_LEN]))
-                    print(f"  ERROR   {sid[:12]}... Permission denied")
-                except Exception as e:
-                    errors += 1
-                    error_details.append((sid, type(e).__name__, str(e)[:LOG_SNIPPET_MAX_LEN]))
-                    print(f"  ERROR   {sid[:12]}... {type(e).__name__}: {e}")
+            except PermissionError as e:
+                errors += 1
+                error_details.append(("*", "Permission", str(e)[:LOG_SNIPPET_MAX_LEN]))
+                print("  ERROR   bulk GC... Permission denied")
+            except Exception as e:
+                errors += 1
+                error_details.append(("*", type(e).__name__, str(e)[:LOG_SNIPPET_MAX_LEN]))
+                print(f"  ERROR   bulk GC... {type(e).__name__}: {e}")
 
             # Step 8: Summary with actionable guidance
             verb = "Would" if dry_run else "Did"

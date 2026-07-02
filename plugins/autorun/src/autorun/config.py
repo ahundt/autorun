@@ -650,6 +650,26 @@ CONFIG = {
     # "just now" (age=0) instead of unknown (fail-open).
     "cache_guard_clock_skew_tolerance_s": 60.0,
 
+    # ─── Hook Performance Budgets ───────────────────────────────────────────
+    # Maximum time a hook-path state read/write may wait on the shared JSON
+    # state lock. Longer waits cause Claude/Codex hook timeouts under many
+    # simultaneous sessions; callers keep daemon-local cache when persistence
+    # is briefly contended.
+    "hook_state_lock_timeout_seconds": 0.25,
+    # Daemon dispatch budgets must be below client/wrapper timeouts so the
+    # daemon can return a platform-correct fail-open/fail-closed response.
+    "daemon_dispatch_timeouts_seconds": {
+        "PreToolUse": 3.0,
+        "BeforeTool": 3.0,
+        "PermissionRequest": 3.0,
+        "UserPromptSubmit": 3.0,
+        "Stop": 3.0,
+        "SubagentStop": 3.0,
+        "PostToolUse": 2.0,
+        "SessionStart": 2.0,
+        "SessionEnd": 2.0,
+    },
+
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py

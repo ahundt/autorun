@@ -27,7 +27,7 @@ import pytest
 import tempfile
 
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
-from autorun.session_manager import session_state, SessionStateManager
+from autorun.session_manager import DEFAULT_SESSION_TIMEOUT, session_state, SessionStateManager
 
 
 @pytest.fixture
@@ -417,6 +417,59 @@ class TestGhostTaskLogging:
 class TestGarbageCollection:
     """Test GC with proper isolation (no impact on production)."""
 
+    def test_loaded_config_repairs_legacy_short_non_hook_timeout(self, tmp_path, monkeypatch):
+        """TEST: persisted hook-sized task timeout is repaired for non-hook operations."""
+        config_path = tmp_path / "task-lifecycle.config.json"
+        config_path.write_text(
+            """{
+  "enabled": true,
+  "storage_dir": "TASK_STORAGE",
+  "state_lock_timeout_seconds": 0.25,
+  "hook_state_lock_timeout_seconds": 0.25
+}
+""".replace("TASK_STORAGE", str(tmp_path / "tasks")),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("autorun.task_lifecycle.CONFIG_PATH", config_path)
+
+        config = TaskLifecycleConfig.load()
+
+        assert config.state_lock_timeout_seconds == DEFAULT_SESSION_TIMEOUT
+        assert config.hook_state_lock_timeout_seconds == 0.25
+
+    def test_task_lifecycle_uses_hook_lock_timeout_only_for_hook_context(self, isolated_config, monkeypatch):
+        """TEST: hook task state is bounded; explicit managers keep long atomic timeout."""
+        calls = []
+        isolated_config.state_lock_timeout_seconds = 3.21
+        isolated_config.hook_state_lock_timeout_seconds = 0.123
+
+        class FakeState(dict):
+            def __enter__(self):
+                calls.append(self.timeout)
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_session_state(_session_id, timeout):
+            state = FakeState()
+            state.timeout = timeout
+            return state
+
+        monkeypatch.setattr("autorun.task_lifecycle.session_state", fake_session_state)
+
+        explicit_manager = TaskLifecycle(session_id="timeout-test", config=isolated_config)
+        assert explicit_manager.tasks == {}
+
+        class FakeCtx:
+            session_id = "timeout-hook-test"
+            cli_type = "claude"
+
+        hook_manager = TaskLifecycle(ctx=FakeCtx(), config=isolated_config)
+        assert hook_manager.tasks == {}
+
+        assert calls == [3.21, 0.123]
+
     def test_gc_protects_current_session(self, isolated_config, isolated_session_manager):
         """TEST: GC never deletes current active session."""
         session_id = f'gc-active-{int(time.time())}'
@@ -475,6 +528,30 @@ class TestGarbageCollection:
         data = json.loads(archive_file.read_text(encoding="utf-8"))
         assert data['session_id'] == session_id
         assert '1' in data['tasks']
+
+    def test_gc_bulk_clears_many_completed_sessions(self, isolated_config, isolated_session_manager):
+        """TEST: GC removes many task-lifecycle prefixes in one maintenance run."""
+        session_ids = [f"gc-bulk-{i}-{int(time.time())}" for i in range(5)]
+        for session_id in session_ids:
+            manager = TaskLifecycle(session_id=session_id, config=isolated_config)
+            manager.create_task('1', {'subject': 'Task', 'description': 'Done'}, 'Created')
+            manager.update_task('1', {'status': 'completed'}, 'Done')
+
+        result = TaskLifecycle.cli_gc(
+            archive=True,
+            dry_run=False,
+            pattern="gc-bulk-*",
+            ttl_days=0,
+            config=isolated_config,
+            confirm=False,
+        )
+        assert result == 0
+
+        for session_id in session_ids:
+            archive_file = isolated_config.storage_dir / "archive" / f"{session_id}.json"
+            assert archive_file.exists()
+            with session_state(f"__task_lifecycle__{session_id}") as state:
+                assert dict(state.items()) == {}
 
     def test_gc_dry_run_never_modifies(self, isolated_config, isolated_session_manager):
         """TEST: dry_run=True doesn't modify data."""
@@ -571,4 +648,3 @@ class TestGCLocking:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

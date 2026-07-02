@@ -35,6 +35,7 @@ import subprocess
 import time
 import copy
 import threading
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Callable, Set, Union
@@ -51,6 +52,16 @@ from .logging_utils import get_logger
 ipc.ensure_config_dir()
 LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 IDLE_TIMEOUT = 1800  # 30 minutes
+# Hooks must stay under strict harness budgets. Persistent session state is a
+# shared JSON file; advisory hook paths should skip persistence on contention
+# instead of waiting long enough to time out active sessions.
+HOOK_STATE_LOCK_TIMEOUT = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.25))
+_DISPATCH_TIMEOUT_BY_EVENT = dict(CONFIG.get("daemon_dispatch_timeouts_seconds", {}))
+
+
+def dispatch_timeout_for_event(event: str) -> float:
+    """Return the daemon handler budget for a hook event."""
+    return _DISPATCH_TIMEOUT_BY_EVENT.get(event, 2.0)
 
 # Buffer size for reading hook payloads (asyncio default is 64KB = 2^16)
 # Need larger than default to accept full payloads before truncating
@@ -437,9 +448,21 @@ class ThreadSafeDB:
         - Daemon restart: Cache rebuilds from persistent JSON
     """
 
-    def __init__(self):
+    def __init__(self, state_timeout: float = HOOK_STATE_LOCK_TIMEOUT):
         self._lock = threading.RLock()
         self._cache: Dict[str, Any] = {}
+        self._state_timeout = state_timeout
+        self._batch = threading.local()
+
+    def _split_key(self, key: str) -> tuple[str, str]:
+        """Split a magic-state key into session id and field name."""
+        parts = key.rsplit(":", 1)
+        session_id = parts[0] if len(parts) > 1 else "__default__"
+        field = parts[-1]
+        return session_id, field
+
+    def _batch_depth(self) -> int:
+        return int(getattr(self._batch, "depth", 0))
 
     def get(self, key: str, default=None) -> Any:
         """Get value with two-tier lookup: memory cache -> persistent JSON store."""
@@ -450,18 +473,15 @@ class ThreadSafeDB:
 
             # Slow path: Load from persistent JSON store
             try:
-                # Use rsplit to handle session_ids containing ":"
-                parts = key.rsplit(":", 1)
-                session_id = parts[0] if len(parts) > 1 else "__default__"
-                field = parts[-1]
-                with session_state(session_id) as state:
+                session_id, field = self._split_key(key)
+                with session_state(session_id, timeout=self._state_timeout) as state:
                     value = state.get(field, default)
                     # Cache for next access
                     if value is not None:
                         self._cache[key] = value
                     return value
             except Exception as e:
-                logger.error(f"ThreadSafeDB.get error: {e}")
+                logger.warning(f"ThreadSafeDB.get skipped persistent state for {key!r}: {e}")
                 return default
 
     def set(self, key: str, value: Any):
@@ -473,17 +493,54 @@ class ThreadSafeDB:
         with self._lock:
             # Update memory cache
             self._cache[key] = value
+            if self._batch_depth() > 0:
+                self._batch.dirty[key] = value
+                return
 
             # Persist to JSON via session_state() RAII wrapper
+            self._persist_many({key: value})
+
+    @contextlib.contextmanager
+    def batch_writes(self):
+        """Batch magic-state writes made by one hook dispatch.
+
+        Handlers still observe their writes through the daemon cache immediately,
+        but persistence is grouped by session and flushed once on dispatch exit.
+        This avoids one full JSON read/write/fsync per magic attribute on
+        PostToolUse chains while preserving daemon-restart persistence when the
+        shared state lock is available.
+        """
+        if self._batch_depth() == 0:
+            self._batch.dirty = {}
+        self._batch.depth = self._batch_depth() + 1
+        try:
+            yield
+        finally:
+            self._batch.depth = self._batch_depth() - 1
+            if self._batch_depth() == 0:
+                dirty = getattr(self._batch, "dirty", {})
+                self._batch.dirty = {}
+                if dirty:
+                    self._persist_many(dict(dirty))
+
+    def _persist_many(self, values: Dict[str, Any]) -> None:
+        grouped: Dict[str, Dict[str, Any]] = {}
+        for key, value in values.items():
+            session_id, field = self._split_key(key)
+            grouped.setdefault(session_id, {})[field] = value
+
+        for session_id, fields in grouped.items():
             try:
-                # Use rsplit to handle session_ids containing ":"
-                parts = key.rsplit(":", 1)
-                session_id = parts[0] if len(parts) > 1 else "__default__"
-                field = parts[-1]
-                with session_state(session_id) as state:
-                    state[field] = value
+                with session_state(session_id, timeout=self._state_timeout) as state:
+                    for field, value in fields.items():
+                        state[field] = value
             except Exception as e:
-                logger.error(f"ThreadSafeDB.set error: {e}")
+                logger.warning(
+                    "ThreadSafeDB cached %d field(s) for %r but skipped persistent state: %s",
+                    len(fields),
+                    session_id,
+                    e,
+                )
 
 
 # === TRI-LAYER IDENTITY RESOLUTION (Optional, for resume robustness) ===
@@ -1634,6 +1691,14 @@ class AutorunApp:
 
         DRY: Single method handles all event types with minimal branching.
         """
+        store = getattr(ctx, "_store", None)
+        if store is not None and hasattr(store, "batch_writes"):
+            with store.batch_writes():
+                return self._dispatch_unbatched(ctx)
+        return self._dispatch_unbatched(ctx)
+
+    def _dispatch_unbatched(self, ctx: EventContext) -> Dict:
+        """Dispatch implementation; caller may wrap store persistence batching."""
         event = ctx.event
 
         # UserPromptSubmit: Check commands first
@@ -1728,11 +1793,19 @@ class AutorunDaemon:
         cli_type = "claude"
         # None = pass-through (dispatch returned None = nothing fired = output nothing)
         response = None
+        skip_response = False
 
         try:
             # Read payload (READ_BUFFER_LIMIT set on server to accept large payloads)
             # Truncates transcript to ~64KB AFTER reading (see normalize_hook_payload below)
-            data = await reader.readuntil(b'\n')
+            try:
+                data = await reader.readuntil(b'\n')
+            except asyncio.IncompleteReadError as e:
+                if not e.partial:
+                    logger.debug("Client disconnected before sending daemon payload")
+                    skip_response = True
+                    return
+                raise
             payload = json.loads(data.decode())
 
             event = payload.get("hook_event_name", "unknown")
@@ -1780,20 +1853,21 @@ class AutorunDaemon:
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
             # Synchronous/blocking work in handlers (file I/O, locks) runs in a thread.
             loop = asyncio.get_running_loop()
+            dispatch_timeout = dispatch_timeout_for_event(ctx.event)
             try:
                 response = await asyncio.wait_for(
                     loop.run_in_executor(None, self.app.dispatch, ctx),
-                    timeout=15.0,
+                    timeout=dispatch_timeout,
                 )
             except asyncio.TimeoutError:
                 logger.error(
-                    f"Handler for '{ctx.event}' timed out after 15s"
+                    f"Handler for '{ctx.event}' timed out after {dispatch_timeout:g}s"
                 )
                 from .client import build_daemon_failure_response
                 response = build_daemon_failure_response(
                     ctx.event,
                     cli_type,
-                    f"Daemon handler for '{ctx.event}' timed out after 15s",
+                    f"Daemon handler for '{ctx.event}' timed out after {dispatch_timeout:g}s",
                 )
 
         except asyncio.LimitOverrunError as e:
@@ -1816,6 +1890,14 @@ class AutorunDaemon:
             response = build_daemon_failure_response(event, cli_type, f"Daemon error: {e}")
 
         finally:
+            if skip_response:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return
+
             # None = pass-through: send {} so client exits 0 with no stdout output
             final = response if response is not None else {}
             # Debug logging (ALWAYS enabled)

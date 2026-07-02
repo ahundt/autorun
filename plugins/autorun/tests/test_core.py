@@ -40,6 +40,8 @@ from autorun.core import (
     EventContext,
     AutorunApp,
     AutorunDaemon,
+    HOOK_STATE_LOCK_TIMEOUT,
+    dispatch_timeout_for_event,
     resolve_session_key,
     get_cli_event_name,
     format_suggestion,
@@ -210,6 +212,126 @@ class TestThreadSafeDB:
         cached = db.get("test:dict")
         assert cached["key"] == "value"
         assert cached["nested"]["a"] == 1
+
+    def test_state_lock_timeout_comes_from_config(self):
+        """Hook-path persistent state waits must be config-driven and short."""
+        from autorun import CONFIG
+
+        assert HOOK_STATE_LOCK_TIMEOUT == CONFIG["hook_state_lock_timeout_seconds"]
+        assert HOOK_STATE_LOCK_TIMEOUT < 1.0
+
+    def test_dispatch_timeouts_come_from_config(self):
+        """Daemon handler budgets must fit inside hook client timeouts."""
+        from autorun import CONFIG
+
+        configured = CONFIG["daemon_dispatch_timeouts_seconds"]
+        assert dispatch_timeout_for_event("PostToolUse") == configured["PostToolUse"]
+        assert dispatch_timeout_for_event("PreToolUse") == configured["PreToolUse"]
+        assert dispatch_timeout_for_event("PostToolUse") < dispatch_timeout_for_event("PreToolUse")
+        assert dispatch_timeout_for_event("unknown-event") <= configured["PostToolUse"]
+
+    def test_set_updates_cache_when_persistence_times_out(self, monkeypatch):
+        """Contended disk persistence must not block the daemon cache path."""
+        import autorun.core as core
+
+        calls = []
+
+        class TimeoutSession:
+            def __init__(self, session_id, timeout):
+                calls.append((session_id, timeout))
+
+            def __enter__(self):
+                raise RuntimeError("lock timeout")
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr(core, "session_state", TimeoutSession)
+
+        db = ThreadSafeDB(state_timeout=0.123)
+        db.set("session-1:file_policy", "SEARCH")
+
+        assert calls == [("session-1", 0.123)]
+        assert db.get("session-1:file_policy") == "SEARCH"
+
+    def test_batch_writes_flushes_one_session_once(self, monkeypatch):
+        """Dispatch batching should avoid one persistent save per magic attribute."""
+        import autorun.core as core
+
+        calls = []
+        states = []
+
+        class FakeSession:
+            def __init__(self, session_id, timeout):
+                self.session_id = session_id
+                self.timeout = timeout
+                self.state = {}
+
+            def __enter__(self):
+                calls.append((self.session_id, self.timeout))
+                states.append(self.state)
+                return self.state
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr(core, "session_state", FakeSession)
+
+        db = ThreadSafeDB(state_timeout=0.123)
+        with db.batch_writes():
+            db.set("session-1:tool_calls_since_task_update", 1)
+            db.set("session-1:task_staleness_enforce_next", True)
+            assert db.get("session-1:tool_calls_since_task_update") == 1
+
+        assert calls == [("session-1", 0.123)]
+        assert states[0] == {
+            "tool_calls_since_task_update": 1,
+            "task_staleness_enforce_next": True,
+        }
+
+    def test_dispatch_batches_magic_state_writes(self, monkeypatch):
+        """AutorunApp.dispatch should flush handler magic-state writes once."""
+        import autorun.core as core
+
+        calls = []
+
+        class FakeSession:
+            def __init__(self, session_id, timeout):
+                self.state = {}
+                calls.append((session_id, timeout, self.state))
+
+            def __enter__(self):
+                return self.state
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr(core, "session_state", FakeSession)
+
+        test_app = AutorunApp()
+
+        @test_app.on("PostToolUse")
+        def first(ctx):
+            ctx.tool_calls_since_task_update = 1
+            return None
+
+        @test_app.on("PostToolUse")
+        def second(ctx):
+            ctx.task_staleness_enforce_next = True
+            return None
+
+        store = ThreadSafeDB(state_timeout=0.123)
+        ctx = EventContext(session_id="session-1", event="PostToolUse", store=store)
+        result = test_app.dispatch(ctx)
+
+        assert result is None
+        assert len(calls) == 1
+        assert calls[0][0] == "session-1"
+        assert calls[0][1] == 0.123
+        assert calls[0][2] == {
+            "tool_calls_since_task_update": 1,
+            "task_staleness_enforce_next": True,
+        }
 
     def test_rsplit_handles_session_id_with_colon(self):
         """Key parsing should handle session_ids containing colons."""
@@ -981,6 +1103,41 @@ class TestAutorunApp:
 
 class TestAutorunDaemon:
     """Tests for AutorunDaemon lifecycle management."""
+
+    @pytest.mark.asyncio
+    async def test_handle_client_ignores_empty_health_probe(self):
+        """Zero-byte socket probes should not dispatch or log handler errors."""
+        daemon = AutorunDaemon(AutorunApp())
+        reader = Mock()
+        reader.readuntil = Mock(
+            side_effect=asyncio.IncompleteReadError(partial=b"", expected=None)
+        )
+
+        class FakeWriter:
+            def __init__(self):
+                self.closed = False
+                self.writes = []
+
+            def write(self, data):
+                self.writes.append(data)
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                self.closed = True
+
+            async def wait_closed(self):
+                return None
+
+        writer = FakeWriter()
+
+        with patch.object(logger, "error") as error:
+            await daemon.handle_client(reader, writer)
+
+        assert writer.closed is True
+        assert writer.writes == []
+        error.assert_not_called()
 
     def test_pid_exists_true(self):
         """_pid_exists should return True for running process."""

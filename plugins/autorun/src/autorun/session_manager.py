@@ -270,6 +270,20 @@ class SessionStateManager:
                 with self._store.session(sid) as s2:
                     s2.clear()
 
+    @contextlib.contextmanager
+    def all_state(self, timeout: float = DEFAULT_SESSION_TIMEOUT,
+                  write: bool = False):
+        """Yield the full shared state dict under one process/file lock.
+
+        Use sparingly for maintenance operations such as archive/GC that need
+        to inspect or remove many session prefixes. Normal hook paths should
+        use session_state() so they stay scoped to one session.
+        """
+        with self._store.session("__all_state__", timeout=timeout):
+            yield self._store._data
+            if write:
+                self._store._dirty = True
+
 
 _manager: "SessionStateManager | None" = None
 _manager_lock = threading.Lock()
@@ -306,6 +320,14 @@ def clear_test_session_states_batch(session_ids, state_dir: "str | None" = None)
     """Clear multiple test sessions in one save operation. Use instead of looping
     over clear_test_session_state to avoid O(n) disk writes."""
     get_session_manager(state_dir).clear_test_sessions_batch(session_ids)
+
+
+@contextlib.contextmanager
+def all_session_state(timeout: float = DEFAULT_SESSION_TIMEOUT,
+                      state_dir: "str | None" = None,
+                      write: bool = False):
+    with get_session_manager(state_dir).all_state(timeout=timeout, write=write) as state:
+        yield state
 
 
 def _reset_for_testing():
