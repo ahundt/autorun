@@ -570,6 +570,25 @@ class TestMainFunctionRouting:
         )
         assert result == 0
 
+    def test_install_dry_run_passes_dry_run_flag(self):
+        """Test that --install-dry-run reaches install_plugins without changing defaults."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--install-dry-run"])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
+            dry_run=True,
+        )
+        assert result == 0
+
     def test_install_with_qwen_passes_qwen_only_flag(self):
         """Test that --install --qwen targets Qwen Code installation."""
         from autorun.__main__ import main

@@ -2853,6 +2853,7 @@ def install_plugins(
     codex_hook_source: str = "user",
     codex_plugin_marketplace: str = "personal",
     custom_harnesses: list[str] | tuple[str, ...] = (),
+    dry_run: bool = False,
 ) -> int:
     """Install and enable plugins for Claude Code and/or Gemini CLI.
 
@@ -2868,8 +2869,10 @@ def install_plugins(
         conductor: Install Conductor extension for Gemini (default: True)
         codex_hook_source: Codex hook source: user, plugin, both, or none
         codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
-        custom_harnesses: Custom Gemini-family harness specs in
+        custom_harnesses: Custom harness specs in
             name=flavor:binary:config_dir[:display] form
+        dry_run: Preview install targets without writing files or running
+                 installer subprocesses
 
     Returns:
         Exit code: 0 = success, 1 = failure
@@ -2883,7 +2886,8 @@ def install_plugins(
         - --codex: Installs only for Codex CLI (error if not available)
         - Multiple platform flags: Installs for all selected CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
-        - --custom-harness: Install a custom Gemini/Qwen-flavored target
+        - --custom-harness: Install a custom flavored target
+        - --install-dry-run: Preview without writes, subprocess install, or daemon restart
         - Continues even if one CLI fails (reports status for each)
 
     Note:
@@ -2907,12 +2911,13 @@ def install_plugins(
     else:
         plugin_root = plugin_candidate  # best-effort fallback
 
-    _update_package_metadata(plugin_root)
-
-    # Re-import to get fresh values if we're in the same process
-    import importlib
     import autorun
-    importlib.reload(autorun)
+    if not dry_run:
+        _update_package_metadata(plugin_root)
+
+        # Re-import to get fresh values if we're in the same process
+        import importlib
+        importlib.reload(autorun)
     from autorun import __version__, __commit__, __build_time__
     
     print(f"autorun v{__version__}")
@@ -2992,6 +2997,26 @@ def install_plugins(
     target_labels = list(target_clis) + [f"custom:{target.name}" for target in custom_targets]
     print(f"Target CLIs: {', '.join(target_labels)}")
     print()
+
+    if dry_run:
+        print("DRY RUN: install preview only")
+        print(f"  Plugins: {', '.join(plugins)}")
+        if target_clis:
+            print(f"  Detected platform targets: {', '.join(target_clis)}")
+        if custom_targets:
+            print("  Custom harness targets:")
+            for target in custom_targets:
+                print(
+                    f"    - {target.name}: flavor={target.flavor}, "
+                    f"binary={target.binary}, config_dir={target.config_dir}, "
+                    f"display={target.display_name}"
+                )
+        if tool:
+            print("  UV tool install: would run")
+        if conductor and "gemini" in target_clis:
+            print("  Gemini Conductor: would install")
+        print("No files, hooks, plugin state, dependencies, or daemons were changed.")
+        return 0
 
     # UV environment check (warning only, not blocker)
     if (marketplace_root / "plugins" / "autorun").exists():
@@ -3846,6 +3871,14 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument("--uninstall", action="store_true", help="Uninstall selected plugins")
     parser.add_argument("--status", action="store_true", help="Show installation status")
     parser.add_argument("--force", "--force-install", dest="force", action="store_true")
+    parser.add_argument(
+        "--install-dry-run",
+        action="store_true",
+        help=(
+            "Preview install targets without writing hooks, plugin state, "
+            "dependencies, or restarting daemons"
+        ),
+    )
     parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
     parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
@@ -3922,6 +3955,8 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         "codex_hook_source": args.codex_hook_source,
         "codex_plugin_marketplace": args.codex_plugin_marketplace,
     }
+    if args.install_dry_run:
+        install_kwargs["dry_run"] = True
     if args.custom_harness:
         install_kwargs["custom_harnesses"] = args.custom_harness
     return install_plugins(args.selection, **install_kwargs)

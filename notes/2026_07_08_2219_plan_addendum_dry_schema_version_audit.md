@@ -1211,6 +1211,55 @@ uv run ruff check --ignore E402 \
 
 Result: passed.
 
+Stage 8 install dry-run checkpoint, 2026_07_09_0019:
+
+- Added install-specific dry-run support via `--install-dry-run` for both
+  `autorun --install` and the direct install-module parser. This avoids
+  overloading the existing task GC `--dry-run` semantics.
+- `install_plugins(..., dry_run=True)` now resolves the marketplace, parses the
+  selected plugins, detects available platform targets, parses custom harness
+  specs, and prints the intended target matrix. It then returns before package
+  metadata writes, dependency sync, hook/plugin installs, hook conflict scans,
+  UV tool installs, and daemon restarts.
+- The dry-run output explicitly says no files, hooks, plugin state,
+  dependencies, or daemons were changed. Custom harness entries show name,
+  normalized flavor, binary, config directory, and display name, so users can
+  verify `agy -> antigravity` normalization and scoped Codex paths before a
+  real install.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter::test_install_module_main_install_dry_run_routes_to_install_plugins \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall::test_install_plugins_dry_run_does_not_write_or_install \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting::test_install_dry_run_passes_dry_run_flag -q
+```
+
+Result: `3 passed`.
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_codex_install.py \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting -q
+```
+
+Result: `76 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py
+```
+
+Result: passed.
+
 Stage 7 skill-doc safety checkpoint, 2026_07_08_2315:
 
 - Added a focused skill-doc regression test for two safety properties:

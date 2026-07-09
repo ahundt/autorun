@@ -506,6 +506,28 @@ class TestInstallMainAdapter:
             custom_harnesses=[spec],
         )
 
+    def test_install_module_main_install_dry_run_routes_to_install_plugins(self):
+        """Direct module install forwards install dry-run mode explicitly."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(["--install", "--install-dry-run"])
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=False,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True,
+            codex_hook_source="user", codex_plugin_marketplace="personal",
+            dry_run=True,
+        )
+
     def test_install_module_main_codex_plugin_marketplace_routes_to_install_plugins(self):
         """Verify direct module install honors --codex-plugin-marketplace."""
         install = get_install_module()
@@ -1236,6 +1258,41 @@ class TestCustomHarnessInstall:
         assert kwargs["codex_dir"] == custom_codex
         assert kwargs["install_global_assets"] is False
         assert kwargs["codex_hook_source"] == "user"
+
+    def test_install_plugins_dry_run_does_not_write_or_install(self, tmp_path, monkeypatch, capsys):
+        """Install dry-run previews custom targets without touching hook state."""
+        install = get_install_module()
+
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("dry-run must not mutate install state")
+
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: marketplace)
+        monkeypatch.setattr(install, "_update_package_metadata", forbidden)
+        monkeypatch.setattr(install, "_sync_dependencies", forbidden)
+        monkeypatch.setattr(install, "_install_for_codex", forbidden)
+        monkeypatch.setattr(install, "_install_gemini_family_extensions", forbidden)
+        monkeypatch.setattr(install, "_check_hook_conflicts", forbidden)
+        monkeypatch.setattr(install, "_restart_daemon_if_running", forbidden)
+        monkeypatch.setattr(install, "detect_available_clis", lambda: {name: False for name in install.PLATFORMS})
+
+        rc = install.install_plugins(
+            "autorun",
+            custom_harnesses=[f"lab=agy:agy-lab:{tmp_path / 'agy-home'}"],
+            conductor=False,
+            dry_run=True,
+        )
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "DRY RUN" in out
+        assert "lab" in out
+        assert "antigravity" in out
+        assert "No files, hooks, plugin state, dependencies, or daemons were changed." in out
 
 
 if __name__ == "__main__":

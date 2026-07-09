@@ -220,6 +220,14 @@ For more information: https://github.com/ahundt/autorun
         help="Force reinstall even if same version (for development)",
     )
     install_group.add_argument(
+        "--install-dry-run",
+        action="store_true",
+        help=(
+            "Preview install targets without writing hooks, plugin state, "
+            "dependencies, or restarting daemons"
+        ),
+    )
+    install_group.add_argument(
         "--tool",
         "-t",
         action="store_true",
@@ -805,6 +813,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "codex_hook_source": args.codex_hook_source,
             "codex_plugin_marketplace": args.codex_plugin_marketplace,
         }
+        if args.install_dry_run:
+            install_kwargs["dry_run"] = True
         if args.custom_harness:
             install_kwargs["custom_harnesses"] = args.custom_harness
         return install_plugins(args.install, **install_kwargs)
