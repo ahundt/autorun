@@ -81,6 +81,13 @@ def _hook_cli_choices() -> tuple[str, ...]:
     return tuple(platform.name for platform in hook_platforms())
 
 
+def _custom_harness_spec_help() -> str:
+    """Return shared parser help for custom harness specs."""
+    from .platforms import custom_harness_spec_help
+
+    return custom_harness_spec_help()
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
     parser = argparse.ArgumentParser(
@@ -98,7 +105,7 @@ QUICK START (after installation):
 
 Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INSTALLATION GUIDE
@@ -276,12 +283,7 @@ For more information: https://github.com/ahundt/autorun
         action="append",
         default=[],
         metavar="SPEC",
-        help=(
-            "Install a custom harness at a custom config dir. "
-            "Format: name=flavor:binary:config_dir[:display]. "
-            "Supported flavors: gemini, qwen, agy, antigravity, codex. "
-            "Repeat for multiple targets."
-        ),
+        help=_custom_harness_spec_help(),
     )
     install_group.add_argument(
         "--codex",
@@ -819,11 +821,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             install_kwargs["custom_harnesses"] = args.custom_harness
         return install_plugins(args.install, **install_kwargs)
 
-    # Status mode
     if args.status:
         from autorun.install import show_status
 
-        return show_status()
+        return show_status(custom_harnesses=args.custom_harness)
 
     # Restart daemon mode
     if args.restart_daemon or args.restart_all_daemons:

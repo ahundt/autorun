@@ -403,7 +403,7 @@ class TestInstallPathwayRouting:
         content = main_file.read_text(encoding="utf-8")
 
         assert "from autorun.install import show_status" in content
-        assert "return show_status()" in content
+        assert "return show_status(custom_harnesses=args.custom_harness)" in content
 
     def test_sync_removed(self):
         """Verify --sync flag has been removed (was broken, replaced by --install --force)."""
@@ -527,6 +527,30 @@ class TestInstallMainAdapter:
             codex_hook_source="user", codex_plugin_marketplace="personal",
             dry_run=True,
         )
+
+    def test_install_module_custom_harness_help_lists_values_and_usage(self):
+        """Direct module help documents custom harness values and status usage."""
+        install = get_install_module()
+
+        help_text = install._create_install_module_parser().format_help()
+
+        assert "--custom-harness SPEC" in help_text
+        assert "--install --custom-harness" in help_text
+        assert "--status --custom-harness" in help_text
+        assert "flavor: gemini|qwen|antigravity|agy|codex" in help_text
+        assert "agy is an alias for antigravity" in help_text
+        assert "--custom-harness-status" not in help_text
+
+    def test_install_module_main_status_with_custom_harness_routes_to_show_status(self):
+        """Direct module status reuses --status and forwards custom harness specs."""
+        install = get_install_module()
+        spec = "lab=agy:agy-lab:/tmp/agy-home"
+
+        with mock.patch.object(install, "show_status", return_value=0) as mock_status:
+            result = install._install_module_main(["--status", "--custom-harness", spec])
+
+        assert result == 0
+        mock_status.assert_called_once_with(custom_harnesses=[spec])
 
     def test_install_module_main_codex_plugin_marketplace_routes_to_install_plugins(self):
         """Verify direct module install honors --codex-plugin-marketplace."""
@@ -1293,6 +1317,75 @@ class TestCustomHarnessInstall:
         assert "lab" in out
         assert "antigravity" in out
         assert "No files, hooks, plugin state, dependencies, or daemons were changed." in out
+
+    def test_custom_harness_status_reports_codex_config_dir(self, tmp_path, capsys):
+        """Custom Codex status inspects only the supplied config directory."""
+        install = get_install_module()
+        codex_dir = tmp_path / "custom-codex"
+        codex_dir.mkdir()
+        (codex_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "uv run python /tmp/hook_entry.py --cli codex",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+        (codex_dir / "AGENTS.md").write_text("autorun guidance", encoding="utf-8")
+
+        rc = install.show_custom_harness_status(f"lab=codex:codex-lab:{codex_dir}:Codex Lab")
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Codex Lab" in out
+        assert "flavor: codex" in out
+        assert "hooks.json: ✓ installed" in out
+        assert "AGENTS.md: ✓ installed" in out
+
+    def test_custom_harness_status_reports_gemini_family_config_dir(self, tmp_path, capsys):
+        """Custom Antigravity/Gemini-family status checks extension hook identity."""
+        install = get_install_module()
+        config_dir = tmp_path / "agy-home"
+        hooks_dir = config_dir / "extensions" / "ar" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "BeforeTool": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "uv run python ${extensionPath}/hooks/"
+                                        "hook_entry.py --cli antigravity"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        rc = install.show_custom_harness_status(f"lab=agy:agy-lab:{config_dir}:Antigravity Lab")
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Antigravity Lab" in out
+        assert "flavor: antigravity" in out
+        assert "ar extension: ✓ installed" in out
+        assert "hooks identity: ✓ antigravity" in out
 
 
 if __name__ == "__main__":

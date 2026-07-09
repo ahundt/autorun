@@ -1164,6 +1164,67 @@ uv run ruff check --ignore E402 \
 
 Result: passed.
 
+Stage 8 custom harness status/help checkpoint, 2026_07_09_0034:
+
+- User review identified CLI bloat in the first implementation of custom
+  harness status: a separate `--custom-harness-status` flag duplicated the
+  existing `--status` operation. The public CLI was corrected so status remains
+  one operation: `autorun --status --custom-harness SPEC`.
+- `--custom-harness` is now a target-spec option shared by install and status
+  paths. This preserves the compact action/target grammar:
+  `--install --custom-harness SPEC` installs a scoped target, while
+  `--status --custom-harness SPEC` inspects that scoped target.
+- The custom harness grammar and aliases moved into the platform source of
+  truth via `CUSTOM_HARNESS_FLAVOR_ALIASES`, `CUSTOM_HARNESS_SPEC_FORMAT`, and
+  `custom_harness_spec_help()`. Both CLI parsers use that helper, so accepted
+  values and help text cannot drift between `autorun` and
+  `python -m ...install`.
+- Help text now lists the working values directly:
+  `flavor: gemini|qwen|antigravity|agy|codex`, says `agy` is an alias for
+  `antigravity`, explains `binary` and `config_dir`, and explicitly documents
+  both `--install --custom-harness` and `--status --custom-harness` usage.
+- `show_status(custom_harnesses=...)` now aggregates custom harness checks into
+  the normal multi-harness status report. Missing Claude CLI no longer prevents
+  Codex, Antigravity, Qwen, ForgeCode, or custom harness status from being
+  displayed; it marks the aggregate result nonzero and continues.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_bootstrap_config.py::TestCLIArgumentParsing::test_custom_harness_help_lists_values_and_usage \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter::test_install_module_custom_harness_help_lists_values_and_usage \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter::test_install_module_main_status_with_custom_harness_routes_to_show_status \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting::test_status_with_custom_harness_routes_to_show_status -q
+```
+
+Result: `4 passed`.
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_codex_install.py \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallPathwayRouting \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_bootstrap_config.py::TestCLIArgumentParsing \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting -q
+```
+
+Result: `96 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/platforms.py \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py
+```
+
+Result: passed.
+
 Stage 8 custom harness idempotence checkpoint, 2026_07_09_0016:
 
 - Added custom harness regression coverage for upgrade/reinstall safety.

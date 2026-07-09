@@ -49,7 +49,12 @@ from pathlib import Path
 
 from .command_docs import iter_command_docs
 from . import ipc
-from .platforms import PLATFORMS
+from .platforms import (
+    CUSTOM_HARNESS_FLAVOR_ALIASES,
+    CUSTOM_HARNESS_SPEC_FORMAT,
+    PLATFORMS,
+    custom_harness_spec_help,
+)
 
 try:
     import tomllib
@@ -123,15 +128,6 @@ class CustomHarnessInstall:
     display_name: str
 
 
-_CUSTOM_HARNESS_FLAVOR_ALIASES = {
-    "gemini": "gemini",
-    "qwen": "qwen",
-    "codex": "codex",
-    "agy": "antigravity",
-    "antigravity": "antigravity",
-}
-
-
 def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
     """Parse `name=flavor:binary:config_dir[:display]` custom harness specs.
 
@@ -142,14 +138,14 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
     raw = spec.strip()
     if not raw or "=" not in raw:
         raise ValueError(
-            "custom harness must use name=flavor:binary:config_dir[:display]"
+            f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
         )
 
     name, rest = raw.split("=", 1)
     parts = rest.split(":", 3)
     if len(parts) < 3:
         raise ValueError(
-            "custom harness must use name=flavor:binary:config_dir[:display]"
+            f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
         )
 
     raw_flavor, binary, config_dir_raw = (part.strip() for part in parts[:3])
@@ -159,9 +155,9 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
         raise ValueError(
             "custom harness name, binary, and config_dir must be non-empty"
         )
-    flavor = _CUSTOM_HARNESS_FLAVOR_ALIASES.get(raw_flavor)
+    flavor = CUSTOM_HARNESS_FLAVOR_ALIASES.get(raw_flavor)
     if flavor is None:
-        supported = ", ".join(sorted(_CUSTOM_HARNESS_FLAVOR_ALIASES))
+        supported = ", ".join(sorted(CUSTOM_HARNESS_FLAVOR_ALIASES))
         raise ValueError(f"unsupported custom harness flavor {raw_flavor!r}; supported flavors: {supported}")
 
     return CustomHarnessInstall(
@@ -2432,6 +2428,74 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
     return (True, "✓ installed, enabled" if enabled else "✓ installed")
 
 
+def _hooks_json_contains_cli(hooks_path: Path, cli_name: str) -> tuple[bool, str]:
+    """Return whether a hooks.json file contains autorun's expected CLI identity."""
+    if not hooks_path.is_file():
+        return (False, "missing")
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return (False, f"unreadable ({exc})")
+    if f"--cli {cli_name}" not in json.dumps(data.get("hooks", {})):
+        return (False, f"missing --cli {cli_name}")
+    return (True, "installed")
+
+
+def show_custom_harness_status(spec: str) -> int:
+    """Show status for one explicit custom harness spec without persistence."""
+    try:
+        target = parse_custom_harness_spec(spec)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    print("Custom Harness Status:")
+    print("-" * 60)
+    print(f"  name: {target.name}")
+    print(f"  display: {target.display_name}")
+    print(f"  flavor: {target.flavor}")
+    print(f"  binary: {target.binary}")
+    print(f"  config_dir: {target.config_dir}")
+
+    if target.flavor == "codex":
+        hooks_ok, hooks_status = _hooks_json_contains_cli(
+            target.config_dir / "hooks.json",
+            "codex",
+        )
+        agents_ok = (target.config_dir / "AGENTS.md").is_file()
+        print(f"  hooks.json: {'✓ installed' if hooks_ok else f'✗ {hooks_status}'}")
+        print(f"  AGENTS.md: {'✓ installed' if agents_ok else '✗ not installed'}")
+        return 0 if hooks_ok and agents_ok else 1
+
+    candidates = [
+        target.config_dir / "extensions" / "ar" / "hooks" / "hooks.json",
+        target.config_dir / "plugins" / "ar" / "hooks" / "hooks.json",
+        target.config_dir / "plugins" / "ar" / "hooks.json",
+    ]
+    installed = False
+    identity_status = "missing"
+    found_path: Path | None = None
+    for hooks_path in candidates:
+        hooks_ok, hooks_status = _hooks_json_contains_cli(hooks_path, target.flavor)
+        if hooks_path.is_file():
+            found_path = hooks_path
+            identity_status = hooks_status
+        if hooks_ok:
+            found_path = hooks_path
+            identity_status = target.flavor
+            installed = True
+            break
+
+    print(f"  ar extension: {'✓ installed' if found_path else '✗ not installed'}")
+    if found_path:
+        print(f"  hooks.json: {found_path}")
+    print(
+        "  hooks identity: "
+        + (f"✓ {identity_status}" if installed else f"✗ {identity_status}")
+    )
+    return 0 if installed else 1
+
+
 def _platform_app_status(platform_name: str) -> tuple[bool, str]:
     """Return whether a platform desktop app is installed and where it was found."""
     platform = PLATFORMS.get(platform_name)
@@ -3396,8 +3460,12 @@ def uninstall_plugins(selection: str = "all") -> int:
 # =============================================================================
 
 
-def show_status() -> int:
+def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     """Show installation status of all plugins, UV environment, and CLI tools.
+
+    Args:
+        custom_harnesses: Optional custom harness specs to include in the same
+            status pass. Specs use name=flavor:binary:config_dir[:display].
 
     Returns:
         Exit code: 0 = all installed, 1 = some missing
@@ -3414,10 +3482,11 @@ def show_status() -> int:
     claude_app_ok, claude_app_status = _platform_app_status("claude")
     print(f"  Claude app: {'✓ installed' if claude_app_ok else '✗ not found'} ({claude_app_status})")
 
+    all_ok = True
     if not claude_ok:
         print()
         print("Install Claude Code first")
-        return 1
+        all_ok = False
 
     # UV environment check
     try:
@@ -3433,8 +3502,7 @@ def show_status() -> int:
         print("  UV environment: marketplace not found")
 
     # Check each plugin
-    all_ok = True
-    result = run_cmd(["claude", "plugin", "list"])
+    result = run_cmd(["claude", "plugin", "list"]) if claude_ok else CmdResult(False, "")
 
     print()
     print("Plugins:")
@@ -3616,6 +3684,12 @@ def show_status() -> int:
     print(f"  commands: {'✓ installed' if forge_command_count else '✗ not installed'} ({forge_command_count})")
     print(f"  AGENTS.md: {'✓ installed' if forge_agents.is_file() else '✗ not installed'}")
     print("  hooks: advisory only (ForgeCode has no external hook system)")
+
+    for spec in custom_harnesses:
+        print()
+        print("-" * 60)
+        if show_custom_harness_status(spec) != 0:
+            all_ok = False
 
     return 0 if all_ok else 1
 
@@ -3865,6 +3939,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m plugins.autorun.src.autorun.install",
         description="Install autorun hooks, skills, and plugin assets.",
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("selection", nargs="?", default="all")
     parser.add_argument("--install", action="store_true", help="Install selected plugins")
@@ -3889,12 +3964,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="SPEC",
-        help=(
-            "Install a custom harness at a custom config dir. "
-            "Format: name=flavor:binary:config_dir[:display]. "
-            "Supported flavors: gemini, qwen, agy, antigravity, codex. "
-            "Repeat for multiple targets."
-        ),
+        help=custom_harness_spec_help(),
     )
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
@@ -3941,7 +4011,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
     if args.uninstall:
         return uninstall_plugins(args.selection)
     if args.status:
-        return show_status()
+        return show_status(custom_harnesses=args.custom_harness)
 
     install_kwargs = {
         "tool": args.tool,
