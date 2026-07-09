@@ -103,14 +103,21 @@ autorun/                             # Git repository root
 
 ## Feature Implementation Lessons (from `/ar:cache`, v0.10)
 
+**Critical:** Set `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before imports so
+tests cannot touch the live daemon. In daemon paths use `state_get`, `state_set`,
+and atomic `state_update`; wrap legacy persistence with `state_synchronize` so
+threads, processes, sessions, and harnesses cannot observe stale state. Never
+raise timeouts or weaken isolation/concurrency tests to hide persistent I/O.
+Full specification: [`docs/RUNTIME_STATE_ISOLATION.md`](docs/RUNTIME_STATE_ISOLATION.md).
+
 Rules extracted from the `/ar:cache` build and earlier fixes. Follow them when adding any new gated feature.
 
 1. **Reuse `ScopedAllow` + `parse_scope_args` for every override grant.** Do not invent a new TTL/count parser — the `5m | 5 | perm | 2h30m` grammar lives in `scoped_allow.py:42-76` and its `_PARALLEL_GRACE_SECONDS = 1.0` fingerprint-matched grace window already mitigates rtk's double-hook. See `cache_guard.grant_override`.
-2. **Use `session_state()` for all persisted state.** Prefix your keys (`<session_id>/<feature>/<key>` and `__global__/<feature>/<key>`). Reuses the one filelock, no new machinery.
+2. **Use the scoped `EventContext` state APIs in daemon paths.** `state_get`, `state_set`, and `state_update` keep `ThreadSafeDB` coherent; wrap legacy direct-persistence helpers with `state_synchronize`. Reserve `session_state()` for standalone administration and persistence internals.
 3. **When a feature adds a new Claude event, add the Gemini analog at the same time.** `PreCompact` on Claude → `PreCompress` on Gemini (advisory, cannot block, no PostCompress exists). Wire both at `plugins.py:@app.on(...)`, add mapping in `core.py:GEMINI_EVENT_MAP`, and declare the event in BOTH `hooks/hooks.json` (Claude) AND `src/autorun/gemini_template/hooks/hooks.json` (Gemini).
 4. **When you need data from hook stdin beyond what `EventContext` already exposes, add a slot + property.** `transcript_path` was missing before `/ar:cache`. Pattern: add the slot, property, kwarg to `__init__`, and update every `EventContext(...)` call site (daemon, plan_export, anywhere else). Do not `getattr(ctx, "field", None)` — that silently returns None when the plumbing is broken.
 5. **Features that may block tools must slot AFTER TIER 1 (`/ar:ok` allows) and BEFORE TIER 2 (pattern blocks).** Otherwise an explicit allow cannot bypass the new gate. See `plugins.check_blocked_commands` → `CacheGuard.from_session().on_pretooluse(...)` site.
-6. **Coalesce filelock acquires inside a single hook invocation.** Multiple `session_state()` calls inside one PreToolUse each take the lock. Read everything you need in one open.
+6. **Keep full persistent-state reads off warm hooks.** Hydrate through `ThreadSafeDB` once per session and use atomic updates for shared fields. Coalescing file locks alone still reparses the full durable state.
 7. **Fail open when data is unknown.** A gate that errors or denies on missing fields is worse than a gate that allows. CacheGuard returns `HookDecision.allow()` whenever the configured axis's data is None. Cross-CLI robustness falls out of this rule for free.
 8. **Default off.** Any new gate must default `False` in its `FeatureToggle`. Users opt in via `/ar:<feature> on`.
 9. **Anchor `.gitignore` directory patterns with a leading `/` when you mean the repo root.** Unanchored `cache/` matches `plugins/autorun/skills/cache/` too — the `/ar:cache` skill was invisible to git until this was fixed. Use `/cache/` + explicit `!plugins/autorun/skills/cache/` when you must name the dir `cache` for UX reasons.

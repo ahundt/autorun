@@ -1,5 +1,21 @@
 # autorun Marketplace - Claude Code
 
+## Critical Runtime Isolation
+
+- Tests must set both `AUTORUN_HOME` and `AUTORUN_TEST_STATE_DIR` before any
+  autorun import; they must never touch the live daemon socket, PID, locks, logs,
+  or user session history.
+- Daemon hook paths must use `EventContext.state_get/state_set/state_update`;
+  wrap legacy direct persistence with `state_synchronize` so concurrent threads,
+  processes, sessions, and harnesses cannot observe stale state.
+- Never hide persistent-state I/O or lock failures by raising hook timeouts, and
+  never weaken concurrency, protocol, or isolation assertions to pass tests.
+- Before committing, read `plugins/autorun/commands/commit.md`; use a concrete
+  `<files>:` or `type(scope):` subject and a body covering previous behavior,
+  exact changes, rationale, affected files, and verification evidence.
+- Full invariants, regression checks, and recovery guidance:
+  [`plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md`](plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md).
+
 UV workspace containing 2 Claude Code plugins: **autorun**, **pdf-extractor**.
 
 **For Gemini CLI:** See [GEMINI.md](GEMINI.md) for Gemini-specific installation and configuration.

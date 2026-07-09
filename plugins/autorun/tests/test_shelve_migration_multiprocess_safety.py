@@ -565,11 +565,65 @@ class TestEventContextConcurrencyDocumentation:
             "rapid hooks. Search for 'CONCURRENT' in the docstring."
         )
 
-    def test_docstring_prescribes_session_state_for_global_scope(self):
+    def test_docstring_prescribes_atomic_state_api_for_global_scope(self):
         from autorun.core import EventContext
         doc = EventContext.__getattr__.__doc__
-        assert "session_state()" in doc, (
-            "Docstring must prescribe session_state() as the safe alternative "
-            "for global-scope read-modify-write operations. "
-            "ctx magic attributes are NOT safe for global atomic operations."
+        assert "Global-scoped read-modify-write: MUST use state_update()" in doc, (
+            "Docstring must prescribe state_update() for global-scope atomic "
+            "operations so ThreadSafeDB and persistence remain coherent."
         )
+
+
+class TestRuntimeStateIsolationSpecification:
+    """Keep the canonical concurrency contract discoverable and complete."""
+
+    def test_spec_and_maintainer_links_exist(self):
+        from pathlib import Path
+
+        plugin_root = Path(__file__).resolve().parents[1]
+        repo_root = Path(__file__).resolve().parents[3]
+        relative_path = "plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md"
+        spec = plugin_root / "docs" / "RUNTIME_STATE_ISOLATION.md"
+
+        assert spec.is_file(), f"Missing canonical isolation spec: {spec}"
+        assert "docs/RUNTIME_STATE_ISOLATION.md" in (
+            plugin_root / "CLAUDE.md"
+        ).read_text(encoding="utf-8")
+        root_claude = repo_root / "CLAUDE.md"
+        root_agents = repo_root / "AGENTS.md"
+        assert root_agents.is_file(), "Top-level AGENTS.md guidance is missing"
+        assert root_agents.samefile(root_claude), (
+            "Top-level AGENTS.md must reuse CLAUDE.md instead of drifting"
+        )
+        root_guidance = root_agents.read_text(encoding="utf-8")
+        assert relative_path in root_guidance
+        for essential in (
+            "AUTORUN_HOME",
+            "AUTORUN_TEST_STATE_DIR",
+            "state_update",
+            "state_synchronize",
+            "Never hide persistent-state I/O",
+        ):
+            assert essential in root_guidance, f"Root agent guidance is missing {essential}"
+
+    def test_spec_covers_runtime_and_test_failure_boundaries(self):
+        from pathlib import Path
+
+        plugin_root = Path(__file__).resolve().parents[1]
+        text = (plugin_root / "docs" / "RUNTIME_STATE_ISOLATION.md").read_text(
+            encoding="utf-8"
+        )
+        required = (
+            "Required Invariants",
+            "State Ownership",
+            "Concurrency Model",
+            "Pytest Isolation",
+            "Regression Specification",
+            "Failure Guidance",
+            "state_update()",
+            "state_synchronize()",
+            "AUTORUN_HOME",
+            "Multiprocess",
+        )
+        missing = [item for item in required if item not in text]
+        assert not missing, f"Isolation specification is missing: {missing}"
