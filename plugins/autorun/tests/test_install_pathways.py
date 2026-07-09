@@ -309,6 +309,31 @@ class TestReadPluginVersion:
         assert "." in version, f"Fallback version must be semver-like: {version}"
 
 
+class TestUpdatePackageMetadata:
+    """Test generated package metadata formatting."""
+
+    def test_update_package_metadata_writes_trailing_newline(self, tmp_path, monkeypatch):
+        """metadata.json should not create a no-newline diff after install."""
+        install = get_install_module()
+        plugin_dir = tmp_path / "plugins" / "autorun"
+        (plugin_dir / ".git").mkdir(parents=True)
+        (plugin_dir / "src" / "autorun").mkdir(parents=True)
+
+        monkeypatch.setattr(
+            install.subprocess,
+            "check_output",
+            lambda *_args, **_kwargs: "abc123\n",
+        )
+        monkeypatch.setattr(install, "_read_plugin_version", lambda _plugin_dir: "0.12.0")
+
+        install._update_package_metadata(plugin_dir)
+
+        metadata = plugin_dir / "src" / "autorun" / "metadata.json"
+        text = metadata.read_text(encoding="utf-8")
+        assert text.endswith("\n")
+        assert json.loads(text)["commit"] == "abc123"
+
+
 class TestCacheVersionSort:
     """Test semver-aware sorting of cache version directories."""
 

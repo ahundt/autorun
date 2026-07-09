@@ -2872,7 +2872,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
                 "commit": commit,
                 "build_time": build_time
             }
-            meta_file.write_text(json.dumps(data, indent=2))
+            meta_file.write_text(json.dumps(data, indent=2) + "\n")
             logger.info(f"Updated metadata: commit {commit[:7]}, time {build_time}")
         except (OSError, PermissionError) as e:
             msg = f"Permission denied writing {meta_file}. Check directory permissions: {e}"
