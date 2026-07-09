@@ -21,12 +21,15 @@ import sys
 from pathlib import Path
 import pytest
 import shutil
+from packaging.version import InvalidVersion, Version
 
 pytestmark = pytest.mark.e2e
+CLI_VERSION_TIMEOUT_SECONDS = 10
+MINIMUM_GEMINI_HOOK_VERSION = Version("0.28.0")
 
 # Add src to path for tmux_utils import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-from autorun.tmux_utils import get_tmux_utilities
+from autorun.tmux_utils import get_tmux_utilities  # noqa: E402
 
 
 def get_plugin_root():
@@ -41,20 +44,31 @@ def gemini_available():
         pytest.skip("Gemini CLI not installed")
 
     # Check version
-    result = subprocess.run(
-        ["gemini", "--version"],
-        capture_output=True,
-        text=True,
-        timeout=5
-    )
+    try:
+        result = subprocess.run(
+            ["gemini", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=CLI_VERSION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip(
+            f"Gemini CLI version probe exceeded {CLI_VERSION_TIMEOUT_SECONDS}s"
+        )
 
     if result.returncode != 0:
         pytest.skip("Gemini CLI not working")
 
     version = result.stdout.strip()
-    # Version should be 0.28.0 or later
-    if version < "0.28.0":
-        pytest.skip(f"Gemini CLI version {version} < 0.28.0 (hooks may not work)")
+    try:
+        parsed_version = Version(version)
+    except InvalidVersion:
+        pytest.skip(f"Gemini CLI returned an invalid version: {version!r}")
+    if parsed_version < MINIMUM_GEMINI_HOOK_VERSION:
+        pytest.skip(
+            f"Gemini CLI version {version} < {MINIMUM_GEMINI_HOOK_VERSION} "
+            "(hooks may not work)"
+        )
 
     return version
 
@@ -354,6 +368,11 @@ def test_gemini_before_tool_hook_structure(
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
+    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
+           "this test starts a real Gemini backend session",
+)
 def test_gemini_session_start_hook_fires(
     gemini_available,
     gemini_settings_enabled,

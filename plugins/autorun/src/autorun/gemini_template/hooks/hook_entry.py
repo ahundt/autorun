@@ -393,6 +393,47 @@ def get_autorun_bin() -> Path | None:
     return None
 
 
+def _extract_json(text: str) -> str | None:
+    """Return the last complete JSON object from child stdout."""
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    candidates = [cleaned, *reversed(cleaned.splitlines())]
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not (candidate.startswith("{") and candidate.endswith("}")):
+            continue
+        try:
+            json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        return candidate
+    return None
+
+
+def _emit_cli_result(result: subprocess.CompletedProcess[str]) -> int | None:
+    """Emit only harness-valid child output and return its accepted exit code.
+
+    Exit-zero stderr is diagnostic noise and must stay in the file log. Exit
+    two stderr is intentional Claude denial feedback. Invalid success stdout
+    returns None so the caller can use the direct-import fallback safely.
+    """
+    if result.returncode not in (0, 2):
+        return None
+
+    json_block = _extract_json(result.stdout)
+    if result.stdout and json_block is None:
+        if result.returncode == 0:
+            return None
+    elif json_block is not None:
+        print(json_block, end="")
+
+    if result.returncode == 2 and result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    return result.returncode
+
+
 def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -> bool:
     """Try to run autorun CLI, passing pre-read stdin payload.
 
@@ -466,55 +507,10 @@ def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -
         # Other: Error (stale install, import failure, etc.)
         # ═══════════════════════════════════════════════════════════════
 
-        # Must check return code — only 0 and 2 are valid
-        if result.returncode not in (0, 2):
+        exit_code = _emit_cli_result(result)
+        if exit_code is None:
             return False
-
-        if not result.stdout:
-            if result.stderr:
-                print(result.stderr, end="", file=sys.stderr)
-            sys.exit(result.returncode)
-
-        # Extract valid JSON from stdout (filters out noise like environment warnings)
-        def extract_json(text: str) -> str | None:
-            """Find valid JSON block efficiently."""
-            if not text:
-                return None
-            
-            cleaned = text.strip()
-            # Fast path: whole output is valid JSON
-            if cleaned.startswith('{') and cleaned.endswith('}'):
-                try:
-                    json.loads(cleaned)
-                    return cleaned
-                except json.JSONDecodeError:
-                    pass
-            
-            # Fallback: search for last valid JSON line (filters leading/trailing noise)
-            for line in reversed(cleaned.splitlines()):
-                line = line.strip()
-                if line.startswith('{') and line.endswith('}'):
-                    try:
-                        json.loads(line)
-                        return line
-                    except json.JSONDecodeError:
-                        continue
-            
-            return None
-
-        json_block = extract_json(result.stdout)
-        if json_block:
-            print(json_block, end="")
-        else:
-            # Fallback to raw output if no JSON found (likely an error message)
-            print(result.stdout, end="")
-
-        # Pass through stderr if present (Bug #4669: stderr → AI for exit 2)
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-
-        # Pass through exit code to Claude Code (DRY: client.py decides)
-        sys.exit(result.returncode)
+        sys.exit(exit_code)
 
     except subprocess.TimeoutExpired:
         return False
@@ -746,7 +742,6 @@ def main() -> None:
         for the fallback path.
     """
     import io
-    from pathlib import Path
 
     # Read stdin once — it can only be consumed once
     stdin_data = ""
@@ -821,60 +816,12 @@ def main() -> None:
             if result.stderr:
                 log_debug(f"CLI stderr ({len(result.stderr)} bytes):\n{result.stderr}")
 
-            if result.returncode not in (0, 2):
-                log_debug("✗ CLI returned unsupported exit code")
-            elif result.stdout:
-                # Extract valid JSON from stdout (filters out noise like environment warnings)
-                def extract_json(text: str) -> str | None:
-                    """Find valid JSON block efficiently."""
-                    if not text:
-                        return None
-                    
-                    cleaned = text.strip()
-                    # Fast path: whole output is valid JSON
-                    if cleaned.startswith('{') and cleaned.endswith('}'):
-                        try:
-                            json.loads(cleaned)
-                            return cleaned
-                        except json.JSONDecodeError:
-                            pass
-                    
-                    # Fallback: search for last valid JSON line (filters leading/trailing noise)
-                    for line in reversed(cleaned.splitlines()):
-                        line = line.strip()
-                        if line.startswith('{') and line.endswith('}'):
-                            try:
-                                json.loads(line)
-                                return line
-                            except json.JSONDecodeError:
-                                continue
-                    
-                    return None
-
-                json_block = extract_json(result.stdout)
-                if json_block:
-                    log_debug("✓ JSON valid")
-                    # CRITICAL: Print ONLY the JSON block. Do not print result.stdout
-                    # which might contain leading/trailing noise or multiple JSONs.
-                    print(json_block, end="")
-                else:
-                    log_debug("✗ JSON NOT found or invalid")
-                    # If no JSON found, something is wrong. Printing raw stdout 
-                    # is risky but may contain the error message.
-                    print(result.stdout, end="")
-
-                # Pass through stderr if present (Bug #4669: stderr → AI for exit 2)
-                if result.stderr:
-                    print(result.stderr, end="", file=sys.stderr)
-
-                log_debug(f"Hook entry finished with exit code {result.returncode}")
-                sys.exit(result.returncode)
+            exit_code = _emit_cli_result(result)
+            if exit_code is None:
+                log_debug("✗ CLI output was not a supported hook response")
             else:
-                log_debug("✓ CLI returned empty stdout; treating as implicit hook response")
-                if result.stderr:
-                    print(result.stderr, end="", file=sys.stderr)
-                log_debug(f"Hook entry finished with exit code {result.returncode}")
-                sys.exit(result.returncode)
+                log_debug(f"Hook entry finished with exit code {exit_code}")
+                sys.exit(exit_code)
         except subprocess.TimeoutExpired:
             log_debug("✗ CLI timed out")
             fail_after_cli_timeout(cli_type, event_name)

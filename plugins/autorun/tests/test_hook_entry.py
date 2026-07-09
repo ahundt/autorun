@@ -289,6 +289,62 @@ class TestTryCliRobustness:
         assert captured.out == ""
         assert captured.err == ""
 
+    def test_try_cli_suppresses_child_stderr_on_success(self, tmp_path, capsys):
+        """Successful hooks must not leak dependency warnings to harness stderr."""
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text(
+            "#!/bin/sh\n"
+            "printf '%s' '{\"continue\": true}'\n"
+            "printf '%s\\n' 'uv warning' >&2\n",
+            encoding="utf-8",
+        )
+        fake_autorun.chmod(0o755)
+
+        hook_entry = load_hook_entry_module()
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.try_cli(fake_autorun, "{}", cli_type="codex")
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 0
+        assert json.loads(captured.out) == {"continue": True}
+        assert captured.err == ""
+
+    def test_try_cli_rejects_non_json_success_without_protocol_noise(self, tmp_path, capsys):
+        """Invalid child stdout must trigger fallback without reaching the harness."""
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text("#!/bin/sh\nprintf '%s\\n' 'not hook json'\n", encoding="utf-8")
+        fake_autorun.chmod(0o755)
+
+        hook_entry = load_hook_entry_module()
+
+        assert hook_entry.try_cli(fake_autorun, "{}", cli_type="claude") is False
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+    def test_try_cli_forwards_stderr_only_for_exit_two(self, tmp_path, capsys):
+        """Claude's exit-2 block path must retain its denial feedback."""
+        fake_autorun = tmp_path / "autorun"
+        fake_autorun.write_text(
+            "#!/bin/sh\n"
+            "printf '%s' '{\"decision\": \"block\"}'\n"
+            "printf '%s\\n' 'blocked for safety' >&2\n"
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        fake_autorun.chmod(0o755)
+
+        hook_entry = load_hook_entry_module()
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.try_cli(fake_autorun, "{}", cli_type="claude")
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 2
+        assert json.loads(captured.out) == {"decision": "block"}
+        assert captured.err == "blocked for safety\n"
+
     def test_main_does_not_fallback_when_cli_allows_with_empty_stdout(self, tmp_path):
         """Empty successful CLI output must not trigger fallback source lookup."""
         fake_autorun = tmp_path / "autorun"

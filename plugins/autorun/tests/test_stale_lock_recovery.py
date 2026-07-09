@@ -13,14 +13,9 @@ for correct behavior under:
 """
 
 import json
-import os
-import sys
 import time
 import uuid
 import multiprocessing
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from typing import Dict, List
 
 import pytest
 
@@ -28,7 +23,6 @@ from autorun.session_manager import (
     SessionLock,
     SessionTimeoutError,
     session_state,
-    shared_session_state,
     _reset_for_testing,
 )
 
@@ -41,22 +35,21 @@ from autorun.session_manager import (
 # =============================================================================
 
 def _hold_session_for_contention(session_id: str, state_dir: str,
-                                  lock_held, lock_released):
+                                  lock_held, release_holder, lock_released):
     """First process holds session_state open to block other processes."""
     from autorun.session_manager import session_state
     with session_state(session_id, state_dir=state_dir, timeout=10.0):
-        lock_held.value = True
-        time.sleep(0.5)  # Hold long enough for second process to attempt acquire
-    lock_released.value = True
+        lock_held.set()
+        release_holder.wait(timeout=10)
+    lock_released.set()
 
 
 def _try_acquire_while_held(session_id: str, state_dir: str, second_result):
     """Second process tries to acquire session_state while first holds it."""
     from autorun.session_manager import session_state, SessionTimeoutError
-    time.sleep(0.1)  # Wait for first to acquire before trying
     try:
         with session_state(session_id, state_dir=state_dir, timeout=0.2):
-            # Should timeout — first holds the lock for 0.5s
+            # The parent keeps the first process locked until this attempt ends.
             second_result["value"] = "acquired"
     except SessionTimeoutError:
         second_result["value"] = "timeout"
@@ -64,21 +57,19 @@ def _try_acquire_while_held(session_id: str, state_dir: str, second_result):
         second_result["value"] = f"error: {e}"
 
 
-def _hold_session_simple(session_id: str, state_dir: str, first_acquired):
+def _hold_session_simple(session_id: str, state_dir: str, first_acquired, release_holder):
     """First process holds the session lock."""
     from autorun.session_manager import session_state
     with session_state(session_id, state_dir=state_dir, timeout=5.0):
-        first_acquired.value = True
-        time.sleep(0.4)  # Hold long enough for second to try acquiring
+        first_acquired.set()
+        release_holder.wait(timeout=10)
 
 
 def _try_acquire_simple(session_id: str, state_dir: str, second_result):
     """Second process tries to acquire a lock held by another."""
     from autorun.session_manager import session_state, SessionTimeoutError
-    time.sleep(0.05)  # Give first process time to acquire
     try:
         with session_state(session_id, state_dir=state_dir, timeout=0.2):
-            # Should timeout — first holds for 0.4s
             second_result["value"] = "acquired"
     except SessionTimeoutError:
         second_result["value"] = "timeout"
@@ -138,21 +129,22 @@ class TestCrossProcessContention:
 
     def test_second_process_times_out_while_first_holds(self, state_setup):
         """
-        Process 1 holds session_state for 0.5s; process 2 tries with 0.2s timeout.
+        Process 1 holds session_state until process 2 finishes its timed attempt.
         Process 2 must get SessionTimeoutError, not succeed.
         """
         setup = state_setup
         session_id = setup["session_id"]
         state_dir = str(setup["state_dir"])
 
-        lock_held = multiprocessing.Value('b', False)
-        lock_released = multiprocessing.Value('b', False)
+        lock_held = multiprocessing.Event()
+        release_holder = multiprocessing.Event()
+        lock_released = multiprocessing.Event()
         manager = multiprocessing.Manager()
         second_result = manager.dict({"value": None})
 
         p1 = multiprocessing.Process(
             target=_hold_session_for_contention,
-            args=(session_id, state_dir, lock_held, lock_released)
+            args=(session_id, state_dir, lock_held, release_holder, lock_released)
         )
         p2 = multiprocessing.Process(
             target=_try_acquire_while_held,
@@ -160,11 +152,13 @@ class TestCrossProcessContention:
         )
 
         p1.start()
+        assert lock_held.wait(timeout=5), "First process did not acquire lock"
         p2.start()
-        p1.join(timeout=10)
         p2.join(timeout=10)
+        release_holder.set()
+        p1.join(timeout=10)
 
-        assert lock_released.value, "First process did not complete"
+        assert lock_released.is_set(), "First process did not complete"
         assert second_result["value"] == "timeout", (
             f"Second process should timeout while lock is held, got: {second_result['value']}"
         )
@@ -178,13 +172,14 @@ class TestCrossProcessContention:
         session_id = setup["session_id"]
         state_dir = str(setup["state_dir"])
 
-        first_acquired = multiprocessing.Value('b', False)
+        first_acquired = multiprocessing.Event()
+        release_holder = multiprocessing.Event()
         manager = multiprocessing.Manager()
         second_result = manager.dict({"value": None})
 
         p1 = multiprocessing.Process(
             target=_hold_session_simple,
-            args=(session_id, state_dir, first_acquired)
+            args=(session_id, state_dir, first_acquired, release_holder)
         )
         p2 = multiprocessing.Process(
             target=_try_acquire_simple,
@@ -192,14 +187,15 @@ class TestCrossProcessContention:
         )
 
         p1.start()
-        # Give p1 time to start and acquire, then let p2 try (and timeout)
-        p2.start()
+        assert first_acquired.wait(timeout=5), "First process did not acquire lock"
+        release_holder.set()
         p1.join(timeout=10)
+        p2.start()
         p2.join(timeout=10)
 
-        assert first_acquired.value, "First process did not acquire lock"
-        assert second_result["value"] == "timeout", (
-            f"Second should timeout (0.2s) while first holds (0.4s), got: "
+        assert first_acquired.is_set(), "First process did not acquire lock"
+        assert second_result["value"] == "acquired", (
+            "Second process should acquire after the first releases, got: "
             f"{second_result['value']}"
         )
 
