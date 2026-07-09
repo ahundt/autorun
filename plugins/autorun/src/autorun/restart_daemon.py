@@ -209,7 +209,7 @@ def _clear_pycache(src_dir: Path) -> None:
     if failed:
         print(f"  ⚠️ Failed to clear {failed} __pycache__ directories")
     if not cleared and not failed:
-        print(f"  No __pycache__ directories to clear")
+        print("  No __pycache__ directories to clear")
 
 
 def _check_conflicting_packages() -> None:
@@ -221,8 +221,8 @@ def _check_conflicting_packages() -> None:
             site_packages = Path(site_pkg_dir) / "autorun"
             if site_packages.exists():
                 print(f"  ⚠️  WARNING: Installed package found at {site_packages}")
-                print(f"      This may interfere with source directory loading")
-                print(f"      Consider: uv pip uninstall autorun")
+                print("      This may interfere with source directory loading")
+                print("      Consider: uv pip uninstall autorun")
                 break
     except Exception as e:
         # Non-fatal: just log
@@ -344,6 +344,41 @@ def _start_daemon(src_dir: Path) -> bool:
     return True
 
 
+def _daemon_cmdline(proc) -> str:
+    """Return a process command line string without raising psutil races."""
+    try:
+        return ' '.join(proc.info.get('cmdline') or [])
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return ""
+
+
+def _is_daemon_process_for_src(proc, src_dir: Path) -> bool:
+    """Return True for autorun daemon processes started from this source tree."""
+    cmdline_str = _daemon_cmdline(proc)
+    return (
+        'from autorun.daemon import main' in cmdline_str
+        and str(src_dir) in cmdline_str
+    )
+
+
+def _daemon_processes_for_src(src_dir: Path) -> list:
+    """Find orphan daemon processes that belong to the current source tree."""
+    return [
+        proc
+        for proc in psutil.process_iter(['pid', 'cmdline'])
+        if _is_daemon_process_for_src(proc, src_dir)
+    ]
+
+
+def _all_daemon_processes() -> list:
+    """Find all autorun daemon processes for explicit all-daemons restart only."""
+    return [
+        proc
+        for proc in psutil.process_iter(['pid', 'cmdline'])
+        if 'from autorun.daemon import main' in _daemon_cmdline(proc)
+    ]
+
+
 def _stop_daemon(pid: int) -> None:
     """Stop a running daemon gracefully, with SIGKILL fallback.
 
@@ -382,11 +417,15 @@ def _stop_daemon(pid: int) -> None:
             cleanup_stale_files()
 
 
-def restart_daemon() -> int:
+def restart_daemon(*, all_daemons: bool = False) -> int:
     """Restart the autorun daemon.
 
     Performs a full stop-cleanup-start cycle with locking, verification,
     and diagnostics. Safe to call from any context (script, import, install).
+    Normal restarts are scoped to the current AUTORUN_HOME/source tree.
+    all-daemons restarts are explicit maintenance operations that stop every
+    matching autorun daemon process and may interrupt active sessions in other
+    installs.
 
     Steps:
     0. Acquire restart lock (prevent concurrent restarts)
@@ -418,19 +457,16 @@ def restart_daemon() -> int:
         else:
             print("Daemon not running")
 
-        # Kill any remaining daemon processes (edge case: multiple daemons)
-        # This handles daemons spawned from different code locations that don't
-        # own the daemon.lock file. Uses psutil for cross-platform process discovery.
-        remaining_pids = []
-        for proc in psutil.process_iter(['pid', 'cmdline']):
-            try:
-                cmdline_str = ' '.join(proc.info.get('cmdline') or [])
-                if 'from autorun.daemon import main' in cmdline_str:
-                    remaining_pids.append(proc)
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
+        src_dir = _resolve_src_dir()
+        if not src_dir:
+            return 1
+
+        # Normal restart keeps shared/live daemons outside this source tree.
+        # all_daemons is risky maintenance for stale multi-daemon cleanup.
+        remaining_pids = _all_daemon_processes() if all_daemons else _daemon_processes_for_src(src_dir)
         if remaining_pids:
-            print(f"  Killing {len(remaining_pids)} remaining daemon(s)")
+            scope = "all matching" if all_daemons else "current source tree"
+            print(f"  Killing {len(remaining_pids)} remaining daemon(s) ({scope})")
             for proc in remaining_pids:
                 try:
                     proc.kill()  # SIGKILL equivalent
@@ -443,10 +479,6 @@ def restart_daemon() -> int:
             cleanup_stale_files()
 
         # Step 4: Start fresh daemon
-        src_dir = _resolve_src_dir()
-        if not src_dir:
-            return 1
-
         print("  Starting fresh daemon...")
         print(f"  Source directory: {src_dir}")
 

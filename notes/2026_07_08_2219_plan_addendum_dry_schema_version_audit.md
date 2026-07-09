@@ -702,3 +702,36 @@ uv run --project /Users/athundt/.claude/autorun/plugins/autorun pytest \
 
 Result: `31 passed` for `test_ghost_clear.py`; `82 passed` for the adjacent
 task lifecycle suites.
+
+Stage 2 daemon ownership/restart checkpoint:
+
+- Source-of-truth pass confirmed daemon lifecycle ownership belongs in
+  `ipc.py`, `restart_daemon.py`, `daemon.py`, `client.py`, and the existing
+  `test_daemon_restart_safety.py`, `test_daemon_startup_race.py`, and
+  `test_client_fail_closed.py` suites.
+- The root risk was the broad orphan process sweep in
+  `restart_daemon.py::restart_daemon`, which matched every process containing
+  `from autorun.daemon import main` and could kill unrelated production or
+  worktree daemons.
+- The fix resolves the current source directory before orphan cleanup and kills
+  only daemon processes whose command line contains both the daemon marker and
+  the current `src_dir`. Other worktree/production daemons remain untouched.
+- The former broad cleanup capability is preserved as the explicit
+  `--restart-all-daemons` maintenance mode. Help text, command docs, and tests
+  state that it can interrupt active autorun-backed sessions in other installs.
+- `restart_daemon.py` still uses the existing restart lock, `ipc` paths,
+  `_stop_daemon`, socket readiness polling, and pycache cleanup; no second daemon
+  ownership store or raw production daemon action was added.
+- Validation:
+
+```bash
+PYTHONPATH=/Users/athundt/.claude/autorun-worktrees/autorun-hardening-single-pass-20260709/plugins/autorun/src \
+AUTORUN_USE_DAEMON=0 \
+uv run --project /Users/athundt/.claude/autorun/plugins/autorun pytest \
+  plugins/autorun/tests/test_daemon_restart_safety.py \
+  plugins/autorun/tests/test_daemon_startup_race.py \
+  plugins/autorun/tests/test_client_fail_closed.py -q
+```
+
+Result: `57 passed`. Ruff check for `__main__.py`, `restart_daemon.py`, and
+`test_daemon_restart_safety.py`: passed.

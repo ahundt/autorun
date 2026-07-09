@@ -62,10 +62,10 @@ if _sys.version_info < (3, 10):
     _sys.exit(1)
 del _sys
 
-import argparse
-import os
-import sys
-from typing import Sequence
+import argparse  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+from typing import Sequence  # noqa: E402
 
 
 # v0.7: Daemon mode is now default (85-90% complete architecture)
@@ -329,7 +329,13 @@ For more information: https://github.com/ahundt/autorun
     info_group.add_argument(
         "--restart-daemon",
         action="store_true",
-        help="Restart the autorun daemon (stops, cleans up, and starts fresh)",
+        help="Restart the autorun daemon for the current AUTORUN_HOME/source tree",
+    )
+    info_group.add_argument(
+        "--restart-all-daemons",
+        action="store_true",
+        help="Risky maintenance mode: restart current daemon and stop all matching "
+             "autorun daemons, which can interrupt active sessions in other installs",
     )
     info_group.add_argument(
         "--cache-snapshot",
@@ -788,10 +794,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return show_status()
 
     # Restart daemon mode
-    if args.restart_daemon:
+    if args.restart_daemon or args.restart_all_daemons:
         from autorun.restart_daemon import restart_daemon
 
-        return restart_daemon()
+        return restart_daemon(all_daemons=args.restart_all_daemons)
 
     # Cache snapshot tap (opt-in; user's statusline pipes JSON here)
     if getattr(args, 'cache_snapshot', False):
@@ -822,7 +828,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # AutoFile (af) subcommand - file creation control
     if args.command == "file":
         from autorun.session_manager import get_session_manager
-        from autorun.config import CONFIG
 
         if not hasattr(args, 'file_command') or args.file_command is None:
             # No subcommand specified - show help

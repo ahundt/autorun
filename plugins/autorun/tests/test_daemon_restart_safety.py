@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -24,7 +25,7 @@ import pytest
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from filelock import FileLock, Timeout
+from filelock import FileLock, Timeout  # noqa: E402 - test path is inserted above for local src imports
 
 
 def _child_acquire_lock(lock_file: str, result_file: str, hold_seconds: float):
@@ -164,7 +165,6 @@ class TestAcquireDaemonLock:
         """_acquire_daemon_lock writes PID to daemon.lock after acquiring flock."""
         from autorun.core import AutorunDaemon
         lock_path = tmp_path / "daemon.lock"
-        flock_path = tmp_path / "daemon.flock"
 
         daemon = AutorunDaemon.__new__(AutorunDaemon)
         daemon._daemon_lock = None
@@ -387,6 +387,118 @@ class TestPsutilProcessLifecycle:
         assert 'os.kill(' not in source, (
             "restart_daemon.py still contains os.kill() — must use psutil for cross-platform"
         )
+
+    def test_restart_kills_only_daemons_from_current_source_tree(self, tmp_path):
+        """Restart must not kill unrelated autorun daemons from other worktrees."""
+        import autorun.restart_daemon as restart_mod
+
+        src_dir = tmp_path / "current" / "plugins" / "autorun" / "src"
+        other_src = tmp_path / "other" / "plugins" / "autorun" / "src"
+        src_dir.mkdir(parents=True)
+        other_src.mkdir(parents=True)
+
+        current_proc = mock.MagicMock()
+        current_proc.info = {
+            "pid": 111,
+            "cmdline": [
+                sys.executable,
+                "-c",
+                f"sys.path.insert(0, r'{src_dir}'); from autorun.daemon import main; main()",
+            ],
+        }
+        other_proc = mock.MagicMock()
+        other_proc.info = {
+            "pid": 222,
+            "cmdline": [
+                sys.executable,
+                "-c",
+                f"sys.path.insert(0, r'{other_src}'); from autorun.daemon import main; main()",
+            ],
+        }
+
+        @contextmanager
+        def acquired_restart_lock():
+            yield True
+
+        # get_daemon_pid(): no owned PID before restart, new owned PID after start.
+        with mock.patch.object(restart_mod, "restart_lock", acquired_restart_lock):
+            with mock.patch.object(restart_mod, "get_daemon_pid", side_effect=[None, 333]):
+                with mock.patch.object(restart_mod, "_resolve_src_dir", return_value=src_dir):
+                    with mock.patch.object(restart_mod, "_clear_pycache"):
+                        with mock.patch.object(restart_mod, "_check_conflicting_packages"):
+                            with mock.patch.object(restart_mod, "_start_daemon", return_value=True):
+                                with mock.patch.object(restart_mod, "is_daemon_responding", return_value=True):
+                                    with mock.patch.object(restart_mod, "verify_bashlex", return_value=True):
+                                        with mock.patch.object(restart_mod.psutil, "process_iter", return_value=[current_proc, other_proc]):
+                                            assert restart_mod.restart_daemon() == 0
+
+        current_proc.kill.assert_called_once_with()
+        other_proc.kill.assert_not_called()
+
+    def test_restart_all_daemons_kills_all_matching_daemons(self, tmp_path):
+        """--restart-all-daemons is the explicit risky all-daemon stop mode."""
+        import autorun.restart_daemon as restart_mod
+
+        src_dir = tmp_path / "current" / "plugins" / "autorun" / "src"
+        other_src = tmp_path / "other" / "plugins" / "autorun" / "src"
+        src_dir.mkdir(parents=True)
+        other_src.mkdir(parents=True)
+
+        current_proc = mock.MagicMock()
+        current_proc.info = {
+            "pid": 111,
+            "cmdline": [
+                sys.executable,
+                "-c",
+                f"sys.path.insert(0, r'{src_dir}'); from autorun.daemon import main; main()",
+            ],
+        }
+        other_proc = mock.MagicMock()
+        other_proc.info = {
+            "pid": 222,
+            "cmdline": [
+                sys.executable,
+                "-c",
+                f"sys.path.insert(0, r'{other_src}'); from autorun.daemon import main; main()",
+            ],
+        }
+
+        @contextmanager
+        def acquired_restart_lock():
+            yield True
+
+        with mock.patch.object(restart_mod, "restart_lock", acquired_restart_lock):
+            with mock.patch.object(restart_mod, "get_daemon_pid", side_effect=[None, 333]):
+                with mock.patch.object(restart_mod, "_resolve_src_dir", return_value=src_dir):
+                    with mock.patch.object(restart_mod, "_clear_pycache"):
+                        with mock.patch.object(restart_mod, "_check_conflicting_packages"):
+                            with mock.patch.object(restart_mod, "_start_daemon", return_value=True):
+                                with mock.patch.object(restart_mod, "is_daemon_responding", return_value=True):
+                                    with mock.patch.object(restart_mod, "verify_bashlex", return_value=True):
+                                        with mock.patch.object(restart_mod.psutil, "process_iter", return_value=[current_proc, other_proc]):
+                                            assert restart_mod.restart_daemon(all_daemons=True) == 0
+
+        current_proc.kill.assert_called_once_with()
+        other_proc.kill.assert_called_once_with()
+
+    def test_restart_command_uses_package_cli_not_missing_script(self):
+        """The slash command must not point at the removed scripts/restart_daemon.py."""
+        command_path = plugin_root / "commands" / "restart-daemon.md"
+        text = command_path.read_text(encoding="utf-8")
+
+        assert "python -m autorun --restart-daemon" in text
+        assert "scripts/restart_daemon.py" not in text
+        assert "--restart-all-daemons" in text
+        assert "can interrupt active autorun-backed sessions" in text
+
+    def test_cli_parser_exposes_restart_all_daemons_flag(self):
+        """The package CLI exposes all-daemon restart as explicit opt-in."""
+        from autorun.__main__ import create_parser
+
+        args = create_parser().parse_args(["--restart-all-daemons"])
+
+        assert args.restart_all_daemons is True
+        assert args.restart_daemon is False
 
 
 class TestDaemonMainLifecycleCleanup:
