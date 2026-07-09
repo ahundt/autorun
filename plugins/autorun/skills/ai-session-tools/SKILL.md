@@ -15,7 +15,11 @@ allowed-tools:
 
 Search, recover, and analyze AI session histories across Claude Code, AI Studio, and Gemini CLI.
 
-**Invoke with:** `/ar:ai-session-tools` or natural language like "find that file from last week", "search sessions for authentication", "recover context from session ab841016"
+**Invoke this skill with:** `$ai-session-tools`, a harness skill picker, or natural
+language like "find that file from last week", "search sessions for
+authentication", "recover context from session ab841016". Do not rely on an
+`/ar:*` slash command for skill activation; slash-command interception is
+harness-specific, and current Codex sessions should use skill-native invocation.
 
 After a context compaction, a lost file, or a confusing session — `aise` finds it. In under a minute you can recover a file the AI (e.g. Claude / Gemini) wrote, restore the sequence of user requests, search every conversation you've ever had, or export a full session to markdown. Works across Claude Code, AI Studio, and Gemini CLI sessions simultaneously.
 

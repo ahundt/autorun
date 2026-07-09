@@ -794,6 +794,53 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 7 skill-doc safety checkpoint:
+
+- Added a focused skill-doc regression test for two safety properties:
+  user-invocable skills must not advertise an `/ar:*` slash command as the skill
+  activation path, and `SKILL.md` entrypoints must not embed Claude-only
+  executable markdown snippets.
+- Updated `ai-session-tools` and the `claude-session-tools` alias skill to use
+  skill-native invocation wording (`$ai-session-tools`, harness skill picker, or
+  natural language) instead of the nonexistent `/ar:ai-session-tools` runtime
+  command.
+- Updated the cache skill with a harness note separating skill activation from
+  the runtime `/ar:cache` command. The note documents Codex-safe prompt forms:
+  `ar:cache` and `ar cache ...`, matching the existing Codex platform prefix
+  registry.
+- This keeps slash commands and skills distinct: slash commands remain runtime
+  hooks where a harness supports them, while skills remain guidance entrypoints
+  that do not implicitly run side-effecting code.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with psutil --with filelock pytest \
+  plugins/autorun/tests/test_skill_docs.py -q
+```
+
+Result: `2 passed`.
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_capability_snapshot.py \
+  plugins/autorun/tests/test_install_pathways.py::TestGenerateGeminiTomlCommands -q
+```
+
+Result: `12 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/command_docs.py \
+  plugins/autorun/src/autorun/capability_snapshot.py \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/tests/test_capability_snapshot.py \
+  plugins/autorun/tests/test_skill_docs.py
+```
+
+Result: passed.
+
 Stage 7 command-doc DRY checkpoint:
 
 - Existing source-of-truth pass confirmed runtime command dispatch already lives
