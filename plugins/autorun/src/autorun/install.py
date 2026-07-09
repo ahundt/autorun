@@ -1596,6 +1596,32 @@ _CODEX_HOOK_SOURCE_CHOICES = ("user", "plugin", "both", "none")
 _CODEX_PLUGIN_MARKETPLACE_CHOICES = ("personal", "github")
 
 
+def _codex_plugin_owned_marker_text(codex_hook_source: str) -> str:
+    """Return metadata stored in the existing autorun-owned plugin marker."""
+    return (
+        "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
+        "`autorun --install --codex` to recreate it.\n"
+        f"codex_hook_source={codex_hook_source}\n"
+    )
+
+
+def _codex_owned_plugin_hook_source(source_dir: Path) -> str | None:
+    """Read the selected hook source from autorun's existing ownership marker."""
+    marker = source_dir / _CODEX_PLUGIN_OWNED_MARKER
+    if not marker.is_file():
+        return None
+    try:
+        for line in marker.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "codex_hook_source":
+                value = value.strip()
+                if value in _CODEX_HOOK_SOURCE_CHOICES:
+                    return value
+    except OSError:
+        return None
+    return None
+
+
 def _codex_hook_source_from_env(default: str = "user") -> str:
     """Return the Codex hook install source selected by env or default."""
     value = os.environ.get("AUTORUN_CODEX_HOOK_SOURCE", default).strip().lower()
@@ -1817,6 +1843,7 @@ def _install_for_codex(
         plugin_marketplace = _install_codex_plugin_marketplace(
             plugin_dir,
             include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
+            codex_hook_source=codex_hook_source,
         )
     else:
         plugin_marketplace = CodexPluginMarketplaceInstall(
@@ -1989,6 +2016,7 @@ def _copy_codex_plugin_source(
     target: Path,
     *,
     include_hooks: bool = False,
+    codex_hook_source: str = "user",
 ) -> None:
     """Copy the Codex plugin source with selected hook packaging.
 
@@ -2022,8 +2050,7 @@ def _copy_codex_plugin_source(
     if include_hooks:
         _write_codex_plugin_hooks(plugin_dir, target)
     (target / _CODEX_PLUGIN_OWNED_MARKER).write_text(
-        "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
-        "`autorun --install --codex` to recreate it.\n",
+        _codex_plugin_owned_marker_text(codex_hook_source),
         encoding="utf-8",
     )
 
@@ -2040,6 +2067,7 @@ def _ensure_codex_plugin_source(
     plugin_dir: Path,
     *,
     include_hooks: bool = False,
+    codex_hook_source: str = "user",
 ) -> tuple[bool, str]:
     """Materialize ~/plugins/autorun for Codex's implicit home marketplace.
 
@@ -2066,7 +2094,12 @@ def _ensure_codex_plugin_source(
         _remove_owned_codex_plugin_source(target)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    _copy_codex_plugin_source(plugin_dir, target, include_hooks=include_hooks)
+    _copy_codex_plugin_source(
+        plugin_dir,
+        target,
+        include_hooks=include_hooks,
+        codex_hook_source=codex_hook_source,
+    )
     return (True, "copy")
 
 
@@ -2136,6 +2169,7 @@ def _install_codex_plugin_marketplace(
     plugin_dir: Path,
     *,
     include_hooks: bool = False,
+    codex_hook_source: str = "user",
 ) -> CodexPluginMarketplaceInstall:
     """Publish autorun as a Codex plugin in the home marketplace.
 
@@ -2146,6 +2180,7 @@ def _install_codex_plugin_marketplace(
     source_ready, source_message = _ensure_codex_plugin_source(
         plugin_dir,
         include_hooks=include_hooks,
+        codex_hook_source=codex_hook_source,
     )
     if not source_ready:
         return CodexPluginMarketplaceInstall(
@@ -2284,6 +2319,12 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
         if child.is_dir() and (child / "hooks" / "hooks.json").is_file()
     ]
     if plugin_hook_caches and _codex_user_hooks_have_autorun():
+        if _codex_owned_plugin_hook_source(source_dir) == "both":
+            versions = ", ".join(sorted(child.name for child in plugin_hook_caches))
+            return (
+                True,
+                f"✓ installed with explicit both hook sources in cache version(s): {versions}",
+            )
         versions = ", ".join(sorted(child.name for child in plugin_hook_caches))
         return (
             False,

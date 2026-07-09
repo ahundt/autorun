@@ -793,3 +793,43 @@ uv run ruff check \
 ```
 
 Result: passed.
+
+Stage 4 Codex installer composition checkpoint:
+
+- Source-of-truth pass confirmed Codex install ownership already lives in
+  `install.py` helpers: `_install_for_codex`, `_merge_codex_hooks`,
+  `_install_codex_plugin_marketplace`, `_copy_codex_plugin_source`,
+  `_CODEX_PLUGIN_OWNED_MARKER`, and `_codex_plugin_marketplace_status`.
+- No `install_specs.py`, new installer registry, or second version reader was
+  added. The existing autorun-owned marker now carries one additional line,
+  `codex_hook_source=<user|plugin|both|none>`, so status can distinguish
+  intentional `both` mode from accidental duplicate hook sources.
+- The root issue addressed here was status ambiguity: user hooks plus plugin
+  cache hooks were always reported as duplicate/broken, even when the installer
+  had explicitly been run with `codex_hook_source="both"`.
+- Reinstall transitions remain idempotent and scoped:
+  - `both -> user` rewrites only the autorun-owned plugin source and removes
+    plugin-bundled hooks.
+  - User-owned hooks in `~/.codex/hooks.json` remain preserved by
+    `_merge_codex_hooks`.
+  - Existing duplicate user+plugin hooks without an explicit `both` marker still
+    report as a status failure requiring action.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with psutil --with filelock \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_codex_install.py -q
+```
+
+Result: `42 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/tests/test_codex_install.py
+```
+
+Result: passed. `E402` is ignored here because `install.py` intentionally keeps
+a Python-version guard before imports.
