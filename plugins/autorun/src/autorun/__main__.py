@@ -269,9 +269,10 @@ For more information: https://github.com/ahundt/autorun
         default=[],
         metavar="SPEC",
         help=(
-            "Install a custom Gemini-family harness at a custom config dir. "
+            "Install a custom harness at a custom config dir. "
             "Format: name=flavor:binary:config_dir[:display]. "
-            "Supported flavors: gemini, qwen. Repeat for multiple targets."
+            "Supported flavors: gemini, qwen, agy, antigravity, codex. "
+            "Repeat for multiple targets."
         ),
     )
     install_group.add_argument(

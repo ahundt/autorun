@@ -1008,12 +1008,41 @@ class TestCustomHarnessInstall:
         with pytest.raises(ValueError, match="supported flavors"):
             install.parse_custom_harness_spec(f"lab=unknown:agy-lab:{tmp_path}")
 
-    def test_custom_gemini_family_binary_stamps_known_hook_flavor(
+    def test_parse_custom_harness_spec_accepts_codex_flavor(self, tmp_path):
+        """Codex-flavored custom harnesses install strict user hooks by config dir."""
+        install = get_install_module()
+        spec = install.parse_custom_harness_spec(f"codexlab=codex:codex-lab:{tmp_path}")
+
+        assert spec.flavor == "codex"
+        assert spec.binary == "codex-lab"
+        assert spec.config_dir == tmp_path
+
+    def test_parse_custom_harness_spec_accepts_agy_alias(self, tmp_path):
+        """The agy CLI spelling maps to the validated antigravity hook identity."""
+        install = get_install_module()
+
+        spec = install.parse_custom_harness_spec(f"lab=agy:agy-lab:{tmp_path}")
+
+        assert spec.flavor == "antigravity"
+        assert spec.binary == "agy-lab"
+
+    def test_parse_custom_harness_spec_accepts_antigravity_flavor(self, tmp_path):
+        """Antigravity can be named by product flavor as well as binary alias."""
+        install = get_install_module()
+
+        spec = install.parse_custom_harness_spec(
+            f"lab=antigravity:agy-lab:{tmp_path}:Antigravity Lab"
+        )
+
+        assert spec.flavor == "antigravity"
+        assert spec.display_name == "Antigravity Lab"
+
+    def test_custom_antigravity_binary_stamps_antigravity_hook_flavor(
         self,
         tmp_path,
         monkeypatch,
     ):
-        """Custom binary runs install commands, but hook_entry.py sees a known flavor."""
+        """Custom agy-like binary runs commands, but hooks see Antigravity."""
         install = get_install_module()
         marketplace = tmp_path / "marketplace"
         plugin_dir = marketplace / "plugins" / "autorun"
@@ -1057,12 +1086,74 @@ class TestCustomHarnessInstall:
             display_name="Antigravity Lab",
             config_dir=custom_home,
             install_hint="install agy-lab",
-            hook_cli_name="gemini",
+            hook_cli_name="antigravity",
         )
 
         assert ok is True, message
         assert any(args[:3] == ["agy-lab", "extensions", "install"] for args, _ in calls)
-        assert synced == [(plugin_dir.resolve(), installed_ar, "ar", "gemini")]
+        assert synced == [(plugin_dir.resolve(), installed_ar, "ar", "antigravity")]
+
+    def test_custom_codex_config_dir_installs_only_user_surface(self, tmp_path, monkeypatch):
+        """Custom Codex-like config dirs get hooks and AGENTS.md, not global assets."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        hooks_dir = plugin_dir / "hooks"
+        template = plugin_dir / "src" / "autorun" / "codex_template"
+        hooks_dir.mkdir(parents=True)
+        template.mkdir(parents=True)
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        (template / "AGENTS.md").write_text("# autorun\nar:sos\n", encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+        custom_codex = tmp_path / "custom-codex"
+        custom_codex.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python /user/pre_tool.py",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        (custom_codex / "hooks.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        def global_asset_called(*_args, **_kwargs):
+            raise AssertionError("custom Codex install must not touch global assets")
+
+        monkeypatch.setattr(install, "_install_codex_skills", global_asset_called)
+        monkeypatch.setattr(install, "_install_codex_plugin_marketplace", global_asset_called)
+
+        ok, message = install._install_for_codex(
+            marketplace,
+            ["autorun"],
+            force=False,
+            codex_dir=custom_codex,
+            install_global_assets=False,
+        )
+
+        assert ok is True, message
+        hooks = json.loads((custom_codex / "hooks.json").read_text(encoding="utf-8"))
+        commands = [
+            hook["command"]
+            for entries in hooks.get("hooks", {}).values()
+            for entry in entries
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict) and "command" in hook
+        ]
+        assert "python /user/pre_tool.py" in commands
+        assert any("--cli codex" in command for command in commands)
+        assert (custom_codex / "AGENTS.md").is_file()
 
 
 if __name__ == "__main__":

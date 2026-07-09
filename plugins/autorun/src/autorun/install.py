@@ -123,14 +123,20 @@ class CustomHarnessInstall:
     display_name: str
 
 
-_CUSTOM_GEMINI_FAMILY_FLAVORS = frozenset({"gemini", "qwen"})
+_CUSTOM_HARNESS_FLAVOR_ALIASES = {
+    "gemini": "gemini",
+    "qwen": "qwen",
+    "codex": "codex",
+    "agy": "antigravity",
+    "antigravity": "antigravity",
+}
 
 
 def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
     """Parse `name=flavor:binary:config_dir[:display]` custom harness specs.
 
     The `flavor` is the autorun hook identity passed to `hook_entry.py --cli`;
-    it must be a known Gemini-family identity so custom binaries cannot create
+    it must be a known hook identity so custom binaries cannot create
     unvalidated response schemas.
     """
     raw = spec.strip()
@@ -146,16 +152,17 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
             "custom harness must use name=flavor:binary:config_dir[:display]"
         )
 
-    flavor, binary, config_dir_raw = (part.strip() for part in parts[:3])
+    raw_flavor, binary, config_dir_raw = (part.strip() for part in parts[:3])
     display_name = parts[3].strip() if len(parts) == 4 and parts[3].strip() else name.strip()
     name = name.strip()
     if not name or not binary or not config_dir_raw:
         raise ValueError(
             "custom harness name, binary, and config_dir must be non-empty"
         )
-    if flavor not in _CUSTOM_GEMINI_FAMILY_FLAVORS:
-        supported = ", ".join(sorted(_CUSTOM_GEMINI_FAMILY_FLAVORS))
-        raise ValueError(f"unsupported custom harness flavor {flavor!r}; supported flavors: {supported}")
+    flavor = _CUSTOM_HARNESS_FLAVOR_ALIASES.get(raw_flavor)
+    if flavor is None:
+        supported = ", ".join(sorted(_CUSTOM_HARNESS_FLAVOR_ALIASES))
+        raise ValueError(f"unsupported custom harness flavor {raw_flavor!r}; supported flavors: {supported}")
 
     return CustomHarnessInstall(
         name=name,
@@ -1837,6 +1844,8 @@ def _install_for_codex(
     force: bool = False,
     codex_hook_source: str = "user",
     codex_plugin_marketplace: str = "personal",
+    codex_dir: Path | None = None,
+    install_global_assets: bool = True,
 ) -> tuple[bool, str]:
     """Install autorun for Codex with an explicit hook source mode.
 
@@ -1856,12 +1865,23 @@ def _install_for_codex(
                idempotent so force has no effect here today.
         codex_hook_source: user, plugin, both, or none
         codex_plugin_marketplace: personal or github
+        codex_dir: Config directory containing hooks.json and AGENTS.md. Defaults
+                   to ~/.codex for normal Codex installs.
+        install_global_assets: If False, skip ~/.agents skills and Codex plugin
+                               marketplace writes. Custom Codex-like harnesses
+                               use this to stay scoped to their config dir.
 
     Returns:
         Tuple of (success: bool, message: str)
     """
     codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
     codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    if not install_global_assets and _codex_uses_plugin_hooks(codex_hook_source):
+        return (
+            False,
+            "custom Codex config-dir installs support user hooks only; "
+            "use codex_hook_source='user' or 'none'",
+        )
     if codex_plugin_marketplace == "github" and _codex_uses_plugin_hooks(codex_hook_source):
         return (
             False,
@@ -1872,8 +1892,8 @@ def _install_for_codex(
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
 
-    codex_dir = Path.home() / ".codex"
-    codex_dir.mkdir(exist_ok=True)
+    codex_dir = (codex_dir or (Path.home() / ".codex")).expanduser()
+    codex_dir.mkdir(parents=True, exist_ok=True)
     hooks_path = codex_dir / "hooks.json"
 
     existing = {}
@@ -1892,12 +1912,21 @@ def _install_for_codex(
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
-    skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
-    if codex_plugin_marketplace == "personal":
+    if install_global_assets:
+        skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
+    else:
+        skills_installed, skills_skipped = (0, 0)
+    if codex_plugin_marketplace == "personal" and install_global_assets:
         plugin_marketplace = _install_codex_plugin_marketplace(
             plugin_dir,
             include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
             codex_hook_source=codex_hook_source,
+        )
+    elif codex_plugin_marketplace == "personal":
+        plugin_marketplace = CodexPluginMarketplaceInstall(
+            source_ready=False,
+            marketplace_ready=False,
+            reason="global Codex plugin marketplace skipped for custom config-dir install",
         )
     else:
         plugin_marketplace = CodexPluginMarketplaceInstall(
@@ -1908,13 +1937,13 @@ def _install_for_codex(
 
     print()
     if _codex_uses_user_hooks(codex_hook_source):
-        print("✓ Codex user hooks installed at ~/.codex/hooks.json")
+        print(f"✓ Codex user hooks installed at {hooks_path}")
     else:
-        print("✓ Codex user hooks removed from ~/.codex/hooks.json")
+        print(f"✓ Codex user hooks removed from {hooks_path}")
     if _codex_uses_plugin_hooks(codex_hook_source):
         print("✓ Codex plugin hooks packaged in autorun@personal")
     if agents_written:
-        print("✓ Advisory safety guidance written to ~/.codex/AGENTS.md")
+        print(f"✓ Advisory safety guidance written to {codex_dir / 'AGENTS.md'}")
     if skills_installed:
         print(f"✓ Installed {skills_installed} autorun skill(s) at ~/.agents/skills/")
     if skills_skipped:
@@ -3105,16 +3134,27 @@ def install_plugins(
         all_succeeded = all_succeeded and qwen_success
 
     for custom in custom_targets:
-        custom_success, custom_msg = _install_gemini_family_extensions(
-            marketplace_root=marketplace_root,
-            plugins=plugins,
-            force=force,
-            cli_name=custom.binary,
-            display_name=custom.display_name,
-            config_dir=custom.config_dir,
-            install_hint=f"install {custom.binary}",
-            hook_cli_name=custom.flavor,
-        )
+        if custom.flavor == "codex":
+            custom_success, custom_msg = _install_for_codex(
+                marketplace_root,
+                plugins,
+                force,
+                codex_hook_source="user",
+                codex_plugin_marketplace="personal",
+                codex_dir=custom.config_dir,
+                install_global_assets=False,
+            )
+        else:
+            custom_success, custom_msg = _install_gemini_family_extensions(
+                marketplace_root=marketplace_root,
+                plugins=plugins,
+                force=force,
+                cli_name=custom.binary,
+                display_name=custom.display_name,
+                config_dir=custom.config_dir,
+                install_hint=f"install {custom.binary}",
+                hook_cli_name=custom.flavor,
+            )
         custom_results.append((custom, custom_success, custom_msg))
         if not custom_success:
             print(f"   Custom harness {custom.name} install failed: {custom_msg}")
@@ -3817,9 +3857,10 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="SPEC",
         help=(
-            "Install a custom Gemini-family harness at a custom config dir. "
+            "Install a custom harness at a custom config dir. "
             "Format: name=flavor:binary:config_dir[:display]. "
-            "Supported flavors: gemini, qwen. Repeat for multiple targets."
+            "Supported flavors: gemini, qwen, agy, antigravity, codex. "
+            "Repeat for multiple targets."
         ),
     )
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")

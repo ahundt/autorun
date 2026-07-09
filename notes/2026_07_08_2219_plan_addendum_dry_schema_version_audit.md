@@ -1110,6 +1110,55 @@ uv run ruff check --ignore E402 \
 Result: passed. `E402` remains intentionally ignored for `install.py` because
 that module has an executable Python-version guard before normal imports.
 
+Stage 8 custom harness correction, 2026_07_09_0012:
+
+- User review caught a missing Antigravity custom flavor: `agy` is the actual
+  CLI binary spelling and must be accepted as a custom harness flavor alias.
+- The parser now accepts `agy` and `antigravity`, normalizing both to the
+  validated hook identity `antigravity`. This keeps hook commands stamped as
+  `hook_entry.py --cli antigravity`, matching the existing hook wrapper and
+  schema tests, while still letting custom targets run binaries such as
+  `agy-lab`.
+- The custom harness flavor set now covers `gemini`, `qwen`, `agy`,
+  `antigravity`, and `codex`. Unknown values are still rejected before install
+  so custom specs cannot create arbitrary hook schemas.
+- Scoped Codex custom config-dir support was added in the same TDD slice:
+  `codex` custom harnesses install user-level hooks and `AGENTS.md` into the
+  supplied config directory while intentionally skipping global `~/.agents`
+  skills and Codex plugin marketplace writes.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall -q
+```
+
+Result: `7 passed`.
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_hook_entry.py::TestHookEntryExecutionPriority::test_antigravity_is_accepted_cli_type \
+  plugins/autorun/tests/test_hook_entry.py::TestHookEntryExecutionPriority::test_antigravity_tool_gate_fail_closed_uses_permissive_schema \
+  plugins/autorun/tests/test_platform_registry.py \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting -q
+```
+
+Result: `52 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py
+```
+
+Result: passed.
+
 Stage 7 skill-doc safety checkpoint, 2026_07_08_2315:
 
 - Added a focused skill-doc regression test for two safety properties:
