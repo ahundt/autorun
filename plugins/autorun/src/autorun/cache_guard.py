@@ -124,10 +124,29 @@ def _read_toggle(session_id: str) -> dict:
 
 def is_cache_enabled(session_id: str) -> bool:
     t = _read_toggle(session_id)
+    return _toggle_enabled(t)
+
+
+def _toggle_enabled(toggle: dict) -> bool:
+    """Resolve an enabled flag, including temporary override expiry."""
+    t = toggle or {}
     exp = t.get("expires_at")
     if exp and time.time() >= exp:
         return bool(t.get("prior", False))   # revert to prior on TTL expiry
     return bool(t.get("enabled", False))
+
+
+def _read_toggle_from_ctx(ctx: object, session_id: str) -> dict:
+    """Read session then global toggle through the daemon's state cache."""
+    state_get = getattr(ctx, "state_get")
+    toggle = state_get(_TOGGLE_KEY, None, session_id=session_id)
+    if toggle and isinstance(toggle, dict):
+        return toggle
+    if session_id != _GLOBAL_SESSION_ID:
+        global_toggle = state_get(_TOGGLE_KEY, None, session_id=_GLOBAL_SESSION_ID)
+        if global_toggle and isinstance(global_toggle, dict):
+            return global_toggle
+    return {}
 
 
 def set_cache_enabled(session_id: str, enabled: bool, duration: float | None = None) -> None:
@@ -170,6 +189,23 @@ class CacheGuardConfig:
         for blob in (g_blob, s_blob):
             if isinstance(blob, dict):
                 merged.update({k: v for k, v in blob.items() if k in _fields and v is not None})
+        return cls(**merged)
+
+    @classmethod
+    def load_from_ctx(cls, ctx: object, session_id: str) -> "CacheGuardConfig":
+        """Merge global and session thresholds through cached context state."""
+        state_get = getattr(ctx, "state_get")
+        global_blob = state_get(_THRESHOLD_KEY, None, session_id=_GLOBAL_SESSION_ID)
+        session_blob = (
+            None
+            if session_id == _GLOBAL_SESSION_ID
+            else state_get(_THRESHOLD_KEY, None, session_id=session_id)
+        )
+        fields = cls.__dataclass_fields__
+        merged: dict = {}
+        for blob in (global_blob, session_blob):
+            if isinstance(blob, dict):
+                merged.update({k: v for k, v in blob.items() if k in fields and v is not None})
         return cls(**merged)
 
     def save(self, session_id: str) -> None:
@@ -440,13 +476,17 @@ class CacheGuard:
     @classmethod
     def from_ctx(cls, ctx: object) -> "CacheGuard":
         sid = getattr(ctx, "session_id", None) or "unknown"
-        return cls(session_id=sid, config=CacheGuardConfig.load(sid))
+        return cls(session_id=sid, config=CacheGuardConfig.load_from_ctx(ctx, sid))
 
     # ── main entry point ─────────────────────────────────────────
 
     def check(self, ctx: object) -> Optional[dict]:
         """Returns None (allow) or ctx.deny(msg) (block)."""
-        if not is_cache_enabled(self.session_id):
+        if hasattr(ctx, "state_get"):
+            enabled = _toggle_enabled(_read_toggle_from_ctx(ctx, self.session_id))
+        else:
+            enabled = is_cache_enabled(self.session_id)
+        if not enabled:
             return None
         usage = self._read_usage(ctx)
         trips = _which_axes_trip(self.config, usage)

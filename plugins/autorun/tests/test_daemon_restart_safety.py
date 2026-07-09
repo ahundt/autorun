@@ -42,6 +42,16 @@ def _child_acquire_lock(lock_file: str, result_file: str, hold_seconds: float):
         Path(result_file).write_text("blocked", encoding="utf-8")
 
 
+def test_pytest_runtime_isolated_from_production_daemon():
+    """The suite must never use the live ~/.autorun socket, PID, or logs."""
+    from autorun import ipc
+
+    test_home = Path(os.environ["AUTORUN_HOME"])
+    assert test_home != Path.home() / ".autorun"
+    assert ipc.AUTORUN_CONFIG_DIR == test_home
+    assert os.environ["AUTORUN_TEST_STATE_DIR"].startswith(str(test_home.parent))
+
+
 class TestRestartLockFilelock:
     """Test restart_lock() with filelock backend — RAII, thread safety, multiprocess."""
 

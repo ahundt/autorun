@@ -50,15 +50,15 @@ def _make_ctx(cmd: str = "ls", session_id: str = None) -> EventContext:
 
 @contextlib.contextmanager
 def _isolated_global_store():
-    """Context manager: patch plugins.session_state with an isolated in-memory
+    """Context manager: patch core.session_state with an isolated in-memory
     dict so global-scope tests never touch production ~/.autorun/sessions/__global__.*"""
     store = {}
 
     @contextlib.contextmanager
-    def mock_session_state(session_id):
+    def mock_session_state(session_id, **kwargs):
         yield store
 
-    with patch("autorun.plugins.session_state", mock_session_state):
+    with patch("autorun.core.session_state", mock_session_state):
         yield store
 
 
@@ -228,7 +228,7 @@ class TestSessionBlockManagement:
 class TestGlobalBlockManagement:
     """Test global block management via ScopeAccessor + isolated in-memory store.
 
-    ISOLATION: _isolated_global_store() patches autorun.plugins.session_state with an
+    ISOLATION: _isolated_global_store() patches autorun.core.session_state with an
     in-memory dict so tests never touch production ~/.autorun/sessions/__global__.*
     """
 
@@ -312,6 +312,16 @@ class TestGlobalBlockManagement:
             assert result is not None
             perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
             assert perm == "deny", f"global block for 'ls' must deny, got {perm!r}"
+
+    def test_isolated_global_block_does_not_leak_to_next_context(self):
+        """Fixture exit must isolate both cached and persisted global policy."""
+        with _isolated_global_store():
+            accessor = plugins.ScopeAccessor(self._ctx(), "global")
+            accessor.set([{"pattern": "ls", "suggestion": "use rtk ls"}])
+            assert accessor.get()[0]["pattern"] == "ls"
+
+        with _isolated_global_store():
+            assert plugins.ScopeAccessor(self._ctx(), "global").get() == []
 
 
 class TestBlockPrecedence:

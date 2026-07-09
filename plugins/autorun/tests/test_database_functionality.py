@@ -80,6 +80,97 @@ class TestThreadSafeDBSessionCache:
         store.set("session-a:missing", "now-present")
         assert store.get("session-a:missing") == "now-present"
 
+    def test_atomic_update_synchronizes_persistent_and_memory_state(self, monkeypatch):
+        """Atomic read-modify-write must refresh the daemon cache in one lock."""
+        values = {"__global__": {"allows": [{"uses": 2}]}}
+        calls = self._fake_session_state(monkeypatch, values)
+        store = ThreadSafeDB()
+
+        updated = store.update(
+            "__global__:allows",
+            lambda allows: [{"uses": allows[0]["uses"] - 1}],
+            default=[],
+        )
+
+        assert updated == [{"uses": 1}]
+        assert values["__global__"]["allows"] == [{"uses": 1}]
+        assert store.get("__global__:allows") == [{"uses": 1}]
+        assert len(calls) == 1
+
+    def test_global_scope_reads_share_session_hydration(self, monkeypatch):
+        """Global allow and block checks must not bypass ThreadSafeDB."""
+        calls = self._fake_session_state(
+            monkeypatch,
+            {
+                "__global__": {
+                    "global_blocked_patterns": [{"pattern": "blocked"}],
+                    "global_allowed_patterns": [{"pattern": "allowed"}],
+                }
+            },
+        )
+        store = ThreadSafeDB()
+        ctx = EventContext(session_id="session-a", event="PreToolUse", store=store)
+        accessor = plugins.ScopeAccessor(ctx, "global")
+
+        assert accessor.get() == [{"pattern": "blocked"}]
+        assert accessor.get_allowed() == [{"pattern": "allowed"}]
+        assert len(calls) == 1
+
+    def test_context_without_daemon_store_keeps_atomic_persistence(self, monkeypatch):
+        """Direct CLI dispatch must retain locked state reads, writes, and updates."""
+        values = {"__global__": {"counter": 1}}
+        calls = self._fake_session_state(monkeypatch, values)
+        ctx = EventContext(session_id="direct-cli", event="UserPromptSubmit")
+
+        assert ctx.state_get("counter", session_id="__global__") == 1
+        ctx.state_set("label", "present", session_id="__global__")
+        updated = ctx.state_update(
+            "counter",
+            lambda current: current + 1,
+            0,
+            session_id="__global__",
+        )
+
+        assert updated == 2
+        assert values["__global__"] == {"counter": 2, "label": "present"}
+        assert len(calls) == 3
+
+    def test_external_mutation_rehydrates_cache_before_unlock(self, monkeypatch):
+        """Legacy persistence operations must not leave warm daemon state stale."""
+        values = {"session-a": {}}
+        calls = self._fake_session_state(monkeypatch, values)
+        store = ThreadSafeDB()
+
+        assert store.get("session-a:cache/toggle") is None
+
+        def mutate():
+            values["session-a"]["cache/toggle"] = {"enabled": True}
+            return "changed"
+
+        assert store.synchronize_session("session-a", mutate) == "changed"
+        assert store.get("session-a:cache/toggle") == {"enabled": True}
+        assert len(calls) == 2
+
+    def test_failed_external_mutation_refreshes_cache_and_reraises(self, monkeypatch):
+        """Failure must remain visible without leaving persisted and cached state split."""
+        values = {"session-a": {"status": "before"}}
+        self._fake_session_state(monkeypatch, values)
+        store = ThreadSafeDB()
+        assert store.get("session-a:status") == "before"
+
+        def mutate_then_fail():
+            values["session-a"]["status"] = "after"
+            raise RuntimeError("mutation failed")
+
+        try:
+            store.synchronize_session("session-a", mutate_then_fail)
+        except RuntimeError as exc:
+            assert str(exc) == "mutation failed"
+        else:
+            raise AssertionError("operation failure was swallowed")
+
+        assert store.get("session-a:status") == "after"
+
 
 def _dispatch_policy(session_id: str, policy: str) -> dict:
     """Dispatch a policy command via canonical daemon-path. Returns response dict."""

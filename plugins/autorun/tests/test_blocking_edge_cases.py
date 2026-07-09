@@ -82,7 +82,7 @@ def _isolated_global_store():
     def mock_session_state(session_id, **kwargs):
         yield store
 
-    with patch("autorun.plugins.session_state", mock_session_state):
+    with patch("autorun.core.session_state", mock_session_state):
         yield store
 
 

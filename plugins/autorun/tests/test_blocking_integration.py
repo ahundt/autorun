@@ -61,7 +61,9 @@ def _isolated_global_store():
     def mock_session_state(session_id, **kwargs):
         yield store
 
-    with patch("autorun.plugins.session_state", mock_session_state):
+    # Patch the persistence owner so both ScopeAccessor and ThreadSafeDB use
+    # this isolated store instead of leaking global policy into later tests.
+    with patch("autorun.core.session_state", mock_session_state):
         yield store
 
 

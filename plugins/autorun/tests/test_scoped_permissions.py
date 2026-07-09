@@ -23,14 +23,14 @@ def _make_ctx(cmd: str = "ls", session_id: str = None) -> EventContext:
 
 @contextlib.contextmanager
 def _isolated_global_store():
-    """Patch plugins.session_state with isolated in-memory dict."""
+    """Patch the canonical ThreadSafeDB persistence boundary."""
     store = {}
 
     @contextlib.contextmanager
-    def mock_session_state(session_id):
+    def mock_session_state(session_id, **kwargs):
         yield store
 
-    with patch("autorun.plugins.session_state", mock_session_state):
+    with patch("autorun.core.session_state", mock_session_state):
         yield store
 
 

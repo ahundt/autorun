@@ -538,47 +538,40 @@ class ScopeAccessor:
 
     def get(self) -> list:
         """Get blocked patterns."""
-        if self.scope == "session":
-            return list(self.ctx.session_blocked_patterns or [])
-        with session_state("__global__") as st:
-            return list(st.get(self._blocked_key, []))
+        session_id = None if self.scope == "session" else "__global__"
+        return list(self.ctx.state_get(self._blocked_key, [], session_id=session_id) or [])
 
     def set(self, blocks: list):
         """Set blocked patterns."""
-        if self.scope == "session":
-            self.ctx.session_blocked_patterns = blocks
-        else:
-            with session_state("__global__") as st:
-                st[self._blocked_key] = blocks
+        session_id = None if self.scope == "session" else "__global__"
+        self.ctx.state_set(self._blocked_key, blocks, session_id=session_id)
 
     def get_allowed(self) -> list:
         """Get allowed patterns."""
-        if self.scope == "session":
-            return list(self.ctx.session_allowed_patterns or [])
-        with session_state("__global__") as st:
-            return list(st.get(self._allowed_key, []))
+        session_id = None if self.scope == "session" else "__global__"
+        return list(self.ctx.state_get(self._allowed_key, [], session_id=session_id) or [])
 
     def set_allowed(self, allows: list):
         """Set allowed patterns."""
-        if self.scope == "session":
-            self.ctx.session_allowed_patterns = allows
-        else:
-            with session_state("__global__") as st:
-                st[self._allowed_key] = allows
+        session_id = None if self.scope == "session" else "__global__"
+        self.ctx.state_set(self._allowed_key, allows, session_id=session_id)
 
     def consume_allowed(self, index: int, consumed_dict: dict) -> None:
         """Atomic update of a single allow entry (safe for global scope)."""
-        if self.scope == "session":
-            allows = list(self.ctx.session_allowed_patterns or [])
+        session_id = None if self.scope == "session" else "__global__"
+
+        def replace_entry(current):
+            allows = list(current or [])
             if index < len(allows):
                 allows[index] = consumed_dict
-                self.ctx.session_allowed_patterns = allows
-        else:
-            with session_state("__global__") as st:
-                allows = list(st.get(self._allowed_key, []))
-                if index < len(allows):
-                    allows[index] = consumed_dict
-                    st[self._allowed_key] = allows
+            return allows
+
+        self.ctx.state_update(
+            self._allowed_key,
+            replace_entry,
+            [],
+            session_id=session_id,
+        )
 
 
 # MEGA DRY: Single factory for ALL block operations
@@ -1893,7 +1886,12 @@ def handle_cache(ctx: EventContext) -> str:
     prompt = ctx.activation_prompt or ctx.prompt or ""
     # Strip the leading "/ar:cache" token to get the sub-arg string.
     tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
-    return cache_command(tail, ctx.session_id)
+    parts = tail.strip().split()
+    target_session = "__global__" if parts and parts[0].lower() == "global" else ctx.session_id
+    return ctx.state_synchronize(
+        lambda: cache_command(tail, ctx.session_id),
+        session_id=target_session,
+    )
 
 
 @app.command("/ar:tasks")

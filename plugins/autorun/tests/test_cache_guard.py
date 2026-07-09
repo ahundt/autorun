@@ -874,6 +874,91 @@ class TestCheckCtxE2EPath:
         guard._read_usage = lambda _ctx: _FakeUsage(cache_hit_ratio=0.01)  # type: ignore
         assert guard.check(_make_ctx(sid)) is None
 
+    def test_daemon_context_disabled_path_avoids_persistent_io(self, monkeypatch):
+        """A disabled default gate must stay entirely on the daemon state cache."""
+        from autorun.cache_guard import CacheGuard
+
+        class CachedContext:
+            session_id = "cached-session"
+
+            def __init__(self):
+                self.reads = []
+
+            def state_get(self, name, default=None, *, session_id=None):
+                self.reads.append((session_id or self.session_id, name))
+                return default
+
+        ctx = CachedContext()
+        monkeypatch.setattr(
+            "autorun.cache_guard.session_state",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("persistent I/O")),
+        )
+        guard = CacheGuard.from_ctx(ctx)
+        guard._read_usage = lambda _ctx: (_ for _ in ()).throw(AssertionError("usage read"))  # type: ignore
+
+        assert guard.check(ctx) is None
+        assert ctx.reads == [
+            ("__global__", "cache/threshold"),
+            ("cached-session", "cache/threshold"),
+            ("cached-session", "cache/toggle"),
+            ("__global__", "cache/toggle"),
+        ]
+
+    def test_daemon_context_merges_global_and_session_thresholds(self, monkeypatch):
+        """Context-backed config keeps global-base then session-override precedence."""
+        from autorun.cache_guard import CacheGuard
+
+        values = {
+            ("__global__", "cache/threshold"): {
+                "cache_hit_ratio_min": 0.4,
+                "cache_age_max_seconds": 600,
+            },
+            ("cached-session", "cache/threshold"): {"cache_hit_ratio_min": 0.7},
+        }
+
+        class CachedContext:
+            session_id = "cached-session"
+
+            def state_get(self, name, default=None, *, session_id=None):
+                return values.get((session_id or self.session_id, name), default)
+
+        monkeypatch.setattr(
+            "autorun.cache_guard.session_state",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("persistent I/O")),
+        )
+        guard = CacheGuard.from_ctx(CachedContext())
+
+        assert guard.config.cache_hit_ratio_min == pytest.approx(0.7)
+        assert guard.config.cache_age_max_seconds == pytest.approx(600)
+
+    @pytest.mark.parametrize(
+        "prompt,target_session",
+        [("/ar:cache on", "cache-command-session"), ("/ar:cache global on", "__global__")],
+    )
+    def test_cache_command_refreshes_prewarmed_daemon_state(
+        self,
+        tmp_state_dir,
+        prompt,
+        target_session,
+    ):
+        """Command writes must become visible before the next shared-daemon hook."""
+        from autorun import plugins
+        from autorun.core import EventContext, ThreadSafeDB
+
+        store = ThreadSafeDB()
+        assert store.get(f"{target_session}:cache/toggle") is None
+        ctx = EventContext(
+            session_id="cache-command-session",
+            event="UserPromptSubmit",
+            prompt=prompt,
+            store=store,
+        )
+
+        response = plugins.app.dispatch(ctx)
+
+        assert "enabled" in response["systemMessage"]
+        assert store.get(f"{target_session}:cache/toggle")["enabled"] is True
+
     def test_check_blocks_and_returns_deny_dict(self, tmp_state_dir):
         sid = _sid()
         guard = self._guard_with_usage(tmp_state_dir, sid, _FakeUsage(cache_hit_ratio=0.01))

@@ -47,9 +47,13 @@ def pytest_configure(config):
     # reading/writing to the real user data at ~/.claude/sessions/.
     # Must happen in pytest_configure (earliest hook) because module-level
     # imports in test files can trigger _get_store() during collection.
-    _test_state_dir = tempfile.mkdtemp(prefix="autorun_test_state_")
-    config._autorun_test_state_dir = _test_state_dir
-    os.environ["AUTORUN_TEST_STATE_DIR"] = _test_state_dir
+    test_runtime_dir = Path(os.environ["AUTORUN_TEST_RUNTIME_DIR"])
+    test_state_dir = Path(os.environ["AUTORUN_TEST_STATE_DIR"])
+    test_autorun_home = Path(os.environ["AUTORUN_HOME"])
+    config._autorun_test_runtime_dir = str(test_runtime_dir)
+    config._autorun_test_state_dir = str(test_state_dir)
+    os.environ["AUTORUN_TEST_STATE_DIR"] = str(test_state_dir)
+    os.environ["AUTORUN_HOME"] = str(test_autorun_home)
 
     # PLATFORM ISOLATION: Ensure tests start in a clean environment (not affected by 
     # the active Gemini CLI session used to run these tests).
@@ -438,16 +442,18 @@ def pytest_sessionfinish(session, exitstatus):
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
 
-    # Clean up test state directory and reset session_manager
-    test_state_dir = getattr(session.config, '_autorun_test_state_dir', None)
-    if test_state_dir and os.path.isdir(test_state_dir):
+    # Clean up isolated state, socket, PID, and logs together.
+    test_runtime_dir = getattr(session.config, '_autorun_test_runtime_dir', None)
+    if test_runtime_dir and os.path.isdir(test_runtime_dir):
         if not should_keep_test_artifacts():
-            shutil.rmtree(test_state_dir, ignore_errors=True)
+            shutil.rmtree(test_runtime_dir, ignore_errors=True)
         else:
-            print(f"\n[DEBUG] Keeping test state dir: {test_state_dir}")
+            print(f"\n[DEBUG] Keeping test runtime dir: {test_runtime_dir}")
 
     # Remove env var and reset singletons so production code isn't affected
     os.environ.pop("AUTORUN_TEST_STATE_DIR", None)
+    os.environ.pop("AUTORUN_HOME", None)
+    os.environ.pop("AUTORUN_TEST_RUNTIME_DIR", None)
     os.environ.pop("AUTORUN_TEST_TMUX_SOCKET", None)
     os.environ.pop("AUTORUN_ORIGINAL_TMUX", None)
     os.environ.pop("AUTORUN_TMUX_BIN", None)

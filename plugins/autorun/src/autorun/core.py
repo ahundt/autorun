@@ -502,6 +502,44 @@ class ThreadSafeDB:
             # Persist to JSON via session_state() RAII wrapper
             self._persist_many({key: value})
 
+    def update(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
+        """Atomically update one field and synchronize the daemon cache."""
+        session_id, field = self._split_key(key)
+        with self._lock:
+            with session_state(session_id, timeout=self._state_timeout) as state:
+                current = state.get(field, default)
+                if isinstance(current, (list, dict, set)):
+                    current = copy.deepcopy(current)
+                value = updater(current)
+                persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+                state[field] = persisted
+            self._cache[key] = persisted
+            self._loaded_sessions.add(session_id)
+            return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+
+    def synchronize_session(self, session_id: str, operation: Callable[[], Any]) -> Any:
+        """Run a legacy state operation and refresh its cache before unlocking."""
+        with self._lock:
+            try:
+                result = operation()
+            finally:
+                prefix = f"{session_id}:"
+                for key in [key for key in self._cache if key.startswith(prefix)]:
+                    del self._cache[key]
+                self._loaded_sessions.discard(session_id)
+                try:
+                    with session_state(session_id, timeout=self._state_timeout) as state:
+                        for field, value in state.items():
+                            self._cache[f"{session_id}:{field}"] = value
+                    self._loaded_sessions.add(session_id)
+                except Exception as e:
+                    logger.warning(
+                        "ThreadSafeDB could not refresh %r after external mutation: %s",
+                        session_id,
+                        e,
+                    )
+            return result
+
     @contextlib.contextmanager
     def batch_writes(self):
         """Batch magic-state writes made by one hook dispatch.
@@ -1102,6 +1140,69 @@ class EventContext:
         """
         return self._source
 
+    def state_get(self, name: str, default=None, *, session_id: str | None = None):
+        """Read a session-scoped field through the shared daemon cache."""
+        store = object.__getattribute__(self, "_store")
+        target_session = session_id or object.__getattribute__(self, "_session_id")
+        if store:
+            return store.get(f"{target_session}:{name}", default)
+        with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+            return state.get(name, default)
+
+    def state_set(self, name: str, value, *, session_id: str | None = None) -> None:
+        """Persist a scoped field and update this request's local cache."""
+        store = object.__getattribute__(self, "_store")
+        own_session = object.__getattribute__(self, "_session_id")
+        target_session = session_id or own_session
+        if store:
+            store.set(f"{target_session}:{name}", value)
+        else:
+            persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+            with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+                state[name] = persisted
+        if target_session == own_session:
+            state = object.__getattribute__(self, "_state")
+            state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
+
+    def state_update(
+        self,
+        name: str,
+        updater: Callable[[Any], Any],
+        default=None,
+        *,
+        session_id: str | None = None,
+    ):
+        """Atomically update a scoped field across concurrent hook processes."""
+        store = object.__getattribute__(self, "_store")
+        own_session = object.__getattribute__(self, "_session_id")
+        target_session = session_id or own_session
+        if store:
+            value = store.update(f"{target_session}:{name}", updater, default)
+        else:
+            with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+                current = state.get(name, default)
+                if isinstance(current, (list, dict, set)):
+                    current = copy.deepcopy(current)
+                value = updater(current)
+                state[name] = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+        if target_session == own_session:
+            state = object.__getattribute__(self, "_state")
+            state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
+        return value
+
+    def state_synchronize(
+        self,
+        operation: Callable[[], Any],
+        *,
+        session_id: str | None = None,
+    ) -> Any:
+        """Run a direct persistence operation without exposing stale daemon state."""
+        store = object.__getattribute__(self, "_store")
+        target_session = session_id or object.__getattribute__(self, "_session_id")
+        if store:
+            return store.synchronize_session(target_session, operation)
+        return operation()
+
     # === MAGIC STATE: __getattr__ / __setattr__ ===
     def __getattr__(self, name: str):
         """
@@ -1124,9 +1225,8 @@ class EventContext:
         - Different sessions have different session_id keys, so session-scoped
           state (ctx.file_policy, ctx.autorun_stage) cannot collide across
           sessions even under concurrent access.
-        - Global scope (__global__ key): all existing code uses session_state()
-          context manager for atomic read-modify-write (e.g.,
-          ScopeAccessor.consume_allowed() at plugins.py:405-418).
+        - Global scope (__global__ key): security-sensitive code uses
+          state_update() for atomic read-modify-write.
 
         What is at risk:
         - PostToolUse counters (ctx.tool_calls_since_task_update) could lose
@@ -1144,7 +1244,7 @@ class EventContext:
           for advisory counters in PostToolUse; safe in Stop (serial per session)
         - Security-critical counters: MUST NOT use ctx magic attributes.
           Use session_state() context manager for atomic read-modify-write
-        - Global-scoped read-modify-write: MUST use session_state() directly
+        - Global-scoped read-modify-write: MUST use state_update()
         """
         # Check local cache first (for this request)
         state = object.__getattribute__(self, '_state')
