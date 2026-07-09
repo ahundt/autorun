@@ -120,6 +120,31 @@ class TestHookEntryExecutionPriority:
             assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
 
+    def test_antigravity_is_accepted_cli_type(self):
+        """Antigravity hooks must not fall back to the wrong CLI identity."""
+        hook_entry = load_hook_entry_module()
+
+        assert "antigravity" in hook_entry._VALID_CLI_TYPES
+
+    def test_antigravity_tool_gate_fail_closed_uses_permissive_schema(self, capsys):
+        """Antigravity shares Gemini-family hook response schema."""
+        hook_entry = load_hook_entry_module()
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.fail_closed_tool_gate(
+                "broken antigravity hook path",
+                cli_type="antigravity",
+                event_name="BeforeTool",
+            )
+
+        assert exc.value.code == 0
+        output = json.loads(capsys.readouterr().out)
+        assert output["decision"] == "deny"
+        assert output["reason"].startswith("[autorun] broken antigravity hook path")
+        assert "Blocking tool use to avoid fail-open" in output["reason"]
+        assert output["systemMessage"].startswith("[autorun] broken antigravity hook path")
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+
     def test_qwen_project_dir_precedes_gemini_compat_env(self, monkeypatch):
         """Qwen hooks must not inherit a stale Gemini-compatible project root."""
         hook_entry = load_hook_entry_module()

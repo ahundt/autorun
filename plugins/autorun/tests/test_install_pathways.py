@@ -14,6 +14,7 @@ Each test verifies:
 - Expected behavior matches documentation
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -839,6 +840,124 @@ class TestGenerateGeminiTomlCommands:
 
         count = install._generate_gemini_toml_commands(tmp_path, "ar")
         assert count == 1  # Only .md file converted
+
+
+class TestAntigravityImportSync:
+    """Antigravity imports Gemini plugins, then autorun must stamp AGY identity."""
+
+    def test_gemini_family_hook_cli_rewrites_nested_and_root_hooks(self, tmp_path):
+        """Antigravity imports can contain both hooks/hooks.json and root hooks.json."""
+        install = get_install_module()
+        ext_dir = tmp_path / "ar"
+        nested_hooks = ext_dir / "hooks"
+        nested_hooks.mkdir(parents=True)
+        hook_data = {
+            "hooks": {
+                "BeforeTool": [
+                    {
+                        "hooks": [
+                            {
+                                "command": (
+                                    "uv run --quiet --project ${extensionPath} "
+                                    "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
+                                )
+                            }
+                        ]
+                    },
+                    {
+                        "hooks": [
+                            {
+                                "command": (
+                                    "uv run custom-wrapper --cli gemini "
+                                    "python custom_hook.py"
+                                )
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        (nested_hooks / "hooks.json").write_text(json.dumps(hook_data), encoding="utf-8")
+        (ext_dir / "hooks.json").write_text(json.dumps(hook_data), encoding="utf-8")
+
+        install._set_gemini_family_hook_cli(ext_dir, "antigravity")
+
+        for hooks_file in (nested_hooks / "hooks.json", ext_dir / "hooks.json"):
+            text = hooks_file.read_text(encoding="utf-8")
+            assert "--cli antigravity" in text
+            assert "hook_entry.py --cli gemini" not in text
+            assert "uv run custom-wrapper --cli gemini python custom_hook.py" in text
+
+    def test_gemini_family_hook_cli_preserves_unrelated_text_on_malformed_hooks(self, tmp_path):
+        """Fallback text repair should touch only autorun hook_entry.py lines."""
+        install = get_install_module()
+        ext_dir = tmp_path / "ar"
+        hooks_dir = ext_dir / "hooks"
+        hooks_dir.mkdir(parents=True)
+        hooks_file = hooks_dir / "hooks.json"
+        hooks_file.write_text(
+            "\n".join([
+                "{",
+                "command = 'python ${extensionPath}/hooks/hook_entry.py --cli gemini'",
+                "custom = 'uv run custom-wrapper --cli gemini python custom_hook.py'",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+
+        install._set_gemini_family_hook_cli(ext_dir, "antigravity")
+
+        text = hooks_file.read_text(encoding="utf-8")
+        assert "hook_entry.py --cli antigravity" in text
+        assert "hook_entry.py --cli gemini" not in text
+        assert "uv run custom-wrapper --cli gemini python custom_hook.py" in text
+
+    def test_antigravity_import_syncs_autorun_resources_with_antigravity_cli(self, tmp_path, monkeypatch):
+        """After `agy plugin import gemini`, installer stamps imported ar hooks."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        template = plugin_dir / "src" / "autorun" / "gemini_template"
+        template.mkdir(parents=True)
+        (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir()
+        (marketplace_meta / "marketplace.json").write_text(
+            json.dumps({"plugins": [{"name": "ar", "source": "./plugins/autorun"}]}),
+            encoding="utf-8",
+        )
+
+        home = tmp_path / "home"
+        imported_ar = home / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+        imported_ar.mkdir(parents=True)
+        calls = []
+
+        monkeypatch.setattr(install.shutil, "which", lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None)
+        monkeypatch.setattr(install.Path, "home", lambda: home)
+
+        def fake_run_cmd(args, timeout=30, **kwargs):
+            calls.append((args, timeout))
+            if args == ["agy", "plugin", "list"]:
+                return install.CmdResult(True, '"name": "ar"')
+            if args == ["agy", "plugin", "import", "gemini"]:
+                return install.CmdResult(True, "imported")
+            return install.CmdResult(False, f"unexpected {args!r}")
+
+        synced = []
+
+        def fake_sync(plugin, ext, ext_name, cli_name="gemini"):
+            synced.append((plugin, ext, ext_name, cli_name))
+            return (0, 0)
+
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(install, "_sync_gemini_extension_resources", fake_sync)
+
+        ok, message = install._install_for_antigravity(marketplace, ["autorun"], force=True)
+
+        assert ok is True
+        assert message == "success"
+        assert (["agy", "plugin", "import", "gemini"], 120) in calls
+        assert synced == [(plugin_dir.resolve(), imported_ar, "ar", "antigravity")]
 
 
 if __name__ == "__main__":

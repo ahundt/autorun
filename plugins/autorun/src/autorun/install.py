@@ -1000,26 +1000,38 @@ def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
     """Set the explicit CLI identity in installed Gemini-family hook commands."""
     if cli_name == "gemini":
         return
-    hooks_json = ext_dir / "hooks" / "hooks.json"
-    if not hooks_json.is_file():
-        return
-    try:
-        data = json.loads(hooks_json.read_text(encoding="utf-8"))
-    except Exception:
-        text = hooks_json.read_text(encoding="utf-8")
-        hooks_json.write_text(text.replace("--cli gemini", f"--cli {cli_name}"), encoding="utf-8")
-        return
+
+    def rewrite_text(text: str) -> str:
+        lines = []
+        for line in text.splitlines(keepends=True):
+            if "hook_entry.py" in line:
+                line = line.replace("--cli gemini", f"--cli {cli_name}")
+            lines.append(line)
+        return "".join(lines)
 
     def rewrite(value):
         if isinstance(value, dict):
             return {key: rewrite(item) for key, item in value.items()}
         if isinstance(value, list):
             return [rewrite(item) for item in value]
-        if isinstance(value, str):
+        if isinstance(value, str) and "hook_entry.py" in value:
             return value.replace("--cli gemini", f"--cli {cli_name}")
         return value
 
-    hooks_json.write_text(json.dumps(rewrite(data), indent=2) + "\n", encoding="utf-8")
+    for hooks_json in (ext_dir / "hooks" / "hooks.json", ext_dir / "hooks.json"):
+        if not hooks_json.is_file():
+            continue
+        try:
+            data = json.loads(hooks_json.read_text(encoding="utf-8"))
+        except Exception:
+            text = hooks_json.read_text(encoding="utf-8")
+            hooks_json.write_text(
+                rewrite_text(text),
+                encoding="utf-8",
+            )
+            continue
+
+        hooks_json.write_text(json.dumps(rewrite(data), indent=2) + "\n", encoding="utf-8")
 
 
 def _migrate_legacy_layout(plugin_dir: Path) -> None:
@@ -2571,7 +2583,7 @@ def _install_for_antigravity(
     The native `agy plugin install <target>` schema expects a plugin.json bundle,
     so direct native bundles remain a separate 0.13.0 acceptance item.
     """
-    del marketplace_root, force  # The importer reads installed Gemini extensions.
+    del force  # The importer reads installed Gemini extensions.
 
     if "autorun" not in plugins and "ar" not in plugins:
         return (True, "no autorun plugin selected")
@@ -2589,6 +2601,11 @@ def _install_for_antigravity(
         return (False, f"agy plugin import succeeded, but list failed: {verify.output}")
     if '"name": "ar"' not in verify.output and "ar" not in verify.output:
         return (False, "agy plugin list did not report imported ar plugin")
+
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+    imported_dir = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    if plugin_dir is not None and imported_dir.is_dir():
+        _sync_gemini_extension_resources(plugin_dir, imported_dir, "ar", "antigravity")
 
     print("   Antigravity ar plugin imported from Gemini CLI")
     return (True, "success")

@@ -105,7 +105,7 @@ def _append_debug_log(message: str) -> None:
 # =============================================================================
 
 
-_VALID_CLI_TYPES = ("claude", "gemini", "qwen", "codex", "forgecode")
+_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 
 
@@ -342,7 +342,7 @@ def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoRet
         print(json.dumps(response))
         sys.exit(0)
 
-    schema_type = "permissive" if cli_type in {"gemini", "qwen"} else "strict"
+    schema_type = "permissive" if cli_type in {"gemini", "antigravity", "qwen"} else "strict"
     decision = "deny" if schema_type == "permissive" else "block"
     response = {
         "decision": decision,

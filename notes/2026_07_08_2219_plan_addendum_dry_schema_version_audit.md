@@ -604,6 +604,109 @@ Tests to add first:
 - Gemini live backend tests skip only for binary/auth unavailability.
 - Antigravity inventory does not enable hooks without verified API.
 
+Stage 8 evidence update, 2026-07-09:
+
+- Web references checked:
+  - Claude Code hooks reference:
+    https://docs.anthropic.com/en/docs/claude-code/hooks and
+    https://code.claude.com/docs/en/hooks. Relevant facts: command hooks read
+    JSON on stdin; plugin hooks live under `hooks/hooks.json`; `PreToolUse` can
+    return `hookSpecificOutput.permissionDecision`; hook locations include user,
+    project, plugin, skill, and agent scopes.
+  - OpenAI Codex hooks:
+    https://developers.openai.com/codex/hooks. Relevant facts: Codex accepts
+    `hookSpecificOutput.permissionDecision="deny"` for `PreToolUse`, also
+    accepts older `{decision:"block"}` output, and explicitly rejects unsupported
+    fields such as `permissionDecision:"ask"`, `continue:false`,
+    `stopReason`, and `suppressOutput` for current tool-control paths.
+  - Gemini CLI hooks reference:
+    https://geminicli.com/docs/hooks/reference/. Relevant facts: command hooks
+    use a `command` field, `type="command"`, and timeout is in milliseconds
+    with default 60000.
+  - Qwen Code repository:
+    https://github.com/QwenLM/qwen-code. Relevant facts: the public project
+    describes hooks, auto-skills, extensions, IDE plugins, headless mode, and
+    multi-protocol providers. This supports treating Qwen as a Gemini-derived
+    but independently identified harness, not as a hidden Gemini alias.
+  - Public Antigravity/Gemini migration reporting:
+    https://www.techradar.com/pro/google-is-making-gemini-cli-users-switch-to-its-new-antigravity-2-0-so-what-will-it-mean-for-you.
+    This is not primary API documentation, but it reports Antigravity 2.0 CLI
+    migration, hooks, skills, subagents, and plugins support. Treat it as
+    contextual only; local CLI probes below are the implementation evidence.
+- Local CLI evidence:
+  - `agy --help` reports `plugin` / `plugins` subcommands plus `--print`,
+    `--prompt`, `--sandbox`, and `--dangerously-skip-permissions`.
+  - `agy plugin --help` reports `list`, `import [source]`, `install <target>`,
+    `uninstall`, `enable`, `disable`, `validate [path]`, and `link <mp>
+    <target>`.
+  - `agy plugin list` shows imported `ar` from `gemini-cli` with components
+    `skills`, `commands`, and `hooks` under
+    `~/.gemini/antigravity-cli/plugins/ar`.
+  - `agy plugin validate plugins/autorun/src/autorun/gemini_template` fails
+    because native Antigravity validation expects `plugin.json`, not only
+    `gemini-extension.json`. Therefore direct native Antigravity bundle support
+    remains a later acceptance item; the current implemented path is the
+    importer path.
+  - `qwen --help` reports `extensions`, `hooks`, OpenAI-compatible auth flags,
+    and `--auth-type` choices including `openai`.
+  - `qwen extensions --help` reports `install`, `uninstall`, `list`, `update`,
+    `disable`, `enable`, `link`, `new`, `settings`, and `sources`.
+- Git history references:
+  - `458c1c13` introduced the `Platform` dataclass registry as the single source
+    of truth.
+  - `9629c5d2` propagated explicit CLI identity through daemon/hook paths.
+  - `19b1bfcb` added the Antigravity importer platform.
+  - `2e6b661e` added Qwen Code hook support and Gemini-family install rewrites.
+- Current root issue found during this phase:
+  - Imported Antigravity `ar` hooks exist, but both
+    `~/.gemini/antigravity-cli/plugins/ar/hooks/hooks.json` and root
+    `~/.gemini/antigravity-cli/plugins/ar/hooks.json` still contained
+    `--cli gemini`. That makes Antigravity sessions run with Gemini identity,
+    defeating platform-specific detection, timeout, schema, and task-surface
+    behavior.
+- Corrected implementation rule:
+  - Keep Antigravity as a Gemini-flavored importer path until native
+    `plugin.json` support is deliberately implemented.
+  - Reuse `_sync_gemini_extension_resources()` and
+    `_set_gemini_family_hook_cli()` for Qwen, Antigravity, and custom
+    Gemini-flavored extension directories.
+  - `_set_gemini_family_hook_cli()` must rewrite both nested
+    `hooks/hooks.json` and root `hooks.json`, because Antigravity import
+    materializes both.
+  - Custom flavored harnesses should be represented by an explicit target
+    directory plus CLI identity routed through the same sync/rewrite helper.
+    Do not copy the Gemini installer into a new harness-specific branch unless
+    a tested API divergence requires it.
+  - The custom-location helper must rewrite only autorun's own
+    `hook_entry.py --cli gemini` command strings. It must not rewrite unrelated
+    custom hooks that happen to contain `--cli gemini`.
+  - User-facing custom harness install flags remain a later acceptance item:
+    they need a tested CLI shape, clear dry-run output, idempotent reinstall,
+    rollback on partial copy, and a warning that the selected `--cli` identity
+    controls schema semantics. Until then, custom support is an internal,
+    reusable sync primitive rather than an advertised stable CLI.
+  - Do not claim native Antigravity plugin install support until a `plugin.json`
+    bundle validates under `agy plugin validate` and install/rollback tests
+    exist.
+- Stage 8 validation status:
+  - Focused Antigravity/Qwen/Codex hook identity tests passed:
+    `15 passed`.
+  - Broader non-live install pathway suite passed with known worktree-basename
+    assumptions deselected: `72 passed, 2 deselected`.
+  - Broader non-live hook-entry suite passed with known live-environment checks
+    deselected: `79 passed, 11 deselected`.
+  - `ruff check --ignore E402` passed for the touched installer, hook entry,
+    template hook entry, and tests.
+  - Full `test_install_pathways.py` currently has two pre-existing worktree-name
+    assumptions: tests expect repository root basename `autorun`, but this work
+    is intentionally running in `autorun-hardening-single-pass-20260709`.
+  - Full `test_hook_entry.py` currently has known live-environment failures:
+    UV compatibility tests attempt an x86_64 `cryptography==49.0.0` build
+    without OpenSSL/pkg-config, and a live-cache sync test detects that the
+    installed Claude cache has not been updated from this worktree. Do not fix
+    those by installing into live sessions from this worktree unless the user
+    explicitly requests it in the current turn.
+
 ### Phase 9: Release Readiness and Documentation
 
 Existing DRY anchors:
