@@ -449,6 +449,46 @@ Tests to add first:
 - Switching `user -> plugin` removes only autorun-owned user hooks.
 - Third-party hooks and skills survive reinstall and rollback.
 
+Stage 4 re-audit, 2026_07_08_2355:
+
+- Read-only source check:
+  - `_merge_codex_hooks()` already strips autorun-owned user hook entries while
+    preserving unrelated user hook entries and events.
+  - `_CODEX_PLUGIN_OWNED_MARKER` and `_codex_owned_plugin_hook_source()` already
+    persist the selected Codex hook source mode (`user`, `plugin`, `both`,
+    `none`) in the existing marker strategy.
+  - `_install_for_codex(..., codex_hook_source="plugin")` already removes
+    user-level autorun hooks and packages Codex-specific plugin hooks.
+  - `_install_for_codex(..., codex_hook_source="user")` already removes
+    autorun-owned plugin hooks by replacing the autorun-owned plugin source copy
+    without `hooks/hooks.json`, while keeping user-level autorun hooks.
+  - `_install_for_codex(..., codex_hook_source="none")` already removes autorun
+    hooks from both user and plugin sources while preserving skills/plugin
+    assets.
+  - `_codex_plugin_marketplace_status()` already fails duplicate user+plugin
+    hook sources unless the owned marker explicitly records `both`.
+- Existing tests satisfying the Phase 4 TDD requirements:
+  - `test_install_for_codex_preserves_user_hooks`
+  - `test_install_for_codex_idempotent`
+  - `test_install_for_codex_plugin_hook_source_packages_codex_hooks_only`
+  - `test_install_for_codex_both_hook_source_installs_user_and_plugin_hooks`
+  - `test_install_for_codex_user_mode_removes_owned_plugin_hooks_and_keeps_user_hooks`
+  - `test_install_for_codex_none_hook_source_removes_user_and_plugin_hooks`
+  - `test_install_for_codex_skills_preserves_user_authored`
+  - `test_install_for_codex_preserves_existing_personal_marketplace_entries`
+  - `test_install_for_codex_does_not_clobber_user_owned_personal_plugin_dir`
+  - `test_codex_plugin_marketplace_status_flags_cached_plugin_hooks`
+  - `test_codex_plugin_marketplace_status_allows_explicit_both_hook_source`
+- Validation:
+  - `PYTHONPATH=plugins/autorun/src uv run --isolated --with pytest --with
+    pytest-timeout --with filelock --with psutil pytest
+    plugins/autorun/tests/test_codex_install.py -q` => `42 passed`.
+- Maintainer conclusion:
+  - No new code is required for Phase 4 at this point. Adding another install
+    pathway or marker would duplicate already-tested behavior and increase
+    rollback complexity. Future work should focus only on live-install
+    verification after explicit approval, not on a second implementation.
+
 ### Phase 5: Long-Lived State, Logs, Retention, and Performance
 
 Existing DRY anchors:
@@ -604,7 +644,7 @@ Tests to add first:
 - Gemini live backend tests skip only for binary/auth unavailability.
 - Antigravity inventory does not enable hooks without verified API.
 
-Stage 8 evidence update, 2026-07-09:
+Stage 8 evidence update, 2026_07_08_2347:
 
 - Web references checked:
   - Claude Code hooks reference:
