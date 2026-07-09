@@ -451,6 +451,7 @@ class ThreadSafeDB:
     def __init__(self, state_timeout: float = HOOK_STATE_LOCK_TIMEOUT):
         self._lock = threading.RLock()
         self._cache: Dict[str, Any] = {}
+        self._loaded_sessions: Set[str] = set()
         self._state_timeout = state_timeout
         self._batch = threading.local()
 
@@ -465,21 +466,22 @@ class ThreadSafeDB:
         return int(getattr(self._batch, "depth", 0))
 
     def get(self, key: str, default=None) -> Any:
-        """Get value with two-tier lookup: memory cache -> persistent JSON store."""
+        """Hydrate one session once, then serve present and missing fields from memory."""
         with self._lock:
-            # Fast path: Check memory cache first
             if key in self._cache:
                 return self._cache[key]
 
-            # Slow path: Load from persistent JSON store
+            session_id, field = self._split_key(key)
+            if session_id in self._loaded_sessions:
+                return default
+
             try:
-                session_id, field = self._split_key(key)
                 with session_state(session_id, timeout=self._state_timeout) as state:
-                    value = state.get(field, default)
-                    # Cache for next access
-                    if value is not None:
-                        self._cache[key] = value
-                    return value
+                    for stored_field, value in state.items():
+                        self._cache[f"{session_id}:{stored_field}"] = value
+                self._loaded_sessions.add(session_id)
+                field_key = f"{session_id}:{field}"
+                return self._cache[field_key] if field_key in self._cache else default
             except Exception as e:
                 logger.warning(f"ThreadSafeDB.get skipped persistent state for {key!r}: {e}")
                 return default

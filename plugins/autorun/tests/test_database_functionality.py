@@ -5,6 +5,7 @@ Real database functionality tests for autorun session state
 Tests actual shelve database operations without mocks
 """
 import time
+import contextlib
 from pathlib import Path
 
 # Add src directory to Python path
@@ -19,6 +20,65 @@ from autorun import plugins
 # COMMAND_HANDLERS removed — canonical path: EventContext + plugins.app.dispatch(ctx)
 # Policy aliases: SEARCH→/ar:f, ALLOW→/ar:a, JUSTIFY→/ar:j, STATUS→/ar:st
 _POLICY_PROMPTS = {"SEARCH": "/ar:f", "ALLOW": "/ar:a", "JUSTIFY": "/ar:j"}
+
+
+class TestThreadSafeDBSessionCache:
+    """Keep long-lived state-file size off the warm hook path."""
+
+    @staticmethod
+    def _fake_session_state(monkeypatch, values):
+        calls = []
+
+        @contextlib.contextmanager
+        def fake_session_state(session_id, timeout):
+            calls.append((session_id, timeout))
+            yield values.setdefault(session_id, {})
+
+        monkeypatch.setattr("autorun.core.session_state", fake_session_state)
+        return calls
+
+    def test_first_read_hydrates_session_once(self, monkeypatch):
+        """Present and absent fields in one session share one persistent read."""
+        calls = self._fake_session_state(
+            monkeypatch,
+            {"session-a": {"present": "value"}},
+        )
+        store = ThreadSafeDB()
+
+        assert store.get("session-a:present") == "value"
+        assert store.get("session-a:missing") is None
+        assert store.get("session-a:other", "fallback") == "fallback"
+        assert len(calls) == 1
+
+    def test_cached_missing_field_uses_each_callers_default(self, monkeypatch):
+        """Negative cache entries must not freeze the first caller's default."""
+        calls = self._fake_session_state(monkeypatch, {"session-a": {}})
+        store = ThreadSafeDB()
+
+        assert store.get("session-a:missing") is None
+        assert store.get("session-a:missing", False) is False
+        assert len(calls) == 1
+
+    def test_persisted_none_is_distinct_from_missing(self, monkeypatch):
+        """A stored None remains a real value after session hydration."""
+        calls = self._fake_session_state(
+            monkeypatch,
+            {"session-a": {"nullable": None}},
+        )
+        store = ThreadSafeDB()
+
+        assert store.get("session-a:nullable", "fallback") is None
+        assert store.get("session-a:nullable", "other") is None
+        assert len(calls) == 1
+
+    def test_set_after_negative_cache_replaces_missing_value(self, monkeypatch):
+        """A daemon write must immediately replace a cached miss."""
+        self._fake_session_state(monkeypatch, {"session-a": {}})
+        store = ThreadSafeDB()
+
+        assert store.get("session-a:missing") is None
+        store.set("session-a:missing", "now-present")
+        assert store.get("session-a:missing") == "now-present"
 
 
 def _dispatch_policy(session_id: str, policy: str) -> dict:
