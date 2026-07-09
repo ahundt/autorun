@@ -577,6 +577,28 @@ class TestCodeQuality:
         assert not (autorun_home / "daemon.log").exists()
 
     @pytest.mark.unit
+    def test_core_import_does_not_emit_syntax_warning(self):
+        """Daemon imports must stay warning-free for hook protocol stability."""
+        import subprocess
+
+        src_dir = Path(__file__).parent.parent / "src"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-W",
+                "error::SyntaxWarning",
+                "-c",
+                "import autorun.core",
+            ],
+            capture_output=True,
+            text=True,
+            env={"PYTHONPATH": str(src_dir)},
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.unit
     def test_no_print_to_stderr_anywhere(self):
         """Test that NO Python files have print(..., file=sys.stderr).
 

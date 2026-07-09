@@ -1896,32 +1896,31 @@ class AutorunDaemon:
                     await writer.wait_closed()
                 except Exception:
                     pass
-                return
+            else:
+                # None = pass-through: send {} so client exits 0 with no stdout output
+                final = response if response is not None else {}
+                # Debug logging (ALWAYS enabled)
+                response_json = json.dumps(final)
+                logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")
 
-            # None = pass-through: send {} so client exits 0 with no stdout output
-            final = response if response is not None else {}
-            # Debug logging (ALWAYS enabled)
-            response_json = json.dumps(final)
-            logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")
-
-            try:
-                writer.write(response_json.encode() + b'\n')
-                await writer.drain()
-            except (ConnectionResetError, BrokenPipeError):
-                logger.warning(
-                    "Client disconnected before daemon response could be delivered "
-                    f"(event={event}, cli={cli_type})"
-                )
-            finally:
-                writer.close()
                 try:
-                    await writer.wait_closed()
-                except Exception:
-                    pass  # Ignore errors on close (connection may already be gone)
+                    writer.write(response_json.encode() + b'\n')
+                    await writer.drain()
+                except (ConnectionResetError, BrokenPipeError):
+                    logger.warning(
+                        "Client disconnected before daemon response could be delivered "
+                        f"(event={event}, cli={cli_type})"
+                    )
+                finally:
+                    writer.close()
+                    try:
+                        await writer.wait_closed()
+                    except Exception:
+                        pass  # Ignore errors on close (connection may already be gone)
 
-            duration = (time.time() - start_time) * 1000
-            from .client import _log_hook_lifecycle
-            _log_hook_lifecycle("DAEMON PROCESSING END", Event=event, Duration=f"{duration:.2f}ms")
+                duration = (time.time() - start_time) * 1000
+                from .client import _log_hook_lifecycle
+                _log_hook_lifecycle("DAEMON PROCESSING END", Event=event, Duration=f"{duration:.2f}ms")
 
     async def watchdog(self):
         """
