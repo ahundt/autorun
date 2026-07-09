@@ -17,6 +17,7 @@ no marketplace trust required). The autorun installer:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from autorun.install import (
@@ -24,6 +25,8 @@ from autorun.install import (
     _build_codex_hook_block,
     _build_codex_plugin_hooks_json,
     _first_nonempty_line,
+    _reproducible_build_time,
+    _update_package_metadata,
     _install_for_antigravity,
     _install_for_qwen,
     _install_codex_plugin_with_cli,
@@ -442,6 +445,31 @@ def test_probe_hook_python_architecture_parses_runtime_json(monkeypatch, tmp_pat
     assert result.python_executable == "/custom/bin/python3"
     assert result.python_machine == "arm64"
     assert result.python_system == "Darwin"
+
+
+def test_reproducible_build_time_uses_source_date_epoch(tmp_path):
+    """Build metadata must honor reproducible-build timestamp input."""
+    result = _reproducible_build_time(tmp_path, env={"SOURCE_DATE_EPOCH": "0"})
+
+    assert result == "1970-01-01T00:00:00+00:00"
+
+
+def test_update_package_metadata_skips_tracked_source_without_opt_in(tmp_path, monkeypatch):
+    """Local installs should not dirty tracked metadata.json by default."""
+    plugin = tmp_path / "plugins" / "autorun"
+    meta = plugin / "src" / "autorun" / "metadata.json"
+    meta.parent.mkdir(parents=True)
+    original = '{"version": "0.12.0", "commit": "unknown", "build_time": "unknown"}\n'
+    meta.write_text(original, encoding="utf-8")
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(["git", "add", str(meta.relative_to(tmp_path))], cwd=tmp_path, check=True)
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    monkeypatch.delenv("AUTORUN_WRITE_SOURCE_METADATA", raising=False)
+
+    _update_package_metadata(plugin)
+
+    assert meta.read_text(encoding="utf-8") == original
 
 
 def test_install_for_codex_prints_trust_reminder(tmp_path, monkeypatch, capsys):

@@ -2785,9 +2785,53 @@ def _install_for_antigravity(
     return (True, "success")
 
 
+def _metadata_file_is_tracked(meta_file: Path, commit_dir: Path) -> bool:
+    """Return whether metadata.json is tracked in the source checkout."""
+    try:
+        rel_meta = meta_file.relative_to(commit_dir)
+    except ValueError:
+        return False
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", str(rel_meta)],
+        cwd=commit_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _reproducible_build_time(commit_dir: Path, env: dict[str, str] | os._Environ[str] | None = None) -> str:
+    """Resolve deterministic build metadata time.
+
+    SOURCE_DATE_EPOCH is the standard reproducible-build timestamp input.
+    Without it, use the git commit timestamp instead of wall-clock time.
+    """
+    env = os.environ if env is None else env
+    source_epoch = env.get("SOURCE_DATE_EPOCH")
+    if source_epoch:
+        try:
+            epoch_seconds = int(source_epoch)
+            if epoch_seconds < 0:
+                raise ValueError("negative epoch")
+            return datetime.fromtimestamp(epoch_seconds, timezone.utc).isoformat()
+        except ValueError:
+            logger.warning("Invalid SOURCE_DATE_EPOCH=%r; falling back to git commit time", source_epoch)
+
+    try:
+        commit_epoch = subprocess.check_output(
+            ["git", "show", "-s", "--format=%ct", "HEAD"],
+            cwd=commit_dir,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return datetime.fromtimestamp(int(commit_epoch), timezone.utc).isoformat()
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return "unknown"
+
+
 def _update_package_metadata(plugin_dir: Path) -> None:
-    """Automatically update plugin_dir/src/autorun/metadata.json with current
-    commit and build time.
+    """Update package metadata when explicitly generating release metadata.
 
     Args:
         plugin_dir: The PLUGIN directory (e.g., plugins/autorun/), not the
@@ -2808,10 +2852,22 @@ def _update_package_metadata(plugin_dir: Path) -> None:
             print(f"   ℹ️  Note: {msg}")
             return
 
+        # 2. Resolve metadata file path
+        # Marketplace root is /plugins/autorun
+        meta_file = plugin_dir / "src" / "autorun" / "metadata.json"
+
+        if (
+            _metadata_file_is_tracked(meta_file, commit_dir)
+            and "SOURCE_DATE_EPOCH" not in os.environ
+            and not _truthy_env(os.environ.get("AUTORUN_WRITE_SOURCE_METADATA"))
+        ):
+            logger.info("Skipping tracked source metadata update; set AUTORUN_WRITE_SOURCE_METADATA=1 to regenerate it.")
+            return
+
         try:
             # Get git commit with '+' suffix for uncommitted changes
             commit = subprocess.check_output(
-                ["git", "describe", "--always", "--dirty=+", "--exclude", "*"], 
+                ["git", "describe", "--always", "--dirty=+", "--exclude", "*"],
                 cwd=commit_dir, text=True, stderr=subprocess.DEVNULL
             ).strip()
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -2819,15 +2875,10 @@ def _update_package_metadata(plugin_dir: Path) -> None:
             logger.warning(msg)
             print(f"   ⚠️  Warning: {msg}")
             commit = "unknown"
-        
-        # 2. Get current time
-        build_time = datetime.now(timezone.utc).isoformat()
-        
-        # 3. Resolve metadata file path
-        # Marketplace root is /plugins/autorun
-        meta_file = plugin_dir / "src" / "autorun" / "metadata.json"
-        
-        # 4. Write metadata with robust error handling
+
+        build_time = _reproducible_build_time(commit_dir)
+
+        # 3. Write metadata with robust error handling
         try:
             meta_file.parent.mkdir(parents=True, exist_ok=True)
             import json
@@ -2836,7 +2887,11 @@ def _update_package_metadata(plugin_dir: Path) -> None:
                 "commit": commit,
                 "build_time": build_time
             }
-            meta_file.write_text(json.dumps(data, indent=2))
+            new_text = json.dumps(data, indent=2) + "\n"
+            if meta_file.exists() and meta_file.read_text(encoding="utf-8") == new_text:
+                logger.info("Metadata already current")
+                return
+            meta_file.write_text(new_text, encoding="utf-8")
             logger.info(f"Updated metadata: commit {commit[:7]}, time {build_time}")
         except (OSError, PermissionError) as e:
             msg = f"Permission denied writing {meta_file}. Check directory permissions: {e}"
