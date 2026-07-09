@@ -650,7 +650,9 @@ Existing DRY anchors:
 - Gemini template installer and hook normalizer
 - Qwen install rewrite tests
 - Codex install/status tests
-- README/GEMINI docs already describing capability levels, but not yet generated.
+- README/GEMINI docs describe capability levels; the read-only generated
+  inventory is `autorun --capability-snapshot`, covered by capability snapshot
+  tests rather than copied tables in documentation.
 
 Semantic duplication to avoid:
 
@@ -761,10 +763,11 @@ Stage 8 evidence update, 2026_07_08_2347:
     tested flavors `gemini`, `qwen`, `agy`, `antigravity`, and `codex`.
     `agy` and `antigravity` normalize to the validated `antigravity` hook
     identity; `codex` installs scoped user hooks and `AGENTS.md` into the
-    supplied config directory while skipping global Codex assets. Remaining
-    custom-harness hardening belongs in idempotent reinstall, dry-run, rollback,
-    and status/reporting tests, not in a second hook schema or installer
-    registry.
+    supplied config directory while skipping global Codex assets. Later
+    checkpoints added idempotent reinstall, dry-run, and
+    `--status --custom-harness SPEC` coverage; any future rollback work should
+    stay in the existing installer path, not in a second hook schema or
+    installer registry.
   - Do not claim native Antigravity plugin install support until a `plugin.json`
     bundle validates under `agy plugin validate` and install/rollback tests
     exist.
@@ -973,6 +976,44 @@ uv run ruff check \
   plugins/autorun/src/autorun/gemini_template/hooks/hook_entry.py \
   plugins/autorun/tests/test_client_fail_closed.py \
   plugins/autorun/tests/test_hook_entry.py
+```
+
+Result: passed.
+
+Stage 11 focused regression checkpoint, 2026_07_09_0045:
+
+- Reconciled stale plan language so completed custom-harness status/dry-run and
+  capability snapshot work is not still described as pending.
+- Ran a combined focused regression suite covering Codex install/status, custom
+  harness install/status/help, bootstrap parser routing, skill documentation,
+  and release-facing Gemini doc version consistency.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_codex_install.py \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallPathwayRouting \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_bootstrap_config.py::TestCLIArgumentParsing \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting \
+  plugins/autorun/tests/test_skill_docs.py \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py::TestManifestFiles::test_version_consistency -q
+```
+
+Result: `100 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/platforms.py \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py \
+  plugins/autorun/tests/test_skill_docs.py \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py
 ```
 
 Result: passed.
