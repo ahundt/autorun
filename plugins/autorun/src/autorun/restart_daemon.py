@@ -11,12 +11,20 @@ Performs a full stop-cleanup-start cycle with:
 - bashlex availability check
 
 Usage:
-    # As a script:
-    python restart_daemon.py
+    # Normal scoped restart for the currently running autorun install:
+    autorun --restart-daemon
 
-    # As an importable function:
-    from scripts.restart_daemon import restart_daemon
-    exit_code = restart_daemon()
+    # Risky maintenance restart that stops every matching autorun daemon:
+    autorun --restart-all-daemons
+
+    # As an importable function from package code:
+    from autorun.restart_daemon import restart_daemon
+    exit_code = restart_daemon(all_daemons=False)
+
+Normal restarts are source-tree scoped so updates in a worktree do not kill
+active sessions using another installed autorun. The all-daemons mode is an
+explicit recovery tool for stale or mixed-version daemons; it can interrupt
+active autorun-backed sessions and should not be used as a routine code reload.
 """
 import os
 import shutil

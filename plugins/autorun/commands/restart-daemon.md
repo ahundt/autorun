@@ -1,6 +1,6 @@
 ---
 name: restart-daemon
-description: Restart autorun daemon to reload Python code changes
+description: Restart the daemon for the current autorun install/source tree
 aliases: [rd, daemon-restart]
 ---
 
@@ -8,7 +8,9 @@ aliases: [rd, daemon-restart]
 
 Restarts the autorun daemon for the current autorun install to load updated Python code.
 
-**When to use:** After modifying Python files in the plugin (integrations.py, config.py, etc.)
+**When to use:** After modifying Python files in the current plugin install
+(integrations.py, config.py, etc.) and needing that same install to load the
+new code.
 
 !`uv run --project ${CLAUDE_PLUGIN_ROOT} python -m autorun --restart-daemon`
 

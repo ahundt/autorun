@@ -562,6 +562,14 @@ class TestPsutilProcessLifecycle:
         assert args.restart_all_daemons is True
         assert args.restart_daemon is False
 
+        help_text = create_parser().format_help()
+        normalized_help = " ".join(help_text.split())
+        assert "--restart-daemon" in help_text
+        assert "current AUTORUN_HOME/source tree" in normalized_help
+        assert "--restart-all-daemons" in help_text
+        assert "Risky maintenance mode" in normalized_help
+        assert "interrupt active sessions in other installs" in normalized_help
+
 
 class TestDaemonMainLifecycleCleanup:
     """Daemon entry-point cleanup must only remove files owned by this process."""

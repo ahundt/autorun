@@ -794,6 +794,38 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 6 help/docs clarity checkpoint:
+
+- The normal restart command is now documented as scoped to the current autorun
+  install/source tree in the package CLI help, slash-command help, README, and
+  Claude-facing command table.
+- The broad recovery command remains named `autorun --restart-all-daemons` and
+  is explicitly described as risky because it can interrupt active
+  autorun-backed sessions in other installs. This is not documented as a routine
+  reload path.
+- `restart_daemon.py` no longer has stale `scripts.restart_daemon` import/usage
+  examples. The module comment now points package callers at
+  `autorun.restart_daemon.restart_daemon(all_daemons=False)`.
+- A parser-help regression assertion verifies that both restart flags and the
+  risk wording remain present even when argparse wraps the help text.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_daemon_restart_safety.py -q
+```
+
+Result: `30 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/restart_daemon.py \
+  plugins/autorun/tests/test_daemon_restart_safety.py
+```
+
+Result: passed.
+
 Stage 6 daemon handoff/restart checkpoint:
 
 - Source-of-truth pass confirmed restart ownership belongs in
