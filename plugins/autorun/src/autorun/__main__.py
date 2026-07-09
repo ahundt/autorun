@@ -62,16 +62,30 @@ if _sys.version_info < (3, 10):
     _sys.exit(1)
 del _sys
 
-import argparse
-import os
-import sys
-from typing import Sequence
+import argparse  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+from typing import Sequence  # noqa: E402
 
 
 # v0.7: Daemon mode is now default (85-90% complete architecture)
 # Set AUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
 # Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
 USE_DAEMON = os.environ.get("AUTORUN_USE_DAEMON", "1") != "0"
+
+
+def _hook_cli_choices() -> tuple[str, ...]:
+    """Return hook-capable CLI names for --cli without duplicating platform data."""
+    from .platforms import hook_platforms
+
+    return tuple(platform.name for platform in hook_platforms())
+
+
+def _custom_harness_spec_help() -> str:
+    """Return shared parser help for custom harness specs."""
+    from .platforms import custom_harness_spec_help
+
+    return custom_harness_spec_help()
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -91,7 +105,7 @@ QUICK START (after installation):
 
 Features: Autonomous execution, file policies, safety guards, task lifecycle tracking.
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INSTALLATION GUIDE
@@ -213,6 +227,14 @@ For more information: https://github.com/ahundt/autorun
         help="Force reinstall even if same version (for development)",
     )
     install_group.add_argument(
+        "--install-dry-run",
+        action="store_true",
+        help=(
+            "Preview install targets without writing hooks, plugin state, "
+            "dependencies, or restarting daemons"
+        ),
+    )
+    install_group.add_argument(
         "--tool",
         "-t",
         action="store_true",
@@ -249,12 +271,22 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--antigravity",
         action="store_true",
-        help="Install for Google Antigravity CLI only (imports Gemini plugins through agy)",
+        help=(
+            "Install for Google Antigravity CLI only "
+            "(native agy plugin bundle, Gemini importer fallback)"
+        ),
     )
     install_group.add_argument(
         "--qwen",
         action="store_true",
         help="Install for Qwen Code only (Gemini-compatible extension surface)",
+    )
+    install_group.add_argument(
+        "--custom-harness",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help=_custom_harness_spec_help(),
     )
     install_group.add_argument(
         "--codex",
@@ -305,9 +337,10 @@ For more information: https://github.com/ahundt/autorun
     hook_group = parser.add_argument_group("Hook Integration")
     hook_group.add_argument(
         "--cli",
-        choices=["claude", "gemini", "antigravity", "qwen", "codex"],
+        choices=_hook_cli_choices(),
         default=None,
-        help="CLI type calling this invocation (claude, gemini, antigravity, qwen, or codex). "
+        help="Hook-capable CLI type calling this invocation. Choices come from "
+             "autorun.platforms hook registry. "
              "Passed by hook_entry.py so every pathway receives CLI identity. "
              "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )
@@ -329,7 +362,13 @@ For more information: https://github.com/ahundt/autorun
     info_group.add_argument(
         "--restart-daemon",
         action="store_true",
-        help="Restart the autorun daemon (stops, cleans up, and starts fresh)",
+        help="Restart the autorun daemon for the current AUTORUN_HOME/source tree",
+    )
+    info_group.add_argument(
+        "--restart-all-daemons",
+        action="store_true",
+        help="Risky maintenance mode: restart current daemon and stop all matching "
+             "autorun daemons, which can interrupt active sessions in other installs",
     )
     info_group.add_argument(
         "--cache-snapshot",
@@ -338,6 +377,14 @@ For more information: https://github.com/ahundt/autorun
              "context_window/rate_limits snapshot for /ar:cache. Opt-in "
              "tap; users invoke by piping their statusline stdin through "
              "`autorun --cache-snapshot`. Always exits 0 (fail-open).",
+    )
+    info_group.add_argument(
+        "--capability-snapshot",
+        nargs="?",
+        const="-",
+        metavar="FILE",
+        help="Write a read-only JSON inventory of registered platforms, commands, "
+             "and hook chains. Use '-' or omit FILE to print to stdout.",
     )
 
     # Update group
@@ -759,36 +806,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.install is not None:
         from autorun.install import install_plugins
 
-        return install_plugins(
-            args.install,
-            tool=args.tool,
-            force=args.force,
-            claude_only=args.claude,
-            gemini_only=args.gemini,
-            codex_only=args.codex,
-            antigravity_only=args.antigravity,
-            qwen_only=args.qwen,
-            conductor=args.conductor,
-            codex_hook_source=args.codex_hook_source,
-            codex_plugin_marketplace=args.codex_plugin_marketplace,
-        )
+        install_kwargs = {
+            "tool": args.tool,
+            "force": args.force,
+            "claude_only": args.claude,
+            "gemini_only": args.gemini,
+            "codex_only": args.codex,
+            "antigravity_only": args.antigravity,
+            "qwen_only": args.qwen,
+            "conductor": args.conductor,
+            "codex_hook_source": args.codex_hook_source,
+            "codex_plugin_marketplace": args.codex_plugin_marketplace,
+        }
+        if args.install_dry_run:
+            install_kwargs["dry_run"] = True
+        if args.custom_harness:
+            install_kwargs["custom_harnesses"] = args.custom_harness
+        return install_plugins(args.install, **install_kwargs)
 
-    # Status mode
     if args.status:
         from autorun.install import show_status
 
-        return show_status()
+        return show_status(custom_harnesses=args.custom_harness)
 
     # Restart daemon mode
-    if args.restart_daemon:
+    if args.restart_daemon or args.restart_all_daemons:
         from autorun.restart_daemon import restart_daemon
 
-        return restart_daemon()
+        return restart_daemon(all_daemons=args.restart_all_daemons)
 
     # Cache snapshot tap (opt-in; user's statusline pipes JSON here)
     if getattr(args, 'cache_snapshot', False):
         from autorun.cache_guard import persist_statusline_snapshot
         return persist_statusline_snapshot(sys.stdin)
+
+    # Capability snapshot (read-only diagnostic; does not install hooks or use daemon)
+    if getattr(args, 'capability_snapshot', None) is not None:
+        from autorun.capability_snapshot import write_capability_snapshot
+
+        write_capability_snapshot(args.capability_snapshot)
+        return 0
 
     # Uninstall mode
     if args.uninstall:
@@ -807,7 +864,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # AutoFile (af) subcommand - file creation control
     if args.command == "file":
         from autorun.session_manager import get_session_manager
-        from autorun.config import CONFIG
 
         if not hasattr(args, 'file_command') or args.file_command is None:
             # No subcommand specified - show help

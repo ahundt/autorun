@@ -112,6 +112,30 @@ class Platform:
 # Module-level dict — declaration order = detection priority.
 PLATFORMS: dict[str, Platform] = {}
 
+CUSTOM_HARNESS_FLAVOR_ALIASES = {
+    "gemini": "gemini",
+    "qwen": "qwen",
+    "codex": "codex",
+    "agy": "antigravity",
+    "antigravity": "antigravity",
+}
+CUSTOM_HARNESS_FLAVOR_ORDER = ("gemini", "qwen", "antigravity", "agy", "codex")
+CUSTOM_HARNESS_SPEC_FORMAT = "name=flavor:binary:config_dir[:display]"
+
+
+def custom_harness_spec_help() -> str:
+    """Return parser help for custom harness specs from one shared source."""
+    flavors = "|".join(CUSTOM_HARNESS_FLAVOR_ORDER)
+    return (
+        "Custom harness target. Use with --install --custom-harness SPEC to "
+        "install, or --status --custom-harness SPEC to inspect.\n"
+        f"SPEC format: {CUSTOM_HARNESS_SPEC_FORMAT}; "
+        f"flavor: {flavors} (agy is an alias for antigravity); "
+        "binary is the CLI executable; config_dir is the harness config root; "
+        "display is optional. Use ::display when config_dir contains ':'. "
+        "Repeat for multiple targets."
+    )
+
 
 def register(platform: Platform) -> Platform:
     """Click/Typer-style helper: register a Platform, return it for chaining."""

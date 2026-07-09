@@ -54,13 +54,6 @@ from . import ipc
 
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
-_DAEMON_RESPONSE_TIMEOUT_BY_CLI = {
-    "gemini": 2.5,
-    "qwen": 2.5,
-    "claude": 4.0,
-    "codex": 4.0,
-    "forgecode": 4.0,
-}
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
 
 
@@ -89,8 +82,16 @@ def is_tool_gate_event(event: str) -> bool:
 
 
 def daemon_response_timeout_for_cli(cli_type: str) -> float:
-    """Return how long the client should wait for a daemon response."""
-    return _DAEMON_RESPONSE_TIMEOUT_BY_CLI.get(cli_type, _DAEMON_RESPONSE_TIMEOUT_BY_CLI["claude"])
+    """Return how long the client should wait for a daemon response.
+
+    Values live in CONFIG so they can be checked against daemon dispatch and
+    hook-wrapper budgets. Keeping this path config-backed prevents regressions
+    where the client times out before the daemon's own fail-safe budget fires.
+    """
+    from .config import CONFIG
+
+    timeouts = CONFIG["daemon_client_response_timeouts_seconds"]
+    return float(timeouts.get(cli_type, timeouts["claude"]))
 
 
 def _hook_specific_event_name(event: str, cli_type: str) -> str:

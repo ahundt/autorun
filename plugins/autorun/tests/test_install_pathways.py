@@ -14,6 +14,7 @@ Each test verifies:
 - Expected behavior matches documentation
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -235,7 +236,7 @@ class TestFindMarketplaceRoot:
         marker = root / ".claude-plugin" / "marketplace.json"
 
         assert marker.exists(), f"marketplace.json not found at {marker}"
-        assert root.name == "autorun", f"Expected root to be 'autorun', got {root.name}"
+        assert (root / "plugins" / "autorun" / "src" / "autorun").is_dir()
 
     def test_find_marketplace_root_cached(self):
         """Verify find_marketplace_root() result is cached."""
@@ -260,8 +261,7 @@ class TestInstallToCachePathResolution:
         install = get_install_module()
         root = install.find_marketplace_root()
 
-        # root is the workspace root (named "autorun")
-        assert root.name == "autorun"
+        # root is the workspace root, regardless of worktree directory name.
         assert (root / ".claude-plugin").exists()
 
         # The workspace root contains plugins/ with individual plugin dirs
@@ -307,6 +307,31 @@ class TestReadPluginVersion:
         # Fallback must be a non-empty semver-like string (tracks install.py default)
         assert isinstance(version, str) and version, "Fallback version must be non-empty"
         assert "." in version, f"Fallback version must be semver-like: {version}"
+
+
+class TestUpdatePackageMetadata:
+    """Test generated package metadata formatting."""
+
+    def test_update_package_metadata_writes_trailing_newline(self, tmp_path, monkeypatch):
+        """metadata.json should not create a no-newline diff after install."""
+        install = get_install_module()
+        plugin_dir = tmp_path / "plugins" / "autorun"
+        (plugin_dir / ".git").mkdir(parents=True)
+        (plugin_dir / "src" / "autorun").mkdir(parents=True)
+
+        monkeypatch.setattr(
+            install.subprocess,
+            "check_output",
+            lambda *_args, **_kwargs: "abc123\n",
+        )
+        monkeypatch.setattr(install, "_read_plugin_version", lambda _plugin_dir: "0.12.0")
+
+        install._update_package_metadata(plugin_dir)
+
+        metadata = plugin_dir / "src" / "autorun" / "metadata.json"
+        text = metadata.read_text(encoding="utf-8")
+        assert text.endswith("\n")
+        assert json.loads(text)["commit"] == "abc123"
 
 
 class TestCacheVersionSort:
@@ -402,7 +427,7 @@ class TestInstallPathwayRouting:
         content = main_file.read_text(encoding="utf-8")
 
         assert "from autorun.install import show_status" in content
-        assert "return show_status()" in content
+        assert "return show_status(custom_harnesses=args.custom_harness)" in content
 
     def test_sync_removed(self):
         """Verify --sync flag has been removed (was broken, replaced by --install --force)."""
@@ -481,6 +506,75 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source="plugin", codex_plugin_marketplace="personal",
         )
+
+    def test_install_module_main_custom_harness_routes_to_install_plugins(self):
+        """Direct module install forwards custom Gemini-family harness specs."""
+        install = get_install_module()
+        spec = "lab=gemini:agy-lab:/tmp/agy-lab"
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(["--install", "--custom-harness", spec])
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=False,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True,
+            codex_hook_source="user", codex_plugin_marketplace="personal",
+            custom_harnesses=[spec],
+        )
+
+    def test_install_module_main_install_dry_run_routes_to_install_plugins(self):
+        """Direct module install forwards install dry-run mode explicitly."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(["--install", "--install-dry-run"])
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=False,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True,
+            codex_hook_source="user", codex_plugin_marketplace="personal",
+            dry_run=True,
+        )
+
+    def test_install_module_custom_harness_help_lists_values_and_usage(self):
+        """Direct module help documents custom harness values and status usage."""
+        install = get_install_module()
+
+        help_text = install._create_install_module_parser().format_help()
+
+        assert "--custom-harness SPEC" in help_text
+        assert "--install --custom-harness" in help_text
+        assert "--status --custom-harness" in help_text
+        assert "flavor: gemini|qwen|antigravity|agy|codex" in help_text
+        assert "agy is an alias for antigravity" in help_text
+        assert "--custom-harness-status" not in help_text
+
+    def test_install_module_main_status_with_custom_harness_routes_to_show_status(self):
+        """Direct module status reuses --status and forwards custom harness specs."""
+        install = get_install_module()
+        spec = "lab=agy:agy-lab:/tmp/agy-home"
+
+        with mock.patch.object(install, "show_status", return_value=0) as mock_status:
+            result = install._install_module_main(["--status", "--custom-harness", spec])
+
+        assert result == 0
+        mock_status.assert_called_once_with(custom_harnesses=[spec])
 
     def test_install_module_main_codex_plugin_marketplace_routes_to_install_plugins(self):
         """Verify direct module install honors --codex-plugin-marketplace."""
@@ -839,6 +933,639 @@ class TestGenerateGeminiTomlCommands:
 
         count = install._generate_gemini_toml_commands(tmp_path, "ar")
         assert count == 1  # Only .md file converted
+
+
+class TestAntigravityImportSync:
+    """Antigravity imports Gemini plugins, then autorun must stamp AGY identity."""
+
+    def test_gemini_family_hook_cli_rewrites_nested_and_root_hooks(self, tmp_path):
+        """Antigravity imports can contain both hooks/hooks.json and root hooks.json."""
+        install = get_install_module()
+        ext_dir = tmp_path / "ar"
+        nested_hooks = ext_dir / "hooks"
+        nested_hooks.mkdir(parents=True)
+        hook_data = {
+            "hooks": {
+                "BeforeTool": [
+                    {
+                        "hooks": [
+                            {
+                                "command": (
+                                    "uv run --quiet --project ${extensionPath} "
+                                    "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
+                                )
+                            }
+                        ]
+                    },
+                    {
+                        "hooks": [
+                            {
+                                "command": (
+                                    "uv run custom-wrapper --cli gemini "
+                                    "python custom_hook.py"
+                                )
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        (nested_hooks / "hooks.json").write_text(json.dumps(hook_data), encoding="utf-8")
+        (ext_dir / "hooks.json").write_text(json.dumps(hook_data), encoding="utf-8")
+
+        install._set_gemini_family_hook_cli(ext_dir, "antigravity")
+
+        for hooks_file in (nested_hooks / "hooks.json", ext_dir / "hooks.json"):
+            text = hooks_file.read_text(encoding="utf-8")
+            assert "--cli antigravity" in text
+            assert "hook_entry.py --cli gemini" not in text
+            assert "uv run custom-wrapper --cli gemini python custom_hook.py" in text
+
+    def test_gemini_family_hook_cli_preserves_unrelated_text_on_malformed_hooks(self, tmp_path):
+        """Fallback text repair should touch only autorun hook_entry.py lines."""
+        install = get_install_module()
+        ext_dir = tmp_path / "ar"
+        hooks_dir = ext_dir / "hooks"
+        hooks_dir.mkdir(parents=True)
+        hooks_file = hooks_dir / "hooks.json"
+        hooks_file.write_text(
+            "\n".join([
+                "{",
+                "command = 'python ${extensionPath}/hooks/hook_entry.py --cli gemini'",
+                "custom = 'uv run custom-wrapper --cli gemini python custom_hook.py'",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+
+        install._set_gemini_family_hook_cli(ext_dir, "antigravity")
+
+        text = hooks_file.read_text(encoding="utf-8")
+        assert "hook_entry.py --cli antigravity" in text
+        assert "hook_entry.py --cli gemini" not in text
+        assert "uv run custom-wrapper --cli gemini python custom_hook.py" in text
+
+    def test_antigravity_native_bundle_has_root_hooks_and_manifest(self, tmp_path):
+        """Native Antigravity bundles expose root hooks.json plus plugin.json."""
+        install = get_install_module()
+        plugin_dir = get_plugin_root()
+        bundle_dir = tmp_path / "agy-ar"
+
+        commands_generated, skills_synced = install._stage_antigravity_native_bundle(
+            plugin_dir,
+            bundle_dir,
+        )
+
+        plugin_json = json.loads((bundle_dir / "plugin.json").read_text(encoding="utf-8"))
+        root_hooks = (bundle_dir / "hooks.json").read_text(encoding="utf-8")
+        nested_hooks = (bundle_dir / "hooks" / "hooks.json").read_text(encoding="utf-8")
+
+        assert commands_generated > 0
+        assert skills_synced > 0
+        assert plugin_json == {
+            "name": "ar",
+            "hooks": "./hooks.json",
+            "commands": "./commands/",
+            "skills": "./skills/",
+        }
+        assert "--cli antigravity" in root_hooks
+        assert "--cli antigravity" in nested_hooks
+        assert "--cli gemini" not in root_hooks
+        assert (bundle_dir / "commands").is_dir()
+        assert (bundle_dir / "skills").is_dir()
+
+    def test_antigravity_install_prefers_native_bundle_when_valid(self, tmp_path, monkeypatch):
+        """Antigravity install uses native plugin install before importer fallback."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        template = plugin_dir / "src" / "autorun" / "gemini_template"
+        hooks_dir = template / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+        (hooks_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "BeforeTool": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "uv run --quiet --project ${extensionPath} "
+                                        "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        (plugin_dir / "commands").mkdir()
+        (plugin_dir / "commands" / "st.md").write_text("# status\n", encoding="utf-8")
+        skill_dir = plugin_dir / "skills" / "cache"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: cache\ndescription: cache\n---\n# Cache\n",
+            encoding="utf-8",
+        )
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir()
+        (marketplace_meta / "marketplace.json").write_text(
+            json.dumps({"plugins": [{"name": "ar", "source": "./plugins/autorun"}]}),
+            encoding="utf-8",
+        )
+
+        calls = []
+        monkeypatch.setattr(install.shutil, "which", lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None)
+
+        def fake_run_cmd(args, timeout=30, **kwargs):
+            calls.append((args, timeout))
+            if args[:3] == ["agy", "plugin", "validate"]:
+                bundle = Path(args[3])
+                assert (bundle / "plugin.json").is_file()
+                assert "--cli antigravity" in (bundle / "hooks.json").read_text(encoding="utf-8")
+                return install.CmdResult(True, "hooks : 1 processed")
+            if args[:3] == ["agy", "plugin", "install"]:
+                bundle = Path(args[3])
+                assert (bundle / "plugin.json").is_file()
+                return install.CmdResult(True, "installed")
+            if args == ["agy", "plugin", "list"]:
+                return install.CmdResult(True, '"name": "ar"')
+            return install.CmdResult(False, f"unexpected {args!r}")
+
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+
+        ok, message = install._install_for_antigravity(marketplace, ["autorun"], force=False)
+
+        assert ok is True
+        assert message == "success"
+        assert any(args[:3] == ["agy", "plugin", "validate"] for args, _timeout in calls)
+        assert any(args[:3] == ["agy", "plugin", "install"] for args, _timeout in calls)
+        assert not any(args == ["agy", "plugin", "import", "gemini"] for args, _timeout in calls)
+
+    def test_antigravity_import_syncs_autorun_resources_with_antigravity_cli(self, tmp_path, monkeypatch):
+        """Importer fallback still stamps imported ar hooks when native install fails."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        template = plugin_dir / "src" / "autorun" / "gemini_template"
+        template.mkdir(parents=True)
+        (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir()
+        (marketplace_meta / "marketplace.json").write_text(
+            json.dumps({"plugins": [{"name": "ar", "source": "./plugins/autorun"}]}),
+            encoding="utf-8",
+        )
+
+        home = tmp_path / "home"
+        imported_ar = home / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+        imported_ar.mkdir(parents=True)
+        calls = []
+
+        monkeypatch.setattr(install.shutil, "which", lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None)
+        monkeypatch.setattr(install.Path, "home", lambda: home)
+
+        def fake_run_cmd(args, timeout=30, **kwargs):
+            calls.append((args, timeout))
+            if args == ["agy", "plugin", "list"]:
+                return install.CmdResult(True, '"name": "ar"')
+            if args == ["agy", "plugin", "import", "gemini"]:
+                return install.CmdResult(True, "imported")
+            return install.CmdResult(False, f"unexpected {args!r}")
+
+        synced = []
+
+        def fake_sync(plugin, ext, ext_name, cli_name="gemini"):
+            synced.append((plugin, ext, ext_name, cli_name))
+            return (0, 0)
+
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(install, "_sync_gemini_extension_resources", fake_sync)
+
+        ok, message = install._install_for_antigravity(marketplace, ["autorun"], force=True)
+
+        assert ok is True
+        assert message == "success"
+        assert (["agy", "plugin", "import", "gemini"], 120) in calls
+        assert (plugin_dir.resolve(), imported_ar, "ar", "antigravity") in synced
+
+
+class TestCustomHarnessInstall:
+    """Custom Gemini-family targets reuse the shared installer safely."""
+
+    def test_parse_custom_harness_spec_requires_known_gemini_family_flavor(self, tmp_path):
+        """Custom harness specs separate the binary from the known hook identity."""
+        install = get_install_module()
+        config_dir = tmp_path / "custom-home"
+
+        spec = install.parse_custom_harness_spec(
+            f"lab=gemini:agy-lab:{config_dir}:Antigravity Lab"
+        )
+
+        assert spec.name == "lab"
+        assert spec.flavor == "gemini"
+        assert spec.binary == "agy-lab"
+        assert spec.config_dir == config_dir
+        assert spec.display_name == "Antigravity Lab"
+
+    def test_parse_custom_harness_spec_rejects_arbitrary_hook_identity(self, tmp_path):
+        """Custom harnesses must not create unvalidated hook_entry.py --cli values."""
+        install = get_install_module()
+
+        with pytest.raises(ValueError, match="supported flavors"):
+            install.parse_custom_harness_spec(f"lab=unknown:agy-lab:{tmp_path}")
+
+    def test_parse_custom_harness_spec_accepts_codex_flavor(self, tmp_path):
+        """Codex-flavored custom harnesses install strict user hooks by config dir."""
+        install = get_install_module()
+        spec = install.parse_custom_harness_spec(f"codexlab=codex:codex-lab:{tmp_path}")
+
+        assert spec.flavor == "codex"
+        assert spec.binary == "codex-lab"
+        assert spec.config_dir == tmp_path
+
+    def test_parse_custom_harness_spec_accepts_agy_alias(self, tmp_path):
+        """The agy CLI spelling maps to the validated antigravity hook identity."""
+        install = get_install_module()
+
+        spec = install.parse_custom_harness_spec(f"lab=agy:agy-lab:{tmp_path}")
+
+        assert spec.flavor == "antigravity"
+        assert spec.binary == "agy-lab"
+
+    def test_parse_custom_harness_spec_accepts_antigravity_flavor(self, tmp_path):
+        """Antigravity can be named by product flavor as well as binary alias."""
+        install = get_install_module()
+
+        spec = install.parse_custom_harness_spec(
+            f"lab=antigravity:agy-lab:{tmp_path}:Antigravity Lab"
+        )
+
+        assert spec.flavor == "antigravity"
+        assert spec.display_name == "Antigravity Lab"
+
+    def test_parse_custom_harness_spec_preserves_colons_in_config_dir(self, tmp_path):
+        """Config paths may contain ':' and should not be mistaken for display."""
+        install = get_install_module()
+        config_dir = tmp_path / "custom:profile"
+
+        spec = install.parse_custom_harness_spec(f"lab=gemini:agy-lab:{config_dir}")
+
+        assert spec.config_dir == config_dir
+        assert spec.display_name == "lab"
+
+    def test_parse_custom_harness_spec_accepts_explicit_display_separator(self, tmp_path):
+        """Use ::display when config paths themselves contain ':' characters."""
+        install = get_install_module()
+        config_dir = tmp_path / "custom:profile"
+
+        spec = install.parse_custom_harness_spec(
+            f"lab=agy:agy-lab:{config_dir}::Antigravity Lab"
+        )
+
+        assert spec.config_dir == config_dir
+        assert spec.flavor == "antigravity"
+        assert spec.display_name == "Antigravity Lab"
+
+    def test_custom_antigravity_binary_stamps_antigravity_hook_flavor(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Custom agy-like binary runs commands, but hooks see Antigravity."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        template = plugin_dir / "src" / "autorun" / "gemini_template"
+        template.mkdir(parents=True)
+        (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+
+        custom_home = tmp_path / "custom-gemini"
+        installed_ar = custom_home / "extensions" / "ar"
+        installed_ar.mkdir(parents=True)
+        calls = []
+
+        def fake_which(name):
+            return f"/usr/local/bin/{name}" if name == "agy-lab" else None
+
+        def fake_run_cmd(args, timeout=30):
+            calls.append((args, timeout))
+            return install.CmdResult(True, "")
+
+        synced = []
+
+        def fake_sync(plugin, ext, ext_name, cli_name="gemini"):
+            synced.append((plugin.resolve(), ext, ext_name, cli_name))
+            return (0, 0)
+
+        monkeypatch.setattr(install.shutil, "which", fake_which)
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(install, "_sync_gemini_extension_resources", fake_sync)
+
+        ok, message = install._install_gemini_family_extensions(
+            marketplace_root=marketplace,
+            plugins=["autorun"],
+            force=False,
+            cli_name="agy-lab",
+            display_name="Antigravity Lab",
+            config_dir=custom_home,
+            install_hint="install agy-lab",
+            hook_cli_name="antigravity",
+        )
+
+        assert ok is True, message
+        assert any(args[:3] == ["agy-lab", "extensions", "install"] for args, _ in calls)
+        assert synced == [(plugin_dir.resolve(), installed_ar, "ar", "antigravity")]
+
+    def test_custom_codex_config_dir_installs_only_user_surface(self, tmp_path, monkeypatch):
+        """Custom Codex-like config dirs get hooks and AGENTS.md, not global assets."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        hooks_dir = plugin_dir / "hooks"
+        template = plugin_dir / "src" / "autorun" / "codex_template"
+        hooks_dir.mkdir(parents=True)
+        template.mkdir(parents=True)
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        (template / "AGENTS.md").write_text("# autorun\nar:sos\n", encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+        custom_codex = tmp_path / "custom-codex"
+        custom_codex.mkdir()
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python /user/pre_tool.py",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        (custom_codex / "hooks.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        def global_asset_called(*_args, **_kwargs):
+            raise AssertionError("custom Codex install must not touch global assets")
+
+        monkeypatch.setattr(install, "_install_codex_skills", global_asset_called)
+        monkeypatch.setattr(install, "_install_codex_plugin_marketplace", global_asset_called)
+
+        ok, message = install._install_for_codex(
+            marketplace,
+            ["autorun"],
+            force=False,
+            codex_dir=custom_codex,
+            install_global_assets=False,
+        )
+
+        assert ok is True, message
+        hooks = json.loads((custom_codex / "hooks.json").read_text(encoding="utf-8"))
+        commands = [
+            hook["command"]
+            for entries in hooks.get("hooks", {}).values()
+            for entry in entries
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict) and "command" in hook
+        ]
+        assert "python /user/pre_tool.py" in commands
+        assert any("--cli codex" in command for command in commands)
+        assert (custom_codex / "AGENTS.md").is_file()
+
+    def test_custom_codex_config_dir_reinstall_is_idempotent(self, tmp_path, monkeypatch):
+        """Repeated custom Codex installs must not duplicate hooks or AGENTS blocks."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        hooks_dir = plugin_dir / "hooks"
+        template = plugin_dir / "src" / "autorun" / "codex_template"
+        hooks_dir.mkdir(parents=True)
+        template.mkdir(parents=True)
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        (template / "AGENTS.md").write_text("# autorun\nar:sos\n", encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+        custom_codex = tmp_path / "custom-codex"
+
+        monkeypatch.setattr(install, "_install_codex_skills", lambda *_args, **_kwargs: (0, 0))
+        monkeypatch.setattr(
+            install,
+            "_install_codex_plugin_marketplace",
+            lambda *_args, **_kwargs: install.CodexPluginMarketplaceInstall(False, False),
+        )
+
+        for _ in range(2):
+            ok, message = install._install_for_codex(
+                marketplace,
+                ["autorun"],
+                force=False,
+                codex_dir=custom_codex,
+                install_global_assets=False,
+            )
+            assert ok is True, message
+
+        hooks = json.loads((custom_codex / "hooks.json").read_text(encoding="utf-8"))
+        for entries in hooks.get("hooks", {}).values():
+            event_commands = [
+                hook["command"]
+                for entry in entries
+                for hook in entry.get("hooks", [])
+                if isinstance(hook, dict) and "command" in hook
+            ]
+            assert len(event_commands) == len(set(event_commands))
+        agents = (custom_codex / "AGENTS.md").read_text(encoding="utf-8")
+        assert agents.count("<!-- autorun:codex-agents-md:start -->") == 1
+        assert agents.count("<!-- autorun:codex-agents-md:end -->") == 1
+
+    def test_custom_codex_invalid_hooks_reports_custom_path(self, tmp_path):
+        """Malformed custom Codex hooks must report the scoped config path."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        hooks_dir = plugin_dir / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+        custom_codex = tmp_path / "custom-codex"
+        custom_codex.mkdir()
+        hooks_path = custom_codex / "hooks.json"
+        hooks_path.write_text("{not-json", encoding="utf-8")
+
+        ok, message = install._install_for_codex(
+            marketplace,
+            ["autorun"],
+            force=False,
+            codex_dir=custom_codex,
+            install_global_assets=False,
+        )
+
+        assert ok is False
+        assert str(hooks_path) in message
+        assert "~/.codex/hooks.json" not in message
+
+    def test_install_plugins_routes_custom_codex_without_global_assets(self, tmp_path, monkeypatch):
+        """Top-level custom Codex install stays scoped to the supplied config dir."""
+        install = get_install_module()
+        custom_codex = tmp_path / "custom-codex"
+        calls = []
+
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: tmp_path / "marketplace")
+        monkeypatch.setattr(install, "_update_package_metadata", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(install, "detect_available_clis", lambda: {name: False for name in install.PLATFORMS})
+        monkeypatch.setattr(install, "_check_uv_env", lambda *_args, **_kwargs: install.CmdResult(True, ""))
+        monkeypatch.setattr(install.shutil, "which", lambda name: None)
+        monkeypatch.setattr(install, "_check_hook_conflicts", lambda: None)
+        monkeypatch.setattr(install, "_restart_daemon_if_running", lambda: None)
+
+        def fake_install_for_codex(*args, **kwargs):
+            calls.append((args, kwargs))
+            return (True, "success")
+
+        monkeypatch.setattr(install, "_install_for_codex", fake_install_for_codex)
+
+        rc = install.install_plugins(
+            "autorun",
+            custom_harnesses=[f"lab=codex:codex-lab:{custom_codex}:Codex Lab"],
+            conductor=False,
+        )
+
+        assert rc == 0
+        assert len(calls) == 1
+        _args, kwargs = calls[0]
+        assert kwargs["codex_dir"] == custom_codex
+        assert kwargs["install_global_assets"] is False
+        assert kwargs["codex_hook_source"] == "user"
+
+    def test_install_plugins_dry_run_does_not_write_or_install(self, tmp_path, monkeypatch, capsys):
+        """Install dry-run previews custom targets without touching hook state."""
+        install = get_install_module()
+
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("dry-run must not mutate install state")
+
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: marketplace)
+        monkeypatch.setattr(install, "_update_package_metadata", forbidden)
+        monkeypatch.setattr(install, "_sync_dependencies", forbidden)
+        monkeypatch.setattr(install, "_install_for_codex", forbidden)
+        monkeypatch.setattr(install, "_install_gemini_family_extensions", forbidden)
+        monkeypatch.setattr(install, "_check_hook_conflicts", forbidden)
+        monkeypatch.setattr(install, "_restart_daemon_if_running", forbidden)
+        monkeypatch.setattr(install, "detect_available_clis", lambda: {name: False for name in install.PLATFORMS})
+
+        rc = install.install_plugins(
+            "autorun",
+            custom_harnesses=[f"lab=agy:agy-lab:{tmp_path / 'agy-home'}"],
+            conductor=False,
+            dry_run=True,
+        )
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "DRY RUN" in out
+        assert "lab" in out
+        assert "antigravity" in out
+        assert "No files, hooks, plugin state, dependencies, or daemons were changed." in out
+
+    def test_custom_harness_status_reports_codex_config_dir(self, tmp_path, capsys):
+        """Custom Codex status inspects only the supplied config directory."""
+        install = get_install_module()
+        codex_dir = tmp_path / "custom-codex"
+        codex_dir.mkdir()
+        (codex_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "uv run python /tmp/hook_entry.py --cli codex",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+        (codex_dir / "AGENTS.md").write_text("autorun guidance", encoding="utf-8")
+
+        rc = install.show_custom_harness_status(f"lab=codex:codex-lab:{codex_dir}:Codex Lab")
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Codex Lab" in out
+        assert "flavor: codex" in out
+        assert "hooks.json: ✓ installed" in out
+        assert "AGENTS.md: ✓ installed" in out
+
+    def test_custom_harness_status_reports_gemini_family_config_dir(self, tmp_path, capsys):
+        """Custom Antigravity/Gemini-family status checks extension hook identity."""
+        install = get_install_module()
+        config_dir = tmp_path / "agy-home"
+        hooks_dir = config_dir / "extensions" / "ar" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "BeforeTool": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "uv run python ${extensionPath}/hooks/"
+                                        "hook_entry.py --cli antigravity"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        rc = install.show_custom_harness_status(f"lab=agy:agy-lab:{config_dir}:Antigravity Lab")
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Antigravity Lab" in out
+        assert "flavor: antigravity" in out
+        assert "ar extension: ✓ installed" in out
+        assert "hooks identity: ✓ antigravity" in out
 
 
 if __name__ == "__main__":

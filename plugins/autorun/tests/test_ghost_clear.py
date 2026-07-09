@@ -20,7 +20,6 @@ from autorun.config import CONFIG
 from autorun import task_lifecycle as tl
 from autorun import plugins as plg
 from autorun.core import EventContext, ThreadSafeDB
-from autorun.session_manager import SessionStateManager, _reset_for_testing  # used by section 3
 
 
 # ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -42,12 +41,21 @@ def _isolated_cfg(tmp_path, monkeypatch) -> tl.TaskLifecycleConfig:
     return cfg
 
 
+def _task_cfg(tmp_path, **overrides) -> tl.TaskLifecycleConfig:
+    return tl.TaskLifecycleConfig(storage_dir=tmp_path / "task-tracking", **overrides)
+
+
+def _saved_mgr(tmp_path, monkeypatch, **overrides) -> tl.TaskLifecycle:
+    """Create a manager whose config is also visible to hook-created managers."""
+    monkeypatch.setattr(tl, "CONFIG_PATH", tmp_path / "task-lifecycle.config.json")
+    cfg = _task_cfg(tmp_path, **overrides)
+    cfg.save()
+    return tl.TaskLifecycle(session_id=_sid(tmp_path), config=cfg)
+
+
 def _make_mgr(tmp_path, **overrides) -> tl.TaskLifecycle:
     """Return a TaskLifecycle with isolated storage and unique session ID."""
-    cfg = tl.TaskLifecycleConfig(
-        storage_dir=tmp_path / "task-tracking",
-        **overrides,
-    )
+    cfg = _task_cfg(tmp_path, **overrides)
     return tl.TaskLifecycle(session_id=_sid(tmp_path), config=cfg)
 
 
@@ -61,14 +69,24 @@ def _add_task(mgr: tl.TaskLifecycle, tid: str, subject: str, status: str = "in_p
     mgr.atomic_update_tasks(seed)
 
 
-def _make_ctx(tmp_path, event: str = "Stop", tool_result: str = "", transcript_text: str = "") -> EventContext:
-    """Create an EventContext with unique session ID and isolated store."""
+def _marker(task_id: str | int) -> str:
+    """Format the configured stale-clear marker without duplicating its literal."""
+    return CONFIG["ghost_clear_marker_template"].format(id=task_id)
+
+
+def _ctx_for_session(
+    session_id: str,
+    event: str = "Stop",
+    tool_result: str = "",
+    transcript_text: str = "",
+) -> EventContext:
+    """Create an EventContext for a specific session id."""
     session_transcript = []
     if transcript_text:
         session_transcript = [{"role": "assistant", "content": transcript_text}]
 
     ctx = EventContext(
-        session_id=_sid(tmp_path),
+        session_id=session_id,
         event=event,
         prompt="",
         tool_name="",
@@ -80,8 +98,19 @@ def _make_ctx(tmp_path, event: str = "Stop", tool_result: str = "", transcript_t
     return ctx
 
 
+def _make_ctx(tmp_path, event: str = "Stop", tool_result: str = "", transcript_text: str = "") -> EventContext:
+    """Create an EventContext with unique session ID and isolated store."""
+    return _ctx_for_session(_sid(tmp_path), event, tool_result, transcript_text)
+
+
 def _make_stop_ctx(tmp_path, tool_result: str = "", transcript_text: str = "") -> EventContext:
     return _make_ctx(tmp_path, event="Stop", tool_result=tool_result, transcript_text=transcript_text)
+
+
+def _arm_stale_clear(mgr: tl.TaskLifecycle, times: int = 2) -> None:
+    """Arm stale clear by producing repeated identical Stop blocks."""
+    for _ in range(times):
+        assert mgr.handle_stop(_ctx_for_session(mgr.session_id)) is not None
 
 
 # ─── Section 1: counter increments on identical id-set ────────────────────────
@@ -222,14 +251,26 @@ def test_handler_idempotent(tmp_path, monkeypatch):
     _isolated_cfg(tmp_path, monkeypatch)
     mgr = _make_mgr(tmp_path)
     _add_task(mgr, "72", "Ghost #72")
+    _arm_stale_clear(mgr)
 
-    ctx = _make_ctx(tmp_path, event="PostToolUse", tool_result="AUTORUN_TASKS_CLEAR_STALE_TASK(72)")
+    ctx = _make_ctx(tmp_path, event="PostToolUse", tool_result=_marker("72"))
     plg.clear_ghost_tasks(ctx)
     assert mgr.tasks.get("72", {}).get("status") == "ignored"
 
     # Second call — no-op, still ignored
     plg.clear_ghost_tasks(ctx)
     assert mgr.tasks.get("72", {}).get("status") == "ignored"
+
+
+def test_posttooluse_marker_before_threshold_does_not_clear(tmp_path, monkeypatch):
+    _isolated_cfg(tmp_path, monkeypatch)
+    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
+    _add_task(mgr, "72", "Real in-progress task")
+
+    ctx = _make_ctx(tmp_path, event="PostToolUse", tool_result=_marker("72"))
+    plg.clear_ghost_tasks(ctx)
+
+    assert mgr.tasks.get("72", {}).get("status") == "in_progress"
 
 
 # ─── Section 9: handler logs GHOST_CLEAR audit event ─────────────────────────
@@ -240,8 +281,9 @@ def test_handler_logs_ghost_clear(tmp_path, monkeypatch):
     cfg.save()
     mgr = tl.TaskLifecycle(session_id=_sid(tmp_path), config=cfg)
     _add_task(mgr, "72", "Ghost #72")
+    _arm_stale_clear(mgr)
 
-    ctx = _make_ctx(tmp_path, event="PostToolUse", tool_result="AUTORUN_TASKS_CLEAR_STALE_TASK(72)")
+    ctx = _make_ctx(tmp_path, event="PostToolUse", tool_result=_marker("72"))
     plg.clear_ghost_tasks(ctx)
 
     log_path = cfg.storage_dir / _sid(tmp_path) / "audit.log"
@@ -274,6 +316,76 @@ def test_full_loop(tmp_path, monkeypatch):
 
     ctx3 = _make_stop_ctx(tmp_path)
     assert mgr.handle_stop(ctx3) is None  # allow stop
+
+
+def test_stop_marker_clears_after_threshold_without_tool_call(tmp_path, monkeypatch):
+    """Assistant-text marker must work on the next Stop, not only PostToolUse.
+
+    Regression source: when the AI prints the stale-clear marker as text and no
+    tool call follows, Claude triggers Stop again. A PostToolUse-only marker
+    scanner misses that path and the session stays blocked forever.
+    """
+    mgr = _saved_mgr(tmp_path, monkeypatch, ghost_clear_min_consecutive_blocks=2)
+    _add_task(mgr, "72", "Ghost")
+
+    _arm_stale_clear(mgr)
+
+    stop_ctx = _make_stop_ctx(tmp_path, transcript_text=_marker("72"))
+
+    assert mgr.handle_stop(stop_ctx) is None
+    assert mgr.tasks["72"]["status"] == "ignored"
+
+
+def test_stop_marker_before_threshold_does_not_clear(tmp_path, monkeypatch):
+    """The AI-callable marker is armed by repeated identical Stop blocks."""
+    mgr = _saved_mgr(tmp_path, monkeypatch, ghost_clear_min_consecutive_blocks=3)
+    _add_task(mgr, "72", "Real in-progress task")
+
+    assert mgr.handle_stop(_make_stop_ctx(tmp_path)) is not None
+
+    early_stop_ctx = _make_stop_ctx(tmp_path, transcript_text=_marker("72"))
+    result = mgr.handle_stop(early_stop_ctx)
+
+    assert result is not None
+    assert "CANNOT STOP" in result.get("systemMessage", "")
+    assert mgr.tasks["72"]["status"] == "in_progress"
+
+
+def test_stop_marker_clears_only_current_session_task(tmp_path, monkeypatch):
+    _isolated_cfg(tmp_path, monkeypatch)
+    storage = tmp_path / "task-tracking"
+    cfg = tl.TaskLifecycleConfig(storage_dir=storage, ghost_clear_min_consecutive_blocks=2)
+    cfg.save()
+    mgr_a = tl.TaskLifecycle(session_id=f"{_sid(tmp_path)}-A", config=cfg)
+    mgr_b = tl.TaskLifecycle(session_id=f"{_sid(tmp_path)}-B", config=cfg)
+    _add_task(mgr_a, "72", "A stale task")
+    _add_task(mgr_b, "72", "B real task")
+
+    _arm_stale_clear(mgr_a)
+
+    clear_ctx = _ctx_for_session(mgr_a.session_id, transcript_text=_marker("72"))
+    assert mgr_a.handle_stop(clear_ctx) is None
+
+    assert mgr_a.tasks["72"]["status"] == "ignored"
+    assert mgr_b.tasks["72"]["status"] == "in_progress"
+
+
+def test_stop_marker_partial_clear_still_blocks_remaining_tasks(tmp_path, monkeypatch):
+    mgr = _saved_mgr(tmp_path, monkeypatch, ghost_clear_min_consecutive_blocks=2)
+    _add_task(mgr, "72", "Stale task")
+    _add_task(mgr, "99", "Real unfinished task")
+
+    _arm_stale_clear(mgr)
+
+    result = mgr.handle_stop(_make_stop_ctx(tmp_path, transcript_text=_marker("72")))
+
+    assert result is not None
+    msg = result.get("systemMessage", "")
+    assert "CANNOT STOP" in msg
+    assert "#72" not in msg
+    assert "#99" in msg
+    assert mgr.tasks["72"]["status"] == "ignored"
+    assert mgr.tasks["99"]["status"] == "in_progress"
 
 
 # ─── Section 11: disabled feature suppresses injection ────────────────────────
@@ -408,3 +520,33 @@ def test_marker_template_integrity():
     prefix, suffix = t.split("{id}")
     assert suffix == ")"
     assert prefix.endswith("(")
+
+
+def test_task_ignore_aliases_route_to_one_handler():
+    canonical = plg.app._find_command("/ar:task-ignore 72", "claude")
+    legacy = plg.app._find_command("/task-ignore 72", "claude")
+    codex_colon = plg.app._find_command("ar:task-ignore 72", "codex")
+    codex_space = plg.app._find_command("ar task-ignore 72", "codex")
+
+    matches = [canonical, legacy, codex_colon, codex_space]
+    assert all(match is not None for match in matches)
+    assert {match.handler for match in matches if match is not None} == {plg.handle_task_ignore}
+    assert {match.alias for match in matches if match is not None} == {"/ar:task-ignore", "/task-ignore"}
+
+
+def test_plain_task_ignore_alias_uses_task_lifecycle_state(tmp_path, monkeypatch):
+    _isolated_cfg(tmp_path, monkeypatch)
+    mgr = _make_mgr(tmp_path)
+    _add_task(mgr, "72", "Stale task")
+    ctx = EventContext(
+        session_id=_sid(tmp_path),
+        event="UserPromptSubmit",
+        prompt="/task-ignore 72 user confirmed stale",
+        store=ThreadSafeDB(),
+        cli_type="claude",
+    )
+
+    result = plg.app.dispatch(ctx)
+
+    assert "Ignored task 72" in result.get("systemMessage", "")
+    assert mgr.tasks["72"]["status"] == "ignored"

@@ -28,13 +28,14 @@ from contextlib import contextmanager
 from .tmux_utils import get_tmux_utilities
 from .session_manager import session_state
 
-STATE_DIR = Path.home() / ".claude" / "sessions"
-STATE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_DIR = Path(os.environ.get("AUTORUN_TEST_STATE_DIR") or Path.home() / ".claude" / "sessions")
+if os.environ.get("AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT") == "1":
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 def setup_autorun_logging():
     """Setup autorun logging with cross-user compatible location"""
     # Use cross-user compatible log directory - works regardless of installation location
-    log_dir = Path.home() / ".claude" / "sessions"
+    log_dir = STATE_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Setup logging to file with autorun prefix

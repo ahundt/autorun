@@ -216,7 +216,8 @@ Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAll
 | Command | Description |
 |---------|-------------|
 | `/ar:reload` | Force-reload all integration rules from config files |
-| `/ar:restart-daemon` | Restart autorun daemon to reload Python code changes |
+| `/ar:restart-daemon` | Restart the daemon for the current autorun install/source tree |
+| `autorun --restart-all-daemons` | Risky recovery command for stale or mixed-version daemons; can interrupt active autorun-backed sessions in other installs |
 | `/ar:marketplace-test` | Run tests across installed marketplace plugins |
 | `/ar:test` | Test command guidelines |
 | `/ar:gemini` | Gemini CLI reference guide |

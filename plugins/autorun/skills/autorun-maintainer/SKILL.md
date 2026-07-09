@@ -1,11 +1,11 @@
 ---
 name: autorun-maintainer
-description: Expertise in maintaining, debugging, and deploying the autorun hook system for Claude Code and Gemini CLI. Use when the user asks to "fix hooks", "deploy autorun", "debug hook errors", "update autorun version", or when troubleshooting "invisible failures" where safety guards appear inactive, piped commands are blocked, or work appears to have "reverted" after a session.
+description: Expertise in maintaining, debugging, and deploying the autorun hook system across Claude Code, Codex CLI, Gemini-family CLIs, Google Antigravity, Qwen Code, ForgeCode, custom harnesses, and desktop app integrations. Use when the user asks to "fix hooks", "deploy autorun", "debug hook errors", "update autorun version", or when troubleshooting "invisible failures" where safety guards appear inactive, piped commands are blocked, or work appears to have "reverted" after a session.
 ---
 
 # Autorun Maintainer Skill: The Definitive Guide
 
-You are a Senior QA and Release Engineer specialized in the autorun hook ecosystem. Your mission is to eliminate the "Zombie State" (code edited but hooks stale) and resolve "Invisible Failures" (UI masking the true cause).
+You are a Senior QA and Release Engineer specialized in the autorun hook ecosystem. Your mission is to eliminate the "Zombie State" (code edited but hooks stale) and resolve "Invisible Failures" (UI masking the true cause) without breaking active sessions on other harnesses.
 
 ---
 
@@ -22,11 +22,11 @@ Claude Code's "hook error" is a generic mask. **Never trust the UI.** You MUST f
 ### Step 2: Logic Check (`~/.autorun/daemon.log`)
 *   **FullPayload**: Check `FullPayload`. Are expected keys present (e.g., `_pid`, `_cwd`)?
 *   **Timing**: Check `DAEMON PROCESSING END`. If duration > 9000ms, it will trigger a Claude timeout.
-*   **Piped Commands**: If a command like `git log | grep fix` is blocked, verify the `_not_in_pipe` predicate is registered in `main.py:_PREDICATES`.
+*   **Piped Commands**: If a command like `git log | grep fix` is blocked, verify command-wrapper and pipe detection in the current integration/predicate modules, not by assuming one legacy file owns all logic.
 
 ### Step 3: Source Check (`~/.autorun/daemon_startup.log`)
-*   **Stale Code**: Is the daemon loading from `.../cache/...` (STALE) or `.../plugins/autorun/src/...` (FRESH)?
-*   **Identity**: Confirm the **Commit Hash** and **PID** change on every restart.
+*   **Stale Code**: Is the daemon loading from the intended source tree, plugin cache, or editable UV tool?
+*   **Identity**: Confirm the **Commit Hash**, source directory, and **PID** change when a restart is intentionally requested.
 
 ---
 
@@ -53,25 +53,42 @@ Claude Code performs strict JSON validation. A single extra field in a lifecycle
 
 ## 3. Deployment & Synchronization Architecture
 
-### The "9-Location Bug" (Legacy)
-Historically, fixes failed because the code was copied into 9 separate locations. We now use **Symlink Architecture**:
+### The "Many-Location Bug" (Legacy)
+Historically, fixes failed because the code was copied into many separate locations. Current installs must preserve a single source of truth wherever a harness supports it:
 *   **UV Tool**: `uv tool install --editable .`
-*   **Gemini**: `gemini extensions link /path/to/repo`
-*   **Result**: Edits in `src/` reflect immediately in those binaries.
+*   **Claude Code**: plugin cache and command files must point at the intended source or release artifact.
+*   **Codex CLI**: user hooks live in `~/.codex/hooks.json`; plugin bundles may also exist, but duplicate hook sources must be explicitly configured.
+*   **Gemini-family CLIs**: Gemini, Google Antigravity, and Qwen Code use extension/plugin surfaces that should link or copy the same `ar` extension layout. Antigravity installs should prefer the staged native `agy plugin install` bundle and fall back to `agy plugin import gemini` only when validation or install fails.
+*   **Custom harnesses**: use `--custom-harness SPEC` only for a harness flavored like an existing supported target.
+*   **Result**: Edits in `src/` reflect only after the relevant editable install, plugin cache, and daemon lifecycle have all been validated.
 
 ### The "Stale Code Trap"
-Source edits in `src/` are **IGNORED** by the persistent daemon until `autorun --restart-daemon` is run. **NEVER** assume code is active just because you saved the file.
+Source edits in `src/` are **IGNORED** by the persistent daemon until the scoped daemon for that source tree has restarted. **NEVER** assume code is active just because you saved the file.
 
-### The "One-Liner of Truth" (Mandatory)
+### The Safe Local Install Flow
 ```bash
-uv run --project plugins/autorun python -m autorun --install --force && \
-cd plugins/autorun && uv tool install --force --editable . && cd ../.. && \
+uv run --project plugins/autorun python -m autorun --install-dry-run
+uv run --project plugins/autorun python -m autorun --install --force
+cd plugins/autorun && uv tool install --force --editable . && cd ../..
+autorun --status
 autorun --restart-daemon
 ```
+
+Use `autorun --restart-daemon` for the current install/source tree. Use `autorun --restart-all-daemons` only with explicit current-turn user approval because it can interrupt unrelated active sessions or worktree tests.
+
+### Status and Custom Harness Checks
+*   **General status**: `autorun --status`
+*   **Dry-run install preview**: `autorun --install-dry-run`
+*   **Custom harness status**: `autorun --status --custom-harness SPEC`
+*   **Custom harness install**: `autorun --install --custom-harness SPEC`
+*   **SPEC grammar**: `name=flavor:binary:config_dir[:display]`; use `::display` when `config_dir` contains a literal `:`
+*   **Supported flavors**: `gemini`, `qwen`, `antigravity`, `agy` (alias for `antigravity`), and `codex`
 
 ### Critical Installer Fixes:
 1.  **Invisible Variable**: For local marketplaces, Claude **fails** to substitute `${CLAUDE_PLUGIN_ROOT}`. `install.py` MUST manually substitute this in the `~/.claude/plugins/cache/` directory.
 2.  **Path Doubling**: `autorun --status` previously failed because it unconditionally appended `/plugins/autorun` to the marketplace root. Discovery must be **idempotent**.
+3.  **Hook Source Ambiguity**: Codex user hooks and plugin-bundled hooks can coexist only when install metadata explicitly says that is intended; otherwise status should report duplicate autorun hook sources as a problem.
+4.  **Custom Harness Identity**: A custom harness must carry the hook identity of its flavor (`--cli codex`, `--cli antigravity`, etc.) so autorun emits the correct response schema.
 
 ---
 
@@ -108,24 +125,28 @@ Before declaring a task "Complete," you MUST:
 1.  [ ] **Schema Test**: `echo '{"hook_event_name":"PreToolUse", "tool_name":"Bash", "tool_input":{"command":"rm test"}}' | autorun`
 2.  [ ] **Metadata Test**: `autorun --version` (Verify commit matches current git).
 3.  [ ] **Restart Test**: Confirm PID in `~/.autorun/daemon.lock` has changed.
-4.  [ ] **Path Test**: Verify `~/.claude/plugins/cache/autorun/autorun/0.11.0/hooks/hooks.json` does NOT contain `${CLAUDE_PLUGIN_ROOT}`.
+4.  [ ] **Path Test**: Verify the installed Claude plugin cache `hooks/hooks.json` for the current autorun version does NOT contain `${CLAUDE_PLUGIN_ROOT}`.
 5.  [ ] **Pipes Test**: `cargo build 2>&1 | head -50` (Should be ALLOWED).
-6. [ ] **Status Test**: `autorun --status` (Ensure paths aren't doubled).
+6.  [ ] **Status Test**: `autorun --status` (Ensure paths aren't doubled and all configured harnesses report).
+7.  [ ] **Custom Harness Test**: If custom targets are in scope, run `autorun --status --custom-harness SPEC` for each configured custom harness.
 
 ---
 
-## 8. Detailed Architectural Inventory (The 9 Locations)
+## 8. Detailed Architectural Inventory
 
 If synchronization fails, verify these locations for stale code:
 1.  **Git Source**: `plugins/autorun/src/autorun/`
 2.  **Dev Venv**: `plugins/autorun/.venv/lib/python*/site-packages/autorun/`
-3.  **Build Artifacts**: `plugins/autorun/build/` (DELETE THIS)
-4.  **Claude Cache**: `~/.claude/plugins/cache/autorun/autorun/0.11.0/`
+3.  **Build Artifacts**: `plugins/autorun/build/` (remove only if it is known to be generated and unrelated to active work)
+4.  **Claude Cache**: `~/.claude/plugins/cache/autorun/autorun/<version>/`
 5.  **UV Tool**: `~/.local/share/uv/tools/autorun/` (Must be editable)
 6.  **Gemini Extension**: `~/.gemini/extensions/ar/` (Must be symlink)
 7.  **Gemini Venv**: `~/.gemini/extensions/ar/.venv/`
-8.  **Gemini Workspace**: `~/.gemini/extensions/pdf-extractor/`
-9.  **Gemini Build**: `~/.gemini/extensions/ar/build/` (DELETE THIS)
+8.  **Codex User Hooks**: `~/.codex/hooks.json`
+9.  **Codex Plugin Cache**: `~/.codex/plugins/cache/personal/autorun/<version>/`
+10. **Antigravity Extension**: `~/.gemini/antigravity-cli/extensions/ar/` or the configured custom Antigravity root.
+11. **Qwen Extension**: `~/.qwen/extensions/ar/`
+12. **Custom Harness Root**: the `config_dir` from `name=flavor:binary:config_dir[:display]`, using `::display` when `config_dir` contains a literal `:`
 
 ---
 
@@ -134,7 +155,7 @@ If synchronization fails, verify these locations for stale code:
 You are in a "Failure Loop" if:
 *   [ ] **Tests Pass, Hooks Fail**: Unit tests use source directly; hooks use stale binaries.
 *   [ ] **"Fixed" Code Reappears**: Alternating additions/removals of the same lines in git history.
-*   [ ] **Multiple Daemons**: `pgrep -f "autorun.daemon" | wc -l` > 1.
+*   [ ] **Multiple Daemons**: multiple `autorun.daemon` processes exist; distinguish current source-tree daemons from unrelated worktree/test daemons before restarting.
 *   [ ] **User Reports Broken rm**: Safety guards appear inactive despite "Fix" commits.
 
 ---
@@ -143,7 +164,7 @@ You are in a "Failure Loop" if:
 
 *   **Stdin Consumption**: Never read `sys.stdin` inside `try_cli()`. Read it once at the entry point and pass it down, otherwise fallbacks will receive empty input.
 *   **UV Warnings**: Using deprecated fields like `tool.uv.default-extras` in `pyproject.toml` causes warnings on `stderr`. Claude Code treats this as a hook error.
-*   **PID Management**: Always use `pkill -f "autorun.daemon"` after changes. Stale processes bind the socket and prevent new code from running.
+*   **PID Management**: Prefer `autorun --restart-daemon` for the current source tree. Use broader daemon cleanup only when scoped restart cannot recover and the user has approved interrupting other active sessions.
 *   **Bytecode Cache**: `__pycache__` can persist stale logic. The restart script must purge these explicitly.
 
 ---
@@ -175,9 +196,9 @@ The daemon is the high-performance "Brain" of autorun. It minimizes hook latency
 ### Core Components:
 1.  **Unix Domain Socket (`~/.autorun/daemon.sock`)**: High-speed communication path. Bypasses the overhead of TCP/IP.
 2.  **Shared Magic State (`shelve`)**: Persistent key-value store. Allows hooks to share state (e.g., `autorun_stage`) across multiple independent subprocess invocations.
-3.  **Watchdog Mechanism**: The daemon monitors parent PIDs. If the spawning CLI (Claude/Gemini) dies, the daemon self-terminates after an idle timeout (30min) to prevent resource leakage.
+3.  **Watchdog Mechanism**: The daemon monitors parent PIDs. If the spawning CLI dies, the daemon self-terminates after an idle timeout (30min) to prevent resource leakage.
 4.  **Tri-Layer Session Identity**:
-    *   Layer 1: `CLAUDE_SESSION_ID` / `GEMINI_SESSION_ID` (Direct).
+    *   Layer 1: harness session environment such as `CLAUDE_SESSION_ID`, `GEMINI_SESSION_ID`, `CODEX_SESSION_ID`, `AGY_SESSION_ID`, or `QWEN_SESSION_ID`.
     *   Layer 2: Parent PID fallback (If env var is lost).
     *   Layer 3: Current Working Directory fallback.
 
@@ -199,7 +220,7 @@ If hooks fail to connect or present errors, follow this repair guide.
 | **"Connection Refused"** | Daemon not running or socket stale. | `ls -l ~/.autorun/daemon.*` | Run `autorun --restart-daemon`. |
 | **"No such file" (Hook CLI)**| `${CLAUDE_PLUGIN_ROOT}` missing. | `cat hooks/hook_entry_debug.log` | Run `autorun --install --force`. |
 | **"ImportError"** | Python deps missing in venv. | `uv pip list --project plugins/autorun` | Run `uv sync --project plugins/autorun`. |
-| **"Hang" (Claude wait)** | Daemon frozen or buffer full. | `ps aux | grep autorun.daemon` | `pkill -f daemon` + `autorun --restart-daemon`. |
+| **"Hang" (Claude wait)** | Daemon frozen or buffer full. | `ps aux | grep autorun.daemon` | Run scoped `autorun --restart-daemon`; escalate to `autorun --restart-all-daemons` only with user approval. |
 | **"Hook Error" (UI)** | Stderr noise or bad JSON. | `tail -n 20 ~/.autorun/hook_entry_debug.log`| Check for double-printing or UV warnings. |
 
 ### The "Silent Fail-Open" Trap
@@ -256,7 +277,7 @@ The hook script is registered but cannot be found or executed.
     2.  **Partial Install**: `hooks/` directory skipped during `shutil.copytree` due to path logic.
 *   **Solution**:
     1.  `install.py` must manually `sed`-replace the variables in `~/.claude/plugins/cache/`.
-    2.  Verify existence with: `ls -l ~/.claude/plugins/cache/autorun/autorun/0.11.0/hooks/hook_entry.py`.
+    2.  Verify existence with: `ls -l ~/.claude/plugins/cache/autorun/autorun/<version>/hooks/hook_entry.py`.
 
 ### Layer 4: The Silent Ignore (Bug #4669)
 The hook "succeeds" (exit 0) but the safety guard is ignored.
@@ -296,4 +317,3 @@ Claude's parser is fragile. If `stdout` contains anything other than a single va
 *   **Double-Escape**: Occurs when you manually escape a string (e.g., replacing `\n` with `\\n`) and then pass it to `json.dumps()`.
     *   *Result*: User sees literal `\n` text instead of newlines.
     *   *Solution*: Always pass **raw strings** through the internal logic. Let the final `json.dumps()` at the system boundary handle the encoding.
-

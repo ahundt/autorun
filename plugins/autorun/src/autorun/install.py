@@ -42,14 +42,21 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
+from .command_docs import iter_command_docs
 from . import ipc
-from .platforms import PLATFORMS
+from .platforms import (
+    CUSTOM_HARNESS_FLAVOR_ALIASES,
+    CUSTOM_HARNESS_SPEC_FORMAT,
+    PLATFORMS,
+    custom_harness_spec_help,
+)
 
 try:
     import tomllib
@@ -132,6 +139,68 @@ class RuntimeArchitectureProbe:
     python_machine: str = ""
     python_system: str = ""
     reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CustomHarnessInstall:
+    """Validated custom Gemini-family install target."""
+
+    name: str
+    flavor: str
+    binary: str
+    config_dir: Path
+    display_name: str
+
+
+def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
+    """Parse `name=flavor:binary:config_dir[:display]` custom harness specs.
+
+    The `flavor` is the autorun hook identity passed to `hook_entry.py --cli`;
+    it must be a known hook identity so custom binaries cannot create
+    unvalidated response schemas. Use `::display` when config_dir contains a
+    literal `:` so the optional display suffix stays unambiguous.
+    """
+    raw = spec.strip()
+    if not raw or "=" not in raw:
+        raise ValueError(
+            f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
+        )
+
+    name, rest = raw.split("=", 1)
+    parts = rest.split(":", 2)
+    if len(parts) != 3:
+        raise ValueError(
+            f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
+        )
+
+    raw_flavor, binary, config_dir_tail = (part.strip() for part in parts)
+    config_dir_raw = config_dir_tail
+    display_name = name.strip()
+    if "::" in config_dir_tail:
+        config_dir_raw, display = (part.strip() for part in config_dir_tail.rsplit("::", 1))
+        display_name = display or display_name
+    elif ":" in config_dir_tail:
+        maybe_config, maybe_display = (part.strip() for part in config_dir_tail.rsplit(":", 1))
+        if any(char.isspace() for char in maybe_display):
+            config_dir_raw = maybe_config
+            display_name = maybe_display
+    name = name.strip()
+    if not name or not binary or not config_dir_raw:
+        raise ValueError(
+            "custom harness name, binary, and config_dir must be non-empty"
+        )
+    flavor = CUSTOM_HARNESS_FLAVOR_ALIASES.get(raw_flavor)
+    if flavor is None:
+        supported = ", ".join(sorted(CUSTOM_HARNESS_FLAVOR_ALIASES))
+        raise ValueError(f"unsupported custom harness flavor {raw_flavor!r}; supported flavors: {supported}")
+
+    return CustomHarnessInstall(
+        name=name,
+        flavor=flavor,
+        binary=binary,
+        config_dir=Path(config_dir_raw).expanduser(),
+        display_name=display_name,
+    )
 
 
 # =============================================================================
@@ -1018,30 +1087,77 @@ def _sync_gemini_extension_resources(
     return (commands_generated, skills_synced)
 
 
+def _stage_antigravity_native_bundle(
+    plugin_dir: Path,
+    bundle_dir: Path,
+) -> tuple[int, int]:
+    """Stage an Antigravity-native plugin bundle without touching user config."""
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    commands_generated, skills_synced = _sync_gemini_extension_resources(
+        plugin_dir,
+        bundle_dir,
+        "ar",
+        "antigravity",
+    )
+    nested_hooks = bundle_dir / "hooks" / "hooks.json"
+    if nested_hooks.is_file():
+        shutil.copy2(nested_hooks, bundle_dir / "hooks.json")
+    (bundle_dir / "plugin.json").write_text(
+        json.dumps({
+            "name": "ar",
+            "hooks": "./hooks.json",
+            "commands": "./commands/",
+            "skills": "./skills/",
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return (commands_generated, skills_synced)
+
+
+def _antigravity_validate_reports_hooks(output: str) -> bool:
+    """Return whether `agy plugin validate` processed hooks, not just metadata."""
+    for line in output.splitlines():
+        if "hooks" in line.lower():
+            return "processed" in line.lower()
+    return False
+
+
 def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
     """Set the explicit CLI identity in installed Gemini-family hook commands."""
     if cli_name == "gemini":
         return
-    hooks_json = ext_dir / "hooks" / "hooks.json"
-    if not hooks_json.is_file():
-        return
-    try:
-        data = json.loads(hooks_json.read_text(encoding="utf-8"))
-    except Exception:
-        text = hooks_json.read_text(encoding="utf-8")
-        hooks_json.write_text(text.replace("--cli gemini", f"--cli {cli_name}"), encoding="utf-8")
-        return
+
+    def rewrite_text(text: str) -> str:
+        lines = []
+        for line in text.splitlines(keepends=True):
+            if "hook_entry.py" in line:
+                line = line.replace("--cli gemini", f"--cli {cli_name}")
+            lines.append(line)
+        return "".join(lines)
 
     def rewrite(value):
         if isinstance(value, dict):
             return {key: rewrite(item) for key, item in value.items()}
         if isinstance(value, list):
             return [rewrite(item) for item in value]
-        if isinstance(value, str):
+        if isinstance(value, str) and "hook_entry.py" in value:
             return value.replace("--cli gemini", f"--cli {cli_name}")
         return value
 
-    hooks_json.write_text(json.dumps(rewrite(data), indent=2) + "\n", encoding="utf-8")
+    for hooks_json in (ext_dir / "hooks" / "hooks.json", ext_dir / "hooks.json"):
+        if not hooks_json.is_file():
+            continue
+        try:
+            data = json.loads(hooks_json.read_text(encoding="utf-8"))
+        except Exception:
+            text = hooks_json.read_text(encoding="utf-8")
+            hooks_json.write_text(
+                rewrite_text(text),
+                encoding="utf-8",
+            )
+            continue
+
+        hooks_json.write_text(json.dumps(rewrite(data), indent=2) + "\n", encoding="utf-8")
 
 
 def _migrate_legacy_layout(plugin_dir: Path) -> None:
@@ -1248,25 +1364,10 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
     toml_dir.mkdir(exist_ok=True)
 
     count = 0
-    for md_file in sorted(commands_dir.glob("*.md")):
+    for doc in iter_command_docs(commands_dir):
         try:
-            content = md_file.read_text(encoding="utf-8")
-
-            # Parse YAML frontmatter (between --- delimiters)
-            description = ""
-            body = content
-            if content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    # Extract description from frontmatter
-                    for line in parts[1].strip().splitlines():
-                        if line.startswith("description:"):
-                            description = line.split(":", 1)[1].strip().strip("'\"")
-                            break
-                    body = parts[2].strip()
-
             # Convert $ARGUMENTS to {{args}} (Gemini convention)
-            body = body.replace("$ARGUMENTS", "{{args}}")
+            body = doc.body.replace("$ARGUMENTS", "{{args}}")
 
             # Support tool mapping for Gemini CLI (Interoperability Superset)
             # Reuses CLI_TOOL_NAMES from core.py to ensure suggestions in .toml
@@ -1288,14 +1389,14 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
             safe_body = body.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
 
             # Write TOML file
-            toml_content = f'description = "{description}"\n'
+            toml_content = f'description = "{doc.description}"\n'
             toml_content += f'prompt = """\n{safe_body}\n"""\n'
 
-            toml_path = toml_dir / f"{md_file.stem}.toml"
+            toml_path = toml_dir / f"{doc.path.stem}.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             count += 1
         except Exception as e:
-            logger.warning(f"Failed to convert {md_file.name} to TOML: {e}")
+            logger.warning(f"Failed to convert {doc.path.name} to TOML: {e}")
 
     return count
 
@@ -1360,8 +1461,10 @@ def _install_gemini_family_extensions(
     display_name: str,
     config_dir: Path,
     install_hint: str,
+    hook_cli_name: str | None = None,
 ) -> tuple[bool, str]:
     """Install Gemini-compatible extensions into Gemini-family CLIs."""
+    hook_cli_name = hook_cli_name or cli_name
     if not shutil.which(cli_name):
         msg = f"{cli_name} CLI not found. Install from: {install_hint}"
         print(msg)
@@ -1491,7 +1594,7 @@ def _install_gemini_family_extensions(
                     plugin_dir,
                     installed_dir,
                     ext_name,
-                    cli_name,
+                    hook_cli_name,
                 )
                 if n > 0:
                     print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
@@ -1617,6 +1720,32 @@ _CODEX_GITHUB_MARKETPLACE_NAME = "autorun"
 _CODEX_GITHUB_MARKETPLACE_SOURCE = "ahundt/autorun"
 _CODEX_HOOK_SOURCE_CHOICES = ("user", "plugin", "both", "none")
 _CODEX_PLUGIN_MARKETPLACE_CHOICES = ("personal", "github")
+
+
+def _codex_plugin_owned_marker_text(codex_hook_source: str) -> str:
+    """Return metadata stored in the existing autorun-owned plugin marker."""
+    return (
+        "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
+        "`autorun --install --codex` to recreate it.\n"
+        f"codex_hook_source={codex_hook_source}\n"
+    )
+
+
+def _codex_owned_plugin_hook_source(source_dir: Path) -> str | None:
+    """Read the selected hook source from autorun's existing ownership marker."""
+    marker = source_dir / _CODEX_PLUGIN_OWNED_MARKER
+    if not marker.is_file():
+        return None
+    try:
+        for line in marker.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "codex_hook_source":
+                value = value.strip()
+                if value in _CODEX_HOOK_SOURCE_CHOICES:
+                    return value
+    except OSError:
+        return None
+    return None
 
 
 def _codex_hook_source_from_env(default: str = "user") -> str:
@@ -1971,6 +2100,8 @@ def _install_for_codex(
     force: bool = False,
     codex_hook_source: str = "user",
     codex_plugin_marketplace: str = "personal",
+    codex_dir: Path | None = None,
+    install_global_assets: bool = True,
 ) -> tuple[bool, str]:
     """Install autorun for Codex with an explicit hook source mode.
 
@@ -1990,12 +2121,23 @@ def _install_for_codex(
                idempotent so force has no effect here today.
         codex_hook_source: user, plugin, both, or none
         codex_plugin_marketplace: personal or github
+        codex_dir: Config directory containing hooks.json and AGENTS.md. Defaults
+                   to ~/.codex for normal Codex installs.
+        install_global_assets: If False, skip ~/.agents skills and Codex plugin
+                               marketplace writes. Custom Codex-like harnesses
+                               use this to stay scoped to their config dir.
 
     Returns:
         Tuple of (success: bool, message: str)
     """
     codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
     codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    if not install_global_assets and _codex_uses_plugin_hooks(codex_hook_source):
+        return (
+            False,
+            "custom Codex config-dir installs support user hooks only; "
+            "use codex_hook_source='user' or 'none'",
+        )
     if codex_plugin_marketplace == "github" and _codex_uses_plugin_hooks(codex_hook_source):
         return (
             False,
@@ -2006,8 +2148,8 @@ def _install_for_codex(
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
 
-    codex_dir = Path.home() / ".codex"
-    codex_dir.mkdir(exist_ok=True)
+    codex_dir = (codex_dir or (Path.home() / ".codex")).expanduser()
+    codex_dir.mkdir(parents=True, exist_ok=True)
     hooks_path = codex_dir / "hooks.json"
 
     existing = {}
@@ -2015,7 +2157,7 @@ def _install_for_codex(
         try:
             existing = json.loads(hooks_path.read_text(encoding="utf-8"))
         except Exception as exc:  # malformed file — surface but don't clobber
-            return (False, f"~/.codex/hooks.json is not valid JSON: {exc}")
+            return (False, f"{hooks_path} is not valid JSON: {exc}")
 
     autorun_block = (
         _build_codex_hook_block(plugin_dir)
@@ -2026,11 +2168,21 @@ def _install_for_codex(
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
-    skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
-    if codex_plugin_marketplace == "personal":
+    if install_global_assets:
+        skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
+    else:
+        skills_installed, skills_skipped = (0, 0)
+    if codex_plugin_marketplace == "personal" and install_global_assets:
         plugin_marketplace = _install_codex_plugin_marketplace(
             plugin_dir,
             include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
+            codex_hook_source=codex_hook_source,
+        )
+    elif codex_plugin_marketplace == "personal":
+        plugin_marketplace = CodexPluginMarketplaceInstall(
+            source_ready=False,
+            marketplace_ready=False,
+            reason="global Codex plugin marketplace skipped for custom config-dir install",
         )
     else:
         plugin_marketplace = CodexPluginMarketplaceInstall(
@@ -2041,13 +2193,13 @@ def _install_for_codex(
 
     print()
     if _codex_uses_user_hooks(codex_hook_source):
-        print("✓ Codex user hooks installed at ~/.codex/hooks.json")
+        print(f"✓ Codex user hooks installed at {hooks_path}")
     else:
-        print("✓ Codex user hooks removed from ~/.codex/hooks.json")
+        print(f"✓ Codex user hooks removed from {hooks_path}")
     if _codex_uses_plugin_hooks(codex_hook_source):
         print("✓ Codex plugin hooks packaged in autorun@personal")
     if agents_written:
-        print("✓ Advisory safety guidance written to ~/.codex/AGENTS.md")
+        print(f"✓ Advisory safety guidance written to {codex_dir / 'AGENTS.md'}")
     if skills_installed:
         print(f"✓ Installed {skills_installed} autorun skill(s) at ~/.agents/skills/")
     if skills_skipped:
@@ -2207,6 +2359,7 @@ def _copy_codex_plugin_source(
     target: Path,
     *,
     include_hooks: bool = False,
+    codex_hook_source: str = "user",
 ) -> None:
     """Copy the Codex plugin source with selected hook packaging.
 
@@ -2240,8 +2393,7 @@ def _copy_codex_plugin_source(
     if include_hooks:
         _write_codex_plugin_hooks(plugin_dir, target)
     (target / _CODEX_PLUGIN_OWNED_MARKER).write_text(
-        "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
-        "`autorun --install --codex` to recreate it.\n",
+        _codex_plugin_owned_marker_text(codex_hook_source),
         encoding="utf-8",
     )
 
@@ -2258,6 +2410,7 @@ def _ensure_codex_plugin_source(
     plugin_dir: Path,
     *,
     include_hooks: bool = False,
+    codex_hook_source: str = "user",
 ) -> tuple[bool, str]:
     """Materialize ~/plugins/autorun for Codex's implicit home marketplace.
 
@@ -2284,7 +2437,12 @@ def _ensure_codex_plugin_source(
         _remove_owned_codex_plugin_source(target)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    _copy_codex_plugin_source(plugin_dir, target, include_hooks=include_hooks)
+    _copy_codex_plugin_source(
+        plugin_dir,
+        target,
+        include_hooks=include_hooks,
+        codex_hook_source=codex_hook_source,
+    )
     return (True, "copy")
 
 
@@ -2354,6 +2512,7 @@ def _install_codex_plugin_marketplace(
     plugin_dir: Path,
     *,
     include_hooks: bool = False,
+    codex_hook_source: str = "user",
 ) -> CodexPluginMarketplaceInstall:
     """Publish autorun as a Codex plugin in the home marketplace.
 
@@ -2364,6 +2523,7 @@ def _install_codex_plugin_marketplace(
     source_ready, source_message = _ensure_codex_plugin_source(
         plugin_dir,
         include_hooks=include_hooks,
+        codex_hook_source=codex_hook_source,
     )
     if not source_ready:
         return CodexPluginMarketplaceInstall(
@@ -2502,6 +2662,12 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
         if child.is_dir() and (child / "hooks" / "hooks.json").is_file()
     ]
     if plugin_hook_caches and _codex_user_hooks_have_autorun():
+        if _codex_owned_plugin_hook_source(source_dir) == "both":
+            versions = ", ".join(sorted(child.name for child in plugin_hook_caches))
+            return (
+                True,
+                f"✓ installed with explicit both hook sources in cache version(s): {versions}",
+            )
         versions = ", ".join(sorted(child.name for child in plugin_hook_caches))
         return (
             False,
@@ -2524,6 +2690,74 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
     section = text.split(section_header, 1)[1].split("\n[", 1)[0]
     enabled = any(line.strip() == "enabled = true" for line in section.splitlines())
     return (True, "✓ installed, enabled" if enabled else "✓ installed")
+
+
+def _hooks_json_contains_cli(hooks_path: Path, cli_name: str) -> tuple[bool, str]:
+    """Return whether a hooks.json file contains autorun's expected CLI identity."""
+    if not hooks_path.is_file():
+        return (False, "missing")
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return (False, f"unreadable ({exc})")
+    if f"--cli {cli_name}" not in json.dumps(data.get("hooks", {})):
+        return (False, f"missing --cli {cli_name}")
+    return (True, "installed")
+
+
+def show_custom_harness_status(spec: str) -> int:
+    """Show status for one explicit custom harness spec without persistence."""
+    try:
+        target = parse_custom_harness_spec(spec)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    print("Custom Harness Status:")
+    print("-" * 60)
+    print(f"  name: {target.name}")
+    print(f"  display: {target.display_name}")
+    print(f"  flavor: {target.flavor}")
+    print(f"  binary: {target.binary}")
+    print(f"  config_dir: {target.config_dir}")
+
+    if target.flavor == "codex":
+        hooks_ok, hooks_status = _hooks_json_contains_cli(
+            target.config_dir / "hooks.json",
+            "codex",
+        )
+        agents_ok = (target.config_dir / "AGENTS.md").is_file()
+        print(f"  hooks.json: {'✓ installed' if hooks_ok else f'✗ {hooks_status}'}")
+        print(f"  AGENTS.md: {'✓ installed' if agents_ok else '✗ not installed'}")
+        return 0 if hooks_ok and agents_ok else 1
+
+    candidates = [
+        target.config_dir / "extensions" / "ar" / "hooks" / "hooks.json",
+        target.config_dir / "plugins" / "ar" / "hooks" / "hooks.json",
+        target.config_dir / "plugins" / "ar" / "hooks.json",
+    ]
+    installed = False
+    identity_status = "missing"
+    found_path: Path | None = None
+    for hooks_path in candidates:
+        hooks_ok, hooks_status = _hooks_json_contains_cli(hooks_path, target.flavor)
+        if hooks_path.is_file():
+            found_path = hooks_path
+            identity_status = hooks_status
+        if hooks_ok:
+            found_path = hooks_path
+            identity_status = target.flavor
+            installed = True
+            break
+
+    print(f"  ar extension: {'✓ installed' if found_path else '✗ not installed'}")
+    if found_path:
+        print(f"  hooks.json: {found_path}")
+    print(
+        "  hooks identity: "
+        + (f"✓ {identity_status}" if installed else f"✗ {identity_status}")
+    )
+    return 0 if installed else 1
 
 
 def _platform_app_status(platform_name: str) -> tuple[bool, str]:
@@ -2754,20 +2988,36 @@ def _install_for_antigravity(
     plugins: list[str],
     force: bool = False,
 ) -> tuple[bool, str]:
-    """Install autorun into Google Antigravity through its Gemini importer.
+    """Install autorun into Google Antigravity with importer fallback.
 
     `agy plugin import gemini` is the documented local migration surface exposed
     by `agy plugin help`; local verification on 2026-06-22 with `agy` 1.0.10
     imports the existing Gemini `ar` extension with skills, commands, and hooks.
-    The native `agy plugin install <target>` schema expects a plugin.json bundle,
-    so direct native bundles remain a separate 0.13.0 acceptance item.
+    Newer Antigravity builds also validate native plugin bundles when they have
+    root `plugin.json` and `hooks.json`; autorun stages that bundle from the
+    shared Gemini-family resources and falls back to the importer if validation
+    or install fails.
     """
-    del marketplace_root, force  # The importer reads installed Gemini extensions.
-
     if "autorun" not in plugins and "ar" not in plugins:
         return (True, "no autorun plugin selected")
     if not shutil.which("agy"):
         return (False, "agy CLI not found")
+
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+    if plugin_dir is not None:
+        with tempfile.TemporaryDirectory(prefix="autorun-antigravity-plugin-") as tmp:
+            bundle_dir = Path(tmp) / "ar"
+            _stage_antigravity_native_bundle(plugin_dir, bundle_dir)
+            validate = run_cmd(["agy", "plugin", "validate", str(bundle_dir)], timeout=30)
+            if validate.ok and _antigravity_validate_reports_hooks(validate.output):
+                if force:
+                    run_cmd(["agy", "plugin", "uninstall", "ar"], timeout=120)
+                install_result = run_cmd(["agy", "plugin", "install", str(bundle_dir)], timeout=120)
+                if install_result.ok or install_result.has_text("already installed"):
+                    verify = run_cmd(["agy", "plugin", "list"], timeout=30)
+                    if verify.ok and ('"name": "ar"' in verify.output or "ar" in verify.output):
+                        print("   Antigravity ar plugin installed from native bundle")
+                        return (True, "success")
 
     print()
     print("Importing Gemini autorun extension into Google Antigravity...")
@@ -2780,6 +3030,10 @@ def _install_for_antigravity(
         return (False, f"agy plugin import succeeded, but list failed: {verify.output}")
     if '"name": "ar"' not in verify.output and "ar" not in verify.output:
         return (False, "agy plugin list did not report imported ar plugin")
+
+    imported_dir = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    if plugin_dir is not None and imported_dir.is_dir():
+        _sync_gemini_extension_resources(plugin_dir, imported_dir, "ar", "antigravity")
 
     print("   Antigravity ar plugin imported from Gemini CLI")
     return (True, "success")
@@ -2996,6 +3250,8 @@ def install_plugins(
     conductor: bool = True,
     codex_hook_source: str = "user",
     codex_plugin_marketplace: str = "personal",
+    custom_harnesses: list[str] | tuple[str, ...] = (),
+    dry_run: bool = False,
 ) -> int:
     """Install and enable plugins for Claude Code and/or Gemini CLI.
 
@@ -3011,6 +3267,11 @@ def install_plugins(
         conductor: Install Conductor extension for Gemini (default: True)
         codex_hook_source: Codex hook source: user, plugin, both, or none
         codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
+        custom_harnesses: Custom harness specs in
+            name=flavor:binary:config_dir[:display] form. Use ::display when
+            config_dir contains a literal colon.
+        dry_run: Preview install targets without writing files or running
+                 installer subprocesses
 
     Returns:
         Exit code: 0 = success, 1 = failure
@@ -3019,11 +3280,13 @@ def install_plugins(
         - Default (no CLI flags): Installs for all available CLIs with maximum capability
         - --claude: Installs only for Claude Code (error if not available)
         - --gemini: Installs only for Gemini CLI (error if not available)
-        - --antigravity: Imports Gemini extensions into Google Antigravity only
+        - --antigravity: Installs Google Antigravity native plugin, with Gemini importer fallback
         - --qwen: Installs only for Qwen Code (error if not available)
         - --codex: Installs only for Codex CLI (error if not available)
         - Multiple platform flags: Installs for all selected CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
+        - --custom-harness: Install a custom flavored target
+        - --install-dry-run: Preview without writes, subprocess install, or daemon restart
         - Continues even if one CLI fails (reports status for each)
 
     Note:
@@ -3047,12 +3310,13 @@ def install_plugins(
     else:
         plugin_root = plugin_candidate  # best-effort fallback
 
-    _update_package_metadata(plugin_root)
-
-    # Re-import to get fresh values if we're in the same process
-    import importlib
     import autorun
-    importlib.reload(autorun)
+    if not dry_run:
+        _update_package_metadata(plugin_root)
+
+        # Re-import to get fresh values if we're in the same process
+        import importlib
+        importlib.reload(autorun)
     from autorun import __version__, __commit__, __build_time__
     
     print(f"autorun v{__version__}")
@@ -3060,6 +3324,11 @@ def install_plugins(
     print(f"Build Time: {__build_time__}")
     codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
     codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    try:
+        custom_targets = [parse_custom_harness_spec(spec) for spec in custom_harnesses]
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
 
     # Python version check
     if sys.version_info < (3, 10):
@@ -3089,7 +3358,7 @@ def install_plugins(
         print(f"Error: {e}")
         return 1
 
-    if not target_clis:
+    if not target_clis and not custom_targets:
         print("No target CLIs available or specified.")
         print(f"Available CLIs: {', '.join([k for k, v in available.items() if v]) or 'none'}")
         if claude_only and not available["claude"]:
@@ -3124,8 +3393,29 @@ def install_plugins(
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")
-    print(f"Target CLIs: {', '.join(target_clis)}")
+    target_labels = list(target_clis) + [f"custom:{target.name}" for target in custom_targets]
+    print(f"Target CLIs: {', '.join(target_labels)}")
     print()
+
+    if dry_run:
+        print("DRY RUN: install preview only")
+        print(f"  Plugins: {', '.join(plugins)}")
+        if target_clis:
+            print(f"  Detected platform targets: {', '.join(target_clis)}")
+        if custom_targets:
+            print("  Custom harness targets:")
+            for target in custom_targets:
+                print(
+                    f"    - {target.name}: flavor={target.flavor}, "
+                    f"binary={target.binary}, config_dir={target.config_dir}, "
+                    f"display={target.display_name}"
+                )
+        if tool:
+            print("  UV tool install: would run")
+        if conductor and "gemini" in target_clis:
+            print("  Gemini Conductor: would install")
+        print("No files, hooks, plugin state, dependencies, or daemons were changed.")
+        return 0
 
     # UV environment check (warning only, not blocker)
     if (marketplace_root / "plugins" / "autorun").exists():
@@ -3169,6 +3459,7 @@ def install_plugins(
     gemini_success = False
     antigravity_success = False
     qwen_success = False
+    custom_results: list[tuple[CustomHarnessInstall, bool, str]] = []
 
     # Install for Claude Code
     if "claude" in target_clis:
@@ -3257,7 +3548,7 @@ def install_plugins(
     if "antigravity" in target_clis:
         antigravity_success, antigravity_msg = _install_for_antigravity(marketplace_root, plugins, force)
         if not antigravity_success:
-            print(f"   Antigravity import failed: {antigravity_msg}")
+            print(f"   Antigravity install failed: {antigravity_msg}")
         all_succeeded = all_succeeded and antigravity_success
 
     if "qwen" in target_clis:
@@ -3265,6 +3556,33 @@ def install_plugins(
         if not qwen_success:
             print(f"   Qwen Code install failed: {qwen_msg}")
         all_succeeded = all_succeeded and qwen_success
+
+    for custom in custom_targets:
+        if custom.flavor == "codex":
+            custom_success, custom_msg = _install_for_codex(
+                marketplace_root,
+                plugins,
+                force,
+                codex_hook_source="user",
+                codex_plugin_marketplace="personal",
+                codex_dir=custom.config_dir,
+                install_global_assets=False,
+            )
+        else:
+            custom_success, custom_msg = _install_gemini_family_extensions(
+                marketplace_root=marketplace_root,
+                plugins=plugins,
+                force=force,
+                cli_name=custom.binary,
+                display_name=custom.display_name,
+                config_dir=custom.config_dir,
+                install_hint=f"install {custom.binary}",
+                hook_cli_name=custom.flavor,
+            )
+        custom_results.append((custom, custom_success, custom_msg))
+        if not custom_success:
+            print(f"   Custom harness {custom.name} install failed: {custom_msg}")
+        all_succeeded = all_succeeded and custom_success
 
     # Install for Codex CLI. Codex hook sources are explicit because user-level
     # hooks and plugin-bundled hooks run side by side instead of replacing each
@@ -3356,15 +3674,24 @@ def install_plugins(
 
     if "antigravity" in target_clis:
         if antigravity_success:
-            print("✓ Google Antigravity: imported Gemini ar plugin with commands, skills, and hooks")
+            print("✓ Google Antigravity: ar plugin installed with commands, skills, and hooks")
         else:
-            print("✗ Google Antigravity: import failed")
+            print("✗ Google Antigravity: install failed")
 
     if "qwen" in target_clis:
         if qwen_success:
             print(f"✓ Qwen Code: Plugins installed ({', '.join(plugins)})")
         else:
             print("✗ Qwen Code: Installation failed")
+
+    for custom, custom_success, _custom_msg in custom_results:
+        if custom_success:
+            print(
+                f"✓ {custom.display_name}: Plugins installed ({', '.join(plugins)}) "
+                f"using {custom.flavor} hook flavor at {custom.config_dir}"
+            )
+        else:
+            print(f"✗ {custom.display_name}: Installation failed")
 
     if "codex" in target_clis:
         if codex_success:
@@ -3401,7 +3728,7 @@ def install_plugins(
     if "gemini" in target_clis and conductor:
         print("  /conductor:*      - Conductor plan mode (Gemini only)")
     if "antigravity" in target_clis:
-        print("  agy plugin list   - verify imported Antigravity plugins")
+        print("  agy plugin list   - verify installed Antigravity plugins")
     if "qwen" in target_clis:
         print("  qwen extensions list - verify installed Qwen extensions")
     print()
@@ -3468,8 +3795,13 @@ def uninstall_plugins(selection: str = "all") -> int:
 # =============================================================================
 
 
-def show_status() -> int:
+def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     """Show installation status of all plugins, UV environment, and CLI tools.
+
+    Args:
+        custom_harnesses: Optional custom harness specs to include in the same
+            status pass. Specs use name=flavor:binary:config_dir[:display],
+            with ::display for config paths containing literal colons.
 
     Returns:
         Exit code: 0 = all installed, 1 = some missing
@@ -3486,10 +3818,11 @@ def show_status() -> int:
     claude_app_ok, claude_app_status = _platform_app_status("claude")
     print(f"  Claude app: {'✓ installed' if claude_app_ok else '✗ not found'} ({claude_app_status})")
 
+    all_ok = True
     if not claude_ok:
         print()
         print("Install Claude Code first")
-        return 1
+        all_ok = False
 
     # UV environment check
     try:
@@ -3523,8 +3856,7 @@ def show_status() -> int:
         print("  UV environment: marketplace not found")
 
     # Check each plugin
-    all_ok = True
-    result = run_cmd(["claude", "plugin", "list"])
+    result = run_cmd(["claude", "plugin", "list"]) if claude_ok else CmdResult(False, "")
 
     print()
     print("Plugins:")
@@ -3706,6 +4038,12 @@ def show_status() -> int:
     print(f"  commands: {'✓ installed' if forge_command_count else '✗ not installed'} ({forge_command_count})")
     print(f"  AGENTS.md: {'✓ installed' if forge_agents.is_file() else '✗ not installed'}")
     print("  hooks: advisory only (ForgeCode has no external hook system)")
+
+    for spec in custom_harnesses:
+        print()
+        print("-" * 60)
+        if show_custom_harness_status(spec) != 0:
+            all_ok = False
 
     return 0 if all_ok else 1
 
@@ -3955,17 +4293,40 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m plugins.autorun.src.autorun.install",
         description="Install autorun hooks, skills, and plugin assets.",
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("selection", nargs="?", default="all")
     parser.add_argument("--install", action="store_true", help="Install selected plugins")
     parser.add_argument("--uninstall", action="store_true", help="Uninstall selected plugins")
     parser.add_argument("--status", action="store_true", help="Show installation status")
     parser.add_argument("--force", "--force-install", dest="force", action="store_true")
+    parser.add_argument(
+        "--install-dry-run",
+        action="store_true",
+        help=(
+            "Preview install targets without writing hooks, plugin state, "
+            "dependencies, or restarting daemons"
+        ),
+    )
     parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
     parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
-    parser.add_argument("--antigravity", action="store_true", help="Install for Google Antigravity CLI only")
+    parser.add_argument(
+        "--antigravity",
+        action="store_true",
+        help=(
+            "Install for Google Antigravity CLI only "
+            "(native agy plugin bundle, Gemini importer fallback)"
+        ),
+    )
     parser.add_argument("--qwen", action="store_true", help="Install for Qwen Code only")
+    parser.add_argument(
+        "--custom-harness",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help=custom_harness_spec_help(),
+    )
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
         "--codex-hook-source",
@@ -4011,21 +4372,25 @@ def _install_module_main(argv: list[str] | None = None) -> int:
     if args.uninstall:
         return uninstall_plugins(args.selection)
     if args.status:
-        return show_status()
+        return show_status(custom_harnesses=args.custom_harness)
 
-    return install_plugins(
-        args.selection,
-        tool=args.tool,
-        force=args.force,
-        claude_only=args.claude,
-        gemini_only=args.gemini,
-        codex_only=args.codex,
-        antigravity_only=args.antigravity,
-        qwen_only=args.qwen,
-        conductor=args.conductor,
-        codex_hook_source=args.codex_hook_source,
-        codex_plugin_marketplace=args.codex_plugin_marketplace,
-    )
+    install_kwargs = {
+        "tool": args.tool,
+        "force": args.force,
+        "claude_only": args.claude,
+        "gemini_only": args.gemini,
+        "codex_only": args.codex,
+        "antigravity_only": args.antigravity,
+        "qwen_only": args.qwen,
+        "conductor": args.conductor,
+        "codex_hook_source": args.codex_hook_source,
+        "codex_plugin_marketplace": args.codex_plugin_marketplace,
+    }
+    if args.install_dry_run:
+        install_kwargs["dry_run"] = True
+    if args.custom_harness:
+        install_kwargs["custom_harnesses"] = args.custom_harness
+    return install_plugins(args.selection, **install_kwargs)
 
 
 if __name__ == "__main__":

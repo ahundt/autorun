@@ -19,6 +19,11 @@ Invoke when the user asks about any of:
 - "how do I stop Claude from burning tokens after idle time"
 - "what is the cache gate", "cache protection"
 
+Harness note: this is a skill, while `/ar:cache` is a runtime autorun command.
+Claude Code can usually pass the slash form to hooks. Codex may intercept
+unknown slash commands before hooks see them, so use `ar:cache` or
+`ar cache ...` in Codex prompts when you need the runtime command.
+
 ## 1. Philosophy
 
 - **Off by default.** No block fires unless the user runs `/ar:cache on`.

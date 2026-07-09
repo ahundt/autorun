@@ -37,16 +37,18 @@ from typing import NoReturn
 # Constants
 # =============================================================================
 
-# Gemini CLI enforces a 5s timeout, so it keeps the tight 4s budget. Claude
-# Code and Codex allow more room; using one global 4s timeout caused avoidable
-# daemon fallbacks and client disconnect churn under real CLI E2E load.
-HOOK_TIMEOUT_BY_CLI = {
-    "gemini": 3.0,
-    "qwen": 3.0,
+# Bootstrap-only fallback. Normal runs read CONFIG["hook_wrapper_timeouts_seconds"].
+# Keep these values in sync with config.py so broken installs still preserve the
+# same timeout layering until `autorun --install --force` repairs the package.
+_FALLBACK_HOOK_TIMEOUT_BY_CLI = {
+    "gemini": 4.0,
+    "antigravity": 4.0,
+    "qwen": 4.0,
     "claude": 5.0,
     "codex": 5.0,
     "forgecode": 5.0,
 }
+HOOK_TIMEOUT_BY_CLI = dict(_FALLBACK_HOOK_TIMEOUT_BY_CLI)
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
 BOOTSTRAP_MSG = (
@@ -103,13 +105,25 @@ def _append_debug_log(message: str) -> None:
 # =============================================================================
 
 
-_VALID_CLI_TYPES = ("claude", "gemini", "qwen", "codex", "forgecode")
+_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 
 
-def hook_timeout_for_cli(cli_type: str) -> int:
-    """Return the hook wrapper subprocess timeout for a CLI platform."""
-    return HOOK_TIMEOUT_BY_CLI.get(cli_type, HOOK_TIMEOUT_BY_CLI["claude"])
+def hook_timeout_for_cli(cli_type: str) -> float:
+    """Return the hook wrapper subprocess timeout for a CLI platform.
+
+    Use autorun.config when importable so maintainers have one normal source
+    of truth. The local fallback only protects recovery/bootstrap paths where
+    the package import is unavailable; widening it can hide hangs until the
+    outer harness discards output.
+    """
+    try:
+        from autorun.config import CONFIG
+
+        timeouts = CONFIG["hook_wrapper_timeouts_seconds"]
+    except Exception:
+        timeouts = HOOK_TIMEOUT_BY_CLI
+    return float(timeouts.get(cli_type, timeouts["claude"]))
 
 
 def detect_cli_type(payload: dict | None = None) -> str:
@@ -328,7 +342,7 @@ def fail_closed_tool_gate(message: str, cli_type: str, event_name: str) -> NoRet
         print(json.dumps(response))
         sys.exit(0)
 
-    schema_type = "permissive" if cli_type in {"gemini", "qwen"} else "strict"
+    schema_type = "permissive" if cli_type in {"gemini", "antigravity", "qwen"} else "strict"
     decision = "deny" if schema_type == "permissive" else "block"
     response = {
         "decision": decision,

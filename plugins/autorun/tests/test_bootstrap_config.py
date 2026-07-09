@@ -383,6 +383,30 @@ class TestCLIArgumentParsing:
 
         assert args.status is True
 
+    def test_status_accepts_custom_harness_specs(self):
+        """Test that --status reuses --custom-harness for scoped status checks."""
+        from autorun.__main__ import create_parser
+
+        parser = create_parser()
+        spec = "lab=agy:agy-lab:/tmp/agy-home"
+        args = parser.parse_args(["--status", "--custom-harness", spec])
+
+        assert args.status is True
+        assert args.custom_harness == [spec]
+
+    def test_custom_harness_help_lists_values_and_usage(self):
+        """Test that custom harness help is usable without reading source."""
+        from autorun.__main__ import create_parser
+
+        help_text = create_parser().format_help()
+
+        assert "--custom-harness SPEC" in help_text
+        assert "--install --custom-harness" in help_text
+        assert "--status --custom-harness" in help_text
+        assert "flavor: gemini|qwen|antigravity|agy|codex" in help_text
+        assert "agy is an alias for antigravity" in help_text
+        assert "--custom-harness-status" not in help_text
+
     def test_version_flag_parsed(self):
         """Test that --version flag is parsed correctly."""
         from autorun.__main__ import create_parser
@@ -550,6 +574,45 @@ class TestMainFunctionRouting:
         )
         assert result == 0
 
+    def test_install_with_custom_harness_passes_custom_specs(self):
+        """Test that --custom-harness reaches install_plugins unchanged."""
+        from autorun.__main__ import main
+
+        spec = "lab=gemini:agy-lab:/tmp/agy-lab"
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--custom-harness", spec])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
+            custom_harnesses=[spec],
+        )
+        assert result == 0
+
+    def test_install_dry_run_passes_dry_run_flag(self):
+        """Test that --install-dry-run reaches install_plugins without changing defaults."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--install-dry-run"])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
+            dry_run=True,
+        )
+        assert result == 0
+
     def test_install_with_qwen_passes_qwen_only_flag(self):
         """Test that --install --qwen targets Qwen Code installation."""
         from autorun.__main__ import main
@@ -596,6 +659,19 @@ class TestMainFunctionRouting:
             result = main(["--status"])
 
         mock_status.assert_called_once()
+        assert result == 0
+
+    def test_status_with_custom_harness_routes_to_show_status(self):
+        """Test that --status inspects supplied custom harness specs."""
+        from autorun.__main__ import main
+
+        spec = "lab=agy:agy-lab:/tmp/agy-home"
+        with mock.patch(
+            "autorun.install.show_status", return_value=0
+        ) as mock_status:
+            result = main(["--status", "--custom-harness", spec])
+
+        mock_status.assert_called_once_with(custom_harnesses=[spec])
         assert result == 0
 
 

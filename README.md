@@ -568,7 +568,7 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:globalstatus` | - | - | Show global blocks and allows |
 | `/ar:globalclear` | - | - | Clear all global blocks and allows |
 | `/ar:reload` | - | - | Reload integration rules from config files |
-| `/ar:restart-daemon` | - | - | Restart daemon to reload Python code changes |
+| `/ar:restart-daemon` | - | - | Restart the daemon for the current autorun install/source tree |
 | `/ar:tasks` | - | - | Toggle task staleness reminders on/off or set threshold |
 | `/ar:tasks stale [on\|off\|min <N>]` | - | - | Stale-task escape hatch: after N identical consecutive stop blocks, inject clear-marker instructions (v0.10.2) |
 | `/ar:task-status` | - | - | Show task lifecycle status and incomplete tasks |
@@ -620,7 +620,8 @@ Three-tier policy system enforced via PreToolUse hooks:
 
 **Developer/Admin Commands:**
 - **/ar:reload** - Force-reload all integration rules from config files
-- **/ar:restart-daemon** - Restart daemon to reload Python code changes
+- **/ar:restart-daemon** - Restart the daemon for the current autorun install/source tree
+- **autorun --restart-all-daemons** - Risky recovery command for stale or mixed-version daemons; can interrupt active autorun-backed sessions in other installs
 
 **Pattern Type Prefixes:**
 - **regex:\<pattern>** - Use regular expression matching
@@ -939,6 +940,7 @@ autorun --help                       # Full help with all options
 
 ```bash
 autorun --restart-daemon             # Restart the autorun daemon
+autorun --restart-all-daemons         # Risky: stop matching daemons across installs
 autorun --update                     # Check for and install updates
 autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip)
 autorun --no-bootstrap               # Disable automatic bootstrap in hooks
@@ -971,7 +973,7 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|always|never
 autorun --conductor                  # Install Conductor extension for Gemini (default)
 autorun --no-conductor               # Skip Conductor extension
-autorun --antigravity                # Import Gemini ar plugin into Google Antigravity
+autorun --install --antigravity      # Install Google Antigravity plugin (native bundle, importer fallback)
 autorun --cli claude                 # Set CLI type (used internally by hooks)
 ```
 

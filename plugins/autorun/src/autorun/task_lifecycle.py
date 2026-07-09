@@ -46,6 +46,7 @@ import time
 import re
 from collections.abc import Iterable
 from datetime import datetime
+from functools import cache
 
 from . import ipc
 from .core import EventContext, format_command_for_cli, logger
@@ -224,6 +225,22 @@ def _reset_ghost_counter(metadata: dict) -> None:
     """Reset consecutive identical stop-block counter (called on clean exit or tool activity)."""
     metadata["consecutive_identical_stop_block_count"] = 0
     metadata.pop("last_stop_block_id_hash", None)
+
+
+@cache
+def _stale_clear_marker_regex() -> re.Pattern:
+    """Regex derived from the configured stale-clear marker template."""
+    template = CONFIG["ghost_clear_marker_template"]
+    prefix, suffix = template.split("{id}")
+    return re.compile(re.escape(prefix) + r"([A-Za-z0-9_.-]+)" + re.escape(suffix))
+
+
+def extract_stale_clear_task_ids(*texts: object) -> list[str]:
+    """Return unique task ids from configured stale-clear markers."""
+    combined = "".join(text for text in texts if isinstance(text, str) and text)
+    if not combined:
+        return []
+    return list(dict.fromkeys(str(match) for match in _stale_clear_marker_regex().findall(combined)))
 
 
 # === TaskLifecycle Class ===
@@ -1218,6 +1235,25 @@ class TaskLifecycle:
         block_count = computed.get('block_count', 1)
         consecutive = computed.get('consecutive', 1)
 
+        if ghost_enabled and consecutive >= min_consecutive:
+            transcript_text = ctx.transcript.text if ctx.transcript else ""
+            marker_ids = extract_stale_clear_task_ids(ctx.tool_result_str, transcript_text)
+            if marker_ids:
+                blocking_ids = {str(task["id"]) for task in incomplete_tasks}
+                cleared = self.clear_stale_task_markers(
+                    marker_ids,
+                    require_armed=False,
+                    allowed_task_ids=blocking_ids,
+                )
+                if cleared:
+                    incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
+                if cleared and not incomplete_tasks:
+                    ctx.add_chain_notification(
+                        f"Cleared stale task(s): {', '.join(f'#{c}' for c in cleared)}",
+                        channel="both",
+                    )
+                    return None
+
         # Build task list with status indicators (cap at max_resume_tasks)
         max_tasks = self.config.max_resume_tasks
         task_lines = []
@@ -1287,6 +1323,50 @@ class TaskLifecycle:
         # Reset staleness counter — AI just learned about tasks, give full countdown.
         ctx.tool_calls_since_task_update = 0
         return ctx.continue_running(injection)
+
+    def clear_stale_task_markers(
+        self,
+        task_ids: Iterable[str],
+        *,
+        require_armed: bool = True,
+        allowed_task_ids: Iterable[str] | None = None,
+    ) -> list[str]:
+        """Mark stale task ids ignored through the configured escape hatch.
+
+        Args:
+            task_ids: Task ids extracted from the configured marker template.
+            require_armed: If true, require the identical-stop threshold to be
+                armed in session metadata before clearing. Stop handling checks
+                the threshold before calling this method, so it passes false to
+                avoid re-reading counter state after it already holds the
+                relevant decision.
+            allowed_task_ids: Optional current blocking task-id set. When
+                provided, markers for unrelated or already non-blocking tasks are
+                ignored.
+        """
+        if not self.config.ghost_clear_enabled:
+            return []
+        if require_armed:
+            consecutive = self.session_metadata.get("consecutive_identical_stop_block_count", 0)
+            if consecutive < self.config.ghost_clear_min_consecutive_blocks:
+                return []
+
+        reason = CONFIG["ghost_clear_reason"]
+        cleared: list[str] = []
+        allowed = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids is not None else None
+        for tid in list(dict.fromkeys(str(task_id) for task_id in task_ids)):
+            if allowed is not None and tid not in allowed:
+                continue
+            try:
+                if self.ignore_task(tid, reason=reason):
+                    cleared.append(tid)
+                    self.log_event(
+                        "GHOST_CLEAR", f"task#{tid}",
+                        "Cleared via ghost-clear marker", "cleared",
+                    )
+            except Exception:
+                continue
+        return cleared
 
     def get_plan_approval_injection(self, ctx) -> Optional[str]:
         """Get plan task context as injection string for plan acceptance.

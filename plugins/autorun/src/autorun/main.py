@@ -97,8 +97,9 @@ except ImportError:
 # update_injection_outcome — REMOVED: ai_monitor injection no longer in production path
 
 # State management - core session infrastructure
-STATE_DIR = Path.home() / ".claude" / "sessions"
-STATE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_DIR = Path(os.environ.get("AUTORUN_TEST_STATE_DIR") or Path.home() / ".claude" / "sessions")
+if os.environ.get("AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT") == "1":
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 def sanitize_log_message(message: str, max_length: int = 10000) -> str:
     """Sanitize message for safe logging - prevents log injection attacks.
