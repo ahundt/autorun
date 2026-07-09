@@ -264,6 +264,17 @@ For more information: https://github.com/ahundt/autorun
         help="Install for Qwen Code only (Gemini-compatible extension surface)",
     )
     install_group.add_argument(
+        "--custom-harness",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help=(
+            "Install a custom Gemini-family harness at a custom config dir. "
+            "Format: name=flavor:binary:config_dir[:display]. "
+            "Supported flavors: gemini, qwen. Repeat for multiple targets."
+        ),
+    )
+    install_group.add_argument(
         "--codex",
         action="store_true",
         help="Install for Codex CLI only (default: install for all available CLIs)",
@@ -781,19 +792,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.install is not None:
         from autorun.install import install_plugins
 
-        return install_plugins(
-            args.install,
-            tool=args.tool,
-            force=args.force,
-            claude_only=args.claude,
-            gemini_only=args.gemini,
-            codex_only=args.codex,
-            antigravity_only=args.antigravity,
-            qwen_only=args.qwen,
-            conductor=args.conductor,
-            codex_hook_source=args.codex_hook_source,
-            codex_plugin_marketplace=args.codex_plugin_marketplace,
-        )
+        install_kwargs = {
+            "tool": args.tool,
+            "force": args.force,
+            "claude_only": args.claude,
+            "gemini_only": args.gemini,
+            "codex_only": args.codex,
+            "antigravity_only": args.antigravity,
+            "qwen_only": args.qwen,
+            "conductor": args.conductor,
+            "codex_hook_source": args.codex_hook_source,
+            "codex_plugin_marketplace": args.codex_plugin_marketplace,
+        }
+        if args.custom_harness:
+            install_kwargs["custom_harnesses"] = args.custom_harness
+        return install_plugins(args.install, **install_kwargs)
 
     # Status mode
     if args.status:

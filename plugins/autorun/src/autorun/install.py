@@ -112,6 +112,60 @@ class CmdResult:
         return text.lower() in self.output.lower()
 
 
+@dataclass(frozen=True, slots=True)
+class CustomHarnessInstall:
+    """Validated custom Gemini-family install target."""
+
+    name: str
+    flavor: str
+    binary: str
+    config_dir: Path
+    display_name: str
+
+
+_CUSTOM_GEMINI_FAMILY_FLAVORS = frozenset({"gemini", "qwen"})
+
+
+def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
+    """Parse `name=flavor:binary:config_dir[:display]` custom harness specs.
+
+    The `flavor` is the autorun hook identity passed to `hook_entry.py --cli`;
+    it must be a known Gemini-family identity so custom binaries cannot create
+    unvalidated response schemas.
+    """
+    raw = spec.strip()
+    if not raw or "=" not in raw:
+        raise ValueError(
+            "custom harness must use name=flavor:binary:config_dir[:display]"
+        )
+
+    name, rest = raw.split("=", 1)
+    parts = rest.split(":", 3)
+    if len(parts) < 3:
+        raise ValueError(
+            "custom harness must use name=flavor:binary:config_dir[:display]"
+        )
+
+    flavor, binary, config_dir_raw = (part.strip() for part in parts[:3])
+    display_name = parts[3].strip() if len(parts) == 4 and parts[3].strip() else name.strip()
+    name = name.strip()
+    if not name or not binary or not config_dir_raw:
+        raise ValueError(
+            "custom harness name, binary, and config_dir must be non-empty"
+        )
+    if flavor not in _CUSTOM_GEMINI_FAMILY_FLAVORS:
+        supported = ", ".join(sorted(_CUSTOM_GEMINI_FAMILY_FLAVORS))
+        raise ValueError(f"unsupported custom harness flavor {flavor!r}; supported flavors: {supported}")
+
+    return CustomHarnessInstall(
+        name=name,
+        flavor=flavor,
+        binary=binary,
+        config_dir=Path(config_dir_raw).expanduser(),
+        display_name=display_name,
+    )
+
+
 # =============================================================================
 # Subprocess Helper
 # =============================================================================
@@ -1335,8 +1389,10 @@ def _install_gemini_family_extensions(
     display_name: str,
     config_dir: Path,
     install_hint: str,
+    hook_cli_name: str | None = None,
 ) -> tuple[bool, str]:
     """Install Gemini-compatible extensions into Gemini-family CLIs."""
+    hook_cli_name = hook_cli_name or cli_name
     if not shutil.which(cli_name):
         msg = f"{cli_name} CLI not found. Install from: {install_hint}"
         print(msg)
@@ -1466,7 +1522,7 @@ def _install_gemini_family_extensions(
                     plugin_dir,
                     installed_dir,
                     ext_name,
-                    cli_name,
+                    hook_cli_name,
                 )
                 if n > 0:
                     print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
@@ -2767,6 +2823,7 @@ def install_plugins(
     conductor: bool = True,
     codex_hook_source: str = "user",
     codex_plugin_marketplace: str = "personal",
+    custom_harnesses: list[str] | tuple[str, ...] = (),
 ) -> int:
     """Install and enable plugins for Claude Code and/or Gemini CLI.
 
@@ -2782,6 +2839,8 @@ def install_plugins(
         conductor: Install Conductor extension for Gemini (default: True)
         codex_hook_source: Codex hook source: user, plugin, both, or none
         codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
+        custom_harnesses: Custom Gemini-family harness specs in
+            name=flavor:binary:config_dir[:display] form
 
     Returns:
         Exit code: 0 = success, 1 = failure
@@ -2795,6 +2854,7 @@ def install_plugins(
         - --codex: Installs only for Codex CLI (error if not available)
         - Multiple platform flags: Installs for all selected CLIs
         - --no-conductor: Skip Conductor (reduce scope to workspace only)
+        - --custom-harness: Install a custom Gemini/Qwen-flavored target
         - Continues even if one CLI fails (reports status for each)
 
     Note:
@@ -2831,6 +2891,11 @@ def install_plugins(
     print(f"Build Time: {__build_time__}")
     codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
     codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    try:
+        custom_targets = [parse_custom_harness_spec(spec) for spec in custom_harnesses]
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
 
     # Python version check
     if sys.version_info < (3, 10):
@@ -2860,7 +2925,7 @@ def install_plugins(
         print(f"Error: {e}")
         return 1
 
-    if not target_clis:
+    if not target_clis and not custom_targets:
         print("No target CLIs available or specified.")
         print(f"Available CLIs: {', '.join([k for k, v in available.items() if v]) or 'none'}")
         if claude_only and not available["claude"]:
@@ -2895,7 +2960,8 @@ def install_plugins(
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")
-    print(f"Target CLIs: {', '.join(target_clis)}")
+    target_labels = list(target_clis) + [f"custom:{target.name}" for target in custom_targets]
+    print(f"Target CLIs: {', '.join(target_labels)}")
     print()
 
     # UV environment check (warning only, not blocker)
@@ -2940,6 +3006,7 @@ def install_plugins(
     gemini_success = False
     antigravity_success = False
     qwen_success = False
+    custom_results: list[tuple[CustomHarnessInstall, bool, str]] = []
 
     # Install for Claude Code
     if "claude" in target_clis:
@@ -3036,6 +3103,22 @@ def install_plugins(
         if not qwen_success:
             print(f"   Qwen Code install failed: {qwen_msg}")
         all_succeeded = all_succeeded and qwen_success
+
+    for custom in custom_targets:
+        custom_success, custom_msg = _install_gemini_family_extensions(
+            marketplace_root=marketplace_root,
+            plugins=plugins,
+            force=force,
+            cli_name=custom.binary,
+            display_name=custom.display_name,
+            config_dir=custom.config_dir,
+            install_hint=f"install {custom.binary}",
+            hook_cli_name=custom.flavor,
+        )
+        custom_results.append((custom, custom_success, custom_msg))
+        if not custom_success:
+            print(f"   Custom harness {custom.name} install failed: {custom_msg}")
+        all_succeeded = all_succeeded and custom_success
 
     # Install for Codex CLI. Codex hook sources are explicit because user-level
     # hooks and plugin-bundled hooks run side by side instead of replacing each
@@ -3136,6 +3219,15 @@ def install_plugins(
             print(f"✓ Qwen Code: Plugins installed ({', '.join(plugins)})")
         else:
             print("✗ Qwen Code: Installation failed")
+
+    for custom, custom_success, _custom_msg in custom_results:
+        if custom_success:
+            print(
+                f"✓ {custom.display_name}: Plugins installed ({', '.join(plugins)}) "
+                f"using {custom.flavor} hook flavor at {custom.config_dir}"
+            )
+        else:
+            print(f"✗ {custom.display_name}: Installation failed")
 
     if "codex" in target_clis:
         if codex_success:
@@ -3719,6 +3811,17 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
     parser.add_argument("--antigravity", action="store_true", help="Install for Google Antigravity CLI only")
     parser.add_argument("--qwen", action="store_true", help="Install for Qwen Code only")
+    parser.add_argument(
+        "--custom-harness",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help=(
+            "Install a custom Gemini-family harness at a custom config dir. "
+            "Format: name=flavor:binary:config_dir[:display]. "
+            "Supported flavors: gemini, qwen. Repeat for multiple targets."
+        ),
+    )
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
         "--codex-hook-source",
@@ -3766,19 +3869,21 @@ def _install_module_main(argv: list[str] | None = None) -> int:
     if args.status:
         return show_status()
 
-    return install_plugins(
-        args.selection,
-        tool=args.tool,
-        force=args.force,
-        claude_only=args.claude,
-        gemini_only=args.gemini,
-        codex_only=args.codex,
-        antigravity_only=args.antigravity,
-        qwen_only=args.qwen,
-        conductor=args.conductor,
-        codex_hook_source=args.codex_hook_source,
-        codex_plugin_marketplace=args.codex_plugin_marketplace,
-    )
+    install_kwargs = {
+        "tool": args.tool,
+        "force": args.force,
+        "claude_only": args.claude,
+        "gemini_only": args.gemini,
+        "codex_only": args.codex,
+        "antigravity_only": args.antigravity,
+        "qwen_only": args.qwen,
+        "conductor": args.conductor,
+        "codex_hook_source": args.codex_hook_source,
+        "codex_plugin_marketplace": args.codex_plugin_marketplace,
+    }
+    if args.custom_harness:
+        install_kwargs["custom_harnesses"] = args.custom_harness
+    return install_plugins(args.selection, **install_kwargs)
 
 
 if __name__ == "__main__":

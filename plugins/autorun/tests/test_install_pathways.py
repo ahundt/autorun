@@ -483,6 +483,29 @@ class TestInstallMainAdapter:
             codex_hook_source="plugin", codex_plugin_marketplace="personal",
         )
 
+    def test_install_module_main_custom_harness_routes_to_install_plugins(self):
+        """Direct module install forwards custom Gemini-family harness specs."""
+        install = get_install_module()
+        spec = "lab=gemini:agy-lab:/tmp/agy-lab"
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
+            result = install._install_module_main(["--install", "--custom-harness", spec])
+
+        assert result == 0
+        mock_install.assert_called_once_with(
+            "all",
+            tool=False,
+            force=False,
+            claude_only=False,
+            gemini_only=False,
+            codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True,
+            codex_hook_source="user", codex_plugin_marketplace="personal",
+            custom_harnesses=[spec],
+        )
+
     def test_install_module_main_codex_plugin_marketplace_routes_to_install_plugins(self):
         """Verify direct module install honors --codex-plugin-marketplace."""
         install = get_install_module()
@@ -958,6 +981,88 @@ class TestAntigravityImportSync:
         assert message == "success"
         assert (["agy", "plugin", "import", "gemini"], 120) in calls
         assert synced == [(plugin_dir.resolve(), imported_ar, "ar", "antigravity")]
+
+
+class TestCustomHarnessInstall:
+    """Custom Gemini-family targets reuse the shared installer safely."""
+
+    def test_parse_custom_harness_spec_requires_known_gemini_family_flavor(self, tmp_path):
+        """Custom harness specs separate the binary from the known hook identity."""
+        install = get_install_module()
+        config_dir = tmp_path / "custom-home"
+
+        spec = install.parse_custom_harness_spec(
+            f"lab=gemini:agy-lab:{config_dir}:Antigravity Lab"
+        )
+
+        assert spec.name == "lab"
+        assert spec.flavor == "gemini"
+        assert spec.binary == "agy-lab"
+        assert spec.config_dir == config_dir
+        assert spec.display_name == "Antigravity Lab"
+
+    def test_parse_custom_harness_spec_rejects_arbitrary_hook_identity(self, tmp_path):
+        """Custom harnesses must not create unvalidated hook_entry.py --cli values."""
+        install = get_install_module()
+
+        with pytest.raises(ValueError, match="supported flavors"):
+            install.parse_custom_harness_spec(f"lab=unknown:agy-lab:{tmp_path}")
+
+    def test_custom_gemini_family_binary_stamps_known_hook_flavor(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Custom binary runs install commands, but hook_entry.py sees a known flavor."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        template = plugin_dir / "src" / "autorun" / "gemini_template"
+        template.mkdir(parents=True)
+        (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+
+        custom_home = tmp_path / "custom-gemini"
+        installed_ar = custom_home / "extensions" / "ar"
+        installed_ar.mkdir(parents=True)
+        calls = []
+
+        def fake_which(name):
+            return f"/usr/local/bin/{name}" if name == "agy-lab" else None
+
+        def fake_run_cmd(args, timeout=30):
+            calls.append((args, timeout))
+            return install.CmdResult(True, "")
+
+        synced = []
+
+        def fake_sync(plugin, ext, ext_name, cli_name="gemini"):
+            synced.append((plugin.resolve(), ext, ext_name, cli_name))
+            return (0, 0)
+
+        monkeypatch.setattr(install.shutil, "which", fake_which)
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(install, "_sync_gemini_extension_resources", fake_sync)
+
+        ok, message = install._install_gemini_family_extensions(
+            marketplace_root=marketplace,
+            plugins=["autorun"],
+            force=False,
+            cli_name="agy-lab",
+            display_name="Antigravity Lab",
+            config_dir=custom_home,
+            install_hint="install agy-lab",
+            hook_cli_name="gemini",
+        )
+
+        assert ok is True, message
+        assert any(args[:3] == ["agy-lab", "extensions", "install"] for args, _ in calls)
+        assert synced == [(plugin_dir.resolve(), installed_ar, "ar", "gemini")]
 
 
 if __name__ == "__main__":

@@ -1018,6 +1018,98 @@ PYTHONPATH=plugins/autorun/src uv run --isolated \
 
 Result: `58 passed`.
 
+Stage 8 hook integration/custom harness checkpoint, 2026_07_09_0005:
+
+- External documentation refresh:
+  - Codex hooks documentation confirms Codex loads hooks in additive source
+    layers and supports user/project/session/plugin/managed hook sources. It
+    also confirms `PreToolUse` deny output uses
+    `hookSpecificOutput.permissionDecision = "deny"` and that unsupported
+    fields such as `continue`, `stopReason`, and `suppressOutput` on
+    `PreToolUse` cause Codex hook-run failures:
+    https://developers.openai.com/codex/hooks.
+  - Claude Code hooks documentation confirms `PreToolUse`, `PostToolUse`,
+    `UserPromptSubmit`, `Stop`, and plugin/agent frontmatter hook formats, and
+    confirms direct slash command expansion has a separate hook path from tool
+    calls:
+    https://docs.anthropic.com/en/docs/claude-code/hooks.
+  - Gemini CLI hooks reference confirms Gemini-family event names such as
+    `SessionStart`, `SessionEnd`, `BeforeModel`, `AfterModel`, and
+    `PreCompress`, and confirms Gemini hook outputs have different event-level
+    flow-control support from Claude/Codex:
+    https://geminicli.com/docs/hooks/reference/.
+  - Qwen Code public repository advertises hooks, skills, subagents, and
+    multi-provider support; local CLI probing remains the more authoritative
+    source for exact extension subcommands:
+    https://github.com/QwenLM/qwen-code.
+  - Public Antigravity 2.0 reporting is not primary API documentation, but it
+    corroborates that Hooks, Agent Skills, Subagents, and Extensions are carried
+    forward as Antigravity plugins while Gemini CLI consumer support was being
+    retired:
+    https://www.techradar.com/pro/google-is-making-gemini-cli-users-switch-to-its-new-antigravity-2-0-so-what-will-it-mean-for-you.
+- Local source-of-truth pass confirmed the current shared anchors are
+  `platforms.py::Platform`, `install.py::_install_gemini_family_extensions`,
+  `_sync_gemini_extension_resources`, `_set_gemini_family_hook_cli`, and the
+  existing Codex/Claude dedicated installer paths. The fix does not add a
+  second platform registry or second hook schema table.
+- The concrete gap addressed here is custom Gemini-family install locations.
+  `autorun --install --custom-harness name=flavor:binary:config_dir[:display]`
+  now accepts repeatable custom targets for known Gemini-family hook flavors
+  (`gemini`, `qwen`). The custom binary is used only to run extension commands;
+  installed hooks are stamped with the known `hook_entry.py --cli <flavor>`
+  value, preventing arbitrary custom strings from entering hook schema
+  selection.
+- `_install_gemini_family_extensions()` now separates executable name
+  (`cli_name`) from hook identity (`hook_cli_name`). Existing Gemini and Qwen
+  callers keep the default where both values are the same. Custom harnesses can
+  run a custom binary while reusing the vetted Gemini/Qwen response schema and
+  event mapping.
+- Scope deliberately not claimed by this checkpoint: arbitrary custom Claude or
+  Codex config directories. Those installers still have dedicated path and
+  source-composition rules (`~/.claude` plugin cache, `~/.codex/hooks.json`,
+  Codex plugin marketplace and hook-source markers). Supporting custom strict
+  harness directories should be a separate TDD slice with tests for preserving
+  third-party hooks and user/plugin source transitions.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting::test_install_with_custom_harness_passes_custom_specs \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting::test_install_with_codex_hook_source_passes_plugin_mode \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting::test_install_with_qwen_passes_qwen_only_flag -q
+```
+
+Result: `15 passed`.
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_platform_registry.py \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallPathwayRouting \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_install_pathways.py::TestGenerateGeminiTomlCommands \
+  plugins/autorun/tests/test_install_pathways.py::TestAntigravityImportSync \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py::TestGeminiHooksJson \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py::TestClaudeHooksJson -q
+```
+
+Result: `74 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py
+```
+
+Result: passed. `E402` remains intentionally ignored for `install.py` because
+that module has an executable Python-version guard before normal imports.
+
 Stage 7 skill-doc safety checkpoint, 2026_07_08_2315:
 
 - Added a focused skill-doc regression test for two safety properties:

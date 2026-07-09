@@ -550,6 +550,26 @@ class TestMainFunctionRouting:
         )
         assert result == 0
 
+    def test_install_with_custom_harness_passes_custom_specs(self):
+        """Test that --custom-harness reaches install_plugins unchanged."""
+        from autorun.__main__ import main
+
+        spec = "lab=gemini:agy-lab:/tmp/agy-lab"
+        with mock.patch(
+            "autorun.install.install_plugins", return_value=0
+        ) as mock_install:
+            result = main(["--install", "--custom-harness", spec])
+
+        mock_install.assert_called_once_with(
+            "all", tool=False, force=False,
+            claude_only=False, gemini_only=False, codex_only=False,
+            antigravity_only=False,
+            qwen_only=False,
+            conductor=True, codex_hook_source="user", codex_plugin_marketplace="personal",
+            custom_harnesses=[spec],
+        )
+        assert result == 0
+
     def test_install_with_qwen_passes_qwen_only_flag(self):
         """Test that --install --qwen targets Qwen Code installation."""
         from autorun.__main__ import main
