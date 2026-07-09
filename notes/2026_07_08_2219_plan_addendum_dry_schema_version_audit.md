@@ -531,6 +531,41 @@ Tests to add first:
 - Corrupt JSON, unknown DB-like files, and giant logs are classified without
   deletion.
 
+Stage 5 audit, 2026_07_09_0008:
+
+- Read-only source check:
+  - `TaskLifecycle.handle_stop()` and `handle_session_start()` use per-session
+    `session_state()` through `TaskLifecycle._session_state()`, not
+    `all_session_state()`.
+  - `TaskLifecycle.cli_gc()` uses `all_session_state()` only inside the explicit
+    maintenance command, with `dry_run`, TTL, current-session protection,
+    incomplete-task protection, optional archive, and confirmation controls.
+  - Existing GC tests cover dry-run no mutation, archive-before-delete,
+    current-session protection, incomplete-task protection, no-archive mode,
+    bulk clear, and lock interaction.
+- Root performance risk that remains:
+  - `session_manager._JSONStore` stores every session key in one
+    `daemon_state.json`. Even per-session `session_state(session_id)` loads and
+    saves the full JSON object. Therefore normal hot hook paths avoid explicit
+    all-session enumeration but still scale with total state file size.
+  - This is a schema/storage architecture issue, not a simple accidental
+    `all_session_state()` call. A correct fix needs a dedicated TDD slice for a
+    consolidated session-manager migration strategy, rollback/restore behavior,
+    and compatibility with `all_session_state()` maintenance consumers.
+- Validation:
+  - `PYTHONPATH=plugins/autorun/src uv run --isolated --with pytest --with
+    pytest-timeout --with filelock --with psutil pytest
+    plugins/autorun/tests/test_task_lifecycle_ghost_task_bug.py::TestGarbageCollection
+    plugins/autorun/tests/test_task_lifecycle_ghost_task_bug.py::TestGCLocking::test_gc_uses_session_state_for_locking
+    plugins/autorun/tests/test_task_cli_commands.py::test_cli_gc_dry_run_previews_without_changes
+    plugins/autorun/tests/test_task_cli_commands.py::test_cli_gc_archives_before_deletion
+    -q` => `11 passed`.
+- Maintainer conclusion:
+  - Do not add a second task-lifecycle persistence path. The next Phase 5 code
+    change, if taken, should be inside `session_manager` and should preserve
+    existing `session_state()` / `all_session_state()` APIs while adding
+    migration tests with large fixtures and corrupt-file classification.
+
 ### Phase 6: Daemon Handoff and Restart Scoping
 
 Existing DRY anchors:
