@@ -1164,6 +1164,53 @@ uv run ruff check --ignore E402 \
 
 Result: passed.
 
+Stage 8 custom harness idempotence checkpoint, 2026_07_09_0016:
+
+- Added custom harness regression coverage for upgrade/reinstall safety.
+- Scoped Codex config-dir installs are now tested for repeatability: running
+  `_install_for_codex(..., codex_dir=<custom>, install_global_assets=False)`
+  twice does not duplicate autorun hook entries within any event and does not
+  duplicate the autorun-owned `AGENTS.md` guidance block.
+- Top-level `install_plugins(..., custom_harnesses=[...])` now has a regression
+  test proving `flavor=codex` routes to `_install_for_codex` with
+  `install_global_assets=False`, `codex_hook_source="user"`, and the supplied
+  config directory. This prevents custom Codex-like harness installs from
+  mutating global `~/.agents` skills or Codex plugin marketplace state.
+- The original global Codex installer behavior remains covered by
+  `test_codex_install.py`; the new custom path is an opt-in scoped install
+  surface rather than a replacement for normal Codex CLI setup.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall -q
+```
+
+Result: `9 passed`.
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_codex_install.py \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting -q
+```
+
+Result: `73 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py
+```
+
+Result: passed.
+
 Stage 7 skill-doc safety checkpoint, 2026_07_08_2315:
 
 - Added a focused skill-doc regression test for two safety properties:

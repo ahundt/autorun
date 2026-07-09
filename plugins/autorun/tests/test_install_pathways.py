@@ -1155,6 +1155,88 @@ class TestCustomHarnessInstall:
         assert any("--cli codex" in command for command in commands)
         assert (custom_codex / "AGENTS.md").is_file()
 
+    def test_custom_codex_config_dir_reinstall_is_idempotent(self, tmp_path, monkeypatch):
+        """Repeated custom Codex installs must not duplicate hooks or AGENTS blocks."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        hooks_dir = plugin_dir / "hooks"
+        template = plugin_dir / "src" / "autorun" / "codex_template"
+        hooks_dir.mkdir(parents=True)
+        template.mkdir(parents=True)
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        (template / "AGENTS.md").write_text("# autorun\nar:sos\n", encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+        custom_codex = tmp_path / "custom-codex"
+
+        monkeypatch.setattr(install, "_install_codex_skills", lambda *_args, **_kwargs: (0, 0))
+        monkeypatch.setattr(
+            install,
+            "_install_codex_plugin_marketplace",
+            lambda *_args, **_kwargs: install.CodexPluginMarketplaceInstall(False, False),
+        )
+
+        for _ in range(2):
+            ok, message = install._install_for_codex(
+                marketplace,
+                ["autorun"],
+                force=False,
+                codex_dir=custom_codex,
+                install_global_assets=False,
+            )
+            assert ok is True, message
+
+        hooks = json.loads((custom_codex / "hooks.json").read_text(encoding="utf-8"))
+        for entries in hooks.get("hooks", {}).values():
+            event_commands = [
+                hook["command"]
+                for entry in entries
+                for hook in entry.get("hooks", [])
+                if isinstance(hook, dict) and "command" in hook
+            ]
+            assert len(event_commands) == len(set(event_commands))
+        agents = (custom_codex / "AGENTS.md").read_text(encoding="utf-8")
+        assert agents.count("<!-- autorun:codex-agents-md:start -->") == 1
+        assert agents.count("<!-- autorun:codex-agents-md:end -->") == 1
+
+    def test_install_plugins_routes_custom_codex_without_global_assets(self, tmp_path, monkeypatch):
+        """Top-level custom Codex install stays scoped to the supplied config dir."""
+        install = get_install_module()
+        custom_codex = tmp_path / "custom-codex"
+        calls = []
+
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: tmp_path / "marketplace")
+        monkeypatch.setattr(install, "_update_package_metadata", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(install, "detect_available_clis", lambda: {name: False for name in install.PLATFORMS})
+        monkeypatch.setattr(install, "_check_uv_env", lambda *_args, **_kwargs: install.CmdResult(True, ""))
+        monkeypatch.setattr(install.shutil, "which", lambda name: None)
+        monkeypatch.setattr(install, "_check_hook_conflicts", lambda: None)
+        monkeypatch.setattr(install, "_restart_daemon_if_running", lambda: None)
+
+        def fake_install_for_codex(*args, **kwargs):
+            calls.append((args, kwargs))
+            return (True, "success")
+
+        monkeypatch.setattr(install, "_install_for_codex", fake_install_for_codex)
+
+        rc = install.install_plugins(
+            "autorun",
+            custom_harnesses=[f"lab=codex:codex-lab:{custom_codex}:Codex Lab"],
+            conductor=False,
+        )
+
+        assert rc == 0
+        assert len(calls) == 1
+        _args, kwargs = calls[0]
+        assert kwargs["codex_dir"] == custom_codex
+        assert kwargs["install_global_assets"] is False
+        assert kwargs["codex_hook_source"] == "user"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
