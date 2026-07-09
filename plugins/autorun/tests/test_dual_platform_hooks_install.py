@@ -473,6 +473,7 @@ class TestManifestFiles:
         workspace_init = (REPO_ROOT / "src" / "autorun_workspace" / "__init__.py").read_text(encoding="utf-8")
         autorun_init = (PLUGIN_ROOT / "src" / "autorun" / "__init__.py").read_text(encoding="utf-8")
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        gemini_md = (REPO_ROOT / "GEMINI.md").read_text(encoding="utf-8")
         skill_versions = [
             (PLUGIN_ROOT / "skills" / "ai-session-tools" / "SKILL.md").read_text(encoding="utf-8"),
             (PLUGIN_ROOT / "skills" / "claude-session-tools" / "SKILL.md").read_text(encoding="utf-8"),
@@ -488,6 +489,8 @@ class TestManifestFiles:
             "workspace __version__": f'__version__ = "{expected}"' in workspace_init,
             "autorun __version__": f'__version__ = "{expected}"' in autorun_init,
             "README expected output": f"autorun-workspace@{expected}" in readme,
+            "GEMINI expected output": f"ar@{expected}" in gemini_md,
+            "GEMINI stale 0.11.0": "0.11.0" not in gemini_md,
             "ai-session-tools skill": f'version: "{expected}"' in skill_versions[0],
             "claude-session-tools skill": f'version: "{expected}"' in skill_versions[1],
         }

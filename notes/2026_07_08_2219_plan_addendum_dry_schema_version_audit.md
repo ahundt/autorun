@@ -977,6 +977,34 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 10 Gemini doc version checkpoint, 2026_07_09_0043:
+
+- The existing release version consistency test covered README, manifests,
+  package metadata, and selected skill versions, but not `GEMINI.md`.
+- Found stale Gemini install verification examples still saying `ar@0.11.0`
+  and `pdf-extractor@0.11.0` while the release metadata is `0.12.0`.
+- Extended `TestManifestFiles.test_version_consistency` to require
+  `GEMINI.md` to contain `ar@<current version>` and to reject stale `0.11.0`
+  text. This keeps Gemini-facing docs tied to the same version source checked
+  for README and manifests.
+- Updated the four stale `GEMINI.md` verification examples to `0.12.0`.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py::TestManifestFiles::test_version_consistency -q
+```
+
+Result: `1 passed`.
+
+```bash
+uv run ruff check plugins/autorun/tests/test_dual_platform_hooks_install.py
+```
+
+Result: passed.
+
 Stage 9 skill audit checkpoint, 2026_07_09_0040:
 
 - Audited `plugins/autorun/skills/autorun-maintainer/SKILL.md` against the
