@@ -1184,6 +1184,29 @@ class TestCustomHarnessInstall:
         assert spec.flavor == "antigravity"
         assert spec.display_name == "Antigravity Lab"
 
+    def test_parse_custom_harness_spec_preserves_colons_in_config_dir(self, tmp_path):
+        """Config paths may contain ':' and should not be mistaken for display."""
+        install = get_install_module()
+        config_dir = tmp_path / "custom:profile"
+
+        spec = install.parse_custom_harness_spec(f"lab=gemini:agy-lab:{config_dir}")
+
+        assert spec.config_dir == config_dir
+        assert spec.display_name == "lab"
+
+    def test_parse_custom_harness_spec_accepts_explicit_display_separator(self, tmp_path):
+        """Use ::display when config paths themselves contain ':' characters."""
+        install = get_install_module()
+        config_dir = tmp_path / "custom:profile"
+
+        spec = install.parse_custom_harness_spec(
+            f"lab=agy:agy-lab:{config_dir}::Antigravity Lab"
+        )
+
+        assert spec.config_dir == config_dir
+        assert spec.flavor == "antigravity"
+        assert spec.display_name == "Antigravity Lab"
+
     def test_custom_antigravity_binary_stamps_antigravity_hook_flavor(
         self,
         tmp_path,
@@ -1350,6 +1373,37 @@ class TestCustomHarnessInstall:
         agents = (custom_codex / "AGENTS.md").read_text(encoding="utf-8")
         assert agents.count("<!-- autorun:codex-agents-md:start -->") == 1
         assert agents.count("<!-- autorun:codex-agents-md:end -->") == 1
+
+    def test_custom_codex_invalid_hooks_reports_custom_path(self, tmp_path):
+        """Malformed custom Codex hooks must report the scoped config path."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        hooks_dir = plugin_dir / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir(parents=True)
+        (marketplace_meta / "marketplace.json").write_text(
+            '{"plugins": [{"name": "autorun", "source": "./plugins/autorun"}]}',
+            encoding="utf-8",
+        )
+        custom_codex = tmp_path / "custom-codex"
+        custom_codex.mkdir()
+        hooks_path = custom_codex / "hooks.json"
+        hooks_path.write_text("{not-json", encoding="utf-8")
+
+        ok, message = install._install_for_codex(
+            marketplace,
+            ["autorun"],
+            force=False,
+            codex_dir=custom_codex,
+            install_global_assets=False,
+        )
+
+        assert ok is False
+        assert str(hooks_path) in message
+        assert "~/.codex/hooks.json" not in message
 
     def test_install_plugins_routes_custom_codex_without_global_assets(self, tmp_path, monkeypatch):
         """Top-level custom Codex install stays scoped to the supplied config dir."""

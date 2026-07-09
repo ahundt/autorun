@@ -982,6 +982,104 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 14 final validation closure, 2026_07_09_020436_EDT:
+
+- Latest source-focused validation result for this worktree:
+  `3836 passed, 74 skipped, 3 deselected`.
+- The 3 deselected checks are the live deployed-copy sync assertions for
+  Claude cache and Gemini extension hook-entry copies. They are intentionally
+  not fixed by mutating live install paths from this isolated worktree.
+- The full default suite still reports those live installed-copy mismatches
+  until autorun is deliberately installed from the intended release tree.
+
+Stage 14 diff review checkpoint, 2026_07_09_020436_EDT:
+
+- Reviewed the branch diff against `main` at merge-base
+  `fb3e901ab8a8e928c389ad7f39a966884f79cdd5`, focusing on harness API
+  boundaries: installer argument parsing, Codex/Gemini-family hook identity,
+  daemon restart ownership, hook timeout layering, session-state isolation, and
+  stale-task marker handling.
+- Fixed a custom harness parser edge case: `name=flavor:binary:config_dir`
+  now preserves literal `:` characters inside `config_dir` instead of treating
+  them as an optional display suffix. `::display` is documented and tested as
+  the unambiguous display separator when a display name is needed.
+- Fixed a custom Codex install diagnostic: malformed custom `hooks.json` files
+  now report the actual custom config path instead of hard-coding
+  `~/.codex/hooks.json`.
+- Fixed scoped daemon restart ownership: lock-file PID reads now obey the same
+  source-tree filter as psutil fallback discovery, and a source-scoped restart
+  refuses to clean up or replace a responding daemon socket when no daemon from
+  the current source tree owns the lock. The risky broad cleanup remains
+  explicit as `--restart-all-daemons`.
+- Fixed an accidental default live test: `test_gemini_session_start_hook_fires`
+  invokes the real `gemini` CLI, so it is now gated behind
+  `AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1` like the neighboring Gemini E2E
+  tests.
+- `git diff --check` on the working tree: passed.
+- `ruff check --ignore E402` on the touched source/test files: passed.
+- Targeted regression validation:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-arm64 \
+uv run --project plugins/autorun \
+  --python /opt/homebrew/opt/python@3.12/bin/python3.12 \
+  --with pytest --with pytest-timeout --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_gemini_before_tool_hooks.py::test_gemini_session_start_hook_fires \
+  plugins/autorun/tests/test_daemon_restart_safety.py \
+  plugins/autorun/tests/test_install_pathways.py::TestCustomHarnessInstall \
+  plugins/autorun/tests/test_install_pathways.py::TestAntigravityImportSync \
+  plugins/autorun/tests/test_client_fail_closed.py \
+  plugins/autorun/tests/test_hook_entry.py::TestHookEntryExecutionPriority \
+  plugins/autorun/tests/test_bootstrap_config.py::TestCLIArgumentParsing \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting -q
+```
+
+Result: `95 passed, 1 skipped`.
+
+- Full default suite after the parser/restart review fixes:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-arm64 \
+uv run --project plugins/autorun \
+  --python /opt/homebrew/opt/python@3.12/bin/python3.12 \
+  --with pytest --with pytest-timeout --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests -q
+```
+
+Result before gating the accidental live Gemini prompt test:
+`3836 passed, 73 skipped, 4 failed`.
+
+The failures were:
+
+- live installed-copy mismatch:
+  `test_claude_cache_hook_entry_matches_source`
+- live installed-copy mismatch:
+  `test_gemini_extension_hook_entry_matches_source`
+- live installed-copy mismatch:
+  `test_cache_matches_source_hook_entry`
+- accidental ungated live Gemini invocation:
+  `test_gemini_session_start_hook_fires`
+
+The first three failures remain release-install checks, not source-worktree
+failures: the live files in `~/.claude/plugins/cache/autorun/ar/0.12.0` and
+`~/.gemini/extensions/ar` are older than this branch. They should be cleared by
+a deliberate install from the intended release tree, not by silently mutating
+live hook locations from this isolated worktree while other sessions may be
+running.
+
+- Source-focused full suite after the live Gemini test gate:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-arm64 \
+uv run --project plugins/autorun \
+  --python /opt/homebrew/opt/python@3.12/bin/python3.12 \
+  --with pytest --with pytest-timeout --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests -q \
+  -k 'not test_claude_cache_hook_entry_matches_source and not test_gemini_extension_hook_entry_matches_source and not test_cache_matches_source_hook_entry'
+```
+
+Result: `3836 passed, 74 skipped, 3 deselected`.
+
 Stage 12 native Antigravity checkpoint, 2026_07_09_0101:
 
 - Closed the earlier native Antigravity deferral without forking Gemini-family

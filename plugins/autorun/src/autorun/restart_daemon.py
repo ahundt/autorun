@@ -43,6 +43,15 @@ LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 RESTART_LOCK_PATH = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
 
 
+def _pid_matches_src(pid: int, src_dir: Path) -> bool:
+    """Return whether a live daemon PID was launched from this source tree."""
+    try:
+        cmdline_str = ' '.join(psutil.Process(pid).cmdline())
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    return 'from autorun.daemon import main' in cmdline_str and str(src_dir) in cmdline_str
+
+
 def get_daemon_pid(*, src_dir: Path | None = None) -> int | None:
     """Get daemon PID from lock file, with process discovery fallback.
 
@@ -61,6 +70,8 @@ def get_daemon_pid(*, src_dir: Path | None = None) -> int | None:
         try:
             pid = int(LOCK_PATH.read_text().strip())
             if psutil.pid_exists(pid):
+                if src_dir is not None and not _pid_matches_src(pid, src_dir):
+                    return None
                 return pid
         except (ValueError, OSError):
             pass
@@ -87,7 +98,7 @@ def is_daemon_responding() -> bool:
     return ipc.is_responding()
 
 
-def wait_for_shutdown(max_wait: float = 5.0) -> bool:
+def wait_for_shutdown(max_wait: float = 5.0, *, src_dir: Path | None = None) -> bool:
     """Poll for daemon shutdown with progress dots.
 
     CRITICAL: Waits for BOTH PID to exit AND socket to close.
@@ -98,7 +109,7 @@ def wait_for_shutdown(max_wait: float = 5.0) -> bool:
     start = time.time()
     while time.time() - start < max_wait:
         # Both conditions must be true for clean shutdown
-        pid_gone = not get_daemon_pid()
+        pid_gone = not get_daemon_pid(src_dir=src_dir)
         socket_closed = not is_daemon_responding()
 
         if pid_gone and socket_closed:
@@ -395,7 +406,7 @@ def _all_daemon_processes() -> list:
     ]
 
 
-def _stop_daemon(pid: int) -> None:
+def _stop_daemon(pid: int, *, src_dir: Path | None = None) -> None:
     """Stop a running daemon gracefully, with SIGKILL fallback.
 
     Steps:
@@ -412,7 +423,7 @@ def _stop_daemon(pid: int) -> None:
         pass
 
     # Wait for FULL shutdown (PID gone AND socket closed)
-    shutdown_clean = wait_for_shutdown(max_wait=5.0)
+    shutdown_clean = wait_for_shutdown(max_wait=5.0, src_dir=src_dir)
 
     if not shutdown_clean:
         # Daemon didn't shut down cleanly - force it
@@ -472,10 +483,10 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
         # install's daemon.
         pid = get_daemon_pid(src_dir=src_dir)
 
-        # Steps 2-3: Stop ALL existing daemons (handles multiple daemon edge case)
+        # Steps 2-3: Stop the daemon owned by this source tree, if any.
         if pid:
             print(f"Daemon running (PID {pid})")
-            _stop_daemon(pid)
+            _stop_daemon(pid, src_dir=src_dir)
         else:
             print("Daemon not running")
 
@@ -491,6 +502,12 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
             time.sleep(0.5)
+        elif not pid and not all_daemons and is_daemon_responding():
+            print("  ✗ Refusing scoped restart: daemon socket responds, but no")
+            print("    daemon from this source tree owns the current lock.")
+            print("    Use --restart-all-daemons only for explicit recovery, or")
+            print("    set AUTORUN_HOME to isolate this worktree.")
+            return 1
 
         # Cleanup any stale files
         if ipc.SOCKET_PATH.exists() or LOCK_PATH.exists():

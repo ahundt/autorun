@@ -61,4 +61,3 @@ print(json.dumps({
     assert data["state_dir"] == str(tmp_path / "state")
     assert "daemon_state.json" in data["files"]
     assert not (tmp_path / "home" / ".claude" / "sessions").exists()
-

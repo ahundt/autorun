@@ -416,6 +416,29 @@ class TestPsutilProcessLifecycle:
                     assert result == os.getpid()
                     mock_iter.assert_not_called()
 
+    def test_get_daemon_pid_filters_lock_file_by_source_tree(self, tmp_path):
+        """Scoped PID discovery must not claim another source tree's lock PID."""
+        from autorun.restart_daemon import get_daemon_pid
+
+        current_src = tmp_path / "current" / "plugins" / "autorun" / "src"
+        other_src = tmp_path / "other" / "plugins" / "autorun" / "src"
+        current_src.mkdir(parents=True)
+        other_src.mkdir(parents=True)
+
+        with mock.patch('autorun.restart_daemon.LOCK_PATH') as mock_lock:
+            mock_lock.exists.return_value = True
+            mock_lock.read_text.return_value = "222"
+            mock_lock.with_suffix.return_value = mock.MagicMock(exists=mock.MagicMock(return_value=False))
+            with mock.patch('psutil.pid_exists', return_value=True):
+                with mock.patch('psutil.Process') as process_cls:
+                    process_cls.return_value.cmdline.return_value = [
+                        sys.executable,
+                        "-c",
+                        f"sys.path.insert(0, r'{other_src}'); from autorun.daemon import main; main()",
+                    ]
+
+                    assert get_daemon_pid(src_dir=current_src) is None
+
     def test_no_os_kill_in_restart_daemon(self):
         """Verify restart_daemon.py contains no os.kill calls (all replaced by psutil)."""
         import inspect
@@ -472,6 +495,28 @@ class TestPsutilProcessLifecycle:
         current_proc.kill.assert_called_once_with()
         other_proc.kill.assert_not_called()
 
+    def test_scoped_restart_refuses_unowned_responding_daemon(self, tmp_path):
+        """A worktree restart must not clean up or replace another live daemon."""
+        import autorun.restart_daemon as restart_mod
+
+        src_dir = tmp_path / "current" / "plugins" / "autorun" / "src"
+        src_dir.mkdir(parents=True)
+
+        @contextmanager
+        def acquired_restart_lock():
+            yield True
+
+        with mock.patch.object(restart_mod, "restart_lock", acquired_restart_lock):
+            with mock.patch.object(restart_mod, "_resolve_src_dir", return_value=src_dir):
+                with mock.patch.object(restart_mod, "get_daemon_pid", return_value=None):
+                    with mock.patch.object(restart_mod, "is_daemon_responding", return_value=True):
+                        with mock.patch.object(restart_mod, "_start_daemon") as start:
+                            with mock.patch.object(restart_mod, "cleanup_stale_files") as cleanup:
+                                assert restart_mod.restart_daemon() == 1
+
+        start.assert_not_called()
+        cleanup.assert_not_called()
+
     def test_restart_discovers_pid_after_resolving_source_tree(self, tmp_path):
         """Normal restart must source-filter fallback daemon discovery."""
         import autorun.restart_daemon as restart_mod
@@ -490,7 +535,7 @@ class TestPsutilProcessLifecycle:
                     with mock.patch.object(restart_mod, "_clear_pycache"):
                         with mock.patch.object(restart_mod, "_check_conflicting_packages"):
                             with mock.patch.object(restart_mod, "_start_daemon", return_value=True):
-                                with mock.patch.object(restart_mod, "is_daemon_responding", return_value=True):
+                                with mock.patch.object(restart_mod, "is_daemon_responding", side_effect=[False, True]):
                                     with mock.patch.object(restart_mod, "verify_bashlex", return_value=True):
                                         with mock.patch.object(restart_mod.psutil, "process_iter", return_value=[]):
                                             assert restart_mod.restart_daemon() == 0

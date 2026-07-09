@@ -132,7 +132,8 @@ def custom_harness_spec_help() -> str:
         f"SPEC format: {CUSTOM_HARNESS_SPEC_FORMAT}; "
         f"flavor: {flavors} (agy is an alias for antigravity); "
         "binary is the CLI executable; config_dir is the harness config root; "
-        "display is optional. Repeat for multiple targets."
+        "display is optional. Use ::display when config_dir contains ':'. "
+        "Repeat for multiple targets."
     )
 
 

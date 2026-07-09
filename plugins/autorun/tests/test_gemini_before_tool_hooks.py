@@ -354,6 +354,11 @@ def test_gemini_before_tool_hook_structure(
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
+    reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
+           "this test runs Gemini CLI which can make a real backend call"
+)
 def test_gemini_session_start_hook_fires(
     gemini_available,
     gemini_settings_enabled,

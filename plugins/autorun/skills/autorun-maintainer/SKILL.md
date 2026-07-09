@@ -81,7 +81,7 @@ Use `autorun --restart-daemon` for the current install/source tree. Use `autorun
 *   **Dry-run install preview**: `autorun --install-dry-run`
 *   **Custom harness status**: `autorun --status --custom-harness SPEC`
 *   **Custom harness install**: `autorun --install --custom-harness SPEC`
-*   **SPEC grammar**: `name=flavor:binary:config_dir[:display]`
+*   **SPEC grammar**: `name=flavor:binary:config_dir[:display]`; use `::display` when `config_dir` contains a literal `:`
 *   **Supported flavors**: `gemini`, `qwen`, `antigravity`, `agy` (alias for `antigravity`), and `codex`
 
 ### Critical Installer Fixes:
@@ -146,7 +146,7 @@ If synchronization fails, verify these locations for stale code:
 9.  **Codex Plugin Cache**: `~/.codex/plugins/cache/personal/autorun/<version>/`
 10. **Antigravity Extension**: `~/.gemini/antigravity-cli/extensions/ar/` or the configured custom Antigravity root.
 11. **Qwen Extension**: `~/.qwen/extensions/ar/`
-12. **Custom Harness Root**: the `config_dir` from `name=flavor:binary:config_dir[:display]`
+12. **Custom Harness Root**: the `config_dir` from `name=flavor:binary:config_dir[:display]`, using `::display` when `config_dir` contains a literal `:`
 
 ---
 

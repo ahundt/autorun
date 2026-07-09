@@ -134,7 +134,8 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
 
     The `flavor` is the autorun hook identity passed to `hook_entry.py --cli`;
     it must be a known hook identity so custom binaries cannot create
-    unvalidated response schemas.
+    unvalidated response schemas. Use `::display` when config_dir contains a
+    literal `:` so the optional display suffix stays unambiguous.
     """
     raw = spec.strip()
     if not raw or "=" not in raw:
@@ -143,14 +144,23 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
         )
 
     name, rest = raw.split("=", 1)
-    parts = rest.split(":", 3)
-    if len(parts) < 3:
+    parts = rest.split(":", 2)
+    if len(parts) != 3:
         raise ValueError(
             f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
         )
 
-    raw_flavor, binary, config_dir_raw = (part.strip() for part in parts[:3])
-    display_name = parts[3].strip() if len(parts) == 4 and parts[3].strip() else name.strip()
+    raw_flavor, binary, config_dir_tail = (part.strip() for part in parts)
+    config_dir_raw = config_dir_tail
+    display_name = name.strip()
+    if "::" in config_dir_tail:
+        config_dir_raw, display = (part.strip() for part in config_dir_tail.rsplit("::", 1))
+        display_name = display or display_name
+    elif ":" in config_dir_tail:
+        maybe_config, maybe_display = (part.strip() for part in config_dir_tail.rsplit(":", 1))
+        if any(char.isspace() for char in maybe_display):
+            config_dir_raw = maybe_config
+            display_name = maybe_display
     name = name.strip()
     if not name or not binary or not config_dir_raw:
         raise ValueError(
@@ -1933,7 +1943,7 @@ def _install_for_codex(
         try:
             existing = json.loads(hooks_path.read_text(encoding="utf-8"))
         except Exception as exc:  # malformed file — surface but don't clobber
-            return (False, f"~/.codex/hooks.json is not valid JSON: {exc}")
+            return (False, f"{hooks_path} is not valid JSON: {exc}")
 
     autorun_block = (
         _build_codex_hook_block(plugin_dir)
@@ -2985,7 +2995,8 @@ def install_plugins(
         codex_hook_source: Codex hook source: user, plugin, both, or none
         codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
         custom_harnesses: Custom harness specs in
-            name=flavor:binary:config_dir[:display] form
+            name=flavor:binary:config_dir[:display] form. Use ::display when
+            config_dir contains a literal colon.
         dry_run: Preview install targets without writing files or running
                  installer subprocesses
 
@@ -3516,7 +3527,8 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
 
     Args:
         custom_harnesses: Optional custom harness specs to include in the same
-            status pass. Specs use name=flavor:binary:config_dir[:display].
+            status pass. Specs use name=flavor:binary:config_dir[:display],
+            with ::display for config paths containing literal colons.
 
     Returns:
         Exit code: 0 = all installed, 1 = some missing
