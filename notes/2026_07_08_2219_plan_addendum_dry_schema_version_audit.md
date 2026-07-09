@@ -749,17 +749,22 @@ Stage 8 evidence update, 2026_07_08_2347:
     `hooks/hooks.json` and root `hooks.json`, because Antigravity import
     materializes both.
   - Custom flavored harnesses should be represented by an explicit target
-    directory plus CLI identity routed through the same sync/rewrite helper.
-    Do not copy the Gemini installer into a new harness-specific branch unless
-    a tested API divergence requires it.
+    directory plus validated CLI identity routed through the same sync/rewrite
+    helper. Do not copy the Gemini installer into a new harness-specific branch
+    unless a tested API divergence requires it.
   - The custom-location helper must rewrite only autorun's own
     `hook_entry.py --cli gemini` command strings. It must not rewrite unrelated
     custom hooks that happen to contain `--cli gemini`.
-  - User-facing custom harness install flags remain a later acceptance item:
-    they need a tested CLI shape, clear dry-run output, idempotent reinstall,
-    rollback on partial copy, and a warning that the selected `--cli` identity
-    controls schema semantics. Until then, custom support is an internal,
-    reusable sync primitive rather than an advertised stable CLI.
+  - User-facing custom harness install flags were implemented in the
+    2026_07_09_0005 and 2026_07_09_0012 checkpoints:
+    `--custom-harness name=flavor:binary:config_dir[:display]` accepts the
+    tested flavors `gemini`, `qwen`, `agy`, `antigravity`, and `codex`.
+    `agy` and `antigravity` normalize to the validated `antigravity` hook
+    identity; `codex` installs scoped user hooks and `AGENTS.md` into the
+    supplied config directory while skipping global Codex assets. Remaining
+    custom-harness hardening belongs in idempotent reinstall, dry-run, rollback,
+    and status/reporting tests, not in a second hook schema or installer
+    registry.
   - Do not claim native Antigravity plugin install support until a `plugin.json`
     bundle validates under `agy plugin validate` and install/rollback tests
     exist.
