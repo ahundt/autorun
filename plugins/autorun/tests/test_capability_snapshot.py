@@ -43,6 +43,23 @@ def test_capability_snapshot_aliases_have_one_owner():
     } == {}
 
 
+def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
+    from autorun.capability_snapshot import build_capability_snapshot
+
+    snapshot = build_capability_snapshot()
+    command_docs = snapshot["command_docs"]
+
+    missing_docs = sorted(
+        alias for alias in snapshot["commands"]
+        if alias.startswith("/ar:") and alias.removeprefix("/ar:") not in command_docs
+    )
+
+    assert missing_docs == []
+    assert command_docs["restart-daemon"]["executable"] is True
+    assert "current autorun install/source tree" in command_docs["restart-daemon"]["description"]
+    assert command_docs["task-ignore"]["aliases"] == ["ti", "ignore-task"]
+
+
 def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
     output_path = tmp_path / "capabilities.json"
     fake_home = tmp_path / "home"

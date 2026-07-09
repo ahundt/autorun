@@ -794,6 +794,47 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 7 command-doc DRY checkpoint:
+
+- Existing source-of-truth pass confirmed runtime command dispatch already lives
+  in `core.py::AutorunApp.command()` and registrations in `plugins.py`; the
+  capability snapshot already inventories `app.command_handlers`.
+- The markdown command docs had a second lightweight frontmatter parser inside
+  `_generate_gemini_toml_commands()`. That parser now lives in
+  `command_docs.py` and is reused by both Gemini TOML generation and
+  `capability_snapshot.py`.
+- `build_capability_snapshot()` now includes `command_docs`, a read-only
+  metadata inventory keyed by command filename stem. It exposes description,
+  aliases, executable-snippet presence, file name, and frontmatter name without
+  executing any command body.
+- The first parity test checks that every registered runtime `/ar:*` alias has a
+  matching command markdown file. This guards against adding a handler without
+  user-facing docs, while intentionally not requiring docs-only commands to
+  become runtime handlers.
+- The snapshot test also locks in high-risk command metadata for
+  `restart-daemon` and executable alias metadata for `task-ignore`, creating a
+  reusable basis for future skill generation without copying command tables.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_capability_snapshot.py \
+  plugins/autorun/tests/test_install_pathways.py::TestGenerateGeminiTomlCommands -q
+```
+
+Result: `12 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/command_docs.py \
+  plugins/autorun/src/autorun/capability_snapshot.py \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/tests/test_capability_snapshot.py
+```
+
+Result: passed.
+
 Stage 6 help/docs clarity checkpoint:
 
 - The normal restart command is now documented as scoped to the current autorun

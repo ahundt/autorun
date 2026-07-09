@@ -47,6 +47,7 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
+from .command_docs import iter_command_docs
 from . import ipc
 from .platforms import PLATFORMS
 
@@ -1225,25 +1226,10 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
     toml_dir.mkdir(exist_ok=True)
 
     count = 0
-    for md_file in sorted(commands_dir.glob("*.md")):
+    for doc in iter_command_docs(commands_dir):
         try:
-            content = md_file.read_text(encoding="utf-8")
-
-            # Parse YAML frontmatter (between --- delimiters)
-            description = ""
-            body = content
-            if content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    # Extract description from frontmatter
-                    for line in parts[1].strip().splitlines():
-                        if line.startswith("description:"):
-                            description = line.split(":", 1)[1].strip().strip("'\"")
-                            break
-                    body = parts[2].strip()
-
             # Convert $ARGUMENTS to {{args}} (Gemini convention)
-            body = body.replace("$ARGUMENTS", "{{args}}")
+            body = doc.body.replace("$ARGUMENTS", "{{args}}")
 
             # Support tool mapping for Gemini CLI (Interoperability Superset)
             # Reuses CLI_TOOL_NAMES from core.py to ensure suggestions in .toml
@@ -1265,14 +1251,14 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
             safe_body = body.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
 
             # Write TOML file
-            toml_content = f'description = "{description}"\n'
+            toml_content = f'description = "{doc.description}"\n'
             toml_content += f'prompt = """\n{safe_body}\n"""\n'
 
-            toml_path = toml_dir / f"{md_file.stem}.toml"
+            toml_path = toml_dir / f"{doc.path.stem}.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             count += 1
         except Exception as e:
-            logger.warning(f"Failed to convert {md_file.name} to TOML: {e}")
+            logger.warning(f"Failed to convert {doc.path.name} to TOML: {e}")
 
     return count
 

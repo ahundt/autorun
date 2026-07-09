@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __commit__, __version__
+from .command_docs import command_docs_inventory
 from .platforms import PLATFORMS, Platform
 
 
@@ -111,6 +112,7 @@ def build_capability_snapshot() -> dict[str, Any]:
     """Return a stable, JSON-serializable autorun capability inventory."""
     commands, command_aliases = _command_inventory()
     hooks = _hook_inventory()
+    plugin_root = Path(__file__).resolve().parents[2]
     return {
         "version": __version__,
         "commit": _git_commit(),
@@ -120,6 +122,7 @@ def build_capability_snapshot() -> dict[str, Any]:
         },
         "commands": commands,
         "command_aliases": command_aliases,
+        "command_docs": command_docs_inventory(plugin_root / "commands"),
         "hook_events": hooks,
     }
 
