@@ -234,6 +234,14 @@ class TestClaudeHooksJson:
         for cmd in commands:
             assert "hook_entry.py" in cmd
 
+    def test_all_uv_commands_use_no_sync(self):
+        """Claude hook subprocesses must not repair uv envs in the hot path."""
+        data = load_hooks_json(HOOKS_JSON)
+        commands = extract_all_commands(data)
+        for cmd in commands:
+            if cmd.startswith("uv run"):
+                assert "--no-sync" in cmd, cmd
+
     def test_default_plugin_hooks_do_not_force_claude_cli(self):
         """Codex plugin loading also parses hooks/hooks.json, so it must auto-detect."""
         data = load_hooks_json(HOOKS_JSON)
@@ -349,6 +357,14 @@ class TestGeminiHooksJson:
         commands = extract_all_commands(data)
         for cmd in commands:
             assert "hook_entry.py" in cmd
+
+    def test_all_uv_commands_use_no_sync(self):
+        """Gemini-family hooks must not run uv sync under 5s hook timeouts."""
+        data = load_hooks_json(GEMINI_HOOKS_JSON)
+        commands = extract_all_commands(data)
+        for cmd in commands:
+            if cmd.startswith("uv run"):
+                assert "--no-sync" in cmd, cmd
 
 
 # =============================================================================
@@ -1329,6 +1345,8 @@ class TestClaudeCachePathSubstitution:
         )
         hooks_dir = cache_dir / "hooks"
         hooks_dir.mkdir(parents=True)
+        # Legacy cached hook command: this fixture intentionally predates
+        # --no-sync so cache path substitution is tested against old installs.
         (hooks_dir / "hooks.json").write_text(
             json.dumps({
                 "hooks": {

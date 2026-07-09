@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import argparse
+import shlex
 import shutil
 import subprocess
 import sys
@@ -109,6 +110,28 @@ class CmdResult:
     def has_text(self, text: str) -> bool:
         """Check if output contains text (case-insensitive)."""
         return text.lower() in self.output.lower()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArchitectureSettings:
+    """Resolved hook runtime settings with precedence source labels."""
+
+    python_command: str | None
+    python_source: str
+    hook_no_sync: bool
+    hook_no_sync_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArchitectureProbe:
+    """Observed uv/Python runtime selected for hook subprocesses."""
+
+    ok: bool
+    uv_path: str
+    python_executable: str = ""
+    python_machine: str = ""
+    python_system: str = ""
+    reason: str = ""
 
 
 # =============================================================================
@@ -1626,6 +1649,192 @@ def _codex_plugin_marketplace_name(codex_plugin_marketplace: str) -> str:
     return _CODEX_PERSONAL_MARKETPLACE_NAME
 
 
+def _truthy_env(value: str | None) -> bool | None:
+    """Parse common environment boolean spellings."""
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def resolve_runtime_architecture_settings(
+    *,
+    cli_python: str | None = None,
+    cli_hook_no_sync: bool | None = None,
+    env: dict[str, str] | os._Environ[str] | None = None,
+    config: dict | None = None,
+    default_python: str | None = None,
+    default_hook_no_sync: bool = True,
+) -> RuntimeArchitectureSettings:
+    """Resolve hook runtime settings using CLI > env > config > defaults."""
+    env = os.environ if env is None else env
+    config = {} if config is None else config
+
+    if cli_python:
+        python_command = cli_python
+        python_source = "cli"
+    elif env.get("UV_PYTHON"):
+        python_command = env["UV_PYTHON"]
+        python_source = "env UV_PYTHON"
+    elif config.get("python"):
+        python_command = str(config["python"])
+        python_source = "config"
+    elif default_python:
+        python_command = default_python
+        python_source = "default"
+    else:
+        python_command = None
+        python_source = "default uv discovery"
+
+    env_no_sync = _truthy_env(env.get("UV_NO_SYNC"))
+    if cli_hook_no_sync is not None:
+        hook_no_sync = cli_hook_no_sync
+        hook_no_sync_source = "cli"
+    elif env_no_sync is not None:
+        hook_no_sync = env_no_sync
+        hook_no_sync_source = "env UV_NO_SYNC"
+    elif "hook_no_sync" in config:
+        hook_no_sync = bool(config["hook_no_sync"])
+        hook_no_sync_source = "config"
+    else:
+        hook_no_sync = default_hook_no_sync
+        hook_no_sync_source = "default"
+
+    return RuntimeArchitectureSettings(
+        python_command=python_command,
+        python_source=python_source,
+        hook_no_sync=hook_no_sync,
+        hook_no_sync_source=hook_no_sync_source,
+    )
+
+
+def _shell_arg(value: str) -> str:
+    """Quote shell args while preserving trusted harness placeholders."""
+    if "${CLAUDE_PLUGIN_ROOT}" in value or "${extensionPath}" in value:
+        return value
+    return shlex.quote(value)
+
+
+def _render_uv_hook_command(
+    *,
+    project: str,
+    hook_entry: str,
+    cli: str,
+    python: str | None = None,
+    no_sync: bool = True,
+    extra_env: dict[str, str] | None = None,
+) -> str:
+    """Render a uv hook command once for user and plugin hook installers."""
+    parts: list[str] = []
+    if extra_env:
+        parts.extend(f"{key}={_shell_arg(value)}" for key, value in extra_env.items())
+
+    parts.extend(["uv", "run", "--quiet"])
+    # uv documents --no-sync as the standard no-environment-update switch; hook
+    # subprocesses must stay fast after install/status have validated the env.
+    if no_sync:
+        parts.append("--no-sync")
+    parts.extend(["--project", _shell_arg(project)])
+    if python:
+        parts.extend(["--python", _shell_arg(python)])
+    parts.extend(["python", _shell_arg(hook_entry), "--cli", cli])
+    return " ".join(parts)
+
+
+def _first_nonempty_line(text: str) -> str:
+    """Return a compact status summary from a multi-line diagnostic."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return "unknown error"
+
+
+def probe_hook_python_architecture(
+    project: Path | str,
+    *,
+    settings: RuntimeArchitectureSettings | None = None,
+    timeout: int = 10,
+) -> RuntimeArchitectureProbe:
+    """Probe uv's selected Python for install/status diagnostics only."""
+    uv_path = shutil.which("uv")
+    if not uv_path:
+        return RuntimeArchitectureProbe(
+            ok=False,
+            uv_path="",
+            reason=ErrorFormatter.uv_not_found(
+                "pip install -e . && python -m autorun --install"
+            ).strip(),
+        )
+
+    settings = settings or resolve_runtime_architecture_settings()
+    code = (
+        "import json, platform, sys; "
+        "print(json.dumps({"
+        "'executable': sys.executable, "
+        "'machine': platform.machine(), "
+        "'system': platform.system()"
+        "}))"
+    )
+    cmd = ["uv", "run", "--quiet"]
+    if settings.hook_no_sync:
+        cmd.append("--no-sync")
+    cmd.extend(["--project", str(project)])
+    if settings.python_command:
+        cmd.extend(["--python", settings.python_command])
+    cmd.extend(["python", "-c", code])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return RuntimeArchitectureProbe(
+            ok=False,
+            uv_path=uv_path,
+            reason=f"runtime architecture probe timed out after {timeout}s",
+        )
+    except OSError as exc:
+        return RuntimeArchitectureProbe(
+            ok=False,
+            uv_path=uv_path,
+            reason=f"runtime architecture probe failed: {exc}",
+        )
+
+    if result.returncode != 0:
+        output = (result.stderr or result.stdout or "").strip()
+        return RuntimeArchitectureProbe(
+            ok=False,
+            uv_path=uv_path,
+            reason=output or f"uv exited with status {result.returncode}",
+        )
+
+    try:
+        payload = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        return RuntimeArchitectureProbe(
+            ok=False,
+            uv_path=uv_path,
+            reason=f"runtime architecture probe returned non-JSON output: {result.stdout.strip()}",
+        )
+
+    return RuntimeArchitectureProbe(
+        ok=True,
+        uv_path=uv_path,
+        python_executable=str(payload.get("executable", "")),
+        python_machine=str(payload.get("machine", "")),
+        python_system=str(payload.get("system", "")),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CodexPluginMarketplaceInstall:
     """Result from publishing autorun's Codex plugin package locally."""
@@ -1660,8 +1869,13 @@ def _build_codex_hook_block(plugin_dir: Path) -> dict:
     """
     plugin_abs = str(plugin_dir.resolve())
     hook_entry = f"{plugin_abs}/hooks/hook_entry.py"
-    command = (
-        f"uv run --quiet --project {plugin_abs} python {hook_entry} --cli codex"
+    settings = resolve_runtime_architecture_settings()
+    command = _render_uv_hook_command(
+        project=plugin_abs,
+        hook_entry=hook_entry,
+        cli="codex",
+        python=settings.python_command,
+        no_sync=settings.hook_no_sync,
     )
 
     entry = {
@@ -1943,10 +2157,14 @@ def _codex_plugin_hook_command() -> str:
     with `--cli codex` so the shared hook wrapper never has to infer Codex
     from a Claude-format hook file.
     """
-    return (
-        "AUTORUN_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT} "
-        "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} "
-        "python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli codex"
+    settings = resolve_runtime_architecture_settings()
+    return _render_uv_hook_command(
+        project="${CLAUDE_PLUGIN_ROOT}",
+        hook_entry="${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py",
+        cli="codex",
+        python=settings.python_command,
+        no_sync=settings.hook_no_sync,
+        extra_env={"AUTORUN_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}"},
     )
 
 
@@ -3228,6 +3446,24 @@ def show_status() -> int:
             plugin_dir = marketplace_root / "plugins" / "autorun"
         uv_result = _check_uv_env(plugin_dir)
         print(f"  UV environment: {'OK' if uv_result.ok else uv_result.output}")
+        runtime_settings = resolve_runtime_architecture_settings()
+        runtime_probe = probe_hook_python_architecture(plugin_dir, settings=runtime_settings)
+        if runtime_probe.ok:
+            print(
+                "  Hook runtime: "
+                f"uv={runtime_probe.uv_path}, "
+                f"python={runtime_probe.python_executable}, "
+                f"arch={runtime_probe.python_machine}, "
+                f"os={runtime_probe.python_system}, "
+                f"python-source={runtime_settings.python_source}, "
+                f"no-sync={runtime_settings.hook_no_sync} "
+                f"({runtime_settings.hook_no_sync_source})"
+            )
+        else:
+            print(
+                "  Hook runtime: diagnostic unavailable "
+                f"({_first_nonempty_line(runtime_probe.reason)})"
+            )
     except FileNotFoundError:
         print("  UV environment: marketplace not found")
 

@@ -21,10 +21,16 @@ from pathlib import Path
 
 from autorun.install import (
     CmdResult,
+    _build_codex_hook_block,
+    _build_codex_plugin_hooks_json,
+    _first_nonempty_line,
     _install_for_antigravity,
     _install_for_qwen,
     _install_codex_plugin_with_cli,
     _install_for_codex,
+    _render_uv_hook_command,
+    probe_hook_python_architecture,
+    resolve_runtime_architecture_settings,
     detect_available_clis,
     determine_target_clis,
     install_plugins,
@@ -306,6 +312,136 @@ def test_install_for_codex_idempotent(tmp_path, monkeypatch):
     _install_for_codex(fake_marketplace, ["autorun"], force=False)
     after = json.loads(((tmp_path / ".codex" / "hooks.json").read_text()))
     assert snapshot == after, "Re-install must be idempotent"
+
+
+def test_render_uv_hook_command_uses_uv_no_sync_and_quotes_paths():
+    """Hook commands keep uv but skip hot-path dependency repair."""
+    cmd = _render_uv_hook_command(
+        project="/tmp/project with spaces",
+        hook_entry="/tmp/project with spaces/hooks/hook_entry.py",
+        cli="codex",
+    )
+
+    assert cmd == (
+        "uv run --quiet --no-sync --project '/tmp/project with spaces' "
+        "python '/tmp/project with spaces/hooks/hook_entry.py' --cli codex"
+    )
+
+
+def test_render_uv_hook_command_uses_standard_uv_python_flag():
+    """Interpreter overrides must use uv's --python flag, not custom env."""
+    cmd = _render_uv_hook_command(
+        project="/tmp/project",
+        hook_entry="/tmp/project/hooks/hook_entry.py",
+        cli="codex",
+        python="/custom/bin/python3",
+    )
+
+    assert "--python /custom/bin/python3" in cmd
+    assert "AUTORUN_PYTHON" not in cmd
+    assert ".venv" not in cmd
+
+
+def test_render_uv_hook_command_preserves_codex_plugin_placeholder():
+    """Plugin hooks need Codex's runtime placeholder to remain expandable."""
+    data = _build_codex_plugin_hooks_json()
+    commands = list(_iter_command_strings(data))
+
+    assert commands
+    for cmd in commands:
+        assert "${CLAUDE_PLUGIN_ROOT}" in cmd
+        assert "'${CLAUDE_PLUGIN_ROOT}'" not in cmd
+        assert "--no-sync" in cmd
+        assert "--cli codex" in cmd
+
+
+def test_codex_user_hooks_use_uv_no_sync(tmp_path):
+    """User-level Codex hooks should not run uv sync during hook events."""
+    plugin = tmp_path / "autorun"
+    (plugin / "hooks").mkdir(parents=True)
+    (plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
+
+    block = _build_codex_hook_block(plugin)
+    commands = list(_iter_command_strings({"hooks": block}))
+
+    assert commands
+    for cmd in commands:
+        assert "uv run --quiet --no-sync --project" in cmd
+        assert "--cli codex" in cmd
+
+
+def test_runtime_architecture_settings_precedence(monkeypatch):
+    """CLI > env > config > default for interpreter and hook no-sync."""
+    config = {"python": "/config/python3", "hook_no_sync": False}
+    env = {"UV_PYTHON": "/env/python3", "UV_NO_SYNC": "1"}
+
+    from_config = resolve_runtime_architecture_settings(env={}, config=config)
+    assert from_config.python_command == "/config/python3"
+    assert from_config.python_source == "config"
+    assert from_config.hook_no_sync is False
+    assert from_config.hook_no_sync_source == "config"
+
+    from_env = resolve_runtime_architecture_settings(env=env, config=config)
+    assert from_env.python_command == "/env/python3"
+    assert from_env.python_source == "env UV_PYTHON"
+    assert from_env.hook_no_sync is True
+    assert from_env.hook_no_sync_source == "env UV_NO_SYNC"
+
+    from_cli = resolve_runtime_architecture_settings(
+        cli_python="/cli/python3",
+        cli_hook_no_sync=False,
+        env=env,
+        config=config,
+    )
+    assert from_cli.python_command == "/cli/python3"
+    assert from_cli.python_source == "cli"
+    assert from_cli.hook_no_sync is False
+    assert from_cli.hook_no_sync_source == "cli"
+
+
+def test_first_nonempty_line_keeps_status_diagnostics_compact():
+    """Status should summarize multi-line remediation without dropping details elsewhere."""
+    message = "\n\nUV not found in PATH.\n\n━━━ INSTALL UV ━━━\n  brew install uv\n"
+
+    assert _first_nonempty_line(message) == "UV not found in PATH."
+
+
+def test_probe_hook_python_architecture_reports_missing_uv(monkeypatch, tmp_path):
+    """Runtime probe must not require Homebrew and must explain missing uv."""
+    monkeypatch.setattr("shutil.which", lambda binary: None)
+
+    result = probe_hook_python_architecture(tmp_path)
+
+    assert result.ok is False
+    assert result.uv_path == ""
+    assert "uv not found" in result.reason.lower()
+    assert "brew install uv" in result.reason
+
+
+def test_probe_hook_python_architecture_parses_runtime_json(monkeypatch, tmp_path):
+    """Runtime probe reports the Python uv actually selected."""
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/uv" if binary == "uv" else None)
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = '{"executable": "/custom/bin/python3", "machine": "arm64", "system": "Darwin"}\n'
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:4] == ["uv", "run", "--quiet", "--no-sync"]
+        assert "--project" in cmd
+        assert "python" in cmd
+        return FakeCompleted()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = probe_hook_python_architecture(tmp_path)
+
+    assert result.ok is True
+    assert result.uv_path == "/usr/bin/uv"
+    assert result.python_executable == "/custom/bin/python3"
+    assert result.python_machine == "arm64"
+    assert result.python_system == "Darwin"
 
 
 def test_install_for_codex_prints_trust_reminder(tmp_path, monkeypatch, capsys):
