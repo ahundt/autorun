@@ -212,20 +212,36 @@ class SessionLock:
 
 
 _store_lock = threading.Lock()
-_store: "_JSONStore | None" = None
+_stores: dict[str, "_JSONStore"] = {}
+_store: "_JSONStore | None" = None  # compatibility alias for legacy test cleanup
+
+
+def _state_dir_key(state_dir: "str | None" = None) -> str:
+    """Return the canonical state directory for cache isolation."""
+    d = state_dir or os.environ.get("AUTORUN_TEST_STATE_DIR") or os.path.expanduser("~/.claude/sessions")
+    return str(Path(d).expanduser().resolve())
 
 
 def _get_store(state_dir: "str | None" = None) -> "_JSONStore":
     global _store
-    if _store is None:
+    key = _state_dir_key(state_dir)
+    if _store is None and _stores:
+        # Some existing tests reset the legacy alias directly. Treat that as a
+        # request to clear the keyed cache too so isolated temp dirs stay clean.
+        _stores.clear()
+    store = _stores.get(key)
+    if store is None:
         with _store_lock:
-            if _store is None:
-                d = state_dir or os.environ.get("AUTORUN_TEST_STATE_DIR") or os.path.expanduser("~/.claude/sessions")
-                _store = _JSONStore(
-                    os.path.join(d, "daemon_state.json"),
-                    os.path.join(d, "daemon_state.json.lock"),
+            store = _stores.get(key)
+            if store is None:
+                store = _JSONStore(
+                    os.path.join(key, "daemon_state.json"),
+                    os.path.join(key, "daemon_state.json.lock"),
                 )
-    return _store
+                _stores[key] = store
+                if _store is None:
+                    _store = store
+    return store
 
 
 class SessionStateManager:
@@ -285,17 +301,26 @@ class SessionStateManager:
                 self._store._dirty = True
 
 
-_manager: "SessionStateManager | None" = None
+_managers: dict[str, SessionStateManager] = {}
+_manager: "SessionStateManager | None" = None  # compatibility alias for legacy test cleanup
 _manager_lock = threading.Lock()
 
 
 def get_session_manager(state_dir: "str | None" = None) -> SessionStateManager:
     global _manager
-    if _manager is None:
+    key = _state_dir_key(state_dir)
+    if _manager is None and _managers:
+        _managers.clear()
+    manager = _managers.get(key)
+    if manager is None:
         with _manager_lock:
-            if _manager is None:
-                _manager = SessionStateManager(state_dir)
-    return _manager
+            manager = _managers.get(key)
+            if manager is None:
+                manager = SessionStateManager(state_dir)
+                _managers[key] = manager
+                if _manager is None:
+                    _manager = manager
+    return manager
 
 
 @contextlib.contextmanager
@@ -333,5 +358,7 @@ def all_session_state(timeout: float = DEFAULT_SESSION_TIMEOUT,
 def _reset_for_testing():
     """Reset module-level singletons. For use in test fixtures ONLY."""
     global _store, _manager
+    _stores.clear()
+    _managers.clear()
     _store = None
     _manager = None

@@ -12,7 +12,6 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorun import session_manager as sm
 from autorun.session_manager import (
     SessionStateError,
     SessionTimeoutError,
@@ -65,8 +64,8 @@ class TestSessionLock:
 
     def test_lock_context_manager_noop(self):
         """SessionLock works as context manager without side effects."""
-        with SessionLock("test_session", 5.0) as l:
-            assert l is not None
+        with SessionLock("test_session", 5.0) as lock:
+            assert lock is not None
 
     def test_lock_no_attributes(self):
         """SessionLock does not expose internal attributes from old implementation."""
@@ -252,6 +251,26 @@ class TestConvenienceFunctions:
         m1 = get_session_manager(str(tmp_path))
         m2 = get_session_manager(str(tmp_path))
         assert m1 is m2
+
+    def test_get_session_manager_isolated_by_state_dir(self, tmp_path):
+        """Different state_dir values must not share one global JSON store."""
+        state_a = tmp_path / "state-a"
+        state_b = tmp_path / "state-b"
+
+        m1 = get_session_manager(str(state_a))
+        m2 = get_session_manager(str(state_b))
+
+        assert m1 is not m2
+        assert m1.state_dir == state_a
+        assert m2.state_dir == state_b
+
+        with session_state("same-session", state_dir=str(state_a)) as s:
+            s["origin"] = "a"
+        with session_state("same-session", state_dir=str(state_b)) as s:
+            s["origin"] = "b"
+
+        assert "a" in (state_a / "daemon_state.json").read_text(encoding="utf-8")
+        assert "b" in (state_b / "daemon_state.json").read_text(encoding="utf-8")
 
 
 class TestConstants:

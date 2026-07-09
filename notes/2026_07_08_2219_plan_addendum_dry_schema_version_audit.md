@@ -833,3 +833,43 @@ uv run ruff check --ignore E402 \
 
 Result: passed. `E402` is ignored here because `install.py` intentionally keeps
 a Python-version guard before imports.
+
+Stage 5 state isolation/performance checkpoint:
+
+- Source-of-truth pass confirmed state persistence still belongs in
+  `session_manager.py`; task retention and archive behavior remain in
+  `TaskLifecycleConfig` and `TaskLifecycle.cli_gc`.
+- The concrete bug addressed here was process-local singleton contamination:
+  `session_manager._get_store(state_dir)` and `get_session_manager(state_dir)`
+  previously used one global store/manager. The first state directory used in a
+  process won, so later explicit `state_dir=` calls could silently write to the
+  wrong `daemon_state.json`.
+- The fix keys store/manager caches by resolved state directory. This preserves
+  singleton reuse for the same path while isolating test, worktree, and live
+  state directories in the same Python process.
+- Legacy `_store` and `_manager` aliases remain as compatibility reset hooks for
+  existing tests and cleanup code; `_reset_for_testing()` now clears the keyed
+  caches too.
+- This change does not add a second backend and does not make hot hook paths call
+  `all_session_state`. Maintenance GC still uses the existing bulk
+  `all_session_state` path, with dry-run/archive tests preserved.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_session_manager.py \
+  plugins/autorun/tests/test_stale_lock_recovery.py \
+  plugins/autorun/tests/test_task_lifecycle_ghost_task_bug.py::TestGarbageCollection \
+  plugins/autorun/tests/test_task_lifecycle_ghost_task_bug.py::TestGCLocking -q
+```
+
+Result: `63 passed`.
+
+```bash
+uv run ruff check \
+  plugins/autorun/src/autorun/session_manager.py \
+  plugins/autorun/tests/test_session_manager.py
+```
+
+Result: passed.
