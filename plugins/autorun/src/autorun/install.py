@@ -41,6 +41,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -1051,6 +1052,41 @@ def _sync_gemini_extension_resources(
         skills_synced = _count_skill_dirs(ext_dir / "skills")
 
     return (commands_generated, skills_synced)
+
+
+def _stage_antigravity_native_bundle(
+    plugin_dir: Path,
+    bundle_dir: Path,
+) -> tuple[int, int]:
+    """Stage an Antigravity-native plugin bundle without touching user config."""
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    commands_generated, skills_synced = _sync_gemini_extension_resources(
+        plugin_dir,
+        bundle_dir,
+        "ar",
+        "antigravity",
+    )
+    nested_hooks = bundle_dir / "hooks" / "hooks.json"
+    if nested_hooks.is_file():
+        shutil.copy2(nested_hooks, bundle_dir / "hooks.json")
+    (bundle_dir / "plugin.json").write_text(
+        json.dumps({
+            "name": "ar",
+            "hooks": "./hooks.json",
+            "commands": "./commands/",
+            "skills": "./skills/",
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return (commands_generated, skills_synced)
+
+
+def _antigravity_validate_reports_hooks(output: str) -> bool:
+    """Return whether `agy plugin validate` processed hooks, not just metadata."""
+    for line in output.splitlines():
+        if "hooks" in line.lower():
+            return "processed" in line.lower()
+    return False
 
 
 def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
@@ -2724,20 +2760,36 @@ def _install_for_antigravity(
     plugins: list[str],
     force: bool = False,
 ) -> tuple[bool, str]:
-    """Install autorun into Google Antigravity through its Gemini importer.
+    """Install autorun into Google Antigravity with importer fallback.
 
     `agy plugin import gemini` is the documented local migration surface exposed
     by `agy plugin help`; local verification on 2026-06-22 with `agy` 1.0.10
     imports the existing Gemini `ar` extension with skills, commands, and hooks.
-    The native `agy plugin install <target>` schema expects a plugin.json bundle,
-    so direct native bundles remain a separate 0.13.0 acceptance item.
+    Newer Antigravity builds also validate native plugin bundles when they have
+    root `plugin.json` and `hooks.json`; autorun stages that bundle from the
+    shared Gemini-family resources and falls back to the importer if validation
+    or install fails.
     """
-    del force  # The importer reads installed Gemini extensions.
-
     if "autorun" not in plugins and "ar" not in plugins:
         return (True, "no autorun plugin selected")
     if not shutil.which("agy"):
         return (False, "agy CLI not found")
+
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+    if plugin_dir is not None:
+        with tempfile.TemporaryDirectory(prefix="autorun-antigravity-plugin-") as tmp:
+            bundle_dir = Path(tmp) / "ar"
+            _stage_antigravity_native_bundle(plugin_dir, bundle_dir)
+            validate = run_cmd(["agy", "plugin", "validate", str(bundle_dir)], timeout=30)
+            if validate.ok and _antigravity_validate_reports_hooks(validate.output):
+                if force:
+                    run_cmd(["agy", "plugin", "uninstall", "ar"], timeout=120)
+                install_result = run_cmd(["agy", "plugin", "install", str(bundle_dir)], timeout=120)
+                if install_result.ok or install_result.has_text("already installed"):
+                    verify = run_cmd(["agy", "plugin", "list"], timeout=30)
+                    if verify.ok and ('"name": "ar"' in verify.output or "ar" in verify.output):
+                        print("   Antigravity ar plugin installed from native bundle")
+                        return (True, "success")
 
     print()
     print("Importing Gemini autorun extension into Google Antigravity...")
@@ -2751,7 +2803,6 @@ def _install_for_antigravity(
     if '"name": "ar"' not in verify.output and "ar" not in verify.output:
         return (False, "agy plugin list did not report imported ar plugin")
 
-    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
     imported_dir = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar"
     if plugin_dir is not None and imported_dir.is_dir():
         _sync_gemini_extension_resources(plugin_dir, imported_dir, "ar", "antigravity")
@@ -2945,7 +2996,7 @@ def install_plugins(
         - Default (no CLI flags): Installs for all available CLIs with maximum capability
         - --claude: Installs only for Claude Code (error if not available)
         - --gemini: Installs only for Gemini CLI (error if not available)
-        - --antigravity: Imports Gemini extensions into Google Antigravity only
+        - --antigravity: Installs Google Antigravity native plugin, with Gemini importer fallback
         - --qwen: Installs only for Qwen Code (error if not available)
         - --codex: Installs only for Codex CLI (error if not available)
         - Multiple platform flags: Installs for all selected CLIs
@@ -3213,7 +3264,7 @@ def install_plugins(
     if "antigravity" in target_clis:
         antigravity_success, antigravity_msg = _install_for_antigravity(marketplace_root, plugins, force)
         if not antigravity_success:
-            print(f"   Antigravity import failed: {antigravity_msg}")
+            print(f"   Antigravity install failed: {antigravity_msg}")
         all_succeeded = all_succeeded and antigravity_success
 
     if "qwen" in target_clis:
@@ -3339,9 +3390,9 @@ def install_plugins(
 
     if "antigravity" in target_clis:
         if antigravity_success:
-            print("✓ Google Antigravity: imported Gemini ar plugin with commands, skills, and hooks")
+            print("✓ Google Antigravity: ar plugin installed with commands, skills, and hooks")
         else:
-            print("✗ Google Antigravity: import failed")
+            print("✗ Google Antigravity: install failed")
 
     if "qwen" in target_clis:
         if qwen_success:
@@ -3393,7 +3444,7 @@ def install_plugins(
     if "gemini" in target_clis and conductor:
         print("  /conductor:*      - Conductor plan mode (Gemini only)")
     if "antigravity" in target_clis:
-        print("  agy plugin list   - verify imported Antigravity plugins")
+        print("  agy plugin list   - verify installed Antigravity plugins")
     if "qwen" in target_clis:
         print("  qwen extensions list - verify installed Qwen extensions")
     print()
@@ -3957,7 +4008,14 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
     parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
-    parser.add_argument("--antigravity", action="store_true", help="Install for Google Antigravity CLI only")
+    parser.add_argument(
+        "--antigravity",
+        action="store_true",
+        help=(
+            "Install for Google Antigravity CLI only "
+            "(native agy plugin bundle, Gemini importer fallback)"
+        ),
+    )
     parser.add_argument("--qwen", action="store_true", help="Install for Qwen Code only")
     parser.add_argument(
         "--custom-harness",

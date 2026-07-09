@@ -271,7 +271,10 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--antigravity",
         action="store_true",
-        help="Install for Google Antigravity CLI only (imports Gemini plugins through agy)",
+        help=(
+            "Install for Google Antigravity CLI only "
+            "(native agy plugin bundle, Gemini importer fallback)"
+        ),
     )
     install_group.add_argument(
         "--qwen",

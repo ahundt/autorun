@@ -667,8 +667,9 @@ Consolidated plan:
 - Extend `Platform` fields only where tests need new capability metadata.
 - Reuse Gemini-family hook normalization for Qwen/Antigravity only when tests
   prove the event/config surface matches.
-- Keep Antigravity read-only/inventory-only until hook/skill install APIs are
-  verified with rollback.
+- Prefer Antigravity native staged bundles when `agy plugin validate` processes
+  hooks; keep the Gemini importer as fallback when native validation or install
+  fails.
 - Document GLM/Z.AI setup by environment variable names only.
 - Unsupported or unverified app/CLI integrations must appear as explicit
   capability states in diagnostics, not as missing docs or half-enabled
@@ -679,7 +680,8 @@ Tests to add first:
 - Qwen capability matrix is not merely a Gemini alias.
 - Qwen GLM-5.2 env docs contain no secret values.
 - Gemini live backend tests skip only for binary/auth unavailability.
-- Antigravity inventory does not enable hooks without verified API.
+- Antigravity native install uses a staged bundle that validates hooks before
+  install; importer fallback remains non-native compatibility coverage.
 
 Stage 8 evidence update, 2026_07_08_2347:
 
@@ -720,10 +722,10 @@ Stage 8 evidence update, 2026_07_08_2347:
     `skills`, `commands`, and `hooks` under
     `~/.gemini/antigravity-cli/plugins/ar`.
   - `agy plugin validate plugins/autorun/src/autorun/gemini_template` fails
-    because native Antigravity validation expects `plugin.json`, not only
-    `gemini-extension.json`. Therefore direct native Antigravity bundle support
-    remains a later acceptance item; the current implemented path is the
-    importer path.
+    because native Antigravity validation expects `plugin.json` plus root
+    `hooks.json`, not only `gemini-extension.json` and nested
+    `hooks/hooks.json`. Later checkpoint `2026_07_09_0101` adds a staged
+    native bundle with those files and keeps the importer as fallback.
   - `qwen --help` reports `extensions`, `hooks`, OpenAI-compatible auth flags,
     and `--auth-type` choices including `openai`.
   - `qwen extensions --help` reports `install`, `uninstall`, `list`, `update`,
@@ -742,8 +744,8 @@ Stage 8 evidence update, 2026_07_08_2347:
     defeating platform-specific detection, timeout, schema, and task-surface
     behavior.
 - Corrected implementation rule:
-  - Keep Antigravity as a Gemini-flavored importer path until native
-    `plugin.json` support is deliberately implemented.
+  - Prefer a staged Antigravity native bundle when `agy plugin validate`
+    reports hooks processed; use the Gemini-flavored importer path as fallback.
   - Reuse `_sync_gemini_extension_resources()` and
     `_set_gemini_family_hook_cli()` for Qwen, Antigravity, and custom
     Gemini-flavored extension directories.
@@ -768,9 +770,9 @@ Stage 8 evidence update, 2026_07_08_2347:
     `--status --custom-harness SPEC` coverage; any future rollback work should
     stay in the existing installer path, not in a second hook schema or
     installer registry.
-  - Do not claim native Antigravity plugin install support until a `plugin.json`
-    bundle validates under `agy plugin validate` and install/rollback tests
-    exist.
+  - Native Antigravity plugin install support now depends on a staged
+    `plugin.json` + root `hooks.json` bundle validated by `agy plugin validate`;
+    importer fallback remains tested for validation/install failure cases.
 - Stage 8 validation status:
   - Focused Antigravity/Qwen/Codex hook identity tests passed:
     `15 passed`.
@@ -976,6 +978,61 @@ uv run ruff check \
   plugins/autorun/src/autorun/gemini_template/hooks/hook_entry.py \
   plugins/autorun/tests/test_client_fail_closed.py \
   plugins/autorun/tests/test_hook_entry.py
+```
+
+Result: passed.
+
+Stage 12 native Antigravity checkpoint, 2026_07_09_0101:
+
+- Closed the earlier native Antigravity deferral without forking Gemini-family
+  installer logic. The installer now stages an Antigravity-native bundle in a
+  temporary directory from the existing Gemini-family resources.
+- `_stage_antigravity_native_bundle(plugin_dir, bundle_dir)` reuses
+  `_sync_gemini_extension_resources(..., cli_name="antigravity")`, then writes
+  root `hooks.json` and `plugin.json` with `hooks`, `commands`, and `skills`
+  fields. Root `hooks.json` is required because `agy plugin validate` skips
+  hooks when only nested `hooks/hooks.json` exists.
+- `_install_for_antigravity()` now prefers `agy plugin validate <bundle>` plus
+  `agy plugin install <bundle>` when validation reports hooks processed. It
+  falls back to `agy plugin import gemini` and the existing post-import sync
+  when native validation/install is unavailable.
+- User-facing installer/README/skill wording was updated from importer-only to
+  native-bundle-with-importer-fallback. This preserves current live workflows
+  while enabling native CLI support where Antigravity accepts it.
+- Local non-mutating Antigravity validation:
+
+```bash
+tmpdir=$(mktemp -d /private/tmp/autorun-agy-native.XXXXXX)
+PYTHONPATH=plugins/autorun/src uv run python -c \
+  'from pathlib import Path; from autorun.install import _stage_antigravity_native_bundle; _stage_antigravity_native_bundle(Path("plugins/autorun"), Path("'$tmpdir'") / "ar")'
+agy plugin validate "$tmpdir/ar"
+```
+
+Result: `agy plugin validate` returned 0 and reported `skills: 9 processed`,
+`commands: 82 processed (converted to skills)`, and `hooks: 2 processed`.
+
+- Test validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_install_pathways.py::TestAntigravityImportSync \
+  plugins/autorun/tests/test_install_pathways.py::TestInstallMainAdapter \
+  plugins/autorun/tests/test_bootstrap_config.py::TestCLIArgumentParsing \
+  plugins/autorun/tests/test_bootstrap_config.py::TestMainFunctionRouting \
+  plugins/autorun/tests/test_skill_docs.py -q
+```
+
+Result: `45 passed`.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py \
+  plugins/autorun/tests/test_skill_docs.py
 ```
 
 Result: passed.
@@ -1657,6 +1714,81 @@ Result: `63 passed`.
 uv run ruff check \
   plugins/autorun/src/autorun/session_manager.py \
   plugins/autorun/tests/test_session_manager.py
+```
+
+Result: passed.
+
+Stage 13 validation closure checkpoint, 2026_07_09_0136:
+
+- Source-of-truth pass confirmed stale-task marker parsing still belongs in
+  `task_lifecycle.py`; no second task-clear pathway was added.
+- The broad test run exposed one real source bug after the earlier hardening:
+  `extract_stale_clear_task_ids()` assumed all hook context fields were strings.
+  Mock, partial, or malformed contexts can carry non-string sentinels, which
+  crashed Stop handling after the stale-clear hatch armed. The fix keeps Stop
+  fail-closed by parsing only real string text and returning no marker ids for
+  non-text fields.
+- The first broad validation used a stale x86_64 worktree `.venv` on this
+  arm64 host. That caused nested `uv run --project plugins/autorun ...`
+  subprocesses to build `cryptography==49.0.0` for `x86_64-apple-darwin` and
+  fail before hook or CLI code ran. This was not a source regression; it was an
+  invalid local validation environment.
+- Validation was rerun with a worktree-local arm64 project environment:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-arm64 \
+uv run --project plugins/autorun \
+  --python /opt/homebrew/opt/python@3.12/bin/python3.12 \
+  python -c "import platform, autorun; print(platform.machine()); print('autorun ok')"
+```
+
+Result: `arm64`, `autorun ok`.
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-arm64 \
+uv run --project plugins/autorun \
+  --python /opt/homebrew/opt/python@3.12/bin/python3.12 \
+  --with pytest --with pytest-timeout --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_hook_entry.py::TestUVCompatibility \
+  plugins/autorun/tests/test_task_14_cli_non_interactive.py \
+  plugins/autorun/tests/test_task_lifecycle_failure_modes.py::TestFailureModes::test_02_stuck_task_always_blocks_without_user_action \
+  plugins/autorun/tests/test_task_lifecycle_integration.py::TestTaskLifecycleIntegration::test_10_stop_always_blocked_with_incomplete_tasks \
+  plugins/autorun/tests/test_task_lifecycle_integration.py::TestTaskLifecycleIntegration::test_13_no_stage_reset_when_stage_not_stage2_completed -q
+```
+
+Result: `15 passed`.
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-arm64 \
+uv run --project plugins/autorun \
+  --python /opt/homebrew/opt/python@3.12/bin/python3.12 \
+  --with pytest --with pytest-timeout --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests -q
+```
+
+Result: `3831 passed, 74 skipped, 3 failed`.
+
+The 3 remaining failures are deployed-copy checks only:
+
+- `plugins/autorun/tests/test_dual_platform_hooks_install.py::TestDeployedCopiesMatchSource::test_claude_cache_hook_entry_matches_source`
+- `plugins/autorun/tests/test_dual_platform_hooks_install.py::TestDeployedCopiesMatchSource::test_gemini_extension_hook_entry_matches_source`
+- `plugins/autorun/tests/test_hook_entry.py::TestAllLocationsSync::test_cache_matches_source_hook_entry`
+
+They report that live files under `~/.claude/plugins/cache/autorun/ar/0.12.0`
+and `~/.gemini/extensions/ar` do not match this worktree source. This is a live
+installation-state condition, not a source regression. The safe next action is a
+deliberate install/restart from the intended release tree, not an implicit
+mutation from this worktree while active sessions may still be running.
+
+```bash
+uv run ruff check --ignore E402 \
+  plugins/autorun/src/autorun/install.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/src/autorun/task_lifecycle.py \
+  plugins/autorun/tests/test_install_pathways.py \
+  plugins/autorun/tests/test_bootstrap_config.py \
+  plugins/autorun/tests/test_skill_docs.py \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py
 ```
 
 Result: passed.

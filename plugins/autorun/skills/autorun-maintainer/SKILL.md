@@ -58,7 +58,7 @@ Historically, fixes failed because the code was copied into many separate locati
 *   **UV Tool**: `uv tool install --editable .`
 *   **Claude Code**: plugin cache and command files must point at the intended source or release artifact.
 *   **Codex CLI**: user hooks live in `~/.codex/hooks.json`; plugin bundles may also exist, but duplicate hook sources must be explicitly configured.
-*   **Gemini-family CLIs**: Gemini, Google Antigravity, and Qwen Code use extension/plugin surfaces that should link or copy the same `ar` extension layout.
+*   **Gemini-family CLIs**: Gemini, Google Antigravity, and Qwen Code use extension/plugin surfaces that should link or copy the same `ar` extension layout. Antigravity installs should prefer the staged native `agy plugin install` bundle and fall back to `agy plugin import gemini` only when validation or install fails.
 *   **Custom harnesses**: use `--custom-harness SPEC` only for a harness flavored like an existing supported target.
 *   **Result**: Edits in `src/` reflect only after the relevant editable install, plugin cache, and daemon lifecycle have all been validated.
 

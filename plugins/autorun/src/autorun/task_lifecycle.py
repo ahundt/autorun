@@ -235,9 +235,9 @@ def _stale_clear_marker_regex() -> re.Pattern:
     return re.compile(re.escape(prefix) + r"([A-Za-z0-9_.-]+)" + re.escape(suffix))
 
 
-def extract_stale_clear_task_ids(*texts: str) -> list[str]:
+def extract_stale_clear_task_ids(*texts: object) -> list[str]:
     """Return unique task ids from configured stale-clear markers."""
-    combined = "".join(text for text in texts if text)
+    combined = "".join(text for text in texts if isinstance(text, str) and text)
     if not combined:
         return []
     return list(dict.fromkeys(str(match) for match in _stale_clear_marker_regex().findall(combined)))

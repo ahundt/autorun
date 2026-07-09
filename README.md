@@ -973,7 +973,7 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|always|never
 autorun --conductor                  # Install Conductor extension for Gemini (default)
 autorun --no-conductor               # Skip Conductor extension
-autorun --antigravity                # Import Gemini ar plugin into Google Antigravity
+autorun --install --antigravity      # Install Google Antigravity plugin (native bundle, importer fallback)
 autorun --cli claude                 # Set CLI type (used internally by hooks)
 ```
 

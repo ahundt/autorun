@@ -236,7 +236,7 @@ class TestFindMarketplaceRoot:
         marker = root / ".claude-plugin" / "marketplace.json"
 
         assert marker.exists(), f"marketplace.json not found at {marker}"
-        assert root.name == "autorun", f"Expected root to be 'autorun', got {root.name}"
+        assert (root / "plugins" / "autorun" / "src" / "autorun").is_dir()
 
     def test_find_marketplace_root_cached(self):
         """Verify find_marketplace_root() result is cached."""
@@ -261,8 +261,7 @@ class TestInstallToCachePathResolution:
         install = get_install_module()
         root = install.find_marketplace_root()
 
-        # root is the workspace root (named "autorun")
-        assert root.name == "autorun"
+        # root is the workspace root, regardless of worktree directory name.
         assert (root / ".claude-plugin").exists()
 
         # The workspace root contains plugins/ with individual plugin dirs
@@ -981,8 +980,110 @@ class TestAntigravityImportSync:
         assert "hook_entry.py --cli gemini" not in text
         assert "uv run custom-wrapper --cli gemini python custom_hook.py" in text
 
+    def test_antigravity_native_bundle_has_root_hooks_and_manifest(self, tmp_path):
+        """Native Antigravity bundles expose root hooks.json plus plugin.json."""
+        install = get_install_module()
+        plugin_dir = get_plugin_root()
+        bundle_dir = tmp_path / "agy-ar"
+
+        commands_generated, skills_synced = install._stage_antigravity_native_bundle(
+            plugin_dir,
+            bundle_dir,
+        )
+
+        plugin_json = json.loads((bundle_dir / "plugin.json").read_text(encoding="utf-8"))
+        root_hooks = (bundle_dir / "hooks.json").read_text(encoding="utf-8")
+        nested_hooks = (bundle_dir / "hooks" / "hooks.json").read_text(encoding="utf-8")
+
+        assert commands_generated > 0
+        assert skills_synced > 0
+        assert plugin_json == {
+            "name": "ar",
+            "hooks": "./hooks.json",
+            "commands": "./commands/",
+            "skills": "./skills/",
+        }
+        assert "--cli antigravity" in root_hooks
+        assert "--cli antigravity" in nested_hooks
+        assert "--cli gemini" not in root_hooks
+        assert (bundle_dir / "commands").is_dir()
+        assert (bundle_dir / "skills").is_dir()
+
+    def test_antigravity_install_prefers_native_bundle_when_valid(self, tmp_path, monkeypatch):
+        """Antigravity install uses native plugin install before importer fallback."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_dir = marketplace / "plugins" / "autorun"
+        template = plugin_dir / "src" / "autorun" / "gemini_template"
+        hooks_dir = template / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
+        (hooks_dir / "hooks.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "BeforeTool": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "uv run --quiet --project ${extensionPath} "
+                                        "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+        (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        (plugin_dir / "commands").mkdir()
+        (plugin_dir / "commands" / "st.md").write_text("# status\n", encoding="utf-8")
+        skill_dir = plugin_dir / "skills" / "cache"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: cache\ndescription: cache\n---\n# Cache\n",
+            encoding="utf-8",
+        )
+        marketplace_meta = marketplace / ".claude-plugin"
+        marketplace_meta.mkdir()
+        (marketplace_meta / "marketplace.json").write_text(
+            json.dumps({"plugins": [{"name": "ar", "source": "./plugins/autorun"}]}),
+            encoding="utf-8",
+        )
+
+        calls = []
+        monkeypatch.setattr(install.shutil, "which", lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None)
+
+        def fake_run_cmd(args, timeout=30, **kwargs):
+            calls.append((args, timeout))
+            if args[:3] == ["agy", "plugin", "validate"]:
+                bundle = Path(args[3])
+                assert (bundle / "plugin.json").is_file()
+                assert "--cli antigravity" in (bundle / "hooks.json").read_text(encoding="utf-8")
+                return install.CmdResult(True, "hooks : 1 processed")
+            if args[:3] == ["agy", "plugin", "install"]:
+                bundle = Path(args[3])
+                assert (bundle / "plugin.json").is_file()
+                return install.CmdResult(True, "installed")
+            if args == ["agy", "plugin", "list"]:
+                return install.CmdResult(True, '"name": "ar"')
+            return install.CmdResult(False, f"unexpected {args!r}")
+
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+
+        ok, message = install._install_for_antigravity(marketplace, ["autorun"], force=False)
+
+        assert ok is True
+        assert message == "success"
+        assert any(args[:3] == ["agy", "plugin", "validate"] for args, _timeout in calls)
+        assert any(args[:3] == ["agy", "plugin", "install"] for args, _timeout in calls)
+        assert not any(args == ["agy", "plugin", "import", "gemini"] for args, _timeout in calls)
+
     def test_antigravity_import_syncs_autorun_resources_with_antigravity_cli(self, tmp_path, monkeypatch):
-        """After `agy plugin import gemini`, installer stamps imported ar hooks."""
+        """Importer fallback still stamps imported ar hooks when native install fails."""
         install = get_install_module()
         marketplace = tmp_path / "marketplace"
         plugin_dir = marketplace / "plugins" / "autorun"
@@ -1026,7 +1127,7 @@ class TestAntigravityImportSync:
         assert ok is True
         assert message == "success"
         assert (["agy", "plugin", "import", "gemini"], 120) in calls
-        assert synced == [(plugin_dir.resolve(), imported_ar, "ar", "antigravity")]
+        assert (plugin_dir.resolve(), imported_ar, "ar", "antigravity") in synced
 
 
 class TestCustomHarnessInstall:
