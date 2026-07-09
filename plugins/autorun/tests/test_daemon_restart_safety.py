@@ -335,7 +335,65 @@ class TestPsutilProcessLifecycle:
             path.write_text("#!/bin/sh\n", encoding="utf-8")
             path.chmod(0o755)
 
-        assert _daemon_python_for_src(src_dir) == workspace_python
+        with mock.patch(
+            "autorun.restart_daemon._python_has_daemon_dependencies",
+            return_value=True,
+        ):
+            assert _daemon_python_for_src(src_dir) == workspace_python
+
+    def test_daemon_python_skips_venv_without_daemon_dependencies(self, tmp_path):
+        """A stale .venv without filelock/psutil must not own the daemon."""
+        import autorun.restart_daemon as restart_mod
+
+        workspace_root = tmp_path / "workspace"
+        plugin_root = workspace_root / "plugins" / "autorun"
+        src_dir = plugin_root / "src"
+        stale_venv_bin = workspace_root / ".venv" / "bin"
+        stale_venv_bin.mkdir(parents=True)
+        src_dir.mkdir(parents=True)
+
+        stale_python = stale_venv_bin / "python3"
+        active_python = tmp_path / ".venv-arm64" / "bin" / "python3"
+        active_python.parent.mkdir(parents=True)
+        for path in (stale_python, active_python):
+            path.write_text("#!/bin/sh\n", encoding="utf-8")
+            path.chmod(0o755)
+
+        def has_deps(path: Path) -> bool:
+            return path == active_python
+
+        with mock.patch.object(restart_mod.sys, "executable", str(active_python)):
+            with mock.patch.object(
+                restart_mod,
+                "_python_has_daemon_dependencies",
+                side_effect=has_deps,
+            ):
+                assert restart_mod._daemon_python_for_src(src_dir) == active_python
+
+    def test_daemon_python_accepts_dot_venv_named_tool_environment(self, tmp_path):
+        """uv tool/env names like .venv-arm64 can provide the autorun executable."""
+        import autorun.restart_daemon as restart_mod
+
+        workspace_root = tmp_path / "workspace"
+        plugin_root = workspace_root / "plugins" / "autorun"
+        src_dir = plugin_root / "src"
+        tool_bin = tmp_path / ".venv-arm64" / "bin"
+        tool_bin.mkdir(parents=True)
+        src_dir.mkdir(parents=True)
+
+        tool_python = tool_bin / "python3"
+        tool_autorun = tool_bin / "autorun"
+        for path in (tool_python, tool_autorun):
+            path.write_text("#!/bin/sh\n", encoding="utf-8")
+            path.chmod(0o755)
+
+        with mock.patch.object(restart_mod.shutil, "which", return_value=str(tool_autorun)):
+            with mock.patch.object(
+                restart_mod,
+                "_python_has_daemon_dependencies",
+                return_value=True,
+            ):
+                assert restart_mod._daemon_python_for_src(src_dir) == tool_python
 
     def test_get_daemon_pid_fallback_process_discovery(self):
         """get_daemon_pid() discovers daemon by cmdline when daemon.lock is missing."""

@@ -265,6 +265,26 @@ def _python_in_venv_bin(bin_dir: Path) -> Path | None:
     return None
 
 
+def _python_has_daemon_dependencies(python: Path) -> bool:
+    """Return whether a Python executable can import daemon-required modules."""
+    try:
+        result = subprocess.run(
+            [str(python), "-c", "import filelock, psutil"],
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _usable_daemon_python(candidate: Path | None) -> Path | None:
+    """Return candidate only when it can run the daemon dependency imports."""
+    if candidate is None:
+        return None
+    return candidate if _python_has_daemon_dependencies(candidate) else None
+
+
 def _daemon_python_for_src(src_dir: Path) -> Path:
     """Return the interpreter that should own the daemon for this source tree."""
     plugin_root = src_dir.parent
@@ -275,20 +295,24 @@ def _daemon_python_for_src(src_dir: Path) -> Path:
     for root in (workspace_root, plugin_root):
         bin_dir = root / ".venv" / "bin"
         if (bin_dir / "autorun").exists():
-            python = _python_in_venv_bin(bin_dir)
+            python = _usable_daemon_python(_python_in_venv_bin(bin_dir))
             if python:
                 return python
 
     autorun_bin = shutil.which("autorun")
     if autorun_bin:
         bin_dir = Path(autorun_bin).resolve().parent
-        if bin_dir.parent.name == ".venv":
-            python = _python_in_venv_bin(bin_dir)
+        if bin_dir.parent.name.startswith(".venv"):
+            python = _usable_daemon_python(_python_in_venv_bin(bin_dir))
             if python:
                 return python
 
+    python = _usable_daemon_python(Path(sys.executable))
+    if python:
+        return python
+
     for root in (plugin_root, workspace_root):
-        python = _python_in_venv_bin(root / ".venv" / "bin")
+        python = _usable_daemon_python(_python_in_venv_bin(root / ".venv" / "bin"))
         if python:
             return python
 
