@@ -111,12 +111,13 @@ class TestHookEntryExecutionPriority:
         assert "HOOK_TIMEOUT" in content
 
     def test_hook_timeout_is_platform_specific(self):
-        """Inner CLI budgets must leave room inside each harness timeout."""
+        """Hook wrapper budgets must match CONFIG when autorun imports work."""
+        from autorun.config import CONFIG
+
         hook_entry = load_hook_entry_module()
-        assert hook_entry.hook_timeout_for_cli("gemini") <= 3.5
-        assert hook_entry.hook_timeout_for_cli("qwen") <= 3.5
-        assert 4 <= hook_entry.hook_timeout_for_cli("claude") <= 5.5
-        assert 4 <= hook_entry.hook_timeout_for_cli("codex") <= 5.5
+
+        for cli_type, timeout in CONFIG["hook_wrapper_timeouts_seconds"].items():
+            assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
 
     def test_qwen_project_dir_precedes_gemini_compat_env(self, monkeypatch):

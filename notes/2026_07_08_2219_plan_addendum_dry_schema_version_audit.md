@@ -735,3 +735,61 @@ uv run --project /Users/athundt/.claude/autorun/plugins/autorun pytest \
 
 Result: `57 passed`. Ruff check for `__main__.py`, `restart_daemon.py`, and
 `test_daemon_restart_safety.py`: passed.
+
+Stage 3 hook timeout/schema checkpoint:
+
+- Source-of-truth pass confirmed hook response schemas still belong in
+  `core.py::HOOK_SCHEMAS`, `core.py::validate_hook_response`, and
+  `platforms.py` response-capability metadata. No second schema table was added.
+- Timeout ownership is now consolidated in `CONFIG`:
+  `daemon_dispatch_timeouts_seconds`,
+  `daemon_client_response_timeouts_seconds`, and
+  `hook_wrapper_timeouts_seconds`.
+- The root timeout bug was a layer inversion: Gemini/Qwen client waits were
+  `2.5s` while daemon permission dispatch could run for `3.0s`. The client
+  could therefore time out before the daemon reached its own controlled
+  platform-correct response path.
+- The fixed layering is explicitly tested:
+  `daemon dispatch < client response wait < hook wrapper wait < outer harness
+  hooks.json timeout`. This keeps hooks fast while avoiding premature
+  fail-closed responses that break active sessions.
+- `client.py::daemon_response_timeout_for_cli` now reads `CONFIG` instead of a
+  private table. `hooks/hook_entry.py::hook_timeout_for_cli` reads `CONFIG` when
+  the package import works, with a documented bootstrap-only fallback for broken
+  installs where `autorun.config` cannot be imported yet.
+- `autorun --cli` choices now derive from `platforms.py::hook_platforms()` so
+  help text and argument validation do not drift from the registry.
+- Canonical `hooks/hook_entry.py` and
+  `src/autorun/gemini_template/hooks/hook_entry.py` were re-synced byte-for-byte.
+- Dependency setup caveat: full workspace sync currently pulls unrelated native
+  `cryptography` builds through `pdf-extractor`/`claude-agent-sdk` and fails on
+  this machine's cross-arch OpenSSL setup. Focused tests were run in an isolated
+  `uv` environment with source `PYTHONPATH` and lightweight test dependencies.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with psutil --with filelock \
+  --with pytest-asyncio --with pytest-mock pytest \
+  plugins/autorun/tests/test_client_fail_closed.py \
+  plugins/autorun/tests/test_hook_entry.py::TestHookEntryExecutionPriority::test_hook_timeout_is_platform_specific \
+  plugins/autorun/tests/test_dual_cli_pathways.py::TestGeminiPathway::test_template_hook_entry_matches_canonical \
+  plugins/autorun/tests/test_dual_cli_pathways.py::TestSharedContract::test_hook_entry_is_single_source_of_truth \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py::TestClaudeHooksJson::test_timeout_is_seconds \
+  plugins/autorun/tests/test_dual_platform_hooks_install.py::TestGeminiHooksJson::test_timeout_is_milliseconds -q
+```
+
+Result: `14 passed`.
+
+```bash
+uv run ruff check \
+  plugins/autorun/src/autorun/config.py \
+  plugins/autorun/src/autorun/client.py \
+  plugins/autorun/src/autorun/__main__.py \
+  plugins/autorun/hooks/hook_entry.py \
+  plugins/autorun/src/autorun/gemini_template/hooks/hook_entry.py \
+  plugins/autorun/tests/test_client_fail_closed.py \
+  plugins/autorun/tests/test_hook_entry.py
+```
+
+Result: passed.

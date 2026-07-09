@@ -7,10 +7,13 @@ or returns invalid data. Lifecycle/context events may continue permissively.
 
 from autorun.client import (
     build_daemon_failure_response,
+    daemon_response_timeout_for_cli,
     get_stable_pid,
     is_tool_gate_event,
     prepare_payload_for_daemon,
 )
+from autorun.config import CONFIG
+from autorun.platforms import hook_platforms
 
 
 def test_client_recognizes_all_supported_tool_gate_events():
@@ -38,6 +41,31 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     assert payload["cli_type"] == "codex"
     assert payload["_pid"] == 12345
     assert "_cwd" in payload
+
+
+def test_client_response_timeouts_are_config_backed_and_above_dispatch_budget():
+    """Client waits must outlast daemon dispatch, with values owned by CONFIG."""
+    response_timeouts = CONFIG["daemon_client_response_timeouts_seconds"]
+    wrapper_timeouts = CONFIG["hook_wrapper_timeouts_seconds"]
+    max_dispatch = max(CONFIG["daemon_dispatch_timeouts_seconds"].values())
+
+    for platform in hook_platforms():
+        assert platform.name in response_timeouts
+        timeout = daemon_response_timeout_for_cli(platform.name)
+        assert timeout == response_timeouts[platform.name]
+        assert timeout > max_dispatch
+        assert wrapper_timeouts[platform.name] > timeout
+
+    assert daemon_response_timeout_for_cli("unknown") == response_timeouts["claude"]
+
+
+def test_cli_argument_choices_come_from_platform_registry():
+    """`autorun --cli` help must not drift from registered hook platforms."""
+    from autorun.__main__ import create_parser
+
+    parser = create_parser()
+    cli_action = next(action for action in parser._actions if action.dest == "cli")
+    assert tuple(cli_action.choices) == tuple(platform.name for platform in hook_platforms())
 
 
 def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):

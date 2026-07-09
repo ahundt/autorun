@@ -74,6 +74,13 @@ from typing import Sequence  # noqa: E402
 USE_DAEMON = os.environ.get("AUTORUN_USE_DAEMON", "1") != "0"
 
 
+def _hook_cli_choices() -> tuple[str, ...]:
+    """Return hook-capable CLI names for --cli without duplicating platform data."""
+    from .platforms import hook_platforms
+
+    return tuple(platform.name for platform in hook_platforms())
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
     parser = argparse.ArgumentParser(
@@ -305,9 +312,10 @@ For more information: https://github.com/ahundt/autorun
     hook_group = parser.add_argument_group("Hook Integration")
     hook_group.add_argument(
         "--cli",
-        choices=["claude", "gemini", "antigravity", "qwen", "codex"],
+        choices=_hook_cli_choices(),
         default=None,
-        help="CLI type calling this invocation (claude, gemini, antigravity, qwen, or codex). "
+        help="Hook-capable CLI type calling this invocation. Choices come from "
+             "autorun.platforms hook registry. "
              "Passed by hook_entry.py so every pathway receives CLI identity. "
              "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )

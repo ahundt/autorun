@@ -669,6 +669,33 @@ CONFIG = {
         "SessionStart": 2.0,
         "SessionEnd": 2.0,
     },
+    # Timeout layering is intentional and must stay ordered:
+    # daemon_dispatch_timeouts_seconds < daemon_client_response_timeouts_seconds
+    # < hook_wrapper_timeouts_seconds < outer harness hooks.json timeout.
+    # If the client waits less than daemon dispatch, it can fail closed before
+    # the daemon emits its platform-correct response. If the wrapper waits too
+    # near the harness timeout, Claude/Codex/Gemini discard autorun output.
+    "daemon_client_response_timeouts_seconds": {
+        "gemini": 3.5,
+        "antigravity": 3.5,
+        "qwen": 3.5,
+        "claude": 4.0,
+        "codex": 4.0,
+    },
+    "hook_wrapper_timeouts_seconds": {
+        # Gemini-family hooks are configured with a 5s outer timeout, so the
+        # wrapper keeps one second of margin for JSON output and process cleanup.
+        "gemini": 4.0,
+        "antigravity": 4.0,
+        "qwen": 4.0,
+        # Claude/Codex hooks use 10s outer timeouts; keep these short enough to
+        # report autorun failures promptly while leaving room for cold starts.
+        "claude": 5.0,
+        "codex": 5.0,
+        # ForgeCode has no active hooks today; retained for hook_entry fallback
+        # compatibility if a user invokes the wrapper with --cli forgecode.
+        "forgecode": 5.0,
+    },
 
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
@@ -951,7 +978,7 @@ After every step and substep you must say "Wait," and execute this sequential th
 # Platform detection metadata derives from the single source of truth in
 # autorun.platforms.PLATFORMS — adding a new CLI = adding one Platform()
 # definition there. No parallel maintenance here.
-from .platforms import PLATFORMS as _PLATFORMS, detection_platforms as _detection_platforms
+from .platforms import PLATFORMS as _PLATFORMS, detection_platforms as _detection_platforms  # noqa: E402
 
 # Ordered detectors for all non-default CLIs. Each entry is a 5-tuple:
 #   (name, session_id_keys, event_names, path_hints, env_vars)
