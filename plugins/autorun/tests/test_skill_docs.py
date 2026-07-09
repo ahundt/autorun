@@ -30,3 +30,23 @@ def test_user_invocable_skills_do_not_advertise_slash_as_skill_invocation():
             offenders.append(str(path.relative_to(PLUGIN_ROOT)))
 
     assert offenders == []
+
+
+def test_autorun_maintainer_skill_covers_current_harnesses_and_scoped_restarts():
+    """Maintainer guidance should reflect current multi-harness install safety."""
+    text = (SKILLS_ROOT / "autorun-maintainer" / "SKILL.md").read_text(encoding="utf-8")
+
+    for required in [
+        "Codex CLI",
+        "Google Antigravity",
+        "Qwen Code",
+        "custom harness",
+        "autorun --status --custom-harness SPEC",
+        "autorun --install-dry-run",
+        "autorun --restart-all-daemons",
+    ]:
+        assert required in text
+
+    assert "restart-all-daemons` only" in text
+    assert "pkill -f" not in text
+    assert "0.11.0" not in text

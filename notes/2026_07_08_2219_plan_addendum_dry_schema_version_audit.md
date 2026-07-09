@@ -977,6 +977,42 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 9 skill audit checkpoint, 2026_07_09_0040:
+
+- Audited `plugins/autorun/skills/autorun-maintainer/SKILL.md` against the
+  hardening plan lessons. The skill source was stale in ways that could cause a
+  future maintainer to break active sessions: it covered only Claude/Gemini,
+  used version-specific plugin cache examples, and recommended broad daemon
+  process cleanup as routine recovery.
+- Updated the shippable repo skill source to cover Claude Code, Codex CLI,
+  Gemini-family CLIs, Google Antigravity, Qwen Code, ForgeCode, custom
+  harnesses, and desktop app integrations.
+- Added maintainer guidance for `autorun --install-dry-run`,
+  `autorun --status --custom-harness SPEC`, scoped `autorun --restart-daemon`,
+  and `autorun --restart-all-daemons` only with explicit current-turn user
+  approval.
+- Replaced hard-coded `0.11.0` plugin cache paths with `<version>` examples and
+  removed broad `pkill -f` advice from the skill. The repair matrix now routes
+  ordinary hangs through scoped restart first.
+- Added a regression test so the maintainer skill must keep current
+  multi-harness coverage, custom harness status/install guidance, and scoped
+  restart safety wording.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_skill_docs.py -q
+```
+
+Result: `3 passed`.
+
+```bash
+uv run ruff check plugins/autorun/tests/test_skill_docs.py
+```
+
+Result: passed.
+
 Stage 2 command runtime/alias checkpoint, 2026_07_08_2357:
 
 - Source-of-truth pass confirmed command execution still belongs in
