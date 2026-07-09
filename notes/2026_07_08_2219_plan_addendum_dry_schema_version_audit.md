@@ -853,7 +853,7 @@ uv run --project /Users/athundt/.claude/autorun/plugins/autorun pytest \
 
 Result: `28 passed`.
 
-Stage 1 stale-task/task-ignore checkpoint:
+Stage 1 stale-task/task-ignore checkpoint, 2026_07_08_2230:
 
 - Source-of-truth pass confirmed the existing anchors are
   `TaskLifecycle`, `TaskLifecycleConfig`, `TaskLifecycle.SCHEMA_VERSION`,
@@ -881,7 +881,7 @@ uv run --project /Users/athundt/.claude/autorun/plugins/autorun pytest \
 Result: `31 passed` for `test_ghost_clear.py`; `82 passed` for the adjacent
 task lifecycle suites.
 
-Stage 2 daemon ownership/restart checkpoint:
+Stage 2 daemon ownership/restart checkpoint, 2026_07_08_2245:
 
 - Source-of-truth pass confirmed daemon lifecycle ownership belongs in
   `ipc.py`, `restart_daemon.py`, `daemon.py`, `client.py`, and the existing
@@ -914,7 +914,7 @@ uv run --project /Users/athundt/.claude/autorun/plugins/autorun pytest \
 Result: `57 passed`. Ruff check for `__main__.py`, `restart_daemon.py`, and
 `test_daemon_restart_safety.py`: passed.
 
-Stage 3 hook timeout/schema checkpoint:
+Stage 3 hook timeout/schema checkpoint, 2026_07_08_2302:
 
 - Source-of-truth pass confirmed hook response schemas still belong in
   `core.py::HOOK_SCHEMAS`, `core.py::validate_hook_response`, and
@@ -972,7 +972,53 @@ uv run ruff check \
 
 Result: passed.
 
-Stage 7 skill-doc safety checkpoint:
+Stage 2 command runtime/alias checkpoint, 2026_07_08_2357:
+
+- Source-of-truth pass confirmed command execution still belongs in
+  `core.py::AutorunApp.command()` and handler registration in `plugins.py`.
+  Markdown command metadata belongs in `command_docs.py`, and
+  `capability_snapshot.py` remains a derived read-only diagnostic.
+- The current implementation already supports the DRY path needed for
+  Claude-style slash commands and Codex-native prompt forms:
+  `/ar:*` aliases register once with `AutorunApp.command`, and Codex dispatch
+  accepts both `ar:<command>` and `ar <command>` through the platform prefix
+  registry instead of a second dispatcher.
+- `task-ignore` is intentionally not implemented as inline markdown Python.
+  `/ar:task-ignore`, `/task-ignore`, `ar:task-ignore`, and `ar task-ignore`
+  route to the same `handle_task_ignore` runtime handler, preserving user-only
+  override semantics without letting the AI silently discard real unfinished
+  work.
+- `/ar:ok` and Codex `ar:ok` keep using the existing shared
+  `_parse_allow_args` and `scoped_allow.parse_scope_args` grammar, including
+  unquoted multiword patterns. No new scope parser or second allow/block syntax
+  was added.
+- The focused test pass below covers command-doc parity, command alias
+  ownership, Codex plain aliases, task-ignore routing, and the high-risk
+  unquoted multiword allow pattern. No code change was required for this
+  checkpoint.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_capability_snapshot.py \
+  plugins/autorun/tests/test_codex_response_schema.py::test_codex_plain_ar_alias_dispatches_without_leading_slash \
+  plugins/autorun/tests/test_codex_response_schema.py::test_every_slash_ar_command_also_dispatches_with_codex_plain_prefix \
+  plugins/autorun/tests/test_codex_response_schema.py::test_codex_accepts_colon_and_space_plain_ar_command_spelling \
+  plugins/autorun/tests/test_codex_response_schema.py::test_codex_plain_ar_allow_alias_unblocks_same_session_command \
+  plugins/autorun/tests/test_codex_response_schema.py::test_codex_plain_ar_allow_supports_unquoted_multiword_patterns \
+  plugins/autorun/tests/test_codex_response_schema.py::test_task_ignore_command_marks_task_ignored_across_native_and_plain_aliases \
+  plugins/autorun/tests/test_codex_response_schema.py::test_codex_suggestions_use_plain_ar_aliases_not_rejected_slash_commands \
+  plugins/autorun/tests/test_core_configuration.py::test_new_ar_command_mappings \
+  plugins/autorun/tests/test_core_configuration.py::test_command_handlers \
+  plugins/autorun/tests/test_core_configuration.py::test_handler_variations_available \
+  plugins/autorun/tests/test_ghost_clear.py::test_task_ignore_aliases_route_to_one_handler \
+  plugins/autorun/tests/test_ghost_clear.py::test_plain_task_ignore_alias_uses_task_lifecycle_state -q
+```
+
+Result: `58 passed`.
+
+Stage 7 skill-doc safety checkpoint, 2026_07_08_2315:
 
 - Added a focused skill-doc regression test for two safety properties:
   user-invocable skills must not advertise an `/ar:*` slash command as the skill
@@ -1019,7 +1065,7 @@ uv run ruff check --ignore E402 \
 
 Result: passed.
 
-Stage 7 command-doc DRY checkpoint:
+Stage 7 command-doc DRY checkpoint, 2026_07_08_2321:
 
 - Existing source-of-truth pass confirmed runtime command dispatch already lives
   in `core.py::AutorunApp.command()` and registrations in `plugins.py`; the
@@ -1060,7 +1106,7 @@ uv run ruff check --ignore E402 \
 
 Result: passed.
 
-Stage 6 help/docs clarity checkpoint:
+Stage 6 help/docs clarity checkpoint, 2026_07_08_2331:
 
 - The normal restart command is now documented as scoped to the current autorun
   install/source tree in the package CLI help, slash-command help, README, and
@@ -1092,7 +1138,7 @@ uv run ruff check --ignore E402 \
 
 Result: passed.
 
-Stage 6 daemon handoff/restart checkpoint:
+Stage 6 daemon handoff/restart checkpoint, 2026_07_08_2338:
 
 - Source-of-truth pass confirmed restart ownership belongs in
   `restart_daemon.py`, `ipc.py`, and the existing daemon restart safety tests.
@@ -1127,7 +1173,7 @@ uv run ruff check \
 
 Result: passed.
 
-Stage 4 Codex installer composition checkpoint:
+Stage 4 Codex installer composition checkpoint, 2026_07_08_2355:
 
 - Source-of-truth pass confirmed Codex install ownership already lives in
   `install.py` helpers: `_install_for_codex`, `_merge_codex_hooks`,
@@ -1167,7 +1213,7 @@ uv run ruff check --ignore E402 \
 Result: passed. `E402` is ignored here because `install.py` intentionally keeps
 a Python-version guard before imports.
 
-Stage 5 state isolation/performance checkpoint:
+Stage 5 state isolation/performance checkpoint, 2026_07_09_0008:
 
 - Source-of-truth pass confirmed state persistence still belongs in
   `session_manager.py`; task retention and archive behavior remain in
