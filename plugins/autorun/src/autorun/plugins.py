@@ -1112,7 +1112,7 @@ def handle_sos(ctx: EventContext) -> str:
     return _deactivate(ctx, f"⚠️ EMERGENCY STOP\n{CONFIG['emergency_stop']}")
 
 
-@app.command("/ar:task-ignore")
+@app.command("/ar:task-ignore", "/task-ignore")
 def handle_task_ignore(ctx: EventContext) -> str:
     """Mark a tracked task ignored so a Stop block can clear."""
     prompt = ctx.activation_prompt or ctx.prompt or ""
@@ -1622,9 +1622,7 @@ def is_task_update_call(ctx: EventContext) -> bool:
 @cache
 def _ghost_marker_regex() -> re.Pattern:
     """Cached regex derived from the CONFIG marker template (single source of truth)."""
-    template = CONFIG["ghost_clear_marker_template"]
-    prefix, suffix = template.split("{id}")
-    return re.compile(re.escape(prefix) + r"([A-Za-z0-9_.-]+)" + re.escape(suffix))
+    return task_lifecycle._stale_clear_marker_regex()
 
 
 @app.on("PostToolUse")
@@ -1663,23 +1661,12 @@ def clear_ghost_tasks(ctx: EventContext) -> Optional[Dict]:
         return None
 
     transcript_text = ctx.transcript.text if ctx.transcript else ""
-    combined = (ctx.tool_result_str or "") + transcript_text
-    if not (matches := _ghost_marker_regex().findall(combined)):
+    matches = task_lifecycle.extract_stale_clear_task_ids(ctx.tool_result_str, transcript_text)
+    if not matches:
         return None
 
-    unique_ids = list(dict.fromkeys(str(m) for m in matches))
-    reason = CONFIG["ghost_clear_reason"]
-    cleared: list[str] = []
-    for tid in unique_ids:
-        try:
-            if manager.ignore_task(tid, reason=reason):
-                cleared.append(tid)
-                manager.log_event(
-                    "GHOST_CLEAR", f"task#{tid}",
-                    "Cleared via ghost-clear marker", "cleared",
-                )
-        except Exception:
-            continue
+    blocking_ids = {str(task["id"]) for task in manager.get_incomplete_tasks(exclude_blocking=True)}
+    cleared = manager.clear_stale_task_markers(matches, allowed_task_ids=blocking_ids)
 
     if cleared:
         ctx.add_chain_notification(

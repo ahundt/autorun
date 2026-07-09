@@ -339,6 +339,14 @@ For more information: https://github.com/ahundt/autorun
              "tap; users invoke by piping their statusline stdin through "
              "`autorun --cache-snapshot`. Always exits 0 (fail-open).",
     )
+    info_group.add_argument(
+        "--capability-snapshot",
+        nargs="?",
+        const="-",
+        metavar="FILE",
+        help="Write a read-only JSON inventory of registered platforms, commands, "
+             "and hook chains. Use '-' or omit FILE to print to stdout.",
+    )
 
     # Update group
     update_group = parser.add_argument_group("Update")
@@ -789,6 +797,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, 'cache_snapshot', False):
         from autorun.cache_guard import persist_statusline_snapshot
         return persist_statusline_snapshot(sys.stdin)
+
+    # Capability snapshot (read-only diagnostic; does not install hooks or use daemon)
+    if getattr(args, 'capability_snapshot', None) is not None:
+        from autorun.capability_snapshot import write_capability_snapshot
+
+        write_capability_snapshot(args.capability_snapshot)
+        return 0
 
     # Uninstall mode
     if args.uninstall:
