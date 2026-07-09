@@ -35,7 +35,7 @@ LOCK_PATH = ipc.AUTORUN_LOCK_PATH
 RESTART_LOCK_PATH = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
 
 
-def get_daemon_pid() -> int | None:
+def get_daemon_pid(*, src_dir: Path | None = None) -> int | None:
     """Get daemon PID from lock file, with process discovery fallback.
 
     Primary: Read PID from daemon.lock (written by _acquire_daemon_lock).
@@ -43,6 +43,11 @@ def get_daemon_pid() -> int | None:
     daemon process by cmdline pattern. This handles the case where the
     daemon acquired the flock but failed to write daemon.lock (OSError,
     race condition, or Gemini extension venv mismatch).
+
+    Args:
+        src_dir: Optional source-tree filter for fallback discovery. Normal
+                 restarts pass this so an unrelated worktree/live daemon is
+                 reported as unowned instead of stopped.
     """
     if LOCK_PATH.exists():
         try:
@@ -58,8 +63,11 @@ def get_daemon_pid() -> int | None:
         for proc in psutil.process_iter(['pid', 'cmdline']):
             try:
                 cmdline_str = ' '.join(proc.info.get('cmdline') or [])
-                if 'from autorun.daemon import main' in cmdline_str:
-                    return proc.info['pid']
+                if 'from autorun.daemon import main' not in cmdline_str:
+                    continue
+                if src_dir is not None and str(src_dir) not in cmdline_str:
+                    continue
+                return proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
 
@@ -447,8 +455,14 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
             print("  ⚠️  Another restart already in progress")
             return 1
 
-        # Step 1: Current state
-        pid = get_daemon_pid()
+        src_dir = _resolve_src_dir()
+        if not src_dir:
+            return 1
+
+        # Step 1: Current state. Fallback process discovery is source-scoped so
+        # missing daemon.lock files cannot make a normal restart stop another
+        # install's daemon.
+        pid = get_daemon_pid(src_dir=src_dir)
 
         # Steps 2-3: Stop ALL existing daemons (handles multiple daemon edge case)
         if pid:
@@ -456,10 +470,6 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
             _stop_daemon(pid)
         else:
             print("Daemon not running")
-
-        src_dir = _resolve_src_dir()
-        if not src_dir:
-            return 1
 
         # Normal restart keeps shared/live daemons outside this source tree.
         # all_daemons is risky maintenance for stale multi-daemon cleanup.
@@ -504,7 +514,7 @@ def restart_daemon(*, all_daemons: bool = False) -> int:
             time.sleep(0.2)
 
         # Step 5: Verify new daemon started
-        new_pid = get_daemon_pid()
+        new_pid = get_daemon_pid(src_dir=src_dir)
         if new_pid:
             if new_pid == pid:
                 print(f"  ⚠️ Same PID {new_pid} (may not have restarted)")

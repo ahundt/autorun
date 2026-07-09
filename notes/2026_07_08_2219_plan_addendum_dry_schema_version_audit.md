@@ -794,6 +794,41 @@ uv run ruff check \
 
 Result: passed.
 
+Stage 6 daemon handoff/restart checkpoint:
+
+- Source-of-truth pass confirmed restart ownership belongs in
+  `restart_daemon.py`, `ipc.py`, and the existing daemon restart safety tests.
+- A remaining root cause existed after the earlier source-tree kill scoping:
+  `get_daemon_pid()` fallback discovery was still broad when `daemon.lock` was
+  missing but `daemon.flock` existed. Because `restart_daemon()` called it before
+  resolving the current source tree, a normal restart could still stop an
+  unrelated live/worktree daemon discovered by command line.
+- The fix resolves `src_dir` before PID discovery in `restart_daemon()` and
+  passes it into `get_daemon_pid(src_dir=...)`. Fallback process scanning now
+  ignores daemon processes whose command line does not contain the current source
+  directory. Lock-file PID reads remain unchanged because the lock path is
+  already scoped by `ipc.AUTORUN_CONFIG_DIR`.
+- `get_daemon_pid()` remains backward compatible for callers that do not pass
+  `src_dir`; explicit maintenance/status callers can still perform broad
+  discovery when that is actually intended.
+- Validation:
+
+```bash
+PYTHONPATH=plugins/autorun/src uv run --isolated \
+  --with pytest --with pytest-timeout --with filelock --with psutil pytest \
+  plugins/autorun/tests/test_daemon_restart_safety.py -q
+```
+
+Result: `30 passed`.
+
+```bash
+uv run ruff check \
+  plugins/autorun/src/autorun/restart_daemon.py \
+  plugins/autorun/tests/test_daemon_restart_safety.py
+```
+
+Result: passed.
+
 Stage 4 Codex installer composition checkpoint:
 
 - Source-of-truth pass confirmed Codex install ownership already lives in
