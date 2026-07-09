@@ -209,7 +209,7 @@ def _clear_pycache(src_dir: Path) -> None:
     if failed:
         print(f"  ⚠️ Failed to clear {failed} __pycache__ directories")
     if not cleared and not failed:
-        print(f"  No __pycache__ directories to clear")
+        print("  No __pycache__ directories to clear")
 
 
 def _check_conflicting_packages() -> None:
@@ -221,8 +221,8 @@ def _check_conflicting_packages() -> None:
             site_packages = Path(site_pkg_dir) / "autorun"
             if site_packages.exists():
                 print(f"  ⚠️  WARNING: Installed package found at {site_packages}")
-                print(f"      This may interfere with source directory loading")
-                print(f"      Consider: uv pip uninstall autorun")
+                print("      This may interfere with source directory loading")
+                print("      Consider: uv pip uninstall autorun")
                 break
     except Exception as e:
         # Non-fatal: just log
@@ -311,10 +311,12 @@ def _start_daemon(src_dir: Path) -> bool:
             start_new_session=True,
         )
 
-    # Wait briefly for daemon to log diagnostics
-    time.sleep(0.5)
+    return True
 
-    # Read and display diagnostics
+
+def _display_daemon_diagnostics(src_dir: Path) -> bool:
+    """Display startup diagnostics and verify the normalized package path."""
+    log_path = ipc.AUTORUN_CONFIG_DIR / "daemon_startup.log"
     print("\n=== Daemon Diagnostics ===")
     try:
         with open(log_path, encoding="utf-8") as log:
@@ -323,25 +325,31 @@ def _start_daemon(src_dir: Path) -> bool:
             for line in lines[:10]:
                 print(f"  {line.rstrip()}")
 
-        # Verify module source matches expected
-        log_content = ''.join(lines)
-        # Check if autorun loaded from our source directory
-        # (path will contain /src/autorun/__init__.py)
-        src_parent = str(src_dir.parent.parent)  # Go up to repo root
-        if src_parent in log_content and '/src/autorun/__init__.py' in log_content:
+        loaded_prefix = "autorun loaded from: "
+        loaded_text = next(
+            (line[len(loaded_prefix):].strip() for line in lines if line.startswith(loaded_prefix)),
+            "",
+        )
+        expected = (src_dir / "autorun" / "__init__.py").resolve()
+        loaded = Path(loaded_text).resolve() if loaded_text else None
+        if loaded == expected:
             print("  ✓ Daemon loaded from source directory")
-        elif '.local/lib' in log_content or 'site-packages' in log_content:
-            print("  ✗ WARNING: Daemon loaded from installed package!")
-            print(f"  Check {log_path} for details")
+            verified = True
+        elif loaded is not None:
+            print(f"  ✗ WARNING: Daemon loaded from {loaded}, expected {expected}")
+            verified = False
         else:
-            print(f"  ⚠️ Unknown load location - check {log_path}")
+            print(f"  ⚠️ Startup log has no module path; check {log_path}")
+            verified = False
     except FileNotFoundError:
         print(f"  ⚠️ Log file not yet created: {log_path}")
+        verified = False
     except Exception as e:
         print(f"  ⚠️ Could not read daemon log: {e}")
+        verified = False
 
     print(f"\n  Full daemon output: {log_path}")
-    return True
+    return verified
 
 
 def _stop_daemon(pid: int) -> None:
@@ -471,6 +479,10 @@ def restart_daemon() -> int:
                 break
             time.sleep(0.2)
 
+        # The startup preamble is flushed before daemon socket startup, so
+        # readiness is the synchronization point for deterministic diagnostics.
+        diagnostics_verified = _display_daemon_diagnostics(src_dir)
+
         # Step 5: Verify new daemon started
         new_pid = get_daemon_pid()
         if new_pid:
@@ -479,6 +491,9 @@ def restart_daemon() -> int:
                 return 1
             elif not ready:
                 print("  ✗ ERROR: Daemon started but not responding to socket")
+                return 1
+            elif not diagnostics_verified:
+                print("  ✗ ERROR: Daemon source location could not be verified")
                 return 1
             else:
                 print(f"  ✓ New daemon started (PID {new_pid}) and responding")

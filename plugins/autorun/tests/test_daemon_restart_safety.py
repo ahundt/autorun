@@ -52,6 +52,55 @@ def test_pytest_runtime_isolated_from_production_daemon():
     assert os.environ["AUTORUN_TEST_STATE_DIR"].startswith(str(test_home.parent))
 
 
+class TestDaemonStartupDiagnostics:
+    """Source verification must be deterministic and actionable."""
+
+    def test_normalized_source_path_is_verified(self, tmp_path, capsys):
+        from autorun import restart_daemon
+
+        src_dir = tmp_path / "checkout" / "src"
+        expected = src_dir / "autorun" / "__init__.py"
+        (tmp_path / "daemon_startup.log").write_text(
+            f"autorun loaded from: {expected}\n=== Starting Daemon ===\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(restart_daemon.ipc, "AUTORUN_CONFIG_DIR", tmp_path):
+            assert restart_daemon._display_daemon_diagnostics(src_dir) is True
+
+        assert "loaded from source directory" in capsys.readouterr().out
+
+    def test_mismatched_source_reports_actual_and_expected(self, tmp_path, capsys):
+        from autorun import restart_daemon
+
+        src_dir = tmp_path / "checkout" / "src"
+        loaded = tmp_path / "site-packages" / "autorun" / "__init__.py"
+        (tmp_path / "daemon_startup.log").write_text(
+            f"autorun loaded from: {loaded}\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(restart_daemon.ipc, "AUTORUN_CONFIG_DIR", tmp_path):
+            assert restart_daemon._display_daemon_diagnostics(src_dir) is False
+
+        output = capsys.readouterr().out
+        assert str(loaded.resolve()) in output
+        assert str((src_dir / "autorun" / "__init__.py").resolve()) in output
+
+    def test_missing_module_path_points_to_startup_log(self, tmp_path, capsys):
+        from autorun import restart_daemon
+
+        log_path = tmp_path / "daemon_startup.log"
+        log_path.write_text("=== Starting Daemon ===\n", encoding="utf-8")
+
+        with mock.patch.object(restart_daemon.ipc, "AUTORUN_CONFIG_DIR", tmp_path):
+            assert restart_daemon._display_daemon_diagnostics(tmp_path / "src") is False
+
+        output = capsys.readouterr().out
+        assert "no module path" in output
+        assert str(log_path) in output
+
+
 class TestRestartLockFilelock:
     """Test restart_lock() with filelock backend — RAII, thread safety, multiprocess."""
 
