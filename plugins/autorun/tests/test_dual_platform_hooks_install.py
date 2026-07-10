@@ -21,9 +21,11 @@ Requirements sourced from:
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -892,31 +894,91 @@ class TestRmBlockingBothPaths:
 # =============================================================================
 
 
-class TestBuildDirectorySync:
-    """Verify build directory hooks match source hooks.
+class TestWheelPluginAssets:
+    """Build a wheel and verify every installer-owned asset surface is bundled."""
 
-    setuptools creates build/lib/autorun/ during 'uv build' or 'pip install'.
-    If package-data config is wrong, hooks in the build artifact may be stale
-    or missing entirely. These tests guard against that.
-    """
+    @pytest.mark.slow
+    def test_wheel_contains_current_plugin_assets(self, tmp_path, request):
+        """A wheel install must remain self-contained outside a source checkout."""
+        build_dir = PLUGIN_ROOT / "build"
+        request.addfinalizer(lambda: shutil.rmtree(build_dir, ignore_errors=True))
+        result = subprocess.run(
+            [
+                "uv",
+                "build",
+                "--package",
+                "autorun",
+                "--wheel",
+                "--out-dir",
+                str(tmp_path),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        wheel = next(tmp_path.glob("autorun-*.whl"))
 
-    def test_build_hooks_json_matches_source(self):
-        build_hooks = PLUGIN_ROOT / "build" / "hooks" / "claude-hooks.json"
-        if not build_hooks.exists():
-            pytest.skip("Build directory not present (run 'uv build' first)")
-        assert load_hooks_json(HOOKS_JSON) == load_hooks_json(build_hooks)
+        with zipfile.ZipFile(wheel) as archive:
+            names = set(archive.namelist())
+            required = {
+                "autorun/.claude-plugin/marketplace.json",
+                "autorun/.claude-plugin/plugin.json",
+                "autorun/.codex-plugin/plugin.json",
+                "autorun/agents/tmux-session-automation.md",
+                "autorun/commands/status.md",
+                "autorun/hooks/hook_entry.py",
+                "autorun/hooks/hooks.json",
+                "autorun/scripts/task_lifecycle_cli.py",
+                "autorun/skills/autorun-maintainer/SKILL.md",
+                "autorun/gemini_template/gemini-extension.json",
+                "autorun/gemini_template/hooks/hooks.json",
+            }
+            assert required <= names, f"wheel missing plugin assets: {required - names}"
+            assert archive.read("autorun/hooks/hook_entry.py") == HOOK_ENTRY_PY.read_bytes()
+            assert json.loads(archive.read("autorun/hooks/hooks.json")) == load_hooks_json(
+                HOOKS_JSON
+            )
+            assert json.loads(
+                archive.read("autorun/gemini_template/hooks/hooks.json")
+            ) == load_hooks_json(GEMINI_HOOKS_JSON)
 
-    def test_build_gemini_hooks_matches_source(self):
-        build_gemini = PLUGIN_ROOT / "build" / "hooks" / "hooks.json"
-        if not build_gemini.exists():
-            pytest.skip("Build directory not present (run 'uv build' first)")
-        assert load_hooks_json(GEMINI_HOOKS_JSON) == load_hooks_json(build_gemini)
-
-    def test_build_hook_entry_matches_source(self):
-        build_entry = PLUGIN_ROOT / "build" / "hooks" / "hook_entry.py"
-        if not build_entry.exists():
-            pytest.skip("Build directory not present (run 'uv build' first)")
-        assert HOOK_ENTRY_PY.read_text(encoding="utf-8") == build_entry.read_text(encoding="utf-8")
+        venv = tmp_path / "venv"
+        subprocess.run(["uv", "venv", str(venv)], check=True, capture_output=True)
+        venv_python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        install_result = subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(venv_python),
+                str(wheel),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+        probe = subprocess.run(
+            [
+                str(venv_python),
+                "-c",
+                (
+                    "from autorun.resources import get_plugin_root; "
+                    "root=get_plugin_root(); "
+                    "assert (root/'.claude-plugin'/'marketplace.json').is_file(); "
+                    "assert (root/'.codex-plugin'/'plugin.json').is_file(); "
+                    "print(root)"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+        assert "site-packages/autorun" in probe.stdout
 
 
 class TestDeployedCopiesMatchSource:

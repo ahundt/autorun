@@ -1387,7 +1387,7 @@ class TestAllLocationsSync:
                 pytest.fail(
                     f"Build artifacts at {build_dir} should not exist (gitignored). "
                     f"These are setuptools artifacts that lag behind source. "
-                    f"Run: rm -rf {build_dir}"
+                    f"Run: trash {build_dir}"
                 )
 
     def test_only_one_daemon_process(self, daemon_manager):

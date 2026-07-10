@@ -1,15 +1,16 @@
 # Core documentation
-include README.md
-include LICENSE
 include CLAUDE.md
+include build_support.py
+include setup.py
 
 # Plugin metadata and configuration
 recursive-include .claude-plugin *
+recursive-include .codex-plugin *
 
 # Plugin resources (commands, agents, skills - markdown and python)
-recursive-include commands *.md
-recursive-include agents *.md *.py
-recursive-include skills *.md *.py
+recursive-include commands *
+recursive-include agents *
+recursive-include skills *
 recursive-include hooks *.json *.py
 
 # Scripts for daemon management
@@ -17,9 +18,10 @@ recursive-include scripts *.py
 
 # Workspace configuration
 include pyproject.toml
-include gemini-extension.json
+recursive-include src/autorun/gemini_template *.json *.py
 
 # Exclude build artifacts
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store
+global-exclude *.tmp

@@ -7,9 +7,9 @@ build-backend = "setuptools.build_meta"
 name = "autorun"
 version = "0.12.0"
 description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
-readme = "README.md"
+readme = {file = "CLAUDE.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [
     {name = "Andrew Hundt", email = "ATHundt@gmail.com"},
 ]
@@ -17,7 +17,6 @@ keywords = ["claude", "agent-sdk", "autorun", "cli", "command-interceptor"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -78,15 +77,6 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
-
-[tool.setuptools.package-data]
-autorun = [
-    "../../.claude-plugin/**/*",
-    "../../commands/**/*",
-    "../../agents/**/*",
-    "../../skills/**/*",
-    "../../hooks/**/*",
-]
 
 [tool.ruff]
 line-length = 160
