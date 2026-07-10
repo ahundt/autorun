@@ -898,7 +898,7 @@ def _sync_dependencies() -> CmdResult:
 
 
 def _install_pdf_deps() -> CmdResult:
-    """Install pdf-extractor's core Python deps via uv pip.
+    """Install or upgrade the PDF CLI and its dependencies.
 
     Returns:
         CmdResult indicating success/failure, or success if plugin not present
@@ -925,10 +925,14 @@ def _install_pdf_deps() -> CmdResult:
         else:
             return CmdResult(True, "pdf-extractor not present, skipping")
 
+    if shutil.which("uv"):
+        return run_cmd(
+            ["uv", "tool", "install", "--force", "--editable", str(pdf_dir)],
+            timeout=180,
+        )
     return run_cmd(
-        ["uv", "pip", "install", "--python", sys.executable, "-q",
-         "pdfplumber", "pdfminer.six", "PyPDF2", "markitdown", "tqdm"],
-        timeout=120,
+        [sys.executable, "-m", "pip", "install", "--editable", str(pdf_dir)],
+        timeout=180,
     )
 
 

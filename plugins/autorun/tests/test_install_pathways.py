@@ -792,16 +792,52 @@ class TestDependencyInstallation:
         assert "_install_pdf_deps()" in content
         assert '"pdf-extractor" in plugins' in content
 
-    def test_pdf_deps_use_correct_packages(self):
-        """Verify _install_pdf_deps() installs correct packages."""
-        plugin_root = get_plugin_root()
-        install_file = plugin_root / "src" / "autorun" / "install.py"
-        content = install_file.read_text(encoding="utf-8")
+    def test_pdf_runtime_installs_editable_uv_tool(self, tmp_path, monkeypatch):
+        """Selecting PDF upgrades the CLI package, not only loose dependencies."""
+        install = get_install_module()
+        pdf_dir = tmp_path / "plugins" / "pdf-extractor"
+        (pdf_dir / ".claude-plugin").mkdir(parents=True)
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: tmp_path)
+        monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+        calls = []
+        monkeypatch.setattr(
+            install,
+            "run_cmd",
+            lambda args, **kwargs: calls.append((args, kwargs)) or install.CmdResult(True, "ok"),
+        )
 
-        # Should install all 5 core pdf deps
-        required_deps = ["pdfplumber", "pdfminer.six", "PyPDF2", "markitdown", "tqdm"]
-        for dep in required_deps:
-            assert dep in content, f"{dep} should be in _install_pdf_deps()"
+        result = install._install_pdf_deps()
+
+        assert result.ok
+        assert calls == [([
+            "uv", "tool", "install", "--force", "--editable", str(pdf_dir)
+        ], {"timeout": 180})]
+
+    def test_pdf_runtime_falls_back_to_editable_pip(self, tmp_path, monkeypatch):
+        """Systems without uv still receive the PDF package and CLI entry point."""
+        install = get_install_module()
+        pdf_dir = tmp_path / "plugins" / "pdf-extractor"
+        (pdf_dir / ".claude-plugin").mkdir(parents=True)
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: tmp_path)
+        monkeypatch.setattr(install.shutil, "which", lambda _name: None)
+        calls = []
+        monkeypatch.setattr(
+            install,
+            "run_cmd",
+            lambda args, **kwargs: calls.append((args, kwargs)) or install.CmdResult(True, "ok"),
+        )
+
+        result = install._install_pdf_deps()
+
+        assert result.ok
+        assert calls == [([
+            install.sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--editable",
+            str(pdf_dir),
+        ], {"timeout": 180})]
 
 
 class TestCacheFallback:
