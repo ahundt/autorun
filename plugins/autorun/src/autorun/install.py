@@ -49,6 +49,8 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
+from filelock import FileLock
+
 from .command_docs import iter_command_docs
 from . import ipc
 from .platforms import (
@@ -1112,6 +1114,33 @@ def _stage_antigravity_native_bundle(
         encoding="utf-8",
     )
     return (commands_generated, skills_synced)
+
+
+def _install_antigravity_cli_bundle(plugin_dir: Path) -> tuple[int, int]:
+    """Atomically install shared resources into Antigravity CLI's plugin root."""
+    target = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    install_lock = FileLock(target.parent / ".autorun-install.lock")
+
+    with install_lock:
+        # Stage beside the target so replacement and rollback stay on one filesystem.
+        with tempfile.TemporaryDirectory(
+            prefix=".autorun-antigravity-",
+            dir=target.parent,
+        ) as tmp:
+            transaction = Path(tmp)
+            staged = transaction / "ar"
+            backup = transaction / "previous"
+            counts = _stage_antigravity_native_bundle(plugin_dir, staged)
+            if target.exists() or target.is_symlink():
+                os.replace(target, backup)
+            try:
+                os.replace(staged, target)
+            except Exception:
+                if backup.exists() or backup.is_symlink():
+                    os.replace(backup, target)
+                raise
+            return counts
 
 
 def _antigravity_validate_reports_hooks(output: str) -> bool:
@@ -3016,6 +3045,10 @@ def _install_for_antigravity(
                 if install_result.ok or install_result.has_text("already installed"):
                     verify = run_cmd(["agy", "plugin", "list"], timeout=30)
                     if verify.ok and ('"name": "ar"' in verify.output or "ar" in verify.output):
+                        try:
+                            _install_antigravity_cli_bundle(plugin_dir)
+                        except OSError as exc:
+                            return (False, f"Antigravity app plugin installed, but CLI sync failed: {exc}")
                         print("   Antigravity ar plugin installed from native bundle")
                         return (True, "success")
 
@@ -3031,9 +3064,11 @@ def _install_for_antigravity(
     if '"name": "ar"' not in verify.output and "ar" not in verify.output:
         return (False, "agy plugin list did not report imported ar plugin")
 
-    imported_dir = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar"
-    if plugin_dir is not None and imported_dir.is_dir():
-        _sync_gemini_extension_resources(plugin_dir, imported_dir, "ar", "antigravity")
+    if plugin_dir is not None:
+        try:
+            _install_antigravity_cli_bundle(plugin_dir)
+        except OSError as exc:
+            return (False, f"Antigravity import succeeded, but CLI sync failed: {exc}")
 
     print("   Antigravity ar plugin imported from Gemini CLI")
     return (True, "success")

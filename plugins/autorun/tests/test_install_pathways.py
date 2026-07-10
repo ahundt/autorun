@@ -1034,6 +1034,11 @@ class TestAntigravityImportSync:
         assert (bundle_dir / "commands").is_dir()
         assert (bundle_dir / "skills").is_dir()
 
+        # Re-staging upgrades owned resources without duplicating hook entries.
+        first_root_hooks = root_hooks
+        install._stage_antigravity_native_bundle(plugin_dir, bundle_dir)
+        assert (bundle_dir / "hooks.json").read_text(encoding="utf-8") == first_root_hooks
+
     def test_antigravity_install_prefers_native_bundle_when_valid(self, tmp_path, monkeypatch):
         """Antigravity install uses native plugin install before importer fallback."""
         install = get_install_module()
@@ -1052,7 +1057,7 @@ class TestAntigravityImportSync:
                                 {
                                     "type": "command",
                                     "command": (
-                                        "uv run --quiet --project ${extensionPath} "
+                                        "uv run --quiet --no-sync --project ${extensionPath} "
                                         "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
                                     ),
                                 }
@@ -1064,6 +1069,9 @@ class TestAntigravityImportSync:
             encoding="utf-8",
         )
         (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
+        shared_hooks = plugin_dir / "hooks"
+        shared_hooks.mkdir()
+        (shared_hooks / "hook_entry.py").write_text("# shared hook\n", encoding="utf-8")
         (plugin_dir / "commands").mkdir()
         (plugin_dir / "commands" / "st.md").write_text("# status\n", encoding="utf-8")
         skill_dir = plugin_dir / "skills" / "cache"
@@ -1079,8 +1087,18 @@ class TestAntigravityImportSync:
             encoding="utf-8",
         )
 
+        home = tmp_path / "home"
+        cli_root = home / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+        stale_hooks = cli_root / "hooks"
+        stale_hooks.mkdir(parents=True)
+        (stale_hooks / "hooks.json").write_text(
+            '{"hooks":{"BeforeTool":[{"hooks":[{"command":"hook_entry.py --cli gemini"}]}]}}',
+            encoding="utf-8",
+        )
+
         calls = []
         monkeypatch.setattr(install.shutil, "which", lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None)
+        monkeypatch.setattr(install.Path, "home", lambda: home)
 
         def fake_run_cmd(args, timeout=30, **kwargs):
             calls.append((args, timeout))
@@ -1106,6 +1124,49 @@ class TestAntigravityImportSync:
         assert any(args[:3] == ["agy", "plugin", "validate"] for args, _timeout in calls)
         assert any(args[:3] == ["agy", "plugin", "install"] for args, _timeout in calls)
         assert not any(args == ["agy", "plugin", "import", "gemini"] for args, _timeout in calls)
+        assert json.loads((cli_root / "plugin.json").read_text(encoding="utf-8"))["name"] == "ar"
+        assert (cli_root / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# shared hook\n"
+        assert (cli_root / "commands" / "ar" / "st.toml").is_file()
+        assert (cli_root / "skills" / "cache" / "SKILL.md").is_file()
+        for hooks_file in (cli_root / "hooks.json", cli_root / "hooks" / "hooks.json"):
+            hook_text = hooks_file.read_text(encoding="utf-8")
+            assert "--cli antigravity" in hook_text
+            assert "--cli gemini" not in hook_text
+            assert "--no-sync" in hook_text
+
+    def test_antigravity_cli_bundle_restores_previous_install_on_replace_failure(
+        self, tmp_path, monkeypatch
+    ):
+        """A failed staged replacement must restore the last working CLI plugin."""
+        install = get_install_module()
+        home = tmp_path / "home"
+        target = home / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+        target.mkdir(parents=True)
+        (target / "version.txt").write_text("previous\n", encoding="utf-8")
+        monkeypatch.setattr(install.Path, "home", lambda: home)
+
+        def fake_stage(_plugin, staged):
+            staged.mkdir(parents=True)
+            (staged / "version.txt").write_text("next\n", encoding="utf-8")
+            return (1, 1)
+
+        real_replace = install.os.replace
+        replacements = 0
+
+        def fail_new_install(source, destination):
+            nonlocal replacements
+            replacements += 1
+            if replacements == 2:
+                raise OSError("injected replacement failure")
+            return real_replace(source, destination)
+
+        monkeypatch.setattr(install, "_stage_antigravity_native_bundle", fake_stage)
+        monkeypatch.setattr(install.os, "replace", fail_new_install)
+
+        with pytest.raises(OSError, match="injected replacement failure"):
+            install._install_antigravity_cli_bundle(tmp_path / "plugin")
+
+        assert (target / "version.txt").read_text(encoding="utf-8") == "previous\n"
 
     def test_antigravity_import_syncs_autorun_resources_with_antigravity_cli(self, tmp_path, monkeypatch):
         """Importer fallback still stamps imported ar hooks when native install fails."""
@@ -1123,8 +1184,6 @@ class TestAntigravityImportSync:
         )
 
         home = tmp_path / "home"
-        imported_ar = home / ".gemini" / "antigravity-cli" / "plugins" / "ar"
-        imported_ar.mkdir(parents=True)
         calls = []
 
         monkeypatch.setattr(install.shutil, "which", lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None)
@@ -1140,19 +1199,19 @@ class TestAntigravityImportSync:
 
         synced = []
 
-        def fake_sync(plugin, ext, ext_name, cli_name="gemini"):
-            synced.append((plugin, ext, ext_name, cli_name))
+        def fake_sync(plugin):
+            synced.append(plugin)
             return (0, 0)
 
         monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
-        monkeypatch.setattr(install, "_sync_gemini_extension_resources", fake_sync)
+        monkeypatch.setattr(install, "_install_antigravity_cli_bundle", fake_sync)
 
         ok, message = install._install_for_antigravity(marketplace, ["autorun"], force=True)
 
         assert ok is True
         assert message == "success"
         assert (["agy", "plugin", "import", "gemini"], 120) in calls
-        assert (plugin_dir.resolve(), imported_ar, "ar", "antigravity") in synced
+        assert synced == [plugin_dir.resolve()]
 
 
 class TestCustomHarnessInstall:
