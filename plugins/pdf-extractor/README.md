@@ -4,6 +4,23 @@ Extract text and structured data from PDF documents using a multi-backend approa
 
 ## Installation
 
+### AI Harnesses
+
+From the autorun repository root, install the plugin and skill for every
+detected supported harness:
+
+```bash
+autorun --install pdf-extractor --force
+```
+
+Target one harness with `--claude`, `--gemini`, `--qwen`, `--antigravity`, or
+`--codex`. Claude, Gemini, Qwen, and Antigravity use native per-plugin skills.
+Codex installs `$pdf-extractor` into `~/.agents/skills/pdf-extractor/` using the
+same ownership and upgrade rules as autorun's other global skills. ForgeCode
+does not currently expose a skill API.
+
+### Python CLI
+
 ```bash
 cd ~/.claude/autorun/plugins/pdf-extractor
 uv venv
@@ -69,6 +86,10 @@ This skill activates when you ask to:
 - "parse PDF contents"
 - "read this PDF file"
 - "batch extract PDFs"
+
+Use the harness's native skill picker. In Codex, invoke `$pdf-extractor` or
+select it from `/skills`; `/pdf-extractor:extract` is the plugin command surface,
+not the Codex skill invocation.
 
 ## License
 

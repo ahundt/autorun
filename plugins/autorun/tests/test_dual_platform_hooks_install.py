@@ -495,6 +495,7 @@ class TestManifestFiles:
         pdf_claude_manifest = json.loads((pdf_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         pdf_gemini_manifest = json.loads((pdf_root / "gemini-extension.json").read_text(encoding="utf-8"))
         pdf_init = (pdf_root / "src" / "pdf_extraction" / "__init__.py").read_text(encoding="utf-8")
+        pdf_skill = (pdf_root / "skills" / "pdf-extractor" / "SKILL.md").read_text(encoding="utf-8")
         workspace_init = (REPO_ROOT / "src" / "autorun_workspace" / "__init__.py").read_text(encoding="utf-8")
         autorun_init = (PLUGIN_ROOT / "src" / "autorun" / "__init__.py").read_text(encoding="utf-8")
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -540,7 +541,9 @@ class TestManifestFiles:
             "unified workspace version": expected,
             "pdf Claude manifest": pdf_claude_manifest.get("version"),
             "pdf Gemini manifest": pdf_gemini_manifest.get("version"),
+            "pdf Gemini skills path": pdf_gemini_manifest.get("skills") == "./skills/",
             "pdf __version__": f'__version__ = "{pdf_expected}"' in pdf_init,
+            "pdf skill version": f"version: {pdf_expected}" in pdf_skill,
             "CLAUDE pdf release heading": f"## pdf-extractor Plugin (v{pdf_expected})" in claude_md,
             "GEMINI pdf expected output": f"pdf-extractor@{pdf_expected}" in gemini_md,
         }

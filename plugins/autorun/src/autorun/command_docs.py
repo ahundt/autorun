@@ -94,3 +94,25 @@ def skill_docs_inventory(skills_dir: Path) -> dict[str, dict[str, str]]:
             "description": frontmatter.get("description", ""),
         }
     return inventory
+
+
+def marketplace_skill_docs_inventory(
+    plugins_dir: Path,
+) -> tuple[dict[str, dict[str, str]], dict[str, list[str]]]:
+    """Return flattened and per-plugin skill metadata for a marketplace."""
+    skills: dict[str, dict[str, str]] = {}
+    plugin_skills: dict[str, list[str]] = {}
+    if not plugins_dir.is_dir():
+        return (skills, plugin_skills)
+
+    for plugin_dir in sorted(path for path in plugins_dir.iterdir() if path.is_dir()):
+        inventory = skill_docs_inventory(plugin_dir / "skills")
+        if not inventory:
+            continue
+        duplicate_names = sorted(set(skills).intersection(inventory))
+        if duplicate_names:
+            names = ", ".join(duplicate_names)
+            raise ValueError(f"duplicate marketplace skill name(s): {names}")
+        skills.update(inventory)
+        plugin_skills[plugin_dir.name] = sorted(inventory)
+    return (skills, plugin_skills)

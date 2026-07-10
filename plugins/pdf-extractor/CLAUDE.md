@@ -19,6 +19,17 @@ extract-pdfs --list-backends
 
 ## Installation
 
+### Cross-Harness Plugin Install
+
+```bash
+# From the repository root; installs the selected plugin's commands and skill.
+autorun --install pdf-extractor --force
+```
+
+Use `--claude`, `--gemini`, `--qwen`, `--antigravity`, or `--codex` to target
+one harness. Codex exposes the installed skill as `$pdf-extractor`; ForgeCode
+does not provide a native skill surface.
+
 ### Using uv tool install (Recommended — makes extract-pdfs globally available)
 
 ```bash

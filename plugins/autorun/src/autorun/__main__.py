@@ -803,8 +803,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return set_bootstrap_config(enabled=True)
 
     # Install mode (new unified installer)
-    if args.install is not None:
+    if args.install is not None or args.install_dry_run:
         from autorun.install import install_plugins
+
+        selection = args.install if args.install is not None else "all"
 
         install_kwargs = {
             "tool": args.tool,
@@ -822,7 +824,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             install_kwargs["dry_run"] = True
         if args.custom_harness:
             install_kwargs["custom_harnesses"] = args.custom_harness
-        return install_plugins(args.install, **install_kwargs)
+        return install_plugins(selection, **install_kwargs)
 
     if args.status:
         from autorun.install import show_status

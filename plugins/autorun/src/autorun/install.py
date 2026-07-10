@@ -1010,6 +1010,20 @@ def _gemini_template_dir(plugin_dir: Path) -> Path:
     return plugin_dir / "src" / "autorun" / "gemini_template"
 
 
+def _gemini_extension_name(plugin_dir: Path) -> str:
+    """Return the harness-facing extension name from a plugin manifest."""
+    template = _gemini_template_dir(plugin_dir)
+    manifest = (
+        template / "gemini-extension.json"
+        if (template / "gemini-extension.json").is_file()
+        else plugin_dir / "gemini-extension.json"
+    )
+    try:
+        return str(json.loads(manifest.read_text(encoding="utf-8"))["name"])
+    except (KeyError, OSError, json.JSONDecodeError):
+        return "ar" if plugin_dir.name == "autorun" else plugin_dir.name
+
+
 def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
     """Copy plugins/autorun/hooks/hook_entry.py into an installed Gemini
     extension dir so ${extensionPath}/hooks/hook_entry.py resolves at runtime.
@@ -1061,6 +1075,34 @@ def _count_skill_dirs(skills_dir: Path) -> int:
     )
 
 
+def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
+    """Return valid top-level skill names, optionally restricted to owned copies."""
+    if not skills_dir.is_dir():
+        return set()
+    return {
+        child.name
+        for child in skills_dir.iterdir()
+        if child.is_dir()
+        and (child / "SKILL.md").is_file()
+        and (not owned_only or (child / _CODEX_SKILL_OWNED_MARKER).is_file())
+    }
+
+
+def _selected_plugin_skill_requirements(
+    marketplace_root: Path,
+) -> dict[str, set[str]]:
+    """Return extension-name to shipped-skill names for all marketplace plugins."""
+    requirements: dict[str, set[str]] = {}
+    for plugin_dir in _resolve_selected_plugin_dirs(
+        marketplace_root,
+        tuple(PluginName.all()) + ("ar",),
+    ):
+        names = _skill_dir_names(plugin_dir / "skills")
+        if names:
+            requirements[_gemini_extension_name(plugin_dir)] = names
+    return requirements
+
+
 def _sync_gemini_extension_resources(
     plugin_dir: Path,
     ext_dir: Path,
@@ -1085,9 +1127,10 @@ def _sync_gemini_extension_resources(
     if manifest_src.is_file():
         shutil.copy2(manifest_src, ext_dir / "gemini-extension.json")
 
-    _copy_tree(gemini_src / "hooks", ext_dir / "hooks")
-    _copy_hook_entry_to_gemini_ext(plugin_dir, ext_dir)
-    _set_gemini_family_hook_cli(ext_dir, cli_name)
+    hooks_synced = _copy_tree(gemini_src / "hooks", ext_dir / "hooks")
+    if hooks_synced:
+        _copy_hook_entry_to_gemini_ext(plugin_dir, ext_dir)
+        _set_gemini_family_hook_cli(ext_dir, cli_name)
 
     commands_generated = 0
     if _copy_tree(plugin_dir / "commands", ext_dir / "commands"):
@@ -1103,33 +1146,45 @@ def _sync_gemini_extension_resources(
 def _stage_antigravity_native_bundle(
     plugin_dir: Path,
     bundle_dir: Path,
+    plugin_name: str = "ar",
 ) -> tuple[int, int]:
-    """Stage an Antigravity-native plugin bundle without touching user config."""
+    """Stage one selected plugin as an Antigravity-native bundle."""
     bundle_dir.mkdir(parents=True, exist_ok=True)
     commands_generated, skills_synced = _sync_gemini_extension_resources(
         plugin_dir,
         bundle_dir,
-        "ar",
+        plugin_name,
         "antigravity",
     )
     nested_hooks = bundle_dir / "hooks" / "hooks.json"
     if nested_hooks.is_file():
         shutil.copy2(nested_hooks, bundle_dir / "hooks.json")
+    manifest = {"name": plugin_name}
+    if (bundle_dir / "hooks.json").is_file():
+        manifest["hooks"] = "./hooks.json"
+    if (bundle_dir / "commands").is_dir():
+        manifest["commands"] = "./commands/"
+    if (bundle_dir / "skills").is_dir():
+        manifest["skills"] = "./skills/"
     (bundle_dir / "plugin.json").write_text(
-        json.dumps({
-            "name": "ar",
-            "hooks": "./hooks.json",
-            "commands": "./commands/",
-            "skills": "./skills/",
-        }, indent=2) + "\n",
+        json.dumps(manifest, indent=2) + "\n",
         encoding="utf-8",
     )
     return (commands_generated, skills_synced)
 
 
-def _install_antigravity_cli_bundle(plugin_dir: Path) -> tuple[int, int]:
-    """Atomically install shared resources into Antigravity CLI's plugin root."""
-    target = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar"
+def _install_antigravity_cli_bundle(
+    plugin_dir: Path,
+    plugin_name: str = "ar",
+) -> tuple[int, int]:
+    """Atomically install one plugin into Antigravity CLI's plugin root."""
+    target = (
+        Path.home()
+        / ".gemini"
+        / "antigravity-cli"
+        / "plugins"
+        / plugin_name
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     install_lock = FileLock(target.parent / ".autorun-install.lock")
 
@@ -1140,9 +1195,17 @@ def _install_antigravity_cli_bundle(plugin_dir: Path) -> tuple[int, int]:
             dir=target.parent,
         ) as tmp:
             transaction = Path(tmp)
-            staged = transaction / "ar"
+            staged = transaction / plugin_name
             backup = transaction / "previous"
-            counts = _stage_antigravity_native_bundle(plugin_dir, staged)
+            counts = (
+                _stage_antigravity_native_bundle(plugin_dir, staged)
+                if plugin_name == "ar"
+                else _stage_antigravity_native_bundle(
+                    plugin_dir,
+                    staged,
+                    plugin_name,
+                )
+            )
             if target.exists() or target.is_symlink():
                 os.replace(target, backup)
             try:
@@ -1701,6 +1764,25 @@ def _resolve_plugin_dir(marketplace_root: Path, name: str) -> Path | None:
     return None
 
 
+def _resolve_selected_plugin_dirs(
+    marketplace_root: Path,
+    plugins: list[str] | tuple[str, ...],
+) -> list[Path]:
+    """Resolve selected plugin directories once, preserving selection order."""
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for name in plugins:
+        plugin_dir = _resolve_plugin_dir(marketplace_root, name)
+        if plugin_dir is None:
+            continue
+        canonical = plugin_dir.resolve()
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        resolved.append(plugin_dir)
+    return resolved
+
+
 def _substitute_claude_cache_paths(marketplace_root: Path, plugin_name: str) -> bool:
     """Substitute ${CLAUDE_PLUGIN_ROOT} in Claude's cached plugin copy.
 
@@ -2188,6 +2270,13 @@ def _install_for_codex(
     if plugin_dir is None:
         return (False, f"autorun plugin not found under {marketplace_root}")
 
+    selected_plugin_dirs = _resolve_selected_plugin_dirs(marketplace_root, plugins)
+    if install_global_assets:
+        try:
+            _collect_plugin_skill_sources(selected_plugin_dirs)
+        except ValueError as exc:
+            return (False, str(exc))
+
     codex_dir = (codex_dir or (Path.home() / ".codex")).expanduser()
     codex_dir.mkdir(parents=True, exist_ok=True)
     hooks_path = codex_dir / "hooks.json"
@@ -2209,7 +2298,9 @@ def _install_for_codex(
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
     if install_global_assets:
-        skills_installed, skills_skipped = _install_codex_skills(plugin_dir)
+        skills_installed, skills_skipped = _install_codex_skills(
+            selected_plugin_dirs
+        )
     else:
         skills_installed, skills_skipped = (0, 0)
     if codex_plugin_marketplace == "personal" and install_global_assets:
@@ -2241,7 +2332,7 @@ def _install_for_codex(
     if agents_written:
         print(f"✓ Advisory safety guidance written to {codex_dir / 'AGENTS.md'}")
     if skills_installed:
-        print(f"✓ Installed {skills_installed} autorun skill(s) at ~/.agents/skills/")
+        print(f"✓ Installed {skills_installed} selected plugin skill(s) at ~/.agents/skills/")
     if skills_skipped:
         print(
             f"  ({skills_skipped} user-authored skill(s) with matching names "
@@ -2263,8 +2354,30 @@ def _install_for_codex(
 _CODEX_SKILL_OWNED_MARKER = ".autorun-owned"
 
 
-def _install_codex_skills(plugin_dir: Path) -> tuple[int, int]:
-    """Copy autorun skills into ~/.agents/skills/ (Codex global skills dir).
+def _collect_plugin_skill_sources(
+    plugin_dirs: list[Path] | tuple[Path, ...],
+) -> dict[str, Path]:
+    """Collect selected skill sources and reject ambiguous global names."""
+    skill_sources: dict[str, Path] = {}
+    for plugin_dir in plugin_dirs:
+        src_root = plugin_dir / "skills"
+        if not src_root.is_dir():
+            continue
+        for skill_src in sorted(src_root.iterdir()):
+            if not skill_src.is_dir() or not (skill_src / "SKILL.md").is_file():
+                continue
+            previous = skill_sources.get(skill_src.name)
+            if previous is not None and previous.resolve() != skill_src.resolve():
+                raise ValueError(
+                    f"selected plugins define duplicate skill {skill_src.name!r}: "
+                    f"{previous} and {skill_src}"
+                )
+            skill_sources[skill_src.name] = skill_src
+    return skill_sources
+
+
+def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> tuple[int, int]:
+    """Copy selected plugin skills into Codex's global skills directory.
 
     Per https://developers.openai.com/codex/skills the user-level skills
     directory Codex scans is `$HOME/.agents/skills/` (NOT `~/.codex/skills/`,
@@ -2277,8 +2390,11 @@ def _install_codex_skills(plugin_dir: Path) -> tuple[int, int]:
         (installed_count, skipped_count) — skipped counts user-authored
         skills (no marker) that we deliberately left intact.
     """
-    src_root = plugin_dir / "skills"
-    if not src_root.is_dir():
+    if isinstance(plugin_dirs, Path):
+        plugin_dirs = [plugin_dirs]
+
+    skill_sources = _collect_plugin_skill_sources(plugin_dirs)
+    if not skill_sources:
         return (0, 0)
 
     dst_root = Path.home() / ".agents" / "skills"
@@ -2286,27 +2402,39 @@ def _install_codex_skills(plugin_dir: Path) -> tuple[int, int]:
 
     installed = 0
     skipped = 0
-    for skill_src in sorted(src_root.iterdir()):
-        if not skill_src.is_dir():
-            continue
-        if not (skill_src / "SKILL.md").is_file():
-            continue
+    install_lock = FileLock(dst_root / ".autorun-install.lock")
+    with install_lock:
+        for skill_src in skill_sources.values():
+            skill_dst = dst_root / skill_src.name
+            if skill_dst.exists() and not (
+                skill_dst / _CODEX_SKILL_OWNED_MARKER
+            ).is_file():
+                # User-authored skill with the same name — never touch it.
+                skipped += 1
+                continue
 
-        skill_dst = dst_root / skill_src.name
-        if skill_dst.exists() and not (skill_dst / _CODEX_SKILL_OWNED_MARKER).is_file():
-            # User-authored skill with the same name — never touch it.
-            skipped += 1
-            continue
-
-        if skill_dst.exists():
-            shutil.rmtree(skill_dst)
-        shutil.copytree(skill_src, skill_dst)
-        (skill_dst / _CODEX_SKILL_OWNED_MARKER).write_text(
-            "Autorun-owned. Safe to delete to un-claim this directory; the\n"
-            "next autorun install will then leave it alone as user-authored.\n",
-            encoding="utf-8",
-        )
-        installed += 1
+            with tempfile.TemporaryDirectory(
+                prefix=f".autorun-{skill_src.name}-",
+                dir=dst_root,
+            ) as tmp:
+                transaction = Path(tmp)
+                staged = transaction / "next"
+                backup = transaction / "previous"
+                shutil.copytree(skill_src, staged)
+                (staged / _CODEX_SKILL_OWNED_MARKER).write_text(
+                    "Autorun-owned. Safe to delete to un-claim this directory; the\n"
+                    "next autorun install will then leave it alone as user-authored.\n",
+                    encoding="utf-8",
+                )
+                if skill_dst.exists():
+                    os.replace(skill_dst, backup)
+                try:
+                    os.replace(staged, skill_dst)
+                except Exception:
+                    if backup.exists():
+                        os.replace(backup, skill_dst)
+                    raise
+            installed += 1
     return (installed, skipped)
 
 
@@ -2767,9 +2895,25 @@ def show_custom_harness_status(spec: str) -> int:
             "codex",
         )
         agents_ok = (target.config_dir / "AGENTS.md").is_file()
+        try:
+            requirements = _selected_plugin_skill_requirements(find_marketplace_root())
+        except FileNotFoundError:
+            requirements = {}
+        expected_skills = set().union(*requirements.values()) if requirements else set()
+        installed_skills = _skill_dir_names(
+            Path.home() / ".agents" / "skills",
+            owned_only=True,
+        )
+        missing_skills = sorted(expected_skills - installed_skills)
         print(f"  hooks.json: {'✓ installed' if hooks_ok else f'✗ {hooks_status}'}")
         print(f"  AGENTS.md: {'✓ installed' if agents_ok else '✗ not installed'}")
-        return 0 if hooks_ok and agents_ok else 1
+        print(
+            "  shared Codex skills: "
+            + ("✓ installed" if not missing_skills else "✗ incomplete")
+        )
+        if missing_skills:
+            print(f"    missing skills: {', '.join(missing_skills)}")
+        return 0 if hooks_ok and agents_ok and not missing_skills else 1
 
     candidates = [
         target.config_dir / "extensions" / "ar" / "hooks" / "hooks.json",
@@ -2797,7 +2941,28 @@ def show_custom_harness_status(spec: str) -> int:
         "  hooks identity: "
         + (f"✓ {identity_status}" if installed else f"✗ {identity_status}")
     )
-    return 0 if installed else 1
+    try:
+        requirements = _selected_plugin_skill_requirements(find_marketplace_root())
+    except FileNotFoundError:
+        requirements = {}
+    skills_complete = True
+    for plugin, expected_skills in requirements.items():
+        skill_roots = (
+            target.config_dir / "extensions" / plugin / "skills",
+            target.config_dir / "plugins" / plugin / "skills",
+        )
+        installed_skills = set().union(
+            *(_skill_dir_names(root) for root in skill_roots)
+        )
+        missing_skills = sorted(expected_skills - installed_skills)
+        print(
+            f"  {plugin} skills: "
+            + ("✓ installed" if not missing_skills else "✗ incomplete")
+        )
+        if missing_skills:
+            print(f"    missing skills: {', '.join(missing_skills)}")
+            skills_complete = False
+    return 0 if installed and skills_complete else 1
 
 
 def _platform_app_status(platform_name: str) -> tuple[bool, str]:
@@ -2812,21 +2977,6 @@ def _platform_app_status(platform_name: str) -> tuple[bool, str]:
     if platform.app_paths:
         return (False, ", ".join(platform.app_paths))
     return (False, "no app path configured")
-
-
-def _count_codex_user_skills(skills_root: Path) -> int:
-    """Count autorun-owned user skills installed where Codex scans directly."""
-    if not skills_root.is_dir():
-        return 0
-    return sum(
-        1
-        for child in skills_root.iterdir()
-        if (
-            child.is_dir()
-            and (child / "SKILL.md").is_file()
-            and (child / _CODEX_SKILL_OWNED_MARKER).is_file()
-        )
-    )
 
 
 def _count_latest_codex_plugin_cache_skills() -> int:
@@ -3028,7 +3178,7 @@ def _install_for_antigravity(
     plugins: list[str],
     force: bool = False,
 ) -> tuple[bool, str]:
-    """Install autorun into Google Antigravity with importer fallback.
+    """Install every selected compatible plugin into Google Antigravity.
 
     `agy plugin import gemini` is the documented local migration surface exposed
     by `agy plugin help`; local verification on 2026-06-22 with `agy` 1.0.10
@@ -3038,33 +3188,66 @@ def _install_for_antigravity(
     shared Gemini-family resources and falls back to the importer if validation
     or install fails.
     """
-    if "autorun" not in plugins and "ar" not in plugins:
-        return (True, "no autorun plugin selected")
     if not shutil.which("agy"):
         return (False, "agy CLI not found")
 
-    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
-    if plugin_dir is not None:
+    plugin_dirs = _resolve_selected_plugin_dirs(marketplace_root, plugins)
+
+    plugin_targets = [
+        (plugin_dir, _gemini_extension_name(plugin_dir))
+        for plugin_dir in plugin_dirs
+    ]
+    expected_names = [name for _plugin_dir, name in plugin_targets]
+    if not expected_names:
+        expected_names = [
+            "ar" if name in {"ar", "autorun"} else name
+            for name in plugins
+        ]
+
+    def sync_cli(plugin_dir: Path, plugin_name: str) -> tuple[int, int]:
+        # Keep the historical one-argument seam for ar test and downstream wrappers.
+        if plugin_name == "ar":
+            return _install_antigravity_cli_bundle(plugin_dir)
+        return _install_antigravity_cli_bundle(plugin_dir, plugin_name)
+    native_installed: list[str] = []
+    for plugin_dir, plugin_name in plugin_targets:
         with tempfile.TemporaryDirectory(prefix="autorun-antigravity-plugin-") as tmp:
-            bundle_dir = Path(tmp) / "ar"
-            _stage_antigravity_native_bundle(plugin_dir, bundle_dir)
-            validate = run_cmd(["agy", "plugin", "validate", str(bundle_dir)], timeout=30)
-            if validate.ok and _antigravity_validate_reports_hooks(validate.output):
-                if force:
-                    run_cmd(["agy", "plugin", "uninstall", "ar"], timeout=120)
-                install_result = run_cmd(["agy", "plugin", "install", str(bundle_dir)], timeout=120)
-                if install_result.ok or install_result.has_text("already installed"):
-                    verify = run_cmd(["agy", "plugin", "list"], timeout=30)
-                    if verify.ok and ('"name": "ar"' in verify.output or "ar" in verify.output):
-                        try:
-                            _install_antigravity_cli_bundle(plugin_dir)
-                        except OSError as exc:
-                            return (False, f"Antigravity app plugin installed, but CLI sync failed: {exc}")
-                        print("   Antigravity ar plugin installed from native bundle")
-                        return (True, "success")
+            bundle_dir = Path(tmp) / plugin_name
+            _stage_antigravity_native_bundle(plugin_dir, bundle_dir, plugin_name)
+            validate = run_cmd(
+                ["agy", "plugin", "validate", str(bundle_dir)], timeout=30
+            )
+            hooks_required = (bundle_dir / "hooks.json").is_file()
+            valid = validate.ok and (
+                not hooks_required or _antigravity_validate_reports_hooks(validate.output)
+            )
+            if not valid:
+                break
+            if force:
+                run_cmd(["agy", "plugin", "uninstall", plugin_name], timeout=120)
+            install_result = run_cmd(
+                ["agy", "plugin", "install", str(bundle_dir)], timeout=120
+            )
+            if not (install_result.ok or install_result.has_text("already installed")):
+                break
+            verify = run_cmd(["agy", "plugin", "list"], timeout=30)
+            if not verify.ok or plugin_name not in verify.output:
+                break
+            try:
+                sync_cli(plugin_dir, plugin_name)
+            except OSError as exc:
+                return (
+                    False,
+                    f"Antigravity {plugin_name} installed, but CLI sync failed: {exc}",
+                )
+            native_installed.append(plugin_name)
+            print(f"   Antigravity {plugin_name} installed from native bundle")
+
+    if plugin_targets and len(native_installed) == len(plugin_targets):
+        return (True, "success")
 
     print()
-    print("Importing Gemini autorun extension into Google Antigravity...")
+    print("Importing Gemini extensions into Google Antigravity...")
     result = run_cmd(["agy", "plugin", "import", "gemini"], timeout=120)
     if not result.ok:
         return (False, result.output)
@@ -3072,16 +3255,23 @@ def _install_for_antigravity(
     verify = run_cmd(["agy", "plugin", "list"], timeout=30)
     if not verify.ok:
         return (False, f"agy plugin import succeeded, but list failed: {verify.output}")
-    if '"name": "ar"' not in verify.output and "ar" not in verify.output:
-        return (False, "agy plugin list did not report imported ar plugin")
+    missing = [name for name in expected_names if name not in verify.output]
+    if missing:
+        return (
+            False,
+            "agy plugin list did not report selected plugin(s): " + ", ".join(missing),
+        )
 
-    if plugin_dir is not None:
+    for plugin_dir, plugin_name in plugin_targets:
         try:
-            _install_antigravity_cli_bundle(plugin_dir)
+            sync_cli(plugin_dir, plugin_name)
         except OSError as exc:
-            return (False, f"Antigravity import succeeded, but CLI sync failed: {exc}")
+            return (
+                False,
+                f"Antigravity import succeeded, but {plugin_name} CLI sync failed: {exc}",
+            )
 
-    print("   Antigravity ar plugin imported from Gemini CLI")
+    print("   Antigravity selected plugins imported from Gemini CLI")
     return (True, "success")
 
 
@@ -3750,7 +3940,10 @@ def install_plugins(
 
     if "antigravity" in target_clis:
         if antigravity_success:
-            print("✓ Google Antigravity: ar plugin installed with commands, skills, and hooks")
+            print(
+                "✓ Google Antigravity: Plugins installed "
+                f"({', '.join(plugins)}) with native commands and skills"
+            )
         else:
             print("✗ Google Antigravity: install failed")
 
@@ -3899,9 +4092,12 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
         print("Install Claude Code first")
         all_ok = False
 
+    skill_requirements: dict[str, set[str]] = {}
+
     # UV environment check
     try:
         marketplace_root = find_marketplace_root()
+        skill_requirements = _selected_plugin_skill_requirements(marketplace_root)
         # Ensure we don't double-append plugins/autorun
         if (marketplace_root / "pyproject.toml").exists():
             plugin_dir = marketplace_root
@@ -3938,12 +4134,36 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     for plugin in PluginName.all():
         # Check if plugin appears in list with "enabled" status
         is_installed = plugin in result.output and "enabled" in result.output
-        if is_installed:
+        extension_name = "ar" if plugin == "autorun" else plugin
+        expected_skills = skill_requirements.get(extension_name, set())
+        source_dir = (
+            _resolve_plugin_dir(marketplace_root, plugin)
+            if marketplace_root is not None
+            else None
+        )
+        cache_skills: set[str] = set()
+        if source_dir is not None:
+            cache_skills = _skill_dir_names(
+                Path.home()
+                / ".claude"
+                / "plugins"
+                / "cache"
+                / MARKETPLACE
+                / extension_name
+                / _read_plugin_version(source_dir)
+                / "skills"
+            )
+        missing_skills = sorted(expected_skills - cache_skills)
+        complete = is_installed and not missing_skills
+        if complete:
             status = "✓ enabled"
         else:
-            status = "✗ not installed"
+            status = "✗ incomplete" if is_installed else "✗ not installed"
             all_ok = False
         print(f"  {plugin}: {status}")
+        if missing_skills:
+            print(f"    current cache missing skills: {', '.join(missing_skills)}")
+            print(f"    repair: autorun --install {plugin} --claude --force")
 
     # Check UV CLI tools in PATH
     print()
@@ -3980,9 +4200,18 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
         result = run_cmd(["gemini", "extensions", "list"])
         if result.ok:
             # Check for each plugin separately (new Gemini architecture)
-            for plugin in ["ar", "pdf-extractor"]:
+            for plugin, expected_skills in skill_requirements.items():
                 is_installed = plugin in result.output
-                print(f"  {plugin}: {'✓ installed' if is_installed else '✗ not installed'}")
+                installed_skills = _skill_dir_names(
+                    Path.home() / ".gemini" / "extensions" / plugin / "skills"
+                )
+                missing_skills = sorted(expected_skills - installed_skills)
+                complete = is_installed and not missing_skills
+                print(f"  {plugin}: {'✓ installed' if complete else '✗ incomplete'}")
+                if missing_skills:
+                    print(f"    missing skills: {', '.join(missing_skills)}")
+                if not complete:
+                    all_ok = False
 
             conductor = "conductor" in result.output
             print(f"  conductor: {'✓ installed' if conductor else '✗ not installed (optional)'}")
@@ -4037,16 +4266,26 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     codex_agents = codex_dir / "AGENTS.md"
     print(f"  AGENTS.md: {'✓ installed' if codex_agents.is_file() else '✗ not installed'}")
     skills_root = Path.home() / ".agents" / "skills"
-    user_skill_count = _count_codex_user_skills(skills_root)
+    user_skill_names = _skill_dir_names(skills_root, owned_only=True)
+    user_skill_count = len(user_skill_names)
+    expected_codex_skills = set().union(*skill_requirements.values()) if skill_requirements else set()
+    missing_codex_skills = sorted(expected_codex_skills - user_skill_names)
     plugin_source_skill_count = _count_skill_dirs(_codex_plugin_source_dir() / "skills")
     plugin_cache_skill_count = _count_latest_codex_plugin_cache_skills()
-    skills_ok = user_skill_count > 0 and plugin_source_skill_count > 0
+    skills_ok = (
+        not missing_codex_skills
+        and user_skill_count > 0
+        and plugin_source_skill_count > 0
+    )
     print(
         f"  skills: {'✓' if skills_ok else '✗'} "
         f"{user_skill_count} user, "
         f"{plugin_source_skill_count} plugin source, "
         f"{plugin_cache_skill_count} plugin cache"
     )
+    if missing_codex_skills:
+        print(f"    missing selected plugin skills: {', '.join(missing_codex_skills)}")
+        print("    repair: autorun --install --codex --force")
     if codex_ok and not skills_ok:
         all_ok = False
     marketplace_ok, marketplace_status = _codex_plugin_marketplace_status()
@@ -4074,10 +4313,23 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     if antigravity_ok:
         result = run_cmd(["agy", "plugin", "list"], timeout=30)
         if result.ok:
-            has_ar = '"name": "ar"' in result.output or "ar" in result.output
-            print(f"  ar plugin: {'✓ imported' if has_ar else '✗ not imported'}")
-            if not has_ar:
-                all_ok = False
+            for plugin, expected_skills in skill_requirements.items():
+                listed = plugin in result.output
+                installed_skills = _skill_dir_names(
+                    Path.home()
+                    / ".gemini"
+                    / "antigravity-cli"
+                    / "plugins"
+                    / plugin
+                    / "skills"
+                )
+                missing_skills = sorted(expected_skills - installed_skills)
+                complete = listed and not missing_skills
+                print(f"  {plugin} plugin: {'✓ installed' if complete else '✗ incomplete'}")
+                if missing_skills:
+                    print(f"    missing skills: {', '.join(missing_skills)}")
+                if not complete:
+                    all_ok = False
         else:
             print(f"  plugins: ✗ list failed: {result.output}")
             all_ok = False
@@ -4094,11 +4346,18 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     if qwen_ok:
         result = run_cmd(["qwen", "extensions", "list"], timeout=30)
         if result.ok:
-            for plugin in ("ar", "pdf-extractor"):
+            for plugin, expected_skills in skill_requirements.items():
                 is_installed = plugin in result.output
-                print(f"  {plugin}: {'✓ installed' if is_installed else '✗ not installed'}")
-            if "ar" not in result.output:
-                all_ok = False
+                installed_skills = _skill_dir_names(
+                    Path.home() / ".qwen" / "extensions" / plugin / "skills"
+                )
+                missing_skills = sorted(expected_skills - installed_skills)
+                complete = is_installed and not missing_skills
+                print(f"  {plugin}: {'✓ installed' if complete else '✗ incomplete'}")
+                if missing_skills:
+                    print(f"    missing skills: {', '.join(missing_skills)}")
+                if not complete:
+                    all_ok = False
         else:
             print(f"  extensions list failed: {result.output}")
             all_ok = False
@@ -4116,6 +4375,7 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     forge_command_count = len(list(forge_commands.glob("ar-*.md"))) if forge_commands.is_dir() else 0
     print(f"  commands: {'✓ installed' if forge_command_count else '✗ not installed'} ({forge_command_count})")
     print(f"  AGENTS.md: {'✓ installed' if forge_agents.is_file() else '✗ not installed'}")
+    print("  skills: unsupported by ForgeCode; commands and AGENTS.md are advisory")
     print("  hooks: advisory only (ForgeCode has no external hook system)")
 
     for spec in custom_harnesses:

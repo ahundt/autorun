@@ -8,5 +8,6 @@
   },
   "license": "MIT",
   "keywords": ["pdf", "extraction", "ocr", "markdown", "data"],
-  "commands": "./commands/"
+  "commands": "./commands/",
+  "skills": "./skills/"
 }

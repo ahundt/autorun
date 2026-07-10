@@ -216,7 +216,7 @@ Codex may intercept unknown slash commands before hooks see them, so use `ar:*` 
 
 #### Bundled Skills
 
-Skills are installed from `plugins/autorun/skills/` and use each harness's native
+Skills are installed from each selected `plugins/*/skills/` tree and use each harness's native
 skill picker or mention syntax. In Codex, use `/skills` or `$skill-name`; do not
 assume a skill is an `/ar:*` command. The read-only
 `autorun --capability-snapshot` output is the machine-readable inventory.
@@ -231,7 +231,14 @@ assume a skill is an `/ar:*` command. The read-only
 | `cli-demo-recorder` | Record reproducible CLI and TUI demos |
 | `mermaid-diagrams` | Render Mermaid diagrams |
 | `parallel-subagent` | Investigate ambiguous failures with parallel approaches |
+| `pdf-extractor` | Extract text and structured data from PDFs with backend fallback |
 | `tmux-automation` | Automate isolated terminal and harness tests |
+
+Claude, Gemini, Qwen, and Antigravity discover the skill through their native
+per-plugin installation. Codex receives the union of selected plugin skills in
+`~/.agents/skills/`, so `$pdf-extractor` works independently of the autorun
+plugin cache. ForgeCode does not expose a skill API; autorun reports that
+limitation instead of claiming skill parity.
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 

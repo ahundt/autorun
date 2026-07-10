@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __commit__, __version__
-from .command_docs import command_docs_inventory, skill_docs_inventory
+from .command_docs import command_docs_inventory, marketplace_skill_docs_inventory
 from .platforms import PLATFORMS, Platform
 
 
@@ -113,6 +113,7 @@ def build_capability_snapshot() -> dict[str, Any]:
     commands, command_aliases = _command_inventory()
     hooks = _hook_inventory()
     plugin_root = Path(__file__).resolve().parents[2]
+    skills, plugin_skills = marketplace_skill_docs_inventory(plugin_root.parent)
     return {
         "version": __version__,
         "commit": _git_commit(),
@@ -123,7 +124,8 @@ def build_capability_snapshot() -> dict[str, Any]:
         "commands": commands,
         "command_aliases": command_aliases,
         "command_docs": command_docs_inventory(plugin_root / "commands"),
-        "skills": skill_docs_inventory(plugin_root / "skills"),
+        "skills": skills,
+        "plugin_skills": plugin_skills,
         "hook_events": hooks,
     }
 

@@ -552,6 +552,17 @@ class TestInstallMainAdapter:
             dry_run=True,
         )
 
+    def test_install_module_standalone_dry_run_previews_all_plugins(self):
+        """The compatibility installer treats standalone dry-run as install all."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "install_plugins", return_value=0) as mocked:
+            result = install._install_module_main(["--install-dry-run"])
+
+        assert result == 0
+        assert mocked.call_args.args == ("all",)
+        assert mocked.call_args.kwargs["dry_run"] is True
+
     def test_install_module_custom_harness_help_lists_values_and_usage(self):
         """Direct module help documents custom harness values and status usage."""
         install = get_install_module()
@@ -1041,6 +1052,103 @@ class TestAntigravityImportSync:
         install._stage_antigravity_native_bundle(plugin_dir, bundle_dir)
         assert (bundle_dir / "hooks.json").read_text(encoding="utf-8") == first_root_hooks
 
+    def test_antigravity_native_bundle_supports_skill_only_plugins(self, tmp_path):
+        """A selected plugin without hooks still gets commands and skills."""
+        install = get_install_module()
+        plugin_dir = tmp_path / "pdf-extractor"
+        (plugin_dir / "commands").mkdir(parents=True)
+        (plugin_dir / "commands" / "extract.md").write_text(
+            "---\ndescription: Extract PDF\n---\n# Extract\n",
+            encoding="utf-8",
+        )
+        skill_dir = plugin_dir / "skills" / "pdf-extractor"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: pdf-extractor\ndescription: Extract PDF\n---\n",
+            encoding="utf-8",
+        )
+        (plugin_dir / "gemini-extension.json").write_text(
+            '{"name":"pdf-extractor","commands":"./commands/","skills":"./skills/"}',
+            encoding="utf-8",
+        )
+        bundle_dir = tmp_path / "bundle"
+
+        commands, skills = install._stage_antigravity_native_bundle(
+            plugin_dir,
+            bundle_dir,
+            "pdf-extractor",
+        )
+
+        manifest = json.loads((bundle_dir / "plugin.json").read_text(encoding="utf-8"))
+        assert commands == 1
+        assert skills == 1
+        assert manifest == {
+            "name": "pdf-extractor",
+            "commands": "./commands/",
+            "skills": "./skills/",
+        }
+        assert not (bundle_dir / "hooks.json").exists()
+
+    def test_antigravity_installs_every_selected_plugin_natively(
+        self, tmp_path, monkeypatch
+    ):
+        """Direct Antigravity installs must include autorun and PDF skills."""
+        install = get_install_module()
+        marketplace = get_plugin_root().parents[1]
+        home = tmp_path / "home"
+        monkeypatch.setattr(install.Path, "home", lambda: home)
+        monkeypatch.setattr(
+            install.shutil,
+            "which",
+            lambda name: "/opt/homebrew/bin/agy" if name == "agy" else None,
+        )
+        installed_names: list[str] = []
+
+        def fake_run_cmd(args, timeout=30, **_kwargs):
+            if args[:3] == ["agy", "plugin", "validate"]:
+                bundle = Path(args[3])
+                name = json.loads(
+                    (bundle / "plugin.json").read_text(encoding="utf-8")
+                )["name"]
+                return install.CmdResult(
+                    True,
+                    "hooks : 1 processed" if name == "ar" else "valid",
+                )
+            if args[:3] == ["agy", "plugin", "install"]:
+                bundle = Path(args[3])
+                installed_names.append(
+                    json.loads(
+                        (bundle / "plugin.json").read_text(encoding="utf-8")
+                    )["name"]
+                )
+                return install.CmdResult(True, "installed")
+            if args == ["agy", "plugin", "list"]:
+                return install.CmdResult(True, "ar pdf-extractor")
+            return install.CmdResult(True, "ok")
+
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+
+        ok, message = install._install_for_antigravity(
+            marketplace,
+            ["autorun", "pdf-extractor"],
+            force=False,
+        )
+
+        assert ok, message
+        assert installed_names == ["ar", "pdf-extractor"]
+        for plugin, skill in (("ar", "cache"), ("pdf-extractor", "pdf-extractor")):
+            skill_file = (
+                home
+                / ".gemini"
+                / "antigravity-cli"
+                / "plugins"
+                / plugin
+                / "skills"
+                / skill
+                / "SKILL.md"
+            )
+            assert skill_file.is_file()
+
     def test_antigravity_install_prefers_native_bundle_when_valid(self, tmp_path, monkeypatch):
         """Antigravity install uses native plugin install before importer fallback."""
         install = get_install_module()
@@ -1218,6 +1326,19 @@ class TestAntigravityImportSync:
 
 class TestCustomHarnessInstall:
     """Custom Gemini-family targets reuse the shared installer safely."""
+
+    @staticmethod
+    def _make_skill_marketplace(tmp_path: Path) -> Path:
+        """Create two selected plugins with one discoverable skill each."""
+        marketplace = tmp_path / "marketplace"
+        for plugin, skill in (("autorun", "cache"), ("pdf-extractor", "pdf-extractor")):
+            skill_dir = marketplace / "plugins" / plugin / "skills" / skill
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                f"---\nname: {skill}\ndescription: fixture\n---\n",
+                encoding="utf-8",
+            )
+        return marketplace
 
     def test_parse_custom_harness_spec_requires_known_gemini_family_flavor(self, tmp_path):
         """Custom harness specs separate the binary from the known hook identity."""
@@ -1559,9 +1680,20 @@ class TestCustomHarnessInstall:
         assert "antigravity" in out
         assert "No files, hooks, plugin state, dependencies, or daemons were changed." in out
 
-    def test_custom_harness_status_reports_codex_config_dir(self, tmp_path, capsys):
+    def test_custom_harness_status_reports_codex_config_dir(
+        self, tmp_path, monkeypatch, capsys
+    ):
         """Custom Codex status inspects only the supplied config directory."""
         install = get_install_module()
+        marketplace = self._make_skill_marketplace(tmp_path)
+        home = tmp_path / "home"
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: marketplace)
+        monkeypatch.setattr(install.Path, "home", lambda: home)
+        for skill in ("cache", "pdf-extractor"):
+            skill_dir = home / ".agents" / "skills" / skill
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text("# fixture\n", encoding="utf-8")
+            (skill_dir / ".autorun-owned").write_text("", encoding="utf-8")
         codex_dir = tmp_path / "custom-codex"
         codex_dir.mkdir()
         (codex_dir / "hooks.json").write_text(
@@ -1591,10 +1723,15 @@ class TestCustomHarnessInstall:
         assert "flavor: codex" in out
         assert "hooks.json: ✓ installed" in out
         assert "AGENTS.md: ✓ installed" in out
+        assert "shared Codex skills: ✓ installed" in out
 
-    def test_custom_harness_status_reports_gemini_family_config_dir(self, tmp_path, capsys):
+    def test_custom_harness_status_reports_gemini_family_config_dir(
+        self, tmp_path, monkeypatch, capsys
+    ):
         """Custom Antigravity/Gemini-family status checks extension hook identity."""
         install = get_install_module()
+        marketplace = self._make_skill_marketplace(tmp_path)
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: marketplace)
         config_dir = tmp_path / "agy-home"
         hooks_dir = config_dir / "extensions" / "ar" / "hooks"
         hooks_dir.mkdir(parents=True)
@@ -1618,6 +1755,10 @@ class TestCustomHarnessInstall:
             }),
             encoding="utf-8",
         )
+        for plugin, skill in (("ar", "cache"), ("pdf-extractor", "pdf-extractor")):
+            skill_dir = config_dir / "extensions" / plugin / "skills" / skill
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text("# fixture\n", encoding="utf-8")
 
         rc = install.show_custom_harness_status(f"lab=agy:agy-lab:{config_dir}:Antigravity Lab")
 
@@ -1627,6 +1768,8 @@ class TestCustomHarnessInstall:
         assert "flavor: antigravity" in out
         assert "ar extension: ✓ installed" in out
         assert "hooks identity: ✓ antigravity" in out
+        assert "ar skills: ✓ installed" in out
+        assert "pdf-extractor skills: ✓ installed" in out
 
 
 class TestOptionalSessionToolInstall:

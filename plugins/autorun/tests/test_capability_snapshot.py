@@ -62,16 +62,18 @@ def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
 
 
 def test_capability_snapshot_covers_installed_skills_with_descriptions():
-    """The machine-readable capability API must include every shipped skill."""
+    """The machine-readable API must include every marketplace plugin skill."""
     from autorun.capability_snapshot import build_capability_snapshot
 
     snapshot = build_capability_snapshot()
+    plugins_root = Path(__file__).parents[2]
     expected = {
-        path.parent.name
-        for path in (Path(__file__).parents[1] / "skills").glob("*/SKILL.md")
+        path.parent.name for path in plugins_root.glob("*/skills/*/SKILL.md")
     }
 
     assert set(snapshot["skills"]) == expected
+    assert snapshot["plugin_skills"]["pdf-extractor"] == ["pdf-extractor"]
+    assert "pdf-extractor" in snapshot["skills"]
     assert all(skill["name"] for skill in snapshot["skills"].values())
     assert all(skill["description"] for skill in snapshot["skills"].values())
 

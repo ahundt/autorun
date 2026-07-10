@@ -613,6 +613,18 @@ class TestMainFunctionRouting:
         )
         assert result == 0
 
+    def test_standalone_install_dry_run_previews_all_plugins(self):
+        """The safety preview flag must not silently no-op without --install."""
+        from autorun.__main__ import main
+
+        with mock.patch("autorun.install.install_plugins", return_value=0) as mock_install:
+            result = main(["--install-dry-run"])
+
+        assert result == 0
+        mock_install.assert_called_once()
+        assert mock_install.call_args.args == ("all",)
+        assert mock_install.call_args.kwargs["dry_run"] is True
+
     def test_install_with_qwen_passes_qwen_only_flag(self):
         """Test that --install --qwen targets Qwen Code installation."""
         from autorun.__main__ import main

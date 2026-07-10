@@ -17,8 +17,11 @@ no marketplace trust required). The autorun installer:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from autorun.install import (
     CmdResult,
@@ -30,6 +33,7 @@ from autorun.install import (
     _install_for_antigravity,
     _install_for_qwen,
     _install_codex_plugin_with_cli,
+    _install_codex_skills,
     _install_for_codex,
     _render_uv_hook_command,
     probe_hook_python_architecture,
@@ -574,6 +578,20 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
                 encoding="utf-8",
             )
 
+    for skill_root in (
+        tmp_path / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "0.12.0" / "skills",
+        tmp_path / ".gemini" / "extensions" / "ar" / "skills",
+        tmp_path / ".qwen" / "extensions" / "ar" / "skills",
+        tmp_path / ".gemini" / "antigravity-cli" / "plugins" / "ar" / "skills",
+    ):
+        for name in ("mermaid-diagrams", "parallel-subagent"):
+            skill_dir = skill_root / name
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: installed skill\n---\n",
+                encoding="utf-8",
+            )
+
     forge = tmp_path / ".forge"
     (forge / "commands").mkdir(parents=True)
     (forge / "commands" / "ar-st.md").write_text("---\ndescription: status\n---\n")
@@ -587,13 +605,57 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "plugin marketplace: ✓ installed, enabled" in out
     assert "Google Antigravity:" in out
     assert "agy CLI: found" in out
-    assert "ar plugin: ✓ imported" in out
+    assert "ar plugin: ✓ installed" in out
     assert "Qwen Code:" in out
     assert "qwen CLI: found" in out
     assert "ar: ✓ installed" in out
     assert "AIX:" not in out
     assert "ForgeCode:" in out
     assert "hooks: advisory only" in out
+    assert "skills: unsupported by ForgeCode" in out
+
+
+def test_show_status_fails_when_selected_codex_skill_is_missing(
+    tmp_path, monkeypatch, capsys
+):
+    """A nonzero skill count must not hide one missing selected plugin skill."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    marketplace = tmp_path / "marketplace"
+    for plugin_name, skill_name in (
+        ("autorun", "cache"),
+        ("pdf-extractor", "pdf-extractor"),
+    ):
+        skill_dir = marketplace / "plugins" / plugin_name / "skills" / skill_name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {skill_name}\ndescription: fixture\n---\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("autorun.install.find_marketplace_root", lambda: marketplace)
+    monkeypatch.setattr("autorun.install._check_uv_env", lambda _p: CmdResult(True, "OK"))
+    monkeypatch.setattr(
+        "autorun.install.probe_hook_python_architecture",
+        lambda *_args, **_kwargs: type("Probe", (), {"ok": False, "reason": "test",})(),
+    )
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary in {"claude", "codex"} else None,
+    )
+    monkeypatch.setattr(
+        "autorun.install.run_cmd",
+        lambda *_args, **_kwargs: CmdResult(
+            True, "autorun enabled\npdf-extractor enabled\n"
+        ),
+    )
+    cache_skill = tmp_path / ".agents" / "skills" / "cache"
+    cache_skill.mkdir(parents=True)
+    (cache_skill / "SKILL.md").write_text("# cache\n", encoding="utf-8")
+    (cache_skill / ".autorun-owned").write_text("", encoding="utf-8")
+
+    assert show_status() == 1
+    out = capsys.readouterr().out
+    assert "missing selected plugin skills: pdf-extractor" in out
+    assert "repair: autorun --install --codex --force" in out
 
 
 # ─── Hot-fix regression tests: schema correctness + path resolution ──────────
@@ -834,6 +896,94 @@ def test_install_for_codex_installs_skills_globally(tmp_path, monkeypatch):
         assert skill_md.is_file(), f"skill {name} missing"
         marker = skills_root / name / ".autorun-owned"
         assert marker.is_file(), f"autorun-owned marker missing for {name}"
+
+
+def test_install_for_codex_installs_skills_from_every_selected_plugin(tmp_path, monkeypatch):
+    """Codex global skills must be the union of all selected plugin skills."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    pdf_plugin = fake_marketplace / "plugins" / "pdf-extractor"
+    pdf_skill = pdf_plugin / "skills" / "pdf-extractor"
+    pdf_skill.mkdir(parents=True)
+    (pdf_skill / "SKILL.md").write_text(
+        "---\nname: pdf-extractor\ndescription: PDF extraction\n---\n",
+        encoding="utf-8",
+    )
+    manifest_dir = fake_marketplace / ".claude-plugin"
+    manifest_dir.mkdir()
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps({"plugins": [
+            {"name": "ar", "source": "./plugins/autorun"},
+            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    ok, message = _install_for_codex(
+        fake_marketplace,
+        ["ar", "pdf-extractor"],
+        force=False,
+    )
+
+    assert ok, message
+    for name in ("cache", "pdf-extractor"):
+        skill_dir = tmp_path / ".agents" / "skills" / name
+        assert (skill_dir / "SKILL.md").is_file()
+        assert (skill_dir / ".autorun-owned").is_file()
+
+
+def test_install_for_codex_rejects_duplicate_selected_skill_names(tmp_path, monkeypatch):
+    """Two selected plugins cannot silently overwrite the same global skill."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["shared-skill"])
+    duplicate = fake_marketplace / "plugins" / "pdf-extractor" / "skills" / "shared-skill"
+    duplicate.mkdir(parents=True)
+    (duplicate / "SKILL.md").write_text(
+        "---\nname: shared-skill\ndescription: duplicate\n---\n",
+        encoding="utf-8",
+    )
+
+    ok, message = _install_for_codex(
+        fake_marketplace,
+        ["autorun", "pdf-extractor"],
+        force=False,
+    )
+
+    assert not ok
+    assert "duplicate skill 'shared-skill'" in message
+    assert not (tmp_path / ".agents" / "skills" / "shared-skill").exists()
+    assert not (tmp_path / ".codex" / "hooks.json").exists()
+    assert not (tmp_path / ".codex" / "AGENTS.md").exists()
+
+
+def test_codex_skill_upgrade_restores_previous_copy_on_replace_failure(
+    tmp_path, monkeypatch
+):
+    """A failed atomic upgrade leaves the previous owned skill usable."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    plugin_dir = fake_marketplace / "plugins" / "autorun"
+    assert _install_for_codex(fake_marketplace, ["autorun"], force=False)[0]
+    installed = tmp_path / ".agents" / "skills" / "cache"
+    (installed / "version.txt").write_text("previous\n", encoding="utf-8")
+
+    real_replace = os.replace
+    replacements = 0
+
+    def fail_new_install(source, destination):
+        nonlocal replacements
+        replacements += 1
+        if replacements == 2:
+            raise OSError("injected skill replacement failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("autorun.install.os.replace", fail_new_install)
+
+    with pytest.raises(OSError, match="injected skill replacement failure"):
+        _install_codex_skills(plugin_dir)
+
+    assert (installed / "version.txt").read_text(encoding="utf-8") == "previous\n"
+    assert (installed / ".autorun-owned").is_file()
 
 
 def test_install_for_codex_skills_preserves_user_authored(tmp_path, monkeypatch):

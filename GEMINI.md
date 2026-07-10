@@ -133,6 +133,10 @@ gemini --version  # Should show 0.28.0 or later
 
 See [README.md](README.md) for the complete command reference.
 
+The `pdf-extractor` extension declares both `commands/` and `skills/`. After
+installation, use Gemini's native skill surface for `pdf-extractor`; the
+`/pdf-extractor:extract` form is the extension command.
+
 #### Cache-Miss / Compaction Protection on Gemini CLI
 
 `/ar:cache` works on Gemini CLI with reduced signal fidelity. Gemini does not surface `cache_read_input_tokens` or `cache_creation_input_tokens` to its hook stdin or statusline, and Gemini's JSONL transcript schema does not consistently expose per-message cache tokens. Consequences when enabled on Gemini:
