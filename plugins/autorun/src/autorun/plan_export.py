@@ -180,7 +180,6 @@ import os
 import shutil
 import re
 import json
-import logging
 from datetime import datetime
 
 from .core import EventContext, app, logger

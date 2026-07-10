@@ -23,8 +23,6 @@ import logging
 # Import centralized tmux utilities for DRY compliance
 from .tmux_utils import get_tmux_utilities
 
-from .config import CONFIG
-from .session_manager import session_state
 from .logging_utils import get_logger as _get_logger
 _log = _get_logger(__name__)
 

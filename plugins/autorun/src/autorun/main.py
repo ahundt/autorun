@@ -56,8 +56,9 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List, Dict
 import re as regex_module
+
+from .session_manager import session_state  # noqa: F401 - compatibility re-export
 
 # Import centralized tmux utilities (TMUX_UTILS_AVAILABLE exported for tests)
 try:
@@ -68,8 +69,13 @@ except ImportError:
     get_tmux_utilities = None
 
 # Import centralized configuration (DRY principle)
-from .config import (
-    CONFIG, BASH_TOOLS, WRITE_TOOLS, EDIT_TOOLS, FILE_TOOLS, PLAN_TOOLS,
+from .config import (  # noqa: F401 - compatibility re-exports
+    CONFIG,
+    BASH_TOOLS,
+    WRITE_TOOLS,
+    EDIT_TOOLS,
+    FILE_TOOLS,
+    PLAN_TOOLS,
     PATTERN_DISPLAY_MAX_LEN,
 )
 
@@ -155,15 +161,10 @@ def log_info(message):
                 debug_f.write(f"[{log_time}] {pid}: {safe_message}\n")
                 debug_f.flush()
 
-    except Exception as e:
+    except Exception:
         # Fallback logging - silently skip to avoid breaking hooks
         # If logging fails, it's better to continue than to break hooks with stderr output
         pass
-
-# Import robust session state management from session_manager module
-# This provides RAII-based session state with proper file locking and backend selection
-# Fixes Issue #29 (process-local _session_backends) and Issue #28 (filename extensions)
-from autorun.session_manager import session_state
 
 # NOTE: _not_in_pipe import removed (fallback path only).
 # Modern replacement: integrations.py — _not_in_pipe(ctx) in _WHEN_PREDICATES,

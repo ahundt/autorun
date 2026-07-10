@@ -35,7 +35,6 @@ __email__ = "ATHundt@gmail.com"
 
 # Load automated metadata (commit, build_time) if available
 import json
-import os
 from pathlib import Path
 
 __commit__ = "unknown"

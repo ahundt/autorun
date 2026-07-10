@@ -17,7 +17,6 @@ import subprocess as sp
 import time
 import os
 import sys
-import signal
 import logging
 from pathlib import Path
 

@@ -66,7 +66,7 @@ def extract_purpose(content: str) -> str:
     that does not look like a shell prompt or separator. Truncation to column
     width is handled by format_output(), not here.
     """
-    lines = [l.strip() for l in content.split('\n') if l.strip()]
+    lines = [line.strip() for line in content.split('\n') if line.strip()]
     skip_prefixes = ['$', '>', '#', 'last login', '───', '═══']
     for line in lines[:15]:
         line_lower = line.lower()
@@ -299,7 +299,9 @@ def handle_execute_mode() -> None:
     if command and not (':' in selections and not selections.startswith(('all:', 'awaiting:'))):
         if not selections.startswith(('all:', 'awaiting:')):
             letters = selections.replace(' ', '').replace(',', '')
-            selections = ', '.join(f'{l}:{command}' for l in letters if l.isalpha())
+            selections = ', '.join(
+                f'{letter}:{command}' for letter in letters if letter.isalpha()
+            )
 
     print(execute_selections(selections, sessions))
 

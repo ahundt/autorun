@@ -23,6 +23,8 @@ Usage:
 # error_handling.py handles that case.
 from __future__ import annotations
 
+# The executable version guard intentionally runs before dependency imports.
+# ruff: noqa: E402
 import sys as _sys
 if _sys.version_info < (3, 10):
     _sys.stderr.write(

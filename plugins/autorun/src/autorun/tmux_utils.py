@@ -1421,7 +1421,7 @@ def tmux_detect_prompt_type(content: str) -> Optional[str]:
 
     # Analyze last 800 chars for prompt detection
     last_800 = content[-800:]
-    last_lines = [l.strip() for l in last_800.split('\n') if l.strip()][-15:]
+    last_lines = [line.strip() for line in last_800.split('\n') if line.strip()][-15:]
     last_text = '\n'.join(last_lines)
 
     # 1. Plan/Feature approval - "Would you like to proceed?" with selector
