@@ -210,6 +210,8 @@ def _codex_exec_command(model: str, cwd: Path, output_file: Path, prompt: str) -
     return [
         "codex",
         "exec",
+        "-c",
+        'model_reasoning_effort="high"',
         "--json",
         "--dangerously-bypass-hook-trust",
         "--sandbox",
@@ -222,6 +224,13 @@ def _codex_exec_command(model: str, cwd: Path, output_file: Path, prompt: str) -
         str(output_file),
         prompt,
     ]
+
+
+def test_codex_exec_command_overrides_incompatible_user_reasoning_effort(tmp_path):
+    """Paid E2E runs must not inherit a model-incompatible global effort."""
+    command = _codex_exec_command("gpt-5.3-codex-spark", tmp_path, tmp_path / "out", "ok")
+
+    assert ["-c", 'model_reasoning_effort="high"'] == command[2:4]
 
 
 def _read_output_file(path: Path) -> str:
@@ -322,6 +331,7 @@ class TestCodexE2ERealMoney:
     """
 
     @pytest.mark.serial
+    @pytest.mark.timeout(180)
     def test_codex_userprompt_hook_does_not_fail_in_real_cli(self, codex_cli_check, tmp_path):
         """Run a real Codex prompt through UserPromptSubmit hooks.
 
