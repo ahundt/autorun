@@ -1,7 +1,7 @@
 """Read-only capability inventory for autorun harness support.
 
 This module is intentionally side-effect-light: it inspects the registered
-platforms, command handlers, and hook chains without installing hooks,
+platforms, command handlers, skill metadata, and hook chains without installing hooks,
 restarting daemons, or writing to user configuration paths.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __commit__, __version__
-from .command_docs import command_docs_inventory
+from .command_docs import command_docs_inventory, skill_docs_inventory
 from .platforms import PLATFORMS, Platform
 
 
@@ -123,6 +123,7 @@ def build_capability_snapshot() -> dict[str, Any]:
         "commands": commands,
         "command_aliases": command_aliases,
         "command_docs": command_docs_inventory(plugin_root / "commands"),
+        "skills": skill_docs_inventory(plugin_root / "skills"),
         "hook_events": hooks,
     }
 

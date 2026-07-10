@@ -64,7 +64,7 @@ autorun --install
 ```bash
 aise messages corrections --since 30d   # Find recurring AI mistakes
 aise analyze                            # Full qualitative analysis
-# → Add findings to CLAUDE.md, skills, or hook blocks (see /ar:ai-session-tools Workflow 6)
+# → Add findings to CLAUDE.md, skills, or hook blocks (see the $ai-session-tools skill, Workflow 6)
 ```
 
 ## Table of Contents
@@ -213,6 +213,25 @@ autorun --install --codex --codex-plugin-marketplace github
 `autorun@personal` is the local development plugin identity: `autorun` is the plugin name and `personal` is the generated local marketplace name in `~/.agents/plugins/marketplace.json`. For repo-backed Codex installs, the repository ships `.agents/plugins/marketplace.json` with marketplace name `autorun` and display name `Autorun`; use `--codex-plugin-marketplace github` to add `ahundt/autorun` through `codex plugin marketplace add` and install `autorun@autorun`.
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
+
+#### Bundled Skills
+
+Skills are installed from `plugins/autorun/skills/` and use each harness's native
+skill picker or mention syntax. In Codex, use `/skills` or `$skill-name`; do not
+assume a skill is an `/ar:*` command. The read-only
+`autorun --capability-snapshot` output is the machine-readable inventory.
+
+| Skill | Purpose |
+|-------|---------|
+| `ai-session-tools` | Search, recover, and analyze AI session history |
+| `autorun-maintainer` | Diagnose, install, and validate autorun across harnesses |
+| `cache` | Configure cache-miss and compaction protection |
+| `claude-session-tools` | Compatibility alias for `ai-session-tools` |
+| `claude-skill-builder` | Create and review Claude skills |
+| `cli-demo-recorder` | Record reproducible CLI and TUI demos |
+| `mermaid-diagrams` | Render Mermaid diagrams |
+| `parallel-subagent` | Investigate ambiguous failures with parallel approaches |
+| `tmux-automation` | Automate isolated terminal and harness tests |
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
@@ -923,6 +942,11 @@ autorun --install --codex --codex-hook-source plugin
                                       # Package Codex hooks in autorun@personal instead of ~/.codex/hooks.json
 autorun --install --codex --codex-plugin-marketplace github
                                       # Install Codex plugin from ahundt/autorun as autorun@autorun
+autorun --install --codex --codex-plugin-marketplace personal
+                                      # Install local development plugin as autorun@personal
+autorun --install-dry-run --codex     # Preview all writes without changing user config
+autorun --install --custom-harness 'lab=qwen:qwen-lab:/path/to/config::Qwen Lab'
+                                      # Install a flavored custom harness; option is repeatable
 autorun --install --force            # Force reinstall (development)
 autorun --install --tool             # Also run uv tool install for global CLI
 autorun --uninstall                  # Uninstall plugins and UV tools
@@ -932,9 +956,23 @@ autorun --uninstall                  # Uninstall plugins and UV tools
 
 ```bash
 autorun --status                     # Show installation status for all CLIs
+autorun --status --custom-harness 'lab=codex:codex-lab:/path/to/config::Codex Lab'
+                                      # Include a custom target in normal status output
 autorun --version                    # Show version
 autorun --help                       # Full help with all options
+autorun --capability-snapshot FILE   # Write platforms, commands, skills, and hooks as JSON
+statusline-command | autorun --cache-snapshot
+                                      # Persist opt-in Claude cache telemetry from stdin
 ```
+
+Custom harness specs use
+`name=flavor:binary:config_dir[::display]`. Supported flavors are `gemini`,
+`qwen`, `antigravity`, `agy` (an alias for `antigravity`), and `codex`.
+The optional display name follows the unambiguous `::` separator, so a
+`config_dir` may itself contain `:` characters.
+
+Accepted option values: `--codex-hook-source: user|plugin|both|none`;
+`--codex-plugin-marketplace: personal|github`.
 
 **Maintenance:**
 
@@ -951,6 +989,7 @@ autorun --enable-bootstrap           # Re-enable automatic bootstrap
 
 ```bash
 autorun file status                  # Show current policy (aliases: st, s)
+autorun file status --global         # Read the global policy instead of session policy
 autorun file allow                   # Allow all file creation (alias: a)
 autorun file justify                 # Require justification for new files (alias: j)
 autorun file search                  # Only modify existing files (aliases: find, f)
@@ -961,11 +1000,24 @@ autorun file search                  # Only modify existing files (aliases: find
 ```bash
 autorun task status                  # Show task status for session
 autorun task status --verbose        # Detailed task information
-autorun task export tasks.json       # Export task history to JSON
-autorun task clear                   # Clear task data
-autorun task gc --dry-run            # Preview cleanup of old data
+autorun task status --session ID --format json
+                                      # Select a session and text|json|table output
+autorun task export tasks.json --session ID --format json --include-completed
+                                      # Export selected task history
+autorun task clear --session ID      # Clear one session
+autorun task clear --all --no-confirm
+                                      # Clear every session without prompting
+autorun task gc --dry-run --ttl DAYS --pattern GLOB
+                                      # Preview age/pattern-selected cleanup
+autorun task gc --no-archive --no-confirm
+                                      # Delete selected data without archive or prompt
 autorun task gc --no-confirm         # Clean up old task data without prompt
 ```
+
+Accepted output values are `--format: text|json|table` for `task status` and
+`--format: json|csv|markdown` for `task export`. `--pattern` is a session-ID
+glob (default `*`); `--ttl` is an age in days (default from
+`config.task_ttl_days`).
 
 **Advanced options:**
 
@@ -974,8 +1026,12 @@ autorun --exit2-mode auto            # Claude Code bug #4669 workaround: auto|al
 autorun --conductor                  # Install Conductor extension for Gemini (default)
 autorun --no-conductor               # Skip Conductor extension
 autorun --install --antigravity      # Install Google Antigravity plugin (native bundle, importer fallback)
-autorun --cli claude                 # Set CLI type (used internally by hooks)
+autorun --cli claude                 # Hook identity: claude|gemini|antigravity|qwen|codex
 ```
+
+Accepted values: `--exit2-mode: auto|always|never`;
+`--cli: claude|gemini|antigravity|qwen|codex`;
+`--update-method: auto|plugin|uv|pip`.
 
 > `--exit2-mode` works around a Claude Code bug ([anthropics/claude-code#4669](https://github.com/anthropics/claude-code/issues/4669)). Controls whether hook deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI).
 

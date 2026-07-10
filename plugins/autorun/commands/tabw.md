@@ -12,7 +12,7 @@ Execute actions on Claude Code sessions across tmux windows.
 
 Current tmux sessions:
 
-! tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"
+!`tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"`
 
 ## Your Task
 

@@ -29,7 +29,7 @@ UV workspace containing 2 Claude Code plugins: **autorun**, **pdf-extractor**.
 claude plugin install https://github.com/ahundt/autorun.git
 
 # Verify
-claude plugin list  # Should show: cr, pdf-extractor
+claude plugin list  # Should show: ar, pdf-extractor
 ```
 
 ### From Local Clone (Development)
@@ -49,7 +49,7 @@ pip install -e . && python -m plugins.autorun.src.autorun.install --install --fo
 cd plugins/autorun && uv tool install --force --editable .
 
 # Verify installation
-claude plugin list  # Should show: cr, pdf-extractor
+claude plugin list  # Should show: ar, pdf-extractor
 autorun --status  # Verifies UV tool installation works
 ```
 
@@ -240,7 +240,7 @@ Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAll
 
 ---
 
-## pdf-extractor Plugin (v0.1.0)
+## pdf-extractor Plugin (v0.12.0)
 
 Extract text from PDFs with 9 backends (markitdown, pdfplumber, docling, marker, etc.).
 

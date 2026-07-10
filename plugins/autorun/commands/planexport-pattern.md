@@ -6,4 +6,4 @@ args: pattern
 
 # Set Filename Pattern
 
-! uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py pattern "$ARGUMENTS"
+!`uv run --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/scripts/plan_export_config.py pattern "$ARGUMENTS"`

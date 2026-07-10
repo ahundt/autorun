@@ -131,7 +131,7 @@ gemini --version  # Should show 0.28.0 or later
 /ar:cache           # Cache-miss / compaction protection gate (off by default)
 ```
 
-See [README.md](README.md) for the complete command reference (77 slash commands).
+See [README.md](README.md) for the complete command reference.
 
 #### Cache-Miss / Compaction Protection on Gemini CLI
 

@@ -8,7 +8,7 @@ argument-hint: [basic|help|"<shell command>"]
 
 Active test sessions:
 
-! tmux list-sessions -F "  #{session_name}" 2>/dev/null | grep -E "^  autorun-test" || echo "  (no active test sessions)"
+!`tmux list-sessions -F "  #{session_name}" 2>/dev/null | grep -E "^  autorun-test" || echo "  (no active test sessions)"`
 
 ## Your Task
 

@@ -6,14 +6,16 @@ When updating versions in the autorun marketplace, use this checklist to ensure 
 
 All plugins in this marketplace use the **same version number** for consistency. When releasing a new version, update ALL plugins to the same version.
 
-**Current Version: 0.11.0**
+The source of truth is `plugins/autorun/pyproject.toml`. The release consistency
+test checks both packages, manifests, marketplaces, Python `__version__` values,
+and maintained version-bearing docs against that value.
 
 ## Quick Method
 
 ```bash
 # 1. Find all references to the OLD version
-grep -rn "OLD_VERSION" --include="*.py" --include="*.json" --include="*.toml" --include="*.md" . \
-  | grep -v __pycache__ | grep -v .venv | grep -v .git/
+rg -n "OLD_VERSION" --glob '*.py' --glob '*.json' --glob '*.toml' --glob '*.md' \
+  --glob '!**/__pycache__/**' --glob '!**/.venv/**' --glob '!notes/**'
 
 # 2. Review EVERY match before replacing — see Gotchas below
 # 3. Replace only the ones that are autorun version refs
@@ -25,13 +27,13 @@ grep -rn "OLD_VERSION" --include="*.py" --include="*.json" --include="*.toml" --
 
 ```bash
 # Find all JSON version fields
-grep -rn '"version"' --include="*.json" . | grep -v __pycache__
+rg -n '"version"' --glob '*.json' --glob '!**/__pycache__/**'
 
 # Find all Python __version__ variables
-grep -rn '__version__' --include="*.py" . | grep -v __pycache__ | grep -v .venv
+rg -n '__version__' --glob '*.py' --glob '!**/__pycache__/**' --glob '!**/.venv/**'
 
 # Find version in pyproject.toml files
-grep -rn '^version\s*=' --include="*.toml" .
+rg -n '^version\s*=' --glob '*.toml'
 ```
 
 ## Files to Update (~33 files)

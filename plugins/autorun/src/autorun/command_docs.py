@@ -1,4 +1,4 @@
-"""Shared readers for autorun slash-command markdown files."""
+"""Shared readers for autorun command and skill Markdown files."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -77,5 +77,20 @@ def command_docs_inventory(commands_dir: Path) -> dict[str, dict[str, object]]:
             "aliases": list(doc.aliases),
             "description": doc.description,
             "executable": doc.executable,
+        }
+    return inventory
+
+
+def skill_docs_inventory(skills_dir: Path) -> dict[str, dict[str, str]]:
+    """Return stable metadata for installed ``skills/*/SKILL.md`` files."""
+    inventory: dict[str, dict[str, str]] = {}
+    if not skills_dir.is_dir():
+        return inventory
+    for skill_file in sorted(skills_dir.glob("*/SKILL.md")):
+        frontmatter, _ = _split_frontmatter(skill_file.read_text(encoding="utf-8"))
+        inventory[skill_file.parent.name] = {
+            "file": str(skill_file.relative_to(skills_dir)),
+            "name": frontmatter.get("name") or skill_file.parent.name,
+            "description": frontmatter.get("description", ""),
         }
     return inventory

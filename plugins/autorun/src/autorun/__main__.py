@@ -384,7 +384,7 @@ For more information: https://github.com/ahundt/autorun
         const="-",
         metavar="FILE",
         help="Write a read-only JSON inventory of registered platforms, commands, "
-             "and hook chains. Use '-' or omit FILE to print to stdout.",
+             "skills, and hook chains. Use '-' or omit FILE to print to stdout.",
     )
 
     # Update group

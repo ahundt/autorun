@@ -1,4 +1,4 @@
-# Codex CLI hook surface (v0.11.0 reference)
+# Codex CLI Hook Surface
 
 OpenAI's [Codex CLI](https://developers.openai.com/codex/) (v0.133 at
 the time of writing, rechecked against local `codex-cli 0.137.0`) ships a

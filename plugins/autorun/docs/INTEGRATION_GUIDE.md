@@ -63,11 +63,11 @@ AUTORUN_USE_DAEMON=0 autorun
 Add new slash commands by placing markdown files in `commands/`:
 
 ```bash
-# commands/mycommand.md — automatically available as /ar:mycommand
+# commands/<command>.md — automatically available as /ar:<command>
 # Contents describe what Claude should do when the command is invoked
 ```
 
-See `commands/` for 76 existing command examples. Commands are loaded by Claude Code at
+See `commands/` for the installed command examples. Commands are loaded by Claude Code at
 session start and do not require hook handler changes.
 
 **When to use**: Adding new slash commands without Python code.

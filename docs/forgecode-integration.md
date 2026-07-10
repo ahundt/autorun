@@ -1,4 +1,4 @@
-# ForgeCode integration (v0.11.0 reference)
+# ForgeCode Integration
 
 [ForgeCode](https://forgecode.dev) by antinomyhq is a Rust-based AI
 coding assistant. Unlike Claude Code, Gemini CLI, and Codex CLI, it

@@ -12,7 +12,7 @@ Discover, analyze, and interact with Claude Code sessions across tmux windows.
 
 Current tmux sessions and Claude windows:
 
-! tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"
+!`tmux list-sessions -F "#{session_name}: #{session_windows} windows" 2>/dev/null || echo "No tmux sessions"`
 
 ## Your Task
 

@@ -14,6 +14,7 @@ def test_capability_snapshot_contains_all_registered_platforms():
     assert set(snapshot["platforms"]) == set(PLATFORMS)
     assert snapshot["version"] == __version__
     assert snapshot["commands"]
+    assert snapshot["skills"]
     assert snapshot["hook_events"]
 
 
@@ -58,6 +59,21 @@ def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
     assert command_docs["restart-daemon"]["executable"] is True
     assert "current autorun install/source tree" in command_docs["restart-daemon"]["description"]
     assert command_docs["task-ignore"]["aliases"] == ["ti", "ignore-task"]
+
+
+def test_capability_snapshot_covers_installed_skills_with_descriptions():
+    """The machine-readable capability API must include every shipped skill."""
+    from autorun.capability_snapshot import build_capability_snapshot
+
+    snapshot = build_capability_snapshot()
+    expected = {
+        path.parent.name
+        for path in (Path(__file__).parents[1] / "skills").glob("*/SKILL.md")
+    }
+
+    assert set(snapshot["skills"]) == expected
+    assert all(skill["name"] for skill in snapshot["skills"].values())
+    assert all(skill["description"] for skill in snapshot["skills"].values())
 
 
 def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):

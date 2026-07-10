@@ -29,7 +29,8 @@ bun run $MERMAID autorun-ux.mmd -o autorun-ux.svg
 > **Note:** `autorun-architecture.mmd` is too complex for beautiful-mermaid (nested subgraphs).
 > Use mermaid-cli (Option 2) for that file.
 
-Or use the Claude Code skill: `/ar:mermaid-diagrams` (runs render-mermaid.ts automatically)
+Or select the `mermaid-diagrams` skill in Claude Code (or use
+`$mermaid-diagrams` in Codex); it runs `render-mermaid.ts` automatically.
 
 ### Option 2: mermaid-cli (fallback, required for autorun-architecture.mmd)
 

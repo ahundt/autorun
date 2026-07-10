@@ -8,7 +8,7 @@ argument-hint: [create <name>|list|cleanup [--all]]
 
 Current tmux sessions:
 
-! tmux list-sessions -F "  #{session_name}: #{session_windows} windows" 2>/dev/null || echo "  (no active sessions)"
+!`tmux list-sessions -F "  #{session_name}: #{session_windows} windows" 2>/dev/null || echo "  (no active sessions)"`
 
 ## Your Task
 

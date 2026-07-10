@@ -48,5 +48,7 @@ def test_autorun_maintainer_skill_covers_current_harnesses_and_scoped_restarts()
         assert required in text
 
     assert "restart-all-daemons` only" in text
+    assert "name=flavor:binary:config_dir[::display]" in text
+    assert "name=flavor:binary:config_dir[:display]" not in text
     assert "pkill -f" not in text
     assert "0.11.0" not in text

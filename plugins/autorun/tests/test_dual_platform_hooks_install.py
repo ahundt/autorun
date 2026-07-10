@@ -476,10 +476,13 @@ class TestManifestFiles:
         assert manifest.get("contextFileName") == "GEMINI.md"
 
     def test_version_consistency(self):
-        """Release-facing version numbers must match the autorun package."""
+        """Release surfaces must match the package version they distribute."""
         root_pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         plugin_pyproject = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         expected = plugin_pyproject["project"]["version"]
+        pdf_root = REPO_ROOT / "plugins" / "pdf-extractor"
+        pdf_pyproject = tomllib.loads((pdf_root / "pyproject.toml").read_text(encoding="utf-8"))
+        pdf_expected = pdf_pyproject["project"]["version"]
 
         with open(PLUGIN_JSON, encoding="utf-8") as f:
             claude_manifest = json.load(f)
@@ -488,6 +491,10 @@ class TestManifestFiles:
         codex_manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         metadata = json.loads((PLUGIN_ROOT / "src" / "autorun" / "metadata.json").read_text(encoding="utf-8"))
         marketplace = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        plugin_marketplace = json.loads((PLUGIN_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        pdf_claude_manifest = json.loads((pdf_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        pdf_gemini_manifest = json.loads((pdf_root / "gemini-extension.json").read_text(encoding="utf-8"))
+        pdf_init = (pdf_root / "src" / "pdf_extraction" / "__init__.py").read_text(encoding="utf-8")
         workspace_init = (REPO_ROOT / "src" / "autorun_workspace" / "__init__.py").read_text(encoding="utf-8")
         autorun_init = (PLUGIN_ROOT / "src" / "autorun" / "__init__.py").read_text(encoding="utf-8")
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -498,7 +505,7 @@ class TestManifestFiles:
             (PLUGIN_ROOT / "skills" / "claude-session-tools" / "SKILL.md").read_text(encoding="utf-8"),
         ]
 
-        actual = {
+        autorun_actual = {
             "workspace pyproject.toml": root_pyproject["project"]["version"],
             "plugins/autorun/pyproject.toml": expected,
             ".claude-plugin/plugin.json": claude_manifest.get("version"),
@@ -515,15 +522,40 @@ class TestManifestFiles:
             "claude-session-tools skill": f'version: "{expected}"' in skill_versions[1],
         }
         for plugin in marketplace.get("plugins", []):
-            if plugin.get("name") in {"ar", "pdf-extractor"}:
-                actual[f"marketplace {plugin['name']}"] = plugin.get("version")
+            if plugin.get("name") == "ar":
+                autorun_actual["root marketplace ar"] = plugin.get("version")
+        for plugin in plugin_marketplace.get("plugins", []):
+            if plugin.get("name") == "ar":
+                autorun_actual["plugin marketplace ar"] = plugin.get("version")
 
         mismatches = {
             name: value
-            for name, value in actual.items()
+            for name, value in autorun_actual.items()
             if value is not True and value != expected
         }
         assert not mismatches, f"Release version mismatch against {expected}: {mismatches}"
+
+        pdf_actual = {
+            "pdf pyproject.toml": pdf_expected,
+            "unified workspace version": expected,
+            "pdf Claude manifest": pdf_claude_manifest.get("version"),
+            "pdf Gemini manifest": pdf_gemini_manifest.get("version"),
+            "pdf __version__": f'__version__ = "{pdf_expected}"' in pdf_init,
+            "CLAUDE pdf release heading": f"## pdf-extractor Plugin (v{pdf_expected})" in claude_md,
+            "GEMINI pdf expected output": f"pdf-extractor@{pdf_expected}" in gemini_md,
+        }
+        for plugin in marketplace.get("plugins", []):
+            if plugin.get("name") == "pdf-extractor":
+                pdf_actual["root marketplace pdf-extractor"] = plugin.get("version")
+
+        pdf_mismatches = {
+            name: value
+            for name, value in pdf_actual.items()
+            if value is not True and value != pdf_expected
+        }
+        assert not pdf_mismatches, (
+            f"PDF release version mismatch against {pdf_expected}: {pdf_mismatches}"
+        )
 
 
 # =============================================================================
