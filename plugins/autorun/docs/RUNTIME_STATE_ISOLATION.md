@@ -150,4 +150,3 @@ plus one allowed and one denied hook request for each installed harness schema.
 - Large persistent state: preserve history, measure the hot path, and design a
   migration or retention policy separately. Never delete user history as a
   performance shortcut.
-
