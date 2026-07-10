@@ -157,12 +157,12 @@ class CustomHarnessInstall:
 
 
 def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
-    """Parse `name=flavor:binary:config_dir[:display]` custom harness specs.
+    """Parse `name=flavor:binary:config_dir[::display]` custom harness specs.
 
     The `flavor` is the autorun hook identity passed to `hook_entry.py --cli`;
     it must be a known hook identity so custom binaries cannot create
-    unvalidated response schemas. Use `::display` when config_dir contains a
-    literal `:` so the optional display suffix stays unambiguous.
+    unvalidated response schemas. The `::display` separator stays unambiguous
+    even when config_dir contains a literal `:`.
     """
     raw = spec.strip()
     if not raw or "=" not in raw:
@@ -3305,8 +3305,7 @@ def install_plugins(
         codex_hook_source: Codex hook source: user, plugin, both, or none
         codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
         custom_harnesses: Custom harness specs in
-            name=flavor:binary:config_dir[:display] form. Use ::display when
-            config_dir contains a literal colon.
+            name=flavor:binary:config_dir[::display] form.
         dry_run: Preview install targets without writing files or running
                  installer subprocesses
 
@@ -3837,8 +3836,7 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
 
     Args:
         custom_harnesses: Optional custom harness specs to include in the same
-            status pass. Specs use name=flavor:binary:config_dir[:display],
-            with ::display for config paths containing literal colons.
+            status pass. Specs use name=flavor:binary:config_dir[::display].
 
     Returns:
         Exit code: 0 = all installed, 1 = some missing

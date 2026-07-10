@@ -120,7 +120,7 @@ CUSTOM_HARNESS_FLAVOR_ALIASES = {
     "antigravity": "antigravity",
 }
 CUSTOM_HARNESS_FLAVOR_ORDER = ("gemini", "qwen", "antigravity", "agy", "codex")
-CUSTOM_HARNESS_SPEC_FORMAT = "name=flavor:binary:config_dir[:display]"
+CUSTOM_HARNESS_SPEC_FORMAT = "name=flavor:binary:config_dir[::display]"
 
 
 def custom_harness_spec_help() -> str:
@@ -132,7 +132,7 @@ def custom_harness_spec_help() -> str:
         f"SPEC format: {CUSTOM_HARNESS_SPEC_FORMAT}; "
         f"flavor: {flavors} (agy is an alias for antigravity); "
         "binary is the CLI executable; config_dir is the harness config root; "
-        "display is optional. Use ::display when config_dir contains ':'. "
+        "display is optional. Use ::display as the unambiguous separator. "
         "Repeat for multiple targets."
     )
 

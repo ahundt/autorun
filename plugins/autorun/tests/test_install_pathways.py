@@ -561,6 +561,8 @@ class TestInstallMainAdapter:
         assert "--custom-harness SPEC" in help_text
         assert "--install --custom-harness" in help_text
         assert "--status --custom-harness" in help_text
+        assert "name=flavor:binary:config_dir[::display]" in help_text
+        assert "Use ::display" in help_text
         assert "flavor: gemini|qwen|antigravity|agy|codex" in help_text
         assert "agy is an alias for antigravity" in help_text
         assert "--custom-harness-status" not in help_text
@@ -1278,18 +1280,18 @@ class TestCustomHarnessInstall:
         assert spec.config_dir == config_dir
         assert spec.display_name == "lab"
 
-    def test_parse_custom_harness_spec_accepts_explicit_display_separator(self, tmp_path):
-        """Use ::display when config paths themselves contain ':' characters."""
+    def test_parse_custom_harness_spec_accepts_unambiguous_display_separator(self, tmp_path):
+        """The canonical :: separator supports one-word displays and colon paths."""
         install = get_install_module()
         config_dir = tmp_path / "custom:profile"
 
         spec = install.parse_custom_harness_spec(
-            f"lab=agy:agy-lab:{config_dir}::Antigravity Lab"
+            f"lab=agy:agy-lab:{config_dir}::Antigravity-Lab"
         )
 
         assert spec.config_dir == config_dir
         assert spec.flavor == "antigravity"
-        assert spec.display_name == "Antigravity Lab"
+        assert spec.display_name == "Antigravity-Lab"
 
     def test_custom_antigravity_binary_stamps_antigravity_hook_flavor(
         self,
