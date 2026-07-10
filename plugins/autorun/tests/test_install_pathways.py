@@ -1718,5 +1718,79 @@ class TestOptionalSessionToolInstall:
         assert working.detail == "aise 0.3.2"
 
 
+class TestUvToolInstall:
+    """The global CLI must install from the package that owns its entry points."""
+
+    def test_uv_tool_install_targets_autorun_plugin_editably(self, tmp_path, monkeypatch):
+        """Workspace installs must not select entrypoint-free autorun-workspace."""
+        install = get_install_module()
+        plugin_root = tmp_path / "plugins" / "autorun"
+        plugin_root.mkdir(parents=True)
+        calls = []
+
+        monkeypatch.setattr(
+            install,
+            "run_cmd",
+            lambda args, **_kwargs: calls.append(args)
+            or install.CmdResult(True, "installed"),
+        )
+
+        result = install._install_autorun_uv_tool(plugin_root)
+
+        assert result.ok is True
+        assert calls == [[
+            "uv",
+            "tool",
+            "install",
+            "--force",
+            "--editable",
+            str(plugin_root),
+        ]]
+
+    def test_uv_tool_failure_makes_full_install_fail(self, tmp_path, monkeypatch):
+        """A missing global autorun entry point cannot be masked by other targets."""
+        install = get_install_module()
+        marketplace = tmp_path / "marketplace"
+        plugin_root = marketplace / "plugins" / "autorun"
+        (plugin_root / ".claude-plugin").mkdir(parents=True)
+        (plugin_root / ".claude-plugin" / "plugin.json").write_text(
+            '{}', encoding="utf-8"
+        )
+        custom_home = tmp_path / "custom-codex"
+
+        monkeypatch.setattr(install, "find_marketplace_root", lambda: marketplace)
+        monkeypatch.setattr(install, "_update_package_metadata", lambda *_args: None)
+        monkeypatch.setattr(
+            install,
+            "detect_available_clis",
+            lambda: {name: False for name in install.PLATFORMS},
+        )
+        monkeypatch.setattr(
+            install, "_check_uv_env", lambda *_args: install.CmdResult(True, "")
+        )
+        monkeypatch.setattr(
+            install, "_sync_dependencies", lambda: install.CmdResult(True, "")
+        )
+        monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+        monkeypatch.setattr(install, "_install_for_codex", lambda *_args, **_kwargs: (True, "ok"))
+        monkeypatch.setattr(
+            install,
+            "_install_autorun_uv_tool",
+            lambda _root: install.CmdResult(False, "no entry points"),
+        )
+        monkeypatch.setattr(install, "_install_aise", lambda **_kwargs: True)
+        monkeypatch.setattr(install, "_check_hook_conflicts", lambda: None)
+        monkeypatch.setattr(install, "_restart_daemon_if_running", lambda: None)
+
+        result = install.install_plugins(
+            "autorun",
+            tool=True,
+            conductor=False,
+            custom_harnesses=[f"lab=codex:codex-lab:{custom_home}"],
+        )
+
+        assert result == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

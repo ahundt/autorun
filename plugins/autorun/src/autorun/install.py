@@ -3206,6 +3206,22 @@ def _update_package_metadata(plugin_dir: Path) -> None:
 # ai-session-tools (aise) Installation
 # =============================================================================
 
+
+def _install_autorun_uv_tool(plugin_root: Path) -> CmdResult:
+    """Install the entrypoint-owning autorun package as an editable uv tool."""
+    return run_cmd(
+        [
+            "uv",
+            "tool",
+            "install",
+            "--force",
+            "--editable",
+            str(plugin_root),
+        ],
+        timeout=120,
+    )
+
+
 # Pinned version for ai-session-tools. Update when releasing a new version.
 _AISE_VERSION = "0.3.1"
 _AISE_REPO = "git+https://github.com/ahundt/ai_session_tools.git"
@@ -3690,11 +3706,12 @@ def install_plugins(
     if tool:
         print()
         print("Installing UV tool...")
-        result = run_cmd(["uv", "tool", "install", ".", "--force"], timeout=120)
+        result = _install_autorun_uv_tool(plugin_root)
         if result.ok:
             print("   uv tool: ok")
         else:
             print(f"   uv tool: {result.output}")
+        all_succeeded = all_succeeded and result.ok
 
         # Install ai-session-tools (aise) as a global UV tool.
         # Autorun doesn't import aise at runtime — it's a separate CLI for
