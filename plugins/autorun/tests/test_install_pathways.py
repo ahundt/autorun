@@ -1629,5 +1629,94 @@ class TestCustomHarnessInstall:
         assert "hooks identity: ✓ antigravity" in out
 
 
+class TestOptionalSessionToolInstall:
+    """Optional session tooling must be executable, not merely present on PATH."""
+
+    def test_aise_install_falls_back_when_installed_candidate_cannot_start(
+        self, monkeypatch
+    ):
+        """A successful uv install is not success until `aise --version` runs."""
+        install = get_install_module()
+        calls = []
+        checks = iter([
+            install.CmdResult(False, "ModuleNotFoundError: No module named 'click'"),
+            install.CmdResult(True, "aise 0.3.2"),
+        ])
+
+        def fake_run_cmd(args, timeout=30, **kwargs):
+            calls.append(args)
+            if args == ["/tmp/aise", "--version"]:
+                return next(checks)
+            return install.CmdResult(True, "installed")
+
+        monkeypatch.setattr(install.shutil, "which", lambda _name: "/tmp/aise")
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+
+        assert install._install_aise(force=True) is True
+        installs = [
+            args
+            for args in calls
+            if args[:4] == ["uv", "tool", "install", "--force"]
+        ]
+        assert len(installs) == 2
+        assert calls.count(["/tmp/aise", "--version"]) == 2
+
+    def test_aise_install_reports_broken_runtime_after_all_candidates(
+        self, monkeypatch, capsys
+    ):
+        """Every non-runnable candidate ends with root-cause and successor guidance."""
+        install = get_install_module()
+
+        def fake_run_cmd(args, timeout=30, **kwargs):
+            if args == ["/tmp/aise", "--version"]:
+                return install.CmdResult(
+                    False, "ModuleNotFoundError: No module named 'click'"
+                )
+            return install.CmdResult(True, "installed")
+
+        monkeypatch.setattr(install.shutil, "which", lambda _name: "/tmp/aise")
+        monkeypatch.setattr(install, "run_cmd", fake_run_cmd)
+
+        assert install._install_aise(force=True) is False
+        output = capsys.readouterr().out
+        assert "installed but failed its runtime check" in output
+        assert "No module named 'click'" in output
+        assert "sessiongrep doctor" in output
+
+    def test_optional_cli_probe_distinguishes_missing_broken_and_working(
+        self, monkeypatch
+    ):
+        """Status probes execute the CLI and preserve a compact failure reason."""
+        install = get_install_module()
+
+        monkeypatch.setattr(install.shutil, "which", lambda _name: None)
+        missing = install._probe_optional_cli("aise")
+        assert missing.path is None
+        assert missing.ok is False
+        assert missing.detail == "not found"
+
+        monkeypatch.setattr(install.shutil, "which", lambda _name: "/tmp/aise")
+        monkeypatch.setattr(
+            install,
+            "run_cmd",
+            lambda *_args, **_kwargs: install.CmdResult(
+                False, "ModuleNotFoundError: No module named 'click'\ntrace"
+            ),
+        )
+        broken = install._probe_optional_cli("aise")
+        assert broken.path == "/tmp/aise"
+        assert broken.ok is False
+        assert broken.detail == "ModuleNotFoundError: No module named 'click'"
+
+        monkeypatch.setattr(
+            install,
+            "run_cmd",
+            lambda *_args, **_kwargs: install.CmdResult(True, "aise 0.3.2\n"),
+        )
+        working = install._probe_optional_cli("aise")
+        assert working.ok is True
+        assert working.detail == "aise 0.3.2"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

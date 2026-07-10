@@ -124,6 +124,15 @@ class CmdResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OptionalCliProbe:
+    """Observed availability and runtime health of an optional CLI."""
+
+    path: str | None
+    ok: bool
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeArchitectureSettings:
     """Resolved hook runtime settings with precedence source labels."""
 
@@ -3202,6 +3211,20 @@ _AISE_VERSION = "0.3.1"
 _AISE_REPO = "git+https://github.com/ahundt/ai_session_tools.git"
 
 
+def _probe_optional_cli(name: str) -> OptionalCliProbe:
+    """Distinguish an absent optional CLI from a broken executable on PATH."""
+    path = shutil.which(name)
+    if path is None:
+        return OptionalCliProbe(path=None, ok=False, detail="not found")
+
+    result = run_cmd([path, "--version"], timeout=10)
+    return OptionalCliProbe(
+        path=path,
+        ok=result.ok,
+        detail=_first_nonempty_line(result.output),
+    )
+
+
 def _install_aise(force: bool = False) -> bool:
     """Install ai-session-tools (aise) as a global UV tool.
 
@@ -3223,49 +3246,49 @@ def _install_aise(force: bool = False) -> bool:
     """
     print("Installing ai-session-tools (aise)...")
 
-    # Step 1: Check if already installed (skip if not --force)
+    # Step 1: Check if already installed (skip if not --force).
     if not force:
-        aise_path = shutil.which("aise")
-        if aise_path:
-            # Verify it actually runs
-            check = run_cmd(["aise", "--version"], timeout=10)
-            if check.ok:
-                print(f"   aise: already installed ({aise_path})")
-                return True
-            logger.debug(f"aise found at {aise_path} but --version failed: {check.output}")
+        probe = _probe_optional_cli("aise")
+        if probe.ok:
+            print(f"   aise: already installed ({probe.path})")
+            return True
+        if probe.path:
+            logger.debug("aise found at %s but failed: %s", probe.path, probe.detail)
 
-    # Step 2: Try PyPI release (fastest, most reliable)
-    aise_result = run_cmd(
-        ["uv", "tool", "install", "--force", f"ai-session-tools=={_AISE_VERSION}"],
-        timeout=120,
+    candidates = (
+        (f"ai-session-tools=={_AISE_VERSION}", f"PyPI {_AISE_VERSION}"),
+        (f"{_AISE_REPO}@v{_AISE_VERSION}", f"git v{_AISE_VERSION}"),
+        (f"{_AISE_REPO}@main", "git main"),
     )
-    if aise_result.ok:
-        print(f"   aise: ok (PyPI {_AISE_VERSION})")
-        return True
+    last_install_error = "no install candidate was attempted"
+    runtime_failure: OptionalCliProbe | None = None
 
-    # Step 3: Try git tag (fallback if PyPI is behind or unavailable)
-    logger.debug(f"aise PyPI {_AISE_VERSION} failed, trying git tag: {aise_result.output}")
-    aise_result = run_cmd(
-        ["uv", "tool", "install", "--force", f"{_AISE_REPO}@v{_AISE_VERSION}"],
-        timeout=120,
-    )
-    if aise_result.ok:
-        print(f"   aise: ok (git v{_AISE_VERSION})")
-        return True
+    # A package-manager exit code only proves installation, not that its CLI starts.
+    for package, label in candidates:
+        result = run_cmd(
+            ["uv", "tool", "install", "--force", package],
+            timeout=120,
+        )
+        if not result.ok:
+            last_install_error = _first_nonempty_line(result.output)
+            logger.debug("aise %s install failed: %s", label, result.output)
+            continue
 
-    # Step 4: Fall back to git main branch (always available)
-    logger.debug(f"aise git tag v{_AISE_VERSION} failed, trying main: {aise_result.output}")
-    aise_result = run_cmd(
-        ["uv", "tool", "install", "--force", f"{_AISE_REPO}@main"],
-        timeout=120,
-    )
-    if aise_result.ok:
-        print(f"   aise: ok (git main, v{_AISE_VERSION} not yet available)")
-        return True
+        probe = _probe_optional_cli("aise")
+        if probe.ok:
+            print(f"   aise: ok ({label})")
+            return True
+        runtime_failure = probe
+        logger.debug("aise %s runtime check failed: %s", label, probe.detail)
 
-    # All attempts failed — non-fatal, autorun works without aise
-    print("   aise: install failed (optional, continuing)")
-    logger.warning(f"aise install failed: {aise_result.output}")
+    # aise is optional; keep autorun usable and point users to the maintained tool.
+    if runtime_failure is not None:
+        print("   aise: installed but failed its runtime check (optional, continuing)")
+        print(f"   Reason: {runtime_failure.detail}")
+    else:
+        print("   aise: install failed (optional, continuing)")
+        print(f"   Reason: {last_install_error}")
+    print("   Session search alternative: run `sessiongrep doctor`.")
     return False
 
 
@@ -3908,12 +3931,16 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     # Check UV CLI tools in PATH
     print()
     print("UV CLI Tools:")
-    for tool_name in ["autorun", "aise"]:
-        path = shutil.which(tool_name)
-        if path:
-            print(f"  {tool_name}: {path}")
-        else:
-            print(f"  {tool_name}: not found")
+    autorun_path = shutil.which("autorun")
+    print(f"  autorun: {autorun_path or 'not found'}")
+    aise_probe = _probe_optional_cli("aise")
+    if aise_probe.ok:
+        print(f"  aise: {aise_probe.path} ({aise_probe.detail})")
+    elif aise_probe.path:
+        print(f"  aise: broken ({aise_probe.detail})")
+        print("    Optional; use `sessiongrep doctor` for maintained session search.")
+    else:
+        print("  aise: not found (optional; use `sessiongrep doctor`)")
 
     # Check for venv
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
