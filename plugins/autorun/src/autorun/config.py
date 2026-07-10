@@ -669,6 +669,11 @@ CONFIG = {
         "SessionStart": 2.0,
         "SessionEnd": 2.0,
     },
+    # Bound executor occupation when one handler becomes unhealthy. Additional requests
+    # return schema-correct failure responses during cooldown or while timed-out workers
+    # remain alive instead of spawning an unbounded cluster of worker threads.
+    "daemon_dispatch_max_concurrent_per_event": 4,
+    "daemon_dispatch_timeout_cooldown_seconds": 5.0,
     # Timeout layering is intentional and must stay ordered:
     # daemon_dispatch_timeouts_seconds < daemon_client_response_timeouts_seconds
     # < hook_wrapper_timeouts_seconds < outer harness hooks.json timeout.

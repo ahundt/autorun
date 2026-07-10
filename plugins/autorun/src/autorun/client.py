@@ -107,21 +107,27 @@ def _hook_specific_event_name(event: str, cli_type: str) -> str:
     return event
 
 
-def build_daemon_failure_response(event: str, cli_type: str, message: str) -> dict:
+def build_daemon_failure_response(
+    event: str,
+    cli_type: str,
+    message: str,
+    event_code: str = "daemon_failure",
+) -> dict:
     """Build a platform-correct fallback for daemon communication failures.
 
     Permission-gate hooks fail closed. Lifecycle/context hooks fail open.
     """
+    tagged_message = f"[AR_EVENT_V1:{event_code}] {message}".strip()
     if not is_tool_gate_event(event):
         return {
             "continue": True,
             "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": f"[autorun] {message}" if message else "",
+            "systemMessage": f"[autorun] {tagged_message}" if message else "",
         }
 
     reason = (
-        f"[autorun] {message}. Blocking tool use because autorun could not "
+        f"[autorun] {tagged_message}. Blocking tool use because autorun could not "
         "evaluate this permission gate. Run `autorun --restart-daemon`, then retry."
     )
     hook_specific = {
@@ -500,6 +506,7 @@ def run_client() -> int:
                 hook_event,
                 cli_type,
                 f"Daemon unavailable or timed out: {e}",
+                event_code="daemon_unavailable_or_timeout",
             ),
             event=hook_event,
             cli_type=cli_type,

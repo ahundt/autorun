@@ -30,6 +30,7 @@ import json
 import threading
 import asyncio
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
@@ -57,6 +58,59 @@ from autorun.core import (
 # ============================================================================
 # P1.1: LazyTranscript Tests
 # ============================================================================
+
+class TestDispatchTimeoutContainment:
+    @pytest.mark.asyncio
+    async def test_41_slow_dispatches_are_bounded_without_recovery_recursion(self, monkeypatch):
+        import autorun.core as core
+
+        calls = 0
+        calls_lock = threading.Lock()
+
+        def slow_dispatch(_ctx):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+            time.sleep(0.2)
+            return None
+
+        slow_app = Mock()
+        slow_app.dispatch.side_effect = slow_dispatch
+        daemon = AutorunDaemon(slow_app)
+        monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: 0.01)
+        monkeypatch.setitem(core.CONFIG, "daemon_dispatch_max_concurrent_per_event", 4)
+        monkeypatch.setitem(core.CONFIG, "daemon_dispatch_timeout_cooldown_seconds", 0.02)
+        contexts = [
+            EventContext(
+                session_id=f"timeout-cluster-{index}",
+                event="PreToolUse",
+                tool_name="Bash",
+                tool_input={"command": "private command must not appear"},
+            )
+            for index in range(41)
+        ]
+
+        started = time.monotonic()
+        results = await asyncio.gather(
+            *(daemon._dispatch_with_timeout(ctx, "claude") for ctx in contexts)
+        )
+        elapsed = time.monotonic() - started
+
+        assert len(results) == 41
+        assert 1 <= calls <= 4
+        assert elapsed < 0.15
+        assert all(isinstance(result, dict) for result in results)
+        rendered = json.dumps(results)
+        assert "timed out" in rendered and "temporarily contained" in rendered
+        assert "private command must not appear" not in rendered
+
+        # Expiring the cooldown must not admit more work while executor threads
+        # from the timed-out batch are still alive.
+        await asyncio.sleep(0.03)
+        retry = await daemon._dispatch_with_timeout(contexts[0], "claude")
+        assert calls <= 4
+        assert "daemon_dispatch_contained" in json.dumps(retry)
+
 
 class TestLazyTranscript:
     """Tests for LazyTranscript lazy string conversion."""

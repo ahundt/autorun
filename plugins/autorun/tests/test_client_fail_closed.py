@@ -59,6 +59,22 @@ def test_client_response_timeouts_are_config_backed_and_above_dispatch_budget():
     assert daemon_response_timeout_for_cli("unknown") == response_timeouts["claude"]
 
 
+def test_daemon_failure_response_embeds_privacy_safe_versioned_event_code():
+    import json
+
+    from autorun.client import build_daemon_failure_response
+
+    response = build_daemon_failure_response(
+        "PreToolUse",
+        "claude",
+        "handler timed out",
+        event_code="daemon_dispatch_timeout",
+    )
+    rendered = json.dumps(response)
+    assert "[AR_EVENT_V1:daemon_dispatch_timeout]" in rendered
+    assert "command" not in rendered.lower()
+
+
 def test_cli_argument_choices_come_from_platform_registry():
     """`autorun --cli` help must not drift from registered hook platforms."""
     from autorun.__main__ import create_parser

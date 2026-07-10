@@ -1869,6 +1869,65 @@ class AutorunDaemon:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.store = ThreadSafeDB()
         self._cleanup_registered = False
+        self._active_dispatches: Dict[str, Set[asyncio.Future]] = {}
+        self._dispatch_circuit_open_until: Dict[str, float] = {}
+
+    async def _dispatch_with_timeout(self, ctx: EventContext, cli_type: str):
+        """Run one handler with bounded per-event concurrency and timeout containment."""
+        from .client import build_daemon_failure_response
+
+        event = ctx.event
+        timeout = dispatch_timeout_for_event(event)
+        cooldown = float(CONFIG.get("daemon_dispatch_timeout_cooldown_seconds", 5.0))
+        max_concurrent = max(
+            1, int(CONFIG.get("daemon_dispatch_max_concurrent_per_event", 4))
+        )
+        active = self._active_dispatches.get(event)
+
+        def circuit_response():
+            return build_daemon_failure_response(
+                event,
+                cli_type,
+                f"Daemon handler for '{event}' is temporarily contained",
+                event_code="daemon_dispatch_contained",
+            )
+
+        circuit_deadline = self._dispatch_circuit_open_until.get(event, 0.0)
+        if time.monotonic() < circuit_deadline or (
+            active is not None and len(active) >= max_concurrent
+        ):
+            return circuit_response()
+        if circuit_deadline:
+            self._dispatch_circuit_open_until.pop(event, None)
+
+        loop = asyncio.get_running_loop()
+        dispatch = loop.run_in_executor(None, self.app.dispatch, ctx)
+        active = self._active_dispatches.setdefault(event, set())
+        active.add(dispatch)
+
+        def release(completed: asyncio.Future) -> None:
+            current = self._active_dispatches.get(event)
+            if current is None:
+                return
+            current.discard(completed)
+            if not current:
+                self._active_dispatches.pop(event, None)
+
+        dispatch.add_done_callback(release)
+        try:
+            response = await asyncio.wait_for(asyncio.shield(dispatch), timeout=timeout)
+        except asyncio.TimeoutError:
+            self._dispatch_circuit_open_until[event] = time.monotonic() + cooldown
+            logger.error(f"Handler for '{event}' timed out after {timeout:g}s")
+            return build_daemon_failure_response(
+                event,
+                cli_type,
+                f"Daemon handler for '{event}' timed out after {timeout:g}s",
+                event_code="daemon_dispatch_timeout",
+            )
+        else:
+            self._dispatch_circuit_open_until.pop(event, None)
+            return response
 
     def _pid_exists(self, pid: int) -> bool:
         """Check if process with given PID exists.
@@ -1954,23 +2013,7 @@ class AutorunDaemon:
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.
             # Synchronous/blocking work in handlers (file I/O, locks) runs in a thread.
-            loop = asyncio.get_running_loop()
-            dispatch_timeout = dispatch_timeout_for_event(ctx.event)
-            try:
-                response = await asyncio.wait_for(
-                    loop.run_in_executor(None, self.app.dispatch, ctx),
-                    timeout=dispatch_timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    f"Handler for '{ctx.event}' timed out after {dispatch_timeout:g}s"
-                )
-                from .client import build_daemon_failure_response
-                response = build_daemon_failure_response(
-                    ctx.event,
-                    cli_type,
-                    f"Daemon handler for '{ctx.event}' timed out after {dispatch_timeout:g}s",
-                )
+            response = await self._dispatch_with_timeout(ctx, cli_type)
 
         except asyncio.LimitOverrunError as e:
             # Buffer size exceeded - provide actionable guidance
