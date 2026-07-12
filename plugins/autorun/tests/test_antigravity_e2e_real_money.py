@@ -1,4 +1,5 @@
 """Isolated hook-process and minimal live-model E2Es for Antigravity."""
+
 from __future__ import annotations
 
 import json
@@ -19,13 +20,7 @@ DEFAULT_MODEL = "Gemini 3.5 Flash (Low)"
 def _find_hook_script() -> Path:
     candidates = (
         PLUGIN_ROOT / "hooks" / "hook_entry.py",
-        Path.home()
-        / ".gemini"
-        / "antigravity-cli"
-        / "plugins"
-        / "ar"
-        / "hooks"
-        / "hook_entry.py",
+        Path.home() / ".gemini" / "antigravity-cli" / "plugins" / "ar" / "hooks" / "hook_entry.py",
     )
     for candidate in candidates:
         if candidate.is_file():
