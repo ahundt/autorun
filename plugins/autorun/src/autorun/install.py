@@ -2570,14 +2570,6 @@ def _copy_codex_plugin_source(
     )
 
 
-def _remove_owned_codex_plugin_source(target: Path) -> None:
-    """Remove only a plugin source path autorun previously owned."""
-    if target.is_symlink() or target.is_file():
-        target.unlink()
-    else:
-        shutil.rmtree(target)
-
-
 def _ensure_codex_plugin_source(
     plugin_dir: Path,
     *,
@@ -2597,24 +2589,37 @@ def _ensure_codex_plugin_source(
         return (False, f"missing Codex plugin manifest at {manifest}")
 
     target = _codex_plugin_source_dir()
-    if target.is_symlink():
-        if _same_resolved_path(target, plugin_dir):
-            _remove_owned_codex_plugin_source(target)
-        else:
-            return (False, f"user-owned symlink exists at {target}")
-
-    if target.exists():
-        if not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file():
-            return (False, f"user-owned directory exists at {target}")
-        _remove_owned_codex_plugin_source(target)
-
     target.parent.mkdir(parents=True, exist_ok=True)
-    _copy_codex_plugin_source(
-        plugin_dir,
-        target,
-        include_hooks=include_hooks,
-        codex_hook_source=codex_hook_source,
-    )
+    install_lock = FileLock(target.parent / ".autorun-install.lock")
+    with install_lock:
+        if target.is_symlink() and not _same_resolved_path(target, plugin_dir):
+            return (False, f"user-owned symlink exists at {target}")
+        if target.exists() and not target.is_symlink() and not (
+            target / _CODEX_PLUGIN_OWNED_MARKER
+        ).is_file():
+            return (False, f"user-owned directory exists at {target}")
+
+        with tempfile.TemporaryDirectory(
+            prefix=".autorun-plugin-source-",
+            dir=target.parent,
+        ) as tmp:
+            transaction = Path(tmp)
+            staged = transaction / "next"
+            backup = transaction / "previous"
+            _copy_codex_plugin_source(
+                plugin_dir,
+                staged,
+                include_hooks=include_hooks,
+                codex_hook_source=codex_hook_source,
+            )
+            if target.exists() or target.is_symlink():
+                os.replace(target, backup)
+            try:
+                os.replace(staged, target)
+            except Exception:
+                if backup.exists() or backup.is_symlink():
+                    os.replace(backup, target)
+                raise
     return (True, "copy")
 
 
@@ -2752,10 +2757,8 @@ def _install_codex_plugin_with_cli(
                 return upgrade
 
     plugin_id = f"{_CODEX_PLUGIN_NAME}@{marketplace_name}"
-    remove = run_cmd(["codex", "plugin", "remove", plugin_id], timeout=120)
-    if not (remove.ok or remove.has_text("not installed") or remove.has_text("not found")):
-        return remove
-
+    # Codex stages and replaces its cache in `plugin add`. Removing first
+    # exposes active skill readers to an avoidable missing-cache interval.
     result = run_cmd(
         ["codex", "plugin", "add", plugin_id],
         timeout=120,

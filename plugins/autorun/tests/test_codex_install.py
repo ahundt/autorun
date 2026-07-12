@@ -1368,6 +1368,31 @@ def test_install_for_codex_does_not_clobber_user_owned_personal_plugin_dir(tmp_p
     )
 
 
+def test_codex_plugin_source_upgrade_preserves_previous_copy_on_stage_failure(
+    tmp_path, monkeypatch
+):
+    """A failed source refresh must not expose a missing or partial plugin."""
+    from autorun.install import _ensure_codex_plugin_source
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    plugin_dir = fake_marketplace / "plugins" / "autorun"
+
+    assert _ensure_codex_plugin_source(plugin_dir)[0]
+    installed_skill = tmp_path / "plugins" / "autorun" / "skills" / "cache" / "SKILL.md"
+    previous = installed_skill.read_text(encoding="utf-8")
+
+    def fail_copy(*_args, **_kwargs):
+        raise OSError("injected staging failure")
+
+    monkeypatch.setattr("autorun.install._copy_codex_plugin_source", fail_copy)
+
+    with pytest.raises(OSError, match="injected staging failure"):
+        _ensure_codex_plugin_source(plugin_dir)
+
+    assert installed_skill.read_text(encoding="utf-8") == previous
+
+
 def test_codex_plugin_manifest_exists_for_packaged_skills():
     """The source plugin must include Codex's required manifest file."""
     manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
@@ -1392,7 +1417,7 @@ def test_repo_codex_marketplace_targets_autorun_plugin():
 
 
 def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
-    """The real installer must refresh and install the local Codex plugin."""
+    """The installer lets Codex atomically refresh the installed plugin."""
     calls = []
 
     monkeypatch.setattr(
@@ -1410,7 +1435,6 @@ def test_install_codex_plugin_with_cli_runs_codex_plugin_add(monkeypatch):
 
     assert result.ok
     assert calls == [
-        (["codex", "plugin", "remove", "autorun@personal"], 120),
         (["codex", "plugin", "add", "autorun@personal"], 120),
     ]
 
@@ -1438,7 +1462,6 @@ def test_install_codex_plugin_with_cli_uses_github_marketplace(monkeypatch):
     assert result.ok
     assert calls == [
         (["codex", "plugin", "marketplace", "add", "ahundt/autorun"], 120),
-        (["codex", "plugin", "remove", "autorun@autorun"], 120),
         (["codex", "plugin", "add", "autorun@autorun"], 120),
     ]
 
@@ -1462,13 +1485,12 @@ def test_install_codex_plugin_with_cli_force_refreshes_cache(monkeypatch):
 
     assert result.ok
     assert calls == [
-        (["codex", "plugin", "remove", "autorun@personal"], 120),
         (["codex", "plugin", "add", "autorun@personal"], 120),
     ]
 
 
 def test_install_codex_plugin_with_cli_refreshes_cache_by_default(monkeypatch):
-    """Normal installs must refresh Codex's cache so removed hooks disappear."""
+    """Normal installs refresh without an uninstall gap for active readers."""
     calls = []
 
     monkeypatch.setattr(
@@ -1478,8 +1500,6 @@ def test_install_codex_plugin_with_cli_refreshes_cache_by_default(monkeypatch):
 
     def fake_run_cmd(cmd, *args, **kwargs):
         calls.append((cmd, kwargs.get("timeout")))
-        if cmd[:3] == ["codex", "plugin", "remove"]:
-            return CmdResult(True, "Removed plugin `autorun`.")
         if cmd[:3] == ["codex", "plugin", "add"]:
             return CmdResult(True, "Added plugin `autorun` from marketplace `personal`.")
         return CmdResult(False, "unexpected")
@@ -1490,7 +1510,6 @@ def test_install_codex_plugin_with_cli_refreshes_cache_by_default(monkeypatch):
 
     assert result.ok
     assert calls == [
-        (["codex", "plugin", "remove", "autorun@personal"], 120),
         (["codex", "plugin", "add", "autorun@personal"], 120),
     ]
 
