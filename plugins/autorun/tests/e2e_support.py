@@ -57,6 +57,14 @@ def isolated_hook_env(plugin_root: Path, session_id: str) -> dict[str, str]:
     return env
 
 
+def live_model_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Enable normal daemon IPC while preserving pytest's isolated AUTORUN_HOME."""
+    env = dict(base) if base is not None else os.environ.copy()
+    env.pop("AUTORUN_USE_DAEMON", None)
+    env.pop("AUTORUN_TEST_MODE", None)
+    return env
+
+
 def run_isolated_hook(
     *,
     plugin_root: Path,

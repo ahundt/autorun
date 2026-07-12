@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from e2e_support import live_model_env
+
 
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 _LOG_DIR = Path("/tmp") / "autorun-e2e-test-logs"
@@ -250,6 +252,7 @@ def _run_codex_exec_case(
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=live_model_env(),
     )
     last_message = _read_output_file(output_file)
     log_path = _log_run(

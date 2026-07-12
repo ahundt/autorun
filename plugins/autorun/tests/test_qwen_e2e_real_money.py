@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import run_isolated_hook
+from e2e_support import live_model_env, run_isolated_hook
 
 
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
@@ -74,7 +74,7 @@ def _derive_zai_coding_base_url(base_url: str) -> str:
 
 def _qwen_zai_openai_env() -> dict[str, str]:
     """Build Qwen's OpenAI-compatible env from Z.AI shell variables."""
-    env = os.environ.copy()
+    env = live_model_env()
     base_url = env.get("Z_AI_BASE_URL", "").strip()
     auth_token = env.get("Z_AI_AUTH_TOKEN", "").strip()
     model = _clean_zai_model(env.get("Z_AI_MODEL"))

@@ -61,7 +61,7 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import model_override
+from e2e_support import live_model_env, model_override
 
 # =============================================================================
 # LOG DIRECTORY — full subprocess output persisted here for post-failure debug
@@ -1682,8 +1682,10 @@ class TestClaudeE2ERealMoney:
 
     @staticmethod
     def _claude_env() -> dict:
-        """Return env without CLAUDECODE so nested claude -p calls are not blocked."""
-        return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        """Use isolated daemon IPC without the nested-Claude guard."""
+        env = live_model_env()
+        env.pop("CLAUDECODE", None)
+        return env
 
     @staticmethod
     def _model_args() -> list[str]:

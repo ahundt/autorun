@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from autorun.platforms import PLATFORMS
-from e2e_support import BACKEND_E2E_CONTRACTS, model_override, run_isolated_hook
+from e2e_support import (
+    BACKEND_E2E_CONTRACTS,
+    live_model_env,
+    model_override,
+    run_isolated_hook,
+)
 from test_codex_e2e_real_money import _codex_exec_command
 
 
@@ -64,3 +69,18 @@ def test_paid_model_defaults_are_small_and_bounded(tmp_path, monkeypatch):
     assert ["-c", 'model_reasoning_effort="low"'] == command[2:4]
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert command[command.index("--cd") + 1] == str(tmp_path)
+
+
+def test_live_model_env_enables_daemon_and_preserves_isolated_home(tmp_path):
+    """Paid CLI tests use daemon IPC inside pytest's private AUTORUN_HOME."""
+    isolated_home = str(tmp_path / "autorun-home")
+    env = live_model_env(
+        {
+            "AUTORUN_HOME": isolated_home,
+            "AUTORUN_USE_DAEMON": "0",
+            "AUTORUN_TEST_MODE": "1",
+        }
+    )
+    assert env["AUTORUN_HOME"] == isolated_home
+    assert "AUTORUN_USE_DAEMON" not in env
+    assert "AUTORUN_TEST_MODE" not in env

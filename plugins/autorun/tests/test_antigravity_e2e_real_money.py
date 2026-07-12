@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import model_override, real_money_enabled, run_isolated_hook
+from e2e_support import (
+    live_model_env,
+    model_override,
+    real_money_enabled,
+    run_isolated_hook,
+)
 
 
 PLUGIN_ROOT = Path(__file__).parent.parent
@@ -97,6 +102,7 @@ def test_antigravity_status_hook_in_minimal_live_model_session(tmp_path):
         capture_output=True,
         text=True,
         timeout=110,
+        env=live_model_env(),
     )
     combined = f"{result.stdout}\n{result.stderr}"
     assert result.returncode == 0, combined[-4000:]
