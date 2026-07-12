@@ -29,16 +29,14 @@ import pytest
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 _LOG_DIR = Path("/tmp") / "autorun-e2e-test-logs"
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not ENABLE_REAL_MONEY_TESTS,
-        reason=(
-            "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests "
-            "spawn real Codex CLI sessions and can cost money."
-        ),
+pytestmark = pytest.mark.e2e
+paid_codex_e2e = pytest.mark.skipif(
+    not ENABLE_REAL_MONEY_TESTS,
+    reason=(
+        "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests "
+        "spawn real Codex CLI sessions and can cost money."
     ),
-]
+)
 
 
 PLUGIN_ROOT = Path(__file__).parent.parent
@@ -211,7 +209,7 @@ def _codex_exec_command(model: str, cwd: Path, output_file: Path, prompt: str) -
         "codex",
         "exec",
         "-c",
-        'model_reasoning_effort="high"',
+        'model_reasoning_effort="low"',
         "--json",
         "--dangerously-bypass-hook-trust",
         "--sandbox",
@@ -226,11 +224,11 @@ def _codex_exec_command(model: str, cwd: Path, output_file: Path, prompt: str) -
     ]
 
 
-def test_codex_exec_command_overrides_incompatible_user_reasoning_effort(tmp_path):
-    """Paid E2E runs must not inherit a model-incompatible global effort."""
+def test_codex_exec_command_uses_low_supported_reasoning_effort(tmp_path):
+    """Trivial paid E2Es must not inherit costly or incompatible effort."""
     command = _codex_exec_command("gpt-5.3-codex-spark", tmp_path, tmp_path / "out", "ok")
 
-    assert ["-c", 'model_reasoning_effort="high"'] == command[2:4]
+    assert ["-c", 'model_reasoning_effort="low"'] == command[2:4]
 
 
 def _read_output_file(path: Path) -> str:
@@ -322,6 +320,7 @@ class TestCodexHookEntryPoint:
         assert hook_output.get("permissionDecision") == "deny"
 
 
+@paid_codex_e2e
 class TestCodexE2ERealMoney:
     """Real Codex CLI E2E tests using codex exec.
 

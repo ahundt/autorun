@@ -1,27 +1,17 @@
 #!/usr/bin/env python3
 """
-REAL MONEY TESTS - Gemini CLI E2E Integration Tests
+Gemini CLI harness capability and retired-backend E2E tests.
 
-⚠️ WARNING: These tests make REAL API calls to Gemini CLI which cost REAL MONEY.
+The consumer model backend retired on 2026-06-18. Free hook-process tests remain
+active because Gemini-family compatibility is reused by Qwen and Antigravity.
+Legacy model calls require both explicit paid-test and retired-backend overrides.
 
-DO NOT RUN unless you understand the costs:
-- Model: gemini-2.5-flash-lite (lowest cost)
-- Estimated cost per test run: < $0.001 (less than 1/10th of a cent)
-- Total tests: ~5 tests
-- Total estimated cost: < $0.005
-
-To run these tests:
-    export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
-    uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py -v
-
-To skip these tests (default):
+Run capability tests normally:
     uv run pytest plugins/autorun/tests/ -v
-    # These tests will be SKIPPED automatically
 
-Mock tests (no cost) are in test_gemini_loading.py
+Use Antigravity's Flash Low E2E for the live Google model successor.
 """
 import os
-import sys
 import json
 import subprocess
 import shutil
@@ -37,15 +27,11 @@ ALLOW_RETIRED_GEMINI_BACKEND_TESTS = (
     os.environ.get("AUTORUN_ALLOW_RETIRED_GEMINI_CLI_BACKEND_TESTS", "0") == "1"
 )
 
-# Skip entire module if flag not set
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not ENABLE_REAL_MONEY_TESTS,
-        reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - these tests cost real money. "
-               "Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 to run."
-    )
-]
+pytestmark = pytest.mark.e2e
+paid_gemini_e2e = pytest.mark.skipif(
+    not ENABLE_REAL_MONEY_TESTS,
+    reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for legacy model tests.",
+)
 
 
 @pytest.fixture(scope="module")
@@ -95,6 +81,7 @@ def gemini_extension_check():
         pytest.skip(f"Extension check failed: {e}")
 
 
+@paid_gemini_e2e
 class TestGeminiE2ERealMoney:
     """Real Gemini CLI E2E tests that make actual API calls.
 
@@ -205,7 +192,7 @@ class TestGeminiHookEntryPoint:
                 hook_script = candidate
                 break
         if hook_script is None:
-            pytest.skip(f"Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
+            pytest.skip("Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
 
         # Set plugin root for source fallback
         plugin_root = str(Path(__file__).parent.parent)
@@ -247,7 +234,7 @@ class TestGeminiHookEntryPoint:
                 hook_script = candidate
                 break
         if hook_script is None:
-            pytest.skip(f"Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
+            pytest.skip("Hook script not found. Searched:\n" + "\n".join(f"  - {p}" for p in candidates))
 
         # Set plugin root for source fallback
         plugin_root = str(Path(__file__).parent.parent)
@@ -284,9 +271,9 @@ __doc__ += """
 
 ## Test Categories
 
-### Real Money Tests (require ENABLE_REAL_MONEY_TESTS=1):
-1. test_gemini_basic_response - Simple API call (< $0.001)
-2. test_gemini_slash_command_recognition - Always skipped (manual enable)
+### Retired model-backend tests
+`TestGeminiE2ERealMoney` is retained for historical diagnostics but is not part
+of the supported live matrix after 2026-06-18. Use Antigravity Flash Low.
 
 ### Free Tests (no API costs):
 1. test_gemini_extension_loaded - Check extension list
@@ -295,17 +282,16 @@ __doc__ += """
 
 ## Running Tests
 
-### Skip real money tests (default):
+### Run free harness capability tests:
 ```bash
 uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py -v
-# All real money tests SKIPPED
 ```
 
-### Run real money tests:
+### Explicitly diagnose the retired backend:
 ```bash
 export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
+export AUTORUN_ALLOW_RETIRED_GEMINI_CLI_BACKEND_TESTS=1
 uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py -v
-# Real money tests RUN (estimated cost: < $0.005)
 ```
 
 ### Run only free tests:
@@ -314,24 +300,15 @@ uv run pytest plugins/autorun/tests/test_gemini_e2e_real_money.py::TestGeminiHoo
 # No costs - direct Python calls only
 ```
 
-## Cost Breakdown
+## Resource policy
 
-| Test | API Calls | Estimated Cost |
-|------|-----------|----------------|
-| test_gemini_basic_response | 1 | < $0.001 |
-| test_gemini_extension_loaded | 0 | $0.000 |
-| test_hook_sessionstart_event | 0 | $0.000 |
-| test_hook_beforeagent_event | 0 | $0.000 |
-| **TOTAL** | 1 | **< $0.001** |
-
-Model: gemini-2.5-flash-lite
-Pricing: ~$0.075 per 1M input tokens, ~$0.30 per 1M output tokens
-Estimated tokens per test: ~50 input + ~5 output
+Routine Gemini compatibility checks make no model calls. The active Google
+successor smoke uses Gemini 3.5 Flash Low through Antigravity with one bounded
+prompt, sandboxing, and a temporary log.
 
 ## Important Notes
 
-1. ⚠️ Always check current Gemini API pricing before running
-2. ⚠️ Set ENABLE_REAL_MONEY_TESTS=1 explicitly to run
-3. ⚠️ test_gemini_slash_command_recognition is ALWAYS SKIPPED (manual enable)
-4. ✅ Mock tests in test_gemini_loading.py have NO costs
+1. Keep Gemini hook compatibility because successor harnesses reuse the schema.
+2. Do not run the retired consumer backend in routine release validation.
+3. Use `test_antigravity_e2e_real_money.py` for live Google model coverage.
 """

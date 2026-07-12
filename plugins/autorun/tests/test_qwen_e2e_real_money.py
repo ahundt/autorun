@@ -18,11 +18,12 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 
 import pytest
+
+from e2e_support import run_isolated_hook
 
 
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
@@ -89,27 +90,45 @@ def _qwen_zai_openai_env() -> dict[str, str]:
 
 
 def _run_qwen_hook(payload: dict, timeout: int = 20) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env["AUTORUN_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
-    env["AUTORUN_USE_DAEMON"] = "0"
-    env["QWEN_SESSION_ID"] = payload.get("session_id", "qwen-e2e-session")
-    env["QWEN_PROJECT_DIR"] = str(REPO_ROOT)
-    env.pop("GEMINI_SESSION_ID", None)
-    env.pop("GEMINI_PROJECT_DIR", None)
-
-    return subprocess.run(
-        [
-            sys.executable,
-            str(_find_qwen_hook_script()),
-            "--cli",
-            "qwen",
-        ],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
+    return run_isolated_hook(
+        plugin_root=PLUGIN_ROOT,
+        hook_script=_find_qwen_hook_script(),
+        cli="qwen",
+        payload=payload,
         timeout=timeout,
-        env=env,
     )
+
+
+def _qwen_live_command(model: str, marker: str) -> list[str]:
+    """Build one bounded, no-tool, no-history Qwen model smoke command."""
+    return [
+        "qwen",
+        "--bare",
+        "--auth-type",
+        "openai",
+        "--model",
+        model,
+        "--output-format",
+        "json",
+        "--max-session-turns",
+        "1",
+        "--max-wall-time",
+        "180s",
+        "--max-tool-calls",
+        "0",
+        "--chat-recording",
+        "false",
+        f"Reply with exactly {marker} and no other text.",
+    ]
+
+
+def test_qwen_live_command_has_strict_resource_bounds():
+    """One paid smoke must stay single-turn, tool-free, and history-free."""
+    command = _qwen_live_command("glm-5.2", "OK")
+    assert command[command.index("--max-session-turns") + 1] == "1"
+    assert command[command.index("--max-tool-calls") + 1] == "0"
+    assert command[command.index("--chat-recording") + 1] == "false"
+    assert "--bare" in command
 
 
 def test_qwen_zai_env_maps_token_to_openai_api_key(monkeypatch):
@@ -186,25 +205,8 @@ def test_qwen_zai_glm52_basic_response_real_money():
 
     model = _clean_zai_model(os.environ.get("Z_AI_MODEL"))
     marker = "QWEN_ZAI_GLM52_OK"
-    prompt = f"Reply with exactly {marker} and no other text."
     result = subprocess.run(
-        [
-            "qwen",
-            "--bare",
-            "--auth-type",
-            "openai",
-            "--model",
-            model,
-            "--output-format",
-            "json",
-            "--max-wall-time",
-            "180s",
-            "--max-tool-calls",
-            "0",
-            "--chat-recording",
-            "false",
-            prompt,
-        ],
+        _qwen_live_command(model, marker),
         capture_output=True,
         text=True,
         timeout=200,

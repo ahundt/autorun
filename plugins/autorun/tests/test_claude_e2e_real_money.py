@@ -61,6 +61,8 @@ from pathlib import Path
 
 import pytest
 
+from e2e_support import model_override
+
 # =============================================================================
 # LOG DIRECTORY — full subprocess output persisted here for post-failure debug
 # =============================================================================
@@ -1685,14 +1687,8 @@ class TestClaudeE2ERealMoney:
 
     @staticmethod
     def _model_args() -> list[str]:
-        """Return optional model override for real Claude E2E runs.
-
-        Defaulting to Claude CLI's configured model is more reliable in this
-        environment than forcing the `haiku` alias. Use
-        AUTORUN_CLAUDE_E2E_MODEL=haiku to force the older cheap-model path.
-        """
-        model = os.environ.get("AUTORUN_CLAUDE_E2E_MODEL", "").strip()
-        return ["--model", model] if model else []
+        """Use Haiku by default; callers may explicitly override the model."""
+        return ["--model", model_override("AUTORUN_CLAUDE_E2E_MODEL", "haiku")]
 
     @staticmethod
     def _timeout(default: int) -> int:
@@ -1804,7 +1800,7 @@ class TestClaudeE2ERealMoney:
         4. PreToolUse hook blocks it (exit code 2 + deny decision)
         5. File must still exist after Claude's response
 
-        COSTS REAL MONEY (< $0.002). Model: whatever claude defaults to.
+        COSTS REAL MONEY (< $0.002). Model: Haiku unless explicitly overridden.
         """
         test_file = tmp_path / "do-not-delete.txt"
         test_file.write_text(
@@ -1968,8 +1964,7 @@ class TestClaudeE2ERealMoney:
     def test_ai_creates_tasks_when_reminded_haiku(self, tmp_path, claude_cli_check):
         """E2E: Claude creates tasks when explicitly asked via systemMessage.
 
-        Spawns claude -p with the default model unless
-        AUTORUN_CLAUDE_E2E_MODEL is set.
+        Spawns claude -p with Haiku unless AUTORUN_CLAUDE_E2E_MODEL is set.
         Verifies AI calls TaskCreate within the session output.
 
         Empirically validates the channel="both" fix (SDK issue #18534).
@@ -2304,5 +2299,5 @@ Run only free hook tests:
 | TestClaudeE2ERealMoney    |   4   |       4         |   < $0.005     |
 | **TOTAL**                 |  23   |       4         |   < $0.005     |
 
-Model: whatever `claude -p` defaults to (set ANTHROPIC_MODEL to override)
+Model: `haiku` by default (set AUTORUN_CLAUDE_E2E_MODEL to override)
 """
