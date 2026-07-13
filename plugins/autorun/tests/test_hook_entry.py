@@ -7,8 +7,10 @@ TDD-driven tests for hook entry point and daemon bootstrap functionality.
 """
 import json
 import io
+import builtins
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import importlib.util
@@ -110,6 +112,176 @@ class TestHookEntryExecutionPriority:
         content = HOOK_ENTRY.read_text(encoding="utf-8")
         assert "HOOK_TIMEOUT" in content
 
+    def test_main_prefers_direct_daemon_before_cli(self, monkeypatch):
+        """A healthy daemon avoids spawning a second Python interpreter."""
+        hook_entry = load_hook_entry_module()
+        payload = json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo ok"},
+            }
+        )
+        monkeypatch.setattr(hook_entry.sys, "stdin", io.StringIO(payload))
+        monkeypatch.setattr(hook_entry.sys, "argv", ["hook_entry.py", "--cli", "codex"])
+        monkeypatch.setattr(
+            hook_entry,
+            "get_autorun_bin",
+            lambda: Path("/tmp/plugin/.venv/bin/autorun"),
+        )
+        monkeypatch.setattr(hook_entry, "try_daemon", lambda *_args: (True, 0))
+        monkeypatch.setattr(
+            hook_entry.subprocess,
+            "run",
+            lambda *_args, **_kwargs: pytest.fail(
+                "healthy daemon fast path must not spawn CLI"
+            ),
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.main()
+
+        assert exc.value.code == 0
+
+    def test_direct_daemon_injects_context_and_emits_response(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Fast IPC preserves daemon routing metadata and Codex denial JSON."""
+        hook_entry = load_hook_entry_module()
+        socket_path = tmp_path / "daemon.sock"
+        socket_path.touch()
+        sent = bytearray()
+
+        class FakeSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def settimeout(self, timeout):
+                assert timeout == hook_entry.hook_timeout_for_cli("codex")
+
+            def connect(self, path):
+                assert path == str(socket_path)
+
+            def sendall(self, data):
+                sent.extend(data)
+
+            def makefile(self, *_args, **_kwargs):
+                response = {
+                    "decision": "block",
+                    "hookSpecificOutput": {
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": "blocked by test",
+                    },
+                }
+                return io.StringIO(json.dumps(response) + "\n")
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: FakeSocket())
+        payload = json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "rm test"},
+                "cli_type": "codex",
+            }
+        )
+
+        handled, exit_code = hook_entry.try_daemon(payload, "codex")
+
+        assert handled is True and exit_code == 0
+        forwarded = json.loads(bytes(sent).decode())
+        assert forwarded["cli_type"] == "codex"
+        assert forwarded["_pid"] == os.getppid()
+        assert forwarded["_cwd"] == os.getcwd()
+        assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+    def test_direct_daemon_unavailable_uses_existing_cli_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        """A missing socket is recoverable and leaves bootstrap behavior intact."""
+        hook_entry = load_hook_entry_module()
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+
+        assert hook_entry.try_daemon("{}", "codex") == (False, 0)
+
+    def test_direct_daemon_timeout_fails_closed_without_cli_replay(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A connected but stalled permission gate is not sent a second time."""
+        hook_entry = load_hook_entry_module()
+        (tmp_path / "daemon.sock").touch()
+
+        class TimeoutSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def settimeout(self, _timeout):
+                return None
+
+            def connect(self, _path):
+                return None
+
+            def sendall(self, _data):
+                return None
+
+            def makefile(self, *_args, **_kwargs):
+                raise socket.timeout
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        monkeypatch.setattr(hook_entry.socket, "socket", lambda *_args: TimeoutSocket())
+        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex"})
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.try_daemon(payload, "codex")
+
+        assert exc.value.code == 0
+        response = json.loads(capsys.readouterr().out)
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_connected_daemon_invalid_response_fails_closed(self, tmp_path, monkeypatch, capsys):
+        """A processed permission event is never replayed after malformed output."""
+        hook_entry = load_hook_entry_module()
+        (tmp_path / "daemon.sock").touch()
+
+        class InvalidResponseSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def settimeout(self, _timeout):
+                return None
+
+            def connect(self, _path):
+                return None
+
+            def sendall(self, _data):
+                return None
+
+            def makefile(self, *_args, **_kwargs):
+                return io.StringIO("not-json\n")
+
+        monkeypatch.setenv("AUTORUN_HOME", str(tmp_path))
+        monkeypatch.setattr(
+            hook_entry.socket, "socket", lambda *_args: InvalidResponseSocket()
+        )
+        payload = json.dumps({"hook_event_name": "PreToolUse", "cli_type": "codex"})
+
+        with pytest.raises(SystemExit) as exc:
+            hook_entry.try_daemon(payload, "codex")
+
+        assert exc.value.code == 0
+        response = json.loads(capsys.readouterr().out)
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "invalid response" in response["reason"]
+
     def test_hook_timeout_is_platform_specific(self):
         """Hook wrapper budgets must match CONFIG when autorun imports work."""
         from autorun.config import CONFIG
@@ -119,6 +291,20 @@ class TestHookEntryExecutionPriority:
         for cli_type, timeout in CONFIG["hook_wrapper_timeouts_seconds"].items():
             assert hook_entry.hook_timeout_for_cli(cli_type) == timeout
         assert hook_entry.hook_timeout_for_cli("unknown") == hook_entry.hook_timeout_for_cli("claude")
+
+    def test_hook_timeout_hot_path_does_not_import_autorun(self, monkeypatch):
+        """Short-lived wrappers read the contract mirror without package startup."""
+        hook_entry = load_hook_entry_module()
+        original_import = builtins.__import__
+
+        def reject_autorun(name, *args, **kwargs):
+            if name == "autorun" or name.startswith("autorun."):
+                pytest.fail(f"hot timeout lookup imported {name}")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", reject_autorun)
+
+        assert hook_entry.hook_timeout_for_cli("codex") == 5.0
 
     def test_antigravity_is_accepted_cli_type(self):
         """Antigravity hooks must not fall back to the wrong CLI identity."""

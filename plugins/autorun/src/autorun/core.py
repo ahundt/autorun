@@ -1871,6 +1871,7 @@ class AutorunDaemon:
         self._cleanup_registered = False
         self._active_dispatches: Dict[str, Set[asyncio.Future]] = {}
         self._dispatch_circuit_open_until: Dict[str, float] = {}
+        self._dispatch_semaphores: Dict[str, tuple[int, asyncio.Semaphore]] = {}
 
     async def _dispatch_with_timeout(self, ctx: EventContext, cli_type: str):
         """Run one handler with bounded per-event concurrency and timeout containment."""
@@ -1882,7 +1883,7 @@ class AutorunDaemon:
         max_concurrent = max(
             1, int(CONFIG.get("daemon_dispatch_max_concurrent_per_event", 4))
         )
-        active = self._active_dispatches.get(event)
+        deadline = time.monotonic() + timeout
 
         def circuit_response():
             return build_daemon_failure_response(
@@ -1893,19 +1894,39 @@ class AutorunDaemon:
             )
 
         circuit_deadline = self._dispatch_circuit_open_until.get(event, 0.0)
-        if time.monotonic() < circuit_deadline or (
-            active is not None and len(active) >= max_concurrent
-        ):
+        if time.monotonic() < circuit_deadline:
             return circuit_response()
         if circuit_deadline:
             self._dispatch_circuit_open_until.pop(event, None)
 
+        semaphore_entry = self._dispatch_semaphores.get(event)
+        if semaphore_entry is None or semaphore_entry[0] != max_concurrent:
+            semaphore_entry = (max_concurrent, asyncio.Semaphore(max_concurrent))
+            self._dispatch_semaphores[event] = semaphore_entry
+        semaphore = semaphore_entry[1]
+        try:
+            await asyncio.wait_for(
+                semaphore.acquire(), timeout=max(0.0, deadline - time.monotonic())
+            )
+        except asyncio.TimeoutError:
+            return circuit_response()
+
+        circuit_deadline = self._dispatch_circuit_open_until.get(event, 0.0)
+        if time.monotonic() < circuit_deadline:
+            semaphore.release()
+            return circuit_response()
+
         loop = asyncio.get_running_loop()
-        dispatch = loop.run_in_executor(None, self.app.dispatch, ctx)
+        try:
+            dispatch = loop.run_in_executor(None, self.app.dispatch, ctx)
+        except Exception:
+            semaphore.release()
+            raise
         active = self._active_dispatches.setdefault(event, set())
         active.add(dispatch)
 
         def release(completed: asyncio.Future) -> None:
+            semaphore.release()
             current = self._active_dispatches.get(event)
             if current is None:
                 return
@@ -1915,7 +1936,10 @@ class AutorunDaemon:
 
         dispatch.add_done_callback(release)
         try:
-            response = await asyncio.wait_for(asyncio.shield(dispatch), timeout=timeout)
+            response = await asyncio.wait_for(
+                asyncio.shield(dispatch),
+                timeout=max(0.0, deadline - time.monotonic()),
+            )
         except asyncio.TimeoutError:
             self._dispatch_circuit_open_until[event] = time.monotonic() + cooldown
             logger.error(f"Handler for '{event}' timed out after {timeout:g}s")

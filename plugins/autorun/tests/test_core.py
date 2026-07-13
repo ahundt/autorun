@@ -61,6 +61,49 @@ from autorun.core import (
 
 class TestDispatchTimeoutContainment:
     @pytest.mark.asyncio
+    async def test_fast_concurrent_dispatches_queue_without_spurious_containment(
+        self, monkeypatch
+    ):
+        """Healthy bursts wait for bounded slots instead of failing closed."""
+        import autorun.core as core
+
+        calls = 0
+        running = 0
+        max_running = 0
+        calls_lock = threading.Lock()
+
+        def fast_dispatch(_ctx):
+            nonlocal calls, running, max_running
+            with calls_lock:
+                calls += 1
+                running += 1
+                max_running = max(max_running, running)
+            time.sleep(0.002)
+            with calls_lock:
+                running -= 1
+            return None
+
+        fast_app = Mock()
+        fast_app.dispatch.side_effect = fast_dispatch
+        daemon = AutorunDaemon(fast_app)
+        monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: 0.5)
+        monkeypatch.setitem(core.CONFIG, "daemon_dispatch_max_concurrent_per_event", 4)
+        contexts = [
+            EventContext(session_id=f"burst-{index}", event="PreToolUse")
+            for index in range(64)
+        ]
+
+        started = time.monotonic()
+        results = await asyncio.gather(
+            *(daemon._dispatch_with_timeout(ctx, "codex") for ctx in contexts)
+        )
+
+        assert results == [None] * 64
+        assert calls == 64
+        assert max_running <= 4
+        assert time.monotonic() - started < 0.5
+
+    @pytest.mark.asyncio
     async def test_41_slow_dispatches_are_bounded_without_recovery_recursion(self, monkeypatch):
         import autorun.core as core
 

@@ -5,13 +5,13 @@
 Entry point for Claude Code hooks that works with or without UV installation.
 
 Execution Priority:
-1. Fast path: Plugin-local venv (${CLAUDE_PLUGIN_ROOT}/.venv/bin/autorun)
-2. Fast path: Global CLI if available (UV/pip installed)
-3. Fallback: Run from plugin cache via CLAUDE_PLUGIN_ROOT
+1. Fast path: Direct IPC to the daemon for a complete plugin-local venv
+2. Recovery: Plugin-local or global autorun CLI
+3. Bootstrap fallback: Run from plugin source
 
 Design Principles:
 - Fail-open for lifecycle/context hooks, fail-closed for tool permission gates
-- Fast: Try CLI first (no Python import overhead if available)
+- Fast: Use stdlib-only daemon IPC without a second Python process
 - Robust: Handle missing env vars, missing files, import errors
 - Minimal: Only stdlib imports (json, os, shutil, subprocess, sys, time)
 - Background bootstrap: Spawn bootstrap via nohup, return immediately
@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -37,10 +38,10 @@ from typing import NoReturn
 # Constants
 # =============================================================================
 
-# Bootstrap-only fallback. Normal runs read CONFIG["hook_wrapper_timeouts_seconds"].
-# Keep these values in sync with config.py so broken installs still preserve the
-# same timeout layering until `autorun --install --force` repairs the package.
-_FALLBACK_HOOK_TIMEOUT_BY_CLI = {
+# Stdlib hot-path mirror of CONFIG["hook_wrapper_timeouts_seconds"]. The spec
+# test compares every value to CONFIG so this cannot drift silently. Importing
+# autorun.config here executes the package initializer on every hook invocation.
+HOOK_TIMEOUT_BY_CLI = {
     "gemini": 4.0,
     "antigravity": 4.0,
     "qwen": 4.0,
@@ -48,7 +49,6 @@ _FALLBACK_HOOK_TIMEOUT_BY_CLI = {
     "codex": 5.0,
     "forgecode": 5.0,
 }
-HOOK_TIMEOUT_BY_CLI = dict(_FALLBACK_HOOK_TIMEOUT_BY_CLI)
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
 BOOTSTRAP_MSG = (
@@ -110,20 +110,8 @@ _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 
 
 def hook_timeout_for_cli(cli_type: str) -> float:
-    """Return the hook wrapper subprocess timeout for a CLI platform.
-
-    Use autorun.config when importable so maintainers have one normal source
-    of truth. The local fallback only protects recovery/bootstrap paths where
-    the package import is unavailable; widening it can hide hangs until the
-    outer harness discards output.
-    """
-    try:
-        from autorun.config import CONFIG
-
-        timeouts = CONFIG["hook_wrapper_timeouts_seconds"]
-    except Exception:
-        timeouts = HOOK_TIMEOUT_BY_CLI
-    return float(timeouts.get(cli_type, timeouts["claude"]))
+    """Return the contract-tested wrapper timeout without package imports."""
+    return float(HOOK_TIMEOUT_BY_CLI.get(cli_type, HOOK_TIMEOUT_BY_CLI["claude"]))
 
 
 def detect_cli_type(payload: dict | None = None) -> str:
@@ -448,6 +436,98 @@ def _emit_cli_result(result: subprocess.CompletedProcess[str]) -> int | None:
     return result.returncode
 
 
+def _daemon_socket_path() -> Path:
+    """Return the shared daemon socket path without importing autorun."""
+    return Path(os.environ.get("AUTORUN_HOME", Path.home() / ".autorun")) / "daemon.sock"
+
+
+def _can_use_direct_daemon(autorun_bin: Path | None) -> bool:
+    """Limit fast IPC to a complete plugin-local installation."""
+    if autorun_bin is None:
+        return False
+    normalized = str(autorun_bin).replace("\\", "/")
+    return normalized.endswith("/.venv/bin/autorun")
+
+
+def _emit_daemon_result(response: dict, cli_type: str) -> int:
+    """Emit an already platform-normalized daemon response."""
+    if not response:
+        if cli_type in {"gemini", "antigravity", "qwen"}:
+            print(json.dumps({"continue": True}))
+        return 0
+
+    print(json.dumps(response))
+    decision = response.get("hookSpecificOutput", {}).get(
+        "permissionDecision", response.get("decision", "allow")
+    )
+    if decision == "deny" and cli_type == "claude":
+        # Import the configurable workaround only on the uncommon deny path;
+        # successful hooks stay stdlib-only and avoid package startup cost.
+        try:
+            from autorun.config import should_use_exit2_workaround
+
+            use_exit2 = should_use_exit2_workaround({"cli_type": cli_type})
+        except Exception:
+            use_exit2 = True
+        if use_exit2:
+            reason = response.get("hookSpecificOutput", {}).get(
+                "permissionDecisionReason", response.get("reason", "Tool blocked")
+            )
+            print(reason, file=sys.stderr)
+            return 2
+    return 0
+
+
+def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
+    """Send one hook directly to the live Unix daemon without a child Python."""
+    if not hasattr(socket, "AF_UNIX"):
+        return False, 0
+
+    socket_path = _daemon_socket_path()
+    if not socket_path.exists():
+        return False, 0
+
+    try:
+        payload = json.loads(stdin_data or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False, 0
+    if not isinstance(payload, dict):
+        return False, 0
+
+    payload.setdefault("_pid", os.getppid())
+    payload.setdefault("_cwd", os.getcwd())
+    payload["cli_type"] = cli_type
+    event_name = payload.get("hook_event_name", "unknown")
+    connected = False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as daemon_socket:
+            daemon_socket.settimeout(hook_timeout_for_cli(cli_type))
+            daemon_socket.connect(str(socket_path))
+            connected = True
+            daemon_socket.sendall(json.dumps(payload).encode("utf-8") + b"\n")
+            with daemon_socket.makefile("r", encoding="utf-8") as response_stream:
+                response_line = response_stream.readline()
+        if not response_line:
+            raise ConnectionError("daemon closed without a response")
+        response = json.loads(response_line)
+        if not isinstance(response, dict):
+            raise ValueError("daemon response is not a JSON object")
+        return True, _emit_daemon_result(response, cli_type)
+    except socket.timeout:
+        if connected:
+            _append_debug_log("Direct daemon fast path timed out after connecting")
+            fail_after_cli_timeout(cli_type, event_name)
+        return False, 0
+    except (ConnectionError, OSError, ValueError, json.JSONDecodeError) as error:
+        if connected:
+            message = f"Daemon returned an invalid response: {type(error).__name__}"
+            _append_debug_log(message)
+            if is_tool_gate_event(event_name):
+                fail_closed_tool_gate(message, cli_type, event_name)
+            fail_open(message)
+        return False, 0
+
+
 def try_cli(bin_path: Path, stdin_data: str = "", cli_type: str | None = None) -> bool:
     """Try to run autorun CLI, passing pre-read stdin payload.
 
@@ -743,10 +823,10 @@ def main() -> None:
 
     Flow:
         1. Read stdin once (payload is consumed on first read)
-        2. Try installed CLI (venv or global) - fast path
-        3. If CLI fails, restore stdin and try fallback (direct import)
-        4. If import fails, spawn background bootstrap via nohup
-        5. Return fail_open so Claude can continue; next hook will work
+        2. Use direct daemon IPC for a complete plugin-local install
+        3. If unavailable, try the installed CLI recovery path
+        4. If CLI fails, restore stdin and try direct-import fallback
+        5. If import fails, spawn background bootstrap via nohup
 
     Bug history:
         stdin was previously read inside try_cli(), so on CLI failure the
@@ -766,9 +846,16 @@ def main() -> None:
         pass
 
     # Debug logging (ALWAYS enabled to diagnose hook issues)
+    debug_lines = []
+
     def log_debug(msg: str):
         import datetime
-        _append_debug_log(f"[{datetime.datetime.now()}] {msg}")
+        debug_lines.append(f"[{datetime.datetime.now()}] {msg}")
+
+    def flush_debug():
+        if debug_lines:
+            _append_debug_log("\n".join(debug_lines))
+            debug_lines.clear()
 
     log_debug("=" * 80)
     event_name = "unknown"
@@ -783,8 +870,6 @@ def main() -> None:
     log_debug(f"Hook entry started (Event: {event_name})")
     log_debug(f"Hook entry stdin ({len(stdin_data)} bytes)")
 
-    autorun_bin = get_autorun_bin()
-    log_debug(f"Selected binary: {autorun_bin}")
     cli_type = detect_cli_type(payload_for_detection)
     log_debug(f"Detected CLI: {cli_type} (from --cli arg: {'--cli' in sys.argv})")
     log_debug(f"Env GEMINI_SESSION_ID: {os.environ.get('GEMINI_SESSION_ID')}")
@@ -804,6 +889,16 @@ def main() -> None:
             log_debug(f"Injected cli_type={cli_type} into payload")
         except (json.JSONDecodeError, Exception) as e:
             log_debug(f"Could not inject cli_type: {e}")
+
+    autorun_bin = get_autorun_bin()
+    log_debug(f"Selected binary: {autorun_bin}")
+    if _can_use_direct_daemon(autorun_bin):
+        handled, daemon_exit_code = try_daemon(stdin_data, cli_type)
+        if handled:
+            log_debug(f"Direct daemon fast path finished with exit code {daemon_exit_code}")
+            flush_debug()
+            sys.exit(daemon_exit_code)
+        log_debug("Direct daemon unavailable; using CLI recovery path")
 
     if autorun_bin:
         try:
@@ -835,9 +930,11 @@ def main() -> None:
                 log_debug("✗ CLI output was not a supported hook response")
             else:
                 log_debug(f"Hook entry finished with exit code {exit_code}")
+                flush_debug()
                 sys.exit(exit_code)
         except subprocess.TimeoutExpired:
             log_debug("✗ CLI timed out")
+            flush_debug()
             fail_after_cli_timeout(cli_type, event_name)
         except Exception as e:
             log_debug(f"✗ CLI exception: {e}")
@@ -847,6 +944,7 @@ def main() -> None:
 
     # No CLI available or CLI failed - try fallback
     log_debug("Starting fallback (direct import)...")
+    flush_debug()
     run_fallback()
     log_debug("Hook entry finished (fallback path)")
 
