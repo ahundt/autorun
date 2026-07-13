@@ -1816,3 +1816,102 @@ class TestDefaultIntegrationsConfig:
             redirect = DEFAULT_INTEGRATIONS[pattern].get("redirect", "")
             assert "{file}" in redirect, \
                 f"Integration '{pattern}' should use {{file}} placeholder, got: '{redirect}'"
+
+
+# Time Machine consent is platform-independent because every harness reaches
+# the same shell-command integration before executing the child process.
+# ForgeCode's registered schema is `none`: it has no blocking hook response API.
+@pytest.mark.parametrize("cli_type", ["claude", "gemini", "antigravity", "qwen", "codex"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tmutil thinlocalsnapshots / 50000000000 4",
+        "sudo tmutil deletelocalsnapshots /",
+        "rtk tmutil delete -d /Volumes/Backup -t 2026-07-12-133755",
+        "rtk proxy tmutil delete -d /Volumes/Backup -t 2026-07-12-133755",
+    ],
+)
+def test_time_machine_history_mutation_requires_consent_across_harnesses(
+    cli_type, command
+):
+    store = ThreadSafeDB()
+    ctx = EventContext(
+        session_id=f"test-tmutil-{cli_type}",
+        event="PreToolUse",
+        tool_name="Bash" if cli_type in {"claude", "codex"} else "run_shell_command",
+        tool_input={"command": command},
+        cli_type=cli_type,
+        store=store,
+    )
+
+    result = plugins.check_blocked_commands(ctx)
+
+    assert result is not None
+    output = result.get("hookSpecificOutput", {})
+    assert output.get("permissionDecision") == "deny"
+    assert "Time Machine" in output.get("permissionDecisionReason", "")
+
+
+def test_time_machine_exact_consent_grant_allows_only_matching_operation():
+    store = ThreadSafeDB()
+    session_id = "test-tmutil-consent"
+
+    def decision(command):
+        ctx = EventContext(
+            session_id=session_id,
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            cli_type="codex",
+            store=store,
+        )
+        result = plugins.check_blocked_commands(ctx)
+        return (result or {}).get("hookSpecificOutput", {}).get(
+            "permissionDecision", ""
+        )
+
+    thin = "tmutil thinlocalsnapshots / 50000000000 4"
+    assert decision(thin) == "deny"
+    grant = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt="ar:ok 'tmutil thinlocalsnapshots'",
+        cli_type="codex",
+        store=store,
+    )
+    plugins.app.dispatch(grant)
+    assert decision(thin) != "deny"
+    assert decision("tmutil deletelocalsnapshots /") == "deny"
+
+
+@pytest.mark.parametrize("prefix", ["", "rtk ", "rtk proxy "])
+def test_scoped_allow_uses_shared_wrapper_detection(prefix):
+    """Direct and RTK-wrapped commands share block and override semantics."""
+    store = ThreadSafeDB()
+    session_id = f"test-wrapper-consent-{prefix!r}"
+
+    def decision(command):
+        ctx = EventContext(
+            session_id=session_id,
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            cli_type="codex",
+            store=store,
+        )
+        result = plugins.check_blocked_commands(ctx)
+        return (result or {}).get("hookSpecificOutput", {}).get(
+            "permissionDecision", ""
+        )
+
+    assert decision(f"{prefix}git push origin main") == "deny"
+    grant = EventContext(
+        session_id=session_id,
+        event="UserPromptSubmit",
+        prompt="ar:ok 'git push'",
+        cli_type="codex",
+        store=store,
+    )
+    plugins.app.dispatch(grant)
+    assert decision(f"{prefix}git push origin main") != "deny"
+    assert decision(f"{prefix}rm -rf /tmp/unrelated") == "deny"

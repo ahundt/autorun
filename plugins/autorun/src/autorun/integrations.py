@@ -39,6 +39,7 @@ from typing import Final
 from .command_detection import (
     COMMAND_PREFIXES,
     command_tokens_for,
+    extract_commands,
     git_subcommand_index,
     shell_command_from_tool_input,
     strip_transparent_command_wrappers,
@@ -1138,6 +1139,44 @@ def _restore_is_destructive(ctx: any) -> bool:
         return True
 
 
+_TMUTIL_CONSENT_REQUIRED_VERBS: Final[frozenset[str]] = frozenset(
+    {
+        "addexclusion",
+        "associatedisk",
+        "delete",
+        "deleteinprogress",
+        "deletelocalsnapshots",
+        "disable",
+        "inheritbackup",
+        "removedestination",
+        "setdestination",
+        "setquota",
+        "stopbackup",
+        "thinlocalsnapshots",
+    }
+)
+
+
+def _tmutil_mutates_backup_safety(ctx: any) -> bool:
+    """Require consent for Time Machine history or protection mutations."""
+    cmd = shell_command_from_tool_input(getattr(ctx, "tool_input", {}))
+    if not cmd:
+        return False
+
+    try:
+        _names, command_strings = extract_commands(cmd)
+        for command_string in command_strings:
+            tokens = command_tokens_for(command_string, "tmutil")
+            if len(tokens) > 1 and tokens[1] in _TMUTIL_CONSENT_REQUIRED_VERBS:
+                return True
+        return False
+    except Exception as e:
+        # Matching `tmutil` reached this predicate; parser failures must not
+        # silently permit a potentially destructive backup operation.
+        logger.warning("_tmutil_mutates_backup_safety fail-safe block: %s", e)
+        return True
+
+
 # Predicate functions (O(1) lookups)
 # v4: new primary names `_repo_differs_from_head` and `_file_differs_from_ref`
 # are ref-aware and cover staged-only changes that the legacy narrow-diff
@@ -1159,6 +1198,7 @@ _WHEN_PREDICATES: Final[dict] = {
     "_not_in_pipe": _not_in_pipe,
     "_sed_modifies_files": _sed_modifies_files,
     "_restore_is_destructive": _restore_is_destructive,
+    "_tmutil_mutates_backup_safety": _tmutil_mutates_backup_safety,
 }
 
 

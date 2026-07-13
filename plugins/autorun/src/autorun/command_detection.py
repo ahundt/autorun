@@ -186,6 +186,7 @@ class CommandWrapperSpec:
     stop_flags: frozenset[str] = frozenset()
     leading_positional_count: int = 0
     skip_env_assignments: bool = False
+    optional_subcommands: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +249,7 @@ def _git_option_head(token: str) -> str:
 _RTK_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
     flags_with_arg=frozenset(),
     stop_flags=frozenset({"-h", "--help", "-V", "--version"}),
+    optional_subcommands=frozenset({"proxy"}),
 )
 
 _TSB_WRAPPER_SPEC: Final[CommandWrapperSpec] = CommandWrapperSpec(
@@ -416,6 +418,10 @@ def _strip_wrapper_once(tokens: list[str], spec: CommandWrapperSpec) -> list[str
 
         if leading_positional_remaining > 0:
             leading_positional_remaining -= 1
+            i += 1
+            continue
+
+        if token in spec.optional_subcommands:
             i += 1
             continue
 

@@ -247,6 +247,25 @@ DEFAULT_INTEGRATIONS = {
         "action": "block",
         "suggestion": "Partition modification is dangerous - backup data first. Use GUI tools like GNOME Disks or gparted for safer operations.\n\nTo allow (default 1 use): /ar:ok fdisk\nScope: [N|5m|permanent] (default 1 use)",
     },
+    "time-machine-safety": {
+        "patterns": ["tmutil"],
+        "action": "block",
+        "when": "_tmutil_mutates_backup_safety",
+        "suggestion": (
+            "Time Machine history and protection changes require explicit user permission. "
+            "This command can permanently remove backup history or weaken backup protection; "
+            "tool-host or automatic approval is not user consent.\n\n"
+            "Inspect first with read-only commands such as:\n"
+            "  tmutil listlocalsnapshots /\n"
+            "  tmutil listbackups\n"
+            "  tmutil destinationinfo\n\n"
+            "Ask the user to approve the exact operation. After approval, allow only that "
+            "operation (default 1 use):\n"
+            "  /ar:ok 'tmutil thinlocalsnapshots'\n"
+            "  Codex: ar:ok 'tmutil thinlocalsnapshots'\n"
+            "Scope: [N|5m|permanent] (default 1 use)"
+        ),
+    },
     # Command-line tools that should use platform-native AI tools or shell
     # affordances instead (v0.8.0)
     # These block the BASH COMMAND (e.g. "grep") and suggest the platform-native

@@ -2580,3 +2580,74 @@ class TestPublishGuard:
         plugins.app.dispatch(grant)
         assert decision("cargo publish") != "deny"
         assert decision("npm publish") == "deny"  # different command still blocked
+
+
+class TestTimeMachineConsentGuard:
+    """Time Machine history and protection changes require user consent."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "tmutil thinlocalsnapshots / 50000000000 4",
+            "tmutil deletelocalsnapshots /",
+            "tmutil delete -d /Volumes/Backup -t 2026-07-12-133755",
+            "tmutil deleteinprogress /Volumes/Backup/Machine",
+            "tmutil disable",
+            "tmutil stopbackup",
+            "tmutil removedestination ABC-123",
+            "tmutil setdestination /Volumes/NewBackup",
+            "tmutil setquota ABC-123 10",
+            "tmutil addexclusion ~/Documents",
+            "tmutil inheritbackup /Volumes/Backup/Machine",
+            "tmutil associatedisk / /Volumes/Backup/snapshot",
+            "sudo /usr/bin/tmutil thinlocalsnapshots / 1 4",
+            "rtk tmutil thinlocalsnapshots / 1 4",
+            "rtk proxy tmutil thinlocalsnapshots / 1 4",
+            "tsb rtk proxy tmutil thinlocalsnapshots / 1 4",
+            "echo ok; tmutil thinlocalsnapshots / 1 4",
+            "sh -c 'tmutil thinlocalsnapshots / 1 4'",
+        ],
+    )
+    def test_destructive_or_protection_weakening_commands_match(self, command):
+        from types import SimpleNamespace
+
+        from autorun.integrations import _tmutil_mutates_backup_safety
+
+        ctx = SimpleNamespace(tool_input={"command": command})
+        assert _tmutil_mutates_backup_safety(ctx) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "tmutil listlocalsnapshots /",
+            "tmutil listlocalsnapshotdates /",
+            "tmutil listbackups",
+            "tmutil latestbackup",
+            "tmutil destinationinfo",
+            "tmutil isexcluded ~/Documents",
+            "tmutil compare",
+            "tmutil verifychecksums /Volumes/Backup/item",
+            "tmutil enable",
+            "tmutil startbackup --auto",
+            "tmutil snapshot",
+            "tmutil restore /Volumes/Backup/file ~/file",
+            "tmutil removeexclusion ~/Documents",
+            "echo 'tmutil thinlocalsnapshots /'",
+            "rtk proxy echo tmutil thinlocalsnapshots",
+        ],
+    )
+    def test_read_restore_and_protection_commands_remain_allowed(self, command):
+        from types import SimpleNamespace
+
+        from autorun.integrations import _tmutil_mutates_backup_safety
+
+        ctx = SimpleNamespace(tool_input={"command": command})
+        assert _tmutil_mutates_backup_safety(ctx) is False
+
+    def test_default_integration_requires_consent_and_gives_exact_override(self):
+        config = DEFAULT_INTEGRATIONS["time-machine-safety"]
+        assert config["action"] == "block"
+        assert config["patterns"] == ["tmutil"]
+        assert config["when"] == "_tmutil_mutates_backup_safety"
+        assert "explicit user permission" in config["suggestion"]
+        assert "ar:ok 'tmutil thinlocalsnapshots'" in config["suggestion"]
