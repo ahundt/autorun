@@ -85,9 +85,7 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 
 | File | Notes |
 |------|-------|
-| `plugins/autorun/skills/ai-session-tools/SKILL.md` | Version in skill description |
 | `plugins/autorun/skills/autorun-maintainer/SKILL.md` | 3 version references |
-| `plugins/autorun/skills/claude-session-tools/SKILL.md` | Version in skill description |
 | `plugins/pdf-extractor/skills/pdf-extractor/SKILL.md` | 2 refs — do NOT change `pdfplumber>=0.10.0` in install commands! |
 | `plugins/pdf-extractor/skills/pdf-extractor/references/backends.md` | Do NOT change `pdfplumber>=0.10.0`! |
 
@@ -241,7 +239,7 @@ git push origin vX.Y.Z
 
 ## PyPI Publishing (future — not yet configured)
 
-autorun is currently distributed via GitHub (`claude plugin install` / `gemini extensions install`), not PyPI. If PyPI publishing is added in the future, follow the pattern from [ai_session_tools/notes/release-process.md](https://github.com/ahundt/ai_session_tools/blob/main/notes/release-process.md):
+autorun is currently distributed via GitHub (`claude plugin install` / `gemini extensions install`), not PyPI. If PyPI publishing is added in the future, follow the pattern from the [AI Session Search release guide](https://github.com/ahundt/ai-session-search/blob/main/docs/development/releasing.md):
 
 1. **Trusted Publishers** — configure on PyPI/TestPyPI with exact owner/repo/workflow/environment match
 2. **GitHub Environments** — `testpypi` (auto-publish) + `pypi` (manual approval gate)

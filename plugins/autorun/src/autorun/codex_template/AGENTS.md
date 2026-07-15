@@ -26,7 +26,7 @@ them. In Codex, prefer `ar:*` or `ar <command>` forms.
 
 Codex exposes skills through `/skills`, `$skill-name` mentions, and installed
 plugin selection such as `@autorun`. Autorun installs skills like
-`$mermaid-diagrams`, `$tmux-automation`, and `$ai-session-tools`, but Codex
+`$mermaid-diagrams` and `$tmux-automation`, but Codex
 does not expose them as slash commands like `/mermaid`.
 
 ## Safety guardrails

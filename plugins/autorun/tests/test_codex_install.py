@@ -883,7 +883,7 @@ def test_install_for_codex_installs_skills_globally(tmp_path, monkeypatch):
     """Install copies autorun skills into ~/.agents/skills/<name>/."""
     monkeypatch.setenv("HOME", str(tmp_path))
     fake_marketplace = _make_fake_plugin_with_skills(
-        tmp_path, ["ai-session-tools", "mermaid-diagrams", "cache"]
+        tmp_path, ["mermaid-diagrams", "cache"]
     )
 
     ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
@@ -891,7 +891,7 @@ def test_install_for_codex_installs_skills_globally(tmp_path, monkeypatch):
 
     skills_root = tmp_path / ".agents" / "skills"
     assert skills_root.is_dir(), "~/.agents/skills/ must be created"
-    for name in ("ai-session-tools", "mermaid-diagrams", "cache"):
+    for name in ("mermaid-diagrams", "cache"):
         skill_md = skills_root / name / "SKILL.md"
         assert skill_md.is_file(), f"skill {name} missing"
         marker = skills_root / name / ".autorun-owned"

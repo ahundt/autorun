@@ -62,9 +62,9 @@ autorun --install
 **Self-Improvement** (learn from past sessions):
 
 ```bash
-aise messages corrections --since 30d   # Find recurring AI mistakes
-aise analyze                            # Full qualitative analysis
-# → Add findings to CLAUDE.md, skills, or hook blocks (see the $ai-session-tools skill, Workflow 6)
+aise corrections --since 30d   # Find recurring AI mistakes
+aise analyze --when 30d --limit 50 --output /absolute/new/analysis
+# Install AI Session Search separately with `aise install`, then add supported findings to guidance or hooks
 ```
 
 ## Table of Contents
@@ -223,10 +223,8 @@ assume a skill is an `/ar:*` command. The read-only
 
 | Skill | Purpose |
 |-------|---------|
-| `ai-session-tools` | Search, recover, and analyze AI session history |
 | `autorun-maintainer` | Diagnose, install, and validate autorun across harnesses |
 | `cache` | Configure cache-miss and compaction protection |
-| `claude-session-tools` | Compatibility alias for `ai-session-tools` |
 | `claude-skill-builder` | Create and review Claude skills |
 | `cli-demo-recorder` | Record reproducible CLI and TUI demos |
 | `mermaid-diagrams` | Render Mermaid diagrams |
@@ -1238,7 +1236,6 @@ The `commands/autorun` script uses JSON stdin/stdout for Claude Code communicati
 **UV Tool Entry Points** (from `pyproject.toml`):
 1. `autorun` — Main plugin functionality
 2. `autorun-install` — Installation management
-3. `aise` — Session history analysis (ai-session-tools; `aise --help` for commands)
 
 See [References](#references) for plugin development documentation links.
 

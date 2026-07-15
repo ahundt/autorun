@@ -1,8 +1,8 @@
 # Concrete Example: aise CLI Demo
 
-aise (`ai_session_tools`) is a pure CLI tool — no AI session, no tmux. The harness runs as the recorded subprocess.
+AI Session Search (`aise`) is a pure CLI tool — no AI session, no tmux. The harness runs as the recorded subprocess.
 
-**Source**: `~/.claude/ai_session_tools/tests/test_demo.py`
+**Source**: `~/.claude/ai-session-search/tests/test_demo.py`
 
 ## Generalizable Patterns (use in any CLI demo)
 

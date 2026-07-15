@@ -18,7 +18,7 @@ import pytest
 # --- Cast file resolution tests ---
 
 CAST_FILES = [
-    ("~/.claude/ai_session_tools/demo.cast", 160, 48),
+    ("~/.claude/ai-session-search/demo.cast", 160, 48),
     ("~/.claude/autorun/autorun_demo.cast", 160, 48),
     pytest.param(
         "~/source/canal/demos/canal-demo.cast",
@@ -57,7 +57,7 @@ def test_cast_resolution_minimum(cast_file, expected_cols, expected_rows):
 # --- MP4 resolution tests ---
 
 MP4_FILES = [
-    ("~/.claude/ai_session_tools/demo.mp4", 1080),
+    ("~/.claude/ai-session-search/demo.mp4", 1080),
     ("~/.claude/autorun/autorun_demo.mp4", 1080),
     pytest.param(
         "~/source/canal/demos/canal-demo.mp4",

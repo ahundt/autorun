@@ -795,7 +795,7 @@ See `references/common-pitfalls.md` for the full 30+ pitfall table covering CLI,
 
 Working examples with act lists, design decisions, prompt evolution, and recording parameters:
 
-- **CLI pathway**: `references/examples/aise-cli-example.md` — aise (ai_session_tools), 7 CLI acts
+- **CLI pathway**: `references/examples/aise-cli-example.md` — AI Session Search (`aise`), 7 CLI acts
 - **TUI pathway**: `references/examples/autorun-tui-example.md` — autorun for Claude Code, 7 TUI acts with prompt debugging history
 
 ---
