@@ -5,6 +5,8 @@ Permission-gate hooks must never fail open when the daemon is slow, missing,
 or returns invalid data. Lifecycle/context events may continue permissively.
 """
 
+import pytest
+
 from autorun.client import (
     build_daemon_failure_response,
     daemon_response_timeout_for_cli,
@@ -30,12 +32,14 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     monkeypatch.setenv("GEMINI_CLI", "1")
     monkeypatch.setattr("autorun.client.get_stable_pid", lambda: 12345)
 
-    payload, cli_type = prepare_payload_for_daemon({
-        "hook_event_name": "PreToolUse",
-        "session_id": "client-cli-type",
-        "tool_name": "Bash",
-        "tool_input": {"command": "rm file"},
-    })
+    payload, cli_type = prepare_payload_for_daemon(
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": "client-cli-type",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm file"},
+        }
+    )
 
     assert cli_type == "codex"
     assert payload["cli_type"] == "codex"
@@ -110,50 +114,70 @@ def test_get_stable_pid_recognizes_codex_parent_after_wrappers(monkeypatch):
         assert get_stable_pid() == 42000
 
 
-def test_claude_daemon_failure_on_pretooluse_fails_closed():
-    response = build_daemon_failure_response(
-        "PreToolUse", "claude", "Daemon response timed out"
-    )
+@pytest.mark.parametrize(
+    ("event", "cli", "decision", "root_fields"),
+    [
+        (
+            "PreToolUse",
+            "claude",
+            "block",
+            {
+                "decision",
+                "permissionDecision",
+                "reason",
+                "continue",
+                "stopReason",
+                "suppressOutput",
+                "systemMessage",
+                "hookSpecificOutput",
+            },
+        ),
+        (
+            "BeforeTool",
+            "gemini",
+            "deny",
+            {
+                "decision",
+                "reason",
+                "continue",
+                "stopReason",
+                "suppressOutput",
+                "systemMessage",
+                "hookSpecificOutput",
+            },
+        ),
+        ("PreToolUse", "qwen", None, {"hookSpecificOutput"}),
+        ("PreToolUse", "antigravity", "deny", {"decision", "reason"}),
+        (
+            "PreToolUse",
+            "codex",
+            "block",
+            {
+                "decision",
+                "reason",
+                "systemMessage",
+                "hookSpecificOutput",
+            },
+        ),
+    ],
+)
+def test_daemon_failure_tool_gates_use_exact_native_fail_closed_schema(event, cli, decision, root_fields):
+    response = build_daemon_failure_response(event, cli, "Daemon response timed out")
 
-    assert response["decision"] == "block"
-    assert response["permissionDecision"] == "deny"
-    assert response["continue"] is True
-    assert response["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "timed out" in response["hookSpecificOutput"]["permissionDecisionReason"]
-
-
-def test_gemini_daemon_failure_on_beforetool_fails_closed():
-    response = build_daemon_failure_response(
-        "BeforeTool", "gemini", "Daemon response timed out"
-    )
-
-    assert response["decision"] == "deny"
-    assert response["continue"] is True
-    assert response["hookSpecificOutput"]["hookEventName"] == "BeforeTool"
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "timed out" in response["reason"]
-
-
-def test_codex_daemon_failure_on_pretooluse_uses_codex_block_schema():
-    response = build_daemon_failure_response(
-        "PreToolUse", "codex", "Daemon response timed out"
-    )
-
-    assert response["decision"] == "block"
-    assert response["reason"]
-    assert response["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "continue" not in response
-    assert "stopReason" not in response
-    assert "suppressOutput" not in response
-    assert "permissionDecision" not in response
+    assert set(response) == root_fields
+    if decision is not None:
+        assert response["decision"] == decision
+    hook_output = response.get("hookSpecificOutput")
+    if hook_output is not None:
+        assert hook_output["hookEventName"] == event
+        assert hook_output["permissionDecision"] == "deny"
+        assert "timed out" in hook_output["permissionDecisionReason"]
+    else:
+        assert "timed out" in response["reason"]
 
 
 def test_lifecycle_daemon_failure_stays_fail_open():
-    response = build_daemon_failure_response(
-        "SessionStart", "claude", "Daemon response timed out"
-    )
+    response = build_daemon_failure_response("SessionStart", "claude", "Daemon response timed out")
 
     assert response["continue"] is True
     assert "decision" not in response

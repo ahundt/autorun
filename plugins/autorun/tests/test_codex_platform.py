@@ -9,12 +9,14 @@ divergences captured here:
     we still test "set the env var → detect codex" so future versions stay covered)
   - task progress: native update_plan checklist, not Claude TaskCreate/TaskUpdate
 """
+
 from __future__ import annotations
 
 from autorun.platforms import PLATFORMS, get_platform
 
 
 # ─── Registry presence ────────────────────────────────────────────────────────
+
 
 def test_codex_platform_registered():
     p = get_platform("codex")
@@ -47,8 +49,10 @@ def test_codex_does_not_drop_additional_context():
 
 # ─── Detection ────────────────────────────────────────────────────────────────
 
+
 def test_codex_detected_via_explicit_cli_type():
     from autorun.config import detect_cli_type
+
     assert detect_cli_type({"cli_type": "codex"}) == "codex"
     assert detect_cli_type({"source": "codex"}) == "codex"
 
@@ -62,48 +66,49 @@ def test_explicit_cli_env_overrides_ambient_platform_hints(monkeypatch):
 
 
 def test_codex_detected_via_session_id_env(monkeypatch):
-    for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
-              "FORGE_CONFIG"):
+    for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI", "FORGE_CONFIG"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("CODEX_SESSION_ID", "codex-abc")
     from autorun.config import detect_cli_type
+
     assert detect_cli_type() == "codex"
 
 
 def test_codex_detected_via_payload_session_id(monkeypatch):
-    for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
-              "CODEX_SESSION_ID", "FORGE_CONFIG"):
+    for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI", "CODEX_SESSION_ID", "FORGE_CONFIG"):
         monkeypatch.delenv(k, raising=False)
     from autorun.config import detect_cli_type
+
     assert detect_cli_type({"CODEX_SESSION_ID": "codex-xyz"}) == "codex"
 
 
 def test_codex_detected_via_transcript_path(monkeypatch):
-    for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
-              "CODEX_SESSION_ID", "FORGE_CONFIG"):
+    for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI", "CODEX_SESSION_ID", "FORGE_CONFIG"):
         monkeypatch.delenv(k, raising=False)
     from autorun.config import detect_cli_type
+
     assert detect_cli_type({"transcript_path": "/home/u/.codex/session.jsonl"}) == "codex"
 
 
 # ─── Event names (identity with Claude) ───────────────────────────────────────
 
+
 def test_codex_event_names_are_identity():
-    """Codex uses the same canonical event names as Claude; the internal->cli
-    map is identity for all in-use events."""
+    """Codex and autorun use identical names for all events in use."""
     p = PLATFORMS["codex"]
-    for ev in ("PreToolUse", "PostToolUse", "Stop", "SessionStart",
-               "SessionEnd", "UserPromptSubmit"):
-        assert p.internal_to_cli_events.get(ev) == ev
+    for ev in ("PreToolUse", "PostToolUse", "Stop", "SessionStart", "SessionEnd", "UserPromptSubmit"):
+        assert p.autorun_to_harness_cli_events.get(ev) == ev
 
 
 def test_codex_get_cli_event_name_identity():
     from autorun.core import get_cli_event_name
+
     for ev in ("PreToolUse", "PostToolUse", "Stop", "SessionStart"):
         assert get_cli_event_name(ev, "codex") == ev
 
 
 # ─── Tool names (Claude-like hooks, Codex-specific model surface) ─────────────
+
 
 def test_codex_tool_names_match_current_model_surface():
     """Codex shares shell hook matchers but not Claude's search/read/edit tools."""
@@ -142,6 +147,7 @@ def test_claude_and_gemini_keep_native_slash_command_prefixes():
 
 def test_codex_get_tool_names():
     from autorun.core import get_tool_names
+
     tools = get_tool_names("codex")
     assert tools["grep"] == "`rg -n` shell search"
     assert tools["glob"] == "`rg --files` shell listing"
@@ -151,11 +157,11 @@ def test_codex_get_tool_names():
 
 # ─── format_suggestion ────────────────────────────────────────────────────────
 
+
 def test_codex_format_suggestion_uses_codex_tool_surface():
     from autorun.core import format_suggestion
-    assert format_suggestion("Use {grep} then {edit}", "codex") == (
-        "Use `rg -n` shell search then apply_patch"
-    )
+
+    assert format_suggestion("Use {grep} then {edit}", "codex") == ("Use `rg -n` shell search then apply_patch")
     assert format_suggestion("Use {read}", "codex") == "Use shell file inspection"
 
 
@@ -183,13 +189,12 @@ def test_codex_formats_autorun_commands_with_platform_display_prefix():
     assert canonicalize_command_prompt("ar ok git push", "codex") == "/ar:ok git push"
     assert canonicalize_command_prompt("/ar:ok git push", "codex") == "/ar:ok git push"
     assert format_command_for_cli("/ar:task-ignore <id>", "codex") == "ar:task-ignore <id>"
-    assert format_commands_for_cli("Try /ar:ok git push then /ar:st", "codex") == (
-        "Try ar:ok git push then ar:st"
-    )
+    assert format_commands_for_cli("Try /ar:ok git push then /ar:st", "codex") == ("Try ar:ok git push then ar:st")
     assert format_commands_for_cli("Try /ar:ok git push", "claude") == "Try /ar:ok git push"
 
 
 # ─── Install metadata ─────────────────────────────────────────────────────────
+
 
 def test_codex_install_metadata():
     p = PLATFORMS["codex"]
@@ -205,8 +210,8 @@ def test_codex_install_metadata():
 def test_codex_response_capabilities_are_not_claude_clone():
     """Codex has Claude-like event names but Codex-specific output schemas."""
     p = PLATFORMS["codex"]
-    assert p.normal_allow_decision is None
-    assert p.block_decision == "block"
+    assert p.hook_protocol.root_allow_decision == "approve"
+    assert p.hook_protocol.root_block_decision == "block"
     assert "UserPromptSubmit" in p.supports_additional_context_events
     assert "continue" in p.unsupported_response_fields_by_event["PreToolUse"]
     assert "permissionDecision" in p.unsupported_response_fields_by_event["PreToolUse"]
@@ -214,11 +219,13 @@ def test_codex_response_capabilities_are_not_claude_clone():
 
 # ─── _bug_18534_human_channels: Codex should NOT trigger workaround ───────────
 
+
 def test_codex_does_not_trigger_bug_18534_workaround(monkeypatch):
     """Codex's additionalContext works correctly; the workaround that upgrades
     channel='ai' to also reach systemMessage is Claude-only."""
     monkeypatch.delenv("AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED", raising=False)
     from autorun.core import _bug_18534_human_channels
+
     chans = _bug_18534_human_channels("codex")
     assert "ai" not in chans
     assert chans == {"human", "both"}
@@ -226,11 +233,13 @@ def test_codex_does_not_trigger_bug_18534_workaround(monkeypatch):
 
 # ─── hook_entry --cli codex acceptance ────────────────────────────────────────
 
+
 def test_hook_entry_detect_cli_type_supports_codex(monkeypatch):
     """The hook_entry.detect_cli_type function recognises codex via env+arg."""
     # Import via path to avoid module collision with autorun.config.detect_cli_type
     import importlib.util
     from pathlib import Path
+
     he_path = Path(__file__).parent.parent / "hooks" / "hook_entry.py"
     spec = importlib.util.spec_from_file_location("autorun_hook_entry_for_test", he_path)
     mod = importlib.util.module_from_spec(spec)

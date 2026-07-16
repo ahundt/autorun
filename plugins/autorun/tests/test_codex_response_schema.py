@@ -5,6 +5,7 @@ These tests intentionally encode the current Codex hook release behavior:
 normal allow responses must not use Claude's legacy decision="approve"
 shape, and every registered autorun command must return Codex-valid JSON.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -250,9 +251,7 @@ def test_every_autorun_command_alias_dispatches_for_all_hook_platforms(cli_type,
     visible = response.get("systemMessage") or response.get("hookSpecificOutput", {}).get("additionalContext")
     assert visible, response
     if "hookSpecificOutput" in response:
-        assert response["hookSpecificOutput"]["hookEventName"] == get_cli_event_name(
-            "UserPromptSubmit", cli_type
-        )
+        assert response["hookSpecificOutput"]["hookEventName"] == get_cli_event_name("UserPromptSubmit", cli_type)
     if cli_type == "codex":
         assert_codex_response_valid("UserPromptSubmit", response)
 
@@ -401,9 +400,7 @@ def test_codex_allow_without_session_id_uses_stable_cli_parent(monkeypatch):
 
     def context_from_payload(payload):
         normalized = normalize_hook_payload(payload)
-        session_id = resolve_session_key(
-            payload.get("_pid"), payload.get("_cwd", ""), normalized["session_id"]
-        )
+        session_id = resolve_session_key(payload.get("_pid"), payload.get("_cwd", ""), normalized["session_id"])
         return EventContext(
             session_id=session_id,
             event=normalized["hook_event_name"],
@@ -419,15 +416,19 @@ def test_codex_allow_without_session_id_uses_stable_cli_parent(monkeypatch):
     monkeypatch.setenv("AUTORUN_CLI_TYPE", "codex")
     monkeypatch.setattr("os.getppid", lambda: next(ephemeral_ppids))
     with mock.patch("psutil.Process", return_value=python):
-        allow_payload, _ = prepare_payload_for_daemon({
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "ar:ok git push",
-        })
-        push_payload, _ = prepare_payload_for_daemon({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "git push origin main"},
-        })
+        allow_payload, _ = prepare_payload_for_daemon(
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "ar:ok git push",
+            }
+        )
+        push_payload, _ = prepare_payload_for_daemon(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git push origin main"},
+            }
+        )
 
     allow_response = plugins.app.dispatch(context_from_payload(allow_payload))
     assert_codex_response_valid("UserPromptSubmit", allow_response)
@@ -748,9 +749,7 @@ def test_task_ignore_command_marks_task_ignored_across_native_and_plain_aliases(
 
 def test_codex_suggestions_use_plain_ar_aliases_not_rejected_slash_commands():
     message = "To allow (default 1 use): /ar:ok git push\nBlock globally: /ar:globalno git push"
-    assert format_suggestion(message, "codex") == (
-        "To allow (default 1 use): ar:ok git push\nBlock globally: ar:globalno git push"
-    )
+    assert format_suggestion(message, "codex") == ("To allow (default 1 use): ar:ok git push\nBlock globally: ar:globalno git push")
     assert format_suggestion(message, "claude") == message
 
 

@@ -4,6 +4,7 @@ This module is intentionally side-effect-light: it inspects the registered
 platforms, command handlers, skill metadata, and hook chains without installing hooks,
 restarting daemons, or writing to user configuration paths.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +26,16 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "binary": platform.binary,
         "has_hooks": platform.has_hooks,
         "schema_type": platform.schema_type,
+        "hook_protocol": platform.hook_protocol.name,
+        "pretool_decision_location": platform.hook_protocol.pretool_decision_location,
+        "supports_ask_decision": platform.hook_protocol.supports_ask_decision,
+        "stop_blocking_decision": platform.hook_protocol.stop_blocking_decision,
+        "stop_response_uses_only_decision_and_reason": (platform.hook_protocol.stop_response_uses_only_decision_and_reason),
+        "requires_json_for_unhandled_hook": (platform.hook_protocol.requires_json_for_unhandled_hook),
+        "context_events_with_block_decision": sorted(platform.hook_protocol.context_events_with_block_decision),
+        "hook_manifest_container_key": platform.hook_protocol.hook_manifest_container_key,
+        "manifest_events_with_flat_handlers": sorted(platform.hook_protocol.manifest_events_with_flat_handlers),
+        "manifest_events_without_matchers": sorted(platform.hook_protocol.manifest_events_without_matchers),
         "config_dir": platform.config_dir,
         "template_dir": platform.template_dir,
         "hooks_path_var": platform.hooks_path_var,
@@ -36,8 +47,8 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "detect_session_keys": sorted(platform.detect_session_keys),
         "detect_event_names": sorted(platform.detect_event_names),
         "detect_path_hints": sorted(platform.detect_path_hints),
-        "cli_to_internal_events": dict(platform.cli_to_internal_events),
-        "internal_to_cli_events": dict(platform.internal_to_cli_events),
+        "harness_cli_to_autorun_events": dict(platform.harness_cli_to_autorun_events),
+        "autorun_to_harness_cli_events": dict(platform.autorun_to_harness_cli_events),
         "tool_names": dict(platform.tool_names),
         "native_shell_read_commands": sorted(platform.native_shell_read_commands),
         "task_management_style": platform.task_management_style,
@@ -50,13 +61,10 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "command_display_prefix": platform.command_display_prefix,
         "has_exit2_workaround": platform.has_exit2_workaround,
         "drops_additional_context": platform.drops_additional_context,
-        "normal_allow_decision": platform.normal_allow_decision,
-        "block_decision": platform.block_decision,
+        "root_allow_decision": platform.hook_protocol.root_allow_decision,
+        "root_block_decision": platform.hook_protocol.root_block_decision,
         "supports_additional_context_events": sorted(platform.supports_additional_context_events),
-        "unsupported_response_fields_by_event": {
-            event: sorted(fields)
-            for event, fields in platform.unsupported_response_fields_by_event.items()
-        },
+        "unsupported_response_fields_by_event": {event: sorted(fields) for event, fields in platform.unsupported_response_fields_by_event.items()},
     }
 
 
@@ -88,10 +96,7 @@ def _command_inventory() -> tuple[dict[str, str], dict[str, list[str]]]:
     from . import plugins as _plugins  # noqa: F401 - registers handlers on import
     from .core import app
 
-    commands = {
-        alias: _handler_name(handler)
-        for alias, handler in sorted(app.command_handlers.items())
-    }
+    commands = {alias: _handler_name(handler) for alias, handler in sorted(app.command_handlers.items())}
     aliases_by_handler: dict[str, list[str]] = {}
     for alias, handler_name in commands.items():
         aliases_by_handler.setdefault(handler_name, []).append(alias)
@@ -102,10 +107,7 @@ def _hook_inventory() -> dict[str, list[str]]:
     from . import plugins as _plugins  # noqa: F401 - registers handlers on import
     from .core import app
 
-    return {
-        event: [_handler_name(handler) for handler in handlers]
-        for event, handlers in sorted(app.chains.items())
-    }
+    return {event: [_handler_name(handler) for handler in handlers] for event, handlers in sorted(app.chains.items())}
 
 
 def build_capability_snapshot() -> dict[str, Any]:
@@ -117,10 +119,7 @@ def build_capability_snapshot() -> dict[str, Any]:
     return {
         "version": __version__,
         "commit": _git_commit(),
-        "platforms": {
-            name: _jsonable_platform(platform)
-            for name, platform in sorted(PLATFORMS.items())
-        },
+        "platforms": {name: _jsonable_platform(platform) for name, platform in sorted(PLATFORMS.items())},
         "commands": commands,
         "command_aliases": command_aliases,
         "command_docs": command_docs_inventory(plugin_root / "commands"),

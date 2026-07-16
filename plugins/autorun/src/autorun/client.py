@@ -33,6 +33,7 @@ References:
 - Exit code semantics: https://claude.com/blog/how-to-configure-hooks
 - Hook docs: https://code.claude.com/docs/en/hooks
 """
+
 import os
 import sys
 import json
@@ -43,10 +44,12 @@ from pathlib import Path
 
 try:
     from .logging_utils import get_logger, DEBUG_ENABLED
+
     logger = get_logger(__name__)
 except ImportError:
     # Fallback if logging_utils not available (shouldn't happen)
     import logging
+
     logger = logging.getLogger(__name__)
     DEBUG_ENABLED = False
 
@@ -62,12 +65,7 @@ def _hook_platform_process_markers() -> tuple[str, ...]:
     try:
         from .platforms import hook_platforms
 
-        markers = {
-            marker.lower()
-            for platform in hook_platforms()
-            for marker in (platform.name, platform.binary)
-            if marker
-        }
+        markers = {marker.lower() for platform in hook_platforms() for marker in (platform.name, platform.binary) if marker}
         # Common installed process name for Claude Code; kept as compatibility data
         # beside the registry-derived names instead of a separate branch.
         markers.add("claude-code")
@@ -94,17 +92,14 @@ def daemon_response_timeout_for_cli(cli_type: str) -> float:
     return float(timeouts.get(cli_type, timeouts["claude"]))
 
 
-def _hook_specific_event_name(event: str, cli_type: str) -> str:
-    """Return the platform event name used inside hookSpecificOutput."""
+def _hook_specific_harness_cli_event_name(event: str, cli_type: str) -> str:
+    """Return the harness CLI event name placed in hookSpecificOutput."""
     try:
-        from .platforms import platform_for
+        from .platforms import to_autorun_event, to_harness_cli_event
 
-        platform = platform_for(cli_type)
-        return platform.internal_to_cli_events.get(event, event)
+        return to_harness_cli_event(to_autorun_event(event, cli_type), cli_type)
     except Exception:
-        if event == "BeforeTool":
-            return "PreToolUse"
-    return event
+        return event
 
 
 def build_daemon_failure_response(
@@ -127,51 +122,17 @@ def build_daemon_failure_response(
         }
 
     reason = (
-        f"[autorun] {tagged_message}. Blocking tool use because autorun could not "
-        "evaluate this permission gate. Run `autorun --restart-daemon`, then retry."
+        f"[autorun] {tagged_message}. Blocking tool use because autorun could not evaluate this permission gate. Run `autorun --restart-daemon`, then retry."
     )
-    hook_specific = {
-        "hookEventName": _hook_specific_event_name(event, cli_type),
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
-    }
-
-    if cli_type == "codex":
-        return {
-            "decision": "block",
-            "reason": reason,
-            "systemMessage": reason,
-            "hookSpecificOutput": hook_specific,
-        }
-
     try:
         from .platforms import platform_for
 
-        schema_type = platform_for(cli_type).schema_type
+        protocol = platform_for(cli_type).hook_protocol
     except Exception:
-        schema_type = "strict"
+        from .platforms import CLAUDE_HOOKS
 
-    if schema_type == "permissive":
-        return {
-            "decision": "deny",
-            "reason": reason,
-            "continue": True,
-            "stopReason": "",
-            "suppressOutput": False,
-            "systemMessage": reason,
-            "hookSpecificOutput": hook_specific,
-        }
-
-    return {
-        "decision": "block",
-        "permissionDecision": "deny",
-        "reason": "",
-        "continue": True,
-        "stopReason": "",
-        "suppressOutput": False,
-        "systemMessage": "",
-        "hookSpecificOutput": hook_specific,
-    }
+        protocol = CLAUDE_HOOKS
+    return protocol.fail_closed_pretool_response(reason, _hook_specific_harness_cli_event_name(event, cli_type))
 
 
 def _log_hook_lifecycle(message: str, **kwargs) -> None:
@@ -180,7 +141,7 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
         return
     try:
         DEBUG_LOG.parent.mkdir(exist_ok=True)
-        with open(DEBUG_LOG, 'a', encoding="utf-8") as f:
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.datetime.now()}] {message}\n")
             for key, value in kwargs.items():
                 f.write(f"{key}: {value}\n")
@@ -188,8 +149,7 @@ def _log_hook_lifecycle(message: str, **kwargs) -> None:
         pass  # Never fail on logging
 
 
-def output_hook_response(response: dict | str, event: str = "unknown", 
-                         cli_type: str = "claude", source: str = "daemon") -> int:
+def output_hook_response(response: dict | str, event: str = "unknown", cli_type: str = "claude", source: str = "daemon") -> int:
     """Unified hook response output handler with two clear pathways (DRY).
 
     Single consolidation point for ALL 4 input paths:
@@ -228,12 +188,11 @@ def output_hook_response(response: dict | str, event: str = "unknown",
         try:
             from .platforms import platform_for
 
-            schema_type = platform_for(cli_type).schema_type
+            empty_response = platform_for(cli_type).hook_protocol.response_for_unhandled_hook()
         except Exception:
-            schema_type = "strict"
-        if schema_type == "permissive":
-            # Gemini-family CLIs expect valid JSON if a hook is registered
-            print(json.dumps({"continue": True}))
+            empty_response = {}
+        if empty_response:
+            print(json.dumps(empty_response))
         sys.exit(0)
 
     # ═══════════════════════════════════════════════════════════════
@@ -253,8 +212,7 @@ def output_hook_response(response: dict | str, event: str = "unknown",
     # ═══════════════════════════════════════════════════════════════
     # SHARED: Extract decision (DRY - works for Claude and Gemini)
     # ═══════════════════════════════════════════════════════════════
-    decision = response.get('hookSpecificOutput', {}).get('permissionDecision',
-                                                          response.get('decision', 'allow'))
+    decision = response.get("hookSpecificOutput", {}).get("permissionDecision", response.get("decision", "allow"))
 
     logger.info(f"Hook response: event={event}, cli={cli_type}, source={source}, decision={decision}")
 
@@ -276,8 +234,7 @@ def output_hook_response(response: dict | str, event: str = "unknown",
         # ║ - Print reason to stderr (AI sees this)                 ║
         # ║ - Exit code 2 (ONLY way blocking works in Claude Code)  ║
         # ╚═══════════════════════════════════════════════════════════╝
-        reason = response.get('hookSpecificOutput', {}).get('permissionDecisionReason',
-                                                            response.get('reason', 'Tool blocked'))
+        reason = response.get("hookSpecificOutput", {}).get("permissionDecisionReason", response.get("reason", "Tool blocked"))
 
         logger.info("Applying exit-2 workaround (Claude Code bug #4669)")
         print(reason, file=sys.stderr)
@@ -336,6 +293,7 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
         payload["_cwd"] = os.getcwd()
 
     from .config import detect_cli_type
+
     cli_type = detect_cli_type(payload)
     payload["cli_type"] = cli_type
 
@@ -344,7 +302,7 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
 
 def run_client() -> int:
     """Forward hook payload to daemon.
-    
+
     Returns:
         int: Exit code (0, 1, or 2)
     """
@@ -359,13 +317,11 @@ def run_client() -> int:
     payload, cli_type = prepare_payload_for_daemon(payload)
 
     # Lifecycle logging (DRY)
-    hook_event = payload.get('hook_event_name', 'unknown')
-    hook_source = payload.get('source', '')
-    tool_name = payload.get('tool_name', '')
+    hook_event = payload.get("hook_event_name", "unknown")
+    hook_source = payload.get("source", "")
+    tool_name = payload.get("tool_name", "")
 
-    _log_hook_lifecycle("\n" + "="*80 + "\nCLIENT→DAEMON REQUEST",
-                        Event=hook_event, Source=hook_source, Tool=tool_name,
-                        PayloadKeys=list(payload.keys()))
+    _log_hook_lifecycle("\n" + "=" * 80 + "\nCLIENT→DAEMON REQUEST", Event=hook_event, Source=hook_source, Tool=tool_name, PayloadKeys=list(payload.keys()))
 
     logger.debug(f"Forwarding hook to daemon: event={hook_event}, cli={cli_type}, tool={tool_name}")
 
@@ -374,12 +330,13 @@ def run_client() -> int:
             raise RuntimeError("Daemon failed to start after 6 attempts")
         try:
             from .core import READ_BUFFER_LIMIT
+
             reader, writer = await ipc.connect(limit=READ_BUFFER_LIMIT)
-            writer.write(json.dumps(payload).encode() + b'\n')
+            writer.write(json.dumps(payload).encode() + b"\n")
             await writer.drain()
 
             resp = await asyncio.wait_for(
-                reader.readuntil(b'\n'),
+                reader.readuntil(b"\n"),
                 timeout=daemon_response_timeout_for_cli(cli_type),
             )
             resp_text = resp.decode().strip()
@@ -435,6 +392,7 @@ def run_client() -> int:
             restart_in_progress = False
             try:
                 from filelock import FileLock, Timeout as FlockTimeout
+
                 restart_lock_path = ipc.AUTORUN_CONFIG_DIR / "daemon-restart.lock"
                 restart_probe = FileLock(str(restart_lock_path), timeout=0)
                 restart_probe.acquire()
@@ -449,7 +407,7 @@ def run_client() -> int:
             if not restart_in_progress:
                 # Check 2: Is a daemon alive (holding flock)?
                 try:
-                    flock_path = ipc.AUTORUN_LOCK_PATH.with_suffix('.flock')
+                    flock_path = ipc.AUTORUN_LOCK_PATH.with_suffix(".flock")
                     daemon_probe = FileLock(str(flock_path), timeout=0)
                     daemon_probe.acquire()
                     daemon_probe.release()
@@ -460,6 +418,7 @@ def run_client() -> int:
                         try:
                             pid = int(lock_path.read_text().strip())
                             import psutil
+
                             if psutil.pid_exists(pid):
                                 pass  # PID alive but socket not ready — wait
                             else:
@@ -480,10 +439,7 @@ def run_client() -> int:
             if should_spawn:
                 logger.info("Daemon not running, auto-starting...")
                 src_dir = Path(__file__).parent.parent
-                daemon_code = (
-                    "import sys; sys.path.insert(0, '{0}'); "
-                    "from autorun.daemon import main; main()"
-                ).format(str(src_dir))
+                daemon_code = ("import sys; sys.path.insert(0, '{0}'); from autorun.daemon import main; main()").format(str(src_dir))
                 subprocess.Popen(
                     [sys.executable, "-c", daemon_code],
                     stdout=subprocess.DEVNULL,
@@ -494,7 +450,7 @@ def run_client() -> int:
                 logger.debug(f"Waiting for daemon (depth={depth})")
 
             # Capped exponential backoff: 0.3, 0.6, 1.2, 2.0, 2.0, 2.0s
-            await asyncio.sleep(min(0.3 * (2 ** depth), 2.0))
+            await asyncio.sleep(min(0.3 * (2**depth), 2.0))
             return await forward(depth + 1)
 
     try:

@@ -32,6 +32,7 @@ def get_install_module():
     plugin_root = get_plugin_root()
     sys.path.insert(0, str(plugin_root / "src"))
     from autorun import install
+
     return install
 
 
@@ -94,9 +95,7 @@ class TestPluginNameEnum:
         install = get_install_module()
 
         # Check enum doesn't have PLAN_EXPORT attribute
-        assert not hasattr(install.PluginName, "PLAN_EXPORT"), (
-            "PluginName.PLAN_EXPORT should not exist (merged into autorun)"
-        )
+        assert not hasattr(install.PluginName, "PLAN_EXPORT"), "PluginName.PLAN_EXPORT should not exist (merged into autorun)"
 
 
 class TestParseSelection:
@@ -266,10 +265,8 @@ class TestInstallToCachePathResolution:
 
         # The workspace root contains plugins/ with individual plugin dirs
         plugin_dir = root / "plugins" / "autorun"
-        assert plugin_dir.exists(), \
-            f"Workspace should contain plugins/autorun: {plugin_dir}"
-        assert (plugin_dir / "src" / "autorun").exists(), \
-            f"Plugin dir should contain src/autorun: {plugin_dir}"
+        assert plugin_dir.exists(), f"Workspace should contain plugins/autorun: {plugin_dir}"
+        assert (plugin_dir / "src" / "autorun").exists(), f"Plugin dir should contain src/autorun: {plugin_dir}"
 
     def test_install_to_cache_finds_sibling_plugin(self):
         """Verify _install_to_cache resolves sibling plugins."""
@@ -279,8 +276,7 @@ class TestInstallToCachePathResolution:
         # Sibling plugin (pdf-extractor) is at root / "plugins" / "pdf-extractor"
         sibling = root / "plugins" / "pdf-extractor"
         if sibling.exists():
-            assert (sibling / ".claude-plugin").exists(), \
-                f"Sibling plugin at {sibling} should have .claude-plugin/"
+            assert (sibling / ".claude-plugin").exists(), f"Sibling plugin at {sibling} should have .claude-plugin/"
 
 
 class TestReadPluginVersion:
@@ -435,10 +431,8 @@ class TestInstallPathwayRouting:
         main_file = plugin_root / "src" / "autorun" / "__main__.py"
         content = main_file.read_text(encoding="utf-8")
 
-        assert "sync_to_cache" not in content, \
-            "--sync was removed because it never worked (path construction bug). Use --install --force."
-        assert '"--sync"' not in content, \
-            "--sync argument should be removed from argparse"
+        assert "sync_to_cache" not in content, "--sync was removed because it never worked (path construction bug). Use --install --force."
+        assert '"--sync"' not in content, "--sync argument should be removed from argparse"
 
     def test_pyproject_entry_point_correct(self):
         """Verify pyproject.toml autorun-install entry point."""
@@ -481,7 +475,8 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user",
+            codex_plugin_marketplace="personal",
         )
 
     def test_install_module_main_codex_hook_source_routes_to_install_plugins(self):
@@ -489,9 +484,7 @@ class TestInstallMainAdapter:
         install = get_install_module()
 
         with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
-            result = install._install_module_main(
-                ["--install", "--codex", "--codex-hook-source", "plugin"]
-            )
+            result = install._install_module_main(["--install", "--codex", "--codex-hook-source", "plugin"])
 
         assert result == 0
         mock_install.assert_called_once_with(
@@ -504,7 +497,8 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            codex_hook_source="plugin", codex_plugin_marketplace="personal",
+            codex_hook_source="plugin",
+            codex_plugin_marketplace="personal",
         )
 
     def test_install_module_main_custom_harness_routes_to_install_plugins(self):
@@ -526,7 +520,8 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user",
+            codex_plugin_marketplace="personal",
             custom_harnesses=[spec],
         )
 
@@ -548,7 +543,8 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user",
+            codex_plugin_marketplace="personal",
             dry_run=True,
         )
 
@@ -594,9 +590,7 @@ class TestInstallMainAdapter:
         install = get_install_module()
 
         with mock.patch.object(install, "install_plugins", return_value=0) as mock_install:
-            result = install._install_module_main(
-                ["--install", "--codex", "--codex-plugin-marketplace", "github"]
-            )
+            result = install._install_module_main(["--install", "--codex", "--codex-plugin-marketplace", "github"])
 
         assert result == 0
         mock_install.assert_called_once_with(
@@ -631,7 +625,8 @@ class TestInstallMainAdapter:
             antigravity_only=True,
             qwen_only=False,
             conductor=True,
-            codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user",
+            codex_plugin_marketplace="personal",
         )
 
     def test_install_module_main_qwen_force_routes_to_install_plugins(self):
@@ -652,7 +647,8 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=True,
             conductor=True,
-            codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user",
+            codex_plugin_marketplace="personal",
         )
 
     def test_install_main_legacy_codex_force_routes_to_install_plugins(self):
@@ -681,7 +677,8 @@ class TestInstallMainAdapter:
             antigravity_only=False,
             qwen_only=False,
             conductor=True,
-            codex_hook_source="user", codex_plugin_marketplace="personal",
+            codex_hook_source="user",
+            codex_plugin_marketplace="personal",
         )
 
 
@@ -842,14 +839,19 @@ class TestDependencyInstallation:
         result = install._install_pdf_deps()
 
         assert result.ok
-        assert calls == [([
-            install.sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--editable",
-            str(pdf_dir),
-        ], {"timeout": 180})]
+        assert calls == [
+            (
+                [
+                    install.sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--editable",
+                    str(pdf_dir),
+                ],
+                {"timeout": 180},
+            )
+        ]
 
 
 class TestCacheFallback:
@@ -910,9 +912,7 @@ class TestGenerateGeminiTomlCommands:
         install = get_install_module()
         commands_dir = tmp_path / "commands"
         commands_dir.mkdir()
-        (commands_dir / "status.md").write_text(
-            '---\ndescription: Show current status\n---\n\n# Status\n\nShows status.'
-        )
+        (commands_dir / "status.md").write_text("---\ndescription: Show current status\n---\n\n# Status\n\nShows status.")
 
         count = install._generate_gemini_toml_commands(tmp_path, "ar")
         assert count == 1
@@ -929,9 +929,7 @@ class TestGenerateGeminiTomlCommands:
         install = get_install_module()
         commands_dir = tmp_path / "commands"
         commands_dir.mkdir()
-        (commands_dir / "run.md").write_text(
-            '---\ndescription: Start run\n---\n\n$ARGUMENTS\n\nRun task.'
-        )
+        (commands_dir / "run.md").write_text("---\ndescription: Start run\n---\n\n$ARGUMENTS\n\nRun task.")
 
         install._generate_gemini_toml_commands(tmp_path, "ar")
         content = (commands_dir / "ar" / "run.toml").read_text()
@@ -943,9 +941,7 @@ class TestGenerateGeminiTomlCommands:
         install = get_install_module()
         commands_dir = tmp_path / "commands"
         commands_dir.mkdir()
-        (commands_dir / "test.md").write_text(
-            '---\ndescription: Test cmd\n---\n\nContent.'
-        )
+        (commands_dir / "test.md").write_text("---\ndescription: Test cmd\n---\n\nContent.")
 
         install._generate_gemini_toml_commands(tmp_path, "myext")
         assert (commands_dir / "myext" / "test.toml").exists()
@@ -969,9 +965,7 @@ class TestGenerateGeminiTomlCommands:
         commands_dir = tmp_path / "commands"
         commands_dir.mkdir()
         for i in range(5):
-            (commands_dir / f"cmd{i}.md").write_text(
-                f'---\ndescription: Cmd {i}\n---\n\nContent {i}.'
-            )
+            (commands_dir / f"cmd{i}.md").write_text(f"---\ndescription: Cmd {i}\n---\n\nContent {i}.")
 
         count = install._generate_gemini_toml_commands(tmp_path, "ar")
         assert count == 5
@@ -988,7 +982,7 @@ class TestGenerateGeminiTomlCommands:
         install = get_install_module()
         commands_dir = tmp_path / "commands"
         commands_dir.mkdir()
-        (commands_dir / "cmd.md").write_text('---\ndescription: Cmd\n---\n\nContent.')
+        (commands_dir / "cmd.md").write_text("---\ndescription: Cmd\n---\n\nContent.")
         (commands_dir / "existing.toml").write_text('description = "existing"')
         (commands_dir / "script.py").write_text("print('hello')")
 
@@ -1008,26 +1002,8 @@ class TestAntigravityImportSync:
         hook_data = {
             "hooks": {
                 "BeforeTool": [
-                    {
-                        "hooks": [
-                            {
-                                "command": (
-                                    "uv run --quiet --project ${extensionPath} "
-                                    "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
-                                )
-                            }
-                        ]
-                    },
-                    {
-                        "hooks": [
-                            {
-                                "command": (
-                                    "uv run custom-wrapper --cli gemini "
-                                    "python custom_hook.py"
-                                )
-                            }
-                        ]
-                    }
+                    {"hooks": [{"command": ("uv run --quiet --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini")}]},
+                    {"hooks": [{"command": ("uv run custom-wrapper --cli gemini python custom_hook.py")}]},
                 ]
             }
         }
@@ -1041,6 +1017,11 @@ class TestAntigravityImportSync:
             assert "--cli antigravity" in text
             assert "hook_entry.py --cli gemini" not in text
             assert "uv run custom-wrapper --cli gemini python custom_hook.py" in text
+            data = json.loads(text)
+            assert set(data) == {"autorun"}
+            assert set(data["autorun"]) == {"PreToolUse"}
+            assert "BeforeTool" not in data["autorun"]
+            assert all(group["matcher"] == "*" for group in data["autorun"]["PreToolUse"])
 
     def test_gemini_family_hook_cli_preserves_unrelated_text_on_malformed_hooks(self, tmp_path):
         """Fallback text repair should touch only autorun hook_entry.py lines."""
@@ -1050,12 +1031,14 @@ class TestAntigravityImportSync:
         hooks_dir.mkdir(parents=True)
         hooks_file = hooks_dir / "hooks.json"
         hooks_file.write_text(
-            "\n".join([
-                "{",
-                "command = 'python ${extensionPath}/hooks/hook_entry.py --cli gemini'",
-                "custom = 'uv run custom-wrapper --cli gemini python custom_hook.py'",
-                "",
-            ]),
+            "\n".join(
+                [
+                    "{",
+                    "command = 'python ${extensionPath}/hooks/hook_entry.py --cli gemini'",
+                    "custom = 'uv run custom-wrapper --cli gemini python custom_hook.py'",
+                    "",
+                ]
+            ),
             encoding="utf-8",
         )
 
@@ -1092,6 +1075,11 @@ class TestAntigravityImportSync:
         assert "--cli antigravity" in root_hooks
         assert "--cli antigravity" in nested_hooks
         assert "--cli gemini" not in root_hooks
+        root_data = json.loads(root_hooks)
+        assert set(root_data) == {"autorun"}
+        assert {"PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"}.issubset(root_data["autorun"])
+        assert isinstance(root_data["autorun"]["Stop"], list)
+        assert all("hooks" not in handler for handler in root_data["autorun"]["Stop"])
         assert (bundle_dir / "commands").is_dir()
         assert (bundle_dir / "skills").is_dir()
 
@@ -1099,6 +1087,26 @@ class TestAntigravityImportSync:
         first_root_hooks = root_hooks
         install._stage_antigravity_native_bundle(plugin_dir, bundle_dir)
         assert (bundle_dir / "hooks.json").read_text(encoding="utf-8") == first_root_hooks
+
+    def test_antigravity_cli_validates_staged_hooks_without_model_call(self, tmp_path):
+        """The local Agy validator must parse the native manifest and hooks.
+
+        ``agy plugin validate`` performs local schema validation; unlike an Agy
+        prompt/session command, this test does not invoke a model or incur usage.
+        """
+        install = get_install_module()
+        if not install.shutil.which("agy"):
+            pytest.skip("agy CLI is not installed")
+
+        bundle_dir = tmp_path / "agy-ar"
+        install._stage_antigravity_native_bundle(get_plugin_root(), bundle_dir)
+        result = install.run_cmd(
+            ["agy", "plugin", "validate", str(bundle_dir)],
+            timeout=30,
+        )
+
+        assert result.ok, result.output
+        assert install._antigravity_validate_reports_hooks(result.output), result.output
 
     def test_antigravity_native_bundle_supports_skill_only_plugins(self, tmp_path):
         """A selected plugin without hooks still gets commands and skills."""
@@ -1137,9 +1145,7 @@ class TestAntigravityImportSync:
         }
         assert not (bundle_dir / "hooks.json").exists()
 
-    def test_antigravity_installs_every_selected_plugin_natively(
-        self, tmp_path, monkeypatch
-    ):
+    def test_antigravity_installs_every_selected_plugin_natively(self, tmp_path, monkeypatch):
         """Direct Antigravity installs must include autorun and PDF skills."""
         install = get_install_module()
         marketplace = get_plugin_root().parents[1]
@@ -1155,20 +1161,14 @@ class TestAntigravityImportSync:
         def fake_run_cmd(args, timeout=30, **_kwargs):
             if args[:3] == ["agy", "plugin", "validate"]:
                 bundle = Path(args[3])
-                name = json.loads(
-                    (bundle / "plugin.json").read_text(encoding="utf-8")
-                )["name"]
+                name = json.loads((bundle / "plugin.json").read_text(encoding="utf-8"))["name"]
                 return install.CmdResult(
                     True,
                     "hooks : 1 processed" if name == "ar" else "valid",
                 )
             if args[:3] == ["agy", "plugin", "install"]:
                 bundle = Path(args[3])
-                installed_names.append(
-                    json.loads(
-                        (bundle / "plugin.json").read_text(encoding="utf-8")
-                    )["name"]
-                )
+                installed_names.append(json.loads((bundle / "plugin.json").read_text(encoding="utf-8"))["name"])
                 return install.CmdResult(True, "installed")
             if args == ["agy", "plugin", "list"]:
                 return install.CmdResult(True, "ar pdf-extractor")
@@ -1185,16 +1185,7 @@ class TestAntigravityImportSync:
         assert ok, message
         assert installed_names == ["ar", "pdf-extractor"]
         for plugin, skill in (("ar", "cache"), ("pdf-extractor", "pdf-extractor")):
-            skill_file = (
-                home
-                / ".gemini"
-                / "antigravity-cli"
-                / "plugins"
-                / plugin
-                / "skills"
-                / skill
-                / "SKILL.md"
-            )
+            skill_file = home / ".gemini" / "antigravity-cli" / "plugins" / plugin / "skills" / skill / "SKILL.md"
             assert skill_file.is_file()
 
     def test_antigravity_install_prefers_native_bundle_when_valid(self, tmp_path, monkeypatch):
@@ -1207,23 +1198,24 @@ class TestAntigravityImportSync:
         hooks_dir.mkdir(parents=True)
         (template / "gemini-extension.json").write_text('{"name": "ar"}', encoding="utf-8")
         (hooks_dir / "hooks.json").write_text(
-            json.dumps({
-                "hooks": {
-                    "BeforeTool": [
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": (
-                                        "uv run --quiet --no-sync --project ${extensionPath} "
-                                        "python ${extensionPath}/hooks/hook_entry.py --cli gemini"
-                                    ),
-                                }
-                            ]
-                        }
-                    ]
+            json.dumps(
+                {
+                    "hooks": {
+                        "BeforeTool": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": (
+                                            "uv run --quiet --no-sync --project ${extensionPath} python ${extensionPath}/hooks/hook_entry.py --cli gemini"
+                                        ),
+                                    }
+                                ]
+                            }
+                        ]
+                    }
                 }
-            }),
+            ),
             encoding="utf-8",
         )
         (hooks_dir / "hook_entry.py").write_text("# hook\n", encoding="utf-8")
@@ -1292,9 +1284,7 @@ class TestAntigravityImportSync:
             assert "--cli gemini" not in hook_text
             assert "--no-sync" in hook_text
 
-    def test_antigravity_cli_bundle_restores_previous_install_on_replace_failure(
-        self, tmp_path, monkeypatch
-    ):
+    def test_antigravity_cli_bundle_restores_previous_install_on_replace_failure(self, tmp_path, monkeypatch):
         """A failed staged replacement must restore the last working CLI plugin."""
         install = get_install_module()
         home = tmp_path / "home"
@@ -1393,9 +1383,7 @@ class TestCustomHarnessInstall:
         install = get_install_module()
         config_dir = tmp_path / "custom-home"
 
-        spec = install.parse_custom_harness_spec(
-            f"lab=gemini:agy-lab:{config_dir}:Antigravity Lab"
-        )
+        spec = install.parse_custom_harness_spec(f"lab=gemini:agy-lab:{config_dir}:Antigravity Lab")
 
         assert spec.name == "lab"
         assert spec.flavor == "gemini"
@@ -1432,9 +1420,7 @@ class TestCustomHarnessInstall:
         """Antigravity can be named by product flavor as well as binary alias."""
         install = get_install_module()
 
-        spec = install.parse_custom_harness_spec(
-            f"lab=antigravity:agy-lab:{tmp_path}:Antigravity Lab"
-        )
+        spec = install.parse_custom_harness_spec(f"lab=antigravity:agy-lab:{tmp_path}:Antigravity Lab")
 
         assert spec.flavor == "antigravity"
         assert spec.display_name == "Antigravity Lab"
@@ -1454,9 +1440,7 @@ class TestCustomHarnessInstall:
         install = get_install_module()
         config_dir = tmp_path / "custom:profile"
 
-        spec = install.parse_custom_harness_spec(
-            f"lab=agy:agy-lab:{config_dir}::Antigravity-Lab"
-        )
+        spec = install.parse_custom_harness_spec(f"lab=agy:agy-lab:{config_dir}::Antigravity-Lab")
 
         assert spec.config_dir == config_dir
         assert spec.flavor == "antigravity"
@@ -1618,12 +1602,7 @@ class TestCustomHarnessInstall:
 
         hooks = json.loads((custom_codex / "hooks.json").read_text(encoding="utf-8"))
         for entries in hooks.get("hooks", {}).values():
-            event_commands = [
-                hook["command"]
-                for entry in entries
-                for hook in entry.get("hooks", [])
-                if isinstance(hook, dict) and "command" in hook
-            ]
+            event_commands = [hook["command"] for entry in entries for hook in entry.get("hooks", []) if isinstance(hook, dict) and "command" in hook]
             assert len(event_commands) == len(set(event_commands))
         agents = (custom_codex / "AGENTS.md").read_text(encoding="utf-8")
         assert agents.count("<!-- autorun:codex-agents-md:start -->") == 1
@@ -1728,9 +1707,7 @@ class TestCustomHarnessInstall:
         assert "antigravity" in out
         assert "No files, hooks, plugin state, dependencies, or daemons were changed." in out
 
-    def test_custom_harness_status_reports_codex_config_dir(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_custom_harness_status_reports_codex_config_dir(self, tmp_path, monkeypatch, capsys):
         """Custom Codex status inspects only the supplied config directory."""
         install = get_install_module()
         marketplace = self._make_skill_marketplace(tmp_path)
@@ -1745,20 +1722,22 @@ class TestCustomHarnessInstall:
         codex_dir = tmp_path / "custom-codex"
         codex_dir.mkdir()
         (codex_dir / "hooks.json").write_text(
-            json.dumps({
-                "hooks": {
-                    "PreToolUse": [
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": "uv run python /tmp/hook_entry.py --cli codex",
-                                }
-                            ]
-                        }
-                    ]
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "uv run python /tmp/hook_entry.py --cli codex",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
                 }
-            }),
+            ),
             encoding="utf-8",
         )
         (codex_dir / "AGENTS.md").write_text("autorun guidance", encoding="utf-8")
@@ -1773,9 +1752,7 @@ class TestCustomHarnessInstall:
         assert "AGENTS.md: ✓ installed" in out
         assert "shared Codex skills: ✓ installed" in out
 
-    def test_custom_harness_status_reports_gemini_family_config_dir(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_custom_harness_status_reports_gemini_family_config_dir(self, tmp_path, monkeypatch, capsys):
         """Custom Antigravity/Gemini-family status checks extension hook identity."""
         install = get_install_module()
         marketplace = self._make_skill_marketplace(tmp_path)
@@ -1784,23 +1761,22 @@ class TestCustomHarnessInstall:
         hooks_dir = config_dir / "extensions" / "ar" / "hooks"
         hooks_dir.mkdir(parents=True)
         (hooks_dir / "hooks.json").write_text(
-            json.dumps({
-                "hooks": {
-                    "BeforeTool": [
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": (
-                                        "uv run python ${extensionPath}/hooks/"
-                                        "hook_entry.py --cli antigravity"
-                                    ),
-                                }
-                            ]
-                        }
-                    ]
+            json.dumps(
+                {
+                    "hooks": {
+                        "BeforeTool": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": ("uv run python ${extensionPath}/hooks/hook_entry.py --cli antigravity"),
+                                    }
+                                ]
+                            }
+                        ]
+                    }
                 }
-            }),
+            ),
             encoding="utf-8",
         )
         for plugin, skill in (("ar", "cache"), ("pdf-extractor", "pdf-extractor")):
@@ -1858,9 +1834,7 @@ class TestUvToolInstall:
         marketplace = tmp_path / "marketplace"
         plugin_root = marketplace / "plugins" / "autorun"
         (plugin_root / ".claude-plugin").mkdir(parents=True)
-        (plugin_root / ".claude-plugin" / "plugin.json").write_text(
-            '{}', encoding="utf-8"
-        )
+        (plugin_root / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
         custom_home = tmp_path / "custom-codex"
 
         monkeypatch.setattr(install, "find_marketplace_root", lambda: marketplace)
@@ -1870,12 +1844,8 @@ class TestUvToolInstall:
             "detect_available_clis",
             lambda: {name: False for name in install.PLATFORMS},
         )
-        monkeypatch.setattr(
-            install, "_check_uv_env", lambda *_args: install.CmdResult(True, "")
-        )
-        monkeypatch.setattr(
-            install, "_sync_dependencies", lambda: install.CmdResult(True, "")
-        )
+        monkeypatch.setattr(install, "_check_uv_env", lambda *_args: install.CmdResult(True, ""))
+        monkeypatch.setattr(install, "_sync_dependencies", lambda: install.CmdResult(True, ""))
         monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
         monkeypatch.setattr(install, "_install_for_codex", lambda *_args, **_kwargs: (True, "ok"))
         monkeypatch.setattr(

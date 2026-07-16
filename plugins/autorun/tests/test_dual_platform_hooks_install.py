@@ -49,6 +49,7 @@ def _pretooluse(ctx):
         return result
     return ctx.allow()
 
+
 # =============================================================================
 # Utilities
 # =============================================================================
@@ -60,6 +61,7 @@ def _extract_function(content: str, func_name: str) -> str:
     This avoids hardcoded character windows that break when code grows.
     """
     import re
+
     func_idx = content.find(f"def {func_name}(")
     if func_idx < 0:
         return ""
@@ -67,7 +69,7 @@ def _extract_function(content: str, func_name: str) -> str:
     line_start = content.rfind("\n", 0, func_idx) + 1
     indent = func_idx - line_start
     # Find next function/class at same or lesser indent
-    pattern = re.compile(rf'\n.{{0,{indent}}}(?:def |class )\w+', re.MULTILINE)
+    pattern = re.compile(rf"\n.{{0,{indent}}}(?:def |class )\w+", re.MULTILINE)
     match = pattern.search(content, func_idx + 1)
     end = match.start() if match else len(content)
     return content[func_idx:end]
@@ -97,11 +99,19 @@ REPO_ROOT = PLUGIN_ROOT.parent.parent
 
 # Expected hook events per platform
 CLAUDE_HOOK_EVENTS = {
-    "UserPromptSubmit", "PreToolUse", "PostToolUse",
-    "SessionStart", "Stop", "SubagentStop",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "SessionStart",
+    "Stop",
+    "SubagentStop",
 }
 GEMINI_HOOK_EVENTS = {
-    "SessionStart", "BeforeAgent", "BeforeTool", "AfterTool", "SessionEnd",
+    "SessionStart",
+    "BeforeAgent",
+    "BeforeTool",
+    "AfterTool",
+    "SessionEnd",
 }
 
 # Path variables per platform
@@ -154,8 +164,7 @@ class TestClaudeHooksJson:
         data = load_hooks_json(HOOKS_JSON)
         assert isinstance(data, dict)
         assert set(data) == {"hooks"}, (
-            "Codex plugin hooks/hooks.json is parsed as HooksFile with "
-            "deny_unknown_fields; metadata belongs in .claude-plugin/plugin.json"
+            "Codex plugin hooks/hooks.json is parsed as HooksFile with deny_unknown_fields; metadata belongs in .claude-plugin/plugin.json"
         )
 
     def test_uses_claude_path_variable(self):
@@ -177,31 +186,26 @@ class TestClaudeHooksJson:
         data = load_hooks_json(HOOKS_JSON)
         commands = extract_all_commands(data)
         for cmd in commands:
-            assert not cmd.startswith("python3 "), \
-                f"Bare python3 found: {cmd}"
-            assert not cmd.startswith("python "), \
-                f"Bare python found: {cmd}"
+            assert not cmd.startswith("python3 "), f"Bare python3 found: {cmd}"
+            assert not cmd.startswith("python "), f"Bare python found: {cmd}"
 
     def test_no_cd_in_commands(self):
         data = load_hooks_json(HOOKS_JSON)
         commands = extract_all_commands(data)
         for cmd in commands:
-            assert not cmd.startswith("cd "), \
-                f"Command must not use cd: {cmd}"
+            assert not cmd.startswith("cd "), f"Command must not use cd: {cmd}"
 
     def test_has_all_required_events(self):
         data = load_hooks_json(HOOKS_JSON)
         hooks_section = data.get("hooks", {})
         for event in {"PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"}:
-            assert event in hooks_section, \
-                f"Required Claude event '{event}' missing"
+            assert event in hooks_section, f"Required Claude event '{event}' missing"
 
     def test_has_no_gemini_events(self):
         data = load_hooks_json(HOOKS_JSON)
         hooks_section = data.get("hooks", {})
         for event in {"BeforeTool", "AfterTool", "BeforeAgent", "SessionEnd"}:
-            assert event not in hooks_section, \
-                f"Gemini-only event '{event}' in Claude hooks"
+            assert event not in hooks_section, f"Gemini-only event '{event}' in Claude hooks"
 
     def test_pretooluse_covers_bash(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -210,16 +214,14 @@ class TestClaudeHooksJson:
         # Catch-all (no matcher) covers all tools including Bash
         has_catch_all = any("matcher" not in g for g in pretool)
         matchers_str = "|".join(c.get("matcher", "") for c in pretool)
-        assert has_catch_all or "Bash" in matchers_str, \
-            f"PreToolUse must cover 'Bash' (catch-all or in matcher). Matchers: {matchers_str}"
+        assert has_catch_all or "Bash" in matchers_str, f"PreToolUse must cover 'Bash' (catch-all or in matcher). Matchers: {matchers_str}"
 
     def test_pretooluse_covers_write(self):
         data = load_hooks_json(HOOKS_JSON)
         pretool = data["hooks"].get("PreToolUse", [])
         has_catch_all = any("matcher" not in g for g in pretool)
         matchers_str = "|".join(c.get("matcher", "") for c in pretool)
-        assert has_catch_all or "Write" in matchers_str, \
-            f"PreToolUse must cover 'Write' (catch-all or in matcher). Matchers: {matchers_str}"
+        assert has_catch_all or "Write" in matchers_str, f"PreToolUse must cover 'Write' (catch-all or in matcher). Matchers: {matchers_str}"
 
     def test_timeout_is_seconds(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -227,8 +229,7 @@ class TestClaudeHooksJson:
             for config in event_configs:
                 for hook in config.get("hooks", []):
                     if "timeout" in hook:
-                        assert hook["timeout"] < 100, \
-                            f"Claude timeout should be seconds (< 100): {hook['timeout']}"
+                        assert hook["timeout"] < 100, f"Claude timeout should be seconds (< 100): {hook['timeout']}"
 
     def test_all_commands_reference_hook_entry(self):
         data = load_hooks_json(HOOKS_JSON)
@@ -250,8 +251,7 @@ class TestClaudeHooksJson:
         commands = extract_all_commands(data)
         for cmd in commands:
             assert "--cli claude" not in cmd, (
-                "hooks/hooks.json is shared by Claude and Codex plugin loading; "
-                "forcing Claude makes Codex PreToolUse emit Claude-shaped blocks"
+                "hooks/hooks.json is shared by Claude and Codex plugin loading; forcing Claude makes Codex PreToolUse emit Claude-shaped blocks"
             )
 
 
@@ -290,29 +290,25 @@ class TestGeminiHooksJson:
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         commands = extract_all_commands(data)
         for cmd in commands:
-            assert not cmd.startswith("python3 "), \
-                f"Bare python3 in Gemini hooks: {cmd}"
+            assert not cmd.startswith("python3 "), f"Bare python3 in Gemini hooks: {cmd}"
 
     def test_no_env_var_assignment(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         raw = json.dumps(data)
         for pattern in ["AUTORUN_PLUGIN_ROOT=", "CLAUDE_PLUGIN_ROOT=", "PLUGIN_ROOT="]:
-            assert pattern not in raw, \
-                f"Gemini CLI doesn't support env var assignment: {pattern}"
+            assert pattern not in raw, f"Gemini CLI doesn't support env var assignment: {pattern}"
 
     def test_has_all_required_events(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         hooks_section = data.get("hooks", {})
         for event in {"BeforeTool", "SessionStart"}:
-            assert event in hooks_section, \
-                f"Required Gemini event '{event}' missing"
+            assert event in hooks_section, f"Required Gemini event '{event}' missing"
 
     def test_has_no_claude_only_events(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         hooks_section = data.get("hooks", {})
         for event in {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SubagentStop"}:
-            assert event not in hooks_section, \
-                f"Claude-only event '{event}' in Gemini hooks"
+            assert event not in hooks_section, f"Claude-only event '{event}' in Gemini hooks"
 
     def test_beforetool_covers_run_shell_command(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
@@ -320,16 +316,16 @@ class TestGeminiHooksJson:
         assert len(beforetool) > 0
         has_catch_all = any("matcher" not in g for g in beforetool)
         matchers_str = "|".join(c.get("matcher", "") for c in beforetool)
-        assert has_catch_all or "run_shell_command" in matchers_str, \
+        assert has_catch_all or "run_shell_command" in matchers_str, (
             f"BeforeTool must cover run_shell_command (catch-all or in matcher). Matchers: {matchers_str}"
+        )
 
     def test_beforetool_covers_write_file(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
         beforetool = data["hooks"].get("BeforeTool", [])
         has_catch_all = any("matcher" not in g for g in beforetool)
         matchers_str = "|".join(c.get("matcher", "") for c in beforetool)
-        assert has_catch_all or "write_file" in matchers_str, \
-            f"BeforeTool must cover write_file (catch-all or in matcher). Matchers: {matchers_str}"
+        assert has_catch_all or "write_file" in matchers_str, f"BeforeTool must cover write_file (catch-all or in matcher). Matchers: {matchers_str}"
 
     def test_timeout_is_milliseconds(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
@@ -337,8 +333,7 @@ class TestGeminiHooksJson:
             for config in event_configs:
                 for hook in config.get("hooks", []):
                     if "timeout" in hook:
-                        assert hook["timeout"] >= 100, \
-                            f"Gemini timeout should be ms (>= 100): {hook['timeout']}"
+                        assert hook["timeout"] >= 100, f"Gemini timeout should be ms (>= 100): {hook['timeout']}"
 
     def test_hooks_have_name_field(self):
         data = load_hooks_json(GEMINI_HOOKS_JSON)
@@ -395,8 +390,7 @@ class TestCrossPlatformConsistency:
         gemini_events = set(load_hooks_json(GEMINI_HOOKS_JSON).get("hooks", {}).keys())
         for claude_event, gemini_event in event_mapping.items():
             if claude_event in claude_events:
-                assert gemini_event in gemini_events, \
-                    f"Claude has {claude_event} but Gemini missing {gemini_event}"
+                assert gemini_event in gemini_events, f"Claude has {claude_event} but Gemini missing {gemini_event}"
 
     def test_tool_name_mapping_complete(self):
         """Verify Claude tool names in matchers have Gemini equivalents.
@@ -411,25 +405,13 @@ class TestCrossPlatformConsistency:
         gemini_matchers = " ".join(extract_all_matchers(gemini_data))
         # Check if Gemini has catch-all BeforeTool/AfterTool (covers all tools)
         gemini_hooks = gemini_data.get("hooks", {})
-        gemini_has_catch_all_pretool = any(
-            "matcher" not in g
-            for g in gemini_hooks.get("BeforeTool", [])
-        )
-        gemini_has_catch_all_posttool = any(
-            "matcher" not in g
-            for g in gemini_hooks.get("AfterTool", [])
-        )
+        gemini_has_catch_all_pretool = any("matcher" not in g for g in gemini_hooks.get("BeforeTool", []))
+        gemini_has_catch_all_posttool = any("matcher" not in g for g in gemini_hooks.get("AfterTool", []))
         for claude_tool, gemini_tool in tool_mapping.items():
             if claude_tool in claude_matchers:
                 # Gemini catch-all covers all tools implicitly
-                covered = (
-                    gemini_tool in gemini_matchers
-                    or gemini_has_catch_all_pretool
-                    or gemini_has_catch_all_posttool
-                )
-                assert covered, \
-                    f"Claude matches '{claude_tool}' but Gemini missing '{gemini_tool}' " \
-                    f"(and no catch-all BeforeTool/AfterTool)"
+                covered = gemini_tool in gemini_matchers or gemini_has_catch_all_pretool or gemini_has_catch_all_posttool
+                assert covered, f"Claude matches '{claude_tool}' but Gemini missing '{gemini_tool}' (and no catch-all BeforeTool/AfterTool)"
 
     def test_both_use_uv_run(self):
         for cmd in extract_all_commands(load_hooks_json(HOOKS_JSON)):
@@ -457,15 +439,12 @@ class TestManifestFiles:
         with open(PLUGIN_JSON, encoding="utf-8") as f:
             manifest = json.load(f)
         assert "hooks" not in manifest, (
-            f"plugin.json should not declare a 'hooks' field — Claude Code auto-discovers "
-            f"hooks/hooks.json. Got: {manifest.get('hooks')!r}"
+            f"plugin.json should not declare a 'hooks' field — Claude Code auto-discovers hooks/hooks.json. Got: {manifest.get('hooks')!r}"
         )
 
     def test_default_claude_hooks_file_exists(self):
         """hooks/hooks.json must exist at the default discovery path."""
-        assert HOOKS_JSON.exists(), (
-            f"Claude default hooks file missing: {HOOKS_JSON}"
-        )
+        assert HOOKS_JSON.exists(), f"Claude default hooks file missing: {HOOKS_JSON}"
 
     def test_gemini_extension_json_exists(self):
         assert GEMINI_EXT_JSON.exists()
@@ -522,11 +501,7 @@ class TestManifestFiles:
             if plugin.get("name") == "ar":
                 autorun_actual["plugin marketplace ar"] = plugin.get("version")
 
-        mismatches = {
-            name: value
-            for name, value in autorun_actual.items()
-            if value is not True and value != expected
-        }
+        mismatches = {name: value for name, value in autorun_actual.items() if value is not True and value != expected}
         assert not mismatches, f"Release version mismatch against {expected}: {mismatches}"
 
         pdf_actual = {
@@ -544,14 +519,8 @@ class TestManifestFiles:
             if plugin.get("name") == "pdf-extractor":
                 pdf_actual["root marketplace pdf-extractor"] = plugin.get("version")
 
-        pdf_mismatches = {
-            name: value
-            for name, value in pdf_actual.items()
-            if value is not True and value != pdf_expected
-        }
-        assert not pdf_mismatches, (
-            f"PDF release version mismatch against {pdf_expected}: {pdf_mismatches}"
-        )
+        pdf_mismatches = {name: value for name, value in pdf_actual.items() if value is not True and value != pdf_expected}
+        assert not pdf_mismatches, f"PDF release version mismatch against {pdf_expected}: {pdf_mismatches}"
 
 
 # =============================================================================
@@ -566,32 +535,16 @@ class TestHookEntryDualPlatform:
         env = os.environ.copy()
         env["CLAUDE_PLUGIN_ROOT"] = "/test/claude/path"
         env.pop("AUTORUN_PLUGIN_ROOT", None)
-        script = (
-            "import sys; import os; "
-            f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
-            "import hook_entry; "
-            "print(hook_entry.get_plugin_root())"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, env=env, timeout=5
-        )
+        script = f"import sys; import os; sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); import hook_entry; print(hook_entry.get_plugin_root())"
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=5)
         assert "/test/claude/path" in result.stdout.strip()
 
     def test_get_plugin_root_with_autorun_env(self):
         env = os.environ.copy()
         env["AUTORUN_PLUGIN_ROOT"] = "/test/autorun/path"
         env["CLAUDE_PLUGIN_ROOT"] = "/test/claude/path"
-        script = (
-            "import sys; import os; "
-            f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
-            "import hook_entry; "
-            "print(hook_entry.get_plugin_root())"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, env=env, timeout=5
-        )
+        script = f"import sys; import os; sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); import hook_entry; print(hook_entry.get_plugin_root())"
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=5)
         assert "/test/autorun/path" in result.stdout.strip()
 
     def test_get_plugin_root_file_inference(self):
@@ -599,16 +552,8 @@ class TestHookEntryDualPlatform:
         env = os.environ.copy()
         env.pop("CLAUDE_PLUGIN_ROOT", None)
         env.pop("AUTORUN_PLUGIN_ROOT", None)
-        script = (
-            "import sys; import os; "
-            f"sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); "
-            "import hook_entry; "
-            "print(hook_entry.get_plugin_root())"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, env=env, timeout=5
-        )
+        script = f"import sys; import os; sys.path.insert(0, '{HOOK_ENTRY_PY.parent}'); import hook_entry; print(hook_entry.get_plugin_root())"
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=5)
         inferred = result.stdout.strip()
         assert len(inferred) > 0, "Should return some path"
 
@@ -623,12 +568,8 @@ class TestHookEntryDualPlatform:
             "spec.loader.exec_module(mod); "
             "print(mod.detect_cli_type())"
         )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, env=env, timeout=5
-        )
-        assert result.stdout.strip() == "claude", \
-            f"Expected 'claude', got: {result.stdout.strip()}, stderr: {result.stderr}"
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=5)
+        assert result.stdout.strip() == "claude", f"Expected 'claude', got: {result.stdout.strip()}, stderr: {result.stderr}"
 
     def test_detect_cli_type_gemini_session(self):
         env = os.environ.copy()
@@ -640,12 +581,8 @@ class TestHookEntryDualPlatform:
             "spec.loader.exec_module(mod); "
             "print(mod.detect_cli_type())"
         )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, env=env, timeout=5
-        )
-        assert result.stdout.strip() == "gemini", \
-            f"Expected 'gemini', got: {result.stdout.strip()}, stderr: {result.stderr}"
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=5)
+        assert result.stdout.strip() == "gemini", f"Expected 'gemini', got: {result.stdout.strip()}, stderr: {result.stderr}"
 
     def test_detect_cli_type_codex_payload_without_cli_arg(self, monkeypatch):
         """Plugin cache hooks may be invoked by Codex without ~/.codex/hooks.json."""
@@ -667,11 +604,7 @@ class TestHookEntryDualPlatform:
         env.pop("CLAUDE_PLUGIN_ROOT", None)
         env.pop("AUTORUN_PLUGIN_ROOT", None)
         env["PATH"] = "/nonexistent"
-        result = subprocess.run(
-            [sys.executable, str(HOOK_ENTRY_PY)],
-            capture_output=True, text=True, env=env,
-            cwd="/tmp", timeout=10
-        )
+        result = subprocess.run([sys.executable, str(HOOK_ENTRY_PY)], capture_output=True, text=True, env=env, cwd="/tmp", timeout=10)
         assert result.returncode == 0
         # Phase 1B: empty stdout = pass-through = implicit allow (no rules fired).
         # This IS the correct fail-open behavior — Claude Code treats no JSON output
@@ -703,49 +636,35 @@ class TestGeminiHookSwapLogic:
     def test_install_py_references_both_hooks_files(self):
         content = INSTALL_PY.read_text(encoding="utf-8")
         assert "hooks.json" in content
-        assert "gemini_template" in content, (
-            "install.py must reference the gemini_template path"
-        )
+        assert "gemini_template" in content, "install.py must reference the gemini_template path"
 
     def test_hooks_json_is_gemini_format(self):
         """gemini_template/hooks/hooks.json must be Gemini format."""
         with open(GEMINI_HOOKS_JSON, encoding="utf-8") as f:
             data = json.load(f)
         hooks = data.get("hooks", {})
-        assert "BeforeTool" in hooks, (
-            f"Gemini hooks template should use BeforeTool at {GEMINI_HOOKS_JSON}"
-        )
-        assert "PreToolUse" not in hooks, (
-            "Gemini hooks template should NOT use Claude event PreToolUse"
-        )
+        assert "BeforeTool" in hooks, f"Gemini hooks template should use BeforeTool at {GEMINI_HOOKS_JSON}"
+        assert "PreToolUse" not in hooks, "Gemini hooks template should NOT use Claude event PreToolUse"
 
     def test_claude_hooks_json_is_claude_format(self):
         """plugins/autorun/hooks/hooks.json must be Claude format."""
         with open(HOOKS_JSON, encoding="utf-8") as f:
             data = json.load(f)
         hooks = data.get("hooks", {})
-        assert "PreToolUse" in hooks, (
-            f"Claude hooks should use PreToolUse at {HOOKS_JSON}"
-        )
-        assert "BeforeTool" not in hooks, (
-            "Claude hooks should NOT use Gemini event BeforeTool"
-        )
+        assert "PreToolUse" in hooks, f"Claude hooks should use PreToolUse at {HOOKS_JSON}"
+        assert "BeforeTool" not in hooks, "Claude hooks should NOT use Gemini event BeforeTool"
 
     def test_no_swap_logic_in_installer(self):
         """Installer should not need swap logic."""
         content = INSTALL_PY.read_text(encoding="utf-8")
         assert "hooks.json.claude-backup" not in content
         # Legacy helper deleted as part of template refactor.
-        assert "_clean_cross_cli_hooks" not in content, (
-            "_clean_cross_cli_hooks should be fully removed; no references allowed"
-        )
+        assert "_clean_cross_cli_hooks" not in content, "_clean_cross_cli_hooks should be fully removed; no references allowed"
 
     def test_both_hooks_files_coexist(self):
         """Each CLI's hooks live in its own root — no shared directory."""
         assert HOOKS_JSON.exists(), f"Claude hooks missing at {HOOKS_JSON}"
-        assert GEMINI_HOOKS_JSON.exists(), (
-            f"Gemini hooks template missing at {GEMINI_HOOKS_JSON}"
-        )
+        assert GEMINI_HOOKS_JSON.exists(), f"Gemini hooks template missing at {GEMINI_HOOKS_JSON}"
 
 
 # =============================================================================
@@ -825,15 +744,16 @@ class TestClaudeInstallPathway:
 
 
 class TestDaemonContinueField:
-    """Validate daemon path correctly sets continue=True for tool denial."""
+    """Validate tool denial blocks one tool without stopping the agent loop."""
 
-    def test_core_py_pretooluse_deny_keeps_ai_working(self):
-        content = CORE_PY.read_text(encoding="utf-8")
-        respond_block = _extract_function(content, "respond")
-        assert respond_block, "Could not find def respond() in core.py"
-        # Verify continue: True is used even on denial to keep AI loop running
-        assert '"continue": True' in respond_block
-        assert "keep AI working" in respond_block or "loop keeps running" in respond_block
+    @pytest.mark.parametrize("cli_type", ["claude", "gemini", "qwen", "antigravity", "codex"])
+    def test_pretooluse_deny_uses_native_tool_block_without_stopping_ai(self, cli_type):
+        response = EventContext("protocol-deny-test", "PreToolUse", cli_type=cli_type).respond("deny", "Blocked by test policy")
+        hook_output = response.get("hookSpecificOutput", {})
+        effective_decision = hook_output.get("permissionDecision", response.get("decision"))
+
+        assert effective_decision == "deny"
+        assert response.get("continue") is not False
 
     def test_plugins_py_enforce_file_policy_deny_keeps_ai_working(self):
         """Verify enforce_file_policy in plugins.py keeps AI working on denial."""
@@ -846,8 +766,7 @@ class TestDaemonContinueField:
         # The response format (continue: True) is in core.py EventContext.respond()
         core_content = CORE_PY.read_text(encoding="utf-8")
         respond_block = _extract_function(core_content, "respond")
-        assert '"continue": True' in respond_block, \
-            "core.py EventContext.respond() must use continue: True to keep AI working"
+        assert '"continue": True' in respond_block, "core.py EventContext.respond() must use continue: True to keep AI working"
 
 
 # =============================================================================
@@ -895,8 +814,7 @@ class TestRmBlockingBothPaths:
             ctx = self._create_test_context("Bash", {"command": cmd})
             result = _pretooluse(ctx)
             if result is not None:
-                assert result.get("continue") is not False, \
-                    f"Safe command '{cmd}' should not be blocked"
+                assert result.get("continue") is not False, f"Safe command '{cmd}' should not be blocked"
 
     def test_cat_blocked(self):
         ctx = self._create_test_context("Bash", {"command": "cat /etc/passwd"})
@@ -965,12 +883,8 @@ class TestWheelPluginAssets:
             }
             assert required <= names, f"wheel missing plugin assets: {required - names}"
             assert archive.read("autorun/hooks/hook_entry.py") == HOOK_ENTRY_PY.read_bytes()
-            assert json.loads(archive.read("autorun/hooks/hooks.json")) == load_hooks_json(
-                HOOKS_JSON
-            )
-            assert json.loads(
-                archive.read("autorun/gemini_template/hooks/hooks.json")
-            ) == load_hooks_json(GEMINI_HOOKS_JSON)
+            assert json.loads(archive.read("autorun/hooks/hooks.json")) == load_hooks_json(HOOKS_JSON)
+            assert json.loads(archive.read("autorun/gemini_template/hooks/hooks.json")) == load_hooks_json(GEMINI_HOOKS_JSON)
 
         venv = tmp_path / "venv"
         subprocess.run(["uv", "venv", str(venv)], check=True, capture_output=True)
@@ -1038,12 +952,11 @@ class TestDeployedCopiesMatchSource:
         # Cache may be RTK-patched (Bash removed from matcher), so compare
         # event structure rather than exact content.
         import json
+
         source = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         cache = json.loads(cached.read_text(encoding="utf-8"))
         assert set(source["hooks"].keys()) == set(cache["hooks"].keys()), (
-            f"Cache events don't match source. "
-            f"Source: {set(source['hooks'].keys())} "
-            f"Cache: {set(cache['hooks'].keys())}"
+            f"Cache events don't match source. Source: {set(source['hooks'].keys())} Cache: {set(cache['hooks'].keys())}"
         )
 
     def test_claude_cache_hook_entry_matches_source(self):
@@ -1062,8 +975,7 @@ class TestDeployedCopiesMatchSource:
         if not cached_entry.exists():
             pytest.skip("No hook_entry.py in cache")
         assert HOOK_ENTRY_PY.read_text(encoding="utf-8") == cached_entry.read_text(encoding="utf-8"), (
-            "Cache hook_entry.py doesn't match source. "
-            "Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Cache hook_entry.py doesn't match source. Run: uv run --project plugins/autorun python -m autorun --install --force"
         )
 
     def test_gemini_extension_hooks_match_source(self):
@@ -1074,8 +986,7 @@ class TestDeployedCopiesMatchSource:
         source_content = GEMINI_HOOKS_JSON.read_text(encoding="utf-8")
         ext_content = ext_hooks.read_text(encoding="utf-8")
         assert source_content == ext_content, (
-            "Gemini extension hooks.json doesn't match source. "
-            "Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Gemini extension hooks.json doesn't match source. Run: uv run --project plugins/autorun python -m autorun --install --force"
         )
 
     def test_gemini_extension_hook_entry_matches_source(self):
@@ -1086,8 +997,7 @@ class TestDeployedCopiesMatchSource:
         source_content = HOOK_ENTRY_PY.read_text(encoding="utf-8")
         ext_content = ext_entry.read_text(encoding="utf-8")
         assert source_content == ext_content, (
-            "Gemini extension hook_entry.py doesn't match source. "
-            "Run: uv run --project plugins/autorun python -m autorun --install --force"
+            "Gemini extension hook_entry.py doesn't match source. Run: uv run --project plugins/autorun python -m autorun --install --force"
         )
 
 
@@ -1171,9 +1081,7 @@ class TestInstallForGeminiMarketplaceResolution:
         """Create a minimal plugin directory with gemini-extension.json."""
         plugin_dir = base / dirname
         plugin_dir.mkdir(parents=True)
-        (plugin_dir / "gemini-extension.json").write_text(
-            json.dumps({"name": ext_name, "version": "1.0.0", "description": "test"})
-        )
+        (plugin_dir / "gemini-extension.json").write_text(json.dumps({"name": ext_name, "version": "1.0.0", "description": "test"}))
         return plugin_dir
 
     def _make_marketplace(self, root: Path, plugins: list[dict]) -> Path:
@@ -1216,18 +1124,24 @@ class TestInstallForGeminiMarketplaceResolution:
     def test_name_differs_from_dir_resolved_via_marketplace_json(self, tmp_path):
         """Core regression: name='ar' but dir='autorun' — must install correctly."""
         self._make_plugin_dir(tmp_path / "plugins", "autorun", "ar")
-        self._make_marketplace(tmp_path, [
-            {"name": "ar", "source": "./plugins/autorun"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "ar", "source": "./plugins/autorun"},
+            ],
+        )
         success, msg = self._run(tmp_path, ["ar"])
         assert success, f"Expected success but got: {msg}"
 
     def test_name_matches_dir_still_works(self, tmp_path):
         """Traditional case: name='pdf-extractor' dir='pdf-extractor' — unaffected."""
         self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
-        self._make_marketplace(tmp_path, [
-            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+            ],
+        )
         success, msg = self._run(tmp_path, ["pdf-extractor"])
         assert success, f"Expected success but got: {msg}"
 
@@ -1235,10 +1149,13 @@ class TestInstallForGeminiMarketplaceResolution:
         """Both ar and pdf-extractor resolved via marketplace.json in one call."""
         self._make_plugin_dir(tmp_path / "plugins", "autorun", "ar")
         self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
-        self._make_marketplace(tmp_path, [
-            {"name": "ar", "source": "./plugins/autorun"},
-            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "ar", "source": "./plugins/autorun"},
+                {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+            ],
+        )
         success, msg = self._run(tmp_path, ["ar", "pdf-extractor"])
         assert success, f"Expected success but got: {msg}"
 
@@ -1266,10 +1183,13 @@ class TestInstallForGeminiMarketplaceResolution:
     def test_source_dir_missing_skipped_silently(self, tmp_path):
         """source points to non-existent dir → skipped, fallback to strategy 1."""
         self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
-        self._make_marketplace(tmp_path, [
-            {"name": "ar", "source": "./plugins/does-not-exist"},
-            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "ar", "source": "./plugins/does-not-exist"},
+                {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+            ],
+        )
         # ar will fail (missing dir); pdf-extractor should still succeed
         success, msg = self._run(tmp_path, ["pdf-extractor"])
         assert success, f"Expected pdf-extractor to succeed but got: {msg}"
@@ -1280,30 +1200,39 @@ class TestInstallForGeminiMarketplaceResolution:
         bad_dir.mkdir(parents=True)
         # No gemini-extension.json in bad_dir
         self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
-        self._make_marketplace(tmp_path, [
-            {"name": "ar", "source": "./plugins/autorun"},
-            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "ar", "source": "./plugins/autorun"},
+                {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+            ],
+        )
         success, msg = self._run(tmp_path, ["pdf-extractor"])
         assert success, f"Expected pdf-extractor to succeed but got: {msg}"
 
     def test_empty_name_field_skipped(self, tmp_path):
         """marketplace.json entry with empty name → skipped without crash."""
         self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
-        self._make_marketplace(tmp_path, [
-            {"name": "", "source": "./plugins/autorun"},
-            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "", "source": "./plugins/autorun"},
+                {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+            ],
+        )
         success, msg = self._run(tmp_path, ["pdf-extractor"])
         assert success, f"Expected pdf-extractor to succeed but got: {msg}"
 
     def test_empty_source_field_skipped(self, tmp_path):
         """marketplace.json entry with empty source → skipped without crash."""
         self._make_plugin_dir(tmp_path / "plugins", "pdf-extractor", "pdf-extractor")
-        self._make_marketplace(tmp_path, [
-            {"name": "ar", "source": ""},
-            {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "ar", "source": ""},
+                {"name": "pdf-extractor", "source": "./plugins/pdf-extractor"},
+            ],
+        )
         success, msg = self._run(tmp_path, ["pdf-extractor"])
         assert success, f"Expected pdf-extractor to succeed but got: {msg}"
 
@@ -1321,10 +1250,7 @@ class TestInstallForGeminiMarketplaceResolution:
     def test_no_hardcoded_cr_pdf_extractor_in_success_message(self):
         """Verify the old hardcoded 'cr, pdf-extractor' string was removed."""
         content = INSTALL_PY.read_text(encoding="utf-8")
-        assert "cr, pdf-extractor" not in content, (
-            "Hardcoded 'cr, pdf-extractor' found in install.py — "
-            "success message must use the actual plugins list"
-        )
+        assert "cr, pdf-extractor" not in content, "Hardcoded 'cr, pdf-extractor' found in install.py — success message must use the actual plugins list"
 
     def test_success_message_uses_join(self):
         """Verify Gemini success message uses ', '.join(plugins) not a literal string."""
@@ -1413,50 +1339,46 @@ class TestClaudeCachePathSubstitution:
         claude_plugin_dir = root / ".claude-plugin"
         claude_plugin_dir.mkdir(parents=True, exist_ok=True)
         (claude_plugin_dir / "marketplace.json").write_text(
-            json.dumps({
-                "name": "autorun",
-                "version": "1.0.0",
-                "plugins": plugins,
-            })
+            json.dumps(
+                {
+                    "name": "autorun",
+                    "version": "1.0.0",
+                    "plugins": plugins,
+                }
+            )
         )
 
     def _make_plugin_source(self, root: Path, dirname: str, version: str) -> Path:
         plugin_dir = root / "plugins" / dirname
         (plugin_dir / ".claude-plugin").mkdir(parents=True)
-        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
-            json.dumps({"name": dirname, "version": version})
-        )
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": dirname, "version": version}))
         return plugin_dir
 
     def _make_cached_hooks(self, home: Path, plugin_name: str, version: str) -> Path:
-        cache_dir = (
-            home
-            / ".claude"
-            / "plugins"
-            / "cache"
-            / "autorun"
-            / plugin_name
-            / version
-        )
+        cache_dir = home / ".claude" / "plugins" / "cache" / "autorun" / plugin_name / version
         hooks_dir = cache_dir / "hooks"
         hooks_dir.mkdir(parents=True)
         # Legacy cached hook command: this fixture intentionally predates
         # --no-sync so cache path substitution is tested against old installs.
         (hooks_dir / "hooks.json").write_text(
-            json.dumps({
-                "hooks": {
-                    "PreToolUse": [{
-                        "hooks": [{
-                            "type": "command",
-                            "command": (
-                                "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} "
-                                "python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py "
-                                "--cli claude"
-                            ),
-                        }]
-                    }]
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": (
+                                            "uv run --quiet --project ${CLAUDE_PLUGIN_ROOT} python ${CLAUDE_PLUGIN_ROOT}/hooks/hook_entry.py --cli claude"
+                                        ),
+                                    }
+                                ]
+                            }
+                        ]
+                    }
                 }
-            })
+            )
         )
         return cache_dir
 
@@ -1465,9 +1387,12 @@ class TestClaudeCachePathSubstitution:
         import autorun.install as install_mod
 
         self._make_plugin_source(tmp_path, "autorun", "9.8.7")
-        self._make_marketplace(tmp_path, [
-            {"name": "ar", "source": "./plugins/autorun"},
-        ])
+        self._make_marketplace(
+            tmp_path,
+            [
+                {"name": "ar", "source": "./plugins/autorun"},
+            ],
+        )
         cache_dir = self._make_cached_hooks(tmp_path, "ar", "9.8.7")
 
         with patch("autorun.install.Path.home", return_value=tmp_path):

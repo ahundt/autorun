@@ -63,6 +63,7 @@ from .session_manager import session_state  # noqa: F401 - compatibility re-expo
 # Import centralized tmux utilities (TMUX_UTILS_AVAILABLE exported for tests)
 try:
     from .tmux_utils import get_tmux_utilities
+
     TMUX_UTILS_AVAILABLE = True
 except ImportError:
     TMUX_UTILS_AVAILABLE = False
@@ -83,6 +84,7 @@ from .config import (  # noqa: F401 - compatibility re-exports
 # Uses bashlex AST parsing when available, falls back to shlex
 try:
     from .command_detection import command_matches_pattern as ast_command_matches_pattern
+
     AST_COMMAND_DETECTION_AVAILABLE = True
 except ImportError:
     AST_COMMAND_DETECTION_AVAILABLE = False
@@ -95,6 +97,7 @@ except ImportError:
     # Fallback if core.py not available
     def validate_hook_response(event, response, cli_type="claude"):
         return response
+
     def get_cli_event_name(internal_event, cli_type):
         return internal_event
 
@@ -106,6 +109,7 @@ except ImportError:
 STATE_DIR = Path(os.environ.get("AUTORUN_TEST_STATE_DIR") or Path.home() / ".claude" / "sessions")
 if os.environ.get("AUTORUN_CREATE_LEGACY_STATE_DIR_ON_IMPORT") == "1":
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def sanitize_log_message(message: str, max_length: int = 10000) -> str:
     """Sanitize message for safe logging - prevents log injection attacks.
@@ -123,9 +127,9 @@ def sanitize_log_message(message: str, max_length: int = 10000) -> str:
     if not isinstance(message, str):
         message = str(message)
     # Replace newlines and carriage returns with escaped versions
-    message = message.replace('\r\n', '\\r\\n').replace('\n', '\\n').replace('\r', '\\r')
+    message = message.replace("\r\n", "\\r\\n").replace("\n", "\\n").replace("\r", "\\r")
     # Replace other control characters that could affect log parsing
-    message = ''.join(c if c.isprintable() or c == ' ' else f'\\x{ord(c):02x}' for c in message)
+    message = "".join(c if c.isprintable() or c == " " else f"\\x{ord(c):02x}" for c in message)
     # Truncate excessively long messages
     if len(message) > max_length:
         message = message[:max_length] + "... (truncated)"
@@ -150,7 +154,7 @@ def log_info(message):
 
         # Log to main autorun log
         with open(STATE_DIR / "autorun.log", "a", encoding="utf-8") as f:
-            log_time = time.strftime('%Y-%m-%d %H:%M:%S')
+            log_time = time.strftime("%Y-%m-%d %H:%M:%S")
             pid = os.getpid()
             f.write(f"[{log_time}] {pid}: {safe_message}\n")
             f.flush()
@@ -165,6 +169,7 @@ def log_info(message):
         # Fallback logging - silently skip to avoid breaking hooks
         # If logging fails, it's better to continue than to break hooks with stderr output
         pass
+
 
 # NOTE: _not_in_pipe import removed (fallback path only).
 # Modern replacement: integrations.py — _not_in_pipe(ctx) in _WHEN_PREDICATES,
@@ -312,12 +317,12 @@ def is_safe_regex_pattern(pattern: str, max_length: int = 200) -> bool:
     # Pattern: quantifier followed by another quantifier on the same group
     # Examples: (a+)+, (a*)+, (a+)*, (a?)*, (.+)+, ((a+))+, etc.
     nested_quantifier_patterns = [
-        r'\([^)]*[+*?]\)[+*?]',       # (x+)+, (x*)+, etc.
-        r'\([^)]*[+*?]\)\{',           # (x+){n}, (x*){n}, etc.
-        r'\[[^\]]*\][+*?][+*?]',       # [abc]+*, etc.
-        r'[+*?]\{[0-9,]+\}[+*?]',      # a{2,}+, etc.
-        r'\)\)+[+*?]',                 # ))+ nested groups with quantifier
-        r'\([^)]*\([^)]*[+*?]\)',      # ((x+)) nested capturing groups
+        r"\([^)]*[+*?]\)[+*?]",  # (x+)+, (x*)+, etc.
+        r"\([^)]*[+*?]\)\{",  # (x+){n}, (x*){n}, etc.
+        r"\[[^\]]*\][+*?][+*?]",  # [abc]+*, etc.
+        r"[+*?]\{[0-9,]+\}[+*?]",  # a{2,}+, etc.
+        r"\)\)+[+*?]",  # ))+ nested groups with quantifier
+        r"\([^)]*\([^)]*[+*?]\)",  # ((x+)) nested capturing groups
     ]
 
     for dangerous_pattern in nested_quantifier_patterns:
@@ -392,17 +397,17 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
 
     # Command name match (pattern is just the command)
     # Split by shell operators and spaces
-    command_parts = regex_module.split(r'[|&;\s]+', command)
+    command_parts = regex_module.split(r"[|&;\s]+", command)
     if pattern in command_parts:
         return True
 
     # Multi-word pattern match (e.g., "dd if=")
-    if ' ' in pattern:
+    if " " in pattern:
         if pattern in command:
             return True
 
     # Pattern starts with command name
-    if command.startswith(pattern + ' '):
+    if command.startswith(pattern + " "):
         return True
 
     return False
@@ -424,7 +429,6 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
 # Key difference: daemon-path predicates take EventContext (not a raw cmd string)
 # and can access full hook context (session state, tool input, transcript, etc.)
 # =============================================================================
-
 
 
 # =============================================================================
@@ -468,8 +472,8 @@ def command_matches_pattern(command: str, pattern: str, pattern_type: str = "lit
 # See stop_handler() at line ~1431 for usage examples.
 # =============================================================================
 
-def build_hook_response(continue_execution=True, stop_reason="", system_message="",
-                        decision=None, reason=None, event_name="unknown", ctx=None):
+
+def build_hook_response(continue_execution=True, stop_reason="", system_message="", decision=None, reason=None, event_name="unknown", ctx=None):
     """Build standardized JSON hook response.
 
     For Stop/SubagentStop hooks that need to keep Claude working:
@@ -480,27 +484,32 @@ def build_hook_response(continue_execution=True, stop_reason="", system_message=
     See documentation block above for full semantics.
     """
     from .config import detect_cli_type
-    
+
     # Priority: explicit ctx cli_type > global detection
-    if ctx and hasattr(ctx, 'cli_type'):
+    if ctx and hasattr(ctx, "cli_type"):
         cli_type = ctx.cli_type
     else:
         cli_type = detect_cli_type()
 
-    response = {"continue": continue_execution, "stopReason": stop_reason,
-                "suppressOutput": False, "systemMessage": system_message}
+    response = {"continue": continue_execution, "stopReason": stop_reason, "suppressOutput": False, "systemMessage": system_message}
     # Stop-hook-specific fields for blocking stops
     if decision is not None:
         actual_decision = decision
         from .platforms import get_platform
+
         platform = get_platform(cli_type)
         if platform:
-            actual_decision = platform.block_decision if decision == "block" else decision
+            # This compatibility helper is specifically documented for Stop and
+            # SubagentStop. Their decision vocabulary is independent of tool
+            # denial: Qwen uses block and Agy uses continue. The named harness
+            # contracts and upstream documentation links live in platforms.py.
+            actual_decision = platform.hook_protocol.stop_blocking_decision if decision == "block" else decision
         response["decision"] = actual_decision
     if reason is not None:
         response["reason"] = reason
-        
+
     return validate_hook_response(event_name, response, cli_type=cli_type)
+
 
 def has_valid_justification(*texts: str) -> bool:
     """
@@ -518,7 +527,7 @@ def has_valid_justification(*texts: str) -> bool:
     """
     combined = " ".join(texts)
     excluded = {"reason", ""}
-    pattern = r'<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>'
+    pattern = r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>"
     matches = regex_module.findall(pattern, combined, regex_module.DOTALL | regex_module.IGNORECASE)
     return any(m.strip().lower() not in excluded for m in matches)
 
@@ -555,6 +564,7 @@ def has_valid_justification(*texts: str) -> bool:
 # Canonical replacements: plugins.autorun_injection (Stop), plugins.build_injection_prompt, plugins.is_premature_stop
 # default_handler — REMOVED: app.dispatch() returns None for unmatched events
 
+
 def main(_exit=True):
     """Thin shim — delegates to __main__.run_hook_handler().
 
@@ -568,10 +578,12 @@ def main(_exit=True):
     - test_edge_cases_comprehensive.py (imports main)
     """
     from autorun.__main__ import run_hook_handler
+
     result = run_hook_handler()
     if _exit:
         sys.exit(result)
     return result
+
 
 if __name__ == "__main__":
     main()

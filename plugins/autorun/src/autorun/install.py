@@ -13,6 +13,7 @@ Usage:
     autorun --uninstall                  # Uninstall plugins
     autorun --status                     # Show installation status
 """
+
 # Python 2 / version guard — AI assistants frequently invoke `python` (Python 2 on many
 # systems) instead of `python3`, wasting tokens trying to debug confusing import errors.
 # This guard outputs a clear, actionable error message so the AI (and user) knows exactly
@@ -26,10 +27,10 @@ from __future__ import annotations
 # The executable version guard intentionally runs before dependency imports.
 # ruff: noqa: E402
 import sys as _sys
+
 if _sys.version_info < (3, 10):
     _sys.stderr.write(
-        "ERROR: autorun requires Python 3.10+. You are running Python " +
-        ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
+        "ERROR: autorun requires Python 3.10+. You are running Python " + ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
         "Fix: Use `uv run python -m autorun --install` or `python3 -m autorun --install`.\n"
         "     Install uv: https://docs.astral.sh/uv/getting-started/installation/\n"
     )
@@ -166,16 +167,12 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
     """
     raw = spec.strip()
     if not raw or "=" not in raw:
-        raise ValueError(
-            f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
-        )
+        raise ValueError(f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}")
 
     name, rest = raw.split("=", 1)
     parts = rest.split(":", 2)
     if len(parts) != 3:
-        raise ValueError(
-            f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}"
-        )
+        raise ValueError(f"custom harness must use {CUSTOM_HARNESS_SPEC_FORMAT}")
 
     raw_flavor, binary, config_dir_tail = (part.strip() for part in parts)
     config_dir_raw = config_dir_tail
@@ -190,9 +187,7 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
             display_name = maybe_display
     name = name.strip()
     if not name or not binary or not config_dir_raw:
-        raise ValueError(
-            "custom harness name, binary, and config_dir must be non-empty"
-        )
+        raise ValueError("custom harness name, binary, and config_dir must be non-empty")
     flavor = CUSTOM_HARNESS_FLAVOR_ALIASES.get(raw_flavor)
     if flavor is None:
         supported = ", ".join(sorted(CUSTOM_HARNESS_FLAVOR_ALIASES))
@@ -398,11 +393,7 @@ Docs: https://docs.astral.sh/uv/getting-started/installation/
             Formatted error message with installation commands
         """
         runner = get_python_runner()
-        install_cmd = " ".join([
-            *runner,
-            "-m", "plugins.autorun.src.autorun.install",
-            "--install", "--force"
-        ])
+        install_cmd = " ".join([*runner, "-m", "plugins.autorun.src.autorun.install", "--install", "--force"])
         return ErrorFormatter.MARKETPLACE_NOT_FOUND.format(install_command=install_cmd)
 
     @staticmethod
@@ -457,7 +448,7 @@ def find_marketplace_root() -> Path:
                 # Otherwise skip and keep searching
                 continue
             root = parent
-    
+
     if root:
         return root
 
@@ -470,6 +461,7 @@ def find_marketplace_root() -> Path:
             direct_url_file = dist_info / "direct_url.json"
             if direct_url_file.exists():
                 import json
+
                 data = json.loads(direct_url_file.read_text())
                 if "dir_info" in data and "editable" in data["dir_info"]:
                     # This is an editable install - get the source directory
@@ -491,8 +483,8 @@ def find_marketplace_root() -> Path:
         # containing .claude-plugin/marketplace.json
         search_bases = [
             Path.home() / ".claude",  # Claude-specific projects
-            Path.home(),               # Home directory projects
-            Path("/opt"),              # System-wide installs
+            Path.home(),  # Home directory projects
+            Path("/opt"),  # System-wide installs
         ]
 
         # Check if AUTORUN_DEV_PATH env var is set (for custom locations)
@@ -523,11 +515,13 @@ def find_marketplace_root() -> Path:
 
                         if filtered_matches:
                             # Sort to prefer exact "autorun" name
-                            filtered_matches.sort(key=lambda p: (
-                                p.name != "autorun",  # Prefer exact name
-                                "-" in p.name,  # Deprioritize names with dashes
-                                str(p),  # Alphabetical tiebreaker
-                            ))
+                            filtered_matches.sort(
+                                key=lambda p: (
+                                    p.name != "autorun",  # Prefer exact name
+                                    "-" in p.name,  # Deprioritize names with dashes
+                                    str(p),  # Alphabetical tiebreaker
+                                )
+                            )
                             return filtered_matches[0]
                 except (PermissionError, OSError):
                     continue
@@ -576,7 +570,7 @@ def find_marketplace_root() -> Path:
                     "-" in p.parent.name,
                     # Alphabetical as final tiebreaker
                     str(p),
-                )
+                ),
             )
             for candidate in candidates:
                 if not candidate.is_dir():
@@ -609,6 +603,7 @@ def find_marketplace_root() -> Path:
                 return tuple(int(x) for x in p.name.split("."))
             except (ValueError, TypeError):
                 return (0,)
+
         version_dirs = sorted(claude_cache.glob("autorun/*"), key=_ver_key, reverse=True)
         for version_dir in version_dirs:
             marker = version_dir / ".claude-plugin" / "marketplace.json"
@@ -677,8 +672,7 @@ def _check_hook_conflicts() -> None:
         cache_dir = Path.home() / ".claude" / "plugins" / "cache"
         if cache_dir.exists():
             conflicting = []
-            for hooks_file in list(cache_dir.glob("*/*/*/hooks/hooks.json")) + \
-                              list(cache_dir.glob("*/*/*/hooks/claude-hooks.json")):
+            for hooks_file in list(cache_dir.glob("*/*/*/hooks/hooks.json")) + list(cache_dir.glob("*/*/*/hooks/claude-hooks.json")):
                 try:
                     hooks_data = json.loads(hooks_file.read_text())
                     if "PreToolUse" in hooks_data.get("hooks", {}):
@@ -718,6 +712,7 @@ def _parse_selection(selection: str) -> list[str]:
         manifest = root / ".claude-plugin" / "marketplace.json"
         if manifest.exists():
             import json
+
             with open(manifest, encoding="utf-8") as f:
                 data = json.load(f)
                 valid_plugins = [p["name"] for p in data.get("plugins", [])]
@@ -877,6 +872,7 @@ def _sync_dependencies() -> CmdResult:
     # Fallback: use pip install with current python (works for any environment)
     try:
         import subprocess
+
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "bashlex"],
             capture_output=True,
@@ -914,20 +910,16 @@ def _install_pdf_deps() -> CmdResult:
         CmdResult indicating success/failure, or success if plugin not present
     """
     root = find_marketplace_root()
-    
+
     # Robust plugin discovery
-    potential_paths = [
-        root / "plugins" / "pdf-extractor",
-        root / "pdf-extractor",
-        root.parent / "pdf-extractor"
-    ]
-    
+    potential_paths = [root / "plugins" / "pdf-extractor", root / "pdf-extractor", root.parent / "pdf-extractor"]
+
     pdf_dir = None
     for p in potential_paths:
         if p.is_dir() and (p / ".claude-plugin").exists():
             pdf_dir = p
             break
-            
+
     if not pdf_dir:
         # Fallback: if root itself is pdf-extractor
         if root.name == "pdf-extractor":
@@ -1000,6 +992,7 @@ def _bug_14449_workaround_enabled() -> bool:
     BUG #14449 regression gate. Env var wins over CONFIG.
     """
     from .config import CONFIG
+
     _KEY = "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED"
     env = os.environ.get(_KEY, "").lower().strip()
     if env in ("false", "0", "never"):
@@ -1028,11 +1021,7 @@ def _gemini_template_dir(plugin_dir: Path) -> Path:
 def _gemini_extension_name(plugin_dir: Path) -> str:
     """Return the harness-facing extension name from a plugin manifest."""
     template = _gemini_template_dir(plugin_dir)
-    manifest = (
-        template / "gemini-extension.json"
-        if (template / "gemini-extension.json").is_file()
-        else plugin_dir / "gemini-extension.json"
-    )
+    manifest = template / "gemini-extension.json" if (template / "gemini-extension.json").is_file() else plugin_dir / "gemini-extension.json"
     try:
         return str(json.loads(manifest.read_text(encoding="utf-8"))["name"])
     except (KeyError, OSError, json.JSONDecodeError):
@@ -1083,11 +1072,7 @@ def _count_skill_dirs(skills_dir: Path) -> int:
     """Count top-level Gemini/Claude skill directories in a copied skills tree."""
     if not skills_dir.is_dir():
         return 0
-    return sum(
-        1
-        for child in skills_dir.iterdir()
-        if child.is_dir() and (child / "SKILL.md").is_file()
-    )
+    return sum(1 for child in skills_dir.iterdir() if child.is_dir() and (child / "SKILL.md").is_file())
 
 
 def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
@@ -1097,9 +1082,7 @@ def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
     return {
         child.name
         for child in skills_dir.iterdir()
-        if child.is_dir()
-        and (child / "SKILL.md").is_file()
-        and (not owned_only or (child / _CODEX_SKILL_OWNED_MARKER).is_file())
+        if child.is_dir() and (child / "SKILL.md").is_file() and (not owned_only or (child / _CODEX_SKILL_OWNED_MARKER).is_file())
     }
 
 
@@ -1193,13 +1176,7 @@ def _install_antigravity_cli_bundle(
     plugin_name: str = "ar",
 ) -> tuple[int, int]:
     """Atomically install one plugin into Antigravity CLI's plugin root."""
-    target = (
-        Path.home()
-        / ".gemini"
-        / "antigravity-cli"
-        / "plugins"
-        / plugin_name
-    )
+    target = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / plugin_name
     target.parent.mkdir(parents=True, exist_ok=True)
     install_lock = FileLock(target.parent / ".autorun-install.lock")
 
@@ -1241,7 +1218,12 @@ def _antigravity_validate_reports_hooks(output: str) -> bool:
 
 
 def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
-    """Set the explicit CLI identity in installed Gemini-family hook commands."""
+    """Translate the shared legacy-Gemini template to a harness hook contract.
+
+    Platform event maps and HookProtocol manifest fields are the semantic source
+    of truth. This function only walks JSON and rewrites owned ``hook_entry.py``
+    commands. ``autorun.capability_snapshot`` exposes the resolved contract.
+    """
     if cli_name == "gemini":
         return
 
@@ -1262,6 +1244,13 @@ def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
             return value.replace("--cli gemini", f"--cli {cli_name}")
         return value
 
+    source_platform = PLATFORMS["gemini"]
+    target_platform = PLATFORMS[cli_name]
+    event_map = {
+        source_event: target_platform.autorun_to_harness_cli_events.get(autorun_event)
+        for source_event, autorun_event in source_platform.harness_cli_to_autorun_events.items()
+    }
+
     for hooks_json in (ext_dir / "hooks" / "hooks.json", ext_dir / "hooks.json"):
         if not hooks_json.is_file():
             continue
@@ -1275,7 +1264,15 @@ def _set_gemini_family_hook_cli(ext_dir: Path, cli_name: str) -> None:
             )
             continue
 
-        hooks_json.write_text(json.dumps(rewrite(data), indent=2) + "\n", encoding="utf-8")
+        rewritten = rewrite(data)
+        hooks_json.write_text(
+            json.dumps(
+                target_platform.hook_protocol.translate_manifest(rewritten, event_map),
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
 
 def _migrate_legacy_layout(plugin_dir: Path) -> None:
@@ -1303,6 +1300,8 @@ def _migrate_legacy_layout(plugin_dir: Path) -> None:
             "Fix: git checkout -- plugins/autorun or delete the stale file, then "
             "rerun autorun --install."
         )
+
+
 # --- BUG #24115 & #14449 WORKAROUND END ---
 
 
@@ -1337,11 +1336,7 @@ def _install_to_cache(plugin_name: str) -> bool:
 
     # Copy plugin to cache (ignore build artifacts)
     try:
-        shutil.copytree(
-            plugin_dir,
-            cache_dir,
-            ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc', '.coverage', '.venv', '.pytest_cache')
-        )
+        shutil.copytree(plugin_dir, cache_dir, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".coverage", ".venv", ".pytest_cache"))
     except OSError as e:
         logger.error(f"Failed to copy {plugin_name} to cache: {e}")
         return False
@@ -1380,14 +1375,9 @@ def _register_in_json(install_path: Path, plugin_name: str, version: str) -> boo
     ts = datetime.now(timezone.utc).isoformat()
 
     key = f"{plugin_name}@{MARKETPLACE}"
-    data["plugins"][key] = [{
-        "scope": "user",
-        "installPath": str(install_path),
-        "version": version,
-        "installedAt": ts,
-        "lastUpdated": ts,
-        "gitCommitSha": "manual-install"
-    }]
+    data["plugins"][key] = [
+        {"scope": "user", "installPath": str(install_path), "version": version, "installedAt": ts, "lastUpdated": ts, "gitCommitSha": "manual-install"}
+    ]
 
     try:
         json_file.write_text(json.dumps(data, indent=2))
@@ -1409,7 +1399,7 @@ def _substitute_paths(plugin_dir: Path) -> None:
         plugin_dir: Path to plugin directory
     """
     abs_path = str(plugin_dir.resolve())
-    
+
     # 1. Manifests and Hooks (Fixed paths).
     # hooks/hooks.json now holds Claude Code events exclusively (post-split).
     # Gemini assets live under src/autorun/gemini_template/ and are materialized
@@ -1419,7 +1409,7 @@ def _substitute_paths(plugin_dir: Path) -> None:
         ".claude-plugin/plugin.json",
         "hooks/hooks.json",
     ]
-    
+
     # 2. Commands and Skills (Recursive discovery)
     for folder in ["commands", "skills"]:
         folder_path = plugin_dir / folder
@@ -1431,7 +1421,7 @@ def _substitute_paths(plugin_dir: Path) -> None:
         fp = plugin_dir / rel_path
         if not fp.exists() or fp.is_symlink():
             continue
-            
+
         try:
             content = fp.read_text(encoding="utf-8")
             original_content = content
@@ -1492,6 +1482,7 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
             # use Gemini tool names (e.g. read_file) instead of Claude names (e.g. Read)
             try:
                 from .core import CLI_TOOL_NAMES
+
                 gemini_tools = CLI_TOOL_NAMES.get("gemini", {})
                 for claude_name, gemini_name in gemini_tools.items():
                     # Match {tool_name} placeholder in prompt
@@ -1504,7 +1495,7 @@ def _generate_gemini_toml_commands(ext_dir: Path, ext_name: str) -> int:
 
             # Escape backslashes and triple quotes in body for TOML multi-line strings
             # Gemini CLI parser fails on unescaped backslashes in regex (e.g. \()
-            safe_body = body.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
+            safe_body = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
 
             # Write TOML file
             toml_content = f'description = "{doc.description}"\n'
@@ -1524,7 +1515,7 @@ def _install_for_gemini(
     plugins: list[str],
     force: bool = False,
 ) -> tuple[bool, str]:
-    """Install selected plugins for Gemini CLI.
+    """Install selected plugins for the legacy Gemini CLI.
 
     Note: Gemini treats each plugin as a separate extension, not a workspace.
 
@@ -1541,7 +1532,7 @@ def _install_for_gemini(
         plugins=plugins,
         force=force,
         cli_name="gemini",
-        display_name="Gemini CLI",
+        display_name="Legacy Gemini CLI",
         config_dir=Path.home() / ".gemini",
         install_hint="npm install -g @google-labs/gemini-cli",
     )
@@ -1595,10 +1586,7 @@ def _install_gemini_family_extensions(
     # Find all plugins in the marketplace
     # Strategy 1: marketplace_root contains plugins/ (workspace root)
     # Strategy 2: marketplace_root/.. contains other plugins (plugin root)
-    potential_plugin_dirs = [
-        marketplace_root / "plugins",
-        marketplace_root.parent
-    ]
+    potential_plugin_dirs = [marketplace_root / "plugins", marketplace_root.parent]
 
     # A plugin dir now advertises Gemini support via either (a) legacy
     # gemini-extension.json at plugin root (pdf-extractor still uses this)
@@ -1624,6 +1612,7 @@ def _install_gemini_family_extensions(
     if marketplace_json.exists():
         try:
             import json as _json
+
             with open(marketplace_json, encoding="utf-8") as _f:
                 _mdata = _json.load(_f)
             for _entry in _mdata.get("plugins", []):
@@ -1682,6 +1671,7 @@ def _install_gemini_family_extensions(
         # Read gemini-extension.json to get the extension name
         try:
             import json
+
             with open(gemini_src / "gemini-extension.json", encoding="utf-8") as f:
                 ext_config = json.load(f)
                 ext_name = ext_config.get("name", plugin_name)
@@ -1861,11 +1851,7 @@ _CODEX_PLUGIN_MARKETPLACE_CHOICES = ("personal", "github")
 
 def _codex_plugin_owned_marker_text(codex_hook_source: str) -> str:
     """Return metadata stored in the existing autorun-owned plugin marker."""
-    return (
-        "Autorun-owned Codex plugin source copy. Safe to delete; rerun "
-        "`autorun --install --codex` to recreate it.\n"
-        f"codex_hook_source={codex_hook_source}\n"
-    )
+    return f"Autorun-owned Codex plugin source copy. Safe to delete; rerun `autorun --install --codex` to recreate it.\ncodex_hook_source={codex_hook_source}\n"
 
 
 def _codex_owned_plugin_hook_source(source_dir: Path) -> str | None:
@@ -2032,20 +2018,11 @@ def probe_hook_python_architecture(
         return RuntimeArchitectureProbe(
             ok=False,
             uv_path="",
-            reason=ErrorFormatter.uv_not_found(
-                "pip install -e . && python -m autorun --install"
-            ).strip(),
+            reason=ErrorFormatter.uv_not_found("pip install -e . && python -m autorun --install").strip(),
         )
 
     settings = settings or resolve_runtime_architecture_settings()
-    code = (
-        "import json, platform, sys; "
-        "print(json.dumps({"
-        "'executable': sys.executable, "
-        "'machine': platform.machine(), "
-        "'system': platform.system()"
-        "}))"
-    )
+    code = "import json, platform, sys; print(json.dumps({'executable': sys.executable, 'machine': platform.machine(), 'system': platform.system()}))"
     cmd = ["uv", "run", "--quiet"]
     if settings.hook_no_sync:
         cmd.append("--no-sync")
@@ -2144,9 +2121,7 @@ def _build_codex_hook_block(plugin_dir: Path) -> dict:
         no_sync=settings.hook_no_sync,
     )
 
-    entry = {
-        "hooks": [{"type": "command", "command": command, "timeout": 10}]
-    }
+    entry = {"hooks": [{"type": "command", "command": command, "timeout": 10}]}
 
     return {
         "PreToolUse": [entry],
@@ -2175,19 +2150,15 @@ def _merge_codex_hooks(existing: dict, autorun_block: dict) -> dict:
         the historical `${PLUGIN_ROOT}/hooks/hook_entry.py --cli codex`
         marker so re-installs from older autorun versions still cleanup.
         """
-        return (
-            isinstance(h, dict)
-            and h.get("type") == "command"
-            and _CODEX_AUTORUN_COMMAND_MARK in (h.get("command") or "")
-        )
+        return isinstance(h, dict) and h.get("type") == "command" and _CODEX_AUTORUN_COMMAND_MARK in (h.get("command") or "")
 
     def _is_autorun_entry(e):
         if not isinstance(e, dict):
             return False
         if e.get("_autorun_owned"):
-            return True                                    # legacy marker
+            return True  # legacy marker
         if _is_autorun_command(e):
-            return True                                    # legacy bare entry
+            return True  # legacy bare entry
         inner = e.get("hooks")
         return isinstance(inner, list) and any(_is_autorun_command(h) for h in inner)
 
@@ -2200,10 +2171,7 @@ def _merge_codex_hooks(existing: dict, autorun_block: dict) -> dict:
                 continue
             # Drop legacy _autorun_owned inner entries if any survive
             if isinstance(e, dict) and isinstance(e.get("hooks"), list):
-                keep_inner = [
-                    h for h in e["hooks"]
-                    if not (isinstance(h, dict) and (h.get("_autorun_owned") or _is_autorun_command(h)))
-                ]
+                keep_inner = [h for h in e["hooks"] if not (isinstance(h, dict) and (h.get("_autorun_owned") or _is_autorun_command(h)))]
                 if not keep_inner:
                     continue
                 e = dict(e)
@@ -2272,14 +2240,12 @@ def _install_for_codex(
     if not install_global_assets and _codex_uses_plugin_hooks(codex_hook_source):
         return (
             False,
-            "custom Codex config-dir installs support user hooks only; "
-            "use codex_hook_source='user' or 'none'",
+            "custom Codex config-dir installs support user hooks only; use codex_hook_source='user' or 'none'",
         )
     if codex_plugin_marketplace == "github" and _codex_uses_plugin_hooks(codex_hook_source):
         return (
             False,
-            "Codex github marketplace mode cannot package runtime-generated plugin hooks; "
-            "use --codex-hook-source user or --codex-plugin-marketplace personal",
+            "Codex github marketplace mode cannot package runtime-generated plugin hooks; use --codex-hook-source user or --codex-plugin-marketplace personal",
         )
     plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
     if plugin_dir is None:
@@ -2303,19 +2269,13 @@ def _install_for_codex(
         except Exception as exc:  # malformed file — surface but don't clobber
             return (False, f"{hooks_path} is not valid JSON: {exc}")
 
-    autorun_block = (
-        _build_codex_hook_block(plugin_dir)
-        if _codex_uses_user_hooks(codex_hook_source)
-        else {}
-    )
+    autorun_block = _build_codex_hook_block(plugin_dir) if _codex_uses_user_hooks(codex_hook_source) else {}
     merged = _merge_codex_hooks(existing, autorun_block)
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
     if install_global_assets:
-        skills_installed, skills_skipped = _install_codex_skills(
-            selected_plugin_dirs
-        )
+        skills_installed, skills_skipped = _install_codex_skills(selected_plugin_dirs)
     else:
         skills_installed, skills_skipped = (0, 0)
     if codex_plugin_marketplace == "personal" and install_global_assets:
@@ -2349,10 +2309,7 @@ def _install_for_codex(
     if skills_installed:
         print(f"✓ Installed {skills_installed} selected plugin skill(s) at ~/.agents/skills/")
     if skills_skipped:
-        print(
-            f"  ({skills_skipped} user-authored skill(s) with matching names "
-            f"left untouched)"
-        )
+        print(f"  ({skills_skipped} user-authored skill(s) with matching names left untouched)")
     if plugin_marketplace.marketplace_ready:
         if codex_plugin_marketplace == "personal":
             print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
@@ -2383,10 +2340,7 @@ def _collect_plugin_skill_sources(
                 continue
             previous = skill_sources.get(skill_src.name)
             if previous is not None and previous.resolve() != skill_src.resolve():
-                raise ValueError(
-                    f"selected plugins define duplicate skill {skill_src.name!r}: "
-                    f"{previous} and {skill_src}"
-                )
+                raise ValueError(f"selected plugins define duplicate skill {skill_src.name!r}: {previous} and {skill_src}")
             skill_sources[skill_src.name] = skill_src
     return skill_sources
 
@@ -2421,9 +2375,7 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
     with install_lock:
         for skill_src in skill_sources.values():
             skill_dst = dst_root / skill_src.name
-            if skill_dst.exists() and not (
-                skill_dst / _CODEX_SKILL_OWNED_MARKER
-            ).is_file():
+            if skill_dst.exists() and not (skill_dst / _CODEX_SKILL_OWNED_MARKER).is_file():
                 # User-authored skill with the same name — never touch it.
                 skipped += 1
                 continue
@@ -2437,8 +2389,7 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
                 backup = transaction / "previous"
                 shutil.copytree(skill_src, staged)
                 (staged / _CODEX_SKILL_OWNED_MARKER).write_text(
-                    "Autorun-owned. Safe to delete to un-claim this directory; the\n"
-                    "next autorun install will then leave it alone as user-authored.\n",
+                    "Autorun-owned. Safe to delete to un-claim this directory; the\nnext autorun install will then leave it alone as user-authored.\n",
                     encoding="utf-8",
                 )
                 if skill_dst.exists():
@@ -2605,9 +2556,7 @@ def _ensure_codex_plugin_source(
     with install_lock:
         if target.is_symlink() and not _same_resolved_path(target, plugin_dir):
             return (False, f"user-owned symlink exists at {target}")
-        if target.exists() and not target.is_symlink() and not (
-            target / _CODEX_PLUGIN_OWNED_MARKER
-        ).is_file():
+        if target.exists() and not target.is_symlink() and not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file():
             return (False, f"user-owned directory exists at {target}")
 
         with tempfile.TemporaryDirectory(
@@ -2807,10 +2756,7 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
         return (False, "✗ incomplete (plugins field is not a list)")
 
     entry = next(
-        (
-            plugin for plugin in plugins
-            if isinstance(plugin, dict) and plugin.get("name") == _CODEX_PLUGIN_NAME
-        ),
+        (plugin for plugin in plugins if isinstance(plugin, dict) and plugin.get("name") == _CODEX_PLUGIN_NAME),
         None,
     )
     if entry is None:
@@ -2823,30 +2769,12 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
     if not (source_dir / ".codex-plugin" / "plugin.json").is_file():
         return (False, "✗ plugin source missing .codex-plugin/plugin.json")
 
-    cache_root = (
-        Path.home()
-        / ".codex"
-        / "plugins"
-        / "cache"
-        / _CODEX_PERSONAL_MARKETPLACE_NAME
-        / _CODEX_PLUGIN_NAME
-    )
-    installed = (
-        cache_root.is_dir()
-        and any(
-            (child / ".codex-plugin" / "plugin.json").is_file()
-            for child in cache_root.iterdir()
-            if child.is_dir()
-        )
-    )
+    cache_root = Path.home() / ".codex" / "plugins" / "cache" / _CODEX_PERSONAL_MARKETPLACE_NAME / _CODEX_PLUGIN_NAME
+    installed = cache_root.is_dir() and any((child / ".codex-plugin" / "plugin.json").is_file() for child in cache_root.iterdir() if child.is_dir())
     if not installed:
         return (True, "✓ available")
 
-    plugin_hook_caches = [
-        child
-        for child in cache_root.iterdir()
-        if child.is_dir() and (child / "hooks" / "hooks.json").is_file()
-    ]
+    plugin_hook_caches = [child for child in cache_root.iterdir() if child.is_dir() and (child / "hooks" / "hooks.json").is_file()]
     if plugin_hook_caches and _codex_user_hooks_have_autorun():
         if _codex_owned_plugin_hook_source(source_dir) == "both":
             versions = ", ".join(sorted(child.name for child in plugin_hook_caches))
@@ -2925,10 +2853,7 @@ def show_custom_harness_status(spec: str) -> int:
         missing_skills = sorted(expected_skills - installed_skills)
         print(f"  hooks.json: {'✓ installed' if hooks_ok else f'✗ {hooks_status}'}")
         print(f"  AGENTS.md: {'✓ installed' if agents_ok else '✗ not installed'}")
-        print(
-            "  shared Codex skills: "
-            + ("✓ installed" if not missing_skills else "✗ incomplete")
-        )
+        print("  shared Codex skills: " + ("✓ installed" if not missing_skills else "✗ incomplete"))
         if missing_skills:
             print(f"    missing skills: {', '.join(missing_skills)}")
         return 0 if hooks_ok and agents_ok and not missing_skills else 1
@@ -2955,10 +2880,7 @@ def show_custom_harness_status(spec: str) -> int:
     print(f"  ar extension: {'✓ installed' if found_path else '✗ not installed'}")
     if found_path:
         print(f"  hooks.json: {found_path}")
-    print(
-        "  hooks identity: "
-        + (f"✓ {identity_status}" if installed else f"✗ {identity_status}")
-    )
+    print("  hooks identity: " + (f"✓ {identity_status}" if installed else f"✗ {identity_status}"))
     try:
         requirements = _selected_plugin_skill_requirements(find_marketplace_root())
     except FileNotFoundError:
@@ -2969,14 +2891,9 @@ def show_custom_harness_status(spec: str) -> int:
             target.config_dir / "extensions" / plugin / "skills",
             target.config_dir / "plugins" / plugin / "skills",
         )
-        installed_skills = set().union(
-            *(_skill_dir_names(root) for root in skill_roots)
-        )
+        installed_skills = set().union(*(_skill_dir_names(root) for root in skill_roots))
         missing_skills = sorted(expected_skills - installed_skills)
-        print(
-            f"  {plugin} skills: "
-            + ("✓ installed" if not missing_skills else "✗ incomplete")
-        )
+        print(f"  {plugin} skills: " + ("✓ installed" if not missing_skills else "✗ incomplete"))
         if missing_skills:
             print(f"    missing skills: {', '.join(missing_skills)}")
             skills_complete = False
@@ -2999,23 +2916,11 @@ def _platform_app_status(platform_name: str) -> tuple[bool, str]:
 
 def _count_latest_codex_plugin_cache_skills() -> int:
     """Count skills in the newest installed autorun Codex plugin cache entry."""
-    cache_root = (
-        Path.home()
-        / ".codex"
-        / "plugins"
-        / "cache"
-        / _CODEX_PERSONAL_MARKETPLACE_NAME
-        / _CODEX_PLUGIN_NAME
-    )
+    cache_root = Path.home() / ".codex" / "plugins" / "cache" / _CODEX_PERSONAL_MARKETPLACE_NAME / _CODEX_PLUGIN_NAME
     if not cache_root.is_dir():
         return 0
-    counts = [
-        _count_skill_dirs(child / "skills")
-        for child in cache_root.iterdir()
-        if child.is_dir()
-    ]
+    counts = [_count_skill_dirs(child / "skills") for child in cache_root.iterdir() if child.is_dir()]
     return max(counts, default=0)
-
 
 
 _CODEX_AGENTS_START = "<!-- autorun:codex-agents-md:start -->"
@@ -3053,7 +2958,7 @@ def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     end = existing.find(_CODEX_AGENTS_END)
     if start != -1 and end != -1 and end > start:
         prefix = existing[:start].rstrip("\n")
-        suffix = existing[end + len(_CODEX_AGENTS_END):].lstrip("\n")
+        suffix = existing[end + len(_CODEX_AGENTS_END) :].lstrip("\n")
         parts = [p for p in (prefix, block.rstrip(), suffix.rstrip()) if p]
         new = "\n\n".join(parts) + "\n"
     elif existing.strip():
@@ -3149,12 +3054,7 @@ def _install_conductor(force: bool = False) -> tuple[bool, str]:
         print("Force mode: uninstalling existing Conductor...")
         run_cmd(["gemini", "extensions", "uninstall", "conductor"])
 
-    result = run_cmd([
-        "gemini", "extensions", "install",
-        "https://github.com/gemini-cli-extensions/conductor",
-        "--auto-update",
-        "--consent"
-    ])
+    result = run_cmd(["gemini", "extensions", "install", "https://github.com/gemini-cli-extensions/conductor", "--auto-update", "--consent"])
 
     if result.ok or result.has_text("already installed"):
         print("   Conductor extension installed")
@@ -3211,41 +3111,30 @@ def _install_for_antigravity(
 
     plugin_dirs = _resolve_selected_plugin_dirs(marketplace_root, plugins)
 
-    plugin_targets = [
-        (plugin_dir, _gemini_extension_name(plugin_dir))
-        for plugin_dir in plugin_dirs
-    ]
+    plugin_targets = [(plugin_dir, _gemini_extension_name(plugin_dir)) for plugin_dir in plugin_dirs]
     expected_names = [name for _plugin_dir, name in plugin_targets]
     if not expected_names:
-        expected_names = [
-            "ar" if name in {"ar", "autorun"} else name
-            for name in plugins
-        ]
+        expected_names = ["ar" if name in {"ar", "autorun"} else name for name in plugins]
 
     def sync_cli(plugin_dir: Path, plugin_name: str) -> tuple[int, int]:
         # Keep the historical one-argument seam for ar test and downstream wrappers.
         if plugin_name == "ar":
             return _install_antigravity_cli_bundle(plugin_dir)
         return _install_antigravity_cli_bundle(plugin_dir, plugin_name)
+
     native_installed: list[str] = []
     for plugin_dir, plugin_name in plugin_targets:
         with tempfile.TemporaryDirectory(prefix="autorun-antigravity-plugin-") as tmp:
             bundle_dir = Path(tmp) / plugin_name
             _stage_antigravity_native_bundle(plugin_dir, bundle_dir, plugin_name)
-            validate = run_cmd(
-                ["agy", "plugin", "validate", str(bundle_dir)], timeout=30
-            )
+            validate = run_cmd(["agy", "plugin", "validate", str(bundle_dir)], timeout=30)
             hooks_required = (bundle_dir / "hooks.json").is_file()
-            valid = validate.ok and (
-                not hooks_required or _antigravity_validate_reports_hooks(validate.output)
-            )
+            valid = validate.ok and (not hooks_required or _antigravity_validate_reports_hooks(validate.output))
             if not valid:
                 break
             if force:
                 run_cmd(["agy", "plugin", "uninstall", plugin_name], timeout=120)
-            install_result = run_cmd(
-                ["agy", "plugin", "install", str(bundle_dir)], timeout=120
-            )
+            install_result = run_cmd(["agy", "plugin", "install", str(bundle_dir)], timeout=120)
             if not (install_result.ok or install_result.has_text("already installed")):
                 break
             verify = run_cmd(["agy", "plugin", "list"], timeout=30)
@@ -3375,8 +3264,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
         try:
             # Get git commit with '+' suffix for uncommitted changes
             commit = subprocess.check_output(
-                ["git", "describe", "--always", "--dirty=+", "--exclude", "*"],
-                cwd=commit_dir, text=True, stderr=subprocess.DEVNULL
+                ["git", "describe", "--always", "--dirty=+", "--exclude", "*"], cwd=commit_dir, text=True, stderr=subprocess.DEVNULL
             ).strip()
         except (subprocess.CalledProcessError, FileNotFoundError):
             msg = "Git command failed or not installed. Version metadata will be 'unknown'."
@@ -3390,11 +3278,8 @@ def _update_package_metadata(plugin_dir: Path) -> None:
         try:
             meta_file.parent.mkdir(parents=True, exist_ok=True)
             import json
-            data = {
-                "version": _read_plugin_version(plugin_dir),
-                "commit": commit,
-                "build_time": build_time
-            }
+
+            data = {"version": _read_plugin_version(plugin_dir), "commit": commit, "build_time": build_time}
             new_text = json.dumps(data, indent=2) + "\n"
             if meta_file.exists() and meta_file.read_text(encoding="utf-8") == new_text:
                 logger.info("Metadata already current")
@@ -3405,7 +3290,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
             msg = f"Permission denied writing {meta_file}. Check directory permissions: {e}"
             logger.warning(msg)
             print(f"   ❌ Error: {msg}")
-            
+
     except Exception as e:
         logger.warning(f"Unexpected error updating metadata: {e}")
 
@@ -3496,14 +3381,16 @@ def install_plugins(
         plugin_root = plugin_candidate  # best-effort fallback
 
     import autorun
+
     if not dry_run:
         _update_package_metadata(plugin_root)
 
         # Re-import to get fresh values if we're in the same process
         import importlib
+
         importlib.reload(autorun)
     from autorun import __version__, __commit__, __build_time__
-    
+
     print(f"autorun v{__version__}")
     print(f"Commit: {__commit__}")
     print(f"Build Time: {__build_time__}")
@@ -3517,8 +3404,7 @@ def install_plugins(
 
     # Python version check
     if sys.version_info < (3, 10):
-        print(f"Python {sys.version_info.major}.{sys.version_info.minor} detected. "
-              f"autorun requires Python 3.10+.")
+        print(f"Python {sys.version_info.major}.{sys.version_info.minor} detected. autorun requires Python 3.10+.")
         return 1
 
     # Parse and validate plugin selection
@@ -3590,11 +3476,7 @@ def install_plugins(
         if custom_targets:
             print("  Custom harness targets:")
             for target in custom_targets:
-                print(
-                    f"    - {target.name}: flavor={target.flavor}, "
-                    f"binary={target.binary}, config_dir={target.config_dir}, "
-                    f"display={target.display_name}"
-                )
+                print(f"    - {target.name}: flavor={target.flavor}, binary={target.binary}, config_dir={target.config_dir}, display={target.display_name}")
         if tool:
             print("  UV tool install: would run")
         if conductor and "gemini" in target_clis:
@@ -3672,7 +3554,7 @@ def install_plugins(
 
         for name in plugins:
             print(f"   {name}...", end=" ", flush=True)
-            
+
             # Use fully qualified name for all operations
             fq_name = f"{name}@{MARKETPLACE}"
 
@@ -3788,11 +3670,7 @@ def install_plugins(
             print()
             print("Installing Codex plugin package...")
             codex_plugin_marketplace_name = _codex_plugin_marketplace_name(codex_plugin_marketplace)
-            codex_plugin_marketplace_source = (
-                _CODEX_GITHUB_MARKETPLACE_SOURCE
-                if codex_plugin_marketplace == "github"
-                else None
-            )
+            codex_plugin_marketplace_source = _CODEX_GITHUB_MARKETPLACE_SOURCE if codex_plugin_marketplace == "github" else None
             codex_plugin_result = _install_codex_plugin_with_cli(
                 force=force,
                 marketplace_name=codex_plugin_marketplace_name,
@@ -3852,10 +3730,7 @@ def install_plugins(
 
     if "antigravity" in target_clis:
         if antigravity_success:
-            print(
-                "✓ Google Antigravity: Plugins installed "
-                f"({', '.join(plugins)}) with native commands and skills"
-            )
+            print(f"✓ Google Antigravity: Plugins installed ({', '.join(plugins)}) with native commands and skills")
         else:
             print("✗ Google Antigravity: install failed")
 
@@ -3867,10 +3742,7 @@ def install_plugins(
 
     for custom, custom_success, _custom_msg in custom_results:
         if custom_success:
-            print(
-                f"✓ {custom.display_name}: Plugins installed ({', '.join(plugins)}) "
-                f"using {custom.flavor} hook flavor at {custom.config_dir}"
-            )
+            print(f"✓ {custom.display_name}: Plugins installed ({', '.join(plugins)}) using {custom.flavor} hook flavor at {custom.config_dir}")
         else:
             print(f"✗ {custom.display_name}: Installation failed")
 
@@ -3887,10 +3759,7 @@ def install_plugins(
             if codex_hook_source != "none":
                 print("  Run /hooks inside Codex to trust hook definitions")
             if codex_plugin_success:
-                print(
-                    "✓ Codex CLI: plugin installed as "
-                    f"autorun@{_codex_plugin_marketplace_name(codex_plugin_marketplace)}"
-                )
+                print(f"✓ Codex CLI: plugin installed as autorun@{_codex_plugin_marketplace_name(codex_plugin_marketplace)}")
             else:
                 print("✗ Codex CLI: plugin install failed")
         else:
@@ -4031,10 +3900,7 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
                 f"({runtime_settings.hook_no_sync_source})"
             )
         else:
-            print(
-                "  Hook runtime: diagnostic unavailable "
-                f"({_first_nonempty_line(runtime_probe.reason)})"
-            )
+            print(f"  Hook runtime: diagnostic unavailable ({_first_nonempty_line(runtime_probe.reason)})")
     except FileNotFoundError:
         print("  UV environment: marketplace not found")
 
@@ -4048,22 +3914,11 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
         is_installed = plugin in result.output and "enabled" in result.output
         extension_name = "ar" if plugin == "autorun" else plugin
         expected_skills = skill_requirements.get(extension_name, set())
-        source_dir = (
-            _resolve_plugin_dir(marketplace_root, plugin)
-            if marketplace_root is not None
-            else None
-        )
+        source_dir = _resolve_plugin_dir(marketplace_root, plugin) if marketplace_root is not None else None
         cache_skills: set[str] = set()
         if source_dir is not None:
             cache_skills = _skill_dir_names(
-                Path.home()
-                / ".claude"
-                / "plugins"
-                / "cache"
-                / MARKETPLACE
-                / extension_name
-                / _read_plugin_version(source_dir)
-                / "skills"
+                Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE / extension_name / _read_plugin_version(source_dir) / "skills"
             )
         missing_skills = sorted(expected_skills - cache_skills)
         complete = is_installed and not missing_skills
@@ -4105,9 +3960,7 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
             # Check for each plugin separately (new Gemini architecture)
             for plugin, expected_skills in skill_requirements.items():
                 is_installed = plugin in result.output
-                installed_skills = _skill_dir_names(
-                    Path.home() / ".gemini" / "extensions" / plugin / "skills"
-                )
+                installed_skills = _skill_dir_names(Path.home() / ".gemini" / "extensions" / plugin / "skills")
                 missing_skills = sorted(expected_skills - installed_skills)
                 complete = is_installed and not missing_skills
                 print(f"  {plugin}: {'✓ installed' if complete else '✗ incomplete'}")
@@ -4175,17 +4028,8 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     missing_codex_skills = sorted(expected_codex_skills - user_skill_names)
     plugin_source_skill_count = _count_skill_dirs(_codex_plugin_source_dir() / "skills")
     plugin_cache_skill_count = _count_latest_codex_plugin_cache_skills()
-    skills_ok = (
-        not missing_codex_skills
-        and user_skill_count > 0
-        and plugin_source_skill_count > 0
-    )
-    print(
-        f"  skills: {'✓' if skills_ok else '✗'} "
-        f"{user_skill_count} user, "
-        f"{plugin_source_skill_count} plugin source, "
-        f"{plugin_cache_skill_count} plugin cache"
-    )
+    skills_ok = not missing_codex_skills and user_skill_count > 0 and plugin_source_skill_count > 0
+    print(f"  skills: {'✓' if skills_ok else '✗'} {user_skill_count} user, {plugin_source_skill_count} plugin source, {plugin_cache_skill_count} plugin cache")
     if missing_codex_skills:
         print(f"    missing selected plugin skills: {', '.join(missing_codex_skills)}")
         print("    repair: autorun --install --codex --force")
@@ -4209,23 +4053,13 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     antigravity_ok = shutil.which("agy") is not None
     print(f"  agy CLI: {'found' if antigravity_ok else 'not found'}")
     antigravity_app_ok, antigravity_app_status = _platform_app_status("antigravity")
-    print(
-        f"  Antigravity app: "
-        f"{'✓ installed' if antigravity_app_ok else '✗ not found'} ({antigravity_app_status})"
-    )
+    print(f"  Antigravity app: {'✓ installed' if antigravity_app_ok else '✗ not found'} ({antigravity_app_status})")
     if antigravity_ok:
         result = run_cmd(["agy", "plugin", "list"], timeout=30)
         if result.ok:
             for plugin, expected_skills in skill_requirements.items():
                 listed = plugin in result.output
-                installed_skills = _skill_dir_names(
-                    Path.home()
-                    / ".gemini"
-                    / "antigravity-cli"
-                    / "plugins"
-                    / plugin
-                    / "skills"
-                )
+                installed_skills = _skill_dir_names(Path.home() / ".gemini" / "antigravity-cli" / "plugins" / plugin / "skills")
                 missing_skills = sorted(expected_skills - installed_skills)
                 complete = listed and not missing_skills
                 print(f"  {plugin} plugin: {'✓ installed' if complete else '✗ incomplete'}")
@@ -4251,9 +4085,7 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
         if result.ok:
             for plugin, expected_skills in skill_requirements.items():
                 is_installed = plugin in result.output
-                installed_skills = _skill_dir_names(
-                    Path.home() / ".qwen" / "extensions" / plugin / "skills"
-                )
+                installed_skills = _skill_dir_names(Path.home() / ".qwen" / "extensions" / plugin / "skills")
                 missing_skills = sorted(expected_skills - installed_skills)
                 complete = is_installed and not missing_skills
                 print(f"  {plugin}: {'✓ installed' if complete else '✗ incomplete'}")
@@ -4325,9 +4157,11 @@ def check_for_updates() -> tuple[bool, str, str]:
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read())
             latest = data["tag_name"].lstrip("v")
+
             # Semantic version comparison using integer tuples
             def _parse_ver(v: str) -> tuple[int, ...]:
                 return tuple(int(x) for x in v.split("."))
+
             try:
                 return (_parse_ver(latest) > _parse_ver(current), current, latest)
             except (ValueError, TypeError):
@@ -4437,10 +4271,7 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 
     elif method == "uv":
         # UV pathway: install + register
-        result = run_cmd([
-            "uv", "pip", "install", "--upgrade",
-            "git+https://github.com/ahundt/autorun.git"
-        ], timeout=120)
+        result = run_cmd(["uv", "pip", "install", "--upgrade", "git+https://github.com/ahundt/autorun.git"], timeout=120)
         if result.ok:
             # Re-register plugins
             runner = get_python_runner()
@@ -4449,10 +4280,7 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 
     elif method == "pip":
         # Pip pathway: install + register
-        result = run_cmd([
-            "pip", "install", "--upgrade",
-            "git+https://github.com/ahundt/autorun.git"
-        ], timeout=120)
+        result = run_cmd(["pip", "install", "--upgrade", "git+https://github.com/ahundt/autorun.git"], timeout=120)
         if result.ok:
             return run_cmd(["python", "-m", "autorun", "--install", "--force"], timeout=120)
         return result
@@ -4464,7 +4292,6 @@ def perform_self_update(method: str = "auto") -> CmdResult:
 # =============================================================================
 # Main Function - Dev Workflow
 # =============================================================================
-
 
 
 # =============================================================================
@@ -4545,10 +4372,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--install-dry-run",
         action="store_true",
-        help=(
-            "Preview install targets without writing hooks, plugin state, "
-            "dependencies, or restarting daemons"
-        ),
+        help=("Preview install targets without writing hooks, plugin state, dependencies, or restarting daemons"),
     )
     parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
@@ -4556,10 +4380,7 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--antigravity",
         action="store_true",
-        help=(
-            "Install for Google Antigravity CLI only "
-            "(native agy plugin bundle, Gemini importer fallback)"
-        ),
+        help=("Install for Google Antigravity CLI only (native agy plugin bundle, Gemini importer fallback)"),
     )
     parser.add_argument("--qwen", action="store_true", help="Install for Qwen Code only")
     parser.add_argument(
@@ -4638,14 +4459,12 @@ def _install_module_main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     # Configure logging for CLI use (file-only when AUTORUN_DEBUG=1, disabled otherwise)
     import os
-    if os.environ.get('AUTORUN_DEBUG') == '1':
+
+    if os.environ.get("AUTORUN_DEBUG") == "1":
         from pathlib import Path
+
         log_file = ipc.AUTORUN_LOG_FILE
-        logging.basicConfig(
-            handlers=[logging.FileHandler(log_file)],
-            level=logging.DEBUG,
-            format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-        )
+        logging.basicConfig(handlers=[logging.FileHandler(log_file)], level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     else:
         # Disable logging - add NullHandler to prevent default stderr handler
         logging.basicConfig(handlers=[logging.NullHandler()], level=logging.CRITICAL + 1)

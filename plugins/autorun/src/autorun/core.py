@@ -26,6 +26,7 @@ Provides:
 
 Reuses session_manager.py entirely (421 lines of battle-tested RAII code).
 """
+
 import os
 import re
 import json
@@ -44,7 +45,13 @@ from functools import lru_cache
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
 from .session_manager import session_state
 from .config import CONFIG
-from .platforms import PLATFORMS as _PLATFORMS, hook_platforms, platform_for
+from .platforms import (
+    PLATFORMS as _PLATFORMS,
+    hook_platforms,
+    platform_for,
+    to_autorun_event,
+    to_harness_cli_event,
+)
 from . import ipc
 from .logging_utils import get_logger
 
@@ -63,6 +70,7 @@ def dispatch_timeout_for_event(event: str) -> float:
     """Return the daemon handler budget for a hook event."""
     return _DISPATCH_TIMEOUT_BY_EVENT.get(event, 2.0)
 
+
 # Buffer size for reading hook payloads (asyncio default is 64KB = 2^16)
 # Need larger than default to accept full payloads before truncating
 # Client sends full transcript (can be 200MB+), server truncates to 64KB after reading
@@ -79,9 +87,9 @@ if _env_limit:
         # Logger not available yet at module load time
         # CRITICAL: Don't print to stderr - breaks hooks!
         # Invalid buffer limit - silently use default 1GB
-        READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)
+        READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2**14)  # 1GB (2^30)
 else:
-    READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2 ** 14)  # 1GB (2^30)
+    READ_BUFFER_LIMIT = _DEFAULT_LIMIT * (2**14)  # 1GB (2^30)
 
 # === LOGGING ===
 # Keep package import side-effect-light. Metadata commands such as
@@ -100,18 +108,18 @@ class CommandMatch:
     activation_prompt: str
 
 
-# === GEMINI CLI PAYLOAD NORMALIZATION ===
-# Gemini CLI uses different event names and camelCase keys vs Claude Code's snake_case.
-# This mapping normalizes both formats to a single internal representation.
+# === LEGACY GEMINI CLI PAYLOAD NORMALIZATION ===
+# Legacy Gemini CLI uses different event names and camelCase keys from Claude
+# Code. This mapping normalizes both formats to autorun's dispatcher names.
 
 # Event maps derive from autorun.platforms (single source of truth).
 # When @app.on handlers route either Gemini's PreCompress or Claude's
 # PreCompact, they listen to both directly in plugins.py without remapping.
-GEMINI_EVENT_MAP = dict(_PLATFORMS["gemini"].cli_to_internal_events)
+GEMINI_EVENT_MAP = dict(_PLATFORMS["gemini"].harness_cli_to_autorun_events)
 
 # Reverse mapping: internal event name → CLI-specific name.
-INTERNAL_TO_CLAUDE = dict(_PLATFORMS["claude"].internal_to_cli_events)
-INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].internal_to_cli_events)
+INTERNAL_TO_CLAUDE = dict(_PLATFORMS["claude"].autorun_to_harness_cli_events)
+INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].autorun_to_harness_cli_events)
 
 
 # === CLI TOOL GUIDANCE DISPATCH TABLE ===
@@ -145,11 +153,7 @@ INTERNAL_TO_GEMINI = dict(_PLATFORMS["gemini"].internal_to_cli_events)
 # API tool_names (layer 1), NOT CLI display names (layer 2). For Codex they may
 # name shell commands such as `rg --files` when Codex has no dedicated model tool.
 # The UX mismatch (Claude "Glob" displayed as "Search") is cosmetic, not functional.
-CLI_TOOL_NAMES: dict[str, dict[str, str]] = {
-    name: dict(p.tool_names)
-    for name, p in _PLATFORMS.items()
-    if p.tool_names
-}
+CLI_TOOL_NAMES: dict[str, dict[str, str]] = {name: dict(p.tool_names) for name, p in _PLATFORMS.items() if p.tool_names}
 
 
 def get_tool_names(cli_type: str) -> dict[str, str]:
@@ -181,7 +185,7 @@ def canonicalize_command_prompt(prompt: str, cli_type: str | None = None) -> str
     for prefix in sorted(_command_prefixes_for_cli(cli_type), key=len, reverse=True):
         if not prompt.startswith(prefix):
             continue
-        suffix = prompt[len(prefix):]
+        suffix = prompt[len(prefix) :]
         if re.match(r"^[A-Za-z][A-Za-z0-9_-]*(?:\s|$)", suffix):
             return f"{CANONICAL_COMMAND_PREFIX}{suffix}"
     return prompt
@@ -198,7 +202,7 @@ def format_command_for_cli(command: str, cli_type: str | None) -> str:
     if display_prefix == CANONICAL_COMMAND_PREFIX:
         return command
     if command.startswith(CANONICAL_COMMAND_PREFIX):
-        return f"{display_prefix}{command[len(CANONICAL_COMMAND_PREFIX):]}"
+        return f"{display_prefix}{command[len(CANONICAL_COMMAND_PREFIX) :]}"
     return command
 
 
@@ -277,6 +281,7 @@ def _bug_18534_human_channels(cli_type: str) -> set:
     import os
     from .config import CONFIG
     from .platforms import get_platform
+
     _KEY = "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"
     base = {"human", "both"}
 
@@ -297,21 +302,22 @@ def _bug_18534_human_channels(cli_type: str) -> set:
     if affected and CONFIG.get(_KEY, True):
         return base | {"ai"}
     return base
+
+
 # --- BUG #18534 WORKAROUND END ---
 
 
-def get_cli_event_name(internal_event: str, cli_type: str) -> str:
-    """Convert internal event name to CLI-specific name for responses.
+def get_cli_event_name(autorun_event: str, cli_type: str) -> str:
+    """Convert an autorun event name to a harness CLI response name.
 
     Args:
-        internal_event: Normalized internal event name (e.g., "PreToolUse")
+        autorun_event: Normalized autorun event name (e.g., "PreToolUse")
         cli_type: Target CLI identifier from autorun.platforms
 
     Returns:
         CLI-specific event name (e.g., "BeforeTool" for Gemini, "PreToolUse" for Claude)
     """
-    platform = platform_for(cli_type)
-    return platform.internal_to_cli_events.get(internal_event, internal_event)
+    return to_harness_cli_event(autorun_event, cli_type)
 
 
 def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> dict:
@@ -339,13 +345,17 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
     Returns:
         dict: Normalized payload with optionally truncated transcript
     """
-    # Map event name: Gemini "BeforeTool" → internal "PreToolUse", etc.
+    from .config import detect_cli_type
+
+    cli_type = detect_cli_type(payload)
+
+    # Map the selected harness CLI's event name to autorun's dispatcher event.
     raw_event = payload.get("hook_event_name") or payload.get("type", "")
-    event = GEMINI_EVENT_MAP.get(raw_event, raw_event)
+    event = to_autorun_event(raw_event, cli_type)
 
     # Get session ID (Gemini uses sessionId)
     session_id = payload.get("sessionId") or payload.get("session_id", "unknown")
-    
+
     logger.debug(f"normalize_hook_payload: raw_event={raw_event}, event={event}, session_id={session_id}")
 
     # Get transcript
@@ -369,7 +379,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         if size_20 <= 64 * 1024:
             # Last 20 fit in 64KB - use them (common case)
             transcript = recent_20
-            logger.debug(f"Truncated transcript: {len(payload['session_transcript'])} → 20 messages ({size_20//1024}KB)")
+            logger.debug(f"Truncated transcript: {len(payload['session_transcript'])} → 20 messages ({size_20 // 1024}KB)")
         else:
             # Last 20 too large - accumulate from end with STRICT 64KB limit
             # Prioritize size over count (some messages are huge)
@@ -390,12 +400,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
                 size_estimate += msg_size
 
             transcript = truncated
-            logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → "
-                        f"{len(truncated)} messages ({size_estimate//1024}KB)")
-
-    # Detect CLI type (explicitly part of normalization for interoperability)
-    from .config import detect_cli_type
-    cli_type = detect_cli_type(payload)
+            logger.debug(f"Truncated huge messages: {len(payload.get('session_transcript', []))} → {len(truncated)} messages ({size_estimate // 1024}KB)")
 
     return {
         "cli_type": cli_type,
@@ -409,8 +414,7 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "permission_mode": payload.get("permission_mode", "default"),
         "source": payload.get("source", "startup"),
         # Expanded at normalise time so downstream consumers can read a filesystem-ready path.
-        "transcript_path": os.path.expanduser(payload["transcript_path"])
-            if payload.get("transcript_path") else None,
+        "transcript_path": os.path.expanduser(payload["transcript_path"]) if payload.get("transcript_path") else None,
     }
 
 
@@ -637,10 +641,7 @@ def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
                 pass
         elif platform.system() == "Darwin":
             try:
-                result = subprocess.run(
-                    ["lsof", "-p", str(pid), "-Fn"],
-                    capture_output=True, text=True, timeout=2.0
-                )
+                result = subprocess.run(["lsof", "-p", str(pid), "-Fn"], capture_output=True, text=True, timeout=2.0)
                 for line in result.stdout.splitlines():
                     if line.startswith("n") and ".jsonl" in line and ".claude" in line:
                         return f"history:{Path(line[1:]).name}"
@@ -666,7 +667,8 @@ class LazyTranscript:
         if transcript.contains("AUTOFILE_JUSTIFICATION"):
             ...
     """
-    __slots__ = ('_raw', '_text', '_converted')
+
+    __slots__ = ("_raw", "_text", "_converted")
 
     def __init__(self, raw_transcript: List[Dict[str, Any]]):
         self._raw = raw_transcript
@@ -691,7 +693,7 @@ class LazyTranscript:
 
     def has_justification(self) -> bool:
         """Check for valid AUTOFILE_JUSTIFICATION tag."""
-        match = self.search_regex(r'<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>')
+        match = self.search_regex(r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>")
         if match:
             content = match.group(1).strip().lower()
             return content not in {"", "reason"}  # Exclude placeholders
@@ -712,44 +714,34 @@ class LazyTranscript:
 # =============================================================================
 HOOK_SCHEMAS = {
     "PreToolUse": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage",
-                 "decision", "permissionDecision", "reason", "hookSpecificOutput"},
-        "hso": {"hookEventName", "permissionDecision", "permissionDecisionReason", "updatedInput"}
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "permissionDecision", "reason", "hookSpecificOutput"},
+        "hso": {"hookEventName", "permissionDecision", "permissionDecisionReason", "updatedInput"},
     },
     "UserPromptSubmit": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", 
-                 "decision", "reason", "hookSpecificOutput"},
-        "hso": {"hookEventName", "additionalContext"}
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason", "hookSpecificOutput"},
+        "hso": {"hookEventName", "additionalContext"},
     },
     "PostToolUse": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", 
-                 "decision", "reason", "hookSpecificOutput"},
-        "hso": {"hookEventName", "additionalContext"}
+        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason", "hookSpecificOutput"},
+        "hso": {"hookEventName", "additionalContext"},
     },
-    "SessionStart": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage"},
-        "hso": {}
-    },
-    "Stop": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"},
-        "hso": {}
-    },
-    "SubagentStop": {
-        "root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"},
-        "hso": {}
-    }
+    "SessionStart": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage"}, "hso": {}},
+    "Stop": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"}, "hso": {}},
+    "SubagentStop": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"}, "hso": {}},
 }
 
 CODEX_COMMON_ROOT_FIELDS = frozenset({"continue", "stopReason", "suppressOutput", "systemMessage"})
 CODEX_CONTEXT_HSO_FIELDS = frozenset({"hookEventName", "additionalContext"})
 CODEX_PRETOOLUSE_ROOT_FIELDS = frozenset({"systemMessage", "decision", "reason", "hookSpecificOutput"})
-CODEX_PRETOOLUSE_HSO_FIELDS = frozenset({
-    "hookEventName",
-    "permissionDecision",
-    "permissionDecisionReason",
-    "additionalContext",
-    "updatedInput",
-})
+CODEX_PRETOOLUSE_HSO_FIELDS = frozenset(
+    {
+        "hookEventName",
+        "permissionDecision",
+        "permissionDecisionReason",
+        "additionalContext",
+        "updatedInput",
+    }
+)
 
 
 def _codex_hook_fields(event: str) -> tuple[frozenset[str], frozenset[str]]:
@@ -790,13 +782,7 @@ def _normalize_codex_pretooluse_hso(
             return hso
 
     if hso.get("permissionDecision") == "deny":
-        hso["permissionDecisionReason"] = (
-            hso.get("permissionDecisionReason")
-            or root_reason
-            or hso.get("additionalContext")
-            or system_message
-            or ""
-        )
+        hso["permissionDecisionReason"] = hso.get("permissionDecisionReason") or root_reason or hso.get("additionalContext") or system_message or ""
         return hso
 
     hso.pop("permissionDecision", None)
@@ -837,40 +823,46 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     """
     Perform strict code-based enforcement of hook schemas.
     Filters the response dictionary to contain ONLY allowed fields for the target CLI.
-    
+
     Args:
         event: Normalized event name (e.g. PreToolUse, Stop)
         response: Dictionary to validate and filter
         cli_type: Target CLI identifier from autorun.platforms
-        
+
     Returns:
         Filtered dictionary containing only schema-compliant fields.
     """
-    # Normalize event name: Gemini CLI uses "BeforeTool" etc., internal uses "PreToolUse".
-    # Client-side calls may pass raw Gemini event names (e.g. from payload['hook_event_name']),
+    # Legacy Gemini CLI uses "BeforeTool" while autorun uses "PreToolUse".
+    # Client calls may pass raw harness CLI names from payload['hook_event_name'],
     # while daemon-side calls pass normalized names. Handle both.
-    event = GEMINI_EVENT_MAP.get(event, event)
+    event = to_autorun_event(event, cli_type)
 
     # Debug logging
     logger.debug(f"validate_hook_response(event={event}, cli_type={cli_type}) input decision={response.get('decision')}")
 
     # Platform.schema_type drives the validation branch (per platforms.py):
-    #   "permissive" → Gemini-style decision/HSO inference + lifecycle whitelist
+    #   "permissive" → Gemini-style decision/hookSpecificOutput inference
     #   "strict"     → Claude/Codex-style HOOK_SCHEMAS filter
     #   "none"       → ForgeCode-style template-only (no hook responses)
     from .platforms import get_platform
+
     platform = get_platform(cli_type)
     schema_type = platform.schema_type if platform else "strict"
 
     if schema_type == "none":
         return {}
 
+    if platform:
+        native = platform.hook_protocol.filter_response_to_harness_schema(event, response)
+        if native is not None:
+            return native
+
     if schema_type == "permissive":
-        # Gemini CLI performs strict JSON schema validation.
+        # Legacy Gemini CLI performs strict JSON schema validation.
         # Lifecycle events (SessionStart, AfterTool, etc.) MUST NOT have 'decision'.
         # We ensure it gets exactly what it expects per event.
-        
-        # Mapping for Gemini top-level decision/reason if they're missing but in HSO
+
+        # Infer missing root decision/reason from hookSpecificOutput.
         if "hookSpecificOutput" in response:
             hso = response["hookSpecificOutput"]
             if "decision" not in response and "permissionDecision" in hso:
@@ -881,12 +873,10 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
 
         # Define Gemini lifecycle events (normalized)
         # These events generally do NOT support 'decision' or 'reason'.
-        gemini_lifecycle_events = {
-            "SessionStart", "SessionEnd", "PostToolUse", "BeforeModel", "AfterModel"
-        }
-        
+        gemini_lifecycle_events = {"SessionStart", "SessionEnd", "PostToolUse", "BeforeModel", "AfterModel"}
+
         allowed_base = {"continue", "systemMessage", "stopReason", "suppressOutput"}
-        
+
         # Determine if this is a lifecycle event or tool/agent event
         if event in gemini_lifecycle_events:
             # Lifecycle: strictly no decision/reason
@@ -894,10 +884,10 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
         else:
             # Tool/Agent/Stop: allows decision/reason
             allowed = allowed_base | {"decision", "reason", "hookSpecificOutput"}
-            
+
         filtered = {k: v for k, v in response.items() if k in allowed}
-        
-        # Gemini-specific HSO filtering
+
+        # Legacy Gemini CLI hookSpecificOutput filtering.
         if "hookSpecificOutput" in filtered:
             hso = filtered["hookSpecificOutput"]
             if event == "PreToolUse":
@@ -909,7 +899,7 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                 # Others (AfterTool, SessionStart, etc.): only allows additionalContext
                 allowed_hso = {"hookEventName", "additionalContext"}
             filtered["hookSpecificOutput"] = {k: v for k, v in hso.items() if k in allowed_hso}
-            
+
         return filtered
 
     if platform and platform.name == "codex":
@@ -921,13 +911,13 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
         if normalized.get("decision") in {"approve", "allow"}:
             normalized.pop("decision", None)
         elif normalized.get("decision") in {"deny", "ask"}:
-            normalized["decision"] = platform.block_decision
+            normalized["decision"] = platform.hook_protocol.root_block_decision
 
         if "decision" not in normalized:
             # Top-level reason is only part of Codex blocking responses. For
             # context injection, use systemMessage and/or additionalContext.
             normalized.pop("reason", None)
-        elif normalized.get("decision") == platform.block_decision:
+        elif normalized.get("decision") == platform.hook_protocol.root_block_decision:
             reason = normalized.get("reason") or normalized.get("systemMessage") or ""
             hso = normalized.get("hookSpecificOutput")
             hso_reason = hso.get("permissionDecisionReason", "") if isinstance(hso, dict) else ""
@@ -968,7 +958,7 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
 
     # 1. Filter root fields
     filtered = {k: v for k, v in response.items() if k in schema["root"]}
-    
+
     # 2. Filter hookSpecificOutput if present and supported
     if "hookSpecificOutput" in filtered and schema["hso"]:
         hso = filtered["hookSpecificOutput"]
@@ -976,7 +966,7 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
     elif "hookSpecificOutput" in filtered:
         # Event does not support hookSpecificOutput (e.g. Stop, SessionStart)
         del filtered["hookSpecificOutput"]
-        
+
     return filtered
 
 
@@ -992,6 +982,7 @@ class EventContext:
         if ctx.autorun_active:      # Loads automatically
             ...
     """
+
     # Reserved attributes (not persisted)
     # Slot map (transcript-related fields clarified — they are NOT duplicates):
     #   _session_transcript : List[Dict]         — already-parsed recent messages (truncated ≤64KB at ingest).
@@ -1003,11 +994,25 @@ class EventContext:
     #                                               fresh / long-tail reads (e.g. cache_guard's bounded
     #                                               reverse-scan) read the file themselves from this path.
     #                                               Distinct purpose from the two in-memory views above.
-    __slots__ = ('_session_id', '_event', '_prompt', '_tool_name', '_tool_input',
-                 '_tool_result', '_session_transcript', '_state', '_transcript',
-                 '_store', '_cli_type', '_cli_type_explicit', '_cwd',
-                 '_permission_mode', '_source', '_chain_notifications',
-                 '_transcript_path')
+    __slots__ = (
+        "_session_id",
+        "_event",
+        "_prompt",
+        "_tool_name",
+        "_tool_input",
+        "_tool_result",
+        "_session_transcript",
+        "_state",
+        "_transcript",
+        "_store",
+        "_cli_type",
+        "_cli_type_explicit",
+        "_cwd",
+        "_permission_mode",
+        "_source",
+        "_chain_notifications",
+        "_transcript_path",
+    )
 
     # Stage constants for type consistency
     STAGE_INACTIVE = 0
@@ -1020,65 +1025,75 @@ class EventContext:
 
     # Default values for magic state (used when key not in persistent store)
     _DEFAULTS = {
-        'file_policy': 'ALLOW',
-        'session_status': '',
-        'autorun_active': False,
-        'autorun_stage': 0,
-        'autorun_task': '',
-        'autorun_mode': 'standard',
-        'activation_prompt': '',
-        'session_blocked_patterns': [],
-        'session_allowed_patterns': [],
-        'recheck_count': 0,
-        'hook_call_count': 0,
-        'ai_monitor_pid': None,
-        'plan_active': False,
-        'plan_type': '',
-        'plan_arguments': '',       # v0.7: Store original user request from $ARGUMENTS
-        'tool_calls_since_task_update': 0,   # v0.9: Counter for task staleness reminder
-        'task_staleness_enabled': True,      # v0.9: Enable/disable reminder injection
-        'task_staleness_threshold': None,    # v0.9: Session override (None = use CONFIG default)
-        'task_staleness_reminder_count': 0,  # v0.10.2: Escalation level (1=normal, 2=stronger, 3+=enforce)
-        'task_staleness_enforce_next': False, # v0.10.2: One-shot PreToolUse deny flag
-        'plan_awaiting_planning_tasks': False,   # v0.10: Nag until [PLANNING] tasks created
-        'plan_awaiting_execution_tasks': False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
-        'plan_task_reminder_count': 0,       # v0.10.2: Escalation for remind_until_tasks_created
-        'pending_stop_injection': None,          # v0.10: Stop-hook msg deferred to next PostToolUse
-        'ghost_clear_min_consecutive_blocks_override': None,  # v0.10.2: Session override
+        "file_policy": "ALLOW",
+        "session_status": "",
+        "autorun_active": False,
+        "autorun_stage": 0,
+        "autorun_task": "",
+        "autorun_mode": "standard",
+        "activation_prompt": "",
+        "session_blocked_patterns": [],
+        "session_allowed_patterns": [],
+        "recheck_count": 0,
+        "hook_call_count": 0,
+        "ai_monitor_pid": None,
+        "plan_active": False,
+        "plan_type": "",
+        "plan_arguments": "",  # v0.7: Store original user request from $ARGUMENTS
+        "tool_calls_since_task_update": 0,  # v0.9: Counter for task staleness reminder
+        "task_staleness_enabled": True,  # v0.9: Enable/disable reminder injection
+        "task_staleness_threshold": None,  # v0.9: Session override (None = use CONFIG default)
+        "task_staleness_reminder_count": 0,  # v0.10.2: Escalation level (1=normal, 2=stronger, 3+=enforce)
+        "task_staleness_enforce_next": False,  # v0.10.2: One-shot PreToolUse deny flag
+        "plan_awaiting_planning_tasks": False,  # v0.10: Nag until [PLANNING] tasks created
+        "plan_awaiting_execution_tasks": False,  # v0.10: Nag until [TDD]/[EXEC] tasks created
+        "plan_task_reminder_count": 0,  # v0.10.2: Escalation for remind_until_tasks_created
+        "pending_stop_injection": None,  # v0.10: Stop-hook msg deferred to next PostToolUse
+        "ghost_clear_min_consecutive_blocks_override": None,  # v0.10.2: Session override
     }
 
-    def __init__(self, session_id: str, event: str, prompt: str = "",
-                 tool_name: str = None, tool_input: Dict = None,
-                 tool_result: str = None, session_transcript: List = None,
-                 store: 'ThreadSafeDB' = None, cli_type: str = None, cwd: str = None,
-                 permission_mode: str = "default", source: str = "startup",
-                 transcript_path: str = None):
-        object.__setattr__(self, '_session_id', session_id)
-        object.__setattr__(self, '_event', event)
-        object.__setattr__(self, '_prompt', prompt)
-        object.__setattr__(self, '_tool_name', tool_name)
-        object.__setattr__(self, '_tool_input', tool_input or {})
-        object.__setattr__(self, '_tool_result', tool_result)
-        object.__setattr__(self, '_session_transcript', session_transcript or [])
-        object.__setattr__(self, '_state', {})
-        object.__setattr__(self, '_transcript', None)
-        object.__setattr__(self, '_store', store)
+    def __init__(
+        self,
+        session_id: str,
+        event: str,
+        prompt: str = "",
+        tool_name: str = None,
+        tool_input: Dict = None,
+        tool_result: str = None,
+        session_transcript: List = None,
+        store: "ThreadSafeDB" = None,
+        cli_type: str = None,
+        cwd: str = None,
+        permission_mode: str = "default",
+        source: str = "startup",
+        transcript_path: str = None,
+    ):
+        object.__setattr__(self, "_session_id", session_id)
+        object.__setattr__(self, "_event", event)
+        object.__setattr__(self, "_prompt", prompt)
+        object.__setattr__(self, "_tool_name", tool_name)
+        object.__setattr__(self, "_tool_input", tool_input or {})
+        object.__setattr__(self, "_tool_result", tool_result)
+        object.__setattr__(self, "_session_transcript", session_transcript or [])
+        object.__setattr__(self, "_state", {})
+        object.__setattr__(self, "_transcript", None)
+        object.__setattr__(self, "_store", store)
         # Auto-detect CLI type from environment if not explicitly provided.
         # Keep an explicitness bit so shared-daemon task dispatch can avoid
         # treating an ambient fallback as a platform assertion.
-        object.__setattr__(self, '_cli_type', cli_type)
-        object.__setattr__(self, '_cli_type_explicit', cli_type is not None)
+        object.__setattr__(self, "_cli_type", cli_type)
+        object.__setattr__(self, "_cli_type_explicit", cli_type is not None)
         # Working directory injected by client.py (_cwd field) for plan tracking
-        object.__setattr__(self, '_cwd', cwd)
+        object.__setattr__(self, "_cwd", cwd)
         # Permission mode from hook payload (plan/bypassPermissions/acceptEdits/default)
-        object.__setattr__(self, '_permission_mode', permission_mode)
+        object.__setattr__(self, "_permission_mode", permission_mode)
         # Path to the session's JSONL transcript (propagated from hook stdin).
         # Used by features that need to read raw usage / history (e.g. cache_guard).
         # Always present on hook-originated contexts; may be None for test / CLI contexts.
-        object.__setattr__(self, '_transcript_path', transcript_path)
+        object.__setattr__(self, "_transcript_path", transcript_path)
         # Session start source from hook payload (startup/resume/clear/compact)
-        object.__setattr__(self, '_source', source)
-        object.__setattr__(self, '_chain_notifications', [])
+        object.__setattr__(self, "_source", source)
+        object.__setattr__(self, "_chain_notifications", [])
 
     # === Read-only accessors for payload data ===
     @property
@@ -1093,8 +1108,9 @@ class EventContext:
     def cli_type(self) -> str:
         if self._cli_type is None:
             from .config import detect_cli_type
+
             detected = detect_cli_type()
-            object.__setattr__(self, '_cli_type', detected)
+            object.__setattr__(self, "_cli_type", detected)
         return self._cli_type
 
     @property
@@ -1304,13 +1320,13 @@ class EventContext:
         - Global-scoped read-modify-write: MUST use state_update()
         """
         # Check local cache first (for this request)
-        state = object.__getattribute__(self, '_state')
+        state = object.__getattribute__(self, "_state")
         if name in state:
             return state[name]
 
         # Load from persistent store
-        store = object.__getattribute__(self, '_store')
-        session_id = object.__getattribute__(self, '_session_id')
+        store = object.__getattribute__(self, "_store")
+        session_id = object.__getattribute__(self, "_session_id")
         if store:
             key = f"{session_id}:{name}"
             value = store.get(key)
@@ -1319,7 +1335,7 @@ class EventContext:
                 return value
 
         # Return default
-        defaults = object.__getattribute__(self, '_DEFAULTS')
+        defaults = object.__getattribute__(self, "_DEFAULTS")
         return defaults.get(name)
 
     def __setattr__(self, name: str, value):
@@ -1335,12 +1351,12 @@ class EventContext:
             value = copy.deepcopy(value)
 
         # Update local cache
-        state = object.__getattribute__(self, '_state')
+        state = object.__getattribute__(self, "_state")
         state[name] = value
 
         # Persist to store
-        store = object.__getattribute__(self, '_store')
-        session_id = object.__getattribute__(self, '_session_id')
+        store = object.__getattribute__(self, "_store")
+        session_id = object.__getattribute__(self, "_session_id")
         if store:
             key = f"{session_id}:{name}"
             store.set(key, value)
@@ -1348,10 +1364,10 @@ class EventContext:
     # === Computed Properties (not persisted) ===
     @property
     def transcript(self) -> LazyTranscript:
-        t = object.__getattribute__(self, '_transcript')
+        t = object.__getattribute__(self, "_transcript")
         if t is None:
             t = LazyTranscript(self._session_transcript)
-            object.__setattr__(self, '_transcript', t)
+            object.__setattr__(self, "_transcript", t)
         return t
 
     @property
@@ -1400,8 +1416,7 @@ class EventContext:
         self._chain_notifications.append((formatted, channel))
 
     # === UNIFIED RESPONSE BUILDER (DRY: single method handles all events) ===
-    def respond(self, decision: str = "allow", reason: str = "", *,
-                to_human: Union[bool, str] = True, to_ai: Union[bool, str] = True) -> dict:
+    def respond(self, decision: str = "allow", reason: str = "", *, to_human: Union[bool, str] = True, to_ai: Union[bool, str] = True) -> dict:
         """
         Unified response builder - automatically formats for event type.
 
@@ -1451,12 +1466,10 @@ class EventContext:
         """
         cli_type = self.cli_type
         from .platforms import get_platform
+
         platform = get_platform(cli_type)
+        protocol = platform.hook_protocol if platform else _PLATFORMS["claude"].hook_protocol
         logger.debug(f"respond: event={self._event} decision={decision} to_human={to_human!r} to_ai={to_ai!r} cli_type={cli_type}")
-        # This keeps both CLIs as first-class citizens by using the best available
-        # blocking mechanism for each.
-        if decision == "ask" and platform and platform.schema_type == "permissive":
-            decision = "deny"
 
         # Use the raw reason - final json.dumps() in the daemon/client will handle escaping.
         # Interoperability Superset: remap tool placeholders for the target CLI.
@@ -1469,71 +1482,19 @@ class EventContext:
             # PATHWAY 1: to_human/to_ai silently ignored — hookSpecificOutput always kept for security.
             if to_human is not True or to_ai is not True:
                 logger.debug("respond: to_human/to_ai ignored for PreToolUse — hookSpecificOutput always kept")
-            # Claude Code PreToolUse Schema:
-            # - top-level 'decision': "approve" | "block"
-            # - top-level 'permissionDecision': "allow" | "deny" | "ask"
-            # - hookSpecificOutput: { permissionDecision, permissionDecisionReason }
-            top_decision = "block" if decision == "deny" else "approve"
-            
-            if platform and platform.schema_type == "permissive":
-                # Gemini-family CLIs use standard allow/deny top-level decision.
-                # Map any blocking decision (deny, block, ask) to "deny".
-                top_decision = "allow" if decision == "allow" else "deny"
-                logger.debug(f"respond: {cli_type} PreToolUse decision={decision} -> top_decision={top_decision}")
-            elif cli_type == "codex":
-                top_decision = "block" if decision != "allow" else "approve"
-
-            # To avoid triple-printing in the UI, we only provide the reason 
-            # in hookSpecificOutput. Claude will also show stderr for exit 2.
-            is_deny = decision == "deny"
-            hide_json_reason = bool(platform and platform.has_exit2_workaround and is_deny)
-
-            # CRITICAL SEMANTICS:
-            # 1. 'continue: True' means the AI loop keeps running. We ALWAYS want this
-            #    on tool denial so the AI can see the feedback and suggest alternatives.
-            #    Setting this to False would stop the entire agent session.
-            # 2. 'decision' / 'permissionDecision' controls the TOOL, not the AI.
-            #    Denying the tool (block/deny) prevents execution while the AI continues.
-            # === PreToolUse response field semantics (ANTI-TRIPLE-PRINT DESIGN) ===
-            # Claude Code deny:  reason="" and systemMessage="" intentionally.
-            #   The message goes to the user via stderr (exit 2 workaround for bug #4669).
-            #   Putting reason/systemMessage would cause triple-printing in the Claude UI.
-            # Claude Code allow: reason=msg and systemMessage=msg (normal display).
-            # Gemini deny/allow: reason=msg and systemMessage=msg (Gemini has no exit-2 quirk).
-            # ALL paths:         hookSpecificOutput.permissionDecisionReason=msg ALWAYS set.
-            #   This is the CANONICAL, PORTABLE location for the blocking/warning message.
-            #   Tests should assert on hookSpecificOutput.permissionDecisionReason, not reason.
-            resp = {
-                "decision": top_decision,
-                "permissionDecision": decision,
-                "reason": "" if hide_json_reason else msg_reason,
-                "continue": True,
-                "stopReason": "",
-                "suppressOutput": False,
-                "systemMessage": "" if hide_json_reason else msg_reason,
-                # Claude Code hookSpecificOutput (REQUIRED for PreToolUse)
-                # Gemini CLI hookSpecificOutput (BeforeTool expects hookEventName: "BeforeTool")
-                "hookSpecificOutput": {
-                    "hookEventName": get_cli_event_name(self._event, cli_type),
-                    "permissionDecision": decision,
-                    "permissionDecisionReason": msg_reason  # ALWAYS populated — use this in tests
-                },
-            }
+            resp = protocol.pretool_response(
+                decision,
+                msg_reason,
+                get_cli_event_name(self._event, cli_type),
+            )
             return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
         # PATHWAY 2: UserPromptSubmit & PostToolUse (Context Injection)
         # =====================================================================
         if self._event in ("UserPromptSubmit", "PostToolUse"):
-            if cli_type == "codex" and decision != "allow":
-                resp = {
-                    "decision": platform.block_decision if platform else "block",
-                    "reason": msg_reason,
-                    "continue": True,
-                    "stopReason": "",
-                    "suppressOutput": False,
-                    "systemMessage": msg_reason,
-                }
+            resp = protocol.block_decision_for_context_event(self._event, msg_reason) if decision != "allow" else None
+            if resp is not None:
                 return validate_hook_response(self._event, resp, cli_type=cli_type)
 
             human_text = self._resolve_channel(to_human, msg_reason)
@@ -1558,24 +1519,12 @@ class EventContext:
             # NOTE: reason="" keyed on human_text (not sys_msg) to preserve backwards compat:
             #   to_human=False → human_text=None → reason=msg_reason (old AI-injection path kept)
             sys_msg = human_text or ai_text or ""
-            if cli_type == "codex" and not sys_msg and ai_text in (None, ""):
-                return {}
-            resp = {
-                "continue": True,
-                "stopReason": "",
-                "suppressOutput": False,
-                "systemMessage": sys_msg,
-            }
-            if platform and platform.normal_allow_decision is not None:
-                resp["decision"] = platform.normal_allow_decision
-            if cli_type != "codex":
-                resp["reason"] = "" if human_text else msg_reason
-
-            if ai_text is not None:
-                resp["hookSpecificOutput"] = {
-                    "hookEventName": get_cli_event_name(self._event, cli_type),
-                    "additionalContext": ai_text,
-                }
+            resp = protocol.context_response(
+                event_name=get_cli_event_name(self._event, cli_type),
+                system_message=sys_msg,
+                root_reason="" if human_text else msg_reason,
+                additional_context=ai_text,
+            )
 
             return validate_hook_response(self._event, resp, cli_type=cli_type)
 
@@ -1586,11 +1535,11 @@ class EventContext:
             # PATHWAY 3: to_human/to_ai silently ignored — systemMessage already human+AI visible.
             if to_human is not True or to_ai is not True:
                 logger.debug(f"respond: to_human/to_ai ignored for {self._event} — systemMessage already human-visible")
-            
+
             # Merge accumulated chain notifications (Interoperability Superset)
             stop_msg = msg_reason
             if self._chain_notifications:
-                # For Stop, we merge everything into the main message since 
+                # For Stop, we merge everything into the main message since
                 # Claude doesn't support additionalContext here.
                 notifs = [m for m, c in self._chain_notifications]
                 prefix = "\n".join(notifs)
@@ -1601,18 +1550,9 @@ class EventContext:
             # - MUST NOT contain 'decision' or 'reason' for standard allow
             # - ONLY supports 'continue', 'stopReason', 'suppressOutput', 'systemMessage'
             if decision == "block":
-                # For Gemini, 'block' decision must be 'deny' to trigger retry
-                actual_decision = platform.block_decision if platform else ("deny" if cli_type == "gemini" else "block")
-                resp = {
-                    "continue": True,  # Keep AI working
-                    "decision": actual_decision,
-                    "reason": stop_msg,
-                    "stopReason": "",
-                    "suppressOutput": False,
-                    "systemMessage": stop_msg,
-                }
+                resp = protocol.response_to_reject_stop_and_continue(stop_msg)
                 return validate_hook_response(self._event, resp, cli_type=cli_type)
-            
+
             resp = {
                 "continue": True,
                 "stopReason": "",
@@ -1629,7 +1569,7 @@ class EventContext:
             # only notification channel for Claude (hookSpecificOutput impossible per HOOK_SCHEMAS).
             if to_human is not True or to_ai is not True:
                 logger.debug("respond: to_human/to_ai ignored for SessionStart — systemMessage always human-visible")
-            
+
             # Merge accumulated chain notifications (Interoperability Superset)
             human_text = msg_reason
             ai_text = None
@@ -1658,14 +1598,11 @@ class EventContext:
                 "suppressOutput": False,
                 "systemMessage": human_text,
             }
-            
+
             # Superset Capability: Context Injection for Gemini-family CLIs
             if platform and platform.schema_type == "permissive" and ai_text:
-                resp["hookSpecificOutput"] = {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": ai_text
-                }
-                
+                resp["hookSpecificOutput"] = {"hookEventName": "SessionStart", "additionalContext": ai_text}
+
             return validate_hook_response(self._event, resp, cli_type=cli_type)
 
         # =====================================================================
@@ -1677,7 +1614,7 @@ class EventContext:
             "suppressOutput": False,
             "systemMessage": msg_reason,
         }
-        
+
         # Enforce strict schema validation before returning
         return validate_hook_response(self._event, final_response, cli_type=cli_type)
 
@@ -1770,10 +1707,12 @@ class AutorunApp:
 
     def command(self, *aliases: str):
         """Register command handler with multiple aliases (DRY: single decorator)."""
+
         def decorator(func: Callable):
             for alias in aliases:
                 self.command_handlers[alias] = func
             return func
+
         return decorator
 
     # Semantic aliases - all point to same decorator
@@ -1781,12 +1720,14 @@ class AutorunApp:
 
     def on(self, event: str):
         """Register chain handler for event (DRY: single decorator)."""
+
         def decorator(func: Callable):
             # SubagentStop shares Stop chain
             target = "Stop" if event == "SubagentStop" else event
             if target in self.chains:
                 self.chains[target].append(func)
             return func
+
         return decorator
 
     def _run_chain(self, ctx: EventContext, chain_name: str) -> Optional[Dict]:
@@ -1867,7 +1808,7 @@ class AutorunApp:
                 ctx.activation_prompt = match.activation_prompt
                 response_text = match.handler(ctx)
                 # Stop/estop handlers set _halt_ai=True to kill AI loop
-                halt = getattr(ctx, '_halt_ai', False)
+                halt = getattr(ctx, "_halt_ai", False)
                 return ctx.command_response(response_text, continue_loop=not halt)
             # Non-commands continue to AI
             return ctx.respond("allow")
@@ -1937,9 +1878,7 @@ class AutorunDaemon:
         event = ctx.event
         timeout = dispatch_timeout_for_event(event)
         cooldown = float(CONFIG.get("daemon_dispatch_timeout_cooldown_seconds", 5.0))
-        max_concurrent = max(
-            1, int(CONFIG.get("daemon_dispatch_max_concurrent_per_event", 4))
-        )
+        max_concurrent = max(1, int(CONFIG.get("daemon_dispatch_max_concurrent_per_event", 4)))
         deadline = time.monotonic() + timeout
 
         def circuit_response():
@@ -1962,9 +1901,7 @@ class AutorunDaemon:
             self._dispatch_semaphores[event] = semaphore_entry
         semaphore = semaphore_entry[1]
         try:
-            await asyncio.wait_for(
-                semaphore.acquire(), timeout=max(0.0, deadline - time.monotonic())
-            )
+            await asyncio.wait_for(semaphore.acquire(), timeout=max(0.0, deadline - time.monotonic()))
         except asyncio.TimeoutError:
             return circuit_response()
 
@@ -2018,16 +1955,17 @@ class AutorunDaemon:
         existence, which causes a spurious KeyboardInterrupt.
         """
         import psutil
+
         return psutil.pid_exists(pid)
 
-    async def handle_client(self, reader: asyncio.StreamReader,
-                           writer: asyncio.StreamWriter):
+    async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Handle single hook request.
 
         Note: Server uses READ_BUFFER_LIMIT (1GB) to accept large payloads,
         then truncates transcript to ~64KB after reading (see normalize_hook_payload).
         """
         import time
+
         start_time = time.time()
         self.last_activity = start_time
         event = "unknown"
@@ -2041,7 +1979,7 @@ class AutorunDaemon:
             # Read payload (READ_BUFFER_LIMIT set on server to accept large payloads)
             # Truncates transcript to ~64KB AFTER reading (see normalize_hook_payload below)
             try:
-                data = await reader.readuntil(b'\n')
+                data = await reader.readuntil(b"\n")
             except asyncio.IncompleteReadError as e:
                 if not e.partial:
                     logger.debug("Client disconnected before sending daemon payload")
@@ -2054,6 +1992,7 @@ class AutorunDaemon:
             tool = payload.get("tool_name", "")
 
             from .client import _log_hook_lifecycle
+
             _log_hook_lifecycle("DAEMON PROCESSING START", Event=event, Tool=tool)
 
             # Debug logging (lazy % formatting avoids str(payload) when debug is off)
@@ -2109,10 +2048,12 @@ class AutorunDaemon:
                 f"Details: {e}"
             )
             from .client import build_daemon_failure_response
+
             response = build_daemon_failure_response(event, cli_type, message)
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
             from .client import build_daemon_failure_response
+
             response = build_daemon_failure_response(event, cli_type, f"Daemon error: {e}")
 
         finally:
@@ -2130,13 +2071,10 @@ class AutorunDaemon:
                 logger.debug(f"Daemon sending response ({len(response_json)} bytes): {response_json}")
 
                 try:
-                    writer.write(response_json.encode() + b'\n')
+                    writer.write(response_json.encode() + b"\n")
                     await writer.drain()
                 except (ConnectionResetError, BrokenPipeError):
-                    logger.warning(
-                        "Client disconnected before daemon response could be delivered "
-                        f"(event={event}, cli={cli_type})"
-                    )
+                    logger.warning(f"Client disconnected before daemon response could be delivered (event={event}, cli={cli_type})")
                 finally:
                     writer.close()
                     try:
@@ -2146,6 +2084,7 @@ class AutorunDaemon:
 
                 duration = (time.time() - start_time) * 1000
                 from .client import _log_hook_lifecycle
+
                 _log_hook_lifecycle("DAEMON PROCESSING END", Event=event, Duration=f"{duration:.2f}ms")
 
     async def watchdog(self):
@@ -2160,10 +2099,7 @@ class AutorunDaemon:
             while self.running:
                 # Use wait_for with shutdown event for responsive shutdown
                 try:
-                    await asyncio.wait_for(
-                        self._shutdown_event.wait() if self._shutdown_event else asyncio.sleep(60),
-                        timeout=60.0
-                    )
+                    await asyncio.wait_for(self._shutdown_event.wait() if self._shutdown_event else asyncio.sleep(60), timeout=60.0)
                     # If shutdown event was set, exit loop
                     if self._shutdown_event and self._shutdown_event.is_set():
                         break
@@ -2246,9 +2182,7 @@ class AutorunDaemon:
 
         # Schedule async cleanup if we have a loop
         if self._loop and self._loop.is_running():
-            self._loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(self.async_stop())
-            )
+            self._loop.call_soon_threadsafe(lambda: asyncio.create_task(self.async_stop()))
         else:
             # Fallback to sync cleanup if no loop
             self._cleanup_files()
@@ -2271,7 +2205,7 @@ class AutorunDaemon:
             self._daemon_lock = None
 
         # Remove lock and flock files
-        for lock_file in [LOCK_PATH, LOCK_PATH.with_suffix('.flock')]:
+        for lock_file in [LOCK_PATH, LOCK_PATH.with_suffix(".flock")]:
             try:
                 if lock_file.exists():
                     lock_file.unlink()
@@ -2292,7 +2226,8 @@ class AutorunDaemon:
         Falls back to socket connect test if lock unavailable (NFS).
         """
         from filelock import FileLock, Timeout
-        flock_path = LOCK_PATH.with_suffix('.flock')
+
+        flock_path = LOCK_PATH.with_suffix(".flock")
         try:
             self._daemon_lock = FileLock(str(flock_path), timeout=0)
             self._daemon_lock.acquire()
@@ -2318,9 +2253,7 @@ class AutorunDaemon:
             # Verify the write succeeded (guards against silent truncation or wrong inode)
             written = LOCK_PATH.read_text(encoding="utf-8").strip()
             if written != str(pid):
-                logger.error(
-                    f"PID file verification failed: wrote {pid}, read back '{written}'"
-                )
+                logger.error(f"PID file verification failed: wrote {pid}, read back '{written}'")
             else:
                 logger.info(f"Wrote PID {pid} to {LOCK_PATH}")
         except OSError as e:
@@ -2353,6 +2286,7 @@ class AutorunDaemon:
         if self._cleanup_registered:
             return
         import atexit
+
         atexit.register(self._cleanup_files)
         self._cleanup_registered = True
         logger.debug("Registered atexit cleanup handler")
@@ -2373,19 +2307,10 @@ class AutorunDaemon:
             asyncio.create_task(self.async_stop())
 
         try:
-            self._loop.add_signal_handler(
-                signal.SIGTERM,
-                lambda: handle_signal("SIGTERM")
-            )
-            self._loop.add_signal_handler(
-                signal.SIGINT,
-                lambda: handle_signal("SIGINT")
-            )
+            self._loop.add_signal_handler(signal.SIGTERM, lambda: handle_signal("SIGTERM"))
+            self._loop.add_signal_handler(signal.SIGINT, lambda: handle_signal("SIGINT"))
             # SIGHUP for graceful restart (just log for now)
-            self._loop.add_signal_handler(
-                signal.SIGHUP,
-                lambda: logger.info("Received SIGHUP (ignored)")
-            )
+            self._loop.add_signal_handler(signal.SIGHUP, lambda: logger.info("Received SIGHUP (ignored)"))
             logger.debug("Signal handlers registered")
         except NotImplementedError:
             # Windows doesn't support add_signal_handler
@@ -2415,9 +2340,7 @@ class AutorunDaemon:
 
         # Start server with large buffer to accept full payloads before truncation
         # Default 64KB too small - client sends full transcript, we truncate after reading
-        self._server = await ipc.start_server(
-            self.handle_client, limit=READ_BUFFER_LIMIT
-        )
+        self._server = await ipc.start_server(self.handle_client, limit=READ_BUFFER_LIMIT)
         self.running = True
 
         # Start watchdog as tracked task

@@ -30,6 +30,18 @@ def test_capability_snapshot_records_multi_harness_task_surfaces():
     assert platforms["antigravity"]["task_management_style"] == "bulk_todos"
 
 
+def test_capability_snapshot_exposes_each_harness_hook_contract():
+    """Diagnostics must explain wire behavior without reading implementation code."""
+    from autorun.capability_snapshot import build_capability_snapshot
+
+    platforms = build_capability_snapshot()["platforms"]
+    assert platforms["claude"]["pretool_decision_location"] == "root_and_hook_specific_output"
+    assert platforms["gemini"]["stop_blocking_decision"] == "deny"
+    assert platforms["qwen"]["pretool_decision_location"] == "hook_specific_output"
+    assert platforms["antigravity"]["hook_manifest_container_key"] == "autorun"
+    assert platforms["codex"]["context_events_with_block_decision"] == ["PostToolUse", "UserPromptSubmit"]
+
+
 def test_capability_snapshot_aliases_have_one_owner():
     from autorun.capability_snapshot import build_capability_snapshot
 
@@ -39,9 +51,7 @@ def test_capability_snapshot_aliases_have_one_owner():
         for alias in command_aliases:
             owners_by_alias.setdefault(alias, set()).add(command_name)
 
-    assert {
-        alias: owners for alias, owners in owners_by_alias.items() if len(owners) > 1
-    } == {}
+    assert {alias: owners for alias, owners in owners_by_alias.items() if len(owners) > 1} == {}
 
 
 def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
@@ -50,10 +60,7 @@ def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
     snapshot = build_capability_snapshot()
     command_docs = snapshot["command_docs"]
 
-    missing_docs = sorted(
-        alias for alias in snapshot["commands"]
-        if alias.startswith("/ar:") and alias.removeprefix("/ar:") not in command_docs
-    )
+    missing_docs = sorted(alias for alias in snapshot["commands"] if alias.startswith("/ar:") and alias.removeprefix("/ar:") not in command_docs)
 
     assert missing_docs == []
     assert command_docs["restart-daemon"]["executable"] is True
@@ -67,9 +74,7 @@ def test_capability_snapshot_covers_installed_skills_with_descriptions():
 
     snapshot = build_capability_snapshot()
     plugins_root = Path(__file__).parents[2]
-    expected = {
-        path.parent.name for path in plugins_root.glob("*/skills/*/SKILL.md")
-    }
+    expected = {path.parent.name for path in plugins_root.glob("*/skills/*/SKILL.md")}
 
     assert set(snapshot["skills"]) == expected
     assert snapshot["plugin_skills"]["pdf-extractor"] == ["pdf-extractor"]
@@ -97,6 +102,7 @@ def test_capability_snapshot_cli_writes_json_without_touching_home(tmp_path):
             str(output_path),
         ],
         env={**env, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+        cwd=tmp_path,
         text=True,
         capture_output=True,
         timeout=10,
