@@ -11,8 +11,8 @@
 - Never hide persistent-state I/O or lock failures by raising hook timeouts, and
   never weaken concurrency, protocol, or isolation assertions to pass tests.
 - Before committing, read `plugins/autorun/commands/commit.md`; use a concrete
-  `<files>:` or `type(scope):` subject and a body covering previous behavior,
-  exact changes, rationale, affected files, and verification evidence.
+  `<files>:` subject for few/grouped files or `type(scope):` for many files.
+  Cover previous behavior, exact changes, rationale, files, and verification.
 - Full invariants, regression checks, and recovery guidance:
   [`plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md`](plugins/autorun/docs/RUNTIME_STATE_ISOLATION.md).
 
