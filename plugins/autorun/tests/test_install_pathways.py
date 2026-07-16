@@ -809,9 +809,21 @@ class TestDependencyInstallation:
         result = install._install_pdf_deps()
 
         assert result.ok
-        assert calls == [([
-            "uv", "tool", "install", "--force", "--editable", str(pdf_dir)
-        ], {"timeout": 180})]
+        assert calls == [
+            (
+                [
+                    "uv",
+                    "tool",
+                    "install",
+                    "--force",
+                    "--python",
+                    install.sys.executable,
+                    "--editable",
+                    str(pdf_dir),
+                ],
+                {"timeout": 180},
+            )
+        ]
 
     def test_pdf_runtime_falls_back_to_editable_pip(self, tmp_path, monkeypatch):
         """Systems without uv still receive the PDF package and CLI entry point."""
@@ -1821,21 +1833,24 @@ class TestUvToolInstall:
         monkeypatch.setattr(
             install,
             "run_cmd",
-            lambda args, **_kwargs: calls.append(args)
-            or install.CmdResult(True, "installed"),
+            lambda args, **_kwargs: calls.append(args) or install.CmdResult(True, "installed"),
         )
 
         result = install._install_autorun_uv_tool(plugin_root)
 
         assert result.ok is True
-        assert calls == [[
-            "uv",
-            "tool",
-            "install",
-            "--force",
-            "--editable",
-            str(plugin_root),
-        ]]
+        assert calls == [
+            [
+                "uv",
+                "tool",
+                "install",
+                "--force",
+                "--python",
+                install.sys.executable,
+                "--editable",
+                str(plugin_root),
+            ]
+        ]
 
     def test_uv_tool_failure_makes_full_install_fail(self, tmp_path, monkeypatch):
         """A missing global autorun entry point cannot be masked by other targets."""

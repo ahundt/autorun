@@ -517,6 +517,29 @@ class ThreadSafeDB:
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
 
+    def set_volatile(self, key: str, value: Any) -> None:
+        """Set daemon-lifetime advisory state without persistent JSON I/O."""
+        if isinstance(value, (list, dict, set)):
+            value = copy.deepcopy(value)
+        with self._lock:
+            self._cache[key] = value
+
+    def update_volatile(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
+        """Atomically update advisory state in the daemon cache only.
+
+        Hydrate the session first so a daemon restart resumes from the latest
+        durable checkpoint. Callers must persist correctness- or safety-critical
+        transitions separately; this path is for counters between checkpoints.
+        """
+        with self._lock:
+            current = self.get(key, default)
+            if isinstance(current, (list, dict, set)):
+                current = copy.deepcopy(current)
+            value = updater(current)
+            cached = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+            self._cache[key] = cached
+            return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+
     def synchronize_session(self, session_id: str, operation: Callable[[], Any]) -> Any:
         """Run a legacy state operation and refresh its cache before unlocking."""
         with self._lock:
@@ -1185,6 +1208,40 @@ class EventContext:
                     current = copy.deepcopy(current)
                 value = updater(current)
                 state[name] = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+        if target_session == own_session:
+            state = object.__getattribute__(self, "_state")
+            state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
+        return value
+
+    def state_set_volatile(self, name: str, value, *, session_id: str | None = None) -> None:
+        """Set daemon-lifetime advisory state, with durable direct-mode fallback."""
+        store = object.__getattribute__(self, "_store")
+        own_session = object.__getattribute__(self, "_session_id")
+        target_session = session_id or own_session
+        if store:
+            store.set_volatile(f"{target_session}:{name}", value)
+        else:
+            self.state_set(name, value, session_id=target_session)
+        if target_session == own_session:
+            state = object.__getattribute__(self, "_state")
+            state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
+
+    def state_update_volatile(
+        self,
+        name: str,
+        updater: Callable[[Any], Any],
+        default=None,
+        *,
+        session_id: str | None = None,
+    ):
+        """Atomically update daemon-lifetime advisory state."""
+        store = object.__getattribute__(self, "_store")
+        own_session = object.__getattribute__(self, "_session_id")
+        target_session = session_id or own_session
+        if store:
+            value = store.update_volatile(f"{target_session}:{name}", updater, default)
+        else:
+            value = self.state_update(name, updater, default, session_id=target_session)
         if target_session == own_session:
             state = object.__getattribute__(self, "_state")
             state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value

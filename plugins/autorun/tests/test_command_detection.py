@@ -5,6 +5,7 @@ Tests for command_detection module.
 
 Run: uv run pytest plugins/autorun/tests/test_command_detection.py -v
 """
+
 from __future__ import annotations
 
 import pytest
@@ -21,8 +22,8 @@ from autorun.config import CONFIG
 
 # ─── Bug 1: Plan Commands ─────────────────────────────────────────────────────
 
-PLAN_COMMANDS = ["/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp",
-                 "/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"]
+PLAN_COMMANDS = ["/ar:pn", "/ar:pr", "/ar:pu", "/ar:pp", "/ar:plannew", "/ar:planrefine", "/ar:planupdate", "/ar:planprocess"]
+
 
 @pytest.mark.parametrize("cmd", PLAN_COMMANDS)
 def test_plan_commands_in_mappings(cmd: str) -> None:
@@ -31,15 +32,19 @@ def test_plan_commands_in_mappings(cmd: str) -> None:
 
 # ─── ParsedPattern Tests ──────────────────────────────────────────────────────
 
+
 class TestParsedPattern:
     """Tests for ParsedPattern dataclass."""
 
-    @pytest.mark.parametrize("pattern,expected_base,expected_flags", [
-        ("rm", "rm", frozenset()),
-        ("rm -rf", "rm", frozenset({"-r", "-f"})),
-        ("git reset --hard", "git reset", frozenset({"--hard"})),
-        ("git checkout .", "git checkout", frozenset()),
-    ])
+    @pytest.mark.parametrize(
+        "pattern,expected_base,expected_flags",
+        [
+            ("rm", "rm", frozenset()),
+            ("rm -rf", "rm", frozenset({"-r", "-f"})),
+            ("git reset --hard", "git reset", frozenset({"--hard"})),
+            ("git checkout .", "git checkout", frozenset()),
+        ],
+    )
     def test_parsing(self, pattern, expected_base, expected_flags):
         p = ParsedPattern.from_string(pattern)
         assert p.base == expected_base
@@ -57,24 +62,17 @@ class TestParsedPattern:
 
 # ─── ExtractedCommands Tests ──────────────────────────────────────────────────
 
+
 class TestExtractedCommands:
     """Tests for ExtractedCommands dataclass."""
 
     def test_matches_single_word(self):
-        ec = ExtractedCommands(
-            frozenset({"rm", "ls"}),
-            frozenset({"rm file.txt", "ls -la"}),
-            frozenset({"rm", "ls", "file.txt"})
-        )
+        ec = ExtractedCommands(frozenset({"rm", "ls"}), frozenset({"rm file.txt", "ls -la"}), frozenset({"rm", "ls", "file.txt"}))
         assert ec.matches_single_word("rm") is True
         assert ec.matches_single_word("cat") is False
 
     def test_matches_pattern(self):
-        ec = ExtractedCommands(
-            frozenset({"rm"}),
-            frozenset({"rm -rf /tmp"}),
-            frozenset({"rm", "/tmp"})
-        )
+        ec = ExtractedCommands(frozenset({"rm"}), frozenset({"rm -rf /tmp"}), frozenset({"rm", "/tmp"}))
         p = ParsedPattern.from_string("rm -rf")
         assert ec.matches_pattern(p) is True
 
@@ -91,6 +89,7 @@ EXTRACT_CASES = [
     ("ls | rm -", {"ls", "rm"}),
 ]
 
+
 @pytest.mark.parametrize("cmd,expected", EXTRACT_CASES)
 def test_extract_commands(cmd: str, expected: set[str]) -> None:
     names, _ = extract_commands(cmd)
@@ -98,10 +97,14 @@ def test_extract_commands(cmd: str, expected: set[str]) -> None:
 
 
 @pytest.mark.skipif(not BASHLEX_AVAILABLE, reason="bashlex required")
-@pytest.mark.parametrize("cmd", [
-    "if true; then rm file; fi",
-    "(rm file)", "$(rm file)",
-])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "if true; then rm file; fi",
+        "(rm file)",
+        "$(rm file)",
+    ],
+)
 def test_extract_nested(cmd: str) -> None:
     names, _ = extract_commands(cmd)
     assert "rm" in names
@@ -124,9 +127,11 @@ def test_extract_caching():
 BLOCK_CASES = ["rm file", "sudo rm file", "/bin/rm file", "cat && rm file"]
 ALLOW_CASES = ["/ar:planrefine", "echo rm", "rmediation", "warm-up.sh"]
 
+
 @pytest.mark.parametrize("cmd", BLOCK_CASES)
 def test_blocks_rm(cmd: str) -> None:
     assert command_matches_pattern(cmd, "rm") is True
+
 
 @pytest.mark.parametrize("cmd", ALLOW_CASES)
 def test_allows_non_rm(cmd: str) -> None:
@@ -148,6 +153,7 @@ MULTIWORD_CASES = [
     ("dd of=/tmp", "dd if=", False),
 ]
 
+
 @pytest.mark.parametrize("cmd,pattern,expected", MULTIWORD_CASES)
 def test_multiword_patterns(cmd: str, pattern: str, expected: bool) -> None:
     assert command_matches_pattern(cmd, pattern) is expected
@@ -156,67 +162,117 @@ def test_multiword_patterns(cmd: str, pattern: str, expected: bool) -> None:
 class TestWrappedCommandDetection:
     """Regression coverage for transparent command wrappers and git global flags."""
 
-    @pytest.mark.parametrize("cmd", [
-        "git -C /tmp/repo push origin main",
-        "git -c push.followTags=false push --porcelain origin main",
-        "rtk git -C /tmp/repo -c push.followTags=false push --porcelain --no-follow-tags origin main:main",
-        "rtk --verbose git -C /tmp/repo push origin main",
-        "rtk --skip-env git push origin main",
-        "rtk git push origin main",
-        "rtk proxy git push origin main",
-        "sudo rtk proxy git push origin main",
-        "tsb rtk proxy git push origin main",
-        "tsb git push origin main",
-        "tsb --ai git push origin main",
-        "tsb --sandbox restrictive-open git push origin main",
-        "tsb -s restrictive-open git push origin main",
-        "tsb --mount /tmp:ro --add-read-path /data git push origin main",
-        "tsb -- git push origin main",
-        "timeout 10 git push origin main",
-        "env FOO=1 git push origin main",
-        "env -u FOO git push origin main",
-    ])
+    # DATA-ONLY wrapper grammar fixtures. These strings are parsed in process;
+    # they are never submitted to a shell. Keep unrelated wrapper capabilities
+    # composable while proving every documented RTK/proxy spelling reaches the
+    # same harmless child command.
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rtk git status",
+            "/opt/homebrew/bin/rtk git status",
+            "rtk -v git status",
+            "rtk -vv git status",
+            "rtk --ultra-compact git status",
+            "rtk --skip-env git status",
+            "rtk proxy git status",
+            "rtk proxy -- git status",
+            "rtk proxy --ultra-compact git status",
+            "rtk proxy --skip-env git status",
+            "rtk --ultra-compact proxy --skip-env -- git status",
+            "sudo rtk proxy -- git status",
+            "tsb rtk --skip-env proxy -- git status",
+        ],
+    )
+    def test_all_documented_rtk_proxy_forms_reach_child(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "git status") is True
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rtk --help",
+            "rtk --version",
+            "rtk proxy --help",
+            "rtk proxy echo git status",
+        ],
+    )
+    def test_rtk_stop_and_operand_forms_do_not_invent_child(self, cmd: str) -> None:
+        assert command_matches_pattern(cmd, "git status") is False
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "git -C /tmp/repo push origin main",
+            "git -c push.followTags=false push --porcelain origin main",
+            "rtk git -C /tmp/repo -c push.followTags=false push --porcelain --no-follow-tags origin main:main",
+            "rtk --verbose git -C /tmp/repo push origin main",
+            "rtk --skip-env git push origin main",
+            "rtk git push origin main",
+            "rtk proxy git push origin main",
+            "sudo rtk proxy git push origin main",
+            "tsb rtk proxy git push origin main",
+            "tsb git push origin main",
+            "tsb --ai git push origin main",
+            "tsb --sandbox restrictive-open git push origin main",
+            "tsb -s restrictive-open git push origin main",
+            "tsb --mount /tmp:ro --add-read-path /data git push origin main",
+            "tsb -- git push origin main",
+            "timeout 10 git push origin main",
+            "env FOO=1 git push origin main",
+            "env -u FOO git push origin main",
+        ],
+    )
     def test_git_push_matches_through_global_options_and_wrappers(self, cmd: str) -> None:
         assert command_matches_pattern(cmd, "git push") is True
 
-    @pytest.mark.parametrize("cmd,pattern", [
-        ("git -C /tmp/repo reset --hard HEAD~1", "git reset --hard"),
-        ("rtk git -C /tmp/repo clean -f", "git clean -f"),
-        ("rtk --verbose git -C /tmp/repo clean -f", "git clean -f"),
-        ("rtk rm -rf /tmp/target", "rm -rf"),
-        ("rtk proxy rm -rf /tmp/target", "rm -rf"),
-        ("tsb --ai git -C /tmp/repo clean -f", "git clean -f"),
-        ("sudo -u root rm -rf /tmp/target", "rm -rf"),
-        ("timeout 10 rm -rf /tmp/target", "rm -rf"),
-        ("env FOO=1 rm -rf /tmp/target", "rm -rf"),
-    ])
+    @pytest.mark.parametrize(
+        "cmd,pattern",
+        [
+            ("git -C /tmp/repo reset --hard HEAD~1", "git reset --hard"),
+            ("rtk git -C /tmp/repo clean -f", "git clean -f"),
+            ("rtk --verbose git -C /tmp/repo clean -f", "git clean -f"),
+            ("rtk rm -rf /tmp/target", "rm -rf"),
+            ("rtk proxy rm -rf /tmp/target", "rm -rf"),
+            ("tsb --ai git -C /tmp/repo clean -f", "git clean -f"),
+            ("sudo -u root rm -rf /tmp/target", "rm -rf"),
+            ("timeout 10 rm -rf /tmp/target", "rm -rf"),
+            ("env FOO=1 rm -rf /tmp/target", "rm -rf"),
+        ],
+    )
     def test_destructive_git_patterns_match_after_global_options(self, cmd: str, pattern: str) -> None:
         assert command_matches_pattern(cmd, pattern) is True
 
-    @pytest.mark.parametrize("cmd", [
-        "rtk echo rm",
-        "rtk --verbose echo rm",
-        "rtk proxy echo rm",
-        "tsb echo rm",
-        "tsb --ai echo rm",
-        "timeout 10 echo rm",
-        "env FOO=1 echo rm",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rtk echo rm",
+            "rtk --verbose echo rm",
+            "rtk proxy echo rm",
+            "tsb echo rm",
+            "tsb --ai echo rm",
+            "timeout 10 echo rm",
+            "env FOO=1 echo rm",
+        ],
+    )
     def test_wrappers_do_not_turn_arguments_into_commands(self, cmd: str) -> None:
         assert command_matches_pattern(cmd, "rm") is False
 
-    @pytest.mark.parametrize("cmd", [
-        "tsb --help",
-        "tsb --version",
-        "rtk --help",
-        "rtk --version",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "tsb --help",
+            "tsb --version",
+            "rtk --help",
+            "rtk --version",
+        ],
+    )
     def test_wrapper_help_invocations_are_not_inner_commands(self, cmd: str) -> None:
         assert command_matches_pattern(cmd, "git push") is False
         assert command_matches_pattern(cmd, "rm") is False
 
 
 # ─── Edge Cases ───────────────────────────────────────────────────────────────
+
 
 def test_empty_inputs():
     assert extract_commands("") == (frozenset(), frozenset())
@@ -236,15 +292,19 @@ def test_git_not_matches_git_lfs():
 
 # ─── Prefix/Wrapper Detection Tests ───────────────────────────────────────────
 
+
 class TestMultiPassDetection:
     """Tests for prefix-with-flags handling."""
 
-    @pytest.mark.parametrize("cmd", [
-        "sudo -u root rm file",
-        "sudo -g wheel rm -rf /",
-        "env -u PATH rm file",
-        "sudo -u root -g wheel rm file",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "sudo -u root rm file",
+            "sudo -g wheel rm -rf /",
+            "env -u PATH rm file",
+            "sudo -u root -g wheel rm file",
+        ],
+    )
     def test_catches_rm_after_prefix_flags(self, cmd: str) -> None:
         """v7: Must catch rm even with flags between prefix and command."""
         assert command_matches_pattern(cmd, "rm") is True
@@ -252,6 +312,7 @@ class TestMultiPassDetection:
     def test_all_potential_commands_collected(self):
         """Only the unwrapped command should be a potential command."""
         from autorun.command_detection import _extract_impl
+
         result = _extract_impl("sudo -u root rm file.txt")
         assert "rm" in result.all_potential
         assert "root" not in result.all_potential
@@ -260,23 +321,30 @@ class TestMultiPassDetection:
 
 # ─── v7: Recursive Shell -c Tests ─────────────────────────────────────────────
 
+
 class TestRecursiveShellParsing:
     """v7: Tests for 'sh -c' pattern detection."""
 
-    @pytest.mark.parametrize("cmd", [
-        'sh -c "rm file"',
-        "bash -c 'rm -rf /'",
-        'zsh -c "sudo rm file"',
-        'sh -c "cat && rm file"',
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            'sh -c "rm file"',
+            "bash -c 'rm -rf /'",
+            'zsh -c "sudo rm file"',
+            'sh -c "cat && rm file"',
+        ],
+    )
     def test_catches_rm_in_shell_c(self, cmd: str) -> None:
         """v7: Must catch rm inside shell -c arguments."""
         assert command_matches_pattern(cmd, "rm") is True
 
-    @pytest.mark.parametrize("cmd", [
-        'sh -c "echo hello"',
-        'bash -c "ls -la"',
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            'sh -c "echo hello"',
+            'bash -c "ls -la"',
+        ],
+    )
     def test_allows_safe_shell_c(self, cmd: str) -> None:
         """v7: Must not false-positive on safe shell -c."""
         assert command_matches_pattern(cmd, "rm") is False
@@ -290,6 +358,7 @@ class TestRecursiveShellParsing:
 
 # ─── v8: Edge Case Tests ──────────────────────────────────────────────────────
 
+
 class TestV8EdgeCases:
     """v8: Edge cases for correctness and efficiency."""
 
@@ -300,6 +369,7 @@ class TestV8EdgeCases:
         assert "rm" in names
         # rm is the command. Operands after -- remain arguments, not commands.
         from autorun.command_detection import _extract_cached
+
         result = _extract_cached("rm -- -rf")
         assert "rm" in result.all_potential
         assert "-rf" not in result.all_potential
@@ -319,18 +389,21 @@ class TestV8EdgeCases:
     def test_exec_not_a_prefix(self):
         """v8: exec is not in COMMAND_PREFIXES (replaces shell)."""
         from autorun.command_detection import COMMAND_PREFIXES
+
         assert "exec" not in COMMAND_PREFIXES
         assert "xargs" not in COMMAND_PREFIXES
 
     def test_sandboxing_prefixes(self):
         """v8: Sandboxing tools are prefixes."""
         from autorun.command_detection import COMMAND_PREFIXES
+
         assert "fakeroot" in COMMAND_PREFIXES
         assert "firejail" in COMMAND_PREFIXES
 
     def test_caching_efficiency(self):
         """v8: Same command should hit cache."""
         from autorun.command_detection import _extract_cached
+
         cmd = "sudo rm -rf /"
         r1 = _extract_cached(cmd)
         r2 = _extract_cached(cmd)
@@ -342,16 +415,19 @@ class TestV8EdgeCases:
         names, _ = extract_commands("echo 'unclosed")
         assert "echo" in names
 
-    @pytest.mark.parametrize("cmd,should_block", [
-        # Safe commands that must NOT be blocked
-        ("make clean", False),           # v8: not git subcommand
-        ("cargo build", False),
-        ("npm run build", False),
-        # Dangerous commands that MUST be blocked
-        ("rm -rf /", True),
-        ("sudo rm -rf /home", True),
-        ("sh -c 'rm -rf /'", True),
-    ])
+    @pytest.mark.parametrize(
+        "cmd,should_block",
+        [
+            # Safe commands that must NOT be blocked
+            ("make clean", False),  # v8: not git subcommand
+            ("cargo build", False),
+            ("npm run build", False),
+            # Dangerous commands that MUST be blocked
+            ("rm -rf /", True),
+            ("sudo rm -rf /home", True),
+            ("sh -c 'rm -rf /'", True),
+        ],
+    )
     def test_false_positive_prevention(self, cmd, should_block):
         """v8: Prevent over-blocking safe commands."""
         result = command_matches_pattern(cmd, "rm")
@@ -360,29 +436,36 @@ class TestV8EdgeCases:
 
 # ─── Integration Test: Bug 2 Fix ──────────────────────────────────────────────
 
+
 class TestBug2SubstringFix:
     """Verify Bug 2 is fixed: rm doesn't match substrings."""
 
-    @pytest.mark.parametrize("safe_cmd", [
-        "/ar:planrefine",
-        "/ar:pr",
-        "rmediation",
-        "warm-up.sh",
-        "perform",
-        "reformatting",
-        "rm_backup.txt",  # filename starting with rm
-    ])
+    @pytest.mark.parametrize(
+        "safe_cmd",
+        [
+            "/ar:planrefine",
+            "/ar:pr",
+            "rmediation",
+            "warm-up.sh",
+            "perform",
+            "reformatting",
+            "rm_backup.txt",  # filename starting with rm
+        ],
+    )
     def test_safe_commands_not_blocked(self, safe_cmd: str) -> None:
         """Commands containing 'rm' as substring should NOT be blocked."""
         assert command_matches_pattern(safe_cmd, "rm") is False
 
-    @pytest.mark.parametrize("dangerous_cmd", [
-        "rm file.txt",
-        "rm -rf /",
-        "/usr/bin/rm file",
-        "sudo rm important.txt",
-        "rm",  # bare rm
-    ])
+    @pytest.mark.parametrize(
+        "dangerous_cmd",
+        [
+            "rm file.txt",
+            "rm -rf /",
+            "/usr/bin/rm file",
+            "sudo rm important.txt",
+            "rm",  # bare rm
+        ],
+    )
     def test_dangerous_commands_blocked(self, dangerous_cmd: str) -> None:
         """Actual rm commands SHOULD be blocked."""
         assert command_matches_pattern(dangerous_cmd, "rm") is True
@@ -393,32 +476,18 @@ class TestHeredocFalsePositives:
 
     def test_git_restore_in_commit_heredoc(self) -> None:
         """'git restore' inside a commit message heredoc must not match 'git restore' pattern."""
-        cmd = (
-            'git commit -m "$(cat <<\'EOF\'\n'
-            'config.py: restore 4 key git commit rules\n'
-            'EOF\n'
-            ')"'
-        )
+        cmd = "git commit -m \"$(cat <<'EOF'\nconfig.py: restore 4 key git commit rules\nEOF\n)\""
         assert command_matches_pattern(cmd, "git restore") is False
         assert command_matches_pattern(cmd, "git commit") is True
 
     def test_rm_in_commit_heredoc(self) -> None:
         """'rm' mentioned in heredoc text must not match 'rm' pattern."""
-        cmd = (
-            'git commit -m "$(cat <<\'EOF\'\n'
-            'fix: rm command now uses trash by default\n'
-            'EOF\n'
-            ')"'
-        )
+        cmd = "git commit -m \"$(cat <<'EOF'\nfix: rm command now uses trash by default\nEOF\n)\""
         assert command_matches_pattern(cmd, "rm") is False
         assert command_matches_pattern(cmd, "git commit") is True
 
     def test_git_push_in_heredoc(self) -> None:
         """'git push' inside heredoc must not match 'git push' pattern."""
-        cmd = (
-            'git commit -F /dev/stdin <<\'EOF\'\n'
-            'docs: add git push safety instructions\n'
-            'EOF'
-        )
+        cmd = "git commit -F /dev/stdin <<'EOF'\ndocs: add git push safety instructions\nEOF"
         assert command_matches_pattern(cmd, "git push") is False
         assert command_matches_pattern(cmd, "git commit") is True

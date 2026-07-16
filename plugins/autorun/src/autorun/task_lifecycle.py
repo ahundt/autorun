@@ -39,6 +39,7 @@ Architecture:
 from typing import Optional, Dict, List, Callable
 from pathlib import Path
 from dataclasses import dataclass, asdict
+import copy
 import hashlib
 import json
 import os
@@ -58,15 +59,15 @@ from .config import (
 from .platforms import platform_for, task_tool_role
 
 
-_SECONDS_PER_DAY: int = 24 * 3600          # pure unit conversion (not a config value)
-_STAGE3_OVERFLOW_NAME_COUNT: int = 3       # task names shown in stage-3 overflow message
+_SECONDS_PER_DAY: int = 24 * 3600  # pure unit conversion (not a config value)
+_STAGE3_OVERFLOW_NAME_COUNT: int = 3  # task names shown in stage-3 overflow message
 
 
 # === Stop / Resume action fragments (assembled at call site) ===
-_ACT_REVIEW   = '{task_list}'
+_ACT_REVIEW = "{task_list}"
 _ACT_COMPLETE = '{task_update}({task_id_param}="X", status="completed")'
 _ACT_DELEGATE = '{task_update}({task_id_param}="X", status="delegated")'
-_ACT_DISCARD  = '{task_update}({task_id_param}="X", status="deleted")'
+_ACT_DISCARD = '{task_update}({task_id_param}="X", status="deleted")'
 # AI-callable escape route — emitted on EVERY Stop block so the AI does
 # not give up on block #1 when a task is provably stale. The actual marker
 # only takes effect after ghost_clear_min_consecutive_blocks identical blocks
@@ -76,7 +77,7 @@ _ACT_DISCARD  = '{task_update}({task_id_param}="X", status="deleted")'
 # (single source of truth, enforced by test_marker_literal_single_source_of_truth).
 _ACT_STALE_AI_ESCAPE = (
     "If a task above is stale (Claude's TaskList does not show it or "
-    "TaskUpdate returns \"Task not found\"), retry — after "
+    'TaskUpdate returns "Task not found"), retry — after '
     "{threshold} identical Stop blocks an AI-callable stale-clear marker "
     "({marker}) becomes printable to mark "
     "those ids ignored without user intervention."
@@ -87,15 +88,12 @@ def _task_actions_fragment(cli_type: str | None) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
     sos = format_command_for_cli("/ar:sos", cli_type)
     task_ignore = format_command_for_cli("/ar:task-ignore <id>", cli_type)
-    act_override = (
-        f"only the user can type {sos} (emergency stop) or "
-        f"{task_ignore} (mark task ignored to unblock stopping)"
-    )
+    act_override = f"only the user can type {sos} (emergency stop) or {task_ignore} (mark task ignored to unblock stopping)"
     if platform_for(cli_type).task_management_style == "plan_checklist":
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
             "2. Review/update: {task_progress} with the current plan list "
-            "3. Finish work: {task_progress} with finished items status=\"completed\" "
+            '3. Finish work: {task_progress} with finished items status="completed" '
             "4. Defer/delegate: keep a concrete follow-up item pending "
             "5. Discard obsolete work: remove it from the current plan list "
             f"6. Override: {act_override} "
@@ -137,12 +135,13 @@ CONFIG_PATH = ipc.AUTORUN_CONFIG_DIR / "task-lifecycle.config.json"
 @dataclass
 class TaskLifecycleConfig:
     """Task lifecycle configuration (follows PlanExportConfig pattern)."""
+
     enabled: bool = True
     storage_dir: Path = ipc.AUTORUN_CONFIG_DIR / "task-tracking"
     max_resume_tasks: int = 20
     stop_block_max_count: int = 3
     task_ttl_days: int = 30
-    recent_task_days: int = 1              # tasks created within this window shown as "recent"
+    recent_task_days: int = 1  # tasks created within this window shown as "recent"
     debug_logging: bool = False
     ghost_clear_enabled: bool = True
     ghost_clear_min_consecutive_blocks: int = 2
@@ -185,6 +184,7 @@ PLAN_NOTIFY_CONFIG_PATH = ipc.AUTORUN_CONFIG_DIR / "plan-notify.config.json"
 @dataclass
 class PlanNotifyConfig:
     """Plan acceptance notification config (follows TaskLifecycleConfig pattern)."""
+
     tdd_scaffolding: bool = True
     task_update_enforcement: bool = True
     dependency_wiring: bool = True
@@ -290,8 +290,7 @@ class TaskLifecycle:
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
     PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
 
-    def __init__(self, session_id: str | None = None, ctx: EventContext | None = None,
-                 config: TaskLifecycleConfig | None = None):
+    def __init__(self, session_id: str | None = None, ctx: EventContext | None = None, config: TaskLifecycleConfig | None = None):
         """Initialize task lifecycle manager.
 
         Args:
@@ -308,10 +307,10 @@ class TaskLifecycle:
             self.session_id = session_id
         elif ctx:
             self.session_id = ctx.session_id
-        elif os.environ.get('CLAUDE_SESSION_ID'):
-            self.session_id = os.environ['CLAUDE_SESSION_ID']
-        elif os.environ.get('GEMINI_SESSION_ID'):
-            self.session_id = os.environ['GEMINI_SESSION_ID']
+        elif os.environ.get("CLAUDE_SESSION_ID"):
+            self.session_id = os.environ["CLAUDE_SESSION_ID"]
+        elif os.environ.get("GEMINI_SESSION_ID"):
+            self.session_id = os.environ["GEMINI_SESSION_ID"]
         else:
             raise ValueError("session_id required: pass explicitly, via ctx, or set CLAUDE_SESSION_ID env var")
 
@@ -320,15 +319,12 @@ class TaskLifecycle:
             self._cli_type = ctx.cli_type
         else:
             from .config import detect_cli_type
+
             self._cli_type = detect_cli_type()
 
         # Config
         self.config = config or TaskLifecycleConfig.load()
-        self._state_lock_timeout = (
-            self.config.hook_state_lock_timeout_seconds
-            if ctx is not None
-            else self.config.state_lock_timeout_seconds
-        )
+        self._state_lock_timeout = self.config.hook_state_lock_timeout_seconds if ctx is not None else self.config.state_lock_timeout_seconds
 
         # Global key for session state (per-session isolation)
         self.global_key = f"__task_lifecycle__{self.session_id}"
@@ -386,8 +382,7 @@ class TaskLifecycle:
                     fixed_count += 1
 
             if fixed_count > 0 and self.config.debug_logging:
-                self.log_event("MIGRATION", "v1->v2", f"Fixed {fixed_count} ghost tasks",
-                              "schema_update", {"fixed_count": fixed_count})
+                self.log_event("MIGRATION", "v1->v2", f"Fixed {fixed_count} ghost tasks", "schema_update", {"fixed_count": fixed_count})
 
         # === v2 → v3 Migration: "delegated" status added to NON_BLOCKING_STATUSES ===
         # No data migration needed — "delegated" is a new status AI can set going
@@ -443,7 +438,7 @@ class TaskLifecycle:
             # Maps to minimal internal Task schema
             task_idx = 1
             for line in content.splitlines():
-                match = re.match(r'^\s*-\s*\[([ xX])\]\s*(.*)', line)
+                match = re.match(r"^\s*-\s*\[([ xX])\]\s*(.*)", line)
                 if match:
                     status_char = match.group(1).lower()
                     subject = match.group(2).strip()
@@ -454,7 +449,7 @@ class TaskLifecycle:
                         "status": "completed" if status_char == "x" else "pending",
                         "created_at": latest_track.stat().st_mtime,
                         "updated_at": latest_track.stat().st_mtime,
-                        "metadata": {"source": "conductor", "track": latest_track.name}
+                        "metadata": {"source": "conductor", "track": latest_track.name},
                     }
                     task_idx += 1
         except Exception:
@@ -488,29 +483,35 @@ class TaskLifecycle:
         with self._session_state() as state:
             if "session_metadata" not in state:
                 state["session_metadata"] = {
-                    'session_id': self.session_id,
-                    'created_at': time.time(),
-                    'last_activity': time.time(),
-                    'stop_block_count': 0,
+                    "session_id": self.session_id,
+                    "created_at": time.time(),
+                    "last_activity": time.time(),
+                    "stop_block_count": 0,
                 }
             return dict(state["session_metadata"])
 
     def atomic_update_metadata(self, updater: Callable[[Dict], None]) -> None:
-        """Atomically update session_metadata."""
+        """Atomically update session_metadata without persisting semantic no-ops."""
         with self._session_state() as state:
-            metadata = state.get("session_metadata", {
-                'session_id': self.session_id,
-                'created_at': time.time(),
-                'last_activity': time.time(),
-                'stop_block_count': 0,
-            })
+            metadata = copy.deepcopy(
+                state.get(
+                    "session_metadata",
+                    {
+                        "session_id": self.session_id,
+                        "created_at": time.time(),
+                        "last_activity": time.time(),
+                        "stop_block_count": 0,
+                    },
+                )
+            )
+            original = copy.deepcopy(metadata)
             updater(metadata)
-            state["session_metadata"] = metadata
+            if metadata != original:
+                state["session_metadata"] = metadata
 
     # === Logging (Simple append - DRY) ===
 
-    def log_event(self, event_type: str, task_id: str, subject: str, status: str,
-                  extra: Dict = None) -> None:
+    def log_event(self, event_type: str, task_id: str, subject: str, status: str, extra: Dict = None) -> None:
         """Log event to audit file (simple append - follows plan_export.py pattern)."""
         if not self.config.debug_logging:
             return
@@ -552,20 +553,17 @@ class TaskLifecycle:
         incomplete = self.get_incomplete_tasks(exclude_blocking=True)
         tasks_dict = self.tasks
 
-        ready = []    # No blockers
+        ready = []  # No blockers
         waiting = []  # All blockers completed
         blocked = []  # Some blockers incomplete
 
         for task in incomplete:
-            blockers = task.get('blockedBy', [])
+            blockers = task.get("blockedBy", [])
 
             if not blockers:
                 ready.append(task)
             else:
-                all_done = all(
-                    tasks_dict.get(blocker_id, {}).get('status') in self.COMPLETED_STATUSES
-                    for blocker_id in blockers
-                )
+                all_done = all(tasks_dict.get(blocker_id, {}).get("status") in self.COMPLETED_STATUSES for blocker_id in blockers)
                 if all_done:
                     waiting.append(task)
                 else:
@@ -575,6 +573,7 @@ class TaskLifecycle:
 
     def create_task(self, task_id: str, input_data: Dict, result: str) -> None:
         """Create task with full metadata (handles duplicates)."""
+
         def updater(tasks):
             # Deduplication check (Problem 5 solution)
             if task_id in tasks:
@@ -590,27 +589,21 @@ class TaskLifecycle:
                 "subject": subject,
                 "description": input_data.get("description", ""),
                 "activeForm": input_data.get("activeForm", ""),
-
                 # Status (explicit field)
                 "status": "pending",
-
                 # Timestamps
                 "created_at": time.time(),
                 "updated_at": time.time(),
-
                 # Session tracking
                 "session_id": self.session_id,
-
                 # Ownership and dependencies (initialized empty, updated via TaskUpdate)
                 "owner": None,
                 "blockedBy": [],
                 "blocks": [],
-
                 # Custom tracking
                 "metadata": input_data.get("metadata", {}),
-
                 # Audit trail
-                "tool_outputs": [result]
+                "tool_outputs": [result],
             }
 
         self.atomic_update_tasks(updater)
@@ -644,7 +637,7 @@ class TaskLifecycle:
                     "blockedBy": [],
                     "blocks": [],
                     "metadata": {"ghost_task": True},
-                    "tool_outputs": []
+                    "tool_outputs": [],
                 }
 
             task = tasks[task_id]
@@ -694,31 +687,34 @@ class TaskLifecycle:
                 if is_ghost and new_status not in terminal_statuses:
                     # Ghost task protection triggered - log for debugging
                     logger.warning(
-                        "GHOST_SKIP: task_id=%s requested status=%s but ghost tasks "
-                        "can only transition to terminal statuses (%s). Keeping 'ignored'.",
-                        task_id, new_status, ", ".join(sorted(terminal_statuses)),
+                        "GHOST_SKIP: task_id=%s requested status=%s but ghost tasks can only transition to terminal statuses (%s). Keeping 'ignored'.",
+                        task_id,
+                        new_status,
+                        ", ".join(sorted(terminal_statuses)),
                     )
-                    self.log_event("GHOST_SKIP", task_id, task["subject"], new_status,
-                                  {"old_status": old_status,
-                                   "reason": "ghost task cannot become blocking",
-                                   "requested_status": new_status,
-                                   "maintained_status": "ignored"})
+                    self.log_event(
+                        "GHOST_SKIP",
+                        task_id,
+                        task["subject"],
+                        new_status,
+                        {
+                            "old_status": old_status,
+                            "reason": "ghost task cannot become blocking",
+                            "requested_status": new_status,
+                            "maintained_status": "ignored",
+                        },
+                    )
                     # Status stays "ignored" - do NOT update to blocking status
                     ghost_state[0] = True
                 else:
                     # Normal status transition (non-ghost or terminal status)
                     task["status"] = new_status
 
-                    event_type = {
-                        "completed": "COMPLETE",
-                        "in_progress": "START",
-                        "deleted": "DELETE",
-                        "paused": "PAUSE",
-                        "ignored": "IGNORE"
-                    }.get(new_status, "UPDATE")
+                    event_type = {"completed": "COMPLETE", "in_progress": "START", "deleted": "DELETE", "paused": "PAUSE", "ignored": "IGNORE"}.get(
+                        new_status, "UPDATE"
+                    )
 
-                    self.log_event(event_type, task_id, task["subject"], new_status,
-                                  {"old_status": old_status})
+                    self.log_event(event_type, task_id, task["subject"], new_status, {"old_status": old_status})
 
             task["updated_at"] = time.time()
             task["tool_outputs"].append(result)
@@ -727,11 +723,11 @@ class TaskLifecycle:
 
         # Fix 4: Reset stop_block_count when task reaches terminal status.
         # Placed OUTSIDE updater closure to avoid nonlocal scoping issues.
-        if ("status" in updates
-                and updates["status"] in self.NON_BLOCKING_STATUSES
-                and not ghost_state[0]):
+        if "status" in updates and updates["status"] in self.NON_BLOCKING_STATUSES and not ghost_state[0]:
+
             def reset_block_count(metadata):
-                metadata['stop_block_count'] = 0
+                metadata["stop_block_count"] = 0
+
             self.atomic_update_metadata(reset_block_count)
 
         return "ghost_skip" if ghost_state[0] else None
@@ -749,19 +745,19 @@ class TaskLifecycle:
         Returns:
             True if task was ignored, False if task not found
         """
+
         def updater(tasks):
             if task_id not in tasks:
                 return
 
             task = tasks[task_id]
-            old_status = task['status']
-            task['status'] = 'ignored'
-            task['updated_at'] = time.time()
-            task['metadata']['ignore_reason'] = reason
-            task['tool_outputs'].append(f'User ignored task: {reason}')
+            old_status = task["status"]
+            task["status"] = "ignored"
+            task["updated_at"] = time.time()
+            task["metadata"]["ignore_reason"] = reason
+            task["tool_outputs"].append(f"User ignored task: {reason}")
 
-            self.log_event('IGNORE', task_id, task['subject'], 'ignored',
-                         {'old_status': old_status, 'reason': reason})
+            self.log_event("IGNORE", task_id, task["subject"], "ignored", {"old_status": old_status, "reason": reason})
 
         self.atomic_update_tasks(updater)
         return task_id in self.tasks
@@ -804,8 +800,7 @@ class TaskLifecycle:
         self.atomic_update_tasks(updater)
 
         if pruned_count > 0:
-            self.log_event("PRUNE", "session", f"Pruned {pruned_count} old completed tasks",
-                          "maintenance")
+            self.log_event("PRUNE", "session", f"Pruned {pruned_count} old completed tasks", "maintenance")
 
         return pruned_count
 
@@ -813,6 +808,7 @@ class TaskLifecycle:
 
     def link_task_to_plan(self, task_id: str, plan_key: str) -> None:
         """Link task to plan for context injection."""
+
         def updater(plan_map):
             if plan_key not in plan_map:
                 plan_map[plan_key] = []
@@ -878,12 +874,12 @@ class TaskLifecycle:
             else:
                 result_text = ctx.tool_result_str
             patterns = [
-                r'"taskId"\s*:\s*"([^"]+)"',   # JSON taskId field
-                r'Task #?([a-zA-Z0-9_\-\.]+)\s+created successfully',
-                r'Created task #?([a-zA-Z0-9_\-\.]+)\s+successfully',
-                r'Created task ([a-zA-Z0-9_\-\.]+):',  # Gemini CLI tracker_create_task format
-                r'Task ([a-zA-Z0-9_\-\.]+)\s+created',
-                r'#([a-zA-Z0-9_\-\.]+)',  # Last resort
+                r'"taskId"\s*:\s*"([^"]+)"',  # JSON taskId field
+                r"Task #?([a-zA-Z0-9_\-\.]+)\s+created successfully",
+                r"Created task #?([a-zA-Z0-9_\-\.]+)\s+successfully",
+                r"Created task ([a-zA-Z0-9_\-\.]+):",  # Gemini CLI tracker_create_task format
+                r"Task ([a-zA-Z0-9_\-\.]+)\s+created",
+                r"#([a-zA-Z0-9_\-\.]+)",  # Last resort
             ]
             for pattern in patterns:
                 match = re.search(pattern, result_text, re.IGNORECASE)
@@ -901,8 +897,8 @@ class TaskLifecycle:
         self.create_task(task_id, ctx.tool_input, result_str)
 
         # If active plan, link this task to the plan for context injection
-        if hasattr(ctx, 'plan_active') and ctx.plan_active:
-            plan_key = getattr(ctx, 'plan_arguments', '')
+        if hasattr(ctx, "plan_active") and ctx.plan_active:
+            plan_key = getattr(ctx, "plan_arguments", "")
             if plan_key:
                 self.link_task_to_plan(task_id, plan_key)
 
@@ -945,20 +941,14 @@ class TaskLifecycle:
             # Clear only previous planner-sourced tasks for this session. The
             # daemon may also track explicit TaskCreate records in the same
             # session; a bulk planner refresh must not erase them.
-            to_remove = [
-                tid for tid, t in tasks.items()
-                if (
-                    t.get("session_id") == self.session_id
-                    and t.get("metadata", {}).get("source") == "planner"
-                )
-            ]
+            to_remove = [tid for tid, t in tasks.items() if (t.get("session_id") == self.session_id and t.get("metadata", {}).get("source") == "planner")]
             for tid in to_remove:
                 tasks.pop(tid)
 
             for i, todo in enumerate(todos, 1):
                 if not isinstance(todo, dict):
                     continue
-                
+
                 # Gemini tool uses 'description', fall back to 'subject' for cross-platform robustness
                 subject = todo.get("description") or todo.get("subject") or f"Task {i}"
                 task_id = str(i)
@@ -975,7 +965,7 @@ class TaskLifecycle:
                     "blockedBy": [],
                     "blocks": [],
                     "metadata": {"source": "planner"},
-                    "tool_outputs": []
+                    "tool_outputs": [],
                 }
 
         self.atomic_update_tasks(updater)
@@ -1014,12 +1004,7 @@ class TaskLifecycle:
                 if not isinstance(item, dict):
                     continue
 
-                subject = str(
-                    item.get("step")
-                    or item.get("subject")
-                    or item.get("title")
-                    or ""
-                ).strip()
+                subject = str(item.get("step") or item.get("subject") or item.get("title") or "").strip()
                 if not subject:
                     continue
 
@@ -1031,12 +1016,14 @@ class TaskLifecycle:
                 current_ids.add(task_id)
                 existing = tasks.get(task_id, {})
                 metadata = dict(existing.get("metadata", {}))
-                metadata.update({
-                    "source": "plan_checklist",
-                    "platform": ctx.cli_type,
-                    "position": i,
-                    "tool_name": ctx.tool_name,
-                })
+                metadata.update(
+                    {
+                        "source": "plan_checklist",
+                        "platform": ctx.cli_type,
+                        "position": i,
+                        "tool_name": ctx.tool_name,
+                    }
+                )
                 if explanation:
                     metadata["explanation"] = str(explanation)
 
@@ -1076,7 +1063,8 @@ class TaskLifecycle:
 
         self.atomic_update_tasks(updater)
         self.log_event(
-            "PLAN_SYNC", "multiple",
+            "PLAN_SYNC",
+            "multiple",
             f"Synced {synced_count} native checklist task(s); removed {removed_count}",
             "multiple",
         )
@@ -1131,20 +1119,20 @@ class TaskLifecycle:
         total_shown = 0
         max_tasks = self.config.max_resume_tasks
 
-        for t in in_progress_tasks[:max_tasks - total_shown]:
-            task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} (🔄)")
+        for t in in_progress_tasks[: max_tasks - total_shown]:
+            task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (🔄)")
             total_shown += 1
 
-        for t in pending_tasks[:max_tasks - total_shown]:
+        for t in pending_tasks[: max_tasks - total_shown]:
             blockers = t.get("blockedBy", [])
             icon = f"⚠️ blocked by {blockers}" if blockers else "✅ ready"
-            task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} ({icon})")
+            task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} ({icon})")
             total_shown += 1
 
         # Show delegated tasks (non-blocking but need follow-up if child failed)
         delegated_tasks = delegated_all
-        for t in delegated_tasks[:max_tasks - total_shown]:
-            task_items.append(f"{len(task_items)+1}. #{t['id']}: {t['subject']} (🤝 delegated — check if complete)")
+        for t in delegated_tasks[: max_tasks - total_shown]:
+            task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (🤝 delegated — check if complete)")
             total_shown += 1
 
         task_list = " ".join(task_items)
@@ -1196,17 +1184,16 @@ class TaskLifecycle:
         incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
 
         if not incomplete_tasks:
+
             def reset_counter(metadata):
-                metadata['stop_block_count'] = 0
+                metadata["stop_block_count"] = 0
                 _reset_ghost_counter(metadata)
+
             self.atomic_update_metadata(reset_counter)
             return None
 
-        override = getattr(ctx, 'ghost_clear_min_consecutive_blocks_override', None)
-        min_consecutive = (
-            override if isinstance(override, int)
-            else self.config.ghost_clear_min_consecutive_blocks
-        )
+        override = getattr(ctx, "ghost_clear_min_consecutive_blocks_override", None)
+        min_consecutive = override if isinstance(override, int) else self.config.ghost_clear_min_consecutive_blocks
         ghost_enabled = self.config.ghost_clear_enabled
 
         id_hash = _ghost_id_set_hash(incomplete_tasks, self.config.ghost_clear_hash_length)
@@ -1216,24 +1203,25 @@ class TaskLifecycle:
         computed: dict = {}
 
         def update_counters(metadata):
-            block_count = metadata.get('stop_block_count', 0) + 1
+            block_count = metadata.get("stop_block_count", 0) + 1
             prev_hash = metadata.get("last_stop_block_id_hash")
             prev_count = metadata.get("consecutive_identical_stop_block_count", 0)
             consecutive = prev_count + 1 if id_hash == prev_hash else 1
-            metadata['stop_block_count'] = block_count
+            metadata["stop_block_count"] = block_count
             metadata["last_stop_block_id_hash"] = id_hash
             metadata["consecutive_identical_stop_block_count"] = consecutive
-            computed['block_count'] = block_count
-            computed['consecutive'] = consecutive
+            computed["block_count"] = block_count
+            computed["consecutive"] = consecutive
 
         self.atomic_update_metadata(update_counters)
+        ctx.state_set_volatile("ghost_counter_armed_in_daemon", True)
         # Use .get() with safe defaults: if atomic update failed (exception in
         # callback), computed is empty. Default to block_count=1/consecutive=1
         # so we show the standard block message but do NOT trigger the escape
         # hatch (consecutive=1 < min_consecutive). Prefer a correct block over
         # a fail-open allow-stop.
-        block_count = computed.get('block_count', 1)
-        consecutive = computed.get('consecutive', 1)
+        block_count = computed.get("block_count", 1)
+        consecutive = computed.get("consecutive", 1)
 
         if ghost_enabled and consecutive >= min_consecutive:
             transcript_text = ctx.transcript.text if ctx.transcript else ""
@@ -1263,7 +1251,7 @@ class TaskLifecycle:
             subject = t["subject"]
             status = t["status"]
             status_icon = {"in_progress": "🔄", "pending": "⏸️", "delegated": "🤝"}.get(status, "❓")
-            task_lines.append(f"{len(task_lines)+1}. #{tid}: {subject} ({status_icon})")
+            task_lines.append(f"{len(task_lines) + 1}. #{tid}: {subject} ({status_icon})")
 
         task_list = " ".join(task_lines)
         total = len(incomplete_tasks)
@@ -1277,27 +1265,22 @@ class TaskLifecycle:
 
         if ghost_enabled and consecutive >= min_consecutive:
             marker_template = CONFIG["ghost_clear_marker_template"]
-            marker_lines = "\n".join(
-                f"   {marker_template.format(id=t['id'])}"
-                for t in incomplete_tasks[:max_tasks]
-            )
+            marker_lines = "\n".join(f"   {marker_template.format(id=t['id'])}" for t in incomplete_tasks[:max_tasks])
             injection += CONFIG["ghost_clear_injection_template"].format(
                 threshold=min_consecutive,
                 marker_lines=marker_lines,
             )
 
         # Log warning (block count is diagnostic-only, not shown to AI)
-        self.log_event("STOP_WARNING", "session",
-                      f"Block #{block_count}: {total} incomplete tasks", "blocked")
+        self.log_event("STOP_WARNING", "session", f"Block #{block_count}: {total} incomplete tasks", "blocked")
 
         # Reset three-stage system if at STAGE_2_COMPLETED — tasks must resolve first.
         if ctx.autorun_stage == EventContext.STAGE_2_COMPLETED:
             ctx.autorun_stage = EventContext.STAGE_2
             injection += CONFIG.get("task_outstanding_stage3_message", "").format(
                 count=total,
-                names=", ".join(
-                    t.get("subject", f"#{t.get('id', '?')}") for t in incomplete_tasks[:_STAGE3_OVERFLOW_NAME_COUNT]
-                ) + ("..." if total > _STAGE3_OVERFLOW_NAME_COUNT else ""),
+                names=", ".join(t.get("subject", f"#{t.get('id', '?')}") for t in incomplete_tasks[:_STAGE3_OVERFLOW_NAME_COUNT])
+                + ("..." if total > _STAGE3_OVERFLOW_NAME_COUNT else ""),
             )
 
         # Deferred AI delivery — Stop events cannot reach the AI directly:
@@ -1361,8 +1344,10 @@ class TaskLifecycle:
                 if self.ignore_task(tid, reason=reason):
                     cleared.append(tid)
                     self.log_event(
-                        "GHOST_CLEAR", f"task#{tid}",
-                        "Cleared via ghost-clear marker", "cleared",
+                        "GHOST_CLEAR",
+                        f"task#{tid}",
+                        "Cleared via ghost-clear marker",
+                        "cleared",
                     )
             except Exception:
                 continue
@@ -1377,7 +1362,7 @@ class TaskLifecycle:
         Returns:
             Injection string with task context, or None if no tasks linked.
         """
-        plan_key = getattr(ctx, 'plan_arguments', '')
+        plan_key = getattr(ctx, "plan_arguments", "")
         if not plan_key:
             return None
 
@@ -1386,12 +1371,9 @@ class TaskLifecycle:
             return None
 
         task_lines = []
-        for task in plan_tasks[:self.config.max_resume_tasks]:
-            status_icon = {
-                "in_progress": "...", "pending": "o", "paused": "||"
-            }.get(task["status"], "?")
-            task_lines.append(
-                f"  - Task #{task['id']}: {task['subject']} ({status_icon} {task['status']})")
+        for task in plan_tasks[: self.config.max_resume_tasks]:
+            status_icon = {"in_progress": "...", "pending": "o", "paused": "||"}.get(task["status"], "?")
+            task_lines.append(f"  - Task #{task['id']}: {task['subject']} ({status_icon} {task['status']})")
 
         if not task_lines:
             return None
@@ -1416,8 +1398,7 @@ class TaskLifecycle:
     # === CLI Interface (Typer-like patterns - class methods) ===
 
     @classmethod
-    def cli_status(cls, session_id: str | None = None, verbose: bool = False,
-                   format: str = 'text') -> int:
+    def cli_status(cls, session_id: str | None = None, verbose: bool = False, format: str = "text") -> int:
         """Show task status for session (CLI command).
 
         Args:
@@ -1431,7 +1412,7 @@ class TaskLifecycle:
         try:
             # Auto-detect session ID if not provided
             if not session_id:
-                session_id = os.environ.get('CLAUDE_SESSION_ID')
+                session_id = os.environ.get("CLAUDE_SESSION_ID")
                 if not session_id:
                     print("Error: No session ID provided and CLAUDE_SESSION_ID not set")
                     return 1
@@ -1439,27 +1420,22 @@ class TaskLifecycle:
             manager = cls(session_id=session_id)
             tasks = manager.tasks
 
-            if format == 'json':
+            if format == "json":
                 # Wrap tasks in metadata for CLI usability
-                incomplete_count = len([t for t in tasks.values()
-                                        if t['status'] not in cls.COMPLETED_STATUSES])
-                output = {
-                    'session_id': session_id,
-                    'total_tasks': len(tasks),
-                    'incomplete_tasks': incomplete_count,
-                    'tasks': tasks
-                }
+                incomplete_count = len([t for t in tasks.values() if t["status"] not in cls.COMPLETED_STATUSES])
+                output = {"session_id": session_id, "total_tasks": len(tasks), "incomplete_tasks": incomplete_count, "tasks": tasks}
                 print(json.dumps(output, indent=2))
                 return 0
 
-            elif format == 'table':
+            elif format == "table":
                 # Simple text table
                 prioritized = manager.get_prioritized_tasks()
                 print(f"Task Status - Session {session_id[:8]}...")
                 print()
                 for task in prioritized:
-                    status_icon = {'in_progress': '🔄', 'pending': '⏸️', 'paused': '⏯️',
-                                  'completed': '✅', 'deleted': '🗑️', 'ignored': '🚫'}.get(task['status'], '❓')
+                    status_icon = {"in_progress": "🔄", "pending": "⏸️", "paused": "⏯️", "completed": "✅", "deleted": "🗑️", "ignored": "🚫"}.get(
+                        task["status"], "❓"
+                    )
                     print(f"  {task['id']}: {status_icon} {task['subject']} ({task['status']})")
                 return 0
 
@@ -1474,11 +1450,11 @@ class TaskLifecycle:
                 if verbose and incomplete:
                     print("\nIncomplete Tasks:")
                     for task in manager.get_prioritized_tasks():
-                        if task['status'] not in cls.NON_BLOCKING_STATUSES:
+                        if task["status"] not in cls.NON_BLOCKING_STATUSES:
                             print(f"\n  Task #{task['id']}: {task['subject']}")
                             print(f"    Status: {task['status']}")
                             print(f"    Created: {datetime.fromtimestamp(task['created_at']).isoformat()}")
-                            if task['blockedBy']:
+                            if task["blockedBy"]:
                                 print(f"    Blocked by: {task['blockedBy']}")
 
                 return 0
@@ -1488,8 +1464,7 @@ class TaskLifecycle:
             return 1
 
     @classmethod
-    def cli_export(cls, session_id: str, output_path: str, format: str = 'json',
-                   include_completed: bool = False) -> int:
+    def cli_export(cls, session_id: str, output_path: str, format: str = "json", include_completed: bool = False) -> int:
         """Export task data to file (CLI command).
 
         Args:
@@ -1506,50 +1481,49 @@ class TaskLifecycle:
             tasks = manager.tasks
 
             if not include_completed:
-                tasks = {k: v for k, v in tasks.items()
-                        if v['status'] not in cls.COMPLETED_STATUSES}
+                tasks = {k: v for k, v in tasks.items() if v["status"] not in cls.COMPLETED_STATUSES}
 
             output_file = Path(output_path)
             output_file.parent.mkdir(parents=True, exist_ok=True)
 
-            if format == 'json':
-                output_file.write_text(json.dumps({
-                    'session_id': session_id,
-                    'exported_at': time.time(),
-                    'tasks': tasks,
-                    'plan_tasks_map': manager.plan_tasks_map
-                }, indent=2))
+            if format == "json":
+                output_file.write_text(
+                    json.dumps({"session_id": session_id, "exported_at": time.time(), "tasks": tasks, "plan_tasks_map": manager.plan_tasks_map}, indent=2)
+                )
 
-            elif format == 'csv':
+            elif format == "csv":
                 import csv
-                with open(output_file, 'w', newline='', encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=['id', 'subject', 'status', 'created_at', 'blockedBy'])
+
+                with open(output_file, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=["id", "subject", "status", "created_at", "blockedBy"])
                     writer.writeheader()
                     for task in tasks.values():
-                        writer.writerow({
-                            'id': task['id'],
-                            'subject': task['subject'],
-                            'status': task['status'],
-                            'created_at': datetime.fromtimestamp(task['created_at']).isoformat(),
-                            'blockedBy': ','.join(task.get('blockedBy', []))
-                        })
+                        writer.writerow(
+                            {
+                                "id": task["id"],
+                                "subject": task["subject"],
+                                "status": task["status"],
+                                "created_at": datetime.fromtimestamp(task["created_at"]).isoformat(),
+                                "blockedBy": ",".join(task.get("blockedBy", [])),
+                            }
+                        )
 
-            elif format == 'markdown':
+            elif format == "markdown":
                 md_lines = [
                     f"# Task Export - Session {session_id}",
                     f"\nExported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     f"\nTotal tasks: {len(tasks)}",
-                    "\n## Tasks\n"
+                    "\n## Tasks\n",
                 ]
                 for task in tasks.values():
                     md_lines.append(f"### Task #{task['id']}: {task['subject']}")
                     md_lines.append(f"- **Status**: {task['status']}")
                     md_lines.append(f"- **Description**: {task['description']}")
-                    if task.get('blockedBy'):
+                    if task.get("blockedBy"):
                         md_lines.append(f"- **Blocked by**: {', '.join(task['blockedBy'])}")
                     md_lines.append("")
 
-                output_file.write_text('\n'.join(md_lines))
+                output_file.write_text("\n".join(md_lines))
 
             print(f"Exported {len(tasks)} tasks to {output_path}")
             return 0
@@ -1559,8 +1533,7 @@ class TaskLifecycle:
             return 1
 
     @classmethod
-    def cli_clear(cls, session_id: str | None = None, all_sessions: bool = False,
-                  confirm: bool = True) -> int:
+    def cli_clear(cls, session_id: str | None = None, all_sessions: bool = False, confirm: bool = True) -> int:
         """Clear task data (CLI command with confirmation).
 
         Args:
@@ -1572,6 +1545,7 @@ class TaskLifecycle:
             Exit code (0 = success, 1 = error, 2 = cancelled)
         """
         import sys
+
         try:
             config = TaskLifecycleConfig.load()
 
@@ -1591,11 +1565,12 @@ class TaskLifecycle:
                 if confirm:
                     print(f"⚠️  WARNING: About to clear {len(session_dirs)} session(s)")
                     response = input("Type 'yes' to confirm: ")
-                    if response.lower() != 'yes':
+                    if response.lower() != "yes":
                         print("Cancelled.")
                         return 2
 
                 import shutil
+
                 for session_dir in session_dirs:
                     shutil.rmtree(session_dir)
 
@@ -1604,7 +1579,7 @@ class TaskLifecycle:
 
             else:
                 if not session_id:
-                    session_id = os.environ.get('CLAUDE_SESSION_ID')
+                    session_id = os.environ.get("CLAUDE_SESSION_ID")
                     if not session_id:
                         print("Error: No session ID provided and CLAUDE_SESSION_ID not set")
                         return 1
@@ -1620,11 +1595,12 @@ class TaskLifecycle:
                         return 2
                     print(f"⚠️  WARNING: About to clear {task_count} task(s) from session {session_id[:8]}...")
                     response = input("Type 'yes' to confirm: ")
-                    if response.lower() != 'yes':
+                    if response.lower() != "yes":
                         print("Cancelled.")
                         return 2
 
                 import shutil
+
                 storage_dir = config.storage_dir / session_id
                 if storage_dir.exists():
                     shutil.rmtree(storage_dir)
@@ -1640,12 +1616,16 @@ class TaskLifecycle:
             print(f"Error clearing tasks: {e}")
             return 1
 
-
     @classmethod
-    def cli_gc(cls, archive: bool = True, dry_run: bool = False,
-               pattern: str = "*", ttl_days: int | None = None,
-               config: TaskLifecycleConfig | None = None,
-               confirm: bool = True) -> int:
+    def cli_gc(
+        cls,
+        archive: bool = True,
+        dry_run: bool = False,
+        pattern: str = "*",
+        ttl_days: int | None = None,
+        config: TaskLifecycleConfig | None = None,
+        confirm: bool = True,
+    ) -> int:
         """Garbage-collect stale task lifecycle data (archive-then-purge).
 
         ⚠️  DESTRUCTIVE OPERATION - PERMANENTLY DELETES SESSION DATA ⚠️
@@ -1726,9 +1706,9 @@ class TaskLifecycle:
 
             # Show prominent warning banner (unless dry-run)
             if not dry_run:
-                print("\n" + "="*70)
+                print("\n" + "=" * 70)
                 print("⚠️  TASK LIFECYCLE GARBAGE COLLECTION - DESTRUCTIVE OPERATION  ⚠️")
-                print("="*70)
+                print("=" * 70)
                 print()
                 print("This will PERMANENTLY DELETE task data from old sessions.")
                 print()
@@ -1756,7 +1736,7 @@ class TaskLifecycle:
                     for json_key in raw:
                         # json_key = "__task_lifecycle__{sid}/{subkey}"
                         if json_key.startswith(json_key_prefix) and "/" in json_key:
-                            rest = json_key[len(json_key_prefix):]
+                            rest = json_key[len(json_key_prefix) :]
                             sid = rest.split("/")[0]
                             if sid and fnmatch.fnmatch(sid, pattern):
                                 sids.add(sid)
@@ -1796,7 +1776,7 @@ class TaskLifecycle:
                 response = input("Type 'yes' to proceed, anything else to cancel: ")
                 print()
 
-                if response.lower() != 'yes':
+                if response.lower() != "yes":
                     print("Cancelled. No changes made.")
                     return 2
 
@@ -1823,18 +1803,10 @@ class TaskLifecycle:
                             continue
 
                         prefix = f"__task_lifecycle__{sid}/"
-                        state_snapshot = {
-                            key[len(prefix):]: value
-                            for key, value in raw.items()
-                            if key.startswith(prefix)
-                        }
+                        state_snapshot = {key[len(prefix) :]: value for key, value in raw.items() if key.startswith(prefix)}
                         tasks = state_snapshot.get("tasks", {})
 
-                        incomplete = [
-                            t for t in tasks.values()
-                            if isinstance(t, dict)
-                            and t.get("status") not in cls.NON_BLOCKING_STATUSES
-                        ]
+                        incomplete = [t for t in tasks.values() if isinstance(t, dict) and t.get("status") not in cls.NON_BLOCKING_STATUSES]
                         if incomplete:
                             skip_incomplete += 1
                             if dry_run:
@@ -1850,7 +1822,7 @@ class TaskLifecycle:
                             if age < ttl_seconds:
                                 skip_young += 1
                                 if dry_run:
-                                    print(f"  SKIP    {sid[:12]}... ({age/_SECONDS_PER_DAY:.1f}d old)")
+                                    print(f"  SKIP    {sid[:12]}... ({age / _SECONDS_PER_DAY:.1f}d old)")
                                 continue
 
                         if dry_run:
@@ -1872,13 +1844,17 @@ class TaskLifecycle:
                         try:
                             if archive and tasks:
                                 (archive_dir / f"{sid}.json").write_text(
-                                    json.dumps({
-                                        "session_id": sid,
-                                        "archived_at": time.time(),
-                                        "schema_version": state_snapshot.get("schema_version", 1),
-                                        "session_metadata": state_snapshot.get("session_metadata", {}),
-                                        "tasks": tasks,
-                                    }, indent=2, default=str),
+                                    json.dumps(
+                                        {
+                                            "session_id": sid,
+                                            "archived_at": time.time(),
+                                            "schema_version": state_snapshot.get("schema_version", 1),
+                                            "session_metadata": state_snapshot.get("session_metadata", {}),
+                                            "tasks": tasks,
+                                        },
+                                        indent=2,
+                                        default=str,
+                                    ),
                                     encoding="utf-8",
                                 )
                                 archived += 1
@@ -1971,10 +1947,11 @@ class TaskLifecycle:
             print("\n━━━ BUG REPORT INFO ━━━")
             print(f"Pattern: '{pattern if 'pattern' in locals() else 'unknown'}'")
             print(f"TTL: {ttl_days}d")
-            if 'sessions_dir' in locals():
+            if "sessions_dir" in locals():
                 print(f"Sessions dir: {sessions_dir}")
             print("\nPlease report at: https://github.com/ahundt/autorun/issues")
             import traceback
+
             traceback.print_exc()  # CLI only - defaults to stderr but not in hook path
             return 1
 
@@ -1994,6 +1971,7 @@ class TaskLifecycle:
             Exit code (0 = success, 1 = error, 2 = non-interactive)
         """
         import sys
+
         try:
             config = TaskLifecycleConfig.load()
 
@@ -2018,13 +1996,13 @@ class TaskLifecycle:
 
             # Prompt to modify
             response = input("Modify settings? (y/n): ")
-            if response.lower() != 'y':
+            if response.lower() != "y":
                 return 0
 
             # Interactive prompts
             enabled = input(f"Enable task lifecycle? (y/n) [current: {'y' if config.enabled else 'n'}]: ")
-            if enabled.lower() in ('y', 'n'):
-                config.enabled = (enabled.lower() == 'y')
+            if enabled.lower() in ("y", "n"):
+                config.enabled = enabled.lower() == "y"
 
             max_tasks = input(f"Max resume tasks [current: {config.max_resume_tasks}]: ")
             if max_tasks.strip():
@@ -2039,8 +2017,8 @@ class TaskLifecycle:
                 config.task_ttl_days = int(ttl)
 
             debug = input(f"Enable debug logging? (y/n) [current: {'y' if config.debug_logging else 'n'}]: ")
-            if debug.lower() in ('y', 'n'):
-                config.debug_logging = (debug.lower() == 'y')
+            if debug.lower() in ("y", "n"):
+                config.debug_logging = debug.lower() == "y"
 
             # Save
             config.save()
@@ -2169,18 +2147,20 @@ def register_hooks(app_instance) -> None:
                 ghost_result = manager.handle_task_update(ctx)
                 if ghost_result == "ghost_skip":
                     if manager.config.debug_logging:
-                        task_id = ctx.tool_input.get('taskId', '?')
-                        status = ctx.tool_input.get('status', '?')
+                        task_id = ctx.tool_input.get("taskId", "?")
+                        status = ctx.tool_input.get("status", "?")
                         tool_result_snippet = ctx.tool_result_str
                         manager.log_event(
-                            "GHOST_SKIP_HOOK", task_id,
+                            "GHOST_SKIP_HOOK",
+                            task_id,
                             f"requested_status={status} tool_result={tool_result_snippet!r}",
                             status="ignored",
                         )
             elif role == "review":
                 # Update last activity timestamp
                 def update_activity(metadata):
-                    metadata['last_activity'] = time.time()
+                    metadata["last_activity"] = time.time()
+
                 manager.atomic_update_metadata(update_activity)
 
         except Exception as e:

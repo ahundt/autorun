@@ -51,7 +51,7 @@ from autorun.core import (
     INTERNAL_TO_CLAUDE,
     INTERNAL_TO_GEMINI,
     app,
-    logger
+    logger,
 )
 
 
@@ -59,11 +59,10 @@ from autorun.core import (
 # P1.1: LazyTranscript Tests
 # ============================================================================
 
+
 class TestDispatchTimeoutContainment:
     @pytest.mark.asyncio
-    async def test_fast_concurrent_dispatches_queue_without_spurious_containment(
-        self, monkeypatch
-    ):
+    async def test_fast_concurrent_dispatches_queue_without_spurious_containment(self, monkeypatch):
         """Healthy bursts wait for bounded slots instead of failing closed."""
         import autorun.core as core
 
@@ -88,15 +87,10 @@ class TestDispatchTimeoutContainment:
         daemon = AutorunDaemon(fast_app)
         monkeypatch.setattr(core, "dispatch_timeout_for_event", lambda _event: 0.5)
         monkeypatch.setitem(core.CONFIG, "daemon_dispatch_max_concurrent_per_event", 4)
-        contexts = [
-            EventContext(session_id=f"burst-{index}", event="PreToolUse")
-            for index in range(64)
-        ]
+        contexts = [EventContext(session_id=f"burst-{index}", event="PreToolUse") for index in range(64)]
 
         started = time.monotonic()
-        results = await asyncio.gather(
-            *(daemon._dispatch_with_timeout(ctx, "codex") for ctx in contexts)
-        )
+        results = await asyncio.gather(*(daemon._dispatch_with_timeout(ctx, "codex") for ctx in contexts))
 
         assert results == [None] * 64
         assert calls == 64
@@ -134,9 +128,7 @@ class TestDispatchTimeoutContainment:
         ]
 
         started = time.monotonic()
-        results = await asyncio.gather(
-            *(daemon._dispatch_with_timeout(ctx, "claude") for ctx in contexts)
-        )
+        results = await asyncio.gather(*(daemon._dispatch_with_timeout(ctx, "claude") for ctx in contexts))
         elapsed = time.monotonic() - started
 
         assert len(results) == 41
@@ -216,7 +208,7 @@ class TestLazyTranscript:
         raw = [{"content": "<AUTOFILE_JUSTIFICATION>valid reason</AUTOFILE_JUSTIFICATION>"}]
         transcript = LazyTranscript(raw)
 
-        match = transcript.search_regex(r'<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>')
+        match = transcript.search_regex(r"<AUTOFILE_JUSTIFICATION>(.*?)</AUTOFILE_JUSTIFICATION>")
         assert match is not None
         assert match.group(1) == "valid reason"
 
@@ -226,8 +218,8 @@ class TestLazyTranscript:
         transcript = LazyTranscript(raw)
 
         # Call twice with same pattern
-        result1 = transcript.search_regex(r'test')
-        result2 = transcript.search_regex(r'test')
+        result1 = transcript.search_regex(r"test")
+        result2 = transcript.search_regex(r"test")
 
         # Results should be cached (same object)
         assert result1 is result2
@@ -264,6 +256,7 @@ class TestLazyTranscript:
 # ============================================================================
 # P1.2: ThreadSafeDB Tests
 # ============================================================================
+
 
 class TestThreadSafeDB:
     """Tests for ThreadSafeDB in-memory cache layer."""
@@ -430,6 +423,41 @@ class TestThreadSafeDB:
             "task_staleness_enforce_next": True,
         }
 
+    def test_volatile_update_hydrates_once_without_persisting(self, monkeypatch):
+        """Advisory updates should read one checkpoint, then remain memory-only."""
+        import autorun.core as core
+
+        calls = []
+        durable_state = {"tool_calls_since_task_update": 10}
+
+        class FakeSession:
+            def __init__(self, session_id, timeout):
+                calls.append((session_id, timeout))
+
+            def __enter__(self):
+                return durable_state
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr(core, "session_state", FakeSession)
+
+        db = ThreadSafeDB(state_timeout=0.123)
+        first = db.update_volatile(
+            "session-1:tool_calls_since_task_update",
+            lambda value: value + 1,
+            0,
+        )
+        second = db.update_volatile(
+            "session-1:tool_calls_since_task_update",
+            lambda value: value + 1,
+            0,
+        )
+
+        assert (first, second) == (11, 12)
+        assert calls == [("session-1", 0.123)]
+        assert durable_state == {"tool_calls_since_task_update": 10}
+
     def test_rsplit_handles_session_id_with_colon(self):
         """Key parsing should handle session_ids containing colons."""
         db = ThreadSafeDB()
@@ -491,6 +519,7 @@ class TestThreadSafeDB:
 # P1.3: EventContext Tests
 # ============================================================================
 
+
 class TestEventContext:
     """Tests for EventContext magic state access."""
 
@@ -503,7 +532,7 @@ class TestEventContext:
             tool_name="Write",
             tool_input={"file_path": "/tmp/test.txt"},
             tool_result="success",
-            session_transcript=[{"role": "user", "content": "test"}]
+            session_transcript=[{"role": "user", "content": "test"}],
         )
 
         assert ctx.session_id == "test-session"
@@ -550,10 +579,7 @@ class TestEventContext:
 
     def test_transcript_property_lazy(self):
         """transcript property should return LazyTranscript."""
-        ctx = EventContext(
-            session_id="test", event="test",
-            session_transcript=[{"content": "AUTOFILE_JUSTIFICATION"}]
-        )
+        ctx = EventContext(session_id="test", event="test", session_transcript=[{"content": "AUTOFILE_JUSTIFICATION"}])
 
         transcript = ctx.transcript
         assert isinstance(transcript, LazyTranscript)
@@ -561,37 +587,29 @@ class TestEventContext:
 
     def test_has_justification_property(self):
         """has_justification should delegate to transcript."""
-        ctx = EventContext(
-            session_id="test", event="test",
-            session_transcript=[{"content": "<AUTOFILE_JUSTIFICATION>valid</AUTOFILE_JUSTIFICATION>"}]
-        )
+        ctx = EventContext(session_id="test", event="test", session_transcript=[{"content": "<AUTOFILE_JUSTIFICATION>valid</AUTOFILE_JUSTIFICATION>"}])
 
         assert ctx.has_justification is True
 
     def test_file_exists_property_true(self, tmp_path):
         """file_exists should return True for existing file."""
         ctx = EventContext(
-            session_id="test", event="test",
-            tool_input={"file_path": str(tmp_path)}  # tmp_path always exists
+            session_id="test",
+            event="test",
+            tool_input={"file_path": str(tmp_path)},  # tmp_path always exists
         )
 
         assert ctx.file_exists is True
 
     def test_file_exists_property_false(self):
         """file_exists should return False for non-existing file."""
-        ctx = EventContext(
-            session_id="test", event="test",
-            tool_input={"file_path": "/nonexistent/path/to/file.txt"}
-        )
+        ctx = EventContext(session_id="test", event="test", tool_input={"file_path": "/nonexistent/path/to/file.txt"})
 
         assert ctx.file_exists is False
 
     def test_file_exists_property_empty_path(self):
         """file_exists should return False for empty path."""
-        ctx = EventContext(
-            session_id="test", event="test",
-            tool_input={}
-        )
+        ctx = EventContext(session_id="test", event="test", tool_input={})
 
         assert ctx.file_exists is False
 
@@ -737,6 +755,7 @@ class TestEventContext:
 # to_human parameter tests — all 5 pathways
 # ============================================================================
 
+
 class TestRespondToHuman:
     """Tests for to_human parameter across all pathways in EventContext.respond().
 
@@ -819,7 +838,7 @@ class TestRespondToHuman:
         ctx = EventContext(session_id="test", event="PostToolUse")
         response = ctx.respond("allow", "", to_human=True, to_ai=False)
         assert "hookSpecificOutput" not in response  # human path taken, AI explicitly off
-        assert response["systemMessage"] == ""       # empty — no visible output
+        assert response["systemMessage"] == ""  # empty — no visible output
 
     def test_posttooluse_ai_injection_has_reason_not_empty(self):
         """AI injection path (to_human=False): reason field carries context to AI."""
@@ -890,6 +909,7 @@ class TestRespondToHuman:
 # P1.3.1: CLI Event Name Mapping Tests
 # ============================================================================
 
+
 class TestCLIEventNameMapping:
     """Test dynamic event name mapping for Gemini/Claude Code compatibility.
 
@@ -935,10 +955,8 @@ class TestCLIEventNameMapping:
         """
         # This is the critical test that detects the original bug
         event_name = get_cli_event_name("PreToolUse", "gemini")
-        assert event_name == "BeforeTool", \
-            f"Gemini CLI expects 'BeforeTool' but got '{event_name}'"
-        assert event_name != "PreToolUse", \
-            "Bug detected: Sending Claude event name 'PreToolUse' to Gemini CLI"
+        assert event_name == "BeforeTool", f"Gemini CLI expects 'BeforeTool' but got '{event_name}'"
+        assert event_name != "PreToolUse", "Bug detected: Sending Claude event name 'PreToolUse' to Gemini CLI"
 
     def test_claude_pretooluse_identity(self):
         """Test Claude Code receives 'PreToolUse' unchanged."""
@@ -962,34 +980,19 @@ class TestCLIEventNameMapping:
     def test_eventcontext_respond_uses_dynamic_event_names(self):
         """Test EventContext.respond() uses get_cli_event_name() for hookSpecificOutput."""
         # Create mock context for Gemini
-        ctx = EventContext(
-            session_id="test",
-            event="PreToolUse",
-            prompt="test",
-            tool_name="write_file",
-            tool_input={},
-            cli_type="gemini"
-        )
+        ctx = EventContext(session_id="test", event="PreToolUse", prompt="test", tool_name="write_file", tool_input={}, cli_type="gemini")
 
         # Test respond with allow
         response = ctx.respond(decision="allow", reason="test")
 
         # Verify hookSpecificOutput uses Gemini event name
         assert "hookSpecificOutput" in response
-        assert response["hookSpecificOutput"]["hookEventName"] == "BeforeTool", \
-            "EventContext.respond() must use get_cli_event_name() for Gemini"
+        assert response["hookSpecificOutput"]["hookEventName"] == "BeforeTool", "EventContext.respond() must use get_cli_event_name() for Gemini"
 
     def test_eventcontext_respond_claude_uses_pretooluse(self):
         """Test EventContext.respond() uses 'PreToolUse' for Claude Code."""
         # Create mock context for Claude
-        ctx = EventContext(
-            session_id="test",
-            event="PreToolUse",
-            prompt="test",
-            tool_name="Write",
-            tool_input={},
-            cli_type="claude"
-        )
+        ctx = EventContext(session_id="test", event="PreToolUse", prompt="test", tool_name="Write", tool_input={}, cli_type="claude")
 
         # Test respond
         response = ctx.respond(decision="allow", reason="test")
@@ -1002,6 +1005,7 @@ class TestCLIEventNameMapping:
 # ============================================================================
 # P1.4: AutorunApp Tests
 # ============================================================================
+
 
 class TestAutorunApp:
     """Tests for AutorunApp decorator-based registration."""
@@ -1198,6 +1202,7 @@ class TestAutorunApp:
 # P1.5: AutorunDaemon Tests
 # ============================================================================
 
+
 class TestAutorunDaemon:
     """Tests for AutorunDaemon lifecycle management."""
 
@@ -1206,9 +1211,7 @@ class TestAutorunDaemon:
         """Zero-byte socket probes should not dispatch or log handler errors."""
         daemon = AutorunDaemon(AutorunApp())
         reader = Mock()
-        reader.readuntil = Mock(
-            side_effect=asyncio.IncompleteReadError(partial=b"", expected=None)
-        )
+        reader.readuntil = Mock(side_effect=asyncio.IncompleteReadError(partial=b"", expected=None))
 
         class FakeWriter:
             def __init__(self):
@@ -1239,6 +1242,7 @@ class TestAutorunDaemon:
     def test_pid_exists_true(self):
         """_pid_exists should return True for running process."""
         import os
+
         daemon = AutorunDaemon(AutorunApp())
         # Current process should exist
         assert daemon._pid_exists(os.getpid()) is True
@@ -1293,11 +1297,11 @@ class TestAutorunDaemon:
         daemon = AutorunDaemon(AutorunApp())
         # With no socket file, should return True (can proceed)
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_socket = Path(tmpdir) / "nonexistent.sock"
             fake_port = Path(tmpdir) / "nonexistent.port"
-            with patch('autorun.ipc.SOCKET_PATH', fake_socket), \
-                 patch('autorun.ipc.PORT_FILE', fake_port):
+            with patch("autorun.ipc.SOCKET_PATH", fake_socket), patch("autorun.ipc.PORT_FILE", fake_port):
                 result = daemon._socket_connect_test()
                 assert result is True
 
@@ -1402,24 +1406,25 @@ class TestAutorunDaemon:
 # Session Identity Resolution Tests
 # ============================================================================
 
+
 class TestResolveSessionKey:
     """Tests for tri-layer session identity resolution."""
 
     def test_explicit_env_var(self):
         """Should use AUTORUN_SESSION_ID env var when set."""
-        with patch.dict('os.environ', {'AUTORUN_SESSION_ID': 'explicit-id'}):
+        with patch.dict("os.environ", {"AUTORUN_SESSION_ID": "explicit-id"}):
             result = resolve_session_key(12345, "/tmp", "fallback")
             assert result == "explicit:explicit-id"
 
     def test_fallback_to_session_id(self):
         """Should fall back to session_id when no env var."""
-        with patch.dict('os.environ', {}, clear=True):
+        with patch.dict("os.environ", {}, clear=True):
             result = resolve_session_key(12345, "/tmp", "fallback-session")
             assert result == "fallback-session"
 
     def test_identity_layer_disabled_by_default(self):
         """JSONL scanning should be disabled without AUTORUN_USE_IDENTITY."""
-        with patch.dict('os.environ', {}, clear=True):
+        with patch.dict("os.environ", {}, clear=True):
             result = resolve_session_key(12345, "/tmp", "fallback")
             # Should go directly to fallback without trying JSONL scan
             assert result == "fallback"
@@ -1428,6 +1433,7 @@ class TestResolveSessionKey:
 # ============================================================================
 # Global App Instance Tests
 # ============================================================================
+
 
 class TestGlobalApp:
     """Tests for global app instance."""
@@ -1447,6 +1453,7 @@ class TestGlobalApp:
 # ============================================================================
 # P1.5: TestFormatSuggestion - Platform-aware tool name substitution
 # ============================================================================
+
 
 class TestFormatSuggestion:
     """TDD tests for format_suggestion() dispatch table.
@@ -1514,6 +1521,7 @@ class TestFormatSuggestion:
 
     def test_real_grep_suggestion_claude(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
         result = format_suggestion(msg, "claude")
         assert "Grep" in result
@@ -1522,6 +1530,7 @@ class TestFormatSuggestion:
     def test_real_grep_suggestion_gemini(self):
         """Regression: grep suggestion must name grep_search for Gemini."""
         from autorun.config import DEFAULT_INTEGRATIONS
+
         msg = DEFAULT_INTEGRATIONS["grep"]["suggestion"]
         result = format_suggestion(msg, "gemini")
         assert "grep_search" in result
@@ -1529,6 +1538,7 @@ class TestFormatSuggestion:
 
     def test_real_find_suggestion_gemini(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         msg = DEFAULT_INTEGRATIONS["find"]["suggestion"]
         result = format_suggestion(msg, "gemini")
         assert "glob" in result.lower()
@@ -1536,6 +1546,7 @@ class TestFormatSuggestion:
 
     def test_real_cat_suggestion_gemini(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         msg = DEFAULT_INTEGRATIONS["cat"]["suggestion"]
         result = format_suggestion(msg, "gemini")
         assert "read_file" in result
@@ -1543,6 +1554,7 @@ class TestFormatSuggestion:
 
     def test_policy_blocked_search_gemini(self):
         from autorun.config import CONFIG
+
         msg = CONFIG["policy_blocked"]["SEARCH"]
         result = format_suggestion(msg, "gemini")
         assert "grep_search" in result
@@ -1564,13 +1576,13 @@ class TestFormatSuggestion:
         https://github.com/ahundt/autorun/issues
         """
         claude = CLI_TOOL_NAMES["claude"]
-        assert claude["grep"]  == "Grep",   "Grep renamed? Update CLI_TOOL_NAMES['claude']['grep']"
-        assert claude["glob"]  == "Glob",   "Glob renamed? (terminal shows 'Search' but API is 'Glob' as of v2.1.47)"
-        assert claude["read"]  == "Read",   "Read renamed? Update CLI_TOOL_NAMES['claude']['read']"
-        assert claude["write"] == "Write",  "Write renamed? Update CLI_TOOL_NAMES['claude']['write']"
-        assert claude["edit"]  == "Edit",   "Edit renamed? Update CLI_TOOL_NAMES['claude']['edit']"
-        assert claude["bash"]  == "Bash",   "Bash renamed? Update CLI_TOOL_NAMES['claude']['bash']"
-        assert claude["ls"]    == "LS",     "LS renamed? Update CLI_TOOL_NAMES['claude']['ls']"
+        assert claude["grep"] == "Grep", "Grep renamed? Update CLI_TOOL_NAMES['claude']['grep']"
+        assert claude["glob"] == "Glob", "Glob renamed? (terminal shows 'Search' but API is 'Glob' as of v2.1.47)"
+        assert claude["read"] == "Read", "Read renamed? Update CLI_TOOL_NAMES['claude']['read']"
+        assert claude["write"] == "Write", "Write renamed? Update CLI_TOOL_NAMES['claude']['write']"
+        assert claude["edit"] == "Edit", "Edit renamed? Update CLI_TOOL_NAMES['claude']['edit']"
+        assert claude["bash"] == "Bash", "Bash renamed? Update CLI_TOOL_NAMES['claude']['bash']"
+        assert claude["ls"] == "LS", "LS renamed? Update CLI_TOOL_NAMES['claude']['ls']"
 
     def test_canary_gemini_api_names(self):
         """Gemini CLI: snake_case API tool names, confirmed by hooks.json BeforeTool matcher:
@@ -1580,13 +1592,13 @@ class TestFormatSuggestion:
         https://github.com/ahundt/autorun/issues
         """
         gemini = CLI_TOOL_NAMES["gemini"]
-        assert gemini["grep"]  == "grep_search",      "grep_search renamed? Update CLI_TOOL_NAMES['gemini']['grep']"
-        assert gemini["glob"]  == "glob",             "glob renamed? Update CLI_TOOL_NAMES['gemini']['glob']"
-        assert gemini["read"]  == "read_file",        "read_file renamed? Update CLI_TOOL_NAMES['gemini']['read']"
-        assert gemini["write"] == "write_file",       "write_file renamed? Update CLI_TOOL_NAMES['gemini']['write']"
-        assert gemini["edit"]  == "replace",          "replace renamed? Update CLI_TOOL_NAMES['gemini']['edit']"
-        assert gemini["bash"]  == "run_shell_command","run_shell_command renamed? Update CLI_TOOL_NAMES['gemini']['bash']"
-        assert gemini["ls"]    == "list_directory",   "list_directory renamed? Update CLI_TOOL_NAMES['gemini']['ls']"
+        assert gemini["grep"] == "grep_search", "grep_search renamed? Update CLI_TOOL_NAMES['gemini']['grep']"
+        assert gemini["glob"] == "glob", "glob renamed? Update CLI_TOOL_NAMES['gemini']['glob']"
+        assert gemini["read"] == "read_file", "read_file renamed? Update CLI_TOOL_NAMES['gemini']['read']"
+        assert gemini["write"] == "write_file", "write_file renamed? Update CLI_TOOL_NAMES['gemini']['write']"
+        assert gemini["edit"] == "replace", "replace renamed? Update CLI_TOOL_NAMES['gemini']['edit']"
+        assert gemini["bash"] == "run_shell_command", "run_shell_command renamed? Update CLI_TOOL_NAMES['gemini']['bash']"
+        assert gemini["ls"] == "list_directory", "list_directory renamed? Update CLI_TOOL_NAMES['gemini']['ls']"
 
     # ─── Symmetry: all CLIs must map the same template keys ─────────────────
 
@@ -1618,6 +1630,7 @@ class TestFormatSuggestion:
         """Return all (label, msg) pairs from suggestion strings and policy_blocked."""
         import re
         from autorun.config import DEFAULT_INTEGRATIONS, CONFIG
+
         items = []
         for cmd, intg in DEFAULT_INTEGRATIONS.items():
             msg = intg.get("suggestion", "")
@@ -1636,7 +1649,8 @@ class TestFormatSuggestion:
         https://github.com/ahundt/autorun/issues
         """
         import re
-        placeholder_re = re.compile(r'\{[a-z_]+\}')
+
+        placeholder_re = re.compile(r"\{[a-z_]+\}")
         for label, msg in self._collect_suggestion_strings():
             result = format_suggestion(msg, "claude")
             remaining = placeholder_re.findall(result)
@@ -1655,7 +1669,8 @@ class TestFormatSuggestion:
         https://github.com/ahundt/autorun/issues
         """
         import re
-        placeholder_re = re.compile(r'\{[a-z_]+\}')
+
+        placeholder_re = re.compile(r"\{[a-z_]+\}")
         for label, msg in self._collect_suggestion_strings():
             result = format_suggestion(msg, "gemini")
             remaining = placeholder_re.findall(result)
@@ -1678,11 +1693,7 @@ class TestFormatSuggestion:
 
         # Find any suggestion string that contains shell braces (non-template braces)
         # These are braces that DON'T match {tool_key} pattern (e.g., xargs -I{} mv {})
-        shell_brace_suggestions = {
-            k: v["suggestion"]
-            for k, v in DEFAULT_INTEGRATIONS.items()
-            if "{}" in v.get("suggestion", "")
-        }
+        shell_brace_suggestions = {k: v["suggestion"] for k, v in DEFAULT_INTEGRATIONS.items() if "{}" in v.get("suggestion", "")}
 
         for cmd, msg in shell_brace_suggestions.items():
             # This should NOT raise ValueError (previous bug with format_map)
@@ -1697,9 +1708,5 @@ class TestFormatSuggestion:
                 ) from e
 
             # Verify shell syntax is preserved (not replaced or removed)
-            assert "{}" in result_claude, (
-                f"Shell brace {{}} was incorrectly removed from '{cmd}' suggestion for claude"
-            )
-            assert "{}" in result_gemini, (
-                f"Shell brace {{}} was incorrectly removed from '{cmd}' suggestion for gemini"
-            )
+            assert "{}" in result_claude, f"Shell brace {{}} was incorrectly removed from '{cmd}' suggestion for claude"
+            assert "{}" in result_gemini, f"Shell brace {{}} was incorrectly removed from '{cmd}' suggestion for gemini"

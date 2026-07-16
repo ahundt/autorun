@@ -3,6 +3,7 @@
 """
 Simplified unit tests for autorun core functionality
 """
+
 import pytest
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorun import CONFIG
+
 # Daemon-path imports for migrated tests
 from autorun.core import EventContext, ThreadSafeDB
 from autorun import plugins
@@ -38,7 +40,7 @@ class TestConfiguration:
         # Stage 1 - dual-key pattern
         assert "stage1_instruction" in CONFIG
         assert "stage1_completion" in CONFIG  # Text injected TO AI
-        assert "stage1_message" in CONFIG     # AI outputs BACK
+        assert "stage1_message" in CONFIG  # AI outputs BACK
         assert isinstance(CONFIG["stage1_message"], str)
         assert len(CONFIG["stage1_message"]) > 0
         assert "AUTORUN_INITIAL_TASKS_COMPLETED" in CONFIG["stage1_message"]
@@ -46,7 +48,7 @@ class TestConfiguration:
         # Stage 2 - dual-key pattern
         assert "stage2_instruction" in CONFIG
         assert "stage2_completion" in CONFIG  # Text injected TO AI
-        assert "stage2_message" in CONFIG     # AI outputs BACK
+        assert "stage2_message" in CONFIG  # AI outputs BACK
         assert isinstance(CONFIG["stage2_message"], str)
         assert len(CONFIG["stage2_message"]) > 0
         assert "CRITICALLY_EVALUATING" in CONFIG["stage2_message"]
@@ -54,7 +56,7 @@ class TestConfiguration:
         # Stage 3 - dual-key pattern
         assert "stage3_instruction" in CONFIG
         assert "stage3_completion" in CONFIG  # Text injected TO AI
-        assert "stage3_message" in CONFIG     # AI outputs BACK
+        assert "stage3_message" in CONFIG  # AI outputs BACK
         assert isinstance(CONFIG["stage3_message"], str)
         assert len(CONFIG["stage3_message"]) > 0
         assert "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY" in CONFIG["stage3_message"]
@@ -106,7 +108,7 @@ class TestConfiguration:
             "{stage2_message}",  # Updated: AI output confirmation
             "{stage3_instruction}",
             "{stage3_message}",  # Updated: AI output confirmation
-            "{policy_instructions}"
+            "{policy_instructions}",
         ]
 
         for placeholder in required_placeholders:
@@ -119,11 +121,7 @@ class TestConfiguration:
         template = CONFIG["recheck_template"]
 
         # Check for required placeholders
-        required_placeholders = [
-            "{activation_prompt}",
-            "{recheck_count}",
-            "{max_recheck_count}"
-        ]
+        required_placeholders = ["{activation_prompt}", "{recheck_count}", "{max_recheck_count}"]
 
         for placeholder in required_placeholders:
             assert placeholder in template, f"Missing placeholder: {placeholder}"
@@ -145,8 +143,9 @@ class TestCommandHandlers:
         expected_commands = ["/ar:f", "/ar:a", "/ar:j", "/ar:st", "/ar:x", "/ar:sos", "/ar:go"]
         ch = plugins.app.command_handlers
         for cmd in expected_commands:
-            assert cmd in ch or any(c.startswith(cmd) or cmd.startswith(c) for c in ch), \
+            assert cmd in ch or any(c.startswith(cmd) or cmd.startswith(c) for c in ch), (
                 f"Command {cmd} should be registered in plugins.app.command_handlers; got: {sorted(ch.keys())}"
+            )
 
     @pytest.mark.unit
     def test_policy_handlers_return_strings(self):
@@ -174,8 +173,7 @@ class TestCommandHandlers:
             result = _dispatch(cmd)
             sm = result.get("systemMessage", "")
             expected_name, _ = CONFIG["policies"][policy_key]
-            assert expected_name in sm, \
-                f"Command {cmd} response should contain policy name '{expected_name}'; got: {sm!r}"
+            assert expected_name in sm, f"Command {cmd} response should contain policy name '{expected_name}'; got: {sm!r}"
 
     @pytest.mark.unit
     def test_status_handler(self):
@@ -208,8 +206,9 @@ class TestCommandHandlers:
         assert isinstance(sm, str), "/ar:go should return systemMessage string"
         assert len(sm) > 0, "/ar:go should return non-empty systemMessage"
         # New format: '✅ Autorun: {task}\n📁 {policy}\n🔄 Stages: 1→2→3\n⚠️ EMERGENCY_STOP_SIGNAL'
-        assert "Autorun" in sm or "autorun" in sm.lower() or "Stage" in sm or "stage" in sm.lower(), \
+        assert "Autorun" in sm or "autorun" in sm.lower() or "Stage" in sm or "stage" in sm.lower(), (
             f"/ar:go response should reference autorun or stages; got: {sm!r}"
+        )
 
 
 class TestCommandDetection:
@@ -264,12 +263,12 @@ class TestCommandDetection:
         # Canonical activate command
         for autorun_cmd in ["/ar:go test task description", "/ar:run test task"]:
             found = next((v for k, v in mappings.items() if autorun_cmd.startswith(k)), None)
-            assert found == "activate", \
-                f"Command '{autorun_cmd}' should map to 'activate'; got: {found}"
+            assert found == "activate", f"Command '{autorun_cmd}' should map to 'activate'; got: {found}"
         # Verify daemon-path dispatch works for /ar:go
         ch = plugins.app.command_handlers
-        assert any("/ar:go" in k for k in ch) or any(k.startswith("/ar:go") for k in ch) or "/ar:go" in ch, \
+        assert any("/ar:go" in k for k in ch) or any(k.startswith("/ar:go") for k in ch) or "/ar:go" in ch, (
             f"/ar:go should be registered in plugins.app.command_handlers; got: {sorted(ch.keys())}"
+        )
 
 
 class TestBasicFunctionality:
@@ -318,8 +317,7 @@ class TestBasicFunctionality:
         canonical_commands = ["/ar:f", "/ar:a", "/ar:j", "/ar:st", "/ar:x", "/ar:sos"]
         for cmd in canonical_commands:
             result = _dispatch(cmd, session_id=f"test-unit-{cmd.replace('/', '-')}")
-            assert isinstance(result, dict), \
-                f"Daemon dispatch of '{cmd}' should return dict; got {type(result)}"
+            assert isinstance(result, dict), f"Daemon dispatch of '{cmd}' should return dict; got {type(result)}"
 
 
 class TestSecurityFunctions:
@@ -333,8 +331,8 @@ class TestSecurityFunctions:
         # Test newline injection attack
         malicious = "normal\n[FAKE] Injected log entry\nmore"
         result = sanitize_log_message(malicious)
-        assert '\n' not in result, "Newlines should be escaped"
-        assert '\\n' in result, "Newlines should be replaced with \\n"
+        assert "\n" not in result, "Newlines should be escaped"
+        assert "\\n" in result, "Newlines should be replaced with \\n"
 
     @pytest.mark.unit
     def test_sanitize_log_message_carriage_return(self):
@@ -343,8 +341,8 @@ class TestSecurityFunctions:
 
         malicious = "normal\r\n[FAKE]\rmore"
         result = sanitize_log_message(malicious)
-        assert '\r' not in result, "Carriage returns should be escaped"
-        assert '\n' not in result, "Newlines should be escaped"
+        assert "\r" not in result, "Carriage returns should be escaped"
+        assert "\n" not in result, "Newlines should be escaped"
 
     @pytest.mark.unit
     def test_sanitize_log_message_truncation(self):
@@ -363,7 +361,7 @@ class TestSecurityFunctions:
 
         # Dangerous patterns with nested quantifiers
         dangerous_patterns = [
-            "(a+)+",      # Classic ReDoS
+            "(a+)+",  # Classic ReDoS
             "(a*)+",
             "(a+)*",
             "([a-z]+)*",
@@ -371,8 +369,7 @@ class TestSecurityFunctions:
         ]
 
         for pattern in dangerous_patterns:
-            assert is_safe_regex_pattern(pattern) is False, \
-                f"Dangerous pattern should be rejected: {pattern}"
+            assert is_safe_regex_pattern(pattern) is False, f"Dangerous pattern should be rejected: {pattern}"
 
     @pytest.mark.unit
     def test_is_safe_regex_accepts_safe_patterns(self):
@@ -388,8 +385,7 @@ class TestSecurityFunctions:
         ]
 
         for pattern in safe_patterns:
-            assert is_safe_regex_pattern(pattern) is True, \
-                f"Safe pattern should be accepted: {pattern}"
+            assert is_safe_regex_pattern(pattern) is True, f"Safe pattern should be accepted: {pattern}"
 
     @pytest.mark.unit
     def test_is_safe_regex_rejects_long_patterns(self):
@@ -397,8 +393,7 @@ class TestSecurityFunctions:
         from autorun.main import is_safe_regex_pattern
 
         long_pattern = "a" * 300
-        assert is_safe_regex_pattern(long_pattern) is False, \
-            "Long pattern should be rejected"
+        assert is_safe_regex_pattern(long_pattern) is False, "Long pattern should be rejected"
 
     @pytest.mark.unit
     def test_is_safe_regex_rejects_invalid_patterns(self):
@@ -412,8 +407,7 @@ class TestSecurityFunctions:
         ]
 
         for pattern in invalid_patterns:
-            assert is_safe_regex_pattern(pattern) is False, \
-                f"Invalid pattern should be rejected: {pattern}"
+            assert is_safe_regex_pattern(pattern) is False, f"Invalid pattern should be rejected: {pattern}"
 
 
 class TestCodeQuality:
@@ -457,28 +451,23 @@ class TestCodeQuality:
 
             # Search for stderr writes
             # EXCEPTION: print(reason, file=sys.stderr) is ALLOWED for exit code 2 workaround (Bug #4669)
-            result = subprocess.run(
-                ["grep", "-n", "file=sys.stderr", str(filepath)],
-                capture_output=True,
-                text=True
-            )
-    
+            result = subprocess.run(["grep", "-n", "file=sys.stderr", str(filepath)], capture_output=True, text=True)
+
             if result.returncode == 0:  # grep found matches
                 # Filter out the intentional workaround
-                violations = [v for v in result.stdout.strip().split('\n') 
-                             if "print(reason, file=sys.stderr)" not in v]
-                
+                violations = [v for v in result.stdout.strip().split("\n") if "print(reason, file=sys.stderr)" not in v]
+
                 if violations:
                     pytest.fail(
-                        f"\n{'='*70}\n"
+                        f"\n{'=' * 70}\n"
                         f"CRITICAL: Found {len(violations)} stderr write(s) in {filename}\n"
-                        f"{'='*70}\n"
+                        f"{'=' * 70}\n"
                         f"Claude Code hook requirement: ZERO stderr output\n"
                         f"Impact: Hook errors, silent safety feature failures\n\n"
                         f"Violations found:\n" + "\n".join(violations) + "\n"
-                        f"{'='*70}\n"
+                        f"{'=' * 70}\n"
                         f"FIX: Replace with logging_utils.get_logger() or remove\n"
-                        f"{'='*70}"
+                        f"{'=' * 70}"
                     )
 
     @pytest.mark.unit
@@ -507,34 +496,34 @@ class TestCodeQuality:
                 continue
 
             content = filepath.read_text(encoding="utf-8")
-            lines = content.split('\n')
+            lines = content.split("\n")
 
             for i, line in enumerate(lines, 1):
                 # Check for logging.basicConfig without explicit handlers or filename
                 # Both handlers= and filename= are safe (create file handlers)
                 # Missing both means default stderr handler
-                if 'logging.basicConfig' in line:
+                if "logging.basicConfig" in line:
                     # Get context around this line (±10 lines)
                     start_idx = max(0, i - 10)
                     end_idx = min(len(lines), i + 10)
-                    context = '\n'.join(lines[start_idx:end_idx])
+                    context = "\n".join(lines[start_idx:end_idx])
 
                     # Check if handlers= or filename= appears in context
-                    if 'handlers=' not in context and 'filename=' not in context:
+                    if "handlers=" not in context and "filename=" not in context:
                         violations.append(f"{filename}:{i}: {line.strip()}")
 
         if violations:
             pytest.fail(
-                f"\n{'='*70}\n"
+                f"\n{'=' * 70}\n"
                 f"CRITICAL: Found logging.basicConfig without handlers\n"
-                f"{'='*70}\n"
+                f"{'=' * 70}\n"
                 f"Python logging defaults to stderr when no handlers specified\n"
                 f"Impact: Hook errors, silent safety feature failures\n\n"
                 f"Violations:\n" + "\n".join(f"  {v}" for v in violations) + "\n"
-                f"{'='*70}\n"
+                f"{'=' * 70}\n"
                 f"FIX: Use handlers=[logging.FileHandler(...)] or handlers=[logging.NullHandler()]\n"
                 f"See: logging_utils.py for correct pattern\n"
-                f"{'='*70}"
+                f"{'=' * 70}"
             )
 
     @pytest.mark.unit
@@ -555,11 +544,7 @@ class TestCodeQuality:
         src_dir = Path(__file__).parent.parent / "src"
         env = os.environ.copy()
         env["AUTORUN_HOME"] = str(autorun_home)
-        env["PYTHONPATH"] = (
-            str(src_dir)
-            if not env.get("PYTHONPATH")
-            else f"{src_dir}{os.pathsep}{env['PYTHONPATH']}"
-        )
+        env["PYTHONPATH"] = str(src_dir) if not env.get("PYTHONPATH") else f"{src_dir}{os.pathsep}{env['PYTHONPATH']}"
 
         try:
             result = subprocess.run(
@@ -611,34 +596,28 @@ class TestCodeQuality:
         src_dir = Path(__file__).parent.parent / "src" / "autorun"
 
         # Search all Python files recursively
-        result = subprocess.run(
-            ["grep", "-r", "-n", "file=sys.stderr", "--include=*.py", str(src_dir)],
-            capture_output=True,
-            text=True
-        )
+        result = subprocess.run(["grep", "-r", "-n", "file=sys.stderr", "--include=*.py", str(src_dir)], capture_output=True, text=True)
 
         if result.returncode == 0:  # grep found matches
             # EXCEPTION 1: print(reason, file=sys.stderr) is ALLOWED for exit code 2 workaround (Bug #4669)
             # EXCEPTION 2: print(result.stderr, ..., file=sys.stderr) is ALLOWED for subprocess stderr
             #   pass-through in hook_entry.py. hook_entry.py forwards the daemon subprocess's stderr
             #   so Claude Code receives it (needed for exit-2 workaround; harmless for Gemini).
-            violations = [v for v in result.stdout.strip().split('\n')
-                         if "print(reason, file=sys.stderr)" not in v
-                         and "print(result.stderr, end=" not in v]
-            
+            violations = [v for v in result.stdout.strip().split("\n") if "print(reason, file=sys.stderr)" not in v and "print(result.stderr, end=" not in v]
+
             if violations:
                 pytest.fail(
-                    f"\n{'='*70}\n"
+                    f"\n{'=' * 70}\n"
                     f"CRITICAL: Found {len(violations)} file=sys.stderr usage(s)\n"
-                    f"{'='*70}\n"
+                    f"{'=' * 70}\n"
                     f"Requirement: ZERO stderr output in entire codebase\n"
                     f"Impact: Breaks Claude Code hooks, disables safety features\n\n"
                     f"Files with violations:\n" + "\n".join(violations) + "\n"
-                    f"{'='*70}\n"
+                    f"{'=' * 70}\n"
                     f"FIX: Use logging_utils.get_logger() or print() without file= arg\n"
                     f"CLI error messages: Use print() to stdout (not stderr)\n"
                     f"Diagnostics: Use logger.error/info/debug (file-only)\n"
-                    f"{'='*70}"
+                    f"{'=' * 70}"
                 )
 
 
@@ -693,10 +672,10 @@ def _make_pending_task(session_id: str, task_id: str = "1", subject: str = "test
 
 # ── Staleness counter ──────────────────────────────────────────────────────
 
+
 def test_staleness_counter_increments_on_tool_call():
     """Counter increments for non-task tool calls when autorun active."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-incr",
-                               tool_calls_since_task_update=0)
+    ctx = _make_post_tool_ctx("Bash", "test-stale-incr", tool_calls_since_task_update=0)
     plugins.app.dispatch(ctx)
     assert (ctx.tool_calls_since_task_update or 0) == 1
 
@@ -705,9 +684,7 @@ def test_staleness_injection_at_threshold():
     """Warning injected when counter reaches threshold and incomplete tasks exist."""
     sid = "test-stale-inject"
     _make_pending_task(sid, "1", "incomplete task")
-    ctx = _make_post_tool_ctx("Bash", sid,
-                               tool_calls_since_task_update=2,
-                               task_staleness_threshold=3)
+    ctx = _make_post_tool_ctx("Bash", sid, tool_calls_since_task_update=2, task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "TASK UPDATE REQUIRED" in additional
@@ -715,16 +692,14 @@ def test_staleness_injection_at_threshold():
 
 def test_staleness_counter_resets_on_task_create():
     """TaskCreate call resets the counter."""
-    ctx = _make_post_tool_ctx("TaskCreate", "test-stale-reset-create",
-                               tool_calls_since_task_update=20)
+    ctx = _make_post_tool_ctx("TaskCreate", "test-stale-reset-create", tool_calls_since_task_update=20)
     plugins.app.dispatch(ctx)
     assert (ctx.tool_calls_since_task_update or 0) == 0
 
 
 def test_staleness_counter_resets_on_task_update():
     """TaskUpdate call resets the counter."""
-    ctx = _make_post_tool_ctx("TaskUpdate", "test-stale-reset-update",
-                               tool_calls_since_task_update=20)
+    ctx = _make_post_tool_ctx("TaskUpdate", "test-stale-reset-update", tool_calls_since_task_update=20)
     plugins.app.dispatch(ctx)
     assert (ctx.tool_calls_since_task_update or 0) == 0
 
@@ -744,9 +719,7 @@ def test_staleness_counter_resets_on_codex_update_plan():
 
 def test_staleness_disabled_no_injection():
     """Disabled reminder does not inject even over threshold."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-off",
-                               task_staleness_enabled=False,
-                               tool_calls_since_task_update=50)
+    ctx = _make_post_tool_ctx("Bash", "test-stale-off", task_staleness_enabled=False, tool_calls_since_task_update=50)
     result = plugins.app.dispatch(ctx) or {}
     assert "TASK UPDATE" not in str(result)
 
@@ -755,10 +728,7 @@ def test_staleness_fires_without_autorun_when_tasks_exist():
     """Staleness reminder fires even when autorun_active=False if incomplete tasks exist."""
     sid = "test-stale-no-autorun-with-tasks"
     _make_pending_task(sid, "1", "incomplete task")
-    ctx = _make_post_tool_ctx("Bash", sid,
-                               autorun_active=False,
-                               tool_calls_since_task_update=50,
-                               task_staleness_threshold=3)
+    ctx = _make_post_tool_ctx("Bash", sid, autorun_active=False, tool_calls_since_task_update=50, task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "TASK UPDATE REQUIRED" in additional
@@ -775,28 +745,23 @@ def test_staleness_fires_no_tasks_when_all_tasks_complete():
     _make_pending_task(sid, "1", "done task")
     # Mark it complete
     from autorun.session_manager import session_state
+
     key = f"__task_lifecycle__{sid}"
     with session_state(key) as st:
         tasks = st.get("tasks", {})
         if "1" in tasks:
             tasks["1"]["status"] = "completed"
             st["tasks"] = tasks
-    ctx = _make_post_tool_ctx("Bash", sid,
-                               tool_calls_since_task_update=50,
-                               task_staleness_threshold=3)
+    ctx = _make_post_tool_ctx("Bash", sid, tool_calls_since_task_update=50, task_staleness_threshold=3)
     result = plugins.app.dispatch(ctx) or {}
     # Should fire NO TASKS EXIST (not TASK UPDATE) — all-complete = no active work
     assert "TASK UPDATE" not in str(result), "All-complete should NOT fire TASK UPDATE"
-    assert "NO TASKS EXIST" in str(result), (
-        f"All-complete should fire NO TASKS EXIST. Got: {str(result)[:120]}"
-    )
+    assert "NO TASKS EXIST" in str(result), f"All-complete should fire NO TASKS EXIST. Got: {str(result)[:120]}"
 
 
 def test_staleness_fires_when_zero_tasks_exist():
     """Staleness reminder fires with lower threshold when zero tasks exist."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-tasks",
-                               tool_calls_since_task_update=10,
-                               task_staleness_threshold=25)
+    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-tasks", tool_calls_since_task_update=10, task_staleness_threshold=25)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "NO TASKS EXIST" in additional
@@ -804,15 +769,89 @@ def test_staleness_fires_when_zero_tasks_exist():
 
 def test_staleness_no_fire_below_zero_tasks_threshold():
     """Staleness reminder does NOT fire below the no_tasks_threshold (default 5)."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-below-thresh",
-                               tool_calls_since_task_update=3,
-                               task_staleness_threshold=25)
+    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-below-thresh", tool_calls_since_task_update=3, task_staleness_threshold=25)
     result = plugins.app.dispatch(ctx) or {}
     assert "NO TASKS EXIST" not in str(result)
     assert "TASK UPDATE" not in str(result)
 
 
+def test_staleness_below_first_decision_boundary_does_not_read_tasks(monkeypatch):
+    """Ordinary calls before the no-tasks threshold must stay off task persistence."""
+    ctx = _make_post_tool_ctx(
+        "Bash",
+        "test-stale-no-read-before-boundary",
+        tool_calls_since_task_update=0,
+        task_staleness_threshold=25,
+    )
+    monkeypatch.setattr(plugins.task_lifecycle, "is_enabled", lambda: True)
+
+    def unexpected_manager(*args, **kwargs):
+        pytest.fail("TaskLifecycle must not be constructed before a decision boundary")
+
+    monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", unexpected_manager)
+
+    plugins.check_task_staleness(ctx)
+
+    assert ctx.tool_calls_since_task_update == 1
+
+
+def test_staleness_decision_boundary_uses_one_task_snapshot(monkeypatch):
+    """The no-tasks decision reads tasks once and derives incompletes in memory."""
+    ctx = _make_post_tool_ctx(
+        "Bash",
+        "test-stale-one-snapshot-at-boundary",
+        tool_calls_since_task_update=4,
+        task_staleness_threshold=25,
+    )
+    accesses = 0
+
+    class FakeLifecycle:
+        NON_BLOCKING_STATUSES = _TaskLifecycle.NON_BLOCKING_STATUSES
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        @property
+        def tasks(self):
+            nonlocal accesses
+            accesses += 1
+            return {"1": {"id": "1", "status": "pending", "subject": "active"}}
+
+        def get_incomplete_tasks(self, *args, **kwargs):
+            pytest.fail("Decision logic must derive incompletes from the existing snapshot")
+
+    monkeypatch.setattr(plugins.task_lifecycle, "is_enabled", lambda: True)
+    monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", FakeLifecycle)
+
+    plugins.check_task_staleness(ctx)
+
+    assert accesses == 1
+    assert ctx.tool_calls_since_task_update == 5
+
+
+def test_staleness_cached_active_classification_skips_intermediate_task_reads(monkeypatch):
+    """After the first boundary, active-task calls stay cached until the main threshold."""
+    ctx = _make_post_tool_ctx(
+        "Bash",
+        "test-stale-cached-active-between-boundaries",
+        tool_calls_since_task_update=5,
+        task_staleness_threshold=25,
+    )
+    ctx.task_staleness_has_active_tasks = True
+    monkeypatch.setattr(plugins.task_lifecycle, "is_enabled", lambda: True)
+
+    def unexpected_manager(*args, **kwargs):
+        pytest.fail("Cached active-task classification must avoid intermediate task reads")
+
+    monkeypatch.setattr(plugins.task_lifecycle, "TaskLifecycle", unexpected_manager)
+
+    plugins.check_task_staleness(ctx)
+
+    assert ctx.tool_calls_since_task_update == 6
+
+
 # ── PreToolUse warn-then-deny enforcement (v0.10.2) ─────────────────────────
+
 
 def _make_pre_tool_ctx(
     tool_name: str,
@@ -849,21 +888,17 @@ def test_enforce_staleness_noop_when_flag_false():
 def test_enforce_staleness_warn_on_first_offense():
     """First threshold crossing: allow(warning) — tool executes with warning."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-enforce-warn",
+        "Read",
+        "test-enforce-warn",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=1,
     )
     result = plugins.app.dispatch(ctx)
     assert result is not None, "enforce_task_staleness should return a response"
     perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
-    assert perm == "allow", (
-        f"First offense should ALLOW (warn). Got: {perm}. "
-        f"enforce_task_staleness should return ctx.allow(warning) when reminder_count<=1."
-    )
+    assert perm == "allow", f"First offense should ALLOW (warn). Got: {perm}. enforce_task_staleness should return ctx.allow(warning) when reminder_count<=1."
     reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-    assert "WARNING" in reason, (
-        f"Warning message should contain WARNING. Got: {reason!r}"
-    )
+    assert "WARNING" in reason, f"Warning message should contain WARNING. Got: {reason!r}"
     # Flag should be cleared (one-shot)
     assert ctx.task_staleness_enforce_next is False
 
@@ -871,7 +906,8 @@ def test_enforce_staleness_warn_on_first_offense():
 def test_enforce_staleness_deny_on_second_offense():
     """Second threshold crossing: deny(instruction) — tool BLOCKED."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-enforce-deny",
+        "Read",
+        "test-enforce-deny",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=2,
     )
@@ -879,19 +915,17 @@ def test_enforce_staleness_deny_on_second_offense():
     assert result is not None, "enforce_task_staleness should return a response"
     perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
     assert perm == "deny", (
-        f"Second offense should DENY (block tool). Got: {perm}. "
-        f"enforce_task_staleness should return ctx.deny(instruction) when reminder_count>=2."
+        f"Second offense should DENY (block tool). Got: {perm}. enforce_task_staleness should return ctx.deny(instruction) when reminder_count>=2."
     )
     reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-    assert "REQUIRED" in reason or "blocked" in reason.lower(), (
-        f"Deny reason should contain REQUIRED or 'blocked'. Got: {reason!r}"
-    )
+    assert "REQUIRED" in reason or "blocked" in reason.lower(), f"Deny reason should contain REQUIRED or 'blocked'. Got: {reason!r}"
 
 
 def test_enforce_staleness_deny_on_third_offense():
     """Third+ threshold crossing: still deny."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-enforce-deny-3rd",
+        "Read",
+        "test-enforce-deny-3rd",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=5,
     )
@@ -904,7 +938,8 @@ def test_enforce_staleness_allows_task_tools():
     """Task tools pass through enforcement and reset counters."""
     for tool in ["TaskList", "TaskCreate", "TaskUpdate", "TaskGet"]:
         ctx = _make_pre_tool_ctx(
-            tool, f"test-enforce-task-{tool.lower()}",
+            tool,
+            f"test-enforce-task-{tool.lower()}",
             task_staleness_enforce_next=True,
             task_staleness_reminder_count=5,
         )
@@ -912,22 +947,17 @@ def test_enforce_staleness_allows_task_tools():
         # Task tools should NOT be denied
         if result:
             perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
-            assert perm != "deny", (
-                f"{tool} should pass through enforcement. Got permissionDecision={perm}"
-            )
+            assert perm != "deny", f"{tool} should pass through enforcement. Got permissionDecision={perm}"
         # Counters should be reset
-        assert ctx.task_staleness_reminder_count == 0, (
-            f"reminder_count should reset after {tool}. Got: {ctx.task_staleness_reminder_count}"
-        )
-        assert ctx.task_staleness_enforce_next is False, (
-            f"enforce_next should clear after {tool}. Got: {ctx.task_staleness_enforce_next}"
-        )
+        assert ctx.task_staleness_reminder_count == 0, f"reminder_count should reset after {tool}. Got: {ctx.task_staleness_reminder_count}"
+        assert ctx.task_staleness_enforce_next is False, f"enforce_next should clear after {tool}. Got: {ctx.task_staleness_enforce_next}"
 
 
 def test_enforce_staleness_allows_codex_update_plan():
     """Codex update_plan passes through enforcement and resets counters."""
     ctx = _make_pre_tool_ctx(
-        "update_plan", "test-enforce-codex-plan",
+        "update_plan",
+        "test-enforce-codex-plan",
         cli_type="codex",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=5,
@@ -944,7 +974,8 @@ def test_enforce_staleness_allows_codex_update_plan():
 def test_codex_staleness_warning_mentions_update_plan():
     """Codex staleness instructions must name update_plan, not Claude TaskCreate."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-enforce-codex-warning",
+        "Read",
+        "test-enforce-codex-warning",
         cli_type="codex",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=1,
@@ -970,9 +1001,7 @@ def test_task_cli_hint_ignores_autodetected_fallback():
     assert implicit.cli_type in {"claude", "gemini", "codex", "forgecode"}
     assert plugins._task_cli_hint(implicit) is None
 
-    explicit = _make_post_tool_ctx(
-        "TaskCreate", "test-explicit-codex-task-hint", cli_type="codex"
-    )
+    explicit = _make_post_tool_ctx("TaskCreate", "test-explicit-codex-task-hint", cli_type="codex")
     assert plugins._task_cli_hint(explicit) == "codex"
     assert plugins.is_task_update_call(explicit) is False
 
@@ -994,8 +1023,13 @@ def test_enforce_staleness_full_lifecycle():
     # Step 1: cross threshold via PostToolUse
     for _ in range(3):
         post_ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Bash", tool_input={}, tool_result="", store=store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            tool_input={},
+            tool_result="",
+            store=store,
         )
         post_ctx.task_staleness_enabled = True
         post_ctx.task_staleness_threshold = 3
@@ -1003,8 +1037,12 @@ def test_enforce_staleness_full_lifecycle():
 
     # Step 2: PreToolUse should WARN (allow)
     pre_ctx1 = EventContext(
-        session_id=sid, event="PreToolUse", prompt="",
-        tool_name="Read", tool_input={}, store=store,
+        session_id=sid,
+        event="PreToolUse",
+        prompt="",
+        tool_name="Read",
+        tool_input={},
+        store=store,
     )
     result1 = plugins.app.dispatch(pre_ctx1)
     if result1:
@@ -1015,8 +1053,13 @@ def test_enforce_staleness_full_lifecycle():
     # Step 3: cross threshold again
     for _ in range(3):
         post_ctx2 = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Bash", tool_input={}, tool_result="", store=store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            tool_input={},
+            tool_result="",
+            store=store,
         )
         post_ctx2.task_staleness_enabled = True
         post_ctx2.task_staleness_threshold = 3
@@ -1024,8 +1067,12 @@ def test_enforce_staleness_full_lifecycle():
 
     # Step 4: PreToolUse should DENY (block)
     pre_ctx2 = EventContext(
-        session_id=sid, event="PreToolUse", prompt="",
-        tool_name="Read", tool_input={}, store=store,
+        session_id=sid,
+        event="PreToolUse",
+        prompt="",
+        tool_name="Read",
+        tool_input={},
+        store=store,
     )
     result2 = plugins.app.dispatch(pre_ctx2)
     if result2:
@@ -1034,22 +1081,28 @@ def test_enforce_staleness_full_lifecycle():
 
     # Step 5: TaskList resets everything
     pre_ctx3 = EventContext(
-        session_id=sid, event="PreToolUse", prompt="",
-        tool_name="TaskList", tool_input={}, store=store,
+        session_id=sid,
+        event="PreToolUse",
+        prompt="",
+        tool_name="TaskList",
+        tool_input={},
+        store=store,
     )
     plugins.app.dispatch(pre_ctx3)
 
     # Step 6: Next Read should be clean (no enforcement)
     pre_ctx4 = EventContext(
-        session_id=sid, event="PreToolUse", prompt="",
-        tool_name="Read", tool_input={}, store=store,
+        session_id=sid,
+        event="PreToolUse",
+        prompt="",
+        tool_name="Read",
+        tool_input={},
+        store=store,
     )
     result4 = plugins.app.dispatch(pre_ctx4)
     if result4:
         perm4 = result4.get("hookSpecificOutput", {}).get("permissionDecision", "")
-        assert perm4 != "deny", (
-            f"After TaskList reset, Read should not be denied. Got: {perm4}"
-        )
+        assert perm4 != "deny", f"After TaskList reset, Read should not be denied. Got: {perm4}"
 
 
 # ── V4 TDD tests: context-aware warn/deny, 2-level escalation, zero-tasks ──
@@ -1058,7 +1111,8 @@ def test_enforce_staleness_full_lifecycle():
 def test_enforce_deny_context_aware_planning():
     """Deny message includes [PLANNING] prefix and addBlockedBy when planning flag set."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-deny-planning",
+        "Read",
+        "test-deny-planning",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=2,
     )
@@ -1075,7 +1129,8 @@ def test_enforce_deny_context_aware_planning():
 def test_enforce_deny_context_aware_execution():
     """Deny message includes [TDD]/[EXEC] prefixes and cross-wiring when execution flag set."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-deny-execution",
+        "Read",
+        "test-deny-execution",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=2,
     )
@@ -1087,15 +1142,14 @@ def test_enforce_deny_context_aware_execution():
     reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
     assert "[TDD]" in reason, f"Execution deny should include [TDD] prefix. Got: {reason!r}"
     assert "[EXEC]" in reason, f"Execution deny should include [EXEC] prefix. Got: {reason!r}"
-    assert "addBlockedBy" in reason or "blockedBy" in reason.lower(), (
-        f"Execution deny should include dependency wiring. Got: {reason!r}"
-    )
+    assert "addBlockedBy" in reason or "blockedBy" in reason.lower(), f"Execution deny should include dependency wiring. Got: {reason!r}"
 
 
 def test_enforce_deny_context_aware_general():
     """Deny message includes general task instructions when no planning/execution flags."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-deny-general",
+        "Read",
+        "test-deny-general",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=2,
     )
@@ -1104,9 +1158,7 @@ def test_enforce_deny_context_aware_general():
     perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
     assert perm == "deny"
     reason = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-    assert "BLOCKED" in reason or "blocked" in reason.lower(), (
-        f"General deny should mention BLOCKED. Got: {reason!r}"
-    )
+    assert "BLOCKED" in reason or "blocked" in reason.lower(), f"General deny should mention BLOCKED. Got: {reason!r}"
     assert "TaskList" in reason, f"General deny should mention TaskList. Got: {reason!r}"
     assert "addBlockedBy" in reason, f"General deny should include dependency wiring. Got: {reason!r}"
 
@@ -1114,7 +1166,8 @@ def test_enforce_deny_context_aware_general():
 def test_enforce_deny_includes_tool_name():
     """Deny message includes the name of the blocked tool."""
     ctx = _make_pre_tool_ctx(
-        "WebSearch", "test-deny-toolname",
+        "WebSearch",
+        "test-deny-toolname",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=2,
     )
@@ -1126,7 +1179,8 @@ def test_enforce_deny_includes_tool_name():
 def test_enforce_warn_context_aware_planning():
     """Warn message includes [PLANNING] prefix when planning flag set."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-warn-planning",
+        "Read",
+        "test-warn-planning",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=1,
     )
@@ -1143,7 +1197,8 @@ def test_enforce_warn_context_aware_planning():
 def test_enforce_warn_context_aware_execution():
     """Warn message includes [TDD]/[EXEC] when execution flag set."""
     ctx = _make_pre_tool_ctx(
-        "Read", "test-warn-execution",
+        "Read",
+        "test-warn-execution",
         task_staleness_enforce_next=True,
         task_staleness_reminder_count=1,
     )
@@ -1164,19 +1219,27 @@ def test_zero_tasks_sets_enforce_next():
     # No tasks created — zero_tasks path should fire at threshold 5
     for i in range(5):
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Read", tool_input={}, tool_result="", store=store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Read",
+            tool_input={},
+            tool_result="",
+            store=store,
         )
         ctx.task_staleness_enabled = True
         plugins.app.dispatch(ctx)
     # After 5 calls with zero tasks, enforce_next should be True
     check_ctx = EventContext(
-        session_id=sid, event="PostToolUse", prompt="",
-        tool_name="Read", tool_input={}, tool_result="", store=store,
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Read",
+        tool_input={},
+        tool_result="",
+        store=store,
     )
-    assert check_ctx.task_staleness_enforce_next is True, (
-        "Zero-tasks should set enforce_next after threshold"
-    )
+    assert check_ctx.task_staleness_enforce_next is True, "Zero-tasks should set enforce_next after threshold"
 
 
 def test_two_level_escalation_no_third():
@@ -1189,8 +1252,13 @@ def test_two_level_escalation_no_third():
     # Run 3 cycles of threshold=3 to trigger 3 escalation firings
     for cycle in range(9):
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Bash", tool_input={}, tool_result="", store=store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            tool_input={},
+            tool_result="",
+            store=store,
         )
         ctx.task_staleness_enabled = True
         ctx.task_staleness_threshold = 3
@@ -1200,25 +1268,19 @@ def test_two_level_escalation_no_third():
             messages.append(additional)
 
     # Should see REQUIRED (1st) and OVERDUE (2nd+), never FINAL
-    assert any("REQUIRED" in m for m in messages), (
-        f"Should see TASK UPDATE REQUIRED. Got: {messages}"
-    )
-    assert any("OVERDUE" in m for m in messages), (
-        f"Should see TASK UPDATE OVERDUE. Got: {messages}"
-    )
-    assert not any("FINAL" in m for m in messages), (
-        f"Should NOT see FINAL (removed in V4). Got: {messages}"
-    )
+    assert any("REQUIRED" in m for m in messages), f"Should see TASK UPDATE REQUIRED. Got: {messages}"
+    assert any("OVERDUE" in m for m in messages), f"Should see TASK UPDATE OVERDUE. Got: {messages}"
+    assert not any("FINAL" in m for m in messages), f"Should NOT see FINAL (removed in V4). Got: {messages}"
 
 
 # ── Task creation reminder (v0.10) ───────────────────────────────────────
+
 
 def test_plan_command_sets_planning_reminder_flag():
     """Plan command sets plan_awaiting_planning_tasks flag."""
     sid = "test-plan-cmd-flag"
     _dispatch("/ar:plannew", session_id=sid)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", store=ThreadSafeDB())
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
     assert ctx.plan_awaiting_planning_tasks is True
     assert ctx.plan_active is True
 
@@ -1227,15 +1289,11 @@ def test_planning_reminder_fires_on_every_post_tool_use():
     """Reminder fires on every PostToolUse when planning flag is set."""
     sid = "test-planning-reminder-fires"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     ctx.plan_awaiting_planning_tasks = True
     results = []
     for _ in range(3):
-        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                           tool_name="Bash", tool_input={}, tool_result="",
-                           store=store)
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
         result = plugins.app.dispatch(ctx) or {}
         results.append(result)
     assert all("PLANNING TASKS REQUIRED" in str(r) for r in results)
@@ -1245,21 +1303,15 @@ def test_planning_reminder_clears_on_task_create():
     """TaskCreate clears the planning reminder flag."""
     sid = "test-planning-clears"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     ctx.plan_awaiting_planning_tasks = True
 
     # TaskCreate should clear the flag
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="TaskCreate", tool_input={}, tool_result="",
-                        store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="TaskCreate", tool_input={}, tool_result="", store=store)
     plugins.app.dispatch(ctx2)
 
     # Next call should be silent
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     result = plugins.app.dispatch(ctx3) or {}
     assert "PLANNING TASKS REQUIRED" not in str(result)
 
@@ -1268,21 +1320,22 @@ def test_planning_reminder_clears_on_codex_update_plan():
     """Codex update_plan clears plan-task reminders like native task creation."""
     sid = "test-planning-clears-codex-plan"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store, cli_type="codex")
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
     ctx.plan_awaiting_planning_tasks = True
 
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="update_plan",
-                        tool_input={"plan": [{"step": "[PLANNING] Step 1: inspect", "status": "in_progress"}]},
-                        tool_result="",
-                        store=store, cli_type="codex")
+    ctx2 = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="update_plan",
+        tool_input={"plan": [{"step": "[PLANNING] Step 1: inspect", "status": "in_progress"}]},
+        tool_result="",
+        store=store,
+        cli_type="codex",
+    )
     plugins.app.dispatch(ctx2)
 
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store, cli_type="codex")
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
     result = plugins.app.dispatch(ctx3) or {}
     assert "PLANNING TASKS REQUIRED" not in str(result)
 
@@ -1293,23 +1346,24 @@ def test_plan_acceptance_sets_execution_reminder_and_clears_planning():
     store = ThreadSafeDB()
 
     # Simulate: plan command was invoked (planning flag set)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     ctx.plan_awaiting_planning_tasks = True
     ctx.plan_arguments = "test plan"
 
     # Simulate plan acceptance via detect_plan_approval
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="ExitPlanMode", tool_input={},
-                        tool_result="User has approved your plan. You can now start coding.",
-                        store=store)
+    ctx2 = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="ExitPlanMode",
+        tool_input={},
+        tool_result="User has approved your plan. You can now start coding.",
+        store=store,
+    )
     plugins.app.dispatch(ctx2)
 
     # Check flags
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     assert ctx3.plan_awaiting_planning_tasks is False
     assert ctx3.plan_awaiting_execution_tasks is True
 
@@ -1318,28 +1372,20 @@ def test_execution_reminder_fires_until_task_create():
     """Execution reminder fires until TaskCreate is called."""
     sid = "test-exec-reminder"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     ctx.plan_awaiting_execution_tasks = True
 
     # Should fire
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     result = plugins.app.dispatch(ctx2) or {}
     assert "EXECUTION TASKS REQUIRED" in str(result)
 
     # TaskCreate clears
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="TaskCreate", tool_input={}, tool_result="",
-                        store=store)
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="TaskCreate", tool_input={}, tool_result="", store=store)
     plugins.app.dispatch(ctx3)
 
     # Should be silent
-    ctx4 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
+    ctx4 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     result2 = plugins.app.dispatch(ctx4) or {}
     assert "EXECUTION TASKS REQUIRED" not in str(result2)
 
@@ -1348,14 +1394,10 @@ def test_codex_execution_reminder_uses_update_plan():
     """Codex execution reminders should use update_plan checklist wording."""
     sid = "test-codex-exec-reminder"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store, cli_type="codex")
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
     ctx.plan_awaiting_execution_tasks = True
 
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store, cli_type="codex")
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store, cli_type="codex")
     result = plugins.app.dispatch(ctx2) or {}
     text = str(result)
     assert "EXECUTION TASKS REQUIRED" in text
@@ -1366,6 +1408,7 @@ def test_codex_execution_reminder_uses_update_plan():
 def test_execution_reminder_references_tdd_exec():
     """Execution reminder message contains [TDD] and [EXEC]."""
     from autorun.config import CONFIG
+
     msg = CONFIG["plan_execution_task_reminder"]
     assert "[TDD]" in msg
     assert "[EXEC]" in msg
@@ -1374,15 +1417,14 @@ def test_execution_reminder_references_tdd_exec():
 def test_planning_reminder_references_planning_format():
     """Planning reminder message contains [PLANNING]."""
     from autorun.config import CONFIG
+
     msg = CONFIG["plan_planning_task_reminder"]
     assert "[PLANNING]" in msg
 
 
 def test_no_reminder_when_flags_not_set():
     """No reminder fires when both flags are False (default)."""
-    ctx = EventContext(session_id="test-no-reminder", event="PostToolUse",
-                       prompt="", tool_name="Bash", tool_input={}, tool_result="",
-                       store=ThreadSafeDB())
+    ctx = EventContext(session_id="test-no-reminder", event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=ThreadSafeDB())
     result = plugins.app.dispatch(ctx) or {}
     assert "PLANNING TASKS REQUIRED" not in str(result)
     assert "EXECUTION TASKS REQUIRED" not in str(result)
@@ -1396,27 +1438,25 @@ def test_plan_acceptance_sets_enforce_next_immediately():
     """
     sid = "test-acceptance-enforce"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     ctx.plan_awaiting_planning_tasks = True
     ctx.plan_arguments = "test plan"
 
     # Plan accepted → sets execution flag
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="ExitPlanMode", tool_input={},
-                        tool_result="User has approved your plan. You can now start coding.",
-                        store=store)
+    ctx2 = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="ExitPlanMode",
+        tool_input={},
+        tool_result="User has approved your plan. You can now start coding.",
+        store=store,
+    )
     plugins.app.dispatch(ctx2)
 
     # enforce_next should be set immediately after plan acceptance
-    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
-    assert ctx3.task_staleness_enforce_next is True, (
-        "Plan acceptance must set enforce_next=True immediately so "
-        "the first non-Task PreToolUse gets enforcement"
-    )
+    ctx3 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
+    assert ctx3.task_staleness_enforce_next is True, "Plan acceptance must set enforce_next=True immediately so the first non-Task PreToolUse gets enforcement"
 
 
 def test_remind_until_tasks_sets_enforce_after_first_call():
@@ -1427,21 +1467,16 @@ def test_remind_until_tasks_sets_enforce_after_first_call():
     """
     sid = "test-remind-enforce-1st"
     store = ThreadSafeDB()
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", tool_input={}, tool_result="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     ctx.plan_awaiting_execution_tasks = True
 
     # First PostToolUse with execution flag → reminder fires
     plugins.app.dispatch(ctx)
 
     # Check enforce_next is set after 1st call
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     assert ctx2.task_staleness_enforce_next is True, (
-        "remind_until_tasks_created must set enforce_next after 1st call "
-        f"(was: count >= 10). plan_task_reminder_count={ctx2.plan_task_reminder_count}"
+        f"remind_until_tasks_created must set enforce_next after 1st call (was: count >= 10). plan_task_reminder_count={ctx2.plan_task_reminder_count}"
     )
 
 
@@ -1458,21 +1493,18 @@ def test_session_resume_sets_enforce_next_for_incomplete_tasks():
     _make_pending_task(sid, "1", "unfinished work")
 
     # Simulate SessionStart (resume)
-    ctx = EventContext(session_id=sid, event="SessionStart", prompt="",
-                       store=store)
+    ctx = EventContext(session_id=sid, event="SessionStart", prompt="", store=store)
     plugins.app.dispatch(ctx)
 
     # enforce_next should be set
-    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                        tool_name="Bash", tool_input={}, tool_result="",
-                        store=store)
+    ctx2 = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
     assert ctx2.task_staleness_enforce_next is True, (
-        "SessionStart with incomplete tasks must set enforce_next=True "
-        "so the AI's first non-Task tool call gets denied"
+        "SessionStart with incomplete tasks must set enforce_next=True so the AI's first non-Task tool call gets denied"
     )
 
 
 # ── /ar:tasks command ──────────────────────────────────────────────────────
+
 
 def test_tasks_command_on():
     """/ar:tasks on enables staleness reminders and returns confirmation."""
@@ -1484,8 +1516,7 @@ def test_tasks_command_off():
     """/ar:tasks off disables staleness reminders."""
     sid = "test-tasks-cmd-off"
     _dispatch("/ar:tasks off", session_id=sid)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", store=ThreadSafeDB())
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
     assert ctx.task_staleness_enabled is False
 
 
@@ -1493,8 +1524,7 @@ def test_tasks_command_threshold_override():
     """/ar:tasks 5 sets per-session threshold."""
     sid = "test-tasks-thresh"
     _dispatch("/ar:tasks 5", session_id=sid)
-    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                       tool_name="Bash", store=ThreadSafeDB())
+    ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
     assert ctx.task_staleness_threshold == 5
 
 
@@ -1538,8 +1568,10 @@ def test_tasks_command_shows_task_summary():
     mock_manager.tasks = fake_tasks
     mock_manager.get_incomplete_tasks.return_value = fake_incomplete
 
-    with patch("autorun.plugins.task_lifecycle.is_enabled", return_value=True), \
-         patch("autorun.plugins.task_lifecycle.TaskLifecycle", return_value=mock_manager):
+    with (
+        patch("autorun.plugins.task_lifecycle.is_enabled", return_value=True),
+        patch("autorun.plugins.task_lifecycle.TaskLifecycle", return_value=mock_manager),
+    ):
         result = _dispatch("/ar:tasks", session_id="test-tasks-summary")
 
     text = str(result)
@@ -1559,8 +1591,10 @@ def test_tasks_command_no_tasks_shows_none_tracked():
     mock_manager = MagicMock()
     mock_manager.tasks = {}
 
-    with patch("autorun.plugins.task_lifecycle.is_enabled", return_value=True), \
-         patch("autorun.plugins.task_lifecycle.TaskLifecycle", return_value=mock_manager):
+    with (
+        patch("autorun.plugins.task_lifecycle.is_enabled", return_value=True),
+        patch("autorun.plugins.task_lifecycle.TaskLifecycle", return_value=mock_manager),
+    ):
         result = _dispatch("/ar:tasks", session_id="test-tasks-none")
 
     text = str(result)
@@ -1583,6 +1617,7 @@ def test_staleness_threshold_negative_validation():
 
 # ── Stage reset in handle_stop() ──────────────────────────────────────────
 
+
 def test_stage_reset_when_stage2_completed_and_tasks_outstanding():
     """handle_stop() resets STAGE_2_COMPLETED -> STAGE_2 when tasks outstanding."""
     sid = "test-stage-reset"
@@ -1598,9 +1633,7 @@ def test_stage_reset_when_stage2_completed_and_tasks_outstanding():
     ctx.autorun_stage = EventContext.STAGE_2_COMPLETED
     result = plugins.app.dispatch(ctx) or {}
 
-    assert ctx.autorun_stage == EventContext.STAGE_2, (
-        f"Stage should be STAGE_2 after reset, got {ctx.autorun_stage}"
-    )
+    assert ctx.autorun_stage == EventContext.STAGE_2, f"Stage should be STAGE_2 after reset, got {ctx.autorun_stage}"
     combined = str(result)
     assert "incomplete task(s)" in combined or "STAGE 3 RESET" in combined
 
@@ -1651,18 +1684,18 @@ def test_stage_reset_counter_also_reset():
 
     # If stage was reset (tasks were found), counter must also be reset
     if ctx.autorun_stage == EventContext.STAGE_2:
-        assert (ctx.tool_calls_since_task_update or 0) == 0, (
-            "Counter should be reset to 0 when stage is reset"
-        )
+        assert (ctx.tool_calls_since_task_update or 0) == 0, "Counter should be reset to 0 when stage is reset"
 
 
 # ── Session isolation ─────────────────────────────────────────────────────
 # Use timestamp-based unique session IDs to avoid stale shelve state
 # from previous test runs contaminating assertions.
 
+
 def _iso_sid(label: str) -> str:
     """Generate unique session ID for isolation tests."""
     import time
+
     return f"iso-{int(time.time() * 1000)}-{label}"
 
 
@@ -1700,17 +1733,11 @@ def test_staleness_counter_session_isolation():
     ctx_b.task_staleness_enabled = True
 
     # Session B's counter should be 0 (default), not 10 (session A's value)
-    assert (ctx_b.tool_calls_since_task_update or 0) == 0, (
-        f"Session B counter should be 0, got {ctx_b.tool_calls_since_task_update} "
-        f"(leaked from session A)"
-    )
+    assert (ctx_b.tool_calls_since_task_update or 0) == 0, f"Session B counter should be 0, got {ctx_b.tool_calls_since_task_update} (leaked from session A)"
 
     # Dispatch on B — should increment to 1, not 11
     plugins.app.dispatch(ctx_b)
-    assert (ctx_b.tool_calls_since_task_update or 0) == 1, (
-        f"Session B counter should be 1 after one tool call, "
-        f"got {ctx_b.tool_calls_since_task_update}"
-    )
+    assert (ctx_b.tool_calls_since_task_update or 0) == 1, f"Session B counter should be 1 after one tool call, got {ctx_b.tool_calls_since_task_update}"
 
     # Session A's counter should still be 10 (untouched by B's dispatch)
     ctx_a2 = EventContext(
@@ -1721,8 +1748,7 @@ def test_staleness_counter_session_isolation():
         store=shared_store,
     )
     assert (ctx_a2.tool_calls_since_task_update or 0) == 10, (
-        f"Session A counter should still be 10, got {ctx_a2.tool_calls_since_task_update} "
-        f"(corrupted by session B)"
+        f"Session A counter should still be 10, got {ctx_a2.tool_calls_since_task_update} (corrupted by session B)"
     )
 
 
@@ -1754,8 +1780,7 @@ def test_staleness_enabled_session_isolation():
         store=shared_store,
     )
     assert ctx_b.task_staleness_enabled is True, (
-        f"Session B should have staleness enabled (default), "
-        f"got {ctx_b.task_staleness_enabled} (leaked from session A)"
+        f"Session B should have staleness enabled (default), got {ctx_b.task_staleness_enabled} (leaked from session A)"
     )
 
 
@@ -1786,13 +1811,11 @@ def test_staleness_threshold_session_isolation():
         tool_name="Bash",
         store=shared_store,
     )
-    assert ctx_b.task_staleness_threshold is None, (
-        f"Session B threshold should be None (default), "
-        f"got {ctx_b.task_staleness_threshold} (leaked from session A)"
-    )
+    assert ctx_b.task_staleness_threshold is None, f"Session B threshold should be None (default), got {ctx_b.task_staleness_threshold} (leaked from session A)"
 
 
 # ── E2E: full dispatch pathway tests ─────────────────────────────────────
+
 
 def _e2e_post_tool(tool_name: str, session_id: str, store: ThreadSafeDB) -> dict:
     """Dispatch a PostToolUse event through the full handler chain.
@@ -1853,6 +1876,7 @@ class TestStalenessE2E:
 
     def setup_method(self):
         import time
+
         self.store = ThreadSafeDB()  # Shared store like production daemon
         self._prefix = f"e2e-{int(time.time() * 1000)}"
 
@@ -1869,8 +1893,7 @@ class TestStalenessE2E:
         _make_pending_task(sid, "1", "keep counter alive")
         for i in range(5):
             _e2e_post_tool("Bash", sid, self.store)
-        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                           tool_name="Read", store=self.store)
+        ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Read", store=self.store)
         assert (ctx.tool_calls_since_task_update or 0) == 5
 
     def test_multiple_injection_cycles(self):
@@ -1890,10 +1913,7 @@ class TestStalenessE2E:
 
         # Should inject at tool calls 3, 6, 9 → indices 2, 5, 8
         # V4 escalation: 1st=TASK UPDATE REQUIRED, 2nd+=TASK UPDATE OVERDUE
-        assert len(injections) == 3, (
-            f"Expected 3 injections at threshold=3 over 9 calls, got {len(injections)} "
-            f"at indices {injections}"
-        )
+        assert len(injections) == 3, f"Expected 3 injections at threshold=3 over 9 calls, got {len(injections)} at indices {injections}"
 
     def test_task_create_resets_counter_mid_cycle(self):
         """TaskCreate mid-cycle resets counter; injection doesn't fire early."""
@@ -1909,9 +1929,7 @@ class TestStalenessE2E:
         for _ in range(4):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK UPDATE" not in str(r) for r in results), (
-            "No injection expected — longest streak is 4, threshold is 5"
-        )
+        assert all("TASK UPDATE" not in str(r) for r in results), "No injection expected — longest streak is 4, threshold is 5"
 
     def test_task_update_resets_counter_mid_cycle(self):
         """TaskUpdate resets counter identically to TaskCreate."""
@@ -1933,13 +1951,11 @@ class TestStalenessE2E:
         _make_pending_task(sid, "1", "incomplete task")
         _e2e_command("/ar:tasks 3", sid, self.store)
 
-        _e2e_post_tool("Bash", sid, self.store)      # count=1
-        _e2e_post_tool("TaskList", sid, self.store)   # count=2 (NOT reset)
+        _e2e_post_tool("Bash", sid, self.store)  # count=1
+        _e2e_post_tool("TaskList", sid, self.store)  # count=2 (NOT reset)
         result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
 
-        assert "TASK UPDATE" in str(result), (
-            "TaskList should not reset the counter — injection expected at count=3"
-        )
+        assert "TASK UPDATE" in str(result), "TaskList should not reset the counter — injection expected at count=3"
 
     def test_task_get_does_not_reset_counter(self):
         """TaskGet should NOT reset the counter."""
@@ -1947,27 +1963,23 @@ class TestStalenessE2E:
         _make_pending_task(sid, "1", "incomplete task")
         _e2e_command("/ar:tasks 3", sid, self.store)
 
-        _e2e_post_tool("Bash", sid, self.store)      # count=1
-        _e2e_post_tool("TaskGet", sid, self.store)    # count=2 (NOT reset)
+        _e2e_post_tool("Bash", sid, self.store)  # count=1
+        _e2e_post_tool("TaskGet", sid, self.store)  # count=2 (NOT reset)
         result = _e2e_post_tool("Bash", sid, self.store)  # count=3 → inject
 
-        assert "TASK UPDATE" in str(result), (
-            "TaskGet should not reset the counter — injection expected at count=3"
-        )
+        assert "TASK UPDATE" in str(result), "TaskGet should not reset the counter — injection expected at count=3"
 
     def test_lowercase_task_create_resets_counter(self):
         """Gemini-style tool name 'task_create' should also reset counter."""
         sid = self._sid("lowercase-create")
         _e2e_command("/ar:tasks 3", sid, self.store)
 
-        _e2e_post_tool("Bash", sid, self.store)        # count=1
-        _e2e_post_tool("Bash", sid, self.store)        # count=2
+        _e2e_post_tool("Bash", sid, self.store)  # count=1
+        _e2e_post_tool("Bash", sid, self.store)  # count=2
         _e2e_post_tool("task_create", sid, self.store)  # reset
         result = _e2e_post_tool("Bash", sid, self.store)  # count=1
 
-        assert "TASK UPDATE" not in str(result), (
-            "task_create should reset counter — no injection expected at count=1"
-        )
+        assert "TASK UPDATE" not in str(result), "task_create should reset counter — no injection expected at count=1"
 
     def test_lowercase_task_update_resets_counter(self):
         """Gemini-style 'task_update' should also reset counter."""
@@ -1993,9 +2005,7 @@ class TestStalenessE2E:
         for _ in range(10):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("TASK UPDATE" not in str(r) for r in results), (
-            "No injection expected when staleness is disabled"
-        )
+        assert all("TASK UPDATE" not in str(r) for r in results), "No injection expected when staleness is disabled"
 
     def test_command_on_after_off_resumes(self):
         """/ar:tasks on after off → handler resumes injection."""
@@ -2016,9 +2026,7 @@ class TestStalenessE2E:
         for _ in range(3):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert "TASK UPDATE" in str(results[-1]), (
-            "Injection expected after re-enabling at call #3"
-        )
+        assert "TASK UPDATE" in str(results[-1]), "Injection expected after re-enabling at call #3"
 
     def test_command_threshold_change_takes_effect(self):
         """/ar:tasks <n> changes threshold; handler uses new value."""
@@ -2092,16 +2100,12 @@ class TestStalenessE2E:
         # Dispatch with autorun_active=False — injection at 2nd call (threshold=2)
         results = []
         for _ in range(2):
-            ctx = EventContext(session_id=sid, event="PostToolUse", prompt="",
-                               tool_name="Bash", tool_input={}, tool_result="",
-                               store=store)
+            ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", tool_input={}, tool_result="", store=store)
             ctx.autorun_active = False
             result = plugins.app.dispatch(ctx) or {}
             results.append(result)
 
-        assert any("TASK UPDATE" in str(r) for r in results), (
-            "Reminder should fire with incomplete tasks even when autorun_active=False"
-        )
+        assert any("TASK UPDATE" in str(r) for r in results), "Reminder should fire with incomplete tasks even when autorun_active=False"
 
     # ── Stage reset in Stop handler ────────────────────────────────────
 
@@ -2120,16 +2124,13 @@ class TestStalenessE2E:
 
         # Phase 2: TaskUpdate resets counter
         _e2e_post_tool("TaskUpdate", sid, store)
-        ctx_check = EventContext(session_id=sid, event="PostToolUse",
-                                  prompt="", tool_name="Bash", store=store)
+        ctx_check = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=store)
         assert (ctx_check.tool_calls_since_task_update or 0) == 0
 
         # Phase 3: Outstanding task exists, attempt stop at STAGE_2_COMPLETED
         result, ctx = _e2e_stop(sid, store, autorun_stage=EventContext.STAGE_2_COMPLETED)
 
-        assert ctx.autorun_stage == EventContext.STAGE_2, (
-            f"Stage should be reset to STAGE_2, got {ctx.autorun_stage}"
-        )
+        assert ctx.autorun_stage == EventContext.STAGE_2, f"Stage should be reset to STAGE_2, got {ctx.autorun_stage}"
         assert "STAGE 3 RESET" in str(result)
         assert (ctx.tool_calls_since_task_update or 0) == 0
 
@@ -2170,6 +2171,7 @@ class TestStalenessE2E:
         _make_pending_task(sid, task_id="1", subject="completed task")
         # Mark it completed
         from autorun.task_lifecycle import TaskLifecycle as _TL
+
         mgr = _TL(session_id=sid)
         mgr.update_task("1", {"status": "completed"}, "Completed")
 
@@ -2179,11 +2181,12 @@ class TestStalenessE2E:
 
     # ── Resume / session lifecycle ─────────────────────────────────────
 
-    def test_counter_persists_across_resume(self):
-        """Counter survives session resume (same session_id, new EventContext).
+    def test_counter_resumes_from_last_decision_checkpoint(self):
+        """Advisory counter resumes from its last semantic decision boundary.
 
         Simulates: AI runs 15 tool calls → session closed → claude --resume
-        → new EventContext with same session_id → counter should be 15 (from shelve).
+        → new EventContext with same session_id → counter resumes from 5. The
+        possible replay is bounded and cannot discard a durable enforcement flag.
         """
         sid = self._sid("resume")
         # Create an incomplete task so zero-tasks path doesn't reset counter at threshold 5
@@ -2196,13 +2199,13 @@ class TestStalenessE2E:
         # Phase 2: simulate resume — new ThreadSafeDB (daemon restart), same sid
         resumed_store = ThreadSafeDB()
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Bash", store=resumed_store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            store=resumed_store,
         )
-        assert (ctx.tool_calls_since_task_update or 0) == 15, (
-            f"Counter should persist across resume, expected 15, "
-            f"got {ctx.tool_calls_since_task_update}"
-        )
+        assert (ctx.tool_calls_since_task_update or 0) == 5, f"Counter should resume from its last boundary, expected 5, got {ctx.tool_calls_since_task_update}"
 
     def test_enabled_flag_persists_across_resume(self):
         """/ar:tasks off persists across session resume."""
@@ -2214,12 +2217,13 @@ class TestStalenessE2E:
         # Resume: new store, same sid
         resumed_store = ThreadSafeDB()
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Bash", store=resumed_store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            store=resumed_store,
         )
-        assert ctx.task_staleness_enabled is False, (
-            "task_staleness_enabled=False should persist across resume"
-        )
+        assert ctx.task_staleness_enabled is False, "task_staleness_enabled=False should persist across resume"
 
     def test_threshold_persists_across_resume(self):
         """Custom threshold persists across session resume."""
@@ -2229,13 +2233,13 @@ class TestStalenessE2E:
 
         resumed_store = ThreadSafeDB()
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="Bash", store=resumed_store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            store=resumed_store,
         )
-        assert ctx.task_staleness_threshold == 7, (
-            f"Threshold should persist across resume, expected 7, "
-            f"got {ctx.task_staleness_threshold}"
-        )
+        assert ctx.task_staleness_threshold == 7, f"Threshold should persist across resume, expected 7, got {ctx.task_staleness_threshold}"
 
     def test_new_session_starts_clean(self):
         """New session (different session_id) starts with default counter=0.
@@ -2251,15 +2255,21 @@ class TestStalenessE2E:
         _e2e_command("/ar:tasks off", sid_old, self.store)
         for _ in range(20):
             ctx = EventContext(
-                session_id=sid_old, event="PostToolUse", prompt="",
-                tool_name="Bash", store=self.store,
+                session_id=sid_old,
+                event="PostToolUse",
+                prompt="",
+                tool_name="Bash",
+                store=self.store,
             )
             ctx.tool_calls_since_task_update = (ctx.tool_calls_since_task_update or 0) + 1
 
         # New session: everything should be default
         ctx_new = EventContext(
-            session_id=sid_new, event="PostToolUse", prompt="",
-            tool_name="Bash", store=self.store,
+            session_id=sid_new,
+            event="PostToolUse",
+            prompt="",
+            tool_name="Bash",
+            store=self.store,
         )
         assert (ctx_new.tool_calls_since_task_update or 0) == 0, "New session counter should be 0"
         assert ctx_new.task_staleness_enabled is True, "New session should have staleness enabled"
@@ -2277,9 +2287,13 @@ class TestStalenessE2E:
         # Create and complete a task
         _make_pending_task(sid, "1", "completed task")
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="TaskUpdate", tool_input={"taskId": "1", "status": "completed"},
-            tool_result="Updated task #1 status", store=self.store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="TaskUpdate",
+            tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status",
+            store=self.store,
         )
         plugins.app.dispatch(ctx)
 
@@ -2296,8 +2310,7 @@ class TestStalenessE2E:
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
         assert any("NO TASKS EXIST" in str(r) for r in results), (
-            f"All tasks complete + threshold crossed should fire NO TASKS EXIST. "
-            f"Got: {[str(r)[:80] for r in results]}"
+            f"All tasks complete + threshold crossed should fire NO TASKS EXIST. Got: {[str(r)[:80] for r in results]}"
         )
 
     def test_zero_tasks_fires_no_tasks_reminder(self):
@@ -2314,7 +2327,9 @@ class TestStalenessE2E:
         _make_pending_task(sid, "99", "setup-only")
         # Complete it via dispatch so lifecycle DB is properly updated
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
             tool_name="TaskUpdate",
             tool_input={"taskId": "99", "status": "completed"},
             tool_result="Updated task #99 status",
@@ -2331,8 +2346,7 @@ class TestStalenessE2E:
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
         assert any("NO TASKS EXIST" in str(r) for r in results), (
-            f"All tasks complete + no_tasks_threshold crossed should fire NO TASKS EXIST. "
-            f"Got: {[str(r)[:80] for r in results]}"
+            f"All tasks complete + no_tasks_threshold crossed should fire NO TASKS EXIST. Got: {[str(r)[:80] for r in results]}"
         )
 
     def test_incomplete_task_uses_normal_threshold_not_no_tasks(self):
@@ -2355,14 +2369,8 @@ class TestStalenessE2E:
         messages = [str(r) for r in results]
         combined = " ".join(messages)
         # Should see TASK UPDATE (REQUIRED or OVERDUE), NOT "NO TASKS EXIST"
-        assert "TASK UPDATE" in combined or "NO TASKS" not in combined, (
-            f"Incomplete task should use normal threshold path. "
-            f"Got: {[m[:80] for m in messages]}"
-        )
-        assert "NO TASKS EXIST" not in combined, (
-            f"Incomplete task must NOT trigger NO TASKS EXIST. "
-            f"Got: {[m[:80] for m in messages]}"
-        )
+        assert "TASK UPDATE" in combined or "NO TASKS" not in combined, f"Incomplete task should use normal threshold path. Got: {[m[:80] for m in messages]}"
+        assert "NO TASKS EXIST" not in combined, f"Incomplete task must NOT trigger NO TASKS EXIST. Got: {[m[:80] for m in messages]}"
 
     def test_all_complete_below_threshold_stays_silent(self):
         """All tasks complete but below no_tasks_threshold — no reminder yet.
@@ -2372,9 +2380,13 @@ class TestStalenessE2E:
         sid = self._sid("all-complete-below")
         _make_pending_task(sid, "1", "done task")
         ctx = EventContext(
-            session_id=sid, event="PostToolUse", prompt="",
-            tool_name="TaskUpdate", tool_input={"taskId": "1", "status": "completed"},
-            tool_result="Updated task #1 status", store=self.store,
+            session_id=sid,
+            event="PostToolUse",
+            prompt="",
+            tool_name="TaskUpdate",
+            tool_input={"taskId": "1", "status": "completed"},
+            tool_result="Updated task #1 status",
+            store=self.store,
         )
         plugins.app.dispatch(ctx)
 
@@ -2385,9 +2397,7 @@ class TestStalenessE2E:
         for _ in range(2):
             results.append(_e2e_post_tool("Bash", sid, self.store))
 
-        assert all("NO TASKS" not in str(r) for r in results), (
-            f"Below threshold should stay silent. Got: {[str(r)[:80] for r in results]}"
-        )
+        assert all("NO TASKS" not in str(r) for r in results), f"Below threshold should stay silent. Got: {[str(r)[:80] for r in results]}"
 
 
 # --- BUG #18534 TESTS START --- DELETE THIS BLOCK WHEN BUG IS FIXED ---
@@ -2404,6 +2414,7 @@ _BUG_FLAG = "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_1
 def test_bug_18534_helper_upgrades_on_claude():
     """_bug_18534_human_channels("claude") includes "ai" when workaround enabled."""
     from autorun.core import _bug_18534_human_channels
+
     result = _bug_18534_human_channels("claude")
     assert "ai" in result, f"Claude + workaround: 'ai' must be in human_channels. Got: {result}"
     assert "human" in result and "both" in result
@@ -2412,6 +2423,7 @@ def test_bug_18534_helper_upgrades_on_claude():
 def test_bug_18534_helper_no_upgrade_on_gemini():
     """_bug_18534_human_channels("gemini") excludes "ai" — Gemini unaffected."""
     from autorun.core import _bug_18534_human_channels
+
     result = _bug_18534_human_channels("gemini")
     assert "ai" not in result, f"Gemini: 'ai' must NOT be in human_channels. Got: {result}"
 
@@ -2420,6 +2432,7 @@ def test_bug_18534_helper_no_upgrade_when_config_disabled(monkeypatch):
     """_bug_18534_human_channels("claude") excludes "ai" when CONFIG flag is False."""
     from autorun.config import CONFIG
     from autorun.core import _bug_18534_human_channels
+
     monkeypatch.setitem(CONFIG, _BUG_FLAG, False)
     result = _bug_18534_human_channels("claude")
     assert "ai" not in result, f"CONFIG disabled: 'ai' must NOT be in human_channels. Got: {result}"
@@ -2428,6 +2441,7 @@ def test_bug_18534_helper_no_upgrade_when_config_disabled(monkeypatch):
 def test_bug_18534_helper_env_always_overrides(monkeypatch):
     """env=always → upgrade even on Gemini."""
     from autorun.core import _bug_18534_human_channels
+
     monkeypatch.setenv(_BUG_FLAG, "always")
     result = _bug_18534_human_channels("gemini")
     assert "ai" in result, f"env=always: 'ai' must be in human_channels even on Gemini. Got: {result}"
@@ -2436,6 +2450,7 @@ def test_bug_18534_helper_env_always_overrides(monkeypatch):
 def test_bug_18534_helper_env_never_overrides(monkeypatch):
     """env=never → no upgrade even on Claude."""
     from autorun.core import _bug_18534_human_channels
+
     monkeypatch.setenv(_BUG_FLAG, "never")
     result = _bug_18534_human_channels("claude")
     assert "ai" not in result, f"env=never: 'ai' must NOT be in human_channels on Claude. Got: {result}"
@@ -2460,8 +2475,7 @@ def test_respond_pathway2_upgrades_ai_channel_on_claude():
     ctx.add_chain_notification("stop injection text", channel="ai")
     result = ctx.respond("allow", "")
     assert "stop injection text" in result.get("systemMessage", ""), (
-        f"Workaround active: channel='ai' should appear in systemMessage. "
-        f"Got: {result.get('systemMessage', '')!r}"
+        f"Workaround active: channel='ai' should appear in systemMessage. Got: {result.get('systemMessage', '')!r}"
     )
     # additionalContext ALSO set (future-proof: works when SDK fixes #18534)
     ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
@@ -2485,14 +2499,10 @@ def test_respond_pathway2_preserves_ai_channel_on_gemini():
     # human_text should contain the human notification but NOT the ai-only one
     # (The ai text may still appear in systemMessage via fallback, but it should
     # NOT be merged into human_notifs)
-    assert "human-visible text" in sys_msg, (
-        f"Gemini: human notification must be in systemMessage. Got: {sys_msg!r}"
-    )
+    assert "human-visible text" in sys_msg, f"Gemini: human notification must be in systemMessage. Got: {sys_msg!r}"
     # additionalContext must contain the ai-only text
     ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    assert "gemini ai-only text" in ac, (
-        f"Gemini: ai-only text must be in additionalContext. Got: {ac!r}"
-    )
+    assert "gemini ai-only text" in ac, f"Gemini: ai-only text must be in additionalContext. Got: {ac!r}"
 
 
 def test_respond_pathway2_no_upgrade_when_disabled(monkeypatch):
@@ -2504,6 +2514,7 @@ def test_respond_pathway2_no_upgrade_when_disabled(monkeypatch):
     behavior when the bug is fixed — additionalContext works and carries the ai text.
     """
     from autorun.config import CONFIG
+
     monkeypatch.setitem(CONFIG, _BUG_FLAG, False)
     ctx = _make_bug_18534_ctx("claude", "disabled")
     ctx.add_chain_notification("should be ai-only", channel="ai")
@@ -2512,9 +2523,7 @@ def test_respond_pathway2_no_upgrade_when_disabled(monkeypatch):
     result = ctx.respond("allow", "")
     sys_msg = result.get("systemMessage", "")
     # human_text should contain human notification but NOT the ai-only one merged in
-    assert "human-visible text" in sys_msg, (
-        f"Flag=False: human notification must be in systemMessage. Got: {sys_msg!r}"
-    )
+    assert "human-visible text" in sys_msg, f"Flag=False: human notification must be in systemMessage. Got: {sys_msg!r}"
     # additionalContext must contain the ai-only text (designed behavior)
     ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "should be ai-only" in ac, f"additionalContext must be set even with flag=False. Got: {ac!r}"
@@ -2528,6 +2537,7 @@ def test_respond_pathway2_both_channel_unchanged():
     assert "both-channel text" in result.get("systemMessage", "")
     ac = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "both-channel text" in ac
+
 
 # --- BUG #18534 TESTS END ---
 
@@ -2551,9 +2561,7 @@ def test_stop_block_does_not_deny_non_task_tools():
     # No handler should deny — enforce_stop_injection was removed
     if result:
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision", "")
-        assert perm != "deny" or "incomplete task" not in str(result), (
-            f"Non-Task tool must not be denied by stop injection. Got: {result}"
-        )
+        assert perm != "deny" or "incomplete task" not in str(result), f"Non-Task tool must not be denied by stop injection. Got: {result}"
 
 
 def test_stop_block_pending_injection_re_armed_every_block(tmp_path, monkeypatch):
@@ -2574,10 +2582,7 @@ def test_stop_block_pending_injection_re_armed_every_block(tmp_path, monkeypatch
 
     for i in range(3):
         result, ctx = _e2e_stop(sid, store)
-        assert ctx.pending_stop_injection is not None, (
-            f"Stop block #{i+1}: pending_stop_injection must be re-armed every "
-            f"Stop so AI sees override actions"
-        )
+        assert ctx.pending_stop_injection is not None, f"Stop block #{i + 1}: pending_stop_injection must be re-armed every Stop so AI sees override actions"
         ctx.pending_stop_injection = None  # simulate PostToolUse delivery clearing
 
 
@@ -2594,9 +2599,7 @@ def test_stop_block_resets_staleness_counter(tmp_path, monkeypatch):
 
     # Stop fires → counter should reset
     result, ctx = _e2e_stop(sid, store)
-    assert (ctx.tool_calls_since_task_update or 0) == 0, (
-        "Stop block must reset staleness counter so AI gets full countdown to work"
-    )
+    assert (ctx.tool_calls_since_task_update or 0) == 0, "Stop block must reset staleness counter so AI gets full countdown to work"
 
 
 def test_stop_block_message_has_anti_gaming_wording(tmp_path, monkeypatch):
@@ -2640,6 +2643,7 @@ from autorun.core import coerce_tool_result_to_str
 
 class _FakeCtxBase:
     """Shared base for FakeCtx test helpers — provides tool_result_str property."""
+
     tool_result = None
 
     @property
@@ -2670,8 +2674,7 @@ def test_validate_hook_response_posttooluse_gemini_strips_decision():
     }
     result = validate_hook_response("PostToolUse", response, cli_type="gemini")
     assert "decision" not in result, (
-        "PostToolUse must strip 'decision' for Gemini — tool already executed, "
-        "no permission decision applies. Including it breaks Gemini strict schema."
+        "PostToolUse must strip 'decision' for Gemini — tool already executed, no permission decision applies. Including it breaks Gemini strict schema."
     )
     assert "systemMessage" in result
 
@@ -2692,15 +2695,12 @@ def test_detect_cli_type_payload_overrides_env_vars(monkeypatch):
     # But payload explicitly says "claude" (Claude Code hook_entry.py --cli claude)
     result = detect_cli_type(payload={"cli_type": "claude"})
     assert result == "claude", (
-        "Payload cli_type='claude' must override GEMINI_SESSION_ID env var. "
-        "Concurrent sessions use payload identification, not env vars."
+        "Payload cli_type='claude' must override GEMINI_SESSION_ID env var. Concurrent sessions use payload identification, not env vars."
     )
 
     # And vice versa: no payload → env vars correctly identify gemini
     result_no_payload = detect_cli_type(payload=None)
-    assert result_no_payload == "gemini", (
-        "Without payload, env vars should correctly identify gemini"
-    )
+    assert result_no_payload == "gemini", "Without payload, env vars should correctly identify gemini"
 
 
 def test_write_todos_none_tool_input_no_crash(tmp_path, monkeypatch):
@@ -2772,12 +2772,8 @@ def test_update_task_title_normalized_to_subject(tmp_path, monkeypatch):
     manager.update_task("t1", {"title": "Updated via Gemini"}, "Task t1 updated")
 
     task = manager.tasks["t1"]
-    assert task["subject"] == "Updated via Gemini", (
-        f"update_task must normalize 'title' → 'subject'. Got subject='{task['subject']}'"
-    )
-    assert "title" not in task or task.get("title") is None, (
-        "Raw 'title' key should not be stored directly on the task"
-    )
+    assert task["subject"] == "Updated via Gemini", f"update_task must normalize 'title' → 'subject'. Got subject='{task['subject']}'"
+    assert "title" not in task or task.get("title") is None, "Raw 'title' key should not be stored directly on the task"
 
 
 def test_ghost_task_skip_logs_warning(tmp_path, monkeypatch, caplog):
@@ -2788,6 +2784,7 @@ def test_ghost_task_skip_logs_warning(tmp_path, monkeypatch, caplog):
     File: task_lifecycle.py update_task()
     """
     import logging
+
     monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(tmp_path))
     from autorun.task_lifecycle import TaskLifecycle
 
@@ -2798,11 +2795,8 @@ def test_ghost_task_skip_logs_warning(tmp_path, monkeypatch, caplog):
 
     assert result == "ghost_skip", f"Expected ghost_skip, got {result}"
     # Verify some form of logging occurred for the ghost skip
-    ghost_logged = any("ghost" in r.message.lower() or "GHOST_SKIP" in r.message
-                       for r in caplog.records)
-    assert ghost_logged, (
-        "Ghost task skip must produce a log entry so debugging is possible"
-    )
+    ghost_logged = any("ghost" in r.message.lower() or "GHOST_SKIP" in r.message for r in caplog.records)
+    assert ghost_logged, "Ghost task skip must produce a log entry so debugging is possible"
 
 
 def test_is_task_update_call_exact_filename_match():
@@ -2820,45 +2814,35 @@ def test_is_task_update_call_exact_filename_match():
         tool_input = {"file_path": "/repo/docs/planning/my-plan.md"}
 
     result = is_task_update_call(FakeCtx())
-    assert result is False, (
-        "is_task_update_call() must not match 'my-plan.md' — only exact 'plan.md'"
-    )
+    assert result is False, "is_task_update_call() must not match 'my-plan.md' — only exact 'plan.md'"
 
     # Positive case: actual Conductor path must still match
     class ConductorCtx:
         tool_name = "Edit"
         tool_input = {"file_path": "conductor/tracks/demo-integration/plan.md"}
 
-    assert is_task_update_call(ConductorCtx()) is True, (
-        "Conductor plan file conductor/tracks/*/plan.md must match"
-    )
+    assert is_task_update_call(ConductorCtx()) is True, "Conductor plan file conductor/tracks/*/plan.md must match"
 
     # Edge: bare plan.md (root-level Conductor file) must match
     class BarePlanCtx:
         tool_name = "Write"
         tool_input = {"file_path": "plan.md"}
 
-    assert is_task_update_call(BarePlanCtx()) is True, (
-        "Bare plan.md must match (could be root-level Conductor plan)"
-    )
+    assert is_task_update_call(BarePlanCtx()) is True, "Bare plan.md must match (could be root-level Conductor plan)"
 
     # Edge: 'path' key (alternative to 'file_path') must also work
     class PathKeyCtx:
         tool_name = "Edit"
         tool_input = {"path": "/tmp/conductor/tracks/session-1/plan.md"}
 
-    assert is_task_update_call(PathKeyCtx()) is True, (
-        "is_task_update_call must check 'path' key too, not just 'file_path'"
-    )
+    assert is_task_update_call(PathKeyCtx()) is True, "is_task_update_call must check 'path' key too, not just 'file_path'"
 
     # Negative: 'implementation-plan.md' must NOT match
     class ImplPlanCtx:
         tool_name = "Edit"
         tool_input = {"file_path": "/repo/implementation-plan.md"}
 
-    assert is_task_update_call(ImplPlanCtx()) is False, (
-        "implementation-plan.md must not match — only exact 'plan.md'"
-    )
+    assert is_task_update_call(ImplPlanCtx()) is False, "implementation-plan.md must not match — only exact 'plan.md'"
 
 
 def test_coerce_tool_result_to_str_all_types():
@@ -3092,7 +3076,7 @@ def test_concurrent_sessions_isolated_task_create(tmp_path, monkeypatch):
         manager = TaskLifecycle(session_id=sid)
 
         class FakeCtx(_FakeCtxBase):
-            tool_result = {"content": f"Task #{i+1} created successfully: Task for {sid}"}
+            tool_result = {"content": f"Task #{i + 1} created successfully: Task for {sid}"}
             tool_input = {"subject": f"Task for {sid}", "description": f"session {sid}"}
             plan_active = False
 
@@ -3151,6 +3135,5 @@ def test_concurrent_threads_task_create(tmp_path, monkeypatch):
     manager = TaskLifecycle(session_id=sid)
     tasks = manager.tasks
     assert len(tasks) == num_tasks, (
-        f"Expected {num_tasks} tasks from {num_tasks} threads, got {len(tasks)}. "
-        f"Missing: {set(str(i) for i in range(1, num_tasks+1)) - set(tasks.keys())}"
+        f"Expected {num_tasks} tasks from {num_tasks} threads, got {len(tasks)}. Missing: {set(str(i) for i in range(1, num_tasks + 1)) - set(tasks.keys())}"
     )

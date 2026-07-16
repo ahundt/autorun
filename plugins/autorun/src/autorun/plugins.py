@@ -27,6 +27,7 @@ Plugins:
 - Plan Management: New/refine/update/process plan commands
 - AI Monitor Integration: External tmux observer (optional)
 """
+
 import re
 import fnmatch
 import shlex
@@ -37,8 +38,12 @@ from typing import Optional, Dict
 
 from .core import app, EventContext, logger, format_command_for_cli, format_suggestion
 from .config import (
-    CONFIG, DEFAULT_INTEGRATIONS,
-    BASH_TOOLS, WRITE_TOOLS, FILE_TOOLS, PLAN_TOOLS,
+    CONFIG,
+    DEFAULT_INTEGRATIONS,
+    BASH_TOOLS,
+    WRITE_TOOLS,
+    FILE_TOOLS,
+    PLAN_TOOLS,
     PATTERN_DISPLAY_MAX_LEN,
 )
 from .platforms import is_task_progress_tool, is_task_tool, platform_for
@@ -57,6 +62,7 @@ from . import plan_export  # noqa: F401
 
 # Import task_lifecycle and register hooks (if enabled)
 from . import task_lifecycle  # noqa: F401
+
 task_lifecycle.register_hooks(app)  # Register task lifecycle hooks
 
 
@@ -103,10 +109,7 @@ def _tail_follow_requested(tokens: tuple[str, ...]) -> bool:
         if token in {"-n", "--lines", "-c", "--bytes", "-s", "--sleep-interval", "--pid"}:
             skip_next = True
             continue
-        if (
-            token.startswith("--lines=") or token.startswith("--bytes=")
-            or token.startswith("--sleep-interval=") or token.startswith("--pid=")
-        ):
+        if token.startswith("--lines=") or token.startswith("--bytes=") or token.startswith("--sleep-interval=") or token.startswith("--pid="):
             continue
         if token.startswith("--"):
             continue
@@ -118,9 +121,7 @@ def _tail_follow_requested(tokens: tuple[str, ...]) -> bool:
     return False
 
 
-def _default_integration_allows_native_shell_read(
-    ctx: EventContext, pattern: str, command: str, source: str
-) -> bool:
+def _default_integration_allows_native_shell_read(ctx: EventContext, pattern: str, command: str, source: str) -> bool:
     """Allow default read-command redirects to yield to platform-native shell reads.
 
     User integration files and explicit /ar:no blocks are not skipped here: this
@@ -146,6 +147,7 @@ def _default_integration_allows_native_shell_read(
 # FILE POLICY PLUGIN (DRY Factory Pattern)
 # ============================================================================
 
+
 def _make_policy_handler(policy_name: str):
     """
     Factory: Generate policy handler for given policy name.
@@ -156,18 +158,20 @@ def _make_policy_handler(policy_name: str):
     Returns:
         Callable: Handler function that sets policy and returns status message
     """
+
     def handler(ctx: EventContext) -> str:
         ctx.file_policy = policy_name  # Magic: auto-persists!
         name, desc = CONFIG["policies"][policy_name]
         return f"✅ AutoFile policy: {name}\n\n{desc}"
+
     return handler
 
 
 # Data-driven registration: easy to add new policies
 _POLICY_ALIASES = {
-    "ALLOW":   ("/ar:a", "/ar:allow", "/afa"),
+    "ALLOW": ("/ar:a", "/ar:allow", "/afa"),
     "JUSTIFY": ("/ar:j", "/ar:justify", "/afj"),
-    "SEARCH":  ("/ar:f", "/ar:find", "/afs"),
+    "SEARCH": ("/ar:f", "/ar:find", "/afs"),
 }
 
 for policy, aliases in _POLICY_ALIASES.items():
@@ -191,9 +195,8 @@ def handle_status(ctx: EventContext) -> str:
     for scope in ("session", "global"):
         accessor = ScopeAccessor(ctx, scope)
         scope_title = scope.title()
-        section = (
-            _format_pattern_list(accessor.get(), f"{scope_title} blocks", "🚫") +
-            _format_pattern_list(accessor.get_allowed(), f"{scope_title} allows", "✅", show_scope=True)
+        section = _format_pattern_list(accessor.get(), f"{scope_title} blocks", "🚫") + _format_pattern_list(
+            accessor.get_allowed(), f"{scope_title} allows", "✅", show_scope=True
         )
         if section:
             if control_lines:
@@ -276,6 +279,7 @@ def gate_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
 # COMMAND BLOCKING PLUGIN (DRY Mega-Factory + Security)
 # ============================================================================
 
+
 def _is_safe_regex(pattern: str, max_len: int = 200) -> bool:
     """
     Validate regex for ReDoS protection.
@@ -291,11 +295,7 @@ def _is_safe_regex(pattern: str, max_len: int = 200) -> bool:
         return False
 
     # Detect nested quantifiers (catastrophic backtracking)
-    dangerous = [
-        r'\([^)]*[+*?]\)[+*?]',
-        r'\([^)]*[+*?]\)\{',
-        r'\[[^\]]*\][+*?][+*?]'
-    ]
+    dangerous = [r"\([^)]*[+*?]\)[+*?]", r"\([^)]*[+*?]\)\{", r"\[[^\]]*\][+*?][+*?]"]
     for d in dangerous:
         if re.search(d, pattern):
             return False
@@ -514,7 +514,7 @@ def _format_pattern_list(patterns: list, label: str, icon: str, show_scope: bool
         return []
     lines = [f"{icon} {label} ({len(patterns)}):"]
     for p in patterns:
-        ptype = f" ({p.get('pattern_type', 'literal')})" if p.get('pattern_type') != 'literal' else ""
+        ptype = f" ({p.get('pattern_type', 'literal')})" if p.get("pattern_type") != "literal" else ""
         scope_info = ""
         if show_scope:
             sa = ScopedAllow.from_dict(p)
@@ -586,6 +586,7 @@ def _make_block_op(scope: str, op: str):
     Returns:
         Callable: Handler function for the specified scope/operation combination
     """
+
     def handler(ctx: EventContext) -> str:
         prompt = ctx.activation_prompt or ctx.prompt
         if op in {"block", "allow"}:
@@ -614,11 +615,7 @@ def _make_block_op(scope: str, op: str):
             if len(new_allows) != len(allows):
                 accessor.set_allowed(new_allows)
 
-            blocks.append({
-                "pattern": pattern,
-                "suggestion": desc or _get_suggestion(pattern),
-                "pattern_type": ptype
-            })
+            blocks.append({"pattern": pattern, "suggestion": desc or _get_suggestion(pattern), "pattern_type": ptype})
             accessor.set(blocks)
             return f"✅ Blocked ({scope}): {pattern}"
 
@@ -637,8 +634,11 @@ def _make_block_op(scope: str, op: str):
                 uses = 1  # Safe default: one user-visible command
             grace_seconds = 5.0 if default_scope and ctx.cli_type == "codex" else None
             sa = ScopedAllow(
-                pattern=pattern, pattern_type=ptype,
-                granted_at=time.time(), ttl_seconds=ttl, remaining_uses=uses,
+                pattern=pattern,
+                pattern_type=ptype,
+                granted_at=time.time(),
+                ttl_seconds=ttl,
+                remaining_uses=uses,
                 grace_seconds=grace_seconds,
             )
             allows = accessor.get_allowed()
@@ -655,9 +655,8 @@ def _make_block_op(scope: str, op: str):
 
         if op == "status":
             allows = accessor.get_allowed()
-            lines = (
-                _format_pattern_list(blocks, f"{scope.title()} Blocks", "🚫") +
-                _format_pattern_list(allows, f"{scope.title()} Allows", "✅", show_scope=True)
+            lines = _format_pattern_list(blocks, f"{scope.title()} Blocks", "🚫") + _format_pattern_list(
+                allows, f"{scope.title()} Allows", "✅", show_scope=True
             )
             return "\n".join(lines) if lines else f"ℹ️ No {scope} blocks or allows"
 
@@ -682,14 +681,16 @@ for scope, cmd, op in _BLOCK_COMMANDS:
     app.command(cmd)(_make_block_op(scope, op))
 
 
-_TRANSCRIPT_POLICY_COMMANDS = frozenset({
-    "/ar:ok",
-    "/ar:globalok",
-    "/ar:no",
-    "/ar:globalno",
-    "/ar:clear",
-    "/ar:globalclear",
-})
+_TRANSCRIPT_POLICY_COMMANDS = frozenset(
+    {
+        "/ar:ok",
+        "/ar:globalok",
+        "/ar:no",
+        "/ar:globalno",
+        "/ar:clear",
+        "/ar:globalclear",
+    }
+)
 _TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY = "processed_transcript_policy_commands"
 _TRANSCRIPT_POLICY_COMMAND_MARKER_LIMIT = 200
 
@@ -844,9 +845,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     if cmd.strip().startswith("/ar:"):
         return ctx.allow()
 
-    transcript_policy_notice = _format_transcript_policy_notice(
-        _apply_pending_transcript_policy_command(ctx)
-    )
+    transcript_policy_notice = _format_transcript_policy_notice(_apply_pending_transcript_policy_command(ctx))
 
     # Fingerprint for this hook invocation: identifies parallel invocations of the
     # same tool call in the same session. Constructed from session_id+tool+cmd so
@@ -861,6 +860,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # is_valid uses the stored last_call_id to verify fingerprint-match before granting grace.
     # consume stores call_id so the next parallel invocation can verify it.
     from .scoped_allow import fingerprint_call
+
     fingerprint_session = "codex" if ctx.cli_type == "codex" else ctx.session_id
     call_id = fingerprint_call(fingerprint_session, ctx.tool_name, cmd)
 
@@ -900,6 +900,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # See plans/make-a-plan-to-sunny-sparkle.md §6.4 + cache_guard.py.
     try:
         from .cache_guard import CacheGuard
+
         result = CacheGuard.from_ctx(ctx).check(ctx)
         if result is not None:
             return result
@@ -986,9 +987,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                         except Exception as e:
                             logger.warning(f"When predicate '{intg.when}' failed: {e}")
                             break
-                        if _default_integration_allows_native_shell_read(
-                            ctx, pattern, cmd, intg.source
-                        ):
+                        if _default_integration_allows_native_shell_read(ctx, pattern, cmd, intg.source):
                             break
                         action = intg.action_for_cli(ctx.cli_type)
                         decision = "warn" if action == "warn" else "deny"
@@ -1027,14 +1026,9 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         combined = "\n\n".join(p for p in (deny_parts + warn_parts) if p)
         # Deduplicate "To allow" lines — keep only the last occurrence
         lines = combined.split("\n")
-        to_allow_idx = [
-            i for i, line in enumerate(lines) if line.strip().startswith("To allow")
-        ]
+        to_allow_idx = [i for i, line in enumerate(lines) if line.strip().startswith("To allow")]
         if len(to_allow_idx) > 1:
-            lines = [
-                line for i, line in enumerate(lines)
-                if i not in set(to_allow_idx[:-1])
-            ]
+            lines = [line for i, line in enumerate(lines) if i not in set(to_allow_idx[:-1])]
             combined = "\n".join(lines)
         combined = _prepend_transcript_policy_notice(
             transcript_policy_notice,
@@ -1055,6 +1049,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
 # ============================================================================
 # AUTORUN PLUGIN - Commands + Stop Hook Injection
 # ============================================================================
+
 
 def _is_procedural_mode(prompt: str) -> bool:
     """Check if command indicates procedural mode."""
@@ -1137,6 +1132,7 @@ def handle_task_ignore(ctx: EventContext) -> str:
 
 # === AUTORUN HELPERS ===
 
+
 def is_premature_stop(ctx: EventContext) -> bool:
     """Check if this is a premature stop without completion markers.
 
@@ -1152,13 +1148,16 @@ def is_premature_stop(ctx: EventContext) -> bool:
     result = ctx.tool_result or ""
     combined = result + transcript
 
-    return not any(marker in combined for marker in [
-        CONFIG["stage1_message"],
-        CONFIG["stage2_message"],
-        CONFIG["stage3_message"],
-        CONFIG.get("completion_marker", ""),
-        CONFIG["emergency_stop"]
-    ])
+    return not any(
+        marker in combined
+        for marker in [
+            CONFIG["stage1_message"],
+            CONFIG["stage2_message"],
+            CONFIG["stage3_message"],
+            CONFIG.get("completion_marker", ""),
+            CONFIG["emergency_stop"],
+        ]
+    )
 
 
 def get_stage3_instructions(ctx: EventContext) -> str:
@@ -1186,31 +1185,31 @@ def _build_progressive_stage_section(ctx: EventContext) -> str:
     Returns:
         str: Stage section showing only current stage
     """
-    stage = getattr(ctx, 'autorun_stage', EventContext.STAGE_1)
+    stage = getattr(ctx, "autorun_stage", EventContext.STAGE_1)
 
     if stage in (EventContext.STAGE_INACTIVE, EventContext.STAGE_1):
         # Stage 1: Show only Stage 1
-        return f"""5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {CONFIG['stage1_instruction']}
-    * When Stage 1 is complete, output **{CONFIG['stage1_message']}** to advance to Stage 2
+        return f"""5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {CONFIG["stage1_instruction"]}
+    * When Stage 1 is complete, output **{CONFIG["stage1_message"]}** to advance to Stage 2
     * You will receive Stage 2 instructions after outputting this confirmation"""
 
     elif stage == EventContext.STAGE_2:
         # Stage 2: Show Stage 2 (Stage 1 already revealed)
-        return f"""5.  **STAGE 2 - CRITICAL EVALUATION:** {CONFIG['stage2_instruction']}
-    * When Stage 2 is complete, output **{CONFIG['stage2_message']}** to advance to Stage 3
+        return f"""5.  **STAGE 2 - CRITICAL EVALUATION:** {CONFIG["stage2_instruction"]}
+    * When Stage 2 is complete, output **{CONFIG["stage2_message"]}** to advance to Stage 3
     * You will receive Stage 3 instructions after outputting this confirmation"""
 
     elif stage in (EventContext.STAGE_2_COMPLETED, EventContext.STAGE_3):
         # Stage 3: Show Stage 3 (countdown complete or in Stage 3)
         stage3_instructions = get_stage3_instructions(ctx)
-        return f"""5.  **STAGE 3 - FINAL VERIFICATION:** {CONFIG['stage3_instruction']}
+        return f"""5.  **STAGE 3 - FINAL VERIFICATION:** {CONFIG["stage3_instruction"]}
     * {stage3_instructions}
-    * When Stage 3 is complete, output **{CONFIG['stage3_message']}** for final completion"""
+    * When Stage 3 is complete, output **{CONFIG["stage3_message"]}** for final completion"""
 
     else:
         # Fallback: Show Stage 1
-        return f"""5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {CONFIG['stage1_instruction']}
-    * When Stage 1 is complete, output **{CONFIG['stage1_message']}** to advance to Stage 2"""
+        return f"""5.  **STAGE 1 - INITIAL IMPLEMENTATION:** {CONFIG["stage1_instruction"]}
+    * When Stage 1 is complete, output **{CONFIG["stage1_message"]}** to advance to Stage 2"""
 
 
 def build_injection_prompt(ctx: EventContext, use_progressive_disclosure: bool = True) -> str:
@@ -1227,9 +1226,7 @@ def build_injection_prompt(ctx: EventContext, use_progressive_disclosure: bool =
     # Force compliance if over limit
     if ctx.recheck_count > CONFIG["max_recheck_count"]:
         return CONFIG["forced_compliance_template"].format(
-            activation_prompt=ctx.autorun_task or "",
-            verification_requirements="",
-            stage3_message=CONFIG["stage3_message"]
+            activation_prompt=ctx.autorun_task or "", verification_requirements="", stage3_message=CONFIG["stage3_message"]
         )
 
     _, desc = CONFIG["policies"].get(ctx.file_policy, ("", ""))
@@ -1261,11 +1258,7 @@ This system ensures thorough, high-quality work through a structured three-stage
 6.  **FILE CREATION POLICY:** {policy_instructions}"""
 
         progressive_stage_section = _build_progressive_stage_section(ctx)
-        return base_template.format(
-            emergency_stop=CONFIG["emergency_stop"],
-            progressive_stage_section=progressive_stage_section,
-            policy_instructions=desc
-        )
+        return base_template.format(emergency_stop=CONFIG["emergency_stop"], progressive_stage_section=progressive_stage_section, policy_instructions=desc)
     else:
         # Original full template showing all three stages
         return template.format(
@@ -1277,7 +1270,7 @@ This system ensures thorough, high-quality work through a structured three-stage
             stage2_instruction=CONFIG["stage2_instruction"],
             stage3_instruction=CONFIG["stage3_instruction"],
             stage3_instructions=get_stage3_instructions(ctx),
-            policy_instructions=desc
+            policy_instructions=desc,
         )
 
 
@@ -1349,7 +1342,7 @@ def _task_staleness_instructions(ctx: EventContext) -> str:
     if ctx.plan_awaiting_planning_tasks:
         return (
             "You must create planning tasks: "
-            "1. {task_create}({task_title}=\"[PLANNING] Step N: [name]\") "
+            '1. {task_create}({task_title}="[PLANNING] Step N: [name]") '
             "2. {task_update}({task_id_param}=N, addBlockedBy=[N-1]) -- wire sequential dependencies "
             "3. {task_list} -- verify all tasks visible. "
             "Do not call any other tool until planning tasks exist."
@@ -1357,8 +1350,8 @@ def _task_staleness_instructions(ctx: EventContext) -> str:
     if ctx.plan_awaiting_execution_tasks:
         return (
             "You must create execution tasks: "
-            "1. {task_create}({task_title}=\"[TDD] Step N: Write tests for [step]\") "
-            "2. {task_create}({task_title}=\"[EXEC] Step N: [step description]\") "
+            '1. {task_create}({task_title}="[TDD] Step N: Write tests for [step]") '
+            '2. {task_create}({task_title}="[EXEC] Step N: [step description]") '
             "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
             "4. {task_list} -- verify all tasks visible. "
             "Do not write code until execution tasks are created and wired."
@@ -1366,8 +1359,8 @@ def _task_staleness_instructions(ctx: EventContext) -> str:
     return (
         "Call one of these Task tools: "
         "1. {task_list} -- review current tasks "
-        "2. {task_update}({task_id_param}=N, status=\"in_progress\"|\"completed\") -- update status "
-        "3. {task_create}({task_title}=\"...\", description=\"...\") -- add newly discovered work "
+        '2. {task_update}({task_id_param}=N, status="in_progress"|"completed") -- update status '
+        '3. {task_create}({task_title}="...", description="...") -- add newly discovered work '
         "4. {task_update}({task_id_param}=N, addBlockedBy=[M]) -- update dependencies if order changed."
     )
 
@@ -1395,6 +1388,7 @@ def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: 
     if overdue:
         return CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
     return CONFIG["task_staleness_message"].format(threshold=threshold)
+
 
 @app.on("PostToolUse")
 def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
@@ -1435,8 +1429,8 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     ctx.autorun_mode = "standard"
     ctx.recheck_count = 0
     ctx.hook_call_count = 0
-    ctx.plan_awaiting_planning_tasks = False   # Planning phase done
-    ctx.plan_awaiting_execution_tasks = True   # Now need [TDD]/[EXEC] tasks
+    ctx.plan_awaiting_planning_tasks = False  # Planning phase done
+    ctx.plan_awaiting_execution_tasks = True  # Now need [TDD]/[EXEC] tasks
 
     injection = build_injection_prompt(ctx)
 
@@ -1448,7 +1442,7 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
             task_injection = manager.get_plan_approval_injection(ctx)
             if task_injection:
                 injection += "\n" + task_injection
-            plan_key = getattr(ctx, 'plan_arguments', '') or ''
+            plan_key = getattr(ctx, "plan_arguments", "") or ""
             if plan_key:
                 tasks = manager.get_plan_tasks(plan_key, incomplete_only=True)
                 task_count = len(tasks) if tasks else 0
@@ -1511,7 +1505,7 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
                 f"{file_path} (old_string was {old_lines} lines, new_string is {new_lines} lines). "
                 f"Read the full plan file NOW and verify no content was accidentally deleted. "
                 f"Restore any missing content before continuing.",
-                channel="both"
+                channel="both",
             )
 
     elif ctx.tool_name == "Write":
@@ -1522,7 +1516,7 @@ def detect_plan_shrinkage(ctx: EventContext) -> Optional[Dict]:
                 f"\n⚠️ PLAN CONTENT WARNING: Write produced only {content_lines} lines "
                 f"in {file_path}. Plan files should have substantial content. "
                 f"Verify this was intentional and no content was accidentally deleted.",
-                channel="both"
+                channel="both",
             )
 
     return None
@@ -1633,10 +1627,32 @@ def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
     # reached. Only reset on non-task tool calls (real work: Read, Edit, Bash, etc.).
     if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
         return None
+    # A Stop block arms this reset in daemon memory. Most PostToolUse calls
+    # therefore avoid opening the much larger task-lifecycle JSON entirely.
+    # The first Stop after a daemon restart begins a fresh consecutive sequence,
+    # so losing this advisory bit cannot create a false ghost-task clearance.
+    claimed_initial_check = False
+
+    def claim_initial_check(current):
+        nonlocal claimed_initial_check
+        if current is None:
+            claimed_initial_check = True
+            return "checking"
+        return current
+
+    armed = ctx.state_update_volatile(
+        "ghost_counter_armed_in_daemon",
+        claim_initial_check,
+        None,
+    )
+    if armed is False or (armed == "checking" and not claimed_initial_check):
+        return None
     try:
         manager = task_lifecycle.TaskLifecycle(ctx=ctx)
         manager.atomic_update_metadata(task_lifecycle._reset_ghost_counter)
+        ctx.state_set_volatile("ghost_counter_armed_in_daemon", False)
     except Exception:
+        ctx.state_set_volatile("ghost_counter_armed_in_daemon", False)
         pass
     return None
 
@@ -1714,8 +1730,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         # via reason + systemMessage (core.py:960-962 PATHWAY 1 allow path)
         warn_msg = (
             f"TASK UPDATE WARNING -- {threshold}+ tool calls without a task update. "
-            "Your next action after this must be a Task tool. "
-            + instructions + " "
+            "Your next action after this must be a Task tool. " + instructions + " "
             "If you do not comply, your next non-Task tool call will be blocked."
         )
         return ctx.allow(warn_msg)
@@ -1723,9 +1738,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         # Second+ offense: DENY — block the tool, AI must call a Task tool first.
         # deny(reason) creates a durable transcript event the AI cannot ignore.
         deny_msg = (
-            f"BLOCKED -- your {ctx.tool_name} call was not executed because your task list "
-            "has not been updated despite a previous warning. "
-            + instructions
+            f"BLOCKED -- your {ctx.tool_name} call was not executed because your task list has not been updated despite a previous warning. " + instructions
         )
         if not ctx.plan_awaiting_planning_tasks and not ctx.plan_awaiting_execution_tasks:
             deny_msg += " Then continue your work."
@@ -1741,6 +1754,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
 # additionalContext (for when Anthropic implements it).
 # Additionally sets enforce_next flag to deliver via PreToolUse allow()
 # which puts the message in reason + systemMessage (core.py:960-962).
+
 
 @app.on("PostToolUse")
 def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
@@ -1762,19 +1776,39 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         ctx.task_staleness_enforce_next = False
         return None
 
-    count = (ctx.tool_calls_since_task_update or 0) + 1
-    ctx.tool_calls_since_task_update = count
+    count = ctx.state_update_volatile(
+        "tool_calls_since_task_update",
+        lambda current: (current or 0) + 1,
+        0,
+    )
 
     threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
     no_tasks_threshold = CONFIG.get("task_staleness_no_tasks_threshold", 5)
 
-    # Check task state to select threshold and message
-    if task_lifecycle.is_enabled():
+    # Checkpoint only at semantic decision boundaries. Persisting every fifth
+    # call lets one seven-way burst cross two checkpoints (5 and 10), recreating
+    # lock contention on the monolithic JSON file. A daemon restart may now
+    # replay part of this advisory countdown, but enforcement transitions and
+    # task updates remain durable.
+    if count == no_tasks_threshold or count >= threshold:
+        ctx.tool_calls_since_task_update = count
+
+    # Task state is only needed when a reminder decision can change. Persist the
+    # boundary classification in magic state so ordinary calls between the lower
+    # no-tasks threshold and the normal staleness threshold stay off the large
+    # task-lifecycle JSON payload.
+    needs_task_snapshot = count == no_tasks_threshold or count >= threshold
+    if count > no_tasks_threshold and count < threshold:
+        needs_task_snapshot = ctx.task_staleness_has_active_tasks is None
+
+    # Check one task snapshot to select threshold and message.
+    if needs_task_snapshot and task_lifecycle.is_enabled():
         try:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
-            total_tasks = len(manager.tasks)
-            incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
-            if total_tasks == 0 or not incomplete:
+            tasks = manager.tasks
+            incomplete = [task for task in tasks.values() if task["status"] not in manager.NON_BLOCKING_STATUSES]
+            ctx.state_set_volatile("task_staleness_has_active_tasks", bool(incomplete))
+            if not tasks or not incomplete:
                 # No active work: zero tasks or all complete. Both mean the AI
                 # is doing work without task tracking. Use lower no_tasks_threshold
                 # (default 5) to prompt task creation quickly.
@@ -1816,6 +1850,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
 #
 # Same dual delivery as check_task_staleness: channel="both" (PostToolUse) +
 # enforce_next flag (PreToolUse allow). See SDK bug references above.
+
 
 @app.on("PostToolUse")
 def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
@@ -1870,6 +1905,7 @@ def handle_cache(ctx: EventContext) -> str:
     `cache_guard.cache_command` and plan §6.5.1.
     """
     from .cache_guard import cache_command
+
     prompt = ctx.activation_prompt or ctx.prompt or ""
     # Strip the leading "/ar:cache" token to get the sub-arg string.
     tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
@@ -1922,9 +1958,8 @@ def toggle_task_staleness(ctx: EventContext) -> str:
             return f"Stale-task clear threshold (this session): {parts[3]} consecutive identical blocks."
         else:
             enabled = "on" if cfg.ghost_clear_enabled else "off"
-            n = getattr(ctx, 'ghost_clear_min_consecutive_blocks_override', None) or cfg.ghost_clear_min_consecutive_blocks
-            return (f"Stale-task clear: {enabled}, min consecutive blocks: {n}.\n"
-                    f"Usage: /ar:tasks stale on | off | min <N>")
+            n = getattr(ctx, "ghost_clear_min_consecutive_blocks_override", None) or cfg.ghost_clear_min_consecutive_blocks
+            return f"Stale-task clear: {enabled}, min consecutive blocks: {n}.\nUsage: /ar:tasks stale on | off | min <N>"
     elif arg:
         # Catches: "0", negative numbers like "-5", non-numeric strings
         return f"Invalid threshold '{arg}'. Use a positive integer (e.g. /ar:tasks 10)."
@@ -1947,9 +1982,12 @@ def toggle_task_staleness(ctx: EventContext) -> str:
                         by_status[s] = by_status.get(s, 0) + 1
 
                     status_icons = {
-                        "completed": "done", "in_progress": "active",
-                        "pending": "pending", "paused": "paused",
-                        "deleted": "deleted", "ignored": "ignored",
+                        "completed": "done",
+                        "in_progress": "active",
+                        "pending": "pending",
+                        "paused": "paused",
+                        "deleted": "deleted",
+                        "ignored": "ignored",
                     }
                     status_parts = []
                     for s in ["in_progress", "pending", "completed", "paused", "deleted", "ignored"]:
@@ -1985,12 +2023,13 @@ def toggle_task_staleness(ctx: EventContext) -> str:
         if ctx.cli_type == "gemini":
             lines.append("\n💡 Gemini Note: Tasks are natively managed via the Conductor extension.")
             lines.append("   Use /conductor:status to see full track details.")
-            
+
         lines.append("Usage: /ar:tasks on|off|<number> | /ar:task-status for full details")
         return "\n".join(lines)
 
 
 # === STOP HOOK HANDLERS ===
+
 
 @app.on("Stop")
 def autorun_injection(ctx: EventContext) -> Optional[Dict]:
@@ -2094,6 +2133,7 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
 
 # === SCOPED ALLOW CLEANUP (SessionStart) ===
 
+
 @app.on("SessionStart")
 def cleanup_expired_allows(ctx: EventContext) -> None:
     """Purge expired scoped allows on session start (lazy GC)."""
@@ -2106,6 +2146,7 @@ def cleanup_expired_allows(ctx: EventContext) -> None:
     # Also purge expired cache_guard overrides — same lifecycle, same GC point.
     try:
         from .cache_guard import purge_stale_overrides
+
         purge_stale_overrides(ctx.session_id)
     except Exception:
         pass  # fail-open; GC must never block session-start
@@ -2124,9 +2165,11 @@ def cleanup_expired_allows(ctx: EventContext) -> None:
 # legitimate session-start flow (that would be worse than the staleness they
 # protect against).
 
+
 def _cache_guard_invalidate(ctx: EventContext, event_name: str) -> None:
     try:
         from .cache_guard import CacheGuard
+
         CacheGuard.from_session(session_id=ctx.session_id).on_compaction_event(event_name)
     except Exception:
         pass
@@ -2161,6 +2204,7 @@ def cache_guard_on_precompress(ctx: EventContext) -> None:
 # PLAN MANAGEMENT PLUGIN
 # ============================================================================
 
+
 def _make_plan_handler(md_filename: str):
     """
     Factory: Generate plan command handler that reads and returns markdown content.
@@ -2175,8 +2219,10 @@ def _make_plan_handler(md_filename: str):
     Returns:
         Callable: Handler function that returns markdown file content
     """
+
     def handler(ctx: EventContext) -> str:
         from pathlib import Path
+
         commands_dir = Path(__file__).parent.parent.parent / "commands"
         md_path = commands_dir / md_filename
 
@@ -2196,7 +2242,7 @@ def _make_plan_handler(md_filename: str):
             return f"❌ Error: Plan command file not found: {md_filename}"
 
         try:
-            return md_path.read_text(encoding='utf-8')
+            return md_path.read_text(encoding="utf-8")
         except Exception as e:
             return f"❌ Error reading plan command: {e}"
 
@@ -2205,9 +2251,9 @@ def _make_plan_handler(md_filename: str):
 
 # Data-driven registration: symlink aliases for plan commands
 _PLAN_ALIASES = {
-    "NEW_PLAN":     ("/ar:pn", "/ar:plannew", "plannew.md"),
-    "REFINE_PLAN":  ("/ar:pr", "/ar:planrefine", "planrefine.md"),
-    "UPDATE_PLAN":  ("/ar:pu", "/ar:planupdate", "planupdate.md"),
+    "NEW_PLAN": ("/ar:pn", "/ar:plannew", "plannew.md"),
+    "REFINE_PLAN": ("/ar:pr", "/ar:planrefine", "planrefine.md"),
+    "UPDATE_PLAN": ("/ar:pu", "/ar:planupdate", "planupdate.md"),
     "PROCESS_PLAN": ("/ar:pp", "/ar:planprocess", "planprocess.md"),
 }
 
@@ -2242,21 +2288,17 @@ def _manage_monitor(ctx: EventContext, action: str) -> Optional[int]:
 
     session_id = ctx.session_id
 
-    if action == 'start':
+    if action == "start":
         if ctx.ai_monitor_pid:
             ai_monitor.stop_monitor(session_id)
 
         pid = ai_monitor.start_monitor(
-            session_id=session_id,
-            prompt="continue working",
-            stop_marker=CONFIG["stage3_message"],
-            max_cycles=20,
-            prompt_on_start=True
+            session_id=session_id, prompt="continue working", stop_marker=CONFIG["stage3_message"], max_cycles=20, prompt_on_start=True
         )
         ctx.ai_monitor_pid = pid
         return pid
 
-    elif action == 'stop':
+    elif action == "stop":
         if ctx.ai_monitor_pid:
             ai_monitor.stop_monitor(session_id)
             ctx.ai_monitor_pid = None
@@ -2266,12 +2308,12 @@ def _manage_monitor(ctx: EventContext, action: str) -> Optional[int]:
 
 def start_external_monitor(ctx: EventContext) -> Optional[int]:
     """Start AI monitor for external tmux-based observation."""
-    return _manage_monitor(ctx, 'start')
+    return _manage_monitor(ctx, "start")
 
 
 def stop_external_monitor(ctx: EventContext):
     """Stop AI monitor subprocess if running."""
-    _manage_monitor(ctx, 'stop')
+    _manage_monitor(ctx, "stop")
 
 
 def get_injection_method(ctx: EventContext) -> str:

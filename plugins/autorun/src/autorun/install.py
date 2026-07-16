@@ -888,6 +888,25 @@ def _sync_dependencies() -> CmdResult:
         return CmdResult(False, f"Failed to install bashlex: {e}")
 
 
+def _editable_uv_tool_install_args(package_dir: Path) -> list[str]:
+    """Build a portable uv tool command pinned to this installer's Python.
+
+    Pinning the interpreter prevents PATH ordering from silently selecting a
+    Python for the wrong CPU architecture (for example, Intel Homebrew under
+    Rosetta on an Apple Silicon host).
+    """
+    return [
+        "uv",
+        "tool",
+        "install",
+        "--force",
+        "--python",
+        sys.executable,
+        "--editable",
+        str(package_dir),
+    ]
+
+
 def _install_pdf_deps() -> CmdResult:
     """Install or upgrade the PDF CLI and its dependencies.
 
@@ -918,7 +937,7 @@ def _install_pdf_deps() -> CmdResult:
 
     if shutil.which("uv"):
         return run_cmd(
-            ["uv", "tool", "install", "--force", "--editable", str(pdf_dir)],
+            _editable_uv_tool_install_args(pdf_dir),
             timeout=180,
         )
     return run_cmd(
@@ -965,6 +984,7 @@ def _bug_24115_workaround_enabled() -> bool:
     BUG #24115 regression gate. Env var wins over CONFIG.
     """
     from .config import CONFIG
+
     _KEY = "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED"
     env = os.environ.get(_KEY, "").lower().strip()
     if env in ("false", "0", "never"):
@@ -3393,14 +3413,7 @@ def _update_package_metadata(plugin_dir: Path) -> None:
 def _install_autorun_uv_tool(plugin_root: Path) -> CmdResult:
     """Install the entrypoint-owning autorun package as an editable uv tool."""
     return run_cmd(
-        [
-            "uv",
-            "tool",
-            "install",
-            "--force",
-            "--editable",
-            str(plugin_root),
-        ],
+        _editable_uv_tool_install_args(plugin_root),
         timeout=120,
     )
 
