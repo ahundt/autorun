@@ -862,8 +862,9 @@ def test_codex_pretooluse_block_reason_lives_only_in_permission_decision_reason(
 def test_codex_command_response_drops_duplicate_system_message():
     """Regression test: every locally-handled slash command reply on
     Codex must carry its text in additionalContext only — systemMessage must
-    not duplicate it (E2's "warning:"/"hook context:" double-row bug, but for
-    UserPromptSubmit instead of PreToolUse)."""
+    not duplicate it. Codex renders systemMessage as a "warning:" row and
+    additionalContext as a separate "hook context:" row, so populating both
+    double-prints every reply — the PreToolUse bug, on UserPromptSubmit."""
     ctx = _codex_context("UserPromptSubmit", prompt="/ar:st")
     response = ctx.command_response("status text")
     assert_codex_response_valid("UserPromptSubmit", response)
