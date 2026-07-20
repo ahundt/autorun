@@ -87,9 +87,6 @@ def assert_codex_response_valid(event: str, response: dict | None) -> None:
         assert unsupported.isdisjoint(response), response
         allowed = {"systemMessage", "decision", "reason", "hookSpecificOutput"}
         assert set(response) <= allowed, response
-        if "decision" in response:
-            assert response["decision"] == "block", response
-            assert isinstance(response.get("reason"), str) and response["reason"], response
         hso_allowed = {
             "hookEventName",
             "permissionDecision",
@@ -97,8 +94,23 @@ def assert_codex_response_valid(event: str, response: dict | None) -> None:
             "additionalContext",
             "updatedInput",
         }
+        hso = response.get("hookSpecificOutput")
+        # Codex's real parser (codex-rs/hooks/src/engine/output_parser.rs
+        # parse_pre_tool_use) only reads root reason when hookSpecificOutput
+        # carries no permissionDecision/permissionDecisionReason/updatedInput
+        # at all — once that nested shape is present, root reason is dead
+        # and Codex resolves the block reason from
+        # hookSpecificOutput.permissionDecisionReason instead.
+        uses_hook_specific_decision = isinstance(hso, dict) and (
+            "permissionDecision" in hso or "permissionDecisionReason" in hso or "updatedInput" in hso
+        )
+        if "decision" in response:
+            assert response["decision"] == "block", response
+            if uses_hook_specific_decision:
+                assert hso.get("permissionDecisionReason"), response
+            else:
+                assert isinstance(response.get("reason"), str) and response["reason"], response
         if "hookSpecificOutput" in response:
-            hso = response["hookSpecificOutput"]
             assert set(hso) <= hso_allowed, response
             assert hso.get("hookEventName") == "PreToolUse", response
             assert hso.get("permissionDecision") != "ask", response
@@ -824,6 +836,55 @@ def test_codex_find_block_guides_to_rg_files_not_claude_glob():
     assert "`rg --files`" in rendered
     assert "Glob tool" not in rendered
     assert "ar:ok find" in rendered
+
+
+def test_codex_pretooluse_block_reason_lives_only_in_permission_decision_reason():
+    """Regression test: blocked commands must not triple-populate the
+    same reason text across root reason, systemMessage, and
+    hookSpecificOutput.permissionDecisionReason (the reported "tail"
+    transcript showed this shape rendering as two duplicate Codex rows; this
+    test uses "find" since Codex treats "tail" as a native shell read)."""
+    ctx = _codex_context(
+        "PreToolUse",
+        tool_name="Bash",
+        tool_input={"command": "find . -name '*.py'"},
+    )
+    response = plugins.check_blocked_commands(ctx)
+
+    assert response is not None
+    assert_codex_response_valid("PreToolUse", response)
+    hso = response["hookSpecificOutput"]
+    assert "rg --files" in hso["permissionDecisionReason"]
+    assert response.get("reason", "") == ""
+    assert response.get("systemMessage", "") == ""
+
+
+def test_codex_command_response_drops_duplicate_system_message():
+    """Regression test: every locally-handled slash command reply on
+    Codex must carry its text in additionalContext only — systemMessage must
+    not duplicate it (E2's "warning:"/"hook context:" double-row bug, but for
+    UserPromptSubmit instead of PreToolUse)."""
+    ctx = _codex_context("UserPromptSubmit", prompt="/ar:st")
+    response = ctx.command_response("status text")
+    assert_codex_response_valid("UserPromptSubmit", response)
+    assert response["hookSpecificOutput"]["additionalContext"] == "status text"
+    assert response.get("systemMessage", "") == ""
+
+
+def test_claude_command_response_keeps_dual_channel_unchanged():
+    """Codex dedup must not touch the Claude branch: systemMessage+additionalContext
+    duplication there is an intentional, pinned contract (see
+    test_command_response_sends_to_both_channels in test_unit_simple.py)."""
+    ctx = EventContext(
+        session_id=f"claude-schema-{uuid.uuid4().hex}",
+        event="UserPromptSubmit",
+        cli_type="claude",
+        store=ThreadSafeDB(),
+        prompt="/ar:st",
+    )
+    response = ctx.command_response("status text")
+    assert response["systemMessage"] == "status text"
+    assert response["hookSpecificOutput"]["additionalContext"] == "status text"
 
 
 def test_codex_pretooluse_updated_input_requires_allow_permission_decision():

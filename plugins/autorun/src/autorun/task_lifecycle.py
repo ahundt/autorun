@@ -84,11 +84,14 @@ _ACT_STALE_AI_ESCAPE = (
 )
 
 
-def _task_actions_fragment(cli_type: str | None) -> str:
+def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled: bool = False) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
     sos = format_command_for_cli("/ar:sos", cli_type)
     task_ignore = format_command_for_cli("/ar:task-ignore <id>", cli_type)
     act_override = f"only the user can type {sos} (emergency stop) or {task_ignore} (mark task ignored to unblock stopping)"
+    if staleness_reminders_disabled:
+        tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
+        act_override += f" — {tasks_off} does NOT apply here, it only disables staleness *reminders*"
     if platform_for(cli_type).task_management_style == "plan_checklist":
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
@@ -727,6 +730,9 @@ class TaskLifecycle:
 
             def reset_block_count(metadata):
                 metadata["stop_block_count"] = 0
+                # Clear the delivery claim with the counter it keys on, so a
+                # recycled generation number cannot suppress a later delivery.
+                metadata.pop("last_delivered_stop_block_generation", None)
 
             self.atomic_update_metadata(reset_block_count)
 
@@ -1143,7 +1149,7 @@ class TaskLifecycle:
 
         injection = (
             f"🔄 incomplete tasks from previous session: {task_list}{overflow}{older}\n"
-            f"{_task_actions_fragment(_task_cli_hint(ctx))}"
+            f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
             f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
         )
 
@@ -1187,6 +1193,9 @@ class TaskLifecycle:
 
             def reset_counter(metadata):
                 metadata["stop_block_count"] = 0
+                # Clear the delivery claim with the counter it keys on, so a
+                # recycled generation number cannot suppress a later delivery.
+                metadata.pop("last_delivered_stop_block_generation", None)
                 _reset_ghost_counter(metadata)
 
             self.atomic_update_metadata(reset_counter)
@@ -1259,7 +1268,7 @@ class TaskLifecycle:
 
         injection = (
             f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
-            f"{_task_actions_fragment(_task_cli_hint(ctx))}"
+            f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
             f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
         )
 
@@ -2096,10 +2105,27 @@ def register_hooks(app_instance) -> None:
              Controlled by CONFIG["AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED"].
 
         HOW IT WORKS:
-          handle_stop() sets ctx.pending_stop_injection on first stop block only
-          (block_count==1). This handler fires on the AI's next PostToolUse,
-          delivers the message via add_chain_notification(channel="ai"), then
-          clears the flag. One-shot — subsequent stops do not re-arm.
+          handle_stop() sets ctx.pending_stop_injection on EVERY blocked Stop
+          (re-arms every time, not just block_count==1 — see the comment
+          above ctx.pending_stop_injection in handle_stop() for why). This
+          handler fires on the AI's next PostToolUse, delivers the message
+          via add_chain_notification(channel="ai"), then clears the flag —
+          one-shot per arm.
+
+          Duplicate suppression is scoped to ONE Stop-block generation
+          (session_metadata["stop_block_count"]), never to message text.
+          Parallel tool calls fire concurrent PostToolUse hooks that can all
+          read the armed slot before any of them clears it, printing the same
+          block text several times; the atomic claim below lets exactly one
+          win per generation.
+
+          Do NOT extend this to skip byte-identical text across generations.
+          An AI stuck repeating the same mistake produces an unchanged task
+          list and therefore identical text on every block — suppressing that
+          would stop feeding it the override actions (/ar:sos,
+          /ar:task-ignore) from the second block onward, recreating the
+          "infinite non-overridable stop failure" the every-block re-arm in
+          handle_stop() exists to prevent. Every new Stop block re-delivers.
 
         HISTORY: enforce_stop_injection (PreToolUse deny) was removed because it
           caused a deadlock — handle_stop re-armed pending_stop_injection on every
@@ -2114,6 +2140,23 @@ def register_hooks(app_instance) -> None:
         if not injection:
             return None
         ctx.pending_stop_injection = None  # Clear so it fires only once per Stop
+
+        manager = TaskLifecycle(ctx=ctx)
+        claimed = False
+
+        def claim_this_generation(metadata):
+            """Compare-and-set inside atomic_update_metadata's lock."""
+            nonlocal claimed
+            generation = metadata.get("stop_block_count", 0)
+            if metadata.get("last_delivered_stop_block_generation") == generation:
+                return  # A concurrent PostToolUse already delivered this block.
+            metadata["last_delivered_stop_block_generation"] = generation
+            claimed = True
+
+        manager.atomic_update_metadata(claim_this_generation)
+        if not claimed:
+            return None
+
         ctx.add_chain_notification(injection, channel="ai")
         return None  # Flushed by _run_chain → ctx.respond("allow","") → additionalContext
 

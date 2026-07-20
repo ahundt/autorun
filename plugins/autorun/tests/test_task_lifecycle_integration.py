@@ -42,6 +42,10 @@ def create_mock_context(session_id='test-integration', **kwargs):
     # v0.9: task staleness defaults — STAGE_INACTIVE so stage-reset guard doesn't fire
     ctx.autorun_stage = kwargs.get('autorun_stage', EventContext.STAGE_INACTIVE)
     ctx.tool_calls_since_task_update = kwargs.get('tool_calls_since_task_update', 0)
+    # _task_actions_fragment() reads ctx.task_staleness_enabled to
+    # gate the "/ar:tasks off does NOT apply here" caveat. Default True
+    # (staleness reminders enabled) matches EventContext's real CONFIG default.
+    ctx.task_staleness_enabled = kwargs.get('task_staleness_enabled', True)
 
     # Mock the allow, block, and continue_running methods
     def mock_allow(msg=''):

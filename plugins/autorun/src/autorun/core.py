@@ -803,20 +803,66 @@ def _drop_empty_codex_hso(filtered: dict, hso: dict, *, event: str) -> None:
         filtered.pop("hookSpecificOutput", None)
 
 
-def _drop_duplicate_codex_pretooluse_system_message(
-    filtered: dict,
-    hso: dict,
-    *,
-    event: str,
-) -> None:
-    """Avoid rendering one Codex PreToolUse status as both warning and context."""
-    if event != "PreToolUse":
+_CANONICAL_MESSAGE_FIELD_CANDIDATES: dict[str, tuple[str, ...]] = {
+    # First non-empty candidate wins, per event. PreToolUse tries
+    # additionalContext first (allow/warn case) then falls back to
+    # permissionDecisionReason (deny case) — the two are mutually exclusive
+    # by construction in _normalize_codex_pretooluse_hso(), never both
+    # populated at once, so this is not an arbitrary preference order.
+    "PreToolUse": ("hookSpecificOutput.additionalContext", "hookSpecificOutput.permissionDecisionReason"),
+    "UserPromptSubmit": ("hookSpecificOutput.additionalContext",),
+    "PostToolUse": ("hookSpecificOutput.additionalContext",),
+}
+_ALL_MESSAGE_FIELDS: dict[str, tuple[str, ...]] = {
+    "PreToolUse": ("reason", "systemMessage", "hookSpecificOutput.additionalContext", "hookSpecificOutput.permissionDecisionReason"),
+    "UserPromptSubmit": ("systemMessage", "hookSpecificOutput.additionalContext"),
+    "PostToolUse": ("systemMessage", "hookSpecificOutput.additionalContext"),
+}
+# No Stop/SubagentStop entry: Codex Stop responses only ever populate one
+# field (stop_response_uses_only_decision_and_reason=True for Codex), so
+# there is nothing to dedupe there. Claude/Gemini's Stop-event duplication
+# is fixed separately, in response_to_reject_stop_and_continue() (platforms.py)
+# — not here, since that fix applies to every cli_type's Stop response, not
+# just Codex's.
+
+
+def _get_field(filtered: dict, hso: dict, path: str) -> object:
+    """Read a dotted "hookSpecificOutput.x" or plain root-field path."""
+    if path.startswith("hookSpecificOutput."):
+        return hso.get(path.split(".", 1)[1])
+    return filtered.get(path)
+
+
+def _clear_field(filtered: dict, hso: dict, path: str) -> None:
+    """Clear a dotted "hookSpecificOutput.x" or plain root-field path."""
+    if path.startswith("hookSpecificOutput."):
+        hso.pop(path.split(".", 1)[1], None)
+    else:
+        filtered.pop(path, None)
+
+
+def _dedupe_identical_message_fields(filtered: dict, hso: dict, *, event: str) -> None:
+    """Clear any field whose text byte-matches the first-populated canonical
+    candidate for this event. Runs for every decision (allow/deny/block) —
+    whichever candidate is actually populated always keeps its message, so a
+    blocking response is never left without a message. Codex's own TUI
+    independently renders each populated response field as its own row with
+    zero cross-field dedup, so autorun must never populate two fields with
+    the same text for Codex. Claude/Gemini/Qwen/Agy are NOT touched here —
+    their dual-field responses (e.g. reason + systemMessage) are intentional,
+    pinned-test contracts for those clients, not the bug this function fixes.
+    """
+    canonical_path = canonical_value = None
+    for path in _CANONICAL_MESSAGE_FIELD_CANDIDATES.get(event, ()):
+        value = _get_field(filtered, hso, path)
+        if value:
+            canonical_path, canonical_value = path, value
+            break
+    if not canonical_path:
         return
-    if filtered.get("decision") == "block" or hso.get("permissionDecision") == "deny":
-        return
-    additional_context = hso.get("additionalContext")
-    if additional_context and filtered.get("systemMessage") == additional_context:
-        filtered.pop("systemMessage", None)
+    for path in _ALL_MESSAGE_FIELDS.get(event, ()):
+        if path != canonical_path and _get_field(filtered, hso, path) == canonical_value:
+            _clear_field(filtered, hso, path)
 
 
 def validate_hook_response(event: str, response: dict, cli_type: str = "claude") -> dict:
@@ -940,11 +986,11 @@ def validate_hook_response(event: str, response: dict, cli_type: str = "claude")
                         root_reason=filtered.get("reason", ""),
                         system_message=filtered.get("systemMessage", ""),
                     )
-                    _drop_duplicate_codex_pretooluse_system_message(
-                        filtered,
-                        hso_filtered,
-                        event=event,
-                    )
+                # Dedup runs for every event this Codex branch handles
+                # (PreToolUse, UserPromptSubmit, PostToolUse — Stop/
+                # SubagentStop have no _CANONICAL_MESSAGE_FIELD_CANDIDATES
+                # entry, so this is a safe no-op for them).
+                _dedupe_identical_message_fields(filtered, hso_filtered, event=event)
                 _drop_empty_codex_hso(filtered, hso_filtered, event=event)
 
         return filtered

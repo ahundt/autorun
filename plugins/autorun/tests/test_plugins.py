@@ -1847,9 +1847,17 @@ def test_time_machine_history_mutation_requires_consent_across_harnesses(
     result = plugins.check_blocked_commands(ctx)
 
     assert result is not None
-    output = result.get("hookSpecificOutput", {})
-    assert output.get("permissionDecision") == "deny"
-    assert "Time Machine" in output.get("permissionDecisionReason", "")
+    if cli_type == "antigravity":
+        # Antigravity's real PreToolUse schema (confirmed via binary-strings
+        # archaeology of the installed Antigravity binary) has no
+        # hookSpecificOutput wrapper: decision/reason live at JSON root
+        # (platforms.py's ANTIGRAVITY_HOOKS: pretool_decision_location="root").
+        assert result.get("decision") == "deny"
+        assert "Time Machine" in result.get("reason", "")
+    else:
+        output = result.get("hookSpecificOutput", {})
+        assert output.get("permissionDecision") == "deny"
+        assert "Time Machine" in output.get("permissionDecisionReason", "")
 
 
 def test_time_machine_exact_consent_grant_allows_only_matching_operation():

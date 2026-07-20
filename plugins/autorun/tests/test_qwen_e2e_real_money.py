@@ -162,10 +162,18 @@ def test_qwen_zai_env_strips_style_suffix_from_model(monkeypatch):
     assert _clean_zai_model("glm-5.2[1m") == "glm-5.2"
 
 
-def test_qwen_before_tool_denies_dangerous_shell_command_without_daemon():
-    """Qwen hook entry returns permissive deny JSON for blocked shell commands."""
+def test_qwen_pre_tool_use_denies_dangerous_shell_command_without_daemon():
+    """Qwen hook entry returns deny JSON for blocked shell commands.
+
+    Event name is "PreToolUse", not Gemini's "BeforeTool". Although Qwen Code
+    forks Gemini CLI's hook types, it kept Claude-style event names:
+    packages/core/src/hooks/types.ts defines HookEventName.PreToolUse =
+    'PreToolUse' and contains no "BeforeTool" member at all. Sending
+    "BeforeTool" left the event unmapped, so the guard never ran and the hook
+    returned {"continue": true} — the test asserted no safety property.
+    """
     payload = {
-        "hook_event_name": "BeforeTool",
+        "hook_event_name": "PreToolUse",
         "session_id": f"qwen-e2e-{uuid.uuid4().hex[:8]}",
         "cwd": str(REPO_ROOT),
         "tool_name": "run_shell_command",
@@ -176,8 +184,8 @@ def test_qwen_before_tool_denies_dangerous_shell_command_without_daemon():
 
     assert result.returncode == 0, result.stderr
     response = json.loads(result.stdout)
-    assert response["decision"] == "deny"
-    assert response["continue"] is True
+    # Qwen carries the decision inside hookSpecificOutput
+    # (pretool_decision_location="hook_specific_output"), with no root decision.
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
     reason = response["hookSpecificOutput"]["permissionDecisionReason"]
     assert "rm" in reason

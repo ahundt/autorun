@@ -179,8 +179,17 @@ class HookProtocol:
 
         ``decision`` blocks the Stop event and ``reason`` becomes continuation
         guidance. Never encode this action as ``continue=False``: that stops the
-        entire agent. Claude/Gemini retain legacy common fields; current Codex,
-        Qwen, and Agy use their minimal native decision/reason contracts.
+        entire agent. Claude/Gemini retain legacy common fields but omit
+        ``systemMessage`` here: Claude Code renders ``systemMessage`` as its
+        own standalone "<hook> says: <text>" history entry AND separately
+        renders the block ``reason`` as a "<hook> hook error: <text>" row
+        inside its "Ran N hooks" summary (confirmed by inspecting the
+        installed Claude Code binary) — setting both duplicates the identical
+        text on two UI surfaces. ``reason`` alone already drives blocking and
+        continuation guidance; ``systemMessage`` here is pure redundant UI
+        decoration. Current Codex, Qwen, and Agy use their minimal native
+        decision/reason contracts and were never affected (their Stop
+        renderers only ever populate one field from this response shape).
         """
         response = {"decision": self.stop_blocking_decision, "reason": reason}
         if self.stop_response_uses_only_decision_and_reason:
@@ -190,7 +199,6 @@ class HookProtocol:
             **response,
             "stopReason": "",
             "suppressOutput": False,
-            "systemMessage": reason,
         }
 
     def fail_closed_pretool_response(self, reason: str, event_name: str) -> dict:

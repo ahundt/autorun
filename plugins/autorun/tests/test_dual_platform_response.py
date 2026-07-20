@@ -72,12 +72,18 @@ PRETOOL_WIRE_CASES = (
         {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "Reason"}},
     ),
     (
+        # Root reason/systemMessage no longer duplicate
+        # hookSpecificOutput.permissionDecisionReason. Codex's own parser
+        # (codex-rs/hooks/src/engine/output_parser.rs parse_pre_tool_use)
+        # ignores root reason entirely once hookSpecificOutput carries a
+        # permissionDecision, so dropping the root/systemMessage copies here
+        # does not change what Codex's agent loop reads — it only removes
+        # the duplicate "warning"/"feedback" rows Codex's TUI used to render
+        # for the identical text.
         "codex",
         "deny",
         {
             "decision": "block",
-            "reason": "Reason",
-            "systemMessage": "Reason",
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
@@ -90,8 +96,6 @@ PRETOOL_WIRE_CASES = (
         "ask",
         {
             "decision": "block",
-            "reason": "Reason",
-            "systemMessage": "Reason",
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
@@ -111,8 +115,24 @@ class TestDualPlatformResponse:
         resp = ctx.respond("block", "Keep working")
         assert resp["decision"] == "block"
         assert resp["continue"] is True
-        # Stop event uses systemMessage for the injection
-        assert resp["systemMessage"] == "Keep working"
+        # reason (not systemMessage) carries the continuation
+        # guidance — Claude Code independently renders systemMessage as its
+        # own "<hook> says: <text>" row AND the block reason as a
+        # "<hook> hook error: <text>" row, so setting both duplicates text
+        # on two UI surfaces.
+        assert resp["reason"] == "Keep working"
+        assert "systemMessage" not in resp
+
+    def test_stop_block_does_not_duplicate_system_message(self):
+        """Regression test: Stop/SubagentStop block responses must not
+        set systemMessage alongside decision+reason for claude/gemini —
+        Claude Code's client renders each as its own duplicate UI row."""
+        for cli_type in ("claude", "gemini"):
+            for event in ("Stop", "SubagentStop"):
+                resp = EventContext("bug-f", event, cli_type=cli_type).respond("block", "Reason")
+                assert resp["decision"] in ("block", "deny")
+                assert resp["reason"] == "Reason"
+                assert "systemMessage" not in resp, (cli_type, event, resp)
 
     def test_stop_injection_gemini(self):
         """Gemini Stop event should use decision='deny' and continue=True."""
@@ -353,8 +373,12 @@ class TestDualPlatformResponse:
     @pytest.mark.parametrize(
         ("cli_type", "expected"),
         [
-            ("claude", {"continue": True, "decision": "block", "reason": "Reason", "stopReason": "", "suppressOutput": False, "systemMessage": "Reason"}),
-            ("gemini", {"continue": True, "decision": "deny", "reason": "Reason", "stopReason": "", "suppressOutput": False, "systemMessage": "Reason"}),
+            # claude/gemini no longer set systemMessage here —
+            # it duplicated the block reason as a second, independently
+            # rendered UI row (see test_bug_f_stop_block_does_not_duplicate_
+            # system_message above).
+            ("claude", {"continue": True, "decision": "block", "reason": "Reason", "stopReason": "", "suppressOutput": False}),
+            ("gemini", {"continue": True, "decision": "deny", "reason": "Reason", "stopReason": "", "suppressOutput": False}),
             ("qwen", {"decision": "block", "reason": "Reason"}),
             ("antigravity", {"decision": "continue", "reason": "Reason"}),
             ("codex", {"decision": "block", "reason": "Reason"}),
@@ -366,8 +390,9 @@ class TestDualPlatformResponse:
     @pytest.mark.parametrize(
         ("cli_type", "expected"),
         [
-            ("claude", {"continue": True, "decision": "block", "reason": "Reason", "stopReason": "", "suppressOutput": False, "systemMessage": "Reason"}),
-            ("gemini", {"continue": True, "decision": "deny", "reason": "Reason", "stopReason": "", "suppressOutput": False, "systemMessage": "Reason"}),
+            # Same systemMessage removal as test_stop_block_matrix_exact above.
+            ("claude", {"continue": True, "decision": "block", "reason": "Reason", "stopReason": "", "suppressOutput": False}),
+            ("gemini", {"continue": True, "decision": "deny", "reason": "Reason", "stopReason": "", "suppressOutput": False}),
             ("qwen", {"decision": "block", "reason": "Reason"}),
             ("antigravity", {"decision": "continue", "reason": "Reason"}),
             ("codex", {"decision": "block", "reason": "Reason"}),

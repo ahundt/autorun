@@ -181,7 +181,7 @@ def test_injection_unchanged_at_count_one(tmp_path):
     assert result is not None
     assert result.get("continue") is True
 
-    msg = result.get("systemMessage", "")
+    msg = result.get("reason", "")
     # The active hatch (heading + "this same set of ids has blocked Stop")
     # must NOT fire at count=1 — anti-abuse: only after min_consecutive blocks.
     assert "STALE-TASK ESCAPE HATCH" not in msg
@@ -211,7 +211,7 @@ def test_injection_augmented_at_threshold(tmp_path):
     result = mgr.handle_stop(ctx) # count=2 — threshold met
 
     assert result is not None
-    msg = result.get("systemMessage", "")
+    msg = result.get("reason", "")
     assert "CANNOT STOP" in msg
     assert "STALE-TASK ESCAPE HATCH" in msg
     assert "AUTORUN_TASKS_CLEAR_STALE_TASK(72)" in msg
@@ -347,7 +347,7 @@ def test_stop_marker_before_threshold_does_not_clear(tmp_path, monkeypatch):
     result = mgr.handle_stop(early_stop_ctx)
 
     assert result is not None
-    assert "CANNOT STOP" in result.get("systemMessage", "")
+    assert "CANNOT STOP" in result.get("reason", "")
     assert mgr.tasks["72"]["status"] == "in_progress"
 
 
@@ -380,7 +380,7 @@ def test_stop_marker_partial_clear_still_blocks_remaining_tasks(tmp_path, monkey
     result = mgr.handle_stop(_make_stop_ctx(tmp_path, transcript_text=_marker("72")))
 
     assert result is not None
-    msg = result.get("systemMessage", "")
+    msg = result.get("reason", "")
     assert "CANNOT STOP" in msg
     assert "#72" not in msg
     assert "#99" in msg
@@ -400,7 +400,7 @@ def test_disabled_feature_suppresses_injection(tmp_path, monkeypatch):
     result = mgr.handle_stop(ctx)
 
     assert result is not None
-    msg = result.get("systemMessage", "")
+    msg = result.get("reason", "")
     assert "STALE-TASK ESCAPE HATCH" not in msg
 
 
@@ -503,11 +503,11 @@ def test_ctx_override_precedence(tmp_path):
     mgr.handle_stop(ctx)  # count=1
     r2 = mgr.handle_stop(ctx)  # count=2 — below override threshold of 3
     assert r2 is not None
-    assert "STALE-TASK ESCAPE HATCH" not in r2.get("systemMessage", "")
+    assert "STALE-TASK ESCAPE HATCH" not in r2.get("reason", "")
 
     r3 = mgr.handle_stop(ctx)  # count=3 — at override threshold
     assert r3 is not None
-    assert "STALE-TASK ESCAPE HATCH" in r3.get("systemMessage", "")
+    assert "STALE-TASK ESCAPE HATCH" in r3.get("reason", "")
 
 
 # ─── Section 17: marker template integrity ───────────────────────────────────

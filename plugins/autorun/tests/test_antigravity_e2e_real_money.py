@@ -63,10 +63,18 @@ def test_antigravity_print_command_is_bounded_and_isolated(tmp_path, monkeypatch
     assert command[command.index("--print-timeout") + 1] == "90s"
 
 
-def test_antigravity_before_tool_denies_dangerous_command_without_daemon(tmp_path):
-    """Exercise the installed Antigravity schema through a real hook process."""
+def test_antigravity_pre_tool_use_denies_dangerous_command_without_daemon(tmp_path):
+    """Exercise the installed Antigravity schema through a real hook process.
+
+    Event name is "PreToolUse", not Gemini's "BeforeTool": Antigravity's tool
+    hooks use Claude-style names (platforms.py ANTIGRAVITY
+    harness_cli_to_autorun_events, citing antigravity.google/docs/cli-plugins);
+    only its model-lifecycle hooks use Pre/PostInvocation. Sending "BeforeTool"
+    here left the event unmapped, so the guard never ran and the hook returned
+    {"continue": true} — the test passed no safety property at all.
+    """
     payload = {
-        "hook_event_name": "BeforeTool",
+        "hook_event_name": "PreToolUse",
         "session_id": f"agy-e2e-{uuid.uuid4().hex}",
         "cwd": str(tmp_path),
         "tool_name": "run_shell_command",
@@ -80,8 +88,11 @@ def test_antigravity_before_tool_denies_dangerous_command_without_daemon(tmp_pat
     )
     assert result.returncode == 0, result.stderr
     response = json.loads(result.stdout)
+    # Antigravity's PreToolUse schema puts decision/reason at the JSON root and
+    # has no hookSpecificOutput wrapper (pretool_decision_location="root").
     assert response["decision"] == "deny"
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "trash" in response["reason"]
+    assert "hookSpecificOutput" not in response
 
 
 @pytest.mark.e2e

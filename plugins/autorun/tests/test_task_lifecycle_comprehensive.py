@@ -153,7 +153,7 @@ class TestSingleThreadedLifecycle:
         ctx = _stop_ctx("sl-partial")
         result = mgr.handle_stop(ctx)
         assert result is not None
-        msg = result.get("systemMessage", "")
+        msg = result.get("reason", "")
         assert "Task 4" in msg or "Task 5" in msg
 
     def test_paused_task_does_not_block_stop(self, isolated_session, cfg):
@@ -653,7 +653,7 @@ class TestStopHookBehavioralInvariants:
         ctx = _stop_ctx("sh-overflow")
         result = mgr.handle_stop(ctx)
         assert result is not None
-        msg = result.get("systemMessage", "")
+        msg = result.get("reason", "")
         assert "more" in msg.lower() or "..." in msg
 
     def test_subagentstop_skips_all_stop_logic(self, isolated_session, cfg):
@@ -999,7 +999,7 @@ class TestClaudeCodeBugScenarios:
         ctx = _stop_ctx("bug-100")
         result = mgr.handle_stop(ctx)
         assert result is not None
-        msg = result.get("systemMessage", "")
+        msg = result.get("reason", "")
         # Only 5 tasks shown, overflow message present
         assert "more" in msg.lower() or "95" in msg
 
@@ -1059,7 +1059,7 @@ class TestGeminiSpecificPaths:
         ctx = _stop_ctx("gem-msg", cli_type="gemini")
         result = mgr.handle_stop(ctx)
         assert result is not None
-        assert "delegated" in result.get("systemMessage", "").lower()
+        assert "delegated" in result.get("reason", "").lower()
 
     def test_gemini_after_agent_blocked_known_gap(self, isolated_session, cfg):
         """AfterAgent→Stop is Gemini's known gap — still blocks in_progress."""

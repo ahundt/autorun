@@ -2420,11 +2420,14 @@ class TestHumanVisibleNotifications:
         response = export_on_exit_plan_mode(ctx)
 
         assert response is None, "Should return None (chain notifications)"
-        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
+        # channel="both" (not "human") — the AI needs the export
+        # destination in its own context too, or it won't know a plan was
+        # archived (see TestPlanExportAIVisibility).
+        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "both"]
         assert len(human_msgs) >= 1, "Should have at least one human notification"
         assert any(m.startswith("📋") for m in human_msgs), \
             f"Notification should start with 📋, got: {human_msgs}"
-        assert any("Plan exported to" in m or "exported" in m.lower() for m in human_msgs), \
+        assert any("Plan exported" in m or "exported" in m.lower() for m in human_msgs), \
             f"Notification should mention export, got: {human_msgs}"
 
     def test_export_on_exit_plan_mode_dedup_notifies_with_path(self, temp_project):
@@ -2456,7 +2459,8 @@ class TestHumanVisibleNotifications:
         ctx1 = make_ctx()
         response1 = export_on_exit_plan_mode(ctx1)
         assert response1 is None, "Should return None (chain notifications)"
-        human1 = [msg for msg, ch in ctx1._chain_notifications if ch == "human"]
+        # channel="both", not "human" — see TestPlanExportAIVisibility.
+        human1 = [msg for msg, ch in ctx1._chain_notifications if ch == "both"]
         assert any("notes/" in m for m in human1), \
             f"First export should mention notes/ path, got: {human1}"
 
@@ -2464,7 +2468,7 @@ class TestHumanVisibleNotifications:
         ctx2 = make_ctx()
         response2 = export_on_exit_plan_mode(ctx2)
         assert response2 is None, "Should return None (chain notifications)"
-        human2 = [msg for msg, ch in ctx2._chain_notifications if ch == "human"]
+        human2 = [msg for msg, ch in ctx2._chain_notifications if ch == "both"]
         assert any("exported" in m.lower() or "📋" in m for m in human2), \
             f"Dedup should still notify about export, got: {human2}"
         assert any("notes/" in m for m in human2), \
@@ -2642,7 +2646,8 @@ class TestHumanVisibleNotifications:
         assert len(ctx._chain_notifications) == 1
         msg, channel = ctx._chain_notifications[0]
         assert "📋" in msg
-        assert channel == "human"
+        # channel="both", not "human" — see TestPlanExportAIVisibility.
+        assert channel == "both"
 
 
 # =============================================================================
@@ -3505,8 +3510,9 @@ class TestAcceptedRejectedRouting:
             "export_on_exit_plan_mode must return None (chain notification pattern)"
         )
         # Check chain notifications for the export message (stored as (message, channel) tuples)
+        # channel="both", not "human" — see TestPlanExportAIVisibility.
         notifications = getattr(ctx_post, '_chain_notifications', [])
-        human_msgs = [msg for msg, ch in notifications if ch == 'human']
+        human_msgs = [msg for msg, ch in notifications if ch == 'both']
         assert len(human_msgs) > 0, (
             "Bug 2b regression: Option 2 PostToolUse must notify even on dedup hit. "
             "Got no chain notifications — user left with no information about where plan was exported."
@@ -3585,8 +3591,9 @@ class TestAcceptedRejectedRouting:
             "export_on_exit_plan_mode must return None (chain notification pattern)"
         )
         # Check chain notifications for the export message (stored as (message, channel) tuples)
+        # channel="both", not "human" — see TestPlanExportAIVisibility.
         notifications = getattr(ctx_post, '_chain_notifications', [])
-        human_msgs = [msg for msg, ch in notifications if ch == 'human']
+        human_msgs = [msg for msg, ch in notifications if ch == 'both']
         assert len(human_msgs) > 0, (
             "Option 2 PostToolUse must notify even when plan was not in "
             "active_plans (removed by Option 1 recovery). Got no chain notifications."
@@ -3674,3 +3681,208 @@ class TestAcceptedRejectedRouting:
         finally:
             if plan_b.exists():
                 plan_b.unlink()
+
+
+class TestPlanExportAIVisibility:
+    """export_on_exit_plan_mode must tell the AI (not just the human
+    terminal) where the accepted plan was archived, via channel="both" so it
+    reaches hookSpecificOutput.additionalContext — previously channel="human"
+    meant the AI never learned the destination path.
+
+    Uses a plan file under neither project_dir nor Path.home(), standing in
+    for a customized Claude plansDirectory or a Gemini/Conductor
+    project-relative plan path — the source must show exactly,
+    with no shortening/guessing at a base directory.
+    """
+
+    def test_export_notification_reaches_ai_and_human_with_exact_source_path(self):
+        from autorun.plan_export import export_on_exit_plan_mode
+
+        with tempfile.TemporaryDirectory() as project_tmp, tempfile.TemporaryDirectory() as plan_tmp:
+            project_dir = Path(project_tmp)
+            (project_dir / "notes").mkdir()
+            # Deliberately outside project_dir AND Path.home() — e.g. a
+            # Conductor "conductor/tracks/" or GEMINI_PLANS_DIR location.
+            plan_file = Path(plan_tmp) / "some-other-plans-dir" / "my-plan.md"
+            plan_file.parent.mkdir(parents=True)
+            plan_file.write_text("# Test Plan\n\nExact source path test.")
+
+            with session_state(GLOBAL_SESSION_ID) as state:
+                state["tracking"] = {}
+                state["active_plans"] = {}
+
+            store = ThreadSafeDB()
+            ctx = EventContext(
+                session_id="test-bug-i-exact-path",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(project_dir)},
+                tool_result={"filePath": str(plan_file)},
+                store=store,
+            )
+
+            handler_result = export_on_exit_plan_mode(ctx)
+            assert handler_result is None, "handler only accumulates a chain notification"
+            # export_on_exit_plan_mode uses add_chain_notification + returns
+            # None by design; _run_chain flushes accumulated notifications via
+            # ctx.respond("allow", "") when no handler returns a dict directly.
+            assert ctx._chain_notifications, "export must accumulate a chain notification"
+            result = ctx.respond("allow", "")
+
+            assert result is not None, "export must produce a chain-flushed response"
+            hso = result.get("hookSpecificOutput", {})
+            additional_context = hso.get("additionalContext", "")
+            system_message = result.get("systemMessage", "")
+
+            # AI-visible: exact, unshortened source path (not a relative guess).
+            assert str(plan_file) in additional_context, (
+                f"AI-visible additionalContext must contain the exact source path. "
+                f"Got: {additional_context!r}"
+            )
+            # Destination shown relative to project_dir.
+            assert "notes/" in additional_context or "notes\\" in additional_context, (
+                f"AI-visible additionalContext must contain the project-relative destination. "
+                f"Got: {additional_context!r}"
+            )
+            # Human-visible channel carries the identical text (channel="both"
+            # is additive, not a swap).
+            assert system_message == additional_context, (
+                "channel=\"both\" must deliver identical text to human and AI"
+            )
+
+    def test_dedup_skip_still_reaches_ai_with_same_message_format(self):
+        """A second ExitPlanMode on an already-exported plan (dedup-skip
+        branch) must use the same unified message format as a fresh export —
+        no more skipped-only special case (Corrected Assumptions Ledger #10-#11)."""
+        from autorun.plan_export import export_on_exit_plan_mode
+
+        with tempfile.TemporaryDirectory() as project_tmp, tempfile.TemporaryDirectory() as plan_tmp:
+            project_dir = Path(project_tmp)
+            (project_dir / "notes").mkdir()
+            plan_file = Path(plan_tmp) / "dedup-plan.md"
+            plan_file.write_text("# Dedup Test Plan")
+
+            with session_state(GLOBAL_SESSION_ID) as state:
+                state["tracking"] = {}
+                state["active_plans"] = {}
+
+            store1 = ThreadSafeDB()
+            ctx1 = EventContext(
+                session_id="test-bug-i-dedup-1",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(project_dir)},
+                tool_result={"filePath": str(plan_file)},
+                store=store1,
+            )
+            export_on_exit_plan_mode(ctx1)
+            assert ctx1._chain_notifications
+
+            store2 = ThreadSafeDB()
+            ctx2 = EventContext(
+                session_id="test-bug-i-dedup-2",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(project_dir)},
+                tool_result={"filePath": str(plan_file)},
+                store=store2,
+            )
+            export_on_exit_plan_mode(ctx2)
+            assert ctx2._chain_notifications, "dedup-skip path must still notify"
+            second_result = ctx2.respond("allow", "")
+            hso = second_result.get("hookSpecificOutput", {})
+            additional_context = hso.get("additionalContext", "")
+            assert str(plan_file) in additional_context, (
+                f"Dedup-skip path must still show the exact source path. Got: {additional_context!r}"
+            )
+            assert second_result.get("systemMessage", "") == additional_context
+
+
+class TestPlanExportFailurePathsReachAI:
+    """Export failures must be visible to the AI, not just the human terminal.
+
+    The SUCCESS path uses channel="both", but the failure
+    paths kept the same defect: when no plan is found, or the copy itself
+    fails, the AI is told nothing and proceeds as if the plan were safely
+    archived. A silent failure is worse than the duplicate message that
+    out to remove — the AI cannot react to something it never sees.
+    """
+
+    def test_no_plan_found_notice_reaches_ai(self):
+        """ExitPlanMode with no resolvable plan must warn the AI, not only the human."""
+        from autorun.plan_export import export_on_exit_plan_mode
+
+        with tempfile.TemporaryDirectory() as project_tmp:
+            project_dir = Path(project_tmp)
+            (project_dir / "notes").mkdir()
+
+            with session_state(GLOBAL_SESSION_ID) as state:
+                state["tracking"] = {}
+                state["active_plans"] = {}
+
+            ctx = EventContext(
+                session_id="test-export-no-plan",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(project_dir)},
+                tool_result={},  # No filePath — nothing to export.
+                store=ThreadSafeDB(),
+            )
+
+            export_on_exit_plan_mode(ctx)
+            assert ctx._chain_notifications, "missing-plan case must notify"
+            result = ctx.respond("allow", "")
+            additional_context = result.get("hookSpecificOutput", {}).get(
+                "additionalContext", ""
+            )
+            assert "no plan content found" in additional_context.lower(), (
+                "The AI must see that the export did not happen, or it will "
+                "assume the plan was archived. Got: "
+                f"{additional_context!r}"
+            )
+
+    def test_export_failure_notifies_both_channels(self):
+        """A failed copy must surface an explicit failure notice to the AI."""
+        from autorun.plan_export import export_on_exit_plan_mode
+
+        with tempfile.TemporaryDirectory() as project_tmp, tempfile.TemporaryDirectory() as plan_tmp:
+            project_dir = Path(project_tmp)
+            (project_dir / "notes").mkdir()
+            plan_file = Path(plan_tmp) / "plan.md"
+            plan_file.write_text("# Plan\n\nbody")
+
+            with session_state(GLOBAL_SESSION_ID) as state:
+                state["tracking"] = {}
+                state["active_plans"] = {}
+
+            ctx = EventContext(
+                session_id="test-export-failure",
+                event="PostToolUse",
+                tool_name="ExitPlanMode",
+                tool_input={"cwd": str(project_dir)},
+                tool_result={"filePath": str(plan_file)},
+                store=ThreadSafeDB(),
+            )
+
+            # Simulate the copy failing (disk full, permissions, race deletion).
+            with patch.object(
+                PlanExport, "export",
+                return_value={"success": False, "error": "disk full"},
+            ):
+                export_on_exit_plan_mode(ctx)
+
+            assert ctx._chain_notifications, (
+                "A failed export must notify — silently dropping it leaves the "
+                "AI believing the plan was archived."
+            )
+            result = ctx.respond("allow", "")
+            additional_context = result.get("hookSpecificOutput", {}).get(
+                "additionalContext", ""
+            )
+            assert "export" in additional_context.lower(), (
+                f"Failure notice must mention the export. Got: {additional_context!r}"
+            )
+            assert "disk full" in additional_context, (
+                "Failure notice must carry the concrete cause so the AI can "
+                f"react appropriately. Got: {additional_context!r}"
+            )

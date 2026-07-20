@@ -290,7 +290,14 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     # Inject context for daemon lifecycle management.
     payload["_pid"] = get_stable_pid()
     if "_cwd" not in payload:
-        payload["_cwd"] = os.getcwd()
+        # Every supported harness reports the project directory in the payload's
+        # "cwd" field (Claude Code, Gemini CLI, Qwen Code, Antigravity, Codex).
+        # Prefer it over this process's own working directory: the two usually
+        # coincide, but not when the hook runs under the daemon, from a git
+        # worktree, or from a harness launched elsewhere — and plan_export.py's
+        # project_dir uses this value to choose which project's notes/ directory
+        # receives the archived plan.
+        payload["_cwd"] = payload.get("cwd") or os.getcwd()
 
     from .config import detect_cli_type
 

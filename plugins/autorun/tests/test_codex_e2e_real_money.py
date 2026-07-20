@@ -314,13 +314,23 @@ class TestCodexHookEntryPoint:
         assert rc == 0, f"Codex blocks through JSON, not exit 2. Full output in: {log_path}"
         assert resp is not None, f"Expected JSON stdout. Full output in: {log_path}"
         assert resp.get("decision") == "block"
-        assert resp.get("reason")
+        # Root "reason" must be ABSENT, not populated. Codex's parser
+        # (codex-rs/hooks/src/engine/output_parser.rs:144-158, parse_pre_tool_use)
+        # sets use_hook_specific_decision=true whenever hookSpecificOutput carries
+        # permissionDecision/permissionDecisionReason/updatedInput, and then reads
+        # block_reason ONLY from permissionDecisionReason. Root "reason" is read
+        # solely in the legacy else-branch, which this response shape never hits.
+        # Populating both made Codex's TUI render the same text twice, as separate
+        # "warning:" and "feedback:" rows (hook_cell.rs:804-812).
+        assert "reason" not in resp or not resp.get("reason")
         assert "continue" not in resp
         assert "stopReason" not in resp
         assert "suppressOutput" not in resp
         hook_output = resp.get("hookSpecificOutput", {})
         assert hook_output.get("hookEventName") == "PreToolUse"
         assert hook_output.get("permissionDecision") == "deny"
+        # The block text must survive on the one field Codex actually reads.
+        assert hook_output.get("permissionDecisionReason")
 
 
 @paid_codex_e2e

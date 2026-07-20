@@ -740,7 +740,11 @@ def run_direct() -> int:
         session_transcript=normalized["session_transcript"],
         store=ThreadSafeDB(),
         cli_type=cli_type,
-        cwd=payload.get("_cwd") or os.getcwd(),
+        # "cwd" is the harness-reported project directory; "_cwd" is the
+        # daemon-client injection of the same value. Prefer either over this
+        # process's cwd, which can point at a different project entirely and
+        # would send plan_export.py's archive to the wrong notes/ directory.
+        cwd=payload.get("_cwd") or payload.get("cwd") or os.getcwd(),
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
         transcript_path=normalized.get("transcript_path"),

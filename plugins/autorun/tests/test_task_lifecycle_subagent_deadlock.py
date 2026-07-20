@@ -217,7 +217,10 @@ class TestStopMessageIncludesDelegateOption:
         ctx = _stop_ctx("msg-stop", event="Stop")
         result = mgr.handle_stop(ctx)
         assert result is not None
-        msg = result.get("systemMessage", "")
+        # Stop block text lives in "reason"; "systemMessage" is deliberately
+        # unset because Claude Code renders it as a second, duplicate UI row
+        # (see response_to_reject_stop_and_continue in platforms.py).
+        msg = result.get("reason", "")
         assert "delegated" in msg.lower(), f"Stop message must mention 'delegated'. Got: {msg[:200]}"
 
     def test_session_start_message_mentions_delegated(self, isolated_session, isolated_config):
@@ -401,7 +404,10 @@ class TestGeminiCompatibility:
         ctx = _stop_ctx("gem-msg", event="Stop", cli_type="gemini")
         result = mgr.handle_stop(ctx)
         assert result is not None
-        assert "delegated" in result.get("systemMessage", "").lower()
+        # Stop block text lives in "reason"; "systemMessage" is deliberately
+        # unset because Claude Code renders it as a second, duplicate UI row
+        # (see response_to_reject_stop_and_continue in platforms.py).
+        assert "delegated" in result.get("reason", "").lower()
 
     def test_gemini_after_agent_blocked_known_gap(self, isolated_session, isolated_config):
         """[KNOWN GAP] AfterAgent → Stop still blocks if tasks in_progress.

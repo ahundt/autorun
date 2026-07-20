@@ -495,7 +495,12 @@ def try_daemon(stdin_data: str, cli_type: str) -> tuple[bool, int]:
         return False, 0
 
     payload.setdefault("_pid", os.getppid())
-    payload.setdefault("_cwd", os.getcwd())
+    # Every supported harness reports the project directory as "cwd". Prefer it
+    # over this process's own directory: plan_export.py's project_dir uses this
+    # value to pick which project's notes/ receives the archived plan, and the
+    # hook process is not guaranteed to run inside the project (daemon, git
+    # worktree, or a harness launched from elsewhere).
+    payload.setdefault("_cwd", payload.get("cwd") or os.getcwd())
     payload["cli_type"] = cli_type
     event_name = payload.get("hook_event_name", "unknown")
     connected = False

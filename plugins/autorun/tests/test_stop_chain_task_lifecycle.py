@@ -16,6 +16,7 @@ Tests verify:
 - Task reminders work without ar:plannew/ar:planrefine
 - Full chain dispatch with real EventContext + ThreadSafeDB
 """
+import threading
 import time
 import pytest
 
@@ -293,8 +294,11 @@ class TestFullStopChainDispatch:
         # result=None means no handler blocked; result with continue=True but
         # no decision/reason means allow through.
         if result is not None:
-            # If a result was returned, it should not be a task-lifecycle block
-            assert "CANNOT STOP" not in result.get("systemMessage", ""), (
+            # If a result was returned, it should not be a task-lifecycle block.
+            # Stop block text lives in "reason"; "systemMessage" is deliberately
+            # unset because Claude Code renders it as a second, duplicate UI row
+            # (see response_to_reject_stop_and_continue in platforms.py).
+            assert "CANNOT STOP" not in result.get("reason", ""), (
                 "Full Stop chain should not block when no tasks exist"
             )
 
@@ -487,9 +491,20 @@ class TestContextCompactionResilience:
                 f"Task #{i} created successfully",
             )
 
-        # Simulate post-compaction SessionStart
-        ctx = make_stop_ctx(session_id=sid, autorun_active=False)
-        ctx._event = "SessionStart"
+        # Simulate post-compaction SessionStart. EventContext.__setattr__ always
+        # routes through magic state persistence (core.py), so a post-hoc
+        # `ctx._event = "SessionStart"` never updates the real _event slot set
+        # at construction — the event must be passed to the constructor.
+        ctx = EventContext(
+            session_id=sid,
+            event="SessionStart",
+            prompt="",
+            tool_name="",
+            tool_input={},
+            tool_result="",
+            session_transcript=[],
+            store=ThreadSafeDB(),
+        )
         # Note: source='compact' comes in the payload, not stored on ctx directly
         result = manager.handle_session_start(ctx)
 
@@ -568,7 +583,7 @@ class TestPendingStopInjection:
     """Verify Stop-hook injection reaches AI via PostToolUse deferred delivery.
 
     Root bug: Stop events lack hookSpecificOutput support (HOOK_SCHEMAS hso:{}).
-    ctx.block(injection) → systemMessage only → user terminal, NOT AI context.
+    ctx.block(injection) → decision+reason only → user terminal, NOT AI context.
     Fix: handle_stop() stores injection in ctx.pending_stop_injection (session
     state) so deliver_pending_stop_injection PostToolUse handler can deliver it
     via additionalContext on the AI's next tool call.
@@ -593,7 +608,7 @@ class TestPendingStopInjection:
         pending = ctx.pending_stop_injection
         assert pending is not None, (
             "handle_stop() must store injection in ctx.pending_stop_injection. "
-            "Stop events have no hookSpecificOutput, so systemMessage only reaches "
+            "Stop events have no hookSpecificOutput, so decision+reason only reach "
             "the user terminal. pending_stop_injection defers AI delivery to PostToolUse."
         )
         assert "CANNOT STOP" in pending, (
@@ -728,7 +743,10 @@ class TestPostToolUseTaskCreateBlocksStop:
         assert stop_result.get("continue") is True, (
             "continue must be True to keep AI working (block stop)"
         )
-        assert "Fix login bug" in stop_result.get("systemMessage", ""), (
+        # Stop block text lives in "reason"; "systemMessage" is deliberately
+        # unset because Claude Code renders it as a second, duplicate UI row
+        # (see response_to_reject_stop_and_continue in platforms.py).
+        assert "Fix login bug" in stop_result.get("reason", ""), (
             "Stop message must include the task subject"
         )
 
@@ -772,7 +790,10 @@ class TestPostToolUseTaskCreateBlocksStop:
         stop_result = plugins.app._run_chain(stop_ctx, "Stop")
         # Stop should be allowed (result is None or no CANNOT STOP message)
         if stop_result is not None:
-            assert "CANNOT STOP" not in stop_result.get("systemMessage", ""), (
+            # Stop block text lives in "reason"; "systemMessage" is deliberately
+            # unset because Claude Code renders it as a second, duplicate UI row
+            # (see response_to_reject_stop_and_continue in platforms.py).
+            assert "CANNOT STOP" not in stop_result.get("reason", ""), (
                 "Stop should be allowed when all tasks are completed"
             )
 
@@ -819,7 +840,10 @@ class TestPostToolUseTaskCreateBlocksStop:
             "Stop must be blocked with 1 pending task (Task 3)"
         )
         assert stop_result.get("continue") is True
-        assert "Task 3" in stop_result.get("systemMessage", ""), (
+        # Stop block text lives in "reason"; "systemMessage" is deliberately
+        # unset because Claude Code renders it as a second, duplicate UI row
+        # (see response_to_reject_stop_and_continue in platforms.py).
+        assert "Task 3" in stop_result.get("reason", ""), (
             "Stop message must list the pending task"
         )
 
@@ -1030,7 +1054,10 @@ class TestWriteTodosRouting:
         stop_ctx = make_stop_ctx(session_id=sid, store=store)
         stop_result = plugins.app._run_chain(stop_ctx, "Stop")
         if stop_result is not None:
-            assert "CANNOT STOP" not in stop_result.get("systemMessage", ""), (
+            # Stop block text lives in "reason"; "systemMessage" is deliberately
+            # unset because Claude Code renders it as a second, duplicate UI row
+            # (see response_to_reject_stop_and_continue in platforms.py).
+            assert "CANNOT STOP" not in stop_result.get("reason", ""), (
                 "Stop should be allowed after write_todos completed all tasks"
             )
 
@@ -1183,4 +1210,212 @@ class TestPreToolUseMatcherRTKCompat:
         assert not found, (
             f"PreToolUse matcher includes unnecessary tools: {found}. "
             f"Only Write|Edit|Bash|ExitPlanMode needed. Matcher: {matchers}"
+        )
+
+
+# === Stop-block redelivery is scoped to one block generation ===
+
+class TestStopBlockRepeatedDeliverySuppression:
+    """Each Stop block delivers its injection to the AI exactly once — and
+    every NEW Stop block re-delivers, even when the text is byte-identical.
+
+    The re-delivery guarantee is the important half. handle_stop() re-arms
+    pending_stop_injection on every block precisely so an AI that keeps making
+    the same mistake keeps re-seeing the override actions (/ar:sos,
+    /ar:task-ignore). Suppressing identical text across blocks recreates the
+    "infinite non-overridable stop failure" that the re-arm exists to prevent:
+    the AI gets blocked forever while never re-learning how to resolve it.
+
+    De-duplication is therefore scoped to a single Stop block generation
+    (stop_block_count), never to message text, and never across blocks.
+    """
+
+    def test_repeated_identical_stop_blocks_keep_redelivering(self):
+        """An AI repeating the SAME mistake must keep receiving guidance.
+
+        Regression guard: a text-identity suppression that persists across
+        Stop blocks would silently stop feeding the AI its override
+        instructions from the second block onward.
+        """
+        sid = f"test-redeliver-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=TaskLifecycleConfig(enabled=True))
+        manager.create_task("1", {"subject": "Unfinished work"}, "created")
+
+        # Five consecutive Stop blocks with identical task state, each
+        # followed by real tool work (the realistic "AI keeps failing" loop).
+        for attempt in range(1, 6):
+            stop_ctx = make_stop_ctx(session_id=sid, store=store)
+            stop_result = plugins.app._run_chain(stop_ctx, "Stop")
+            assert stop_result is not None, f"Stop #{attempt} must block"
+            assert stop_ctx.pending_stop_injection, (
+                f"Stop #{attempt} must re-arm pending_stop_injection"
+            )
+
+            pt_ctx = EventContext(
+                session_id=sid, event="PostToolUse", tool_name="Bash",
+                tool_input={"command": "echo hi"}, tool_result="hi", store=store,
+            )
+            pt_result = plugins.app._run_chain(pt_ctx, "PostToolUse")
+            delivered = (pt_result or {}).get("hookSpecificOutput", {}).get(
+                "additionalContext", ""
+            )
+            assert "Unfinished work" in delivered, (
+                f"Stop block #{attempt} must re-deliver the task list to the AI "
+                f"even though the text is identical to the previous block. "
+                f"Got: {pt_result!r}"
+            )
+            assert "/ar:sos" in delivered or "ar:sos" in delivered, (
+                f"Stop block #{attempt} must re-deliver the override actions"
+            )
+
+    def test_single_stop_block_delivers_only_once(self):
+        """Within ONE Stop block, a second PostToolUse must not re-deliver.
+
+        The arm/clear slot makes each re-arm fire at most once; this pins that
+        property so a future change cannot turn one block into a repeat-printer.
+        """
+        sid = f"test-once-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=TaskLifecycleConfig(enabled=True))
+        manager.create_task("1", {"subject": "Unfinished work"}, "created")
+
+        stop_ctx = make_stop_ctx(session_id=sid, store=store)
+        plugins.app._run_chain(stop_ctx, "Stop")
+
+        first = plugins.app._run_chain(
+            EventContext(
+                session_id=sid, event="PostToolUse", tool_name="Bash",
+                tool_input={"command": "echo 1"}, tool_result="1", store=store,
+            ),
+            "PostToolUse",
+        )
+        assert "Unfinished work" in (first or {}).get(
+            "hookSpecificOutput", {}
+        ).get("additionalContext", ""), "First delivery must carry the task list"
+
+        second = plugins.app._run_chain(
+            EventContext(
+                session_id=sid, event="PostToolUse", tool_name="Bash",
+                tool_input={"command": "echo 2"}, tool_result="2", store=store,
+            ),
+            "PostToolUse",
+        )
+        assert "Unfinished work" not in (second or {}).get(
+            "hookSpecificOutput", {}
+        ).get("additionalContext", ""), (
+            f"No second delivery within the same Stop block. Got: {second!r}"
+        )
+
+    def test_concurrent_posttooluse_delivers_once_per_block(self):
+        """Parallel tool calls fire concurrent PostToolUse hooks; only one may
+        deliver. Without an atomic claim both can read the armed slot before
+        either clears it (TOCTOU), printing the block text twice.
+        """
+        sid = f"test-concurrent-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=TaskLifecycleConfig(enabled=True))
+        manager.create_task("1", {"subject": "Unfinished work"}, "created")
+
+        stop_ctx = make_stop_ctx(session_id=sid, store=store)
+        plugins.app._run_chain(stop_ctx, "Stop")
+
+        results = []
+        lock = threading.Lock()
+
+        def fire(n):
+            res = plugins.app._run_chain(
+                EventContext(
+                    session_id=sid, event="PostToolUse", tool_name="Bash",
+                    tool_input={"command": f"echo {n}"}, tool_result=str(n),
+                    store=store,
+                ),
+                "PostToolUse",
+            )
+            with lock:
+                results.append(res)
+
+        threads = [threading.Thread(target=fire, args=(n,)) for n in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        deliveries = [
+            r for r in results
+            if "Unfinished work" in (r or {}).get("hookSpecificOutput", {}).get(
+                "additionalContext", ""
+            )
+        ]
+        assert len(deliveries) == 1, (
+            f"Exactly one of the concurrent PostToolUse hooks may deliver the "
+            f"Stop-block text; got {len(deliveries)}."
+        )
+
+    def test_changed_stop_block_text_is_still_delivered(self):
+        """New task state must still be delivered — the guard is per-text, not permanent."""
+        sid = f"test-bug-a-changed-{time.time()}"
+        store = ThreadSafeDB()
+        manager = TaskLifecycle(session_id=sid, config=TaskLifecycleConfig(enabled=True))
+        manager.create_task("1", {"subject": "First task"}, "created")
+
+        stop_ctx1 = make_stop_ctx(session_id=sid, store=store)
+        plugins.app._run_chain(stop_ctx1, "Stop")
+        first_text = stop_ctx1.pending_stop_injection
+        pt_ctx1 = EventContext(
+            session_id=sid, event="PostToolUse", tool_name="Bash",
+            tool_input={"command": "echo hi"}, tool_result="hi", store=store,
+        )
+        plugins.app._run_chain(pt_ctx1, "PostToolUse")
+
+        # Task list changes — injection text must differ, so it must be delivered again.
+        manager.create_task("2", {"subject": "Second task"}, "created")
+        stop_ctx2 = make_stop_ctx(session_id=sid, store=store)
+        plugins.app._run_chain(stop_ctx2, "Stop")
+        second_text = stop_ctx2.pending_stop_injection
+        assert second_text != first_text
+
+        pt_ctx2 = EventContext(
+            session_id=sid, event="PostToolUse", tool_name="Bash",
+            tool_input={"command": "echo hi"}, tool_result="hi", store=store,
+        )
+        pt_result2 = plugins.app._run_chain(pt_ctx2, "PostToolUse")
+        assert pt_result2 is not None, (
+            "Changed Stop-block text must still be delivered on the next PostToolUse"
+        )
+        assert "Second task" in pt_result2.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+
+# === /ar:tasks off caveat only shown when actually relevant ===
+
+class TestStopBlockTasksOffCaveat:
+    """The Stop-block message must tell the AI that /ar:tasks off does
+    NOT affect Stop blocking — but only when the user has actually touched
+    /ar:tasks off (ctx.task_staleness_enabled is False), never unconditionally
+    on every block (per /ar:philosophy Principle 16, "Optimize for Common Case").
+    """
+
+    def test_caveat_shown_when_staleness_reminders_disabled(self):
+        sid = f"test-bug-c-off-{time.time()}"
+        manager = TaskLifecycle(session_id=sid, config=TaskLifecycleConfig(enabled=True))
+        manager.create_task("1", {"subject": "Task"}, "created")
+        ctx = make_stop_ctx(session_id=sid)
+        ctx.task_staleness_enabled = False
+        result = manager.handle_stop(ctx)
+        assert result is not None
+        assert "/ar:tasks off does NOT apply here" in result.get("reason", ""), (
+            f"Stop block must caveat /ar:tasks off when it was disabled. Got: {result}"
+        )
+
+    def test_caveat_absent_by_default(self):
+        """Common case: /ar:tasks off was never touched — no caveat noise."""
+        sid = f"test-bug-c-default-{time.time()}"
+        manager = TaskLifecycle(session_id=sid, config=TaskLifecycleConfig(enabled=True))
+        manager.create_task("1", {"subject": "Task"}, "created")
+        ctx = make_stop_ctx(session_id=sid)
+        assert ctx.task_staleness_enabled is True, "Default must be enabled"
+        result = manager.handle_stop(ctx)
+        assert result is not None
+        assert "/ar:tasks off does NOT apply here" not in result.get("reason", ""), (
+            f"Stop block must NOT show the caveat in the common case. Got: {result}"
         )

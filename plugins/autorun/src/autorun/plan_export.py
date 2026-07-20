@@ -1151,25 +1151,55 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
             result = exporter.export(plan)
             logger.info(f"export_on_exit_plan_mode: export result={result}")
             if result["success"] and config.notify_claude:
-                # Build export notification message
-                export_msg = f"📋 {result['message']}"
-                if result.get("skipped"):
-                    dest = result.get("destination", "")
-                    if dest:
-                        try:
-                            rel = Path(dest).relative_to(exporter.project_dir)
-                            export_msg = f"📋 Plan exported to {rel}"
-                        except ValueError:
-                            export_msg = f"📋 Plan exported to {dest}"
+                # Shows both source and destination so the reader (including
+                # the AI, via channel="both" below) knows which file to keep
+                # editing vs. which is the archived snapshot. Source is the
+                # exact `plan` path, unshortened: plan-file location is NOT
+                # one fixed directory — Claude Code defaults to
+                # ~/.claude/plans/ but this is configurable (plansDirectory
+                # in .claude/settings.json), and Gemini CLI (including its
+                # Conductor extension) stores plans project-relatively
+                # (GEMINI_PLANS_DIR). A shortened/relative guess would force
+                # the reader to infer the wrong base directory for whichever
+                # harness/config produced this path.
+                # dest is populated whether this is a fresh export or a
+                # dedup-skip (plan_export.py:733,755) — one branch covers both.
+                dest = result.get("destination", "")
+                if dest:
+                    try:
+                        dest_display = str(Path(dest).relative_to(exporter.project_dir))
+                    except ValueError:
+                        dest_display = dest
+                    export_msg = f"📋 Plan exported from {plan} to: {dest_display}"
+                else:
+                    export_msg = f"📋 {result['message']}"
 
                 # Always chain-notify for ExitPlanMode — never stop the chain.
                 # detect_plan_approval (downstream) handles approval-specific logic.
-                ctx.add_chain_notification(export_msg, channel="human")
+                # channel="both": the AI needs this in its own context
+                # (additionalContext), not just the human's terminal
+                # (systemMessage), or it won't know a plan was archived and
+                # will keep editing only the original working copy.
+                ctx.add_chain_notification(export_msg, channel="both")
                 return None
+            if not result["success"]:
+                # channel="both": a silently-dropped failure is worse than a
+                # duplicate message — the AI would keep working believing the
+                # plan was archived, and would never re-export or warn anyone.
+                # Carries the concrete cause so the AI can react (retry, pick a
+                # different destination, or tell the user).
+                ctx.add_chain_notification(
+                    f"⚠️ Plan export FAILED for {plan}: "
+                    f"{result.get('error', 'unknown error')}. "
+                    f"The plan was NOT archived.",
+                    channel="both",
+                )
         else:
+            # channel="both" for the same reason as the failure branch above:
+            # the AI must not assume an archive exists when none was written.
             ctx.add_chain_notification(
                 "⚠️ Plan export: no plan content found for export",
-                channel="human"
+                channel="both"
             )
     except SessionTimeoutError:
         return ctx.respond("allow", "⚠️ Plan export skipped: lock timeout. Re-trigger ExitPlanMode to retry.", to_human=True)

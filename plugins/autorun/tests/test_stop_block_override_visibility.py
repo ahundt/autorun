@@ -262,10 +262,14 @@ def test_override_visible_for_codex_cli_type(
         last_response = manager.handle_stop(ctx)
         last_ctx = ctx
 
-    sys_msg = last_response.get("systemMessage", "")
+    # Codex's Stop response is decision+reason only (CodexHookProtocol's
+    # stop_response_uses_only_decision_and_reason=True, platforms.py) — it
+    # never populates systemMessage. Assert on "reason", the field Codex's
+    # Stop response actually carries, not systemMessage (which stays empty).
+    reason = last_response.get("reason", "")
     pending = last_ctx.pending_stop_injection or ""
-    assert CODEX_OVERRIDE_SOS in sys_msg
-    assert CODEX_OVERRIDE_TASK_IGNORE in sys_msg
+    assert CODEX_OVERRIDE_SOS in reason
+    assert CODEX_OVERRIDE_TASK_IGNORE in reason
     assert CODEX_OVERRIDE_SOS in pending
     assert CODEX_OVERRIDE_TASK_IGNORE in pending
 
@@ -332,7 +336,10 @@ def test_base_injection_includes_task_subject_and_count(
 
     ctx = _make_stop_ctx(sid, cli_type="claude")
     resp = manager.handle_stop(ctx)
-    sys_msg = resp.get("systemMessage", "")
+    # Stop block text lives in "reason"; "systemMessage" is deliberately
+    # unset because Claude Code renders it as a second, duplicate UI row
+    # (see response_to_reject_stop_and_continue in platforms.py).
+    sys_msg = resp.get("reason", "")
     assert "CANNOT STOP" in sys_msg
     assert "Task seed0" in sys_msg
     assert OVERRIDE_SOS in sys_msg
@@ -371,7 +378,10 @@ def test_first_stop_block_mentions_stale_task_ai_escape_path(
 
     ctx = _make_stop_ctx(sid, cli_type="claude")
     resp = manager.handle_stop(ctx)
-    sys_msg = resp.get("systemMessage", "")
+    # Stop block text lives in "reason"; "systemMessage" is deliberately
+    # unset because Claude Code renders it as a second, duplicate UI row
+    # (see response_to_reject_stop_and_continue in platforms.py).
+    sys_msg = resp.get("reason", "")
     pending = ctx.pending_stop_injection or ""
 
     # Either the literal marker shape or the docstring keyword must be present
@@ -401,7 +411,10 @@ def test_every_stop_block_mentions_ai_escape_path(
     for i in range(5):
         ctx = _make_stop_ctx(sid, cli_type=cli_type, store=store)
         resp = manager.handle_stop(ctx)
-        sys_msg = resp.get("systemMessage", "")
+        # Stop block text lives in "reason"; "systemMessage" is deliberately
+        # unset because Claude Code renders it as a second, duplicate UI row
+        # (see response_to_reject_stop_and_continue in platforms.py).
+        sys_msg = resp.get("reason", "")
         assert (
             "AUTORUN_TASKS_CLEAR_STALE_TASK" in sys_msg
             or "stale-clear marker" in sys_msg

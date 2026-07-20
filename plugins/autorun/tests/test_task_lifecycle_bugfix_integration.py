@@ -495,10 +495,12 @@ class TestChainOrderingBugFix:
 
         result = export_on_exit_plan_mode(ctx)
         assert result is None, "Should return None (chain notifications)"
-        # Diagnostic notification about no plan content found
-        human_msgs = [msg for msg, ch in ctx._chain_notifications if ch == "human"]
-        assert any("no plan content" in m for m in human_msgs), \
-            f"Should have diagnostic about no plan content, got: {human_msgs}"
+        # Diagnostic notification about no plan content found. channel="both",
+        # not "human": the AI must also learn the export did not happen, or it
+        # proceeds believing the plan was archived.
+        msgs = [msg for msg, ch in ctx._chain_notifications if ch == "both"]
+        assert any("no plan content" in m for m in msgs), \
+            f"Should have diagnostic about no plan content, got: {msgs}"
 
     def test_run_chain_flush_catches_orphan_notifications(self):
         """If all handlers return None but notifications accumulated, _run_chain flushes them."""
