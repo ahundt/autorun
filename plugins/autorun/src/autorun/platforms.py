@@ -518,6 +518,12 @@ class Platform:
     task_review_tools: frozenset[str] = field(default_factory=frozenset)
     task_bulk_tools: frozenset[str] = field(default_factory=frozenset)
     task_plan_tools: frozenset[str] = field(default_factory=frozenset)
+    # Status values this harness's own task-update tool accepts. Guidance must
+    # never name a value absent here: the AI would call it and get a hard
+    # validation error instead of the action autorun offered it. Empty means
+    # "unverified", which routes guidance to autorun's harness-independent
+    # marker instead — safe for any harness, including ones not listed above.
+    native_task_statuses: frozenset[str] = field(default_factory=frozenset)
 
     # === Autorun prompt commands ===
     # Autorun command handlers are registered in canonical /ar:* form. Some
@@ -666,6 +672,11 @@ CLAUDE = register(
         task_create_tools=frozenset({"TaskCreate"}),
         task_update_tools=frozenset({"TaskUpdate"}),
         task_review_tools=frozenset({"TaskList", "TaskGet"}),
+        # Verified against the live tool: TaskUpdate rejects anything else with
+        # InputValidationError ('expected one of "pending"|"in_progress"|
+        # "completed" ... expected "deleted"'). Notably absent: "delegated",
+        # which autorun tracks internally but Claude Code's tool cannot set.
+        native_task_statuses=frozenset({"pending", "in_progress", "completed", "deleted"}),
         supports_additional_context_events=frozenset({"UserPromptSubmit", "PostToolUse"}),
         # event maps left empty: Claude events are canonical (identity).
         autorun_to_harness_cli_events={

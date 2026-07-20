@@ -75,13 +75,51 @@ _ACT_DISCARD = '{task_update}({task_id_param}="X", status="deleted")'
 # must not depend on the threshold being met.
 # The marker literal lives in CONFIG["ghost_clear_marker_template"]
 # (single source of truth, enforced by test_marker_literal_single_source_of_truth).
-_ACT_STALE_AI_ESCAPE = (
-    "If a task above is stale (Claude's TaskList does not show it or "
-    'TaskUpdate returns "Task not found"), retry — after '
+# {task_list}/{task_update}/{task_progress} are resolved per harness by
+# core.py's placeholder substitution. Spelling either tool literally here sent
+# Claude's tool names to every harness — a Codex transcript showed "Claude's
+# TaskList ... TaskUpdate returns" inside a message that otherwise correctly
+# said update_plan, naming two tools Codex does not have.
+_ACT_STALE_AI_ESCAPE_TASK_TOOLS = (
+    "If a task above is stale ({task_list} does not show it or "
+    '{task_update} returns "Task not found"), retry — after '
     "{threshold} identical Stop blocks an AI-callable stale-clear marker "
     "({marker}) becomes printable to mark "
     "those ids ignored without user intervention."
 )
+_ACT_STALE_AI_ESCAPE_CHECKLIST = (
+    "If an item above is stale (it no longer appears in {task_progress}), "
+    "retry — after {threshold} identical Stop blocks an AI-callable "
+    "stale-clear marker ({marker}) becomes printable to mark those ids "
+    "ignored without user intervention."
+)
+
+
+def _stale_escape_sentence(cli_type: str | None, *, threshold: int, marker: str) -> str:
+    """Stale-task escape wording in the harness's own task vocabulary."""
+    template = (
+        _ACT_STALE_AI_ESCAPE_CHECKLIST
+        if platform_for(cli_type).task_management_style == "plan_checklist"
+        else _ACT_STALE_AI_ESCAPE_TASK_TOOLS
+    )
+    # Only threshold/marker are substituted here; the {task_*} placeholders stay
+    # for core.py to resolve against the running harness.
+    return template.replace("{threshold}", str(threshold)).replace("{marker}", marker)
+
+
+def _delegate_action(cli_type: str | None) -> str:
+    """Return a delegation action the running harness can actually perform.
+
+    Prefers the harness's own task-update tool when it accepts "delegated".
+    No supported harness does today — Claude Code's TaskUpdate rejects the
+    value with InputValidationError — so this normally yields autorun's
+    marker, which works everywhere because autorun parses it out of the AI's
+    own output rather than asking the harness's tool to accept a status it
+    does not define.
+    """
+    if "delegated" in platform_for(cli_type).native_task_statuses:
+        return _ACT_DELEGATE
+    return f"print {_delegate_marker_example()}"
 
 
 def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled: bool = False) -> str:
@@ -105,7 +143,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         f"Actions: 1. You must complete or discard each task before stopping "
         f"2. Review: {_ACT_REVIEW} "
         f"3. Do the work, then: {_ACT_COMPLETE} "
-        f"4. Delegate to subagent first: {_ACT_DELEGATE} (marks task non-blocking while subagent runs) "
+        f"4. Delegate to subagent first: {_delegate_action(cli_type)} (marks task non-blocking while subagent runs) "
         f"5. Or discard: {_ACT_DISCARD} "
         f"6. Override: {act_override} "
     )
@@ -233,17 +271,37 @@ def _reset_ghost_counter(metadata: dict) -> None:
 @cache
 def _stale_clear_marker_regex() -> re.Pattern:
     """Regex derived from the configured stale-clear marker template."""
-    template = CONFIG["ghost_clear_marker_template"]
+    return _marker_regex(CONFIG["ghost_clear_marker_template"])
+
+
+@cache
+def _marker_regex(template: str) -> re.Pattern:
+    """Regex matching one AI-printable marker template's {id} slot."""
     prefix, suffix = template.split("{id}")
     return re.compile(re.escape(prefix) + r"([A-Za-z0-9_.-]+)" + re.escape(suffix))
 
 
-def extract_stale_clear_task_ids(*texts: object) -> list[str]:
-    """Return unique task ids from configured stale-clear markers."""
+def _extract_marker_task_ids(template: str, *texts: object) -> list[str]:
+    """Return unique task ids matching one marker template across texts."""
     combined = "".join(text for text in texts if isinstance(text, str) and text)
     if not combined:
         return []
-    return list(dict.fromkeys(str(match) for match in _stale_clear_marker_regex().findall(combined)))
+    return list(dict.fromkeys(str(m) for m in _marker_regex(template).findall(combined)))
+
+
+def extract_stale_clear_task_ids(*texts: object) -> list[str]:
+    """Return unique task ids from configured stale-clear markers."""
+    return _extract_marker_task_ids(CONFIG["ghost_clear_marker_template"], *texts)
+
+
+def extract_delegate_task_ids(*texts: object) -> list[str]:
+    """Return unique task ids from configured delegation markers."""
+    return _extract_marker_task_ids(CONFIG["delegate_marker_template"], *texts)
+
+
+def _delegate_marker_example() -> str:
+    """Delegation marker with a placeholder id, for guidance text."""
+    return CONFIG["delegate_marker_template"].replace("{id}", "<id>")
 
 
 # === TaskLifecycle Class ===
@@ -1135,6 +1193,19 @@ class TaskLifecycle:
             task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} ({icon})")
             total_shown += 1
 
+        # Every incomplete task can be older than recent_task_days — a session
+        # resumed after a break. Listing only "recent" tasks then produced a
+        # message that named nothing and counted the same tasks twice, once as
+        # "and N more" and again as "N older". Naming them is the whole point of
+        # the message, so fall back to the older ones rather than emitting a
+        # bare count.
+        named_older: list[dict] = []
+        if not task_items and older_incomplete:
+            for t in older_incomplete[: max_tasks - total_shown]:
+                task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (📅 older)")
+                named_older.append(t)
+                total_shown += 1
+
         # Show delegated tasks (non-blocking but need follow-up if child failed)
         delegated_tasks = delegated_all
         for t in delegated_tasks[: max_tasks - total_shown]:
@@ -1143,15 +1214,41 @@ class TaskLifecycle:
 
         task_list = " ".join(task_items)
         total = len(incomplete)
-        older_count = len(older_incomplete)
+        # Subtract the older tasks already named above: counting them again in
+        # the "older" suffix reported one set of tasks as two.
+        older_count = len(older_incomplete) - len(named_older)
         overflow = f" [... and {total - total_shown} more: use /task-status to see all]" if total > total_shown else ""
         older = f" [📅 {older_count} older task(s) from previous days also incomplete]" if older_count > 0 else ""
 
         injection = (
             f"🔄 incomplete tasks from previous session: {task_list}{overflow}{older}\n"
             f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
-            f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
+            f"7. {_stale_escape_sentence(_task_cli_hint(ctx), threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
         )
+
+        # SessionStart can fire repeatedly within one session: harnesses emit it
+        # for startup, resume, and post-compaction, and a Codex transcript showed
+        # six consecutive fires rendering the identical block six times. Claim
+        # each (source, injection) pair once, inside atomic_update_metadata's
+        # lock so concurrent fires cannot both claim it.
+        #
+        # Deliberately keyed on the injection text and not on the session alone:
+        # a changed task list still re-injects (the AI needs the new task), and a
+        # different source still re-injects (compaction wipes the context that
+        # held the previous copy). Only an identical repeat is suppressed.
+        claim_key = f"{getattr(ctx, 'source', '') or ''}:{hashlib.sha256(injection.encode()).hexdigest()[:16]}"
+        claimed = False
+
+        def claim_session_start_injection(metadata):
+            nonlocal claimed
+            if metadata.get("last_session_start_injection") == claim_key:
+                return
+            metadata["last_session_start_injection"] = claim_key
+            claimed = True
+
+        self.atomic_update_metadata(claim_session_start_injection)
+        if not claimed:
+            return None
 
         # Log resume event
         self.log_event("RESUME", "session", f"{total} incomplete tasks", "multiple")
@@ -1269,7 +1366,7 @@ class TaskLifecycle:
         injection = (
             f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
             f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
-            f"7. {_ACT_STALE_AI_ESCAPE.format(threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
+            f"7. {_stale_escape_sentence(_task_cli_hint(ctx), threshold=min_consecutive, marker=_stale_clear_marker_example())}\n"
         )
 
         if ghost_enabled and consecutive >= min_consecutive:
@@ -1361,6 +1458,44 @@ class TaskLifecycle:
             except Exception:
                 continue
         return cleared
+
+    def delegate_tasks_from_markers(
+        self,
+        task_ids: Iterable[str],
+        *,
+        allowed_task_ids: Iterable[str] | None = None,
+    ) -> list[str]:
+        """Mark task ids delegated from AI-printed delegation markers.
+
+        "delegated" is in NON_BLOCKING_STATUSES, so this releases a Stop block
+        while keeping the task visible for follow-up if the subagent fails.
+        Unlike the stale-clear marker there is no armed threshold: delegation
+        is a normal, immediate action the AI takes before spawning a subagent,
+        not an escape hatch guarded against abuse — and it is strictly safer
+        than the alternatives already offered (completed/deleted), since a
+        delegated task stays listed and resurfaces at SessionStart.
+
+        Args:
+            task_ids: Task ids extracted from the delegation marker template.
+            allowed_task_ids: Optional current blocking task-id set. When
+                provided, markers naming unrelated or already non-blocking
+                tasks are ignored, matching clear_stale_task_markers().
+        """
+        reason = CONFIG["delegate_reason"]
+        delegated: list[str] = []
+        allowed = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids is not None else None
+        for tid in list(dict.fromkeys(str(task_id) for task_id in task_ids)):
+            if allowed is not None and tid not in allowed:
+                continue
+            try:
+                # update_task returns None on success and "ghost_skip" when
+                # ghost-task protection refused the write.
+                if self.update_task(tid, {"status": "delegated"}, reason) != "ghost_skip":
+                    delegated.append(tid)
+                    self.log_event("DELEGATE", f"task#{tid}", reason, "delegated")
+            except Exception:
+                continue
+        return delegated
 
     def get_plan_approval_injection(self, ctx) -> Optional[str]:
         """Get plan task context as injection string for plan acceptance.

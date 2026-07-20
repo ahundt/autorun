@@ -639,6 +639,16 @@ CONFIG = {
     # re.escape) derive from this one string.
     "ghost_clear_marker_template": "AUTORUN_TASKS_CLEAR_STALE_TASK({id})",
 
+    # SINGLE SOURCE OF TRUTH for the delegation marker, same derivation rules as
+    # the stale-clear marker above. Exists because "delegated" is an autorun
+    # status, not a harness one: no supported harness's task-update tool accepts
+    # it (Claude Code's TaskUpdate rejects it with InputValidationError), so the
+    # AI needs a way to request delegation that does not depend on the harness's
+    # tool schema. Printing this marker is that way.
+    "delegate_marker_template": "AUTORUN_TASK_DELEGATED({id})",
+
+    "delegate_reason": "delegated to a subagent via marker; non-blocking until it reports back",
+
     "ghost_clear_reason": (
         "stale ref: marker emitted after "
         "ghost_clear_min_consecutive_blocks identical stop blocks"
