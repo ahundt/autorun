@@ -39,6 +39,7 @@ Architecture:
 from typing import Optional, Dict, List, Callable
 from pathlib import Path
 from dataclasses import dataclass, asdict
+import contextlib
 import copy
 import hashlib
 import json
@@ -396,9 +397,29 @@ class TaskLifecycle:
 
     # === State Access (REUSES session_state() - DRY) ===
 
+    def _daemon_serialized(self):
+        """Take turns with other daemon threads; a no-op for standalone use."""
+        if self.ctx is None:
+            return contextlib.nullcontext()
+        return self.ctx.state_synchronized(session_id=self.global_key)
+
+    @contextlib.contextmanager
     def _session_state(self):
-        """Open this task lifecycle session with the configured hook lock budget."""
-        return session_state(self.global_key, timeout=self._state_lock_timeout)
+        """Open this task lifecycle session with the configured hook lock budget.
+
+        Serialized against the daemon's other state access whenever a hook
+        supplies a context. Parallel tool calls in one assistant turn make the
+        harness fire several PostToolUse hooks at once, and the daemon runs
+        them on separate threads of a shared pool. Racing them for this
+        session's file lock on a sub-second budget loses the losers' writes,
+        which strands a task the AI already completed at its previous status:
+        Stop then blocks on it forever, and the harness — which did complete
+        it — answers "Task not found" to every repair attempt. Every other
+        daemon write path already holds this lock across the file lock.
+        """
+        with self._daemon_serialized():
+            with session_state(self.global_key, timeout=self._state_lock_timeout) as state:
+                yield state
 
     def _migrate_if_needed(self, state: Dict) -> None:
         """Migrate stored state to current schema version (lazy self-healing).
@@ -2217,6 +2238,31 @@ def is_enabled() -> bool:
     return TaskLifecycleConfig.load().enabled
 
 
+def _report_tracking_failure(ctx: EventContext, error: Exception) -> None:
+    """Say out loud that a task operation never reached autorun's mirror.
+
+    Sent to the AI as well as the user because only the AI can repair it: it
+    still holds the intent and can re-issue the call, while the harness's own
+    task list already shows the operation as done.
+    """
+    tool_input = ctx.tool_input or {}
+    task_id = tool_input.get("taskId") or tool_input.get("id")
+    status = tool_input.get("status")
+    target = f"task #{task_id}" if task_id else f"the {ctx.tool_name} call"
+    if status:
+        target += f" (status={status})"
+    try:
+        ctx.add_chain_notification(
+            f"⚠️ autorun did not record {target}: {error}. The tool call itself "
+            "succeeded, so autorun's task mirror is now out of date — re-issue "
+            "the same update to resync it, otherwise a later Stop can block on "
+            "a task that is already finished.",
+            channel="both",
+        )
+    except Exception as notify_error:  # noqa: BLE001 - reporting must not block the tool
+        logger.warning(f"Could not report task tracking failure: {notify_error}")
+
+
 def register_hooks(app_instance) -> None:
     """Register all task lifecycle hooks (if enabled).
 
@@ -2343,7 +2389,12 @@ def register_hooks(app_instance) -> None:
 
         except Exception as e:
             logger.warning(f"Task tracking error: {e}")
-            # Fail-open: don't break hook chain on tracking errors
+            # Fail open so tracking never blocks a tool — but never silently.
+            # The tool call itself succeeded, so nothing else tells the AI that
+            # autorun's mirror now disagrees with the harness. Unreported, the
+            # mismatch resurfaces much later as a Stop block naming a task that
+            # is already finished and can no longer be updated.
+            _report_tracking_failure(ctx, e)
 
         return None  # Always allow tool to complete
 

@@ -19,6 +19,7 @@ Test isolation:
 - No tests touch production data in ~/.claude/sessions/
 - Each test class has its own fixture for clean state
 """
+import contextlib
 import os
 import shutil
 import time
@@ -464,6 +465,16 @@ class TestGarbageCollection:
         class FakeCtx:
             session_id = "timeout-hook-test"
             cli_type = "claude"
+
+            @contextlib.contextmanager
+            def state_synchronized(self, *, session_id=None):
+                """Task state serializes against daemon state before locking.
+
+                Mirrors EventContext's no-store behaviour, which yields
+                straight through: outside the daemon there is no shared cache
+                to take turns with, so only the file lock orders writers.
+                """
+                yield
 
         hook_manager = TaskLifecycle(ctx=FakeCtx(), config=isolated_config)
         assert hook_manager.tasks == {}

@@ -544,28 +544,55 @@ class ThreadSafeDB:
             self._cache[key] = cached
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
 
-    def synchronize_session(self, session_id: str, operation: Callable[[], Any]) -> Any:
-        """Run a legacy state operation and refresh its cache before unlocking."""
+    @contextlib.contextmanager
+    def synchronized_session(self, session_id: str):
+        """Serialize direct persistence for one session against daemon state.
+
+        Hook threads share one pool, so several handlers can reach the state
+        file for the same session at the same instant and contend for a lock
+        budget measured in fractions of a second. Holding this lock across the
+        file lock makes them queue instead of race — the same ordering
+        ``update`` and ``_persist_many`` already rely on.
+        """
         with self._lock:
             try:
-                result = operation()
+                yield
             finally:
-                prefix = f"{session_id}:"
-                for key in [key for key in self._cache if key.startswith(prefix)]:
-                    del self._cache[key]
-                self._loaded_sessions.discard(session_id)
-                try:
-                    with session_state(session_id, timeout=self._state_timeout) as state:
-                        for field, value in state.items():
-                            self._cache[f"{session_id}:{field}"] = value
-                    self._loaded_sessions.add(session_id)
-                except Exception as e:
-                    logger.warning(
-                        "ThreadSafeDB could not refresh %r after external mutation: %s",
-                        session_id,
-                        e,
-                    )
-            return result
+                # Only sessions the cache actually holds can go stale. Skipping
+                # the rest keeps callers that own a private key space (task
+                # lifecycle state, for one) from paying a file read per write.
+                if self._has_cached_fields(session_id):
+                    self._refresh_session_cache(session_id)
+
+    def synchronize_session(self, session_id: str, operation: Callable[[], Any]) -> Any:
+        """Run a legacy state operation and refresh its cache before unlocking."""
+        with self.synchronized_session(session_id):
+            return operation()
+
+    def _has_cached_fields(self, session_id: str) -> bool:
+        """True when the daemon cache holds anything for this session."""
+        if session_id in self._loaded_sessions:
+            return True
+        prefix = f"{session_id}:"
+        return any(key.startswith(prefix) for key in self._cache)
+
+    def _refresh_session_cache(self, session_id: str) -> None:
+        """Re-read one session so cached fields match what is on disk."""
+        prefix = f"{session_id}:"
+        for key in [key for key in self._cache if key.startswith(prefix)]:
+            del self._cache[key]
+        self._loaded_sessions.discard(session_id)
+        try:
+            with session_state(session_id, timeout=self._state_timeout) as state:
+                for field, value in state.items():
+                    self._cache[f"{session_id}:{field}"] = value
+            self._loaded_sessions.add(session_id)
+        except Exception as e:
+            logger.warning(
+                "ThreadSafeDB could not refresh %r after external mutation: %s",
+                session_id,
+                e,
+            )
 
     @contextlib.contextmanager
     def batch_writes(self):
@@ -1309,6 +1336,23 @@ class EventContext:
             state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
         return value
 
+    @contextlib.contextmanager
+    def state_synchronized(self, *, session_id: str | None = None):
+        """Scope a direct persistence block so daemon threads take turns.
+
+        The context-manager form for callers whose persistence is already a
+        ``with`` block and cannot be inverted into a callable. Outside the
+        daemon there is no shared cache to serialize against, so this is a
+        no-op and the file lock alone orders concurrent processes.
+        """
+        store = object.__getattribute__(self, "_store")
+        target_session = session_id or object.__getattribute__(self, "_session_id")
+        if not store:
+            yield
+            return
+        with store.synchronized_session(target_session):
+            yield
+
     def state_synchronize(
         self,
         operation: Callable[[], Any],
@@ -1316,11 +1360,8 @@ class EventContext:
         session_id: str | None = None,
     ) -> Any:
         """Run a direct persistence operation without exposing stale daemon state."""
-        store = object.__getattribute__(self, "_store")
-        target_session = session_id or object.__getattribute__(self, "_session_id")
-        if store:
-            return store.synchronize_session(target_session, operation)
-        return operation()
+        with self.state_synchronized(session_id=session_id):
+            return operation()
 
     # === MAGIC STATE: __getattr__ / __setattr__ ===
     def __getattr__(self, name: str):
