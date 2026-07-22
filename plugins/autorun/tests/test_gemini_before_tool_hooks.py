@@ -23,9 +23,18 @@ import pytest
 import shutil
 from packaging.version import InvalidVersion, Version
 
+from e2e_support import (
+    RETIRED_GEMINI_BACKEND_REASON,
+    retired_gemini_backend_enabled,
+)
+
 pytestmark = pytest.mark.e2e
 CLI_VERSION_TIMEOUT_SECONDS = 10
 MINIMUM_GEMINI_HOOK_VERSION = Version("0.28.0")
+retired_gemini_model = pytest.mark.skipif(
+    not retired_gemini_backend_enabled(),
+    reason=RETIRED_GEMINI_BACKEND_REASON,
+)
 
 # Add src to path for tmux_utils import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -166,6 +175,7 @@ if __name__ == "__main__":
 
 
 @pytest.mark.integration
+@retired_gemini_model
 @pytest.mark.skipif(
     not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
     reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
@@ -368,6 +378,7 @@ def test_gemini_before_tool_hook_structure(
 
 
 @pytest.mark.integration
+@retired_gemini_model
 @pytest.mark.skipif(
     not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
     reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "
@@ -467,6 +478,7 @@ def test_gemini_before_tool_hook_covers_replace(
 
 
 @pytest.mark.integration
+@retired_gemini_model
 @pytest.mark.skipif(
     not os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"),
     reason="AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY not set - "

@@ -28,6 +28,11 @@ from pathlib import Path
 
 import pytest
 
+from e2e_support import (
+    RETIRED_GEMINI_BACKEND_REASON,
+    retired_gemini_backend_enabled,
+)
+
 pytestmark = pytest.mark.e2e
 
 # Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
@@ -388,6 +393,10 @@ class TestGeminiCLIRealMoney:
     Requires: export AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1
     """
 
+    @pytest.mark.skipif(
+        not retired_gemini_backend_enabled(),
+        reason=RETIRED_GEMINI_BACKEND_REASON,
+    )
     def test_gemini_basic_response(self, gemini_cli_available):
         """Test basic Gemini CLI functionality (COSTS REAL MONEY < $0.001).
 

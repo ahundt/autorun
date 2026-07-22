@@ -203,6 +203,21 @@ class _JSONStore:
     def _save(self):
         atomic_write_json(Path(self._state_file), self._data)
 
+    def _assert_authoritative(self) -> None:
+        """Refuse a transaction after SQLite has taken state authority.
+
+        The store object may predate cutover and may belong to a daemon with a
+        different ``AUTORUN_HOME``. Checking inside the persistent JSON lock
+        closes the race with migration and prevents that stale process from
+        recreating the retired source file.
+        """
+        state_path = Path(self._state_file)
+        StateMigrator(
+            state_path,
+            state_path.with_suffix(".sqlite3"),
+            state_path.with_suffix(".migration.json"),
+        ).assert_json_authoritative()
+
     @contextlib.contextmanager
     def _persistent_filelock(self, timeout: float):
         """Acquire FileLock and ensure the lock file persists after release.
@@ -235,6 +250,7 @@ class _JSONStore:
         try:
             with self._persistent_filelock(timeout):
                 with self._rlock:
+                    self._assert_authoritative()
                     # Re-read inside lock: pick up any changes from other processes
                     self._data = self._load()
                     self._dirty = False
@@ -334,11 +350,17 @@ def _build_store(key: str):
         # task, and claim silently gone, with nothing reporting a problem.
         # Refuse, and say how to come back properly.
         status = migrator.status()
-        if status["phase"] == "COMPLETE" and not status["source_present"]:
+        if status["phase"] == "COMPLETE":
+            conflict = (
+                f"Unexpected legacy JSON has reappeared at {json_path}; "
+                "serving it would create split authority."
+                if status["source_present"]
+                else f"{json_path} no longer exists. Starting now would serve empty state."
+            )
             raise SessionBackendError(
                 "state_backend is 'json', but state was converted to SQLite "
-                f"and {json_path} no longer exists. Starting now would serve "
-                "empty state and lose everything recorded since the "
+                f"and SQLite remains authoritative. {conflict} This would lose "
+                "everything recorded since the "
                 "conversion.\n"
                 "  To return to JSON, export current state first:\n"
                 "    autorun --state-rollback\n"
@@ -2389,6 +2411,32 @@ class StateMigrator:
             "fields": receipt.get("fields", 0),
             "sessions": receipt.get("sessions", 0),
         }
+
+    def assert_json_authoritative(self) -> None:
+        """Raise when the receipt says JSON may no longer accept writes.
+
+        ``PREPARED`` normally leaves JSON authoritative. If the source has
+        already been renamed but the process crashed before recording
+        ``SOURCE_RETIRED``, the planned backup is the authority evidence and
+        a stale JSON writer must still stop.
+        """
+        receipt = self._read_receipt()
+        phase = receipt.get("phase", "NOT_STARTED")
+        retired_before_receipt = (
+            phase == "PREPARED"
+            and not self._json_path.exists()
+            and bool(receipt.get("backup"))
+            and Path(receipt["backup"]).exists()
+        )
+        if phase in {"SOURCE_RETIRED", "DATABASE_PUBLISHED", "COMPLETE"} \
+                or retired_before_receipt:
+            raise SessionBackendError(
+                "SQLite state is authoritative; refusing a legacy JSON "
+                f"transaction from migration phase {phase!r}. Upgrade and "
+                "restart this autorun daemon with state_backend='sqlite', or "
+                "run `autorun --state-rollback` from the converted install "
+                "before selecting JSON."
+            )
 
     # --- migration ---------------------------------------------------------
 

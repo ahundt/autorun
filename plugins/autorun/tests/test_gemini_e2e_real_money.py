@@ -15,17 +15,17 @@ import os
 import json
 import subprocess
 import shutil
-from datetime import date
 from pathlib import Path
 
 import pytest
 
+from e2e_support import (
+    RETIRED_GEMINI_BACKEND_REASON,
+    retired_gemini_backend_enabled,
+)
+
 # Check for AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY flag
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
-GEMINI_CLI_CONSUMER_BACKEND_CUTOFF = date(2026, 6, 18)
-ALLOW_RETIRED_GEMINI_BACKEND_TESTS = (
-    os.environ.get("AUTORUN_ALLOW_RETIRED_GEMINI_CLI_BACKEND_TESTS", "0") == "1"
-)
 
 pytestmark = pytest.mark.e2e
 paid_gemini_e2e = pytest.mark.skipif(
@@ -94,12 +94,8 @@ class TestGeminiE2ERealMoney:
 
         Estimated cost: < $0.001
         """
-        if date.today() >= GEMINI_CLI_CONSUMER_BACKEND_CUTOFF and not ALLOW_RETIRED_GEMINI_BACKEND_TESTS:
-            pytest.skip(
-                "Gemini CLI consumer AI backend is retired after 2026-06-18; "
-                "keep harness capability tests, but run live AI backend e2e "
-                "against a successor such as Antigravity CLI."
-            )
+        if not retired_gemini_backend_enabled():
+            pytest.skip(RETIRED_GEMINI_BACKEND_REASON)
 
         # Simple arithmetic test - minimal tokens
         try:

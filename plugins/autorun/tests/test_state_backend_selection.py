@@ -261,6 +261,37 @@ class TestSwitchingBack:
         )
         assert "empty state" in message
 
+    def test_json_backend_refuses_a_source_that_reappears_after_conversion(
+        self, state_dir, monkeypatch
+    ):
+        _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
+        (state_dir / "daemon_state.json").write_text(
+            json.dumps({"stale/writer": "resurrected"}), encoding="utf-8"
+        )
+        monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
+        sm._reset_for_testing()
+
+        with pytest.raises(sm.SessionBackendError, match="split authority"):
+            sm._get_store()
+
+    def test_state_status_reports_complete_sqlite_authority_even_if_json_reappears(
+        self, state_dir, monkeypatch, capsys
+    ):
+        from autorun.__main__ import main
+
+        _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
+        (state_dir / "daemon_state.json").write_text(
+            json.dumps({"stale/writer": "resurrected"}), encoding="utf-8"
+        )
+        monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
+
+        assert main(["--state-status"]) == 0
+        output = capsys.readouterr().out
+        assert "SQLite is authoritative" in output
+        assert "unexpected legacy JSON" in output
+
     def test_rollback_then_json_serves_the_converted_state(
         self, state_dir, monkeypatch
     ):
@@ -285,6 +316,62 @@ class TestSwitchingBack:
                 "Rollback did not carry back the value written after the "
                 "conversion, so going back loses work."
             )
+
+    def test_cli_rollback_refuses_while_the_scoped_daemon_lease_is_held(
+        self, state_dir, monkeypatch, capsys
+    ):
+        from filelock import FileLock
+
+        from autorun import ipc
+        from autorun.__main__ import main
+
+        _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
+        runtime_dir = state_dir.parent / "rollback-runtime"
+        runtime_dir.mkdir()
+        monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", runtime_dir / "daemon.lock")
+        daemon_lease = FileLock(
+            str(ipc.AUTORUN_LOCK_PATH.with_suffix(".flock")), timeout=0
+        )
+
+        with daemon_lease:
+            assert main(["--state-rollback"]) == 1
+
+        output = capsys.readouterr().out
+        assert "scoped autorun daemon is active" in output
+        assert "autorun --state-rollback" in output
+        assert not (state_dir / "daemon_state.json").exists()
+        assert (state_dir / "daemon_state.sqlite3").exists()
+
+    def test_cli_migrate_rollback_and_remigrate_preserve_new_sqlite_writes(
+        self, state_dir, monkeypatch, capsys
+    ):
+        from autorun import ipc
+        from autorun.__main__ import main
+
+        runtime_dir = state_dir.parent / "migration-runtime"
+        runtime_dir.mkdir()
+        monkeypatch.setattr(ipc, "AUTORUN_LOCK_PATH", runtime_dir / "daemon.lock")
+        _seed_legacy(state_dir)
+        assert main(["--state-migrate"]) == 0
+        assert main(["--state-status"]) == 0
+
+        store = SQLiteStore(state_dir / "daemon_state.sqlite3")
+        store.initialize()
+        with store.session("sess-a") as state:
+            state["file_policy"] = "ALLOW"
+
+        assert main(["--state-rollback"]) == 0
+        restored = json.loads(
+            (state_dir / "daemon_state.json").read_text(encoding="utf-8")
+        )
+        assert restored["sess-a/file_policy"] == "ALLOW"
+
+        assert main(["--state-migrate"]) == 0
+        remigrated = SQLiteStore(state_dir / "daemon_state.sqlite3")
+        remigrated.initialize()
+        assert remigrated.read_field("sess-a", "file_policy") == "ALLOW"
+        assert "conversion phase   : COMPLETE" in capsys.readouterr().out
 
     def test_json_still_opens_normally_when_nothing_was_converted(self, state_dir):
         _seed_legacy(state_dir)

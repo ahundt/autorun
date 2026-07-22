@@ -7,10 +7,18 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 
 REAL_MONEY_ENV = "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"
+RETIRED_GEMINI_BACKEND_ENV = "AUTORUN_ALLOW_RETIRED_GEMINI_CLI_BACKEND_TESTS"
+GEMINI_CLI_CONSUMER_BACKEND_CUTOFF = date(2026, 6, 18)
+RETIRED_GEMINI_BACKEND_REASON = (
+    "Gemini CLI consumer AI backend retired after 2026-06-18; keep hook "
+    "capability tests active and run live Google model E2E through Antigravity. "
+    f"Set {RETIRED_GEMINI_BACKEND_ENV}=1 only to diagnose the retired backend."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +44,11 @@ BACKEND_E2E_CONTRACTS = {
 def real_money_enabled() -> bool:
     """Return whether the caller explicitly opted into paid model calls."""
     return os.environ.get(REAL_MONEY_ENV, "0") == "1"
+
+
+def retired_gemini_backend_enabled() -> bool:
+    """Return whether a legacy Gemini model call is still intentional."""
+    return date.today() < GEMINI_CLI_CONSUMER_BACKEND_CUTOFF or os.environ.get(RETIRED_GEMINI_BACKEND_ENV, "0") == "1"
 
 
 def model_override(env_name: str, default: str) -> str:

@@ -9,8 +9,10 @@ import pytest
 from autorun.platforms import PLATFORMS
 from e2e_support import (
     BACKEND_E2E_CONTRACTS,
+    RETIRED_GEMINI_BACKEND_ENV,
     live_model_env,
     model_override,
+    retired_gemini_backend_enabled,
     run_isolated_hook,
 )
 from test_codex_e2e_real_money import _codex_exec_command
@@ -39,6 +41,13 @@ def test_hook_and_model_contracts_match_platform_capabilities():
 
     assert not BACKEND_E2E_CONTRACTS["gemini"].live_model
     assert not BACKEND_E2E_CONTRACTS["forgecode"].live_model
+
+
+def test_retired_gemini_model_calls_require_the_dedicated_override(monkeypatch):
+    monkeypatch.delenv(RETIRED_GEMINI_BACKEND_ENV, raising=False)
+    assert not retired_gemini_backend_enabled()
+    monkeypatch.setenv(RETIRED_GEMINI_BACKEND_ENV, "1")
+    assert retired_gemini_backend_enabled()
 
 
 @pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])

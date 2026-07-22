@@ -63,6 +63,7 @@ if _sys.version_info < (3, 10):
 del _sys
 
 import argparse  # noqa: E402
+import contextlib  # noqa: E402
 import os  # noqa: E402
 import sys  # noqa: E402
 from typing import Sequence  # noqa: E402
@@ -86,6 +87,17 @@ def _custom_harness_spec_help() -> str:
     from .platforms import custom_harness_spec_help
 
     return custom_harness_spec_help()
+
+
+@contextlib.contextmanager
+def _scoped_daemon_lease():
+    """Own the current runtime's daemon lifecycle for state authority changes."""
+    from filelock import FileLock
+
+    from . import ipc
+
+    with FileLock(str(ipc.AUTORUN_LOCK_PATH.with_suffix(".flock")), timeout=0):
+        yield
 
 
 def _run_state_command(args) -> int:
@@ -135,30 +147,32 @@ def _run_state_command(args) -> int:
         print(f"reclaimable bytes : {report['reclaimable_bytes']}")
         return 0
 
-    if args.state_migrate:
-        from filelock import FileLock, Timeout as FileLockTimeout
-        from . import ipc
+    if args.state_migrate or args.state_rollback:
+        from filelock import Timeout as FileLockTimeout
 
-        daemon_lease = FileLock(
-            str(ipc.AUTORUN_LOCK_PATH.with_suffix(".flock")), timeout=0
-        )
+        operation = "migration" if args.state_migrate else "rollback"
+        option = "migrate" if args.state_migrate else "rollback"
         try:
-            with daemon_lease:
-                result = migrator.migrate()
+            with _scoped_daemon_lease():
+                result = migrator.migrate() if args.state_migrate else migrator.rollback()
         except FileLockTimeout:
             print(
-                "State migration did not run: the scoped autorun daemon is "
+                f"State {operation} did not run: the scoped autorun daemon is "
                 "active. Stop that daemon/session first, then rerun "
-                "`autorun --state-migrate`. No state was changed."
+                f"`autorun --state-{option}`. No state was changed."
             )
             return 1
         except SessionStateError as exc:
-            print(f"State migration did not run: {exc}")
+            print(f"State {operation} did not run: {exc}")
             return 1
-        print(
-            f"Migrated {result['fields']} fields in {result['sessions']} sessions "
-            f"to {migrator.status()['database']}."
-        )
+        if args.state_migrate:
+            print(
+                f"Migrated {result['fields']} fields in {result['sessions']} sessions "
+                f"to {migrator.status()['database']}."
+            )
+        else:
+            print(f"Wrote {result['fields']} fields back to {result['source']}. "
+                  "Set state_backend to 'json' to use it.")
         return 0
 
     if args.state_status:
@@ -174,25 +188,16 @@ def _run_state_command(args) -> int:
                   f"{status['sessions']} sessions")
         if status["backup"]:
             print(f"pre-conversion copy: {status['backup']}")
-        if configured == "json" and status["phase"] == "COMPLETE" \
-                and not status["source_present"]:
-            print("\nstate_backend is 'json' but state lives in the database. "
+        if configured == "json" and status["phase"] == "COMPLETE":
+            print("\nstate_backend is 'json' but SQLite is authoritative. "
                   "Run `autorun --state-rollback` before starting, or set "
                   "state_backend back to 'sqlite'.")
+            if status["source_present"]:
+                print("An unexpected legacy JSON file is also present. It is "
+                      "not authoritative and will not be merged or served.")
         return 0
 
-    # --state-rollback
-    try:
-        result = migrator.rollback()
-    except SessionStateError as exc:
-        # stdout, not stderr: this module is also the hook entry point, and
-        # any stderr from a hook is read as a hook error, which discards the
-        # response and silently disables every protection the plugin provides.
-        print(f"Rollback did not run: {exc}")
-        return 1
-    print(f"Wrote {result['fields']} fields back to {result['source']}. "
-          "Set state_backend to 'json' to use it.")
-    return 0
+    raise AssertionError("state maintenance dispatch reached no operation")
 
 
 def create_parser() -> argparse.ArgumentParser:

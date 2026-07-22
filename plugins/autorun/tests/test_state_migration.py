@@ -36,7 +36,7 @@ from autorun.session_manager import (  # noqa: E402
     SQLiteStore,
     SessionBackendError,
     StateMigrator,
-    session_state,
+    _JSONStore,
 )
 
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}-\d{4}")
@@ -208,6 +208,48 @@ class TestIdempotence:
 
 
 class TestCutoverCoordination:
+    def test_a_json_store_opened_before_cutover_cannot_recreate_the_source(
+        self, paths
+    ):
+        """A daemon from another install must observe the authority handoff."""
+        _write_legacy(paths, {"sess/value": "before"})
+        stale_store = _JSONStore(
+            str(paths["json"]), str(paths["json"]) + ".lock"
+        )
+        with stale_store.session("sess") as state:
+            assert state["value"] == "before"
+
+        _migrator(paths).migrate()
+
+        with pytest.raises(SessionBackendError, match="SQLite.*authoritative"):
+            with stale_store.session("sess") as state:
+                state["value"] = "stale-writer"
+
+        assert not paths["json"].exists()
+        store = SQLiteStore(paths["db"])
+        store.initialize()
+        assert store.read_field("sess", "value") == "before"
+
+    def test_a_pre_cutover_json_store_works_again_after_supported_rollback(
+        self, paths
+    ):
+        _write_legacy(paths, {"sess/value": "before"})
+        stale_store = _JSONStore(
+            str(paths["json"]), str(paths["json"]) + ".lock"
+        )
+        _migrator(paths).migrate()
+
+        with pytest.raises(SessionBackendError):
+            with stale_store.session("sess"):
+                pass
+
+        _migrator(paths).rollback()
+        with stale_store.session("sess") as state:
+            state["value"] = "after-rollback"
+
+        restored = json.loads(paths["json"].read_text(encoding="utf-8"))
+        assert restored["sess/value"] == "after-rollback"
+
     def test_a_write_after_verification_is_included_before_retirement(
         self, paths, monkeypatch
     ):
@@ -387,6 +429,34 @@ class TestResume:
         store.initialize()
         assert store.read_field("plain", "field") == "value"
 
+    def test_json_writer_is_refused_after_retire_rename_before_receipt(
+        self, paths, monkeypatch
+    ):
+        _write_legacy(paths, {"sess/value": "before"})
+        stale_store = _JSONStore(
+            str(paths["json"]), str(paths["json"]) + ".lock"
+        )
+        migrator = _migrator(paths)
+        real_replace = __import__("os").replace
+
+        def retire_then_crash(source, destination):
+            real_replace(source, destination)
+            if Path(source) == paths["json"]:
+                raise KeyboardInterrupt("crashed after source retirement")
+
+        monkeypatch.setattr(
+            "autorun.session_manager.os.replace", retire_then_crash
+        )
+        with pytest.raises(KeyboardInterrupt, match="source retirement"):
+            migrator.migrate()
+        monkeypatch.undo()
+
+        assert migrator.status()["phase"] == "PREPARED"
+        with pytest.raises(SessionBackendError, match="SQLite.*authoritative"):
+            with stale_store.session("sess") as state:
+                state["value"] = "stale-writer"
+        assert not paths["json"].exists()
+
 
 class TestRollback:
     def test_state_can_be_exported_back_to_the_legacy_format(self, paths):
@@ -436,12 +506,13 @@ class TestRollback:
 
 class TestLegacyStateStillReadable:
     def test_the_backup_can_be_read_by_the_old_store(self, paths):
-        """Rollback is only credible if the retired file still works."""
+        """The preserved artifact remains valid legacy JSON on its own path."""
         _write_legacy(paths, LEGACY)
         result = _migrator(paths).migrate()
 
-        Path(result["backup"]).rename(paths["json"])
-        with session_state("plain", state_dir=str(paths["dir"])) as state:
+        backup = Path(result["backup"])
+        legacy_store = _JSONStore(str(backup), str(backup) + ".lock")
+        with legacy_store.session("plain") as state:
             assert state["field"] == "value"
             assert state["stored_none"] is None
             assert state["with/slash"] == "field name contains the separator"

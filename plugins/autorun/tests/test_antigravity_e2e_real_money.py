@@ -19,7 +19,10 @@ from e2e_support import (
 
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-DEFAULT_MODEL = "Gemini 3.5 Flash (Low)"
+# `agy models` exposes canonical slugs. Gemini 3.5 Flash-Lite is available via
+# the Gemini API but is not in Antigravity's catalog; 3.6 Flash is the current
+# low-cost AGY model and avoids relying on a display label the CLI may reject.
+DEFAULT_MODEL = "gemini-3.6-flash-low"
 
 
 def _find_hook_script() -> Path:
