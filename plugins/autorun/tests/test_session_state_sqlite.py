@@ -41,6 +41,7 @@ from autorun.session_manager import (  # noqa: E402
     SessionBackendError,
     SessionTimeoutError,
     SQLiteStore,
+    _migrate_schema_v1_to_v2,
 )
 
 SHORT_TIMEOUT = 0.05
@@ -100,6 +101,60 @@ class TestSchema:
             assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_USER_VERSION
         finally:
             conn.close()
+
+    def test_versioned_database_without_autorun_identity_is_refused(self, db_path):
+        db_path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE TABLE unrelated (value TEXT)")
+            conn.execute("PRAGMA user_version = 1")
+            conn.commit()
+        finally:
+            conn.close()
+
+        with pytest.raises(SessionBackendError, match="application id|another program"):
+            SQLiteStore(db_path).initialize()
+
+    def test_autorun_header_without_required_schema_is_refused(self, db_path):
+        db_path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(f"PRAGMA application_id = {SCHEMA_APPLICATION_ID}")
+            conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
+            conn.execute("CREATE TABLE unrelated (value TEXT)")
+            conn.commit()
+        finally:
+            conn.close()
+
+        with pytest.raises(SessionBackendError, match="schema|missing"):
+            SQLiteStore(db_path).initialize()
+
+    def test_v1_task_rows_gain_generated_policy_columns(self, db_path):
+        db_path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "CREATE TABLE tasks (session TEXT, task_id TEXT, status TEXT, "
+                "updated_at REAL, payload_json TEXT, PRIMARY KEY(session, task_id))"
+            )
+            conn.executemany(
+                "INSERT INTO tasks VALUES (?, ?, ?, ?, ?)",
+                [
+                    ("s", "open", "in_progress", 1.0, "{}"),
+                    ("s", "paused", "paused", 1.0, "{}"),
+                    ("s", "done", "completed", 1.0, "{}"),
+                ],
+            )
+            _migrate_schema_v1_to_v2(conn)
+            rows = conn.execute(
+                "SELECT task_id, blocks_stop, prunable FROM tasks ORDER BY task_id"
+            ).fetchall()
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+        finally:
+            conn.close()
+
+        assert rows == [("done", 0, 1), ("open", 1, 0), ("paused", 0, 0)]
+        assert version == SCHEMA_USER_VERSION
 
     def test_every_table_and_index_exists(self, store, db_path):
         store.initialize()
@@ -276,6 +331,20 @@ class TestConnectionSettings:
 # ── Resource ownership ───────────────────────────────────────────────────────
 
 class TestResourceOwnership:
+    def test_all_state_read_does_not_begin_a_write_transaction(
+        self, store, monkeypatch
+    ):
+        store.initialize()
+        with store.session("read-only", SHORT_TIMEOUT) as state:
+            state["field"] = "value"
+
+        def forbid_write_transaction(*_args, **_kwargs):
+            raise AssertionError("read-only all_state acquired a write transaction")
+
+        monkeypatch.setattr(store, "write_transaction", forbid_write_transaction)
+        with store.all_state(write=False) as state:
+            assert state["read-only/field"] == "value"
+
     def test_a_completed_scope_leaves_nothing_open(self, store):
         store.initialize()
         with store.operation_scope(SHORT_TIMEOUT) as owner:

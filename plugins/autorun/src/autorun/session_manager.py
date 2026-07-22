@@ -9,6 +9,7 @@ Design:
 """
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -17,10 +18,16 @@ import sqlite3
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from filelock import FileLock, Timeout as FileLockTimeout
 
 from .config import CONFIG as _CONFIG
+from .durable_io import atomic_write_json, sync_directory
+from .task_status import (
+    STATUS_POLICY, BLOCKING_TASK_STATUSES, PRUNABLE_TASK_STATUSES,
+    task_status_policy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,13 +171,7 @@ class _JSONStore:
             return {}
 
     def _save(self):
-        os.makedirs(os.path.dirname(self._state_file), exist_ok=True)
-        tmp = self._state_file + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self._data, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self._state_file)
+        atomic_write_json(Path(self._state_file), self._data)
 
     @contextlib.contextmanager
     def _persistent_filelock(self, timeout: float):
@@ -193,8 +194,7 @@ class _JSONStore:
 
     @contextlib.contextmanager
     def session(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT):
-        if not isinstance(session_id, str) or not session_id.strip():
-            raise SessionStateError("session_id must be a non-empty string")
+        _validate_session_id(session_id)
 
         # Reentrant support: same thread already holds the lock — share _data, defer save
         if getattr(self._held_by, 'active', False):
@@ -270,7 +270,9 @@ def _build_store(key: str):
                                          by the conversion, so serving would
                                          mean serving nothing. Points at
                                          --state-rollback.
-      "sqlite"        none / partial     convert (resumable), then SQLite store
+      "sqlite"        legacy JSON exists refused; run --state-migrate while
+                                         the scoped daemon is stopped
+      "sqlite"        no legacy state    initialize an empty SQLite store
       "sqlite"        COMPLETE           SQLite store; conversion is a no-op
       anything else                      refused rather than guessed
 
@@ -281,11 +283,9 @@ def _build_store(key: str):
     Predecessor: `_get_store()`, which caches one store per state directory,
     so this runs once per directory per process.
 
-    Selecting the row store also converts whatever is already in the JSON
-    file. Conversion belongs to the switch rather than to a command an
-    operator has to remember: a backend that quietly began from empty state
-    would look like it worked while every policy, task, and claim in the
-    ignored file went missing.
+    Selecting the row store never converts live JSON implicitly. Existing
+    state requires the explicit, daemon-quiesced migration command; a truly
+    empty installation may initialize SQLite directly.
     """
     backend = str(_CONFIG.get("state_backend", "json")).strip().lower()
     db_path = os.path.join(key, "daemon_state.sqlite3")
@@ -324,14 +324,19 @@ def _build_store(key: str):
             "reading from a store that does not hold this session's state."
         )
 
-    # Idempotent, and resumable if a previous attempt was interrupted. Once
-    # complete it reports so and leaves both artifacts alone, so a restart
-    # cannot roll state back to the import.
-    #
-    # A failure here stops the store from opening at all, deliberately. The
-    # alternative — quietly using JSON instead — would leave two writable
-    # authorities with no record of which one a given write went to. Failing
-    # is recoverable; that is not.
+    status = migrator.status()
+    if status["phase"] != "COMPLETE" and status["source_present"]:
+        raise SessionBackendError(
+            "state_backend is 'sqlite', but legacy JSON state still exists. "
+            "Cutover must run as an explicit maintenance operation while the "
+            "scoped daemon is stopped, so an older writer cannot change JSON "
+            "after verification. Run:\n"
+            "    autorun --state-migrate\n"
+            "Then start or retry the hook. Existing JSON remains authoritative."
+        )
+
+    # A genuinely empty installation has no legacy state or writer to
+    # quiesce, so creating its first generation on first use is safe.
     try:
         migrator.migrate()
     except SessionStateError as exc:
@@ -389,8 +394,32 @@ class SessionStateManager:
             yield s
 
     def clear_test_session(self, session_id: str):
-        with self._store.session(session_id) as s:
-            s.clear()
+        self.clear_session(session_id)
+
+    def clear_session(self, session_id: str,
+                      timeout: float = DEFAULT_SESSION_TIMEOUT) -> None:
+        """Remove one complete session through its backend's RAII boundary.
+
+        SQLite owns generic fields, task rows, and task events beneath the
+        session foreign-key root, so deleting that root clears the whole unit
+        atomically and cascades to every dependent row. JSON has no relational
+        root and clears the session proxy under its file-lock/save scope.
+        """
+        _validate_session_id(session_id)
+        if isinstance(self._store, SQLiteStore):
+            try:
+                with self._store.operation_scope(timeout) as owner:
+                    with self._store.write_transaction(owner) as conn:
+                        conn.execute(
+                            "DELETE FROM sessions WHERE session = ?", (session_id,)
+                        )
+            except sqlite3.Error as exc:
+                raise SessionBackendError(
+                    f"Could not clear session {session_id!r}: {exc}"
+                ) from exc
+            return
+        with self._store.session(session_id, timeout) as state:
+            state.clear()
 
     def clear_test_sessions_batch(self, session_ids):
         """Clear multiple test sessions in one save operation (O(1) disk writes).
@@ -420,6 +449,18 @@ class SessionStateManager:
         """
         with self._store.all_state(timeout=timeout, write=write) as data:
             yield data
+
+    def task_repository(self) -> "TaskRepository | None":
+        """Return the row task API when this manager owns a SQLite store.
+
+        Callers use this capability check instead of inspecting the private
+        store or repeating the backend-selection policy. JSON remains a fully
+        supported compatibility and rollback backend and therefore returns
+        ``None``.
+        """
+        if isinstance(self._store, SQLiteStore):
+            return TaskRepository(self._store)
+        return None
 
 
 _managers: dict[str, SessionStateManager] = {}
@@ -485,11 +526,11 @@ def all_session_state(timeout: float = DEFAULT_SESSION_TIMEOUT,
 #   1. Look first:   autorun --state-status
 #      Reports the configured backend and whether a conversion has run. It
 #      changes nothing, so it is safe at any point.
-#   2. Flip it:      set "state_backend": "sqlite" in the autorun config
-#      The next process converts whatever daemon_state.json holds and serves
-#      from the database. The original is renamed, never deleted, to
+#   2. Quiesce and convert: autorun --state-migrate
+#      The command refuses while the scoped daemon is active. The original is
+#      renamed, never deleted, to
 #      daemon_state.json.migrated.<yyyy-mm-dd-hhmm>.
-#   3. Restart the daemon so it stops holding the old store.
+#   3. Set "state_backend": "sqlite", then start/retry the daemon or hook.
 #   4. Watch for: "Could not acquire state lock", "Task tracking error", and
 #      "skipped persistent state" in the daemon log. They should stop.
 #
@@ -540,7 +581,7 @@ def all_session_state(timeout: float = DEFAULT_SESSION_TIMEOUT,
 # "AURN" as a big-endian integer. SQLite stores this in the file header, so a
 # database created by something else is recognizable before any statement runs.
 SCHEMA_APPLICATION_ID = 0x4155524E
-SCHEMA_USER_VERSION = 1
+SCHEMA_USER_VERSION = 2
 
 # Maintenance settings, from CONFIG so they can be tuned without editing code.
 # Both bound the write-ahead log rather than throughput, and neither discards
@@ -554,18 +595,19 @@ JOURNAL_SIZE_LIMIT_BYTES = int(
 # SQLite's variable limit. Larger requests are split, never refused.
 QUERY_PARAMETER_CHUNK = int(_CONFIG.get("state_query_parameter_chunk", 500))
 
-# Statuses that mean a task is over. Defined once, as SQL text, because a
-# partial index predicate has to be a constant and the query that uses that
-# index has to spell the predicate identically.
-# Not configurable, deliberately: these are written into the tasks_incomplete
-# partial index as literals when the schema is created. Making them settable
-# would let a later config change stop the index from matching the query, with
-# no error and no wrong answer — just a silent return to scanning every
-# finished task, which is the thing the index exists to prevent.
-TERMINAL_TASK_STATUSES = ("completed", "deleted", "ignored")
-_TERMINAL_TASK_STATUS_SQL = (
-    "(" + ", ".join(f"'{status}'" for status in TERMINAL_TASK_STATUSES) + ")"
-)
+# Status policy is not configurable: generated columns and the partial Stop
+# index embed it in the schema. Runtime policy and DDL both derive from the
+# immutable mapping in task_status.py so they cannot drift silently.
+_CANONICAL_PRUNABLE_TASK_STATUSES = tuple(sorted(PRUNABLE_TASK_STATUSES))
+_VALID_TASK_STATUS_SQL = "(" + ", ".join(
+    f"'{status}'" for status in sorted(STATUS_POLICY)
+) + ")"
+_BLOCKING_TASK_STATUS_SQL = "(" + ", ".join(
+    f"'{status}'" for status in sorted(BLOCKING_TASK_STATUSES)
+) + ")"
+_PRUNABLE_TASK_STATUS_SQL = "(" + ", ".join(
+    f"'{status}'" for status in sorted(PRUNABLE_TASK_STATUSES)
+) + ")"
 
 _SCHEMA_STATEMENTS = (
     """
@@ -594,11 +636,15 @@ _SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS sessions_retention
         ON sessions(namespace, last_modified)
     """,
-    """
+    f"""
     CREATE TABLE IF NOT EXISTS tasks (
         session      TEXT NOT NULL REFERENCES sessions(session) ON DELETE CASCADE,
         task_id      TEXT NOT NULL,
-        status       TEXT NOT NULL,
+        status       TEXT NOT NULL CHECK (status IN {_VALID_TASK_STATUS_SQL}),
+        blocks_stop  INTEGER GENERATED ALWAYS AS
+            (CASE WHEN status IN {_BLOCKING_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL,
+        prunable     INTEGER GENERATED ALWAYS AS
+            (CASE WHEN status IN {_PRUNABLE_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL,
         updated_at   REAL NOT NULL,
         payload_json TEXT NOT NULL,
         PRIMARY KEY (session, task_id)
@@ -606,19 +652,14 @@ _SCHEMA_STATEMENTS = (
     """,
     """
     CREATE INDEX IF NOT EXISTS tasks_retention
-        ON tasks(session, status, updated_at)
+        ON tasks(session, prunable, updated_at)
     """,
     # "Is anything unfinished?" is asked on every Stop, and the answer is
-    # almost always a handful of rows among thousands of finished ones. A
-    # plain index cannot help a NOT IN predicate — SQLite still walks every
-    # entry for the session — so the unfinished rows get an index of their
-    # own. The statuses are written out because a partial index predicate
-    # must be constant; TERMINAL_TASK_STATUS_SQL below is the one place they
-    # are defined, and the query has to use the identical text to match.
-    f"""
+    # almost always a handful of rows among thousands of non-blocking ones.
+    """
     CREATE INDEX IF NOT EXISTS tasks_incomplete
         ON tasks(session, task_id)
-        WHERE status NOT IN {_TERMINAL_TASK_STATUS_SQL}
+        WHERE blocks_stop = 1
     """,
     """
     CREATE TABLE IF NOT EXISTS task_events (
@@ -658,6 +699,13 @@ _SCHEMA_STATEMENTS = (
     )
     """,
 )
+
+_REQUIRED_SCHEMA_OBJECTS = frozenset({
+    "schema_meta", "sessions", "state", "tasks", "task_events",
+    "publication_receipts", "sessions_retention", "tasks_retention",
+    "tasks_incomplete", "task_events_order",
+    "task_events_pending_projection",
+})
 
 # SQLite reports contention through these two result codes. Matching on the
 # code rather than the message keeps the classification stable across versions
@@ -707,6 +755,45 @@ def _close_connection(conn, active_error) -> None:
             raise SessionBackendError(
                 f"Could not close state connection: {exc}"
             ) from exc
+
+
+@contextlib.contextmanager
+def _managed_connection(conn):
+    """Own and close one already-open SQLite connection for one scope."""
+    try:
+        yield conn
+    finally:
+        _close_connection(conn, sys.exc_info()[1])
+
+
+def _migrate_schema_v1_to_v2(conn) -> None:
+    """Add explicit task policy columns and rebuild their partial indexes."""
+    unknown = conn.execute(
+        "SELECT DISTINCT status FROM tasks "
+        f"WHERE status NOT IN {_VALID_TASK_STATUS_SQL}"
+    ).fetchall()
+    if unknown:
+        raise SessionBackendError(
+            f"Cannot migrate tasks with unknown statuses: {[row[0] for row in unknown]}"
+        )
+    conn.execute(
+        "ALTER TABLE tasks ADD COLUMN blocks_stop INTEGER GENERATED ALWAYS AS "
+        f"(CASE WHEN status IN {_BLOCKING_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL"
+    )
+    conn.execute(
+        "ALTER TABLE tasks ADD COLUMN prunable INTEGER GENERATED ALWAYS AS "
+        f"(CASE WHEN status IN {_PRUNABLE_TASK_STATUS_SQL} THEN 1 ELSE 0 END) VIRTUAL"
+    )
+    conn.execute("DROP INDEX IF EXISTS tasks_incomplete")
+    conn.execute("DROP INDEX IF EXISTS tasks_retention")
+    conn.execute(
+        "CREATE INDEX tasks_incomplete ON tasks(session, task_id) "
+        "WHERE blocks_stop = 1"
+    )
+    conn.execute(
+        "CREATE INDEX tasks_retention ON tasks(session, prunable, updated_at)"
+    )
+    conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
 
 
 class _Missing:
@@ -987,22 +1074,14 @@ class SQLiteStore:
         deleted and whatever it changed is written back, in one transaction.
         """
         with self.operation_scope(timeout) as owner:
-            with self.write_transaction(owner) as conn:
-                rows = conn.execute(
-                    "SELECT session, field, value_json FROM state"
-                ).fetchall()
-                original = {
-                    f"{session}/{field}": raw for session, field, raw in rows
-                }
-                view = {
-                    key: _decode_state_value(key.split("/", 1)[0],
-                                             key.split("/", 1)[1], raw)
-                    for key, raw in original.items()
-                }
+            if not write:
+                _original, view = self._all_state_snapshot(owner.connection)
                 yield view
-                if not write:
-                    return
+                return
 
+            with self.write_transaction(owner) as conn:
+                original, view = self._all_state_snapshot(conn)
+                yield view
                 removed = [key for key in original if key not in view]
                 changed = {
                     key: encoded
@@ -1019,6 +1098,23 @@ class SQLiteStore:
                 for key, encoded in changed.items():
                     session, field = key.split("/", 1)
                     self._stage(conn, session, {field: encoded}, [])
+
+    @staticmethod
+    def _all_state_snapshot(conn):
+        """Decode the administrative full-state view from one connection."""
+        rows = conn.execute(
+            "SELECT session, field, value_json FROM state"
+        ).fetchall()
+        original = {
+            f"{session}/{field}": raw for session, field, raw in rows
+        }
+        view = {
+            key: _decode_state_value(
+                key.split("/", 1)[0], key.split("/", 1)[1], raw
+            )
+            for key, raw in original.items()
+        }
+        return original, view
 
     def open_connection_count(self) -> int:
         """Connections this store currently owns. Zero between operations."""
@@ -1044,36 +1140,37 @@ class SQLiteStore:
                 f"Could not create the state directory for {self._db_path}: {exc}"
             ) from exc
 
-        conn = self._connect(timeout=DEFAULT_SESSION_TIMEOUT)
         try:
-            # Both of these are recorded in the file header rather than in a
-            # transaction, and neither may run inside one. auto_vacuum only
-            # takes effect while the database is still empty, so it has to
-            # precede the first table.
-            conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
-            conn.execute("PRAGMA journal_mode = WAL")
+            with _managed_connection(
+                self._connect(timeout=DEFAULT_SESSION_TIMEOUT)
+            ) as conn:
+                # Both of these are recorded in the file header rather than
+                # in a transaction. auto_vacuum must precede the first table.
+                conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                conn.execute("PRAGMA journal_mode = WAL")
 
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                # Another process may have finished the work while this one
-                # waited for the write lock.
-                version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if version == 0:
-                    for statement in _SCHEMA_STATEMENTS:
-                        conn.execute(statement)
-                    conn.execute(f"PRAGMA application_id = {SCHEMA_APPLICATION_ID}")
-                    conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
-                conn.execute("COMMIT")
-            except BaseException:
-                _rollback_without_masking_original(conn)
-                raise
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    # Another process may have initialized while this one
+                    # waited for the write lock.
+                    version = conn.execute("PRAGMA user_version").fetchone()[0]
+                    if version == 0:
+                        for statement in _SCHEMA_STATEMENTS:
+                            conn.execute(statement)
+                        conn.execute(
+                            f"PRAGMA application_id = {SCHEMA_APPLICATION_ID}"
+                        )
+                        conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
+                    elif version == 1:
+                        _migrate_schema_v1_to_v2(conn)
+                    conn.execute("COMMIT")
+                except BaseException:
+                    _rollback_without_masking_original(conn)
+                    raise
         except sqlite3.Error as exc:
-            _close_connection(conn, exc)
             raise SessionBackendError(
                 f"Could not initialize state database {self._db_path}: {exc}"
             ) from exc
-        else:
-            _close_connection(conn, None)
 
         self._initialized = True
 
@@ -1093,27 +1190,40 @@ class SQLiteStore:
                 f"Could not open state database {self._db_path}: {exc}"
             ) from exc
         try:
-            application_id = conn.execute("PRAGMA application_id").fetchone()[0]
-            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            with _managed_connection(conn):
+                application_id = conn.execute("PRAGMA application_id").fetchone()[0]
+                user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+                objects = conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')"
+                ).fetchall()
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not read the header of {self._db_path}: {exc}"
             ) from exc
-        finally:
-            _close_connection(conn, None)
 
-        if application_id not in (0, SCHEMA_APPLICATION_ID):
+        is_empty_uninitialized = application_id == 0 and user_version == 0 and not objects
+        if application_id != SCHEMA_APPLICATION_ID and not is_empty_uninitialized:
             raise SessionBackendError(
                 f"{self._db_path} carries application id {application_id}, not "
                 f"{SCHEMA_APPLICATION_ID}. It belongs to another program; move "
                 "it aside rather than letting autorun write to it."
             )
-        if user_version > SCHEMA_USER_VERSION:
+        if application_id == SCHEMA_APPLICATION_ID and user_version not in (1, SCHEMA_USER_VERSION):
             raise SessionBackendError(
                 f"{self._db_path} uses schema version {user_version} but this "
-                f"build understands version {SCHEMA_USER_VERSION}. Upgrade "
-                "autorun, or point it at a different state directory."
+                f"build requires exactly version {SCHEMA_USER_VERSION}. Run "
+                "an explicit schema migration or use a compatible autorun build."
             )
+        if application_id == SCHEMA_APPLICATION_ID:
+            present = {row[0] for row in objects}
+            missing = _REQUIRED_SCHEMA_OBJECTS - present
+            if missing:
+                raise SessionBackendError(
+                    f"{self._db_path} has the autorun header but its schema is "
+                    f"missing required objects: {sorted(missing)}. Refusing "
+                    "to repair a versioned database implicitly."
+                )
 
     # --- connections -------------------------------------------------------
 
@@ -1267,6 +1377,73 @@ class SQLiteStore:
 
     # --- reads -------------------------------------------------------------
 
+    @staticmethod
+    def _session_rows(conn, session_id: str, fields=None):
+        """Read canonical rows plus aliases created by legacy flat JSON keys.
+
+        JSON stored ``session/field`` as one string. A key such as ``a/b/c``
+        was intentionally visible both as session ``a`` field ``b/c`` and as
+        session ``a/b`` field ``c``. Migration chooses the first split for a
+        canonical row; these targeted alias probes preserve the other view
+        without duplicating every ambiguous key. Canonical SQLite rows win if
+        both forms exist after a later write.
+        """
+        requested = None if fields is None else list(dict.fromkeys(fields))
+        if requested == []:
+            return []
+
+        if requested is None:
+            rows = conn.execute(
+                "SELECT field, value_json FROM state WHERE session = ?",
+                (session_id,),
+            ).fetchall()
+        else:
+            rows = []
+            for start in range(0, len(requested), QUERY_PARAMETER_CHUNK):
+                chunk = requested[start:start + QUERY_PARAMETER_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                rows.extend(conn.execute(
+                    "SELECT field, value_json FROM state "
+                    f"WHERE session = ? AND field IN ({placeholders})",
+                    (session_id, *chunk),
+                ).fetchall())
+
+        merged = {field: raw for field, raw in rows}
+        slash_positions = [
+            index for index, char in enumerate(session_id) if char == "/"
+        ]
+        for position in slash_positions:
+            parent_session = session_id[:position]
+            field_prefix = session_id[position + 1:] + "/"
+            if requested is None:
+                alias_rows = conn.execute(
+                    "SELECT field, value_json FROM state WHERE session = ? "
+                    "AND substr(field, 1, ?) = ?",
+                    (parent_session, len(field_prefix), field_prefix),
+                ).fetchall()
+                candidates = (
+                    (stored_field[len(field_prefix):], raw)
+                    for stored_field, raw in alias_rows
+                )
+            else:
+                candidates = []
+                for start in range(0, len(requested), QUERY_PARAMETER_CHUNK):
+                    chunk = requested[start:start + QUERY_PARAMETER_CHUNK]
+                    legacy_fields = [field_prefix + field for field in chunk]
+                    placeholders = ",".join("?" * len(legacy_fields))
+                    alias_rows = conn.execute(
+                        "SELECT field, value_json FROM state WHERE session = ? "
+                        f"AND field IN ({placeholders})",
+                        (parent_session, *legacy_fields),
+                    ).fetchall()
+                    candidates.extend(
+                        (stored_field[len(field_prefix):], raw)
+                        for stored_field, raw in alias_rows
+                    )
+            for field, raw in candidates:
+                merged.setdefault(field, raw)
+        return list(merged.items())
+
     def read_field(self, session_id: str, field: str, default=MISSING,
                    timeout: float = DEFAULT_SESSION_TIMEOUT):
         """One field, without taking the writer slot.
@@ -1305,29 +1482,7 @@ class SQLiteStore:
                     {f: v for f, v in buffer.values.items() if f in wanted}
                 )
 
-            conn = owner.connection
-            if fields is None:
-                rows = conn.execute(
-                    "SELECT field, value_json FROM state WHERE session = ?",
-                    (session_id,),
-                ).fetchall()
-            else:
-                requested = list(dict.fromkeys(fields))
-                if not requested:
-                    return {}
-                rows = []
-                # Bound the parameter list so a large request cannot exceed
-                # SQLite's variable limit.
-                for start in range(0, len(requested), QUERY_PARAMETER_CHUNK):
-                    chunk = requested[start:start + QUERY_PARAMETER_CHUNK]
-                    placeholders = ",".join("?" * len(chunk))
-                    rows.extend(
-                        conn.execute(
-                            "SELECT field, value_json FROM state "
-                            f"WHERE session = ? AND field IN ({placeholders})",
-                            (session_id, *chunk),
-                        ).fetchall()
-                    )
+            rows = self._session_rows(owner.connection, session_id, fields)
 
             return {
                 field: _decode_state_value(session_id, field, raw)
@@ -1358,10 +1513,7 @@ class SQLiteStore:
                     yield existing.proxy
                     return
 
-                rows = conn.execute(
-                    "SELECT field, value_json FROM state WHERE session = ?",
-                    (session_id,),
-                ).fetchall()
+                rows = self._session_rows(conn, session_id)
                 buffer = SessionBuffer(session_id, rows)
                 owner.buffers[session_id] = buffer
                 try:
@@ -1531,39 +1683,40 @@ class TaskRepository:
             for row in rows
         }
 
-    def list_incomplete(self, session_id: str, terminal_statuses,
+    def list_incomplete(self, session_id: str, terminal_statuses=None,
                         timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
-        """Tasks that are not in a terminal status.
+        """Tasks whose canonical policy says they block Stop.
 
         This is the question the Stop check asks. Answering it from the status
         column means finished work is never decoded to establish that it is
         finished.
         """
         _validate_session_id(session_id)
-        statuses = list(terminal_statuses)
-
-        if tuple(statuses) == TERMINAL_TASK_STATUSES:
-            # Spelled exactly like the partial index predicate so SQLite can
-            # use it. Without the match the query degrades to walking every
-            # task in the session, finished ones included, which is the cost
-            # this index exists to remove.
-            sql = (
+        with self._store.operation_scope(timeout) as owner:
+            rows = owner.connection.execute(
                 "SELECT task_id, status, updated_at, payload_json FROM tasks "
-                f"WHERE session = ? AND status NOT IN {_TERMINAL_TASK_STATUS_SQL} "
-                "ORDER BY task_id"
-            )
-            params = (session_id,)
-        else:
-            placeholders = ",".join("?" * len(statuses)) or "NULL"
-            sql = (
+                "WHERE session = ? AND blocks_stop = 1 ORDER BY task_id",
+                (session_id,),
+            ).fetchall()
+        return [
+            self._record_from_row(session_id, row[0], row[1:]) for row in rows
+        ]
+
+    def list_excluding_statuses(self, session_id: str, statuses,
+                                timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
+        """Return task records except those carrying one of ``statuses``."""
+        _validate_session_id(session_id)
+        excluded = list(statuses)
+        if not excluded:
+            return list(self.list_tasks(session_id, timeout).values())
+        placeholders = ",".join("?" * len(excluded))
+        with self._store.operation_scope(timeout) as owner:
+            rows = owner.connection.execute(
                 "SELECT task_id, status, updated_at, payload_json FROM tasks "
                 f"WHERE session = ? AND status NOT IN ({placeholders}) "
-                "ORDER BY task_id"
-            )
-            params = (session_id, *statuses)
-
-        with self._store.operation_scope(timeout) as owner:
-            rows = owner.connection.execute(sql, params).fetchall()
+                "ORDER BY task_id",
+                (session_id, *excluded),
+            ).fetchall()
         return [
             self._record_from_row(session_id, row[0], row[1:]) for row in rows
         ]
@@ -1598,7 +1751,8 @@ class TaskRepository:
     def append_event(self, session_id: str, task_id, *, event_id: str,
                      idempotency_key: str, event_type: str, payload: dict,
                      created_at: "float | None" = None,
-                     timeout: float = DEFAULT_SESSION_TIMEOUT) -> None:
+                     requires_projection: bool = True,
+                     timeout: float = DEFAULT_SESSION_TIMEOUT) -> bool:
         """Record one event once.
 
         Repeating an event with the same key and the same content does
@@ -1613,32 +1767,35 @@ class TaskRepository:
             with self._store.write_transaction(owner) as conn:
                 self._ensure_session_row(conn, session_id, stamp)
                 existing = conn.execute(
-                    "SELECT event_id, payload_json FROM task_events "
+                    "SELECT task_id, event_id, event_type, payload_json "
+                    "FROM task_events "
                     "WHERE session = ? AND idempotency_key = ?",
                     (session_id, idempotency_key),
                 ).fetchone()
                 if existing is not None:
-                    if existing[0] == event_id and existing[1] == encoded:
-                        return
+                    if existing == (task_id, event_id, event_type, encoded):
+                        return False
                     raise SessionBackendError(
                         f"Event key {idempotency_key!r} in session "
                         f"{session_id!r} already identifies a different event "
-                        f"({existing[0]!r}). Two events sharing a key means "
+                        f"({existing[1]!r}). Two events sharing a key means "
                         "the key does not identify what it claims to."
                     )
                 try:
                     conn.execute(
                         "INSERT INTO task_events (session, task_id, event_id, "
-                        "idempotency_key, event_type, created_at, payload_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "idempotency_key, event_type, created_at, payload_json, "
+                        "projected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (session_id, task_id, event_id, idempotency_key,
-                         event_type, stamp, encoded),
+                         event_type, stamp, encoded,
+                         None if requires_projection else stamp),
                     )
                 except sqlite3.IntegrityError as exc:
                     raise SessionBackendError(
                         f"Could not record event {event_id!r} for session "
                         f"{session_id!r}: {exc}"
                     ) from exc
+                return True
 
     def events(self, session_id: str, task_id=MISSING, *, limit=None,
                after=None, timeout: float = DEFAULT_SESSION_TIMEOUT) -> list:
@@ -1740,6 +1897,10 @@ class TaskRepository:
                 f"for task {task_id!r}."
             )
         status = record.get("status", "pending")
+        try:
+            task_status_policy(status)
+        except ValueError as exc:
+            raise SessionBackendError(str(exc)) from exc
         updated_at = record.get("updated_at", time.time())
         payload = {k: v for k, v in record.items() if k not in self._COLUMN_FIELDS}
         encoded = _encode_state_value(f"task {task_id}", payload)
@@ -1793,7 +1954,7 @@ class RetentionPolicy:
 
     # Statuses that mean the work is over. Paused is deliberately absent: a
     # paused task is work someone means to come back to.
-    TERMINAL_TASK_STATUSES = ("completed", "deleted", "ignored")
+    TERMINAL_TASK_STATUSES = _CANONICAL_PRUNABLE_TASK_STATUSES
 
     def __init__(self, session_max_age_seconds: "float | None" = None,
                  task_max_age_seconds: "float | None" = None,
@@ -1809,10 +1970,10 @@ class RetentionPolicy:
 class StateRetention:
     """Bounded growth, on purpose rather than by accident.
 
-    Collection today is manual and confirmation-gated, so in practice it does
-    not happen; the measured store holds 8,106 sessions. This makes it
-    automatic while keeping deletion off until someone turns it on, and
-    keeping the archive ahead of the delete so a mistake is recoverable.
+    The CLI exposes report-only maintenance; deletion remains an explicit
+    library policy with archive-before-delete semantics. This keeps routine
+    inspection safe while making bounded retention available to a caller that
+    deliberately supplies age limits, an archive directory, and ``delete``.
     """
 
     def __init__(self, store: "SQLiteStore", policy: RetentionPolicy):
@@ -1976,7 +2137,7 @@ class StateRetention:
                            / f"{_artifact_timestamp()}-{safe_prefix}.{counter}.json")
             counter += 1
 
-        StateMigrator._write_json_durably(destination, payload)
+        atomic_write_json(destination, payload)
         return destination
 
     # --- maintenance -------------------------------------------------------
@@ -1997,8 +2158,7 @@ class StateRetention:
 
         staged = destination.with_name(f"{destination.name}.stage-{os.getpid()}")
         staged.unlink(missing_ok=True)
-        target = sqlite3.connect(str(staged))
-        try:
+        with _managed_connection(sqlite3.connect(str(staged))) as target:
             with self.store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
                 owner.connection.backup(target)
             integrity = target.execute("PRAGMA integrity_check").fetchone()[0]
@@ -2007,8 +2167,6 @@ class StateRetention:
                     f"The backup written to {staged} failed its integrity "
                     f"check ({integrity}) and has not been published."
                 )
-        finally:
-            _close_connection(target, sys.exc_info()[1])
 
         try:
             os.link(staged, destination)
@@ -2019,7 +2177,7 @@ class StateRetention:
             ) from exc
         finally:
             staged.unlink(missing_ok=True)
-        StateMigrator._sync_directory(destination.parent)
+        sync_directory(destination.parent)
         return {"destination": str(destination), "integrity": "ok"}
 
     def maintenance(self, reclaim: bool = False) -> dict:
@@ -2117,6 +2275,10 @@ class StateMigrator:
         self._json_path = Path(json_path)
         self._db_path = Path(db_path)
         self._receipt_path = Path(receipt_path)
+        self._migration_lock_path = self._receipt_path.with_suffix(
+            self._receipt_path.suffix + ".lock"
+        )
+        self._legacy_lock_path = Path(str(self._json_path) + ".lock")
 
     # --- inspection --------------------------------------------------------
 
@@ -2136,16 +2298,42 @@ class StateMigrator:
 
     # --- migration ---------------------------------------------------------
 
+    @contextlib.contextmanager
+    def _maintenance_leases(self):
+        """Own migration identity and legacy-writer exclusion as one scope."""
+        try:
+            with FileLock(
+                str(self._migration_lock_path), timeout=DEFAULT_SESSION_TIMEOUT
+            ):
+                with FileLock(
+                    str(self._legacy_lock_path), timeout=DEFAULT_SESSION_TIMEOUT
+                ):
+                    yield
+        except FileLockTimeout as exc:
+            raise SessionTimeoutError(
+                "Could not acquire the exclusive state-migration lease"
+            ) from exc
+
     def migrate(self) -> dict:
         """Import legacy state, or resume an interrupted import.
 
         Safe to call repeatedly: once complete it reports so and touches
         nothing, including a source file that has reappeared.
         """
+        with self._maintenance_leases():
+            return self._migrate_locked()
+
+    def _migrate_locked(self) -> dict:
+        """Run one migration while both migration and legacy writer leases are held."""
         receipt = self._read_receipt()
         phase = receipt.get("phase", "NOT_STARTED")
 
         if phase == "COMPLETE":
+            self._validate_generation(
+                self._db_path,
+                receipt.get("generation"),
+                receipt.get("source_digest"),
+            )
             result = dict(receipt)
             result["already_complete"] = True
             if self._json_path.exists():
@@ -2159,38 +2347,87 @@ class StateMigrator:
                 result["unexpected_source"] = True
             return result
 
-        stage_path = self._stage_path()
+        stage_path = Path(receipt.get("stage") or self._stage_path())
 
         if phase in self.RESTARTABLE_PHASES:
+            if self._db_path.exists():
+                raise SessionBackendError(
+                    f"Migration destination {self._db_path} already exists but "
+                    "is not the published generation in a COMPLETE receipt. "
+                    "Move it aside or restore the matching receipt; refusing "
+                    "to retire JSON state in favor of an unidentified database."
+                )
             legacy = self._read_legacy()
             grouped, field_count = self._group_by_session(legacy)
-            self._build_stage(stage_path, grouped)
+            generation = uuid.uuid4().hex
+            source_digest = self._legacy_digest(legacy)
+            stage_path = self._stage_path(generation)
+            backup = self._backup_path(generation)
+            self._build_stage(
+                stage_path, grouped, generation=generation,
+                source_digest=source_digest,
+            )
             self._verify_stage(stage_path, legacy)
             self._record_phase(
                 "PREPARED",
                 stage=str(stage_path),
+                generation=generation,
+                source_digest=source_digest,
                 fields=field_count,
                 sessions=len(grouped),
                 source_bytes=(self._json_path.stat().st_size
                               if self._json_path.exists() else 0),
-                backup="",
+                backup=str(backup),
             )
             receipt = self._read_receipt()
             phase = "PREPARED"
 
         if phase == "PREPARED":
             backup = self._retire_source()
-            self._record_phase("SOURCE_RETIRED", backup=str(backup))
+            retired = self._read_legacy_path(backup) if backup is not None else {}
+            retired_digest = self._legacy_digest(retired)
+            if retired_digest != receipt.get("source_digest"):
+                # A writer committed after the first snapshot but before the
+                # rename. Rebuild from the exact retired artifact while the
+                # legacy writer lock is still held, then publish that version.
+                grouped, field_count = self._group_by_session(retired)
+                stage_path = Path(receipt["stage"])
+                self._build_stage(
+                    stage_path, grouped,
+                    generation=receipt["generation"],
+                    source_digest=retired_digest,
+                )
+                self._verify_stage(stage_path, retired)
+                self._record_phase(
+                    "PREPARED",
+                    source_digest=retired_digest,
+                    fields=field_count,
+                    sessions=len(grouped),
+                    source_bytes=backup.stat().st_size if backup is not None else 0,
+                )
+                receipt = self._read_receipt()
+            self._record_phase(
+                "SOURCE_RETIRED", backup=str(backup) if backup is not None else ""
+            )
             receipt = self._read_receipt()
             phase = "SOURCE_RETIRED"
 
         if phase == "SOURCE_RETIRED":
-            self._publish(Path(receipt.get("stage", stage_path)))
+            self._publish(
+                Path(receipt.get("stage", stage_path)),
+                receipt.get("generation"),
+                receipt.get("source_digest"),
+            )
             self._record_phase("DATABASE_PUBLISHED")
             receipt = self._read_receipt()
             phase = "DATABASE_PUBLISHED"
 
         if phase == "DATABASE_PUBLISHED":
+            self._validate_generation(
+                self._db_path,
+                receipt.get("generation"),
+                receipt.get("source_digest"),
+            )
             self._record_phase("COMPLETE")
             receipt = self._read_receipt()
 
@@ -2206,6 +2443,10 @@ class StateMigrator:
         existing source file: that file was written by something, and this is
         not the moment to decide it did not matter.
         """
+        with self._maintenance_leases():
+            return self._rollback_locked()
+
+    def _rollback_locked(self) -> dict:
         receipt = self._read_receipt()
         if receipt.get("phase") != "COMPLETE":
             raise SessionBackendError(
@@ -2225,7 +2466,7 @@ class StateMigrator:
         staged = self._json_path.with_name(
             f"{self._json_path.name}.rollback-{os.getpid()}"
         )
-        self._write_json_durably(staged, legacy)
+        atomic_write_json(staged, legacy)
         try:
             # Fails rather than replaces if the name was taken meanwhile.
             os.link(staged, self._json_path)
@@ -2237,30 +2478,62 @@ class StateMigrator:
             ) from exc
         finally:
             staged.unlink(missing_ok=True)
-        self._sync_directory(self._json_path.parent)
+        sync_directory(self._json_path.parent)
 
-        self._record_phase("ROLLED_BACK", fields=len(legacy))
+        database_backup = self._db_path.with_name(
+            f"{self._db_path.name}.rolled-back.{_artifact_timestamp()}."
+            f"{receipt.get('generation', 'unknown')}"
+        )
+        try:
+            os.replace(self._db_path, database_backup)
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(self._db_path) + suffix)
+                if sidecar.exists():
+                    os.replace(sidecar, Path(str(database_backup) + suffix))
+        except OSError as exc:
+            raise SessionBackendError(
+                f"JSON rollback was written, but the prior database could not "
+                f"be retired safely: {exc}. Do not remigrate until it is moved aside."
+            ) from exc
+        sync_directory(self._db_path.parent)
+
+        self._record_phase(
+            "ROLLED_BACK", fields=len(legacy),
+            database_backup=str(database_backup),
+        )
         return {"phase": "ROLLED_BACK", "fields": len(legacy),
-                "source": str(self._json_path)}
+                "source": str(self._json_path),
+                "database_backup": str(database_backup)}
 
     # --- phases ------------------------------------------------------------
 
     def _read_legacy(self) -> dict:
-        if not self._json_path.exists():
+        return self._read_legacy_path(self._json_path)
+
+    def _read_legacy_path(self, path: Path) -> dict:
+        if not path or not path.exists():
             return {}
         try:
-            data = json.loads(self._json_path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, OSError) as exc:
             raise SessionBackendError(
-                f"Could not read legacy state from {self._json_path}: {exc}. "
+                f"Could not read legacy state from {path}: {exc}. "
                 "Migration has not started; the file is unchanged."
             ) from exc
         if not isinstance(data, dict):
             raise SessionBackendError(
-                f"{self._json_path} holds a {type(data).__name__}, not a "
+                f"{path} holds a {type(data).__name__}, not a "
                 "mapping of session state."
             )
         return data
+
+    @staticmethod
+    def _legacy_digest(legacy: dict) -> str:
+        canonical = json.dumps(
+            legacy, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
 
     @staticmethod
     def _group_by_session(legacy: dict):
@@ -2286,10 +2559,17 @@ class StateMigrator:
             grouped.setdefault(session_id, {})[field] = value
         return grouped, len(legacy)
 
-    def _stage_path(self) -> Path:
-        return self._db_path.with_name(f"{self._db_path.name}.stage")
+    def _stage_path(self, generation: str | None = None) -> Path:
+        suffix = generation or uuid.uuid4().hex
+        return self._db_path.with_name(f"{self._db_path.name}.stage.{suffix}")
 
-    def _build_stage(self, stage_path: Path, grouped: dict) -> None:
+    def _backup_path(self, generation: str) -> Path:
+        return self._json_path.with_name(
+            f"{self._json_path.name}.migrated.{_artifact_timestamp()}.{generation}"
+        )
+
+    def _build_stage(self, stage_path: Path, grouped: dict, *,
+                     generation: str, source_digest: str) -> None:
         """Create a complete database off to one side, then leave it closed."""
         stage_path.unlink(missing_ok=True)
         Path(str(stage_path) + "-wal").unlink(missing_ok=True)
@@ -2298,7 +2578,12 @@ class StateMigrator:
         store = SQLiteStore(stage_path)
         store.initialize()
         with store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
-            with store.write_transaction(owner):
+            with store.write_transaction(owner) as conn:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+                    (("migration_generation", generation),
+                     ("source_digest", source_digest)),
+                )
                 for session_id, fields in grouped.items():
                     with store.session(session_id) as state:
                         for field, value in fields.items():
@@ -2339,27 +2624,66 @@ class StateMigrator:
             for session, field, raw in rows
         }
 
-    def _retire_source(self) -> Path:
+    def _retire_source(self) -> Path | None:
         """Rename the original out of the way. It is never deleted."""
+        receipt = self._read_receipt()
+        planned = Path(receipt.get("backup", "")) if receipt.get("backup") else None
         if not self._json_path.exists():
-            return Path("")
-        backup = self._json_path.with_name(
-            f"{self._json_path.name}.migrated.{_artifact_timestamp()}"
-        )
-        counter = 1
-        while backup.exists():
-            backup = self._json_path.with_name(
-                f"{self._json_path.name}.migrated.{_artifact_timestamp()}.{counter}"
+            if planned and planned.exists():
+                return planned
+            if receipt.get("source_bytes", 0) == 0:
+                return None
+            raise SessionBackendError(
+                "The legacy source disappeared before its retirement receipt "
+                "was recorded, and the planned backup is missing."
             )
-            counter += 1
+        backup = planned or self._backup_path(receipt.get("generation", uuid.uuid4().hex))
+        if backup.exists():
+            raise SessionBackendError(
+                f"Planned migration backup {backup} already exists; refusing "
+                "to overwrite evidence from another generation."
+            )
         os.replace(self._json_path, backup)
-        self._sync_directory(self._json_path.parent)
+        sync_directory(self._json_path.parent)
         return backup
 
-    def _publish(self, stage_path: Path) -> None:
+    def _validate_generation(self, path: Path, generation, source_digest) -> None:
+        if not path.exists() or not generation or not source_digest:
+            raise SessionBackendError(
+                f"Database generation evidence is incomplete for {path}."
+            )
+        try:
+            with _managed_connection(
+                sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            ) as conn:
+                application_id = conn.execute("PRAGMA application_id").fetchone()[0]
+                user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+                rows = dict(conn.execute(
+                    "SELECT key, value FROM schema_meta WHERE key IN (?, ?)",
+                    ("migration_generation", "source_digest"),
+                ).fetchall())
+        except sqlite3.Error as exc:
+            raise SessionBackendError(
+                f"Could not validate migration generation in {path}: {exc}"
+            ) from exc
+        if application_id != SCHEMA_APPLICATION_ID \
+                or user_version != SCHEMA_USER_VERSION:
+            raise SessionBackendError(
+                f"Database {path} is not an autorun schema generation."
+            )
+        if rows.get("migration_generation") != generation \
+                or rows.get("source_digest") != source_digest:
+            raise SessionBackendError(
+                f"Database {path} does not match migration generation "
+                f"{generation} and source digest {source_digest}."
+            )
+
+    def _publish(self, stage_path: Path, generation, source_digest) -> None:
         """Put the verified database in place under its real name."""
         if self._db_path.exists():
-            # A resumed run may have published already.
+            # A crash may have published before its receipt write. Only the
+            # exact prepared generation is safe to adopt.
+            self._validate_generation(self._db_path, generation, source_digest)
             return
         if not stage_path.exists():
             raise SessionBackendError(
@@ -2367,8 +2691,9 @@ class StateMigrator:
                 "cannot be completed. Restore the retired source file and "
                 "start again."
             )
+        self._validate_generation(stage_path, generation, source_digest)
         os.replace(stage_path, self._db_path)
-        self._sync_directory(self._db_path.parent)
+        sync_directory(self._db_path.parent)
 
     # --- receipt -----------------------------------------------------------
 
@@ -2393,41 +2718,12 @@ class StateMigrator:
         receipt.update(details)
         receipt["phase"] = phase
         receipt["recorded_at"] = _artifact_timestamp()
-        self._write_json_durably(self._receipt_path, receipt)
-
-    # --- durability helpers ------------------------------------------------
-
-    @staticmethod
-    def _write_json_durably(path: Path, data: dict) -> None:
-        """Write and replace atomically, so a crash leaves one whole version."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        staged = path.with_name(f"{path.name}.tmp-{os.getpid()}")
         try:
-            with open(staged, "w", encoding="utf-8") as handle:
-                json.dump(data, handle)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(staged, path)
+            atomic_write_json(self._receipt_path, receipt)
         except OSError as exc:
-            staged.unlink(missing_ok=True)
             raise SessionBackendError(
-                f"Could not write {path}: {exc}"
+                f"Could not write {self._receipt_path}: {exc}"
             ) from exc
-        StateMigrator._sync_directory(path.parent)
-
-    @staticmethod
-    def _sync_directory(directory: Path) -> None:
-        """Make a rename durable, not just the bytes it points at."""
-        try:
-            fd = os.open(str(directory), os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(fd)
-        except OSError as exc:
-            logger.warning("Could not sync directory %s: %s", directory, exc)
-        finally:
-            os.close(fd)
 
 
 def _reset_for_testing():

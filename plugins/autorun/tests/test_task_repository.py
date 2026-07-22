@@ -18,7 +18,6 @@ of the same event changing nothing — matter as much as the task rows do.
 """
 from __future__ import annotations
 
-import json
 import sys
 import threading
 import time
@@ -167,8 +166,47 @@ class TestTaskScope:
                      for i in range(500)],
                 )
 
-        incomplete = repo.list_incomplete(SESSION, terminal_statuses=("completed",))
+        incomplete = repo.list_incomplete(SESSION)
         assert [task["id"] for task in incomplete] == ["open"]
+
+    def test_stop_query_uses_the_partial_blocking_index(self, repo, store):
+        repo.put_task(SESSION, "open", _record("open", status="in_progress"))
+        repo.put_task(SESSION, "paused", _record("paused", status="paused"))
+        with store.operation_scope(30.0) as owner:
+            plan = owner.connection.execute(
+                "EXPLAIN QUERY PLAN SELECT task_id FROM tasks "
+                "WHERE session = ? AND blocks_stop = 1 ORDER BY task_id",
+                (SESSION,),
+            ).fetchall()
+        assert any("tasks_incomplete" in str(row) for row in plan), plan
+
+    @pytest.mark.parametrize(
+        "status, blocks_stop, prunable",
+        [
+            ("pending", 1, 0),
+            ("in_progress", 1, 0),
+            ("paused", 0, 0),
+            ("delegated", 0, 0),
+            ("completed", 0, 1),
+            ("deleted", 0, 1),
+            ("ignored", 0, 1),
+        ],
+    )
+    def test_generated_policy_columns_match_the_canonical_status_policy(
+        self, repo, store, status, blocks_stop, prunable
+    ):
+        repo.put_task(SESSION, status, _record(status, status=status))
+        with store.operation_scope(30.0) as owner:
+            row = owner.connection.execute(
+                "SELECT blocks_stop, prunable FROM tasks "
+                "WHERE session = ? AND task_id = ?",
+                (SESSION, status),
+            ).fetchone()
+        assert row == (blocks_stop, prunable)
+
+    def test_unknown_status_is_rejected_before_it_can_bypass_stop(self, repo):
+        with pytest.raises(SessionBackendError, match="Unknown task status"):
+            repo.put_task(SESSION, "mystery", _record("mystery", status="mystery"))
 
     def test_the_bulk_listing_is_the_explicit_whole_session_path(self, crowded):
         """It really does read everything, which is what makes the rest scoping."""

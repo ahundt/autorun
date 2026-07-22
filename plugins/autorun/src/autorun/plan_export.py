@@ -122,7 +122,8 @@ THREAD SAFETY & MULTIPROCESS CONCURRENCY:
     - SessionLock supports reentrant locking (same thread can acquire multiple times)
     - atomic_update_*() methods ensure read-modify-write is atomic
     - JSON save is called on context exit for durability
-    - No additional FileLock needed - autorun's SessionLock is sufficient
+    - A content-scoped FileLock serializes file publication; SessionLock
+      separately protects shared tracking state.
 
 STATE PERSISTENCE:
     State is stored in daemon_state.json (filelock+JSON format):
@@ -176,14 +177,19 @@ from typing import Optional, Dict, List
 from pathlib import Path
 from dataclasses import dataclass, field
 import hashlib
+import contextlib
 import os
 import shutil
 import re
 import json
 from datetime import datetime
+from filelock import FileLock, Timeout as FileLockTimeout
 
 from .core import EventContext, app, logger
-from .session_manager import session_state, SessionLock, SessionTimeoutError
+from .durable_io import atomic_write_json, sync_file
+from .session_manager import (
+    session_state, SessionLock, SessionTimeoutError, get_session_manager,
+)
 from .config import CONFIG, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 
 # Global key for cross-session state (survives Option 1 fresh context)
@@ -397,8 +403,8 @@ class PlanExport:
     """Manages plan export state with cross-session persistence.
 
     Uses GLOBAL_SESSION_ID for state that must survive Option 1 (fresh context).
-    Reuses autorun's session_state() for thread-safe, file-locked access.
-    No redundant FileLock - autorun's SessionLock handles concurrency.
+    Reuses autorun's session_state() for state and a content-scoped FileLock
+    for crash-safe publication without serializing unrelated exports.
     """
     ctx: EventContext
     config: PlanExportConfig = field(default_factory=PlanExportConfig.load)
@@ -777,31 +783,6 @@ class PlanExport:
             relative = Path(destination)
         return Path(rejected_dir).name in relative.parts
 
-    def _withdraw_export_claim(self, content_hash: str, dest_path: Path) -> None:
-        """Undo a claim whose file was never written.
-
-        Leaving it would suppress every later attempt at the same plan while
-        pointing at a file that does not exist, so the plan would be silently
-        lost rather than retried.
-        """
-        try:
-            with session_state(GLOBAL_SESSION_ID) as state:
-                tracking = dict(state.get("tracking", {}))
-                claim = tracking.get(content_hash)
-                # Only withdraw this exporter's own claim; another one may
-                # have legitimately replaced it.
-                if claim and claim.get("exported_to") == str(dest_path):
-                    tracking.pop(content_hash, None)
-                    state["tracking"] = tracking
-        except Exception as state_error:  # noqa: BLE001 - the copy failure matters more
-            log_warning(
-                f"Could not withdraw the export claim for {dest_path}: "
-                f"{state_error}. A later export of the same plan may be "
-                "skipped; re-export with force to override.",
-                self.config,
-            )
-        self._release_reservation(dest_path)
-
     def _release_reservation(self, dest_path: Path) -> None:
         """Give back a reserved name after the export did not happen."""
         try:
@@ -814,6 +795,86 @@ class PlanExport:
                 self.config,
             )
 
+    def _publication_paths(self, content_hash: str, rejected: bool):
+        identity = hashlib.sha256(
+            f"{self.project_dir.resolve()}\0{content_hash}\0{int(rejected)}".encode()
+        ).hexdigest()
+        directory = get_session_manager().state_dir / "plan-export-publications"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{identity}.lock", directory / f"{identity}.json"
+
+    @contextlib.contextmanager
+    def _publication_lock(self, lock_path: Path, content_hash: str):
+        """Own the content publication lock for exactly one RAII scope."""
+        try:
+            with FileLock(str(lock_path), timeout=30.0):
+                yield
+        except FileLockTimeout as exc:
+            raise SessionTimeoutError(
+                f"Timed out publishing plan content {content_hash}"
+            ) from exc
+
+    @contextlib.contextmanager
+    def _publication_reservation(
+        self, plan_path: Path, rejected: bool, receipt_path: Path
+    ):
+        """Own an exclusive destination until publication becomes durable."""
+        destination = self._reserve_destination(plan_path, rejected)
+        try:
+            yield destination
+        except BaseException:
+            self._release_reservation(destination)
+            receipt_path.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _write_receipt(path: Path, payload: Dict) -> None:
+        atomic_write_json(path, payload, sort_keys=True)
+
+    @staticmethod
+    def _read_receipt(path: Path) -> Dict:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _record_matches_file(record: Dict, content_hash: str,
+                             rejected: bool) -> bool:
+        destination = record.get("exported_to") or record.get("destination")
+        if not destination:
+            return False
+        path = Path(destination)
+        try:
+            if not path.is_file() or path.stat().st_size == 0:
+                return False
+        except OSError:
+            return False
+        expected_export_hash = record.get("exported_file_hash")
+        if expected_export_hash:
+            return get_content_hash(path) == expected_export_hash
+        # Compatibility for records created before exported-file digests were
+        # stored. The tracking key already identifies the source content; only
+        # a real non-empty destination can satisfy the legacy record.
+        return bool(content_hash)
+
+    def _record_complete_export(self, content_hash: str, dest_path: Path,
+                                rejected: bool, exported_file_hash: str,
+                                plan_path: Path) -> None:
+        with session_state(GLOBAL_SESSION_ID) as state:
+            tracking = dict(state.get("tracking", {}))
+            tracking[content_hash] = {
+                "exported_to": str(dest_path),
+                "exported_at": datetime.now().isoformat(),
+                "rejected": bool(rejected),
+                "exported_file_hash": exported_file_hash,
+            }
+            state["tracking"] = tracking
+            active_plans = dict(state.get("active_plans", {}))
+            active_plans.pop(str(plan_path), None)
+            state["active_plans"] = active_plans
+
     def export(self, plan_path: Path, rejected: bool = False, force: bool = False) -> Dict:
         """Export plan to project notes directory.
 
@@ -824,85 +885,94 @@ class PlanExport:
         """
         try:
             content_hash = get_content_hash(plan_path)
-
-            # Three phases, and only the middle one touches state. The copy
-            # used to happen with the global state lock held, which made every
-            # other session's writes queue behind one filesystem operation on
-            # a quarter-second budget.
-            #
-            #   1. Read whether this content was already exported.
-            #   2. Reserve a destination name, then claim the export in one
-            #      short transaction. The claim is what makes a plan exported
-            #      once even though the check and the write are now separate.
-            #   3. Write the file with no lock held.
-            #
-            # This used to be a single open, collapsed from three to close two
-            # race windows between checking and updating. Those windows are
-            # still closed, by the claim in phase 2 rather than by lock
-            # duration: a second exporter that arrives after the phase 1 read
-            # finds the claim and defers. Do not re-collapse this into one
-            # open — that is what put a filesystem copy inside the lock.
-            if not force:
-                with session_state(GLOBAL_SESSION_ID) as state:
-                    previous = state.get("tracking", {}).get(content_hash)
-                if previous and not self._supersedes_record(previous, rejected):
-                    return {
-                        "success": True,
-                        "message": "Already exported (dedup)",
-                        "destination": previous.get("exported_to", ""),
-                        "skipped": True,
-                    }
-
-            dest_path = self._reserve_destination(plan_path, rejected)
-
-            claimed_by_other = None
-            with session_state(GLOBAL_SESSION_ID) as state:
-                tracking = dict(state.get("tracking", {}))
-                existing = tracking.get(content_hash)
-                if existing and not force \
-                        and self._supersedes_record(existing, rejected):
-                    # The plan was rejected and is now accepted. This export
-                    # is not a duplicate of that record; it replaces it.
-                    existing = None
-                if existing and not force:
-                    # Another exporter claimed the same content between the
-                    # read above and now. Theirs stands.
-                    claimed_by_other = existing
-                else:
-                    tracking[content_hash] = {
-                        "exported_to": str(dest_path),
-                        "exported_at": datetime.now().isoformat(),
-                        "rejected": bool(rejected),
-                    }
-                    state["tracking"] = tracking
-
-                    active_plans = dict(state.get("active_plans", {}))
-                    active_plans.pop(str(plan_path), None)
-                    state["active_plans"] = active_plans
-
-            if claimed_by_other is not None:
-                self._release_reservation(dest_path)
-                return {
-                    "success": True,
-                    "message": "Already exported (dedup)",
-                    "destination": claimed_by_other.get("exported_to", ""),
-                    "skipped": True,
-                }
-
-            try:
-                self._write_reserved_destination(plan_path, dest_path)
-            except BaseException:
-                # The claim promises a file that now does not exist. Withdraw
-                # both, or a retry is suppressed and the plan is lost.
-                self._withdraw_export_claim(content_hash, dest_path)
-                raise
-
-            rel_path = dest_path.relative_to(self.project_dir)
-            log_warning(f"Exported plan to {rel_path}", self.config)
-            return {"success": True, "message": f"Plan exported to {rel_path}", "destination": str(dest_path)}
+            if not content_hash:
+                raise OSError(f"Could not hash plan {plan_path}")
+            lock_path, receipt_path = self._publication_paths(content_hash, rejected)
+            with self._publication_lock(lock_path, content_hash):
+                return self._export_locked(
+                    plan_path, content_hash, receipt_path, rejected, force
+                )
         except Exception as e:
             log_warning(f"Export error: {e}", self.config)
             return {"success": False, "error": str(e)}
+
+    def _export_locked(
+        self,
+        plan_path: Path,
+        content_hash: str,
+        receipt_path: Path,
+        rejected: bool,
+        force: bool,
+    ) -> Dict:
+        """Publish while the caller owns this content identity's lock."""
+        receipt = self._read_receipt(receipt_path)
+        if (
+            not force
+            and receipt.get("phase") in {"FILE_DURABLE", "COMPLETE"}
+            and self._record_matches_file(receipt, content_hash, rejected)
+        ):
+            dest_path = Path(receipt["destination"])
+            self._record_complete_export(
+                content_hash, dest_path, rejected,
+                receipt["exported_file_hash"], plan_path,
+            )
+            receipt["phase"] = "COMPLETE"
+            self._write_receipt(receipt_path, receipt)
+            return {
+                "success": True,
+                "message": "Recovered already-published plan",
+                "destination": str(dest_path),
+                "skipped": True,
+                "recovered": True,
+            }
+
+        if not force:
+            with session_state(GLOBAL_SESSION_ID) as state:
+                previous = state.get("tracking", {}).get(content_hash)
+            if (
+                previous
+                and not self._supersedes_record(previous, rejected)
+                and self._record_matches_file(previous, content_hash, rejected)
+            ):
+                return {
+                    "success": True,
+                    "message": "Already exported (dedup)",
+                    "destination": previous.get("exported_to", ""),
+                    "skipped": True,
+                }
+
+        with self._publication_reservation(
+            plan_path, rejected, receipt_path
+        ) as dest_path:
+            receipt = {
+                "phase": "PREPARED",
+                "content_hash": content_hash,
+                "destination": str(dest_path),
+                "rejected": bool(rejected),
+            }
+            self._write_receipt(receipt_path, receipt)
+            self._write_reserved_destination(plan_path, dest_path)
+            sync_file(dest_path)
+            exported_file_hash = get_content_hash(dest_path)
+            receipt.update(
+                phase="FILE_DURABLE",
+                exported_file_hash=exported_file_hash,
+            )
+            self._write_receipt(receipt_path, receipt)
+
+        self._record_complete_export(
+            content_hash, dest_path, rejected, exported_file_hash, plan_path,
+        )
+        receipt["phase"] = "COMPLETE"
+        self._write_receipt(receipt_path, receipt)
+
+        rel_path = dest_path.relative_to(self.project_dir)
+        log_warning(f"Exported plan to {rel_path}", self.config)
+        return {
+            "success": True,
+            "message": f"Plan exported to {rel_path}",
+            "destination": str(dest_path),
+        }
 
     def backup_to_rejected(self, plan_path: Path, permission_mode: str) -> Optional[str]:
         """Back up plan to notes/rejected/ before ExitPlanMode dialog is shown.

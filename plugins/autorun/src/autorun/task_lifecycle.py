@@ -46,22 +46,35 @@ import json
 import os
 import time
 import re
+import uuid
 from collections.abc import Iterable
 from datetime import datetime
 from functools import cache
 
 from . import ipc
 from .core import EventContext, format_command_for_cli, logger
-from .session_manager import DEFAULT_SESSION_TIMEOUT, session_state  # REUSE - no custom persistence code
+from .session_manager import (
+    DEFAULT_SESSION_TIMEOUT,
+    MISSING,
+    get_session_manager,
+    session_state,
+)
 from .config import (
     CONFIG,
     LOG_SNIPPET_MAX_LEN,
 )
 from .platforms import platform_for, task_tool_role
+from .task_status import (
+    COMPLETED_TASK_STATUSES,
+    NON_BLOCKING_TASK_STATUSES,
+    PRUNABLE_TASK_STATUSES,
+    task_status_policy,
+)
 
 
 _SECONDS_PER_DAY: int = 24 * 3600  # pure unit conversion (not a config value)
 _STAGE3_OVERFLOW_NAME_COUNT: int = 3  # task names shown in stage-3 overflow message
+_MAX_CONSUMED_DELEGATION_MARKERS: int = 256
 
 
 # === Stop / Resume action fragments (assembled at call site) ===
@@ -446,14 +459,17 @@ class TaskLifecycle:
     SCHEMA_VERSION = 3
 
     # Status constants (single source of truth - DRY)
-    COMPLETED_STATUSES = frozenset(["completed", "deleted"])
+    COMPLETED_STATUSES = COMPLETED_TASK_STATUSES
     # Statuses that don't block stopping.
     # "ignored" is set by /ar:task-ignore (autorun code), not via TaskUpdate tool.
     # "delegated" is set explicitly by AI before spawning a subagent for a task.
-    NON_BLOCKING_STATUSES = frozenset(["completed", "deleted", "paused", "ignored", "delegated"])
+    NON_BLOCKING_STATUSES = NON_BLOCKING_TASK_STATUSES
 
     # Statuses safe to prune after TTL (truly terminal, no resume expected)
-    PRUNABLE_STATUSES = frozenset(["completed", "deleted", "ignored"])
+    PRUNABLE_STATUSES = PRUNABLE_TASK_STATUSES
+    TASK_OUTPUT_RECENT_LIMIT = int(
+        CONFIG.get("task_output_recent_limit", 64)
+    )
 
     def __init__(self, session_id: str | None = None, ctx: EventContext | None = None, config: TaskLifecycleConfig | None = None):
         """Initialize task lifecycle manager.
@@ -546,7 +562,8 @@ class TaskLifecycle:
         if stored_version >= self.SCHEMA_VERSION:
             return  # Already current - no work needed
 
-        tasks = state.get("tasks", {})
+        row_backed = state.get("task_rows_migrated") is True
+        tasks = {} if row_backed else state.get("tasks", {})
 
         # === v1 → v2 Migration: Fix Ghost Task Blocking Bug ===
         # PROBLEM (v1): Ghost tasks (created via TaskUpdate on unknown ID) could
@@ -576,16 +593,166 @@ class TaskLifecycle:
         if stored_version < 3:
             pass  # v2→v3: pure addition, no data changes needed
 
-        # Atomic update: tasks + version together
-        state["tasks"] = tasks
+        # Atomic update: blob tasks (when still used) + version together.
+        # A future lifecycle version must not resurrect an empty legacy blob
+        # after this session has moved to row storage.
+        if not row_backed:
+            state["tasks"] = tasks
         state["schema_version"] = self.SCHEMA_VERSION
+
+    def _prepare_task_storage(self, state):
+        """Return the row repository after one atomic blob-to-row conversion.
+
+        The enclosing ``session_state`` context already owns SQLite's
+        connection and write transaction. Repository calls are nested RAII
+        scopes, so copying all rows, removing the blob, and recording the
+        marker either commit together or roll back together.
+        """
+        self._migrate_if_needed(state)
+        repository = get_session_manager().task_repository()
+        if repository is None or state.get("task_rows_migrated") is True:
+            return repository
+
+        blob_tasks = state.get("tasks", {})
+        if not isinstance(blob_tasks, dict):
+            raise TypeError("task lifecycle field 'tasks' must be a mapping")
+        row_tasks = repository.list_tasks(self.global_key, self._state_lock_timeout)
+        if row_tasks and blob_tasks and row_tasks != blob_tasks:
+            raise RuntimeError(
+                "task state exists in both legacy blob and SQLite rows but "
+                "differs; refusing to choose one and discard the other"
+            )
+        if not row_tasks:
+            for task_id, record in blob_tasks.items():
+                self._persist_task_record(
+                    repository, str(task_id), MISSING, record,
+                    event_source="legacy-migration",
+                )
+        if "tasks" in state:
+            del state["tasks"]
+        state["task_rows_migrated"] = True
+        return repository
+
+    def _event_source_identity(self) -> str:
+        """Stable identity for retries of one hook, unique for standalone calls."""
+        if self.ctx is None:
+            return f"standalone:{uuid.uuid4().hex}"
+        transcript = object.__getattribute__(self.ctx, "_session_transcript")
+        latest = self.ctx.transcript.latest_assistant_message() if transcript else None
+        latest_identity = latest[0] if latest else f"messages:{len(transcript)}"
+        tool_input = json.dumps(
+            self.ctx.tool_input, ensure_ascii=False, sort_keys=True, default=str,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(tool_input.encode("utf-8")).hexdigest()
+        return (
+            f"{self.ctx.event}:{self.ctx.tool_name}:{latest_identity}:"
+            f"{len(transcript)}:{digest}"
+        )
+
+    def _persist_task_record(
+        self,
+        repository,
+        task_id: str,
+        original,
+        updated: Dict,
+        *,
+        event_source: str | None = None,
+    ) -> None:
+        """Store one bounded task row and every newly appended output event."""
+        previous_outputs = (
+            list(original.get("tool_outputs", []))
+            if original is not MISSING else []
+        )
+        candidate_outputs = list(updated.get("tool_outputs", []))
+        if candidate_outputs[:len(previous_outputs)] == previous_outputs:
+            appended = candidate_outputs[len(previous_outputs):]
+            recent = previous_outputs[-self.TASK_OUTPUT_RECENT_LIMIT:]
+        else:
+            # A bulk synchronizer replaced the compatibility view rather than
+            # appending to it. Retain the bounded view; only true append
+            # operations become immutable output events.
+            appended = []
+            recent = candidate_outputs[-self.TASK_OUTPUT_RECENT_LIMIT:]
+
+        record = copy.deepcopy(updated)
+        record["tool_outputs"] = list(recent)
+        # Events reference the task row. A new task is staged first; the outer
+        # lifecycle transaction still makes the preliminary row, events, and
+        # final row one commit.
+        if original is MISSING:
+            repository.put_task(
+                self.global_key, task_id, record, self._state_lock_timeout
+            )
+
+        source = event_source or self._event_source_identity()
+        created_at = float(updated.get("updated_at", time.time()))
+        for ordinal, output in enumerate(appended):
+            identity = hashlib.sha256(
+                f"{source}\0{self.global_key}\0{task_id}\0{ordinal}\0{output}".encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+            inserted = repository.append_event(
+                self.global_key,
+                task_id,
+                event_id=f"output-{identity}",
+                idempotency_key=f"task-output:{identity}",
+                event_type="tool_output",
+                payload={"output": output},
+                created_at=created_at + ordinal * 1e-6,
+                requires_projection=False,
+                timeout=self._state_lock_timeout,
+            )
+            if inserted:
+                recent.append(output)
+                recent = recent[-self.TASK_OUTPUT_RECENT_LIMIT:]
+
+        record["tool_outputs"] = recent
+        repository.put_task(
+            self.global_key, task_id, record, self._state_lock_timeout
+        )
+
+    def _atomic_update_task(self, task_id: str, updater: Callable[[Dict], None]) -> bool:
+        """Update at most one task without loading any unrelated task rows."""
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            if repository is None:
+                tasks = state.get("tasks", {})
+                existed = task_id in tasks
+                updater(tasks)
+                state["tasks"] = tasks
+                return existed or task_id in tasks
+
+            current = repository.get_task(
+                self.global_key, task_id, self._state_lock_timeout
+            )
+            original = copy.deepcopy(current) if current is not MISSING else MISSING
+            tasks = {} if current is MISSING else {task_id: current}
+            existed = current is not MISSING
+            updater(tasks)
+            updated = tasks.get(task_id, MISSING)
+            if updated is MISSING:
+                if existed:
+                    repository.delete_task(
+                        self.global_key, task_id, self._state_lock_timeout
+                    )
+            elif original is MISSING or updated != original:
+                self._persist_task_record(
+                    repository, task_id, original, updated
+                )
+            return existed or updated is not MISSING
 
     @property
     def tasks(self) -> Dict[str, Dict]:
         """Get tasks dict aggregated from internal store and Conductor (Gemini)."""
         with self._session_state() as state:
-            self._migrate_if_needed(state)
-            tasks = dict(state.get("tasks", {}))
+            repository = self._prepare_task_storage(state)
+            tasks = (
+                repository.list_tasks(self.global_key, self._state_lock_timeout)
+                if repository is not None
+                else dict(state.get("tasks", {}))
+            )
 
         # Superset Capability: Aggregation with Conductor (Gemini-native)
         # If in Gemini session and Conductor plan exists, parse and merge its tasks.
@@ -642,12 +809,29 @@ class TaskLifecycle:
         return tasks
 
     def atomic_update_tasks(self, updater: Callable[[Dict], None]) -> None:
-        """Atomically update tasks. updater(tasks) modifies in-place."""
+        """Bulk compatibility path; prefer ``_atomic_update_task`` on hot paths."""
         with self._session_state() as state:
-            self._migrate_if_needed(state)
-            tasks = state.get("tasks", {})
+            repository = self._prepare_task_storage(state)
+            tasks = (
+                repository.list_tasks(self.global_key, self._state_lock_timeout)
+                if repository is not None
+                else state.get("tasks", {})
+            )
+            original = copy.deepcopy(tasks)
             updater(tasks)
-            state["tasks"] = tasks
+            if repository is None:
+                state["tasks"] = tasks
+                return
+            for task_id in original.keys() - tasks.keys():
+                repository.delete_task(
+                    self.global_key, task_id, self._state_lock_timeout
+                )
+            for task_id, record in tasks.items():
+                if original.get(task_id, MISSING) != record:
+                    self._persist_task_record(
+                        repository, task_id,
+                        original.get(task_id, MISSING), record,
+                    )
 
     @property
     def plan_tasks_map(self) -> Dict[str, List[str]]:
@@ -718,7 +902,18 @@ class TaskLifecycle:
             exclude_blocking: If True, exclude paused/ignored (don't block stop).
                              If False, only exclude completed/deleted.
         """
-        tasks = self.tasks
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            if repository is not None:
+                if exclude_blocking:
+                    return repository.list_incomplete(
+                        self.global_key, timeout=self._state_lock_timeout
+                    )
+                return repository.list_excluding_statuses(
+                    self.global_key, self.COMPLETED_STATUSES,
+                    self._state_lock_timeout,
+                )
+            tasks = dict(state.get("tasks", {}))
         if exclude_blocking:
             return [t for t in tasks.values() if t["status"] not in self.NON_BLOCKING_STATUSES]
         else:
@@ -791,7 +986,7 @@ class TaskLifecycle:
                 "tool_outputs": [result],
             }
 
-        self.atomic_update_tasks(updater)
+        self._atomic_update_task(task_id, updater)
         self.log_event("CREATE", task_id, input_data.get("subject", ""), "pending")
 
     def update_task(self, task_id: str, updates: Dict, result: str) -> Optional[str]:
@@ -850,6 +1045,7 @@ class TaskLifecycle:
             if "status" in updates:
                 old_status = task["status"]
                 new_status = updates["status"]
+                task_status_policy(new_status)
 
                 # CRITICAL GHOST TASK PROTECTION:
                 # Ghost tasks are created when AI calls TaskUpdate(id=X) for unknown X
@@ -904,7 +1100,7 @@ class TaskLifecycle:
             task["updated_at"] = time.time()
             task["tool_outputs"].append(result)
 
-        self.atomic_update_tasks(updater)
+        self._atomic_update_task(task_id, updater)
 
         # Fix 4: Reset stop_block_count when task reaches terminal status.
         # Placed OUTSIDE updater closure to avoid nonlocal scoping issues.
@@ -947,8 +1143,7 @@ class TaskLifecycle:
 
             self.log_event("IGNORE", task_id, task["subject"], "ignored", {"old_status": old_status, "reason": reason})
 
-        self.atomic_update_tasks(updater)
-        return task_id in self.tasks
+        return self._atomic_update_task(task_id, updater)
 
     def prune_old_tasks(self) -> int:
         """Prune truly terminal tasks older than TTL.
@@ -974,6 +1169,22 @@ class TaskLifecycle:
         now = time.time()
         pruned_count = 0
 
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            if repository is not None:
+                expired = repository.list_terminal_before(
+                    self.global_key,
+                    self.PRUNABLE_STATUSES,
+                    now - ttl_seconds,
+                    self._state_lock_timeout,
+                )
+                for task in expired:
+                    repository.delete_task(
+                        self.global_key, str(task["id"]),
+                        self._state_lock_timeout,
+                    )
+                pruned_count = len(expired)
+
         def updater(tasks):
             nonlocal pruned_count
             for task_id in list(tasks.keys()):
@@ -985,7 +1196,8 @@ class TaskLifecycle:
                         del tasks[task_id]
                         pruned_count += 1
 
-        self.atomic_update_tasks(updater)
+        if repository is None:
+            self.atomic_update_tasks(updater)
 
         if pruned_count > 0:
             self.log_event("PRUNE", "session", f"Pruned {pruned_count} old completed tasks", "maintenance")
@@ -1279,16 +1491,18 @@ class TaskLifecycle:
         Old behavior deleted completed tasks > 30 days on EVERY resume,
         losing user's work history without consent.
         """
-        # Find incomplete tasks (exclude paused/ignored - they're explicitly parked)
+        # Find blocking tasks. Parked and delegated work is retained and shown
+        # separately below without making Stop block on it.
         # REMOVED: self.prune_old_tasks() - manual pruning only
         incomplete = self.get_incomplete_tasks(exclude_blocking=True)
 
         # Also find delegated tasks — non-blocking but need follow-up if child failed
         all_tasks = self.tasks
         delegated_all = [t for t in all_tasks.values() if t.get("status") == "delegated"]
+        paused_all = [t for t in all_tasks.values() if t.get("status") == "paused"]
 
-        if not incomplete and not delegated_all:
-            return None  # No incomplete or delegated tasks - session proceeds normally
+        if not incomplete and not delegated_all and not paused_all:
+            return None
 
         # Get prioritized tasks for better AI guidance
         prioritized = self.get_prioritized_tasks()
@@ -1336,8 +1550,15 @@ class TaskLifecycle:
             task_items.append(f"{len(task_items) + 1}. #{t['id']}: {t['subject']} (🤝 delegated — check if complete)")
             total_shown += 1
 
+        for t in paused_all[: max_tasks - total_shown]:
+            task_items.append(
+                f"{len(task_items) + 1}. #{t['id']}: {t['subject']} "
+                "(⏯ paused — resume when ready)"
+            )
+            total_shown += 1
+
         task_list = " ".join(task_items)
-        total = len(incomplete)
+        total = len(incomplete) + len(delegated_all) + len(paused_all)
         # Subtract the older tasks already named above: counting them again in
         # the "older" suffix reported one set of tasks as two.
         older_count = len(older_incomplete) - len(named_older)
@@ -1345,7 +1566,8 @@ class TaskLifecycle:
         older = f" [📅 {older_count} older task(s) from previous days also incomplete]" if older_count > 0 else ""
 
         injection = (
-            f"🔄 incomplete tasks from previous session: {task_list}{overflow}{older}\n"
+            f"🔄 outstanding incomplete tasks from previous session: "
+            f"{task_list}{overflow}{older}\n"
             f"{_task_actions_fragment(_task_cli_hint(ctx), staleness_reminders_disabled=not ctx.task_staleness_enabled)}"
             f"7. {_stale_escape_sentence(_task_cli_hint(ctx), threshold=self.config.ghost_clear_min_consecutive_blocks, marker=_stale_clear_marker_example())}\n"
         )
@@ -1375,13 +1597,13 @@ class TaskLifecycle:
             return None
 
         # Log resume event
-        self.log_event("RESUME", "session", f"{total} incomplete tasks", "multiple")
+        self.log_event("RESUME", "session", f"{total} outstanding tasks", "multiple")
 
-        # Set enforce_next so the AI's first non-Task tool call gets PreToolUse
-        # enforcement (deny). SessionStart block() only sets systemMessage which
-        # the AI may ignore. PreToolUse deny creates a durable transcript event.
-        ctx.task_staleness_enforce_next = True
-        ctx.task_staleness_reminder_count = 1  # Skip allow, go straight to deny
+        # Only blocking work arms PreToolUse enforcement. Paused/delegated work
+        # is surfaced for recovery but remains genuinely non-blocking.
+        if incomplete:
+            ctx.task_staleness_enforce_next = True
+            ctx.task_staleness_reminder_count = 1  # Skip allow, go straight to deny
 
         # Keep AI running with injected prompt — AI sees this immediately
         return ctx.continue_running(injection)
@@ -1427,24 +1649,43 @@ class TaskLifecycle:
         been, not replace it with an error.
         """
         try:
-            transcript_text = ctx.transcript.text if ctx.transcript else ""
-            entries = extract_delegate_markers(ctx.tool_result_str, transcript_text)
-            if not entries:
+            sources: list[tuple[str, str]] = []
+            tool_text = ctx.tool_result_str
+            marker_prefix = _marker_literal_prefix(CONFIG["delegate_marker_template"])
+            if marker_prefix in tool_text:
+                digest = hashlib.sha256(tool_text.encode("utf-8")).hexdigest()
+                transcript_size = len(object.__getattribute__(ctx, "_session_transcript"))
+                sources.append(
+                    (f"tool:{ctx.event}:{ctx.tool_name}:{transcript_size}:{digest}", tool_text)
+                )
+            latest = ctx.transcript.latest_assistant_message() if ctx.transcript else None
+            if latest and marker_prefix in latest[1]:
+                sources.append((f"assistant:{latest[0]}", latest[1]))
+            if not sources:
                 return []
 
             if blocking_tasks is None:
                 blocking_tasks = self.get_incomplete_tasks(exclude_blocking=True)
             blocking_ids = {str(task["id"]) for task in blocking_tasks}
 
-            # Applied per marker rather than as one flat list, so each group
-            # of tasks keeps the session its own marker named.
             delegated: list[str] = []
-            for marker_ids, session in entries:
-                delegated.extend(
-                    self.delegate_tasks_from_markers(
-                        marker_ids, allowed_task_ids=blocking_ids, session=session
+            for source_identity, text in sources:
+                for ordinal, (marker_ids, session) in enumerate(
+                    extract_delegate_markers(text)
+                ):
+                    marker_payload = json.dumps(
+                        [marker_ids, session], ensure_ascii=False,
+                        separators=(",", ":"),
                     )
-                )
+                    identity = hashlib.sha256(
+                        f"{source_identity}:{ordinal}:{marker_payload}".encode("utf-8")
+                    ).hexdigest()
+                    delegated.extend(
+                        self.delegate_tasks_from_markers(
+                            marker_ids, allowed_task_ids=blocking_ids,
+                            session=session, marker_identity=identity,
+                        )
+                    )
             delegated = list(dict.fromkeys(delegated))
             if delegated:
                 ctx.add_chain_notification(
@@ -1664,6 +1905,7 @@ class TaskLifecycle:
         *,
         allowed_task_ids: Iterable[str] | None = None,
         session: "str | None" = None,
+        marker_identity: "str | None" = None,
     ) -> list[str]:
         """Mark task ids delegated from AI-printed delegation markers.
 
@@ -1685,6 +1927,12 @@ class TaskLifecycle:
                 is otherwise untraceable — the task says only that it went
                 somewhere.
         """
+        if marker_identity:
+            return self._consume_delegation_marker(
+                marker_identity, task_ids,
+                allowed_task_ids=allowed_task_ids, session=session,
+            )
+
         reason = CONFIG["delegate_reason"]
         delegated: list[str] = []
         allowed = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids is not None else None
@@ -1705,6 +1953,83 @@ class TaskLifecycle:
                     )
             except Exception:
                 continue
+        return delegated
+
+    def _consume_delegation_marker(
+        self,
+        marker_identity: str,
+        task_ids: Iterable[str],
+        *,
+        allowed_task_ids: Iterable[str] | None,
+        session: "str | None",
+    ) -> list[str]:
+        """Apply task transitions and consume one marker in one state commit."""
+        allowed = (
+            {str(task_id) for task_id in allowed_task_ids}
+            if allowed_task_ids is not None else None
+        )
+        requested = list(dict.fromkeys(str(task_id) for task_id in task_ids))
+        delegated: list[str] = []
+        now = time.time()
+
+        with self._session_state() as state:
+            repository = self._prepare_task_storage(state)
+            metadata = copy.deepcopy(state.get("session_metadata", {}))
+            consumed = dict(metadata.get("consumed_delegation_markers", {}))
+            if marker_identity in consumed:
+                return []
+
+            tasks = state.get("tasks", {}) if repository is None else None
+            for task_id in requested:
+                if allowed is not None and task_id not in allowed:
+                    continue
+                task = (
+                    tasks.get(task_id)
+                    if repository is None
+                    else repository.get_task(
+                        self.global_key, task_id, self._state_lock_timeout
+                    )
+                )
+                if task is MISSING:
+                    continue
+                if not isinstance(task, dict):
+                    continue
+                if not task_status_policy(task.get("status", "pending")).blocks_stop:
+                    continue
+                task["status"] = "delegated"
+                task["updated_at"] = now
+                task_metadata = task.setdefault("metadata", {})
+                if session:
+                    task_metadata["delegated_to_session"] = str(session)
+                else:
+                    task_metadata.pop("delegated_to_session", None)
+                task.setdefault("tool_outputs", []).append(CONFIG["delegate_reason"])
+                if repository is not None:
+                    repository.put_task(
+                        self.global_key, task_id, task,
+                        self._state_lock_timeout,
+                    )
+                delegated.append(task_id)
+
+            # Consume only when at least one currently blocking task changed.
+            # An early marker naming an unknown task may become meaningful
+            # later and must not be burned pre-emptively.
+            if delegated:
+                consumed[marker_identity] = now
+                while len(consumed) > _MAX_CONSUMED_DELEGATION_MARKERS:
+                    consumed.pop(next(iter(consumed)))
+                metadata["consumed_delegation_markers"] = consumed
+                metadata["stop_block_count"] = 0
+                metadata.pop("last_delivered_stop_block_generation", None)
+                if repository is None:
+                    state["tasks"] = tasks
+                state["session_metadata"] = metadata
+
+        for task_id in delegated:
+            self.log_event(
+                "DELEGATE", f"task#{task_id}", CONFIG["delegate_reason"],
+                "delegated", {"session": session} if session else None,
+            )
         return delegated
 
     def get_plan_approval_injection(self, ctx) -> Optional[str]:
@@ -1956,12 +2281,14 @@ class TaskLifecycle:
                 import shutil
 
                 storage_dir = config.storage_dir / session_id
+                # SessionStateManager owns the backend-specific clear scope:
+                # one cascading transaction for SQLite, one locked save for
+                # JSON. The CLI does not manually clear persistence internals.
+                state_manager = get_session_manager()
+                state_manager.clear_session(manager.global_key)
+
                 if storage_dir.exists():
                     shutil.rmtree(storage_dir)
-
-                # Also clear from session_state
-                with session_state(manager.global_key) as state:
-                    state.clear()
 
                 print(f"Cleared {task_count} task(s) from session")
                 return 0
@@ -2049,6 +2376,20 @@ class TaskLifecycle:
 
         try:
             config = config or cls._get_config()
+            # The legacy collector scans and rewrites daemon_state.json
+            # prefixes directly. On SQLite that would falsely report no data
+            # and, if partially adapted, could bypass row/event retention
+            # invariants. Refuse explicitly until this file's
+            # TaskLifecycle.cli_gc archive/confirmation/delete workflow is
+            # implemented through session_manager.py:StateRetention, the
+            # SQLite archive-before-delete authority.
+            if get_session_manager().task_repository() is not None:
+                print(
+                    "Task GC is not available for the SQLite backend. "
+                    "Use 'autorun --state-maintenance' for a report-only "
+                    "retention assessment; no SQLite rows were deleted."
+                )
+                return 1
             ttl = ttl_days if ttl_days is not None else config.task_ttl_days
             ttl_seconds = ttl * _SECONDS_PER_DAY
             mgr = get_session_manager()

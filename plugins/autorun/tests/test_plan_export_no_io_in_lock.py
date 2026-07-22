@@ -21,6 +21,7 @@ properties the lock was providing:
 """
 from __future__ import annotations
 
+import builtins
 import sys
 import threading
 from pathlib import Path
@@ -159,6 +160,34 @@ class TestExportBehaviorIsUnchanged:
         )
         assert second["destination"] == first["destination"]
 
+    def test_a_tracking_record_never_suppresses_a_missing_file(
+        self, exporter, plan_file
+    ):
+        content_hash = pe.get_content_hash(plan_file)
+        missing = exporter.project_dir / "notes" / "missing.md"
+        with pe.session_state(pe.GLOBAL_SESSION_ID) as state:
+            state["tracking"] = {
+                content_hash: {
+                    "exported_to": str(missing),
+                    "exported_at": "2026-07-22T00:00:00",
+                    "rejected": False,
+                }
+            }
+
+        result = exporter.export(plan_file)
+        assert result["success"] and not result.get("skipped"), result
+        assert Path(result["destination"]).exists()
+
+    def test_a_modified_export_is_not_accepted_as_a_valid_duplicate(
+        self, exporter, plan_file
+    ):
+        first = exporter.export(plan_file)
+        Path(first["destination"]).write_text("tampered", encoding="utf-8")
+
+        second = exporter.export(plan_file)
+        assert second["success"] and not second.get("skipped"), second
+        assert second["destination"] != first["destination"]
+
     def test_forcing_a_re_export_still_writes_a_second_file(
         self, exporter, plan_file
     ):
@@ -212,28 +241,30 @@ class TestDestinationSafety:
         Outside the lock that gap is real: another process, or the user, can
         take the name in between.
         """
-        first = exporter.export(plan_file)
-        taken = Path(first["destination"])
+        assert exporter.export(plan_file)["success"]
 
-        real_exists = Path.exists
-        stolen = {"done": False}
+        real_open = builtins.open
+        stolen = {"done": False, "path": None}
 
-        def exists_but_then_taken(self):
-            result = real_exists(self)
-            if not result and not stolen["done"] and self.suffix == ".md":
-                # The name looks free, and then someone else takes it.
-                self.write_text("taken by someone else", encoding="utf-8")
+        def open_but_name_is_taken(path, mode="r", *args, **kwargs):
+            candidate = Path(path)
+            if mode == "x" and not stolen["done"] and candidate.suffix == ".md":
+                # Another actor wins immediately before our exclusive create.
+                with real_open(candidate, "w", encoding="utf-8") as handle:
+                    handle.write("taken by someone else")
                 stolen["done"] = True
-                return False
-            return result
+                stolen["path"] = candidate
+            return real_open(path, mode, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "exists", exists_but_then_taken)
+        monkeypatch.setattr(builtins, "open", open_but_name_is_taken)
         second = exporter.export(plan_file, force=True)
         monkeypatch.undo()
 
         assert second["success"], second
-        assert taken.read_text(encoding="utf-8") != "taken by someone else" or True
+        assert stolen["done"] is True
+        assert stolen["path"].read_text(encoding="utf-8") == "taken by someone else"
         destination = Path(second["destination"])
+        assert destination != stolen["path"]
         assert "Do the thing." in destination.read_text(encoding="utf-8"), (
             "The export wrote somewhere it did not own, or lost its content."
         )
@@ -299,3 +330,25 @@ class TestFailureLeavesNoFalseRecord:
         assert not leftovers, (
             f"A failed export left files behind: {leftovers}"
         )
+
+    def test_a_crash_after_file_publication_is_adopted_on_retry(
+        self, exporter, plan_file, monkeypatch
+    ):
+        real_record = type(exporter)._record_complete_export
+        calls = {"count": 0}
+
+        def crash_once(self, *args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise KeyboardInterrupt("after publication before tracking")
+            return real_record(self, *args, **kwargs)
+
+        monkeypatch.setattr(type(exporter), "_record_complete_export", crash_once)
+        with pytest.raises(KeyboardInterrupt):
+            exporter.export(plan_file)
+
+        result = exporter.export(plan_file)
+        assert result["success"]
+        assert result.get("recovered") is True
+        exported = list((exporter.project_dir / "notes").glob("*.md"))
+        assert len(exported) == 1, exported

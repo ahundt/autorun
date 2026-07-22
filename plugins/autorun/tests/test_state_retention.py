@@ -40,6 +40,23 @@ from autorun.session_manager import (  # noqa: E402
     TaskRepository,
 )
 
+
+def test_state_maintenance_cli_reports_the_existing_database(
+    tmp_path, monkeypatch, capsys
+):
+    from autorun.__main__ import main
+
+    state_dir = tmp_path / "cli-state"
+    monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state_dir))
+    store = SQLiteStore(state_dir / "daemon_state.sqlite3")
+    store.initialize()
+
+    assert main(["--state-maintenance"]) == 0
+    output = capsys.readouterr().out
+    assert "database bytes" in output
+    assert "wal bytes" in output
+    assert "reclaimable bytes" in output
+
 DAY = 86400.0
 
 

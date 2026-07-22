@@ -1,14 +1,13 @@
-"""One setting turns on the row store, and brings existing state with it.
+"""One setting selects the row store after an explicit safe cutover.
 
 The row store is worth nothing if reaching it takes a code change. This is
-the switch: set the backend to sqlite and the next process converts whatever
-JSON state exists and serves from the database, through the same
-``session_state()`` every caller already uses.
+the switch: an empty install initializes directly; an install with JSON state
+must first run the daemon-quiesced migration command, then serves from SQLite
+through the same ``session_state()`` every caller already uses.
 
-Conversion is part of flipping the switch rather than a separate step an
-operator has to remember. A switch that silently starts from empty state
-would look like it worked and lose every policy, task, and claim in the file
-it ignored.
+Selecting SQLite while legacy JSON exists is refused. That prevents both a
+silent empty start and an old daemon changing JSON after conversion verified
+it, while keeping rollback explicit and recoverable.
 
 The default stays JSON. Changing backends is a deliberate act, and until the
 new one has run against real traffic it should not become the default by
@@ -67,6 +66,14 @@ def _seed_legacy(state_dir):
     (state_dir / "daemon_state.json").write_text(json.dumps(LEGACY), encoding="utf-8")
 
 
+def _migrate_legacy(state_dir):
+    sm.StateMigrator(
+        state_dir / "daemon_state.json",
+        state_dir / "daemon_state.sqlite3",
+        state_dir / "daemon_state.migration.json",
+    ).migrate()
+
+
 class TestTheDefaultIsUnchanged:
     def test_without_the_setting_the_json_store_is_used(self, state_dir):
         assert isinstance(sm._get_store(), _JSONStore)
@@ -86,6 +93,7 @@ class TestFlippingTheSetting:
 
     def test_existing_state_comes_across(self, state_dir, use_sqlite):
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
 
         with session_state("sess-a") as state:
             assert state["file_policy"] == "SEARCH"
@@ -94,18 +102,19 @@ class TestFlippingTheSetting:
         with session_state("__global__") as state:
             assert state["toggle"] == {"enabled": True}
 
-    def test_conversion_happens_without_a_separate_command(
+    def test_existing_state_requires_an_explicit_quiescent_conversion(
         self, state_dir, use_sqlite
     ):
-        """A switch that quietly started empty would look like it worked."""
         _seed_legacy(state_dir)
-        with session_state("sess-a") as state:
-            assert len(state) == 3
-
-        assert (state_dir / "daemon_state.sqlite3").exists()
+        with pytest.raises(sm.SessionBackendError, match="--state-migrate"):
+            with session_state("sess-a"):
+                pass
+        assert (state_dir / "daemon_state.json").exists()
+        assert not (state_dir / "daemon_state.sqlite3").exists()
 
     def test_the_original_file_is_kept(self, state_dir, use_sqlite):
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
         with session_state("sess-a"):
             pass
 
@@ -115,6 +124,7 @@ class TestFlippingTheSetting:
 
     def test_writes_go_to_the_row_store(self, state_dir, use_sqlite):
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
         with session_state("sess-a") as state:
             state["file_policy"] = "ALLOW"
 
@@ -131,6 +141,7 @@ class TestFlippingTheSetting:
 
     def test_converting_twice_does_not_repeat_itself(self, state_dir, use_sqlite):
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
         with session_state("sess-a") as state:
             state["file_policy"] = "ALLOW"
 
@@ -204,8 +215,9 @@ class TestAcrossProcesses:
         import subprocess
 
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
         with session_state("sess-a"):
-            pass  # convert here
+            pass
 
         completed = subprocess.run(
             [sys.executable, "-c", _CHILD, str(SRC_DIR), "sess-a"],
@@ -231,6 +243,7 @@ class TestSwitchingBack:
         a path that is not there, find nothing, and report nothing wrong.
         """
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
         monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
         sm._reset_for_testing()
         with session_state("sess-a"):
@@ -253,6 +266,7 @@ class TestSwitchingBack:
     ):
         """The path out has to actually work, not just be named."""
         _seed_legacy(state_dir)
+        _migrate_legacy(state_dir)
         monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
         sm._reset_for_testing()
         with session_state("sess-a") as state:
@@ -297,10 +311,10 @@ class TestConversionFailure:
             sm._get_store()
 
         message = str(raised.value)
-        assert "--state-status" in message, (
+        assert "--state-migrate" in message, (
             f"The failure does not say how to inspect it. Got: {message}"
         )
-        assert "still authoritative" in message
+        assert "remains authoritative" in message
 
     def test_the_original_file_survives_a_failed_conversion(
         self, state_dir, monkeypatch

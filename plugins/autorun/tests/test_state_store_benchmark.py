@@ -21,6 +21,7 @@ import os
 import statistics
 import sys
 import time
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -30,11 +31,13 @@ SRC_DIR = PLUGIN_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from autorun import session_manager as sm  # noqa: E402
 from autorun.session_manager import (  # noqa: E402
     SQLiteStore,
     TaskRepository,
     session_state,
 )
+from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig  # noqa: E402
 
 pytestmark = [
     pytest.mark.benchmark,
@@ -95,6 +98,16 @@ def _report(title: str, rows: list) -> None:
     for size, timing in rows:
         print(f"{size:>10} {timing['median_ms']:>12.3f} "
               f"{timing['p95_ms']:>10.3f} {timing['max_ms']:>10.3f}")
+
+
+def _peak_bytes(operation) -> int:
+    tracemalloc.start()
+    try:
+        operation()
+        _current, peak = tracemalloc.get_traced_memory()
+        return peak
+    finally:
+        tracemalloc.stop()
 
 
 class TestWriteCostVersusCorpusSize:
@@ -212,9 +225,7 @@ class TestTaskCostVersusTaskCount:
                         })
 
             def check():
-                repo.list_incomplete(session_id,
-                                     terminal_statuses=("completed", "deleted",
-                                                        "ignored"))
+                repo.list_incomplete(session_id)
 
             rows.append((task_count, _time_repeatedly(check)))
 
@@ -224,6 +235,82 @@ class TestTaskCostVersusTaskCount:
             f"With 100x more finished tasks the check took {growth:.2f}x as "
             "long, so finished work is still being decoded to establish that "
             "it is finished."
+        )
+
+
+class TestLifecycleProductionPath:
+    """Measure the TaskLifecycle methods invoked by real hook handlers."""
+
+    @staticmethod
+    def _build(tmp_path, monkeypatch, task_count):
+        state_dir = tmp_path / f"lifecycle-{task_count}"
+        monkeypatch.setenv("AUTORUN_TEST_STATE_DIR", str(state_dir))
+        monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
+        sm._reset_for_testing()
+        lifecycle = TaskLifecycle(
+            session_id="benchmark",
+            config=TaskLifecycleConfig(storage_dir=tmp_path / "logs"),
+        )
+        # Establish the blob-to-row marker before loading the corpus.
+        assert lifecycle.tasks == {}
+        repository = sm.get_session_manager().task_repository()
+        now = time.time()
+        with repository._store.operation_scope(300.0) as owner:
+            with repository._store.write_transaction(owner):
+                for index in range(task_count):
+                    repository.put_task(
+                        lifecycle.global_key,
+                        str(index),
+                        {
+                            "id": str(index),
+                            "status": "completed" if index else "pending",
+                            "subject": f"Task {index}",
+                            "updated_at": now,
+                            "created_at": now,
+                            "session_id": lifecycle.session_id,
+                            "metadata": {},
+                            "blockedBy": [],
+                            "blocks": [],
+                            "tool_outputs": [],
+                        },
+                    )
+        return lifecycle
+
+    def test_hook_update_and_stop_latency_stay_flat(
+        self, tmp_path, monkeypatch
+    ):
+        rows = []
+        for task_count in (100, 1000, 10000):
+            lifecycle = self._build(tmp_path, monkeypatch, task_count)
+
+            def operation():
+                lifecycle.update_task("0", {"status": "pending"}, "tick")
+                lifecycle.get_incomplete_tasks()
+
+            rows.append((task_count, _time_repeatedly(operation)))
+
+        _report("TaskLifecycle: update plus Stop query", rows)
+        growth = rows[-1][1]["median_ms"] / max(
+            rows[0][1]["median_ms"], 1e-9
+        )
+        assert growth < 3.0, (
+            f"With 100x more tasks the production hook path became "
+            f"{growth:.2f}x slower."
+        )
+
+    def test_stop_query_peak_memory_does_not_follow_terminal_history(
+        self, tmp_path, monkeypatch
+    ):
+        rows = []
+        for task_count in (100, 10000):
+            lifecycle = self._build(tmp_path, monkeypatch, task_count)
+            rows.append((task_count, _peak_bytes(lifecycle.get_incomplete_tasks)))
+
+        print(f"\nTaskLifecycle Stop peak bytes: {rows}")
+        growth = rows[-1][1] / max(rows[0][1], 1)
+        assert growth < 3.0, (
+            f"With 100x more terminal tasks the Stop query allocated "
+            f"{growth:.2f}x more peak memory."
         )
 
 

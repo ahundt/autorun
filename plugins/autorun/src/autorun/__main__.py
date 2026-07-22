@@ -89,17 +89,21 @@ def _custom_harness_spec_help() -> str:
 
 
 def _run_state_command(args) -> int:
-    """Report on, or undo, the conversion to the row-based state store.
+    """Migrate, report on, or undo the row-based state-store conversion.
 
-    These are the two things an operator needs when ``state_backend`` is
-    involved: what state is in, and how to get back. The refusal messages in
-    session_manager point here by name, so they must stay in step.
+    These are the maintenance operations an operator needs when
+    ``state_backend`` is involved: inspect, convert, measure, and roll back.
+    Refusal messages in session_manager point here by name, so they must stay
+    in step.
     """
     import os
 
     from .session_manager import (
+        RetentionPolicy,
         SessionStateError,
+        SQLiteStore,
         StateMigrator,
+        StateRetention,
         _state_dir_key,
     )
     from .config import CONFIG
@@ -110,6 +114,52 @@ def _run_state_command(args) -> int:
         os.path.join(directory, "daemon_state.sqlite3"),
         os.path.join(directory, "daemon_state.migration.json"),
     )
+
+    if args.state_maintenance:
+        database = os.path.join(directory, "daemon_state.sqlite3")
+        if not os.path.exists(database):
+            print(
+                "State maintenance did not run: no SQLite state database "
+                f"exists at {database}."
+            )
+            return 1
+        try:
+            store = SQLiteStore(database)
+            store.initialize()
+            report = StateRetention(store, RetentionPolicy()).maintenance()
+        except SessionStateError as exc:
+            print(f"State maintenance did not run: {exc}")
+            return 1
+        print(f"database bytes    : {report['database_bytes']}")
+        print(f"wal bytes         : {report['wal_bytes']}")
+        print(f"reclaimable bytes : {report['reclaimable_bytes']}")
+        return 0
+
+    if args.state_migrate:
+        from filelock import FileLock, Timeout as FileLockTimeout
+        from . import ipc
+
+        daemon_lease = FileLock(
+            str(ipc.AUTORUN_LOCK_PATH.with_suffix(".flock")), timeout=0
+        )
+        try:
+            with daemon_lease:
+                result = migrator.migrate()
+        except FileLockTimeout:
+            print(
+                "State migration did not run: the scoped autorun daemon is "
+                "active. Stop that daemon/session first, then rerun "
+                "`autorun --state-migrate`. No state was changed."
+            )
+            return 1
+        except SessionStateError as exc:
+            print(f"State migration did not run: {exc}")
+            return 1
+        print(
+            f"Migrated {result['fields']} fields in {result['sessions']} sessions "
+            f"to {migrator.status()['database']}."
+        )
+        return 0
 
     if args.state_status:
         status = migrator.status()
@@ -422,10 +472,20 @@ For more information: https://github.com/ahundt/autorun
         help="Report which state backend is in use and any conversion in progress",
     )
     info_group.add_argument(
+        "--state-migrate",
+        action="store_true",
+        help="Convert legacy JSON state to SQLite while the scoped daemon is stopped",
+    )
+    info_group.add_argument(
         "--state-rollback",
         action="store_true",
         help="Export state from the SQLite store back to daemon_state.json, so "
              "state_backend can be set to 'json' again without losing work",
+    )
+    info_group.add_argument(
+        "--state-maintenance",
+        action="store_true",
+        help="Report SQLite database, WAL, and reclaimable storage bytes",
     )
     info_group.add_argument(
         "--restart-daemon",
@@ -906,7 +966,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return show_status(custom_harnesses=args.custom_harness)
 
     # Restart daemon mode
-    if args.state_status or args.state_rollback:
+    if (
+        args.state_status
+        or args.state_migrate
+        or args.state_rollback
+        or args.state_maintenance
+    ):
         return _run_state_command(args)
 
     if args.restart_daemon or args.restart_all_daemons:

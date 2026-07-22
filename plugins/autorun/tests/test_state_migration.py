@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,18 @@ class TestEverythingSurvives:
         assert result["fields"] == 0
         assert paths["db"].exists()
 
+    def test_slash_bearing_session_alias_remains_readable_after_migration(
+        self, paths
+    ):
+        _write_legacy(paths, LEGACY)
+        _migrator(paths).migrate()
+
+        store = SQLiteStore(paths["db"])
+        store.initialize()
+        assert store.read_field("plain/with", "slash") == (
+            "field name contains the separator"
+        )
+
 
 class TestIdempotence:
     def test_running_it_twice_changes_nothing(self, paths):
@@ -159,6 +172,86 @@ class TestIdempotence:
             "A source file reappearing after cutover has to be reported; it "
             "means something else is still writing."
         )
+
+    def test_an_existing_destination_must_match_the_prepared_generation(self, paths):
+        existing = SQLiteStore(paths["db"])
+        existing.initialize()
+        with existing.session("sess") as state:
+            state["value"] = "database-old"
+        _write_legacy(paths, {"sess/value": "json-new"})
+
+        with pytest.raises(SessionBackendError, match="generation|destination|database"):
+            _migrator(paths).migrate()
+
+        assert json.loads(paths["json"].read_text(encoding="utf-8")) == {
+            "sess/value": "json-new"
+        }
+
+    def test_rollback_then_remigration_never_reuses_the_old_database(self, paths):
+        _write_legacy(paths, {"sess/value": "v1"})
+        _migrator(paths).migrate()
+        store = SQLiteStore(paths["db"])
+        store.initialize()
+        with store.session("sess") as state:
+            state["value"] = "v2"
+
+        _migrator(paths).rollback()
+        restored = json.loads(paths["json"].read_text(encoding="utf-8"))
+        restored["sess/value"] = "v3"
+        _write_legacy(paths, restored)
+        result = _migrator(paths).migrate()
+
+        assert result["phase"] == "COMPLETE"
+        remigrated = SQLiteStore(paths["db"])
+        remigrated.initialize()
+        assert remigrated.read_field("sess", "value") == "v3"
+
+
+class TestCutoverCoordination:
+    def test_a_write_after_verification_is_included_before_retirement(
+        self, paths, monkeypatch
+    ):
+        _write_legacy(paths, {"sess/original": "kept"})
+        migrator = _migrator(paths)
+        real_retire = type(migrator)._retire_source
+
+        def write_then_retire(self):
+            current = json.loads(paths["json"].read_text(encoding="utf-8"))
+            current["sess/late"] = "also kept"
+            _write_legacy(paths, current)
+            return real_retire(self)
+
+        monkeypatch.setattr(type(migrator), "_retire_source", write_then_retire)
+        result = migrator.migrate()
+        assert result["phase"] == "COMPLETE"
+
+        store = SQLiteStore(paths["db"])
+        store.initialize()
+        assert store.read_field("sess", "late") == "also kept"
+
+    def test_two_migrators_share_one_exclusive_generation(self, paths):
+        _write_legacy(paths, LEGACY)
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def run():
+            try:
+                barrier.wait(timeout=5)
+                results.append(_migrator(paths).migrate())
+            except BaseException as exc:  # captured for assertion in parent thread
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not errors, errors
+        assert len(results) == 2
+        assert {result["phase"] for result in results} == {"COMPLETE"}
+        assert sum(bool(result.get("already_complete")) for result in results) == 1
 
 
 class TestTheOriginalIsKept:
@@ -260,6 +353,39 @@ class TestResume:
         assert status["phase"] == "NOT_STARTED"
         assert not paths["db"].exists()
         assert paths["json"].exists()
+
+    @pytest.mark.parametrize("action", ["retire", "publish"])
+    def test_crash_after_artifact_action_before_receipt_resumes(
+        self, paths, monkeypatch, action
+    ):
+        _write_legacy(paths, LEGACY)
+        migrator = _migrator(paths)
+        real_replace = __import__("os").replace
+        crashed = {"done": False}
+
+        def replace_then_crash(source, destination):
+            real_replace(source, destination)
+            source = Path(source)
+            destination = Path(destination)
+            artifact_action = (
+                action == "retire" and source == paths["json"]
+            ) or (
+                action == "publish" and destination == paths["db"]
+            )
+            if artifact_action and not crashed["done"]:
+                crashed["done"] = True
+                raise KeyboardInterrupt(f"crashed after {action} rename")
+
+        monkeypatch.setattr("autorun.session_manager.os.replace", replace_then_crash)
+        with pytest.raises(KeyboardInterrupt, match="crashed after"):
+            migrator.migrate()
+        monkeypatch.undo()
+
+        resumed = _migrator(paths).migrate()
+        assert resumed["phase"] == "COMPLETE"
+        store = SQLiteStore(paths["db"])
+        store.initialize()
+        assert store.read_field("plain", "field") == "value"
 
 
 class TestRollback:

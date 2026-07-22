@@ -687,8 +687,8 @@ CONFIG = {
     "hook_state_lock_timeout_seconds": 0.25,
     # ─── State store: which backend holds session state ───
     # "json"   — one file rewritten on every change. The original.
-    # "sqlite" — one row per field. Selecting it also converts whatever the
-    #            JSON file holds, once, keeping the original renamed beside it.
+    # "sqlite" — one row per field. Existing JSON must first be converted with
+    #            `autorun --state-migrate` while the scoped daemon is stopped.
     #
     # Switching back to "json" after a conversion is refused rather than
     # silently serving empty state; export current state first with
@@ -709,6 +709,9 @@ CONFIG = {
     "volatile_state_max_entries": 4096,
     "volatile_state_max_bytes": 8 * 1024 * 1024,
     "volatile_state_max_age_seconds": 86400.0,
+    # Full task output history lives in append-only SQLite task_events. Keep a
+    # bounded tail in each task record for compatibility/status displays.
+    "task_output_recent_limit": 64,
     # ─── State store: write-ahead log maintenance ───
     # Bound the SQLite sidecar, not the data. A checkpoint moves committed
     # pages from the log into the database; the limit caps how large the log

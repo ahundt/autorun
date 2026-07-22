@@ -80,6 +80,23 @@ def _stop_context(session_id, assistant_text, store=None, event="Stop"):
     return ctx
 
 
+def _stop_context_with_messages(session_id, messages, store=None):
+    ctx = EventContext(
+        session_id=session_id,
+        event="Stop",
+        prompt="",
+        tool_name="",
+        tool_input={},
+        tool_result="",
+        session_transcript=messages,
+        store=store or ThreadSafeDB(),
+        cli_type="claude",
+    )
+    ctx.autorun_active = True
+    ctx.autorun_stage = EventContext.STAGE_1
+    return ctx
+
+
 class TestDelegationMarkerWithoutAToolCall:
     def test_a_delegated_task_stops_blocking(self, isolated_state, cfg):
         """The failure verbatim: marker printed, no tool call, still blocked."""
@@ -195,6 +212,75 @@ class TestDelegationMarkerWithoutAToolCall:
             assert manager.handle_stop(ctx) is None
 
         assert manager.tasks["77"]["status"] == "delegated"
+
+    def test_a_consumed_historical_marker_cannot_redelegate_resumed_work(
+        self, isolated_state, cfg
+    ):
+        session_id = "stop-delegate-historical"
+        seed = TaskLifecycle(config=cfg, session_id=session_id)
+        seed.create_task("77", {"subject": "Task"}, "created")
+        seed.update_task("77", {"status": "in_progress"}, "started")
+
+        transcript = [{"role": "assistant", "content": DELEGATE.format(id="77")}]
+        first = _stop_context_with_messages(session_id, transcript)
+        assert TaskLifecycle(ctx=first, config=cfg).handle_stop(first) is None
+
+        TaskLifecycle(config=cfg, session_id=session_id).update_task(
+            "77", {"status": "in_progress"}, "subagent returned; resume locally"
+        )
+        replay = _stop_context_with_messages(session_id, transcript)
+        blocked = TaskLifecycle(ctx=replay, config=cfg).handle_stop(replay)
+
+        assert "77" in _blocked_text(blocked)
+        assert TaskLifecycle(config=cfg, session_id=session_id).tasks["77"]["status"] \
+            == "in_progress"
+
+    def test_only_the_latest_assistant_message_can_issue_a_marker(
+        self, isolated_state, cfg
+    ):
+        session_id = "stop-delegate-latest-only"
+        seed = TaskLifecycle(config=cfg, session_id=session_id)
+        seed.create_task("77", {"subject": "Task"}, "created")
+        seed.update_task("77", {"status": "in_progress"}, "started")
+        ctx = _stop_context_with_messages(
+            session_id,
+            [
+                {"role": "assistant", "content": DELEGATE.format(id="77")},
+                {"role": "user", "content": "Resume it locally"},
+                {"role": "assistant", "content": "Continuing without delegation."},
+            ],
+        )
+
+        blocked = TaskLifecycle(ctx=ctx, config=cfg).handle_stop(ctx)
+        assert "77" in _blocked_text(blocked)
+
+    def test_a_new_identical_marker_has_a_distinct_message_identity(
+        self, isolated_state, cfg
+    ):
+        session_id = "stop-delegate-new-identical"
+        seed = TaskLifecycle(config=cfg, session_id=session_id)
+        seed.create_task("77", {"subject": "Task"}, "created")
+        seed.update_task("77", {"status": "in_progress"}, "started")
+        marker = DELEGATE.format(id="77")
+        first = _stop_context_with_messages(
+            session_id, [{"role": "assistant", "content": marker}]
+        )
+        TaskLifecycle(ctx=first, config=cfg).handle_stop(first)
+        TaskLifecycle(config=cfg, session_id=session_id).update_task(
+            "77", {"status": "in_progress"}, "resumed"
+        )
+
+        second = _stop_context_with_messages(
+            session_id,
+            [
+                {"role": "assistant", "content": marker},
+                {"role": "user", "content": "delegate it again"},
+                {"role": "assistant", "content": marker},
+            ],
+        )
+        assert TaskLifecycle(ctx=second, config=cfg).handle_stop(second) is None
+        assert TaskLifecycle(config=cfg, session_id=session_id).tasks["77"]["status"] \
+            == "delegated"
 
 
 class TestTheGateIsUnchangedWithoutAMarker:

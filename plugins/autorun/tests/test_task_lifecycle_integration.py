@@ -307,8 +307,10 @@ class TestTaskLifecycleIntegration:
         # Should show task details (in_progress or pending task names)
         assert 'In progress task' in result['systemMessage'] or 'Pending task' in result['systemMessage']
 
-        # Paused task should not be in the resume list (excluded by get_incomplete_tasks)
-        assert 'Paused task' not in result['systemMessage']
+        # Paused work is recoverable context after restart, but remains
+        # explicitly non-blocking rather than joining the Stop-blocking set.
+        assert 'Paused task' in result['systemMessage']
+        assert 'paused — resume when ready' in result['systemMessage']
 
         print("✅ Test 6 passed: Resume detection works with full context")
 

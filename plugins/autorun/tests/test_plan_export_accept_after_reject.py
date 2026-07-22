@@ -202,9 +202,11 @@ class TestRecordsWrittenBeforeThisDistinction:
             "previously exported plan would be written again."
         )
 
-    def test_a_legacy_record_with_no_path_is_treated_as_accepted(
+    def test_a_legacy_record_with_no_path_cannot_suppress_a_real_export(
         self, exporter, plan_file
     ):
-        """Ambiguous is not a reason to write a second copy."""
+        """A claim with no durable file is not evidence of an export."""
         self._write_legacy_record(exporter, plan_file, "")
-        assert exporter.export(plan_file).get("skipped") is True
+        result = exporter.export(plan_file)
+        assert result["success"] and not result.get("skipped")
+        assert Path(result["destination"]).exists()

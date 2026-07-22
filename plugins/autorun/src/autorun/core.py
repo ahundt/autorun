@@ -37,7 +37,9 @@ import time
 import copy
 import threading
 import contextlib
+import hashlib
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Callable, Set, Union
 from functools import lru_cache
@@ -45,7 +47,7 @@ from functools import lru_cache
 from collections import OrderedDict
 
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
-from .session_manager import SessionPersistenceError, session_state
+from .session_manager import SessionPersistenceError, SessionStateError, session_state
 from .config import CONFIG
 from .platforms import (
     PLATFORMS as _PLATFORMS,
@@ -107,6 +109,26 @@ else:
 # `autorun --version` import this module indirectly and must not require write
 # access to ~/.autorun/daemon.log. Daemon entry points opt into file logging.
 logger = get_logger("autorun")
+
+
+class StateWriteStatus(str, Enum):
+    """What the persistence layer has established about a state write."""
+
+    DURABLE = "durable"
+    STAGED = "staged"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class StateWriteOutcome:
+    """Typed result for non-raising hook state writes."""
+
+    status: StateWriteStatus
+    error: "SessionStateError | None" = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status is not StateWriteStatus.FAILED
 
 
 CANONICAL_COMMAND_PREFIX = "/ar:"
@@ -608,22 +630,32 @@ class ThreadSafeDB:
             self._drop_volatile_bookkeeping(key)
             if self._batch_depth() > 0:
                 self._batch.dirty[key] = value
-                return
+                return StateWriteStatus.STAGED
 
             # Persist to JSON via session_state() RAII wrapper
             self._persist_many({key: value})
+            return StateWriteStatus.DURABLE
 
     def update(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
         """Atomically update one field and synchronize the daemon cache."""
         session_id, field = self._split_key(key)
         with self._lock:
-            with session_state(session_id, timeout=self._state_timeout) as state:
-                current = state.get(field, default)
-                if isinstance(current, (list, dict, set)):
-                    current = copy.deepcopy(current)
-                value = updater(current)
-                persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
-                state[field] = persisted
+            try:
+                with session_state(session_id, timeout=self._state_timeout) as state:
+                    current = state.get(field, default)
+                    if isinstance(current, (list, dict, set)):
+                        current = copy.deepcopy(current)
+                    value = updater(current)
+                    persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+                    state[field] = persisted
+            except SessionStateError as exc:
+                self._cache.pop(key, None)
+                self._loaded_sessions.discard(session_id)
+                if isinstance(exc, SessionPersistenceError):
+                    raise
+                raise SessionPersistenceError(
+                    f"State update was not saved for {session_id} ({field}): {exc}"
+                ) from exc
             self._cache[key] = persisted
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
@@ -934,6 +966,50 @@ class LazyTranscript:
     def contains(self, pattern: str) -> bool:
         """Case-insensitive substring search."""
         return pattern.lower() in self.text.lower()
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                value = block.get("text")
+                if not isinstance(value, str):
+                    value = block.get("content")
+                if isinstance(value, str):
+                    parts.append(value)
+        return "\n".join(parts)
+
+    def latest_assistant_message(self) -> tuple[str, str] | None:
+        """Return stable identity and text for only the newest assistant turn.
+
+        This avoids serializing or scanning the retained transcript for
+        event-like markers. Provider message ids win; otherwise transcript
+        position plus a content digest distinguishes a genuinely new repeated
+        message from replay of an old one.
+        """
+        for index in range(len(self._raw) - 1, -1, -1):
+            entry = self._raw[index]
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("message") if isinstance(entry.get("message"), dict) else entry
+            role = entry.get("role") or entry.get("type") or message.get("role")
+            if str(role).lower() != "assistant":
+                continue
+            text = self._content_text(message.get("content"))
+            provider_id = (
+                entry.get("id") or entry.get("message_id")
+                or message.get("id") or message.get("message_id")
+            )
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            identity = f"id:{provider_id}" if provider_id else f"index:{index}:{digest}"
+            return identity, text
+        return None
 
     @lru_cache(maxsize=16)
     def search_regex(self, pattern: str) -> Optional[re.Match]:
@@ -1483,14 +1559,14 @@ class EventContext:
         with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
             return state.get(name, default)
 
-    def state_set(self, name: str, value, *, session_id: str | None = None) -> None:
+    def state_set(self, name: str, value, *, session_id: str | None = None) -> StateWriteOutcome:
         """Persist a scoped field and update this request's local cache."""
         store = object.__getattribute__(self, "_store")
         own_session = object.__getattribute__(self, "_session_id")
         target_session = session_id or own_session
         if store:
             try:
-                store.set(f"{target_session}:{name}", value)
+                status = store.set(f"{target_session}:{name}", value)
             except SessionPersistenceError as exc:
                 # Reported rather than raised: a hook that fails here would
                 # block a tool call over bookkeeping. The value is already
@@ -1498,15 +1574,28 @@ class EventContext:
                 # the rest of the dispatch cannot decide from state that does
                 # not exist.
                 report_state_persistence_failure(self, [name], target_session, exc)
-                object.__getattribute__(self, "_state").pop(name, None)
-                return
+                if target_session == own_session:
+                    object.__getattribute__(self, "_state").pop(name, None)
+                return StateWriteOutcome(StateWriteStatus.FAILED, exc)
+            if not isinstance(status, StateWriteStatus):
+                # Compatibility for lightweight stores used by integrations;
+                # returning normally still means their synchronous set landed.
+                status = StateWriteStatus.DURABLE
         else:
             persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
-            with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
-                state[name] = persisted
+            try:
+                with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+                    state[name] = persisted
+            except SessionStateError as exc:
+                report_state_persistence_failure(self, [name], target_session, exc)
+                if target_session == own_session:
+                    object.__getattribute__(self, "_state").pop(name, None)
+                return StateWriteOutcome(StateWriteStatus.FAILED, exc)
+            status = StateWriteStatus.DURABLE
         if target_session == own_session:
             state = object.__getattribute__(self, "_state")
             state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value
+        return StateWriteOutcome(status)
 
     def state_update(
         self,
@@ -1520,15 +1609,28 @@ class EventContext:
         store = object.__getattribute__(self, "_store")
         own_session = object.__getattribute__(self, "_session_id")
         target_session = session_id or own_session
-        if store:
-            value = store.update(f"{target_session}:{name}", updater, default)
-        else:
-            with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
-                current = state.get(name, default)
-                if isinstance(current, (list, dict, set)):
-                    current = copy.deepcopy(current)
-                value = updater(current)
-                state[name] = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+        try:
+            if store:
+                value = store.update(f"{target_session}:{name}", updater, default)
+            else:
+                with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
+                    current = state.get(name, default)
+                    if isinstance(current, (list, dict, set)):
+                        current = copy.deepcopy(current)
+                    value = updater(current)
+                    state[name] = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+        except SessionStateError as exc:
+            if isinstance(exc, SessionPersistenceError):
+                error = exc
+            else:
+                error = SessionPersistenceError(
+                    f"State update was not saved for {target_session} "
+                    f"({name}): {exc}"
+                )
+            report_state_persistence_failure(self, [name], target_session, error)
+            if error is exc:
+                raise
+            raise error from exc
         if target_session == own_session:
             state = object.__getattribute__(self, "_state")
             state[name] = copy.deepcopy(value) if isinstance(value, (list, dict)) else value

@@ -647,7 +647,9 @@ Three-tier policy system enforced via PreToolUse hooks:
 - **/ar:restart-daemon** - Restart the daemon for the current autorun install/source tree
 - **autorun --restart-all-daemons** - Risky recovery command for stale or mixed-version daemons; can interrupt active autorun-backed sessions in other installs
 - **autorun --state-status** - Report the configured state backend, whether a conversion to the row-based store has run, and how many fields it moved
+- **autorun --state-migrate** - Convert existing JSON state while the scoped daemon is stopped; required before selecting SQLite when legacy state exists
 - **autorun --state-rollback** - Export state from the row-based store back to `daemon_state.json`, so `state_backend` can be set to `json` again without losing anything written since the conversion
+- **autorun --state-maintenance** - Report SQLite database, WAL, and reclaimable bytes without deleting state
 
 **Pattern Type Prefixes:**
 - **regex:\<pattern>** - Use regular expression matching
@@ -987,7 +989,9 @@ Accepted option values: `--codex-hook-source: user|plugin|both|none`;
 autorun --restart-daemon             # Restart the autorun daemon
 autorun --restart-all-daemons         # Risky: stop matching daemons across installs
 autorun --state-status                # Which state backend, and any conversion
+autorun --state-migrate               # Convert JSON while scoped daemon is stopped
 autorun --state-rollback              # Export the row store back to JSON
+autorun --state-maintenance           # Report database/WAL/reclaimable bytes
 autorun --update                     # Check for and install updates
 autorun --update-method uv           # Force specific update method (auto|plugin|uv|pip)
 autorun --no-bootstrap               # Disable automatic bootstrap in hooks

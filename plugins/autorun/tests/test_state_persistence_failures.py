@@ -36,12 +36,51 @@ SRC_DIR = PLUGIN_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from autorun import core  # noqa: E402
-from autorun.core import EventContext, ThreadSafeDB  # noqa: E402
+from autorun import core, durable_io  # noqa: E402
+from autorun.core import (  # noqa: E402
+    EventContext,
+    StateWriteStatus,
+    ThreadSafeDB,
+)
 from autorun.session_manager import (  # noqa: E402
     SessionPersistenceError,
     SessionTimeoutError,
 )
+
+
+class TestDurablePublicationFailureIsLoud:
+    def test_windows_does_not_attempt_the_unsupported_posix_directory_open(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(durable_io.sys, "platform", "win32")
+
+        def forbid_open(*_args, **_kwargs):
+            raise AssertionError("Windows attempted POSIX directory fsync")
+
+        monkeypatch.setattr(durable_io.os, "open", forbid_open)
+        durable_io.sync_directory(tmp_path)
+
+    def test_directory_open_failure_is_not_reported_as_durable(
+        self, tmp_path, monkeypatch
+    ):
+        def fail_open(*_args, **_kwargs):
+            raise OSError("injected directory open failure")
+
+        monkeypatch.setattr(durable_io.os, "open", fail_open)
+
+        with pytest.raises(OSError, match="Could not open directory for fsync"):
+            durable_io.sync_directory(tmp_path)
+
+    def test_directory_fsync_failure_is_not_reported_as_durable(
+        self, tmp_path, monkeypatch
+    ):
+        def fail_fsync(*_args, **_kwargs):
+            raise OSError("injected directory fsync failure")
+
+        monkeypatch.setattr(durable_io.os, "fsync", fail_fsync)
+
+        with pytest.raises(OSError, match="Could not fsync directory"):
+            durable_io.sync_directory(tmp_path)
 
 
 @pytest.fixture
@@ -233,6 +272,45 @@ class TestPersistenceFailureReachesTheCaller:
             "The request kept serving a value that never persisted, so the "
             "rest of the dispatch made decisions on state that does not exist."
         )
+
+    def test_cross_session_failure_does_not_delete_same_named_local_state(
+        self, isolated_state
+    ):
+        db = ThreadSafeDB()
+        ctx = self._context(db)
+        ctx._state["file_policy"] = "own-session-value"
+
+        with failing_persistence():
+            outcome = ctx.state_set(
+                "file_policy", "global-value", session_id="__global__"
+            )
+
+        assert outcome.status is StateWriteStatus.FAILED
+        assert ctx._state["file_policy"] == "own-session-value"
+
+    def test_state_set_reports_durable_and_staged_outcomes(self, isolated_state):
+        db = ThreadSafeDB()
+        ctx = self._context(db)
+
+        durable = ctx.state_set("one", 1)
+        with db.batch_writes():
+            staged = ctx.state_set("two", 2)
+
+        assert durable.status is StateWriteStatus.DURABLE
+        assert staged.status is StateWriteStatus.STAGED
+
+    def test_state_update_failure_is_typed_and_does_not_poison_local_cache(
+        self, isolated_state
+    ):
+        db = ThreadSafeDB()
+        ctx = self._context(db)
+        ctx.state_set("counter", 1)
+
+        with failing_persistence():
+            with pytest.raises(SessionPersistenceError):
+                ctx.state_update("counter", lambda value: value + 1, 0)
+
+        assert ctx.state_get("counter") == 1
 
 
 class TestVolatileMemoryIsBounded:
