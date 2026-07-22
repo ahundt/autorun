@@ -88,6 +88,63 @@ def _custom_harness_spec_help() -> str:
     return custom_harness_spec_help()
 
 
+def _run_state_command(args) -> int:
+    """Report on, or undo, the conversion to the row-based state store.
+
+    These are the two things an operator needs when ``state_backend`` is
+    involved: what state is in, and how to get back. The refusal messages in
+    session_manager point here by name, so they must stay in step.
+    """
+    import os
+
+    from .session_manager import (
+        SessionStateError,
+        StateMigrator,
+        _state_dir_key,
+    )
+    from .config import CONFIG
+
+    directory = _state_dir_key()
+    migrator = StateMigrator(
+        os.path.join(directory, "daemon_state.json"),
+        os.path.join(directory, "daemon_state.sqlite3"),
+        os.path.join(directory, "daemon_state.migration.json"),
+    )
+
+    if args.state_status:
+        status = migrator.status()
+        configured = CONFIG.get("state_backend", "json")
+        print(f"configured backend : {configured}")
+        print(f"state directory    : {directory}")
+        print(f"conversion phase   : {status['phase']}")
+        print(f"json present       : {status['source_present']}")
+        print(f"database present   : {status['database_present']}")
+        if status["fields"]:
+            print(f"converted          : {status['fields']} fields in "
+                  f"{status['sessions']} sessions")
+        if status["backup"]:
+            print(f"pre-conversion copy: {status['backup']}")
+        if configured == "json" and status["phase"] == "COMPLETE" \
+                and not status["source_present"]:
+            print("\nstate_backend is 'json' but state lives in the database. "
+                  "Run `autorun --state-rollback` before starting, or set "
+                  "state_backend back to 'sqlite'.")
+        return 0
+
+    # --state-rollback
+    try:
+        result = migrator.rollback()
+    except SessionStateError as exc:
+        # stdout, not stderr: this module is also the hook entry point, and
+        # any stderr from a hook is read as a hook error, which discards the
+        # response and silently disables every protection the plugin provides.
+        print(f"Rollback did not run: {exc}")
+        return 1
+    print(f"Wrote {result['fields']} fields back to {result['source']}. "
+          "Set state_backend to 'json' to use it.")
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
     parser = argparse.ArgumentParser(
@@ -358,6 +415,17 @@ For more information: https://github.com/ahundt/autorun
         "-V",
         action="store_true",
         help="Show version and exit",
+    )
+    info_group.add_argument(
+        "--state-status",
+        action="store_true",
+        help="Report which state backend is in use and any conversion in progress",
+    )
+    info_group.add_argument(
+        "--state-rollback",
+        action="store_true",
+        help="Export state from the SQLite store back to daemon_state.json, so "
+             "state_backend can be set to 'json' again without losing work",
     )
     info_group.add_argument(
         "--restart-daemon",
@@ -738,7 +806,9 @@ def run_direct() -> int:
         tool_input=normalized["tool_input"],
         tool_result=normalized["tool_result"],
         session_transcript=normalized["session_transcript"],
-        store=ThreadSafeDB(),
+        # No daemon here: this process handles one hook and exits, so
+        # advisory in-memory state would never survive to be read back.
+        store=ThreadSafeDB(persist_volatile_state=True),
         cli_type=cli_type,
         # "cwd" is the harness-reported project directory; "_cwd" is the
         # daemon-client injection of the same value. Prefer either over this
@@ -836,6 +906,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return show_status(custom_harnesses=args.custom_harness)
 
     # Restart daemon mode
+    if args.state_status or args.state_rollback:
+        return _run_state_command(args)
+
     if args.restart_daemon or args.restart_all_daemons:
         from autorun.restart_daemon import restart_daemon
 

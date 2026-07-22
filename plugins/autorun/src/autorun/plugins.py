@@ -1697,25 +1697,12 @@ def delegate_marked_tasks(ctx: EventContext) -> Optional[Dict]:
     """
     if not task_lifecycle.is_enabled():
         return None
-    transcript_text = ctx.transcript.text if ctx.transcript else ""
-    matches = task_lifecycle.extract_delegate_task_ids(ctx.tool_result_str, transcript_text)
-    if not matches:
-        return None
     try:
         manager = task_lifecycle.TaskLifecycle(ctx=ctx)
-        # Restrict to currently blocking tasks: a marker must not resurrect or
-        # mutate a task that is already completed, ignored, or unrelated.
-        blocking_ids = {str(task["id"]) for task in manager.get_incomplete_tasks(exclude_blocking=True)}
-        delegated = manager.delegate_tasks_from_markers(matches, allowed_task_ids=blocking_ids)
     except Exception:
         return None
-
-    if delegated:
-        ctx.add_chain_notification(
-            f"Marked delegated (non-blocking until it reports back): "
-            f"{', '.join(f'#{d}' for d in delegated)}",
-            channel="both",
-        )
+    # Same routine the stop gate runs, so the two pathways cannot drift.
+    manager.apply_delegation_markers(ctx)
     return None
 
 

@@ -184,7 +184,7 @@ from datetime import datetime
 
 from .core import EventContext, app, logger
 from .session_manager import session_state, SessionLock, SessionTimeoutError
-from .config import WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
+from .config import CONFIG, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 
 # Global key for cross-session state (survives Option 1 fresh context)
 GLOBAL_SESSION_ID = "__plan_export__"
@@ -674,15 +674,23 @@ class PlanExport:
 
     # --- Export Logic ---
 
-    def _copy_plan_to_dir(self, plan_path: Path, rejected: bool = False) -> Path:
-        """Copy plan file to configured output directory with collision handling.
+    # Enough suffixes that exhausting them means something is wrong, not busy.
+    _MAX_DESTINATION_ATTEMPTS = int(
+        CONFIG.get("plan_export_max_destination_attempts", 1000)
+    )
 
-        Must be called INSIDE an active session_state lock (preserves atomicity with
-        state updates in the caller). Raises on any file I/O error; caller handles.
-        Returns the destination Path after copy + metadata embedding.
+    def _reserve_destination(self, plan_path: Path, rejected: bool = False) -> Path:
+        """Take a destination name by creating the file, and return it.
 
-        File I/O inside the lock is consistent with export() line comment:
-        "inside lock — plan files are small, <1MB".
+        The name is reserved by creating it exclusively rather than by
+        checking whether it is free and writing later. Those are two steps,
+        and between them another exporter — or the user — can take the name.
+        That gap used to be covered by holding the global state lock across
+        the whole export; it is not held here, so the reservation has to be
+        atomic on its own.
+
+        An existing file is therefore never overwritten: if the name is
+        taken, the next suffix is tried.
         """
         dir_key = "output_rejected_plan_dir" if rejected else "output_plan_dir"
         output_dir = getattr(self.config, dir_key)
@@ -692,22 +700,119 @@ class PlanExport:
         notes_dir = self.project_dir / expanded_dir
         notes_dir.mkdir(parents=True, exist_ok=True)
 
-        base_filename = self.expand_template(
-            self.config.filename_pattern, plan_path, useful_name
+        base_filename = self._sanitize_filename(
+            self.expand_template(self.config.filename_pattern, plan_path, useful_name)
         )
-        base_filename = self._sanitize_filename(base_filename)
-        dest_filename = f"{base_filename}{self.config.extension}"
-        dest_path = notes_dir / dest_filename
 
-        counter = 1
-        while dest_path.exists():
-            dest_filename = f"{base_filename}_{counter}{self.config.extension}"
-            dest_path = notes_dir / dest_filename
-            counter += 1
+        for counter in range(self._MAX_DESTINATION_ATTEMPTS):
+            suffix = "" if counter == 0 else f"_{counter}"
+            dest_path = notes_dir / f"{base_filename}{suffix}{self.config.extension}"
+            try:
+                # "x" fails if the path exists, including if it appeared a
+                # moment ago. That failure is the reservation working.
+                with open(dest_path, "x", encoding="utf-8"):
+                    pass
+                return dest_path
+            except FileExistsError:
+                continue
 
+        raise OSError(
+            f"Could not reserve a destination for {plan_path.name} in "
+            f"{notes_dir}: {self._MAX_DESTINATION_ATTEMPTS} names are already "
+            "taken. Move or remove the existing exports."
+        )
+
+    def _write_reserved_destination(self, plan_path: Path, dest_path: Path) -> None:
+        """Fill in a destination this exporter already reserved.
+
+        Deliberately performs no state access: the caller holds no lock here,
+        which is the point. Copying while the global state lock was held made
+        every other session's writes wait on this filesystem operation.
+        """
         shutil.copy2(plan_path, dest_path)
         embed_plan_metadata(plan_path, self.ctx.session_id, dest_path)
-        return dest_path
+
+    def _supersedes_record(self, record: Dict, rejected: bool) -> bool:
+        """Whether this export should proceed despite an existing record.
+
+        Only one case does: the plan was kept because it was rejected, and it
+        is now accepted. That is a different outcome, not a repeat of the
+        earlier one, and suppressing it is what leaves an approved plan
+        existing only under notes/rejected/.
+
+        The reverse is not symmetric. Once a plan has been exported as
+        accepted, writing a second copy into the rejected directory adds
+        nothing — the meaningful outcome already happened — so an accepted
+        record suppresses a later rejected export.
+        """
+        return self._record_is_rejected(record) and not rejected
+
+    def _record_is_rejected(self, record: Dict) -> bool:
+        """Whether a tracking record describes a rejected-plan backup.
+
+        Deduplication is per kind: a plan kept because it was rejected must
+        not answer for one that was later accepted. Otherwise accepting an
+        unchanged plan after rejecting it reports success and writes nothing,
+        which is how an approved plan ends up existing only under
+        notes/rejected/.
+
+        Records written before this distinction carry no flag, so their kind
+        is read from where they point. Re-exporting every previously exported
+        plan would be worse than the bug, so an unrecognizable record counts
+        as accepted and keeps suppressing duplicates.
+        """
+        flag = record.get("rejected")
+        if isinstance(flag, bool):
+            return flag
+
+        destination = record.get("exported_to") or ""
+        if not destination:
+            return False
+        rejected_dir = self.expand_template(
+            self.config.output_rejected_plan_dir, Path(destination), ""
+        )
+        try:
+            relative = Path(destination).relative_to(self.project_dir)
+        except ValueError:
+            relative = Path(destination)
+        return Path(rejected_dir).name in relative.parts
+
+    def _withdraw_export_claim(self, content_hash: str, dest_path: Path) -> None:
+        """Undo a claim whose file was never written.
+
+        Leaving it would suppress every later attempt at the same plan while
+        pointing at a file that does not exist, so the plan would be silently
+        lost rather than retried.
+        """
+        try:
+            with session_state(GLOBAL_SESSION_ID) as state:
+                tracking = dict(state.get("tracking", {}))
+                claim = tracking.get(content_hash)
+                # Only withdraw this exporter's own claim; another one may
+                # have legitimately replaced it.
+                if claim and claim.get("exported_to") == str(dest_path):
+                    tracking.pop(content_hash, None)
+                    state["tracking"] = tracking
+        except Exception as state_error:  # noqa: BLE001 - the copy failure matters more
+            log_warning(
+                f"Could not withdraw the export claim for {dest_path}: "
+                f"{state_error}. A later export of the same plan may be "
+                "skipped; re-export with force to override.",
+                self.config,
+            )
+        self._release_reservation(dest_path)
+
+    def _release_reservation(self, dest_path: Path) -> None:
+        """Give back a reserved name after the export did not happen."""
+        try:
+            dest_path.unlink(missing_ok=True)
+        except OSError as unlink_error:
+            log_warning(
+                f"Could not remove the reserved export destination "
+                f"{dest_path}: {unlink_error}. Remove it by hand if it is "
+                "empty.",
+                self.config,
+            )
 
     def export(self, plan_path: Path, rejected: bool = False, force: bool = False) -> Dict:
         """Export plan to project notes directory.
@@ -720,35 +825,77 @@ class PlanExport:
         try:
             content_hash = get_content_hash(plan_path)
 
-            # Single session_state open: check dedup + update tracking + update active_plans
-            # Collapses the previous triple-open pattern to eliminate 3 lock cycles and
-            # 2 race windows between checks and updates.
-            with session_state(GLOBAL_SESSION_ID) as state:
-                tracking = state.get("tracking", {})
-                if not force and content_hash in tracking:
-                    prev = tracking[content_hash]
+            # Three phases, and only the middle one touches state. The copy
+            # used to happen with the global state lock held, which made every
+            # other session's writes queue behind one filesystem operation on
+            # a quarter-second budget.
+            #
+            #   1. Read whether this content was already exported.
+            #   2. Reserve a destination name, then claim the export in one
+            #      short transaction. The claim is what makes a plan exported
+            #      once even though the check and the write are now separate.
+            #   3. Write the file with no lock held.
+            #
+            # This used to be a single open, collapsed from three to close two
+            # race windows between checking and updating. Those windows are
+            # still closed, by the claim in phase 2 rather than by lock
+            # duration: a second exporter that arrives after the phase 1 read
+            # finds the claim and defers. Do not re-collapse this into one
+            # open — that is what put a filesystem copy inside the lock.
+            if not force:
+                with session_state(GLOBAL_SESSION_ID) as state:
+                    previous = state.get("tracking", {}).get(content_hash)
+                if previous and not self._supersedes_record(previous, rejected):
                     return {
                         "success": True,
                         "message": "Already exported (dedup)",
-                        "destination": prev.get("exported_to", ""),
+                        "destination": previous.get("exported_to", ""),
                         "skipped": True,
                     }
 
-                # _copy_plan_to_dir called inside lock — same atomicity contract as before
-                dest_path = self._copy_plan_to_dir(plan_path, rejected)
+            dest_path = self._reserve_destination(plan_path, rejected)
 
-                # Atomic update: tracking + active_plans in one write
-                dest_str = str(dest_path)
-                new_tracking = dict(tracking)
-                new_tracking[content_hash] = {
-                    "exported_to": dest_str,
-                    "exported_at": datetime.now().isoformat(),
+            claimed_by_other = None
+            with session_state(GLOBAL_SESSION_ID) as state:
+                tracking = dict(state.get("tracking", {}))
+                existing = tracking.get(content_hash)
+                if existing and not force \
+                        and self._supersedes_record(existing, rejected):
+                    # The plan was rejected and is now accepted. This export
+                    # is not a duplicate of that record; it replaces it.
+                    existing = None
+                if existing and not force:
+                    # Another exporter claimed the same content between the
+                    # read above and now. Theirs stands.
+                    claimed_by_other = existing
+                else:
+                    tracking[content_hash] = {
+                        "exported_to": str(dest_path),
+                        "exported_at": datetime.now().isoformat(),
+                        "rejected": bool(rejected),
+                    }
+                    state["tracking"] = tracking
+
+                    active_plans = dict(state.get("active_plans", {}))
+                    active_plans.pop(str(plan_path), None)
+                    state["active_plans"] = active_plans
+
+            if claimed_by_other is not None:
+                self._release_reservation(dest_path)
+                return {
+                    "success": True,
+                    "message": "Already exported (dedup)",
+                    "destination": claimed_by_other.get("exported_to", ""),
+                    "skipped": True,
                 }
-                state["tracking"] = new_tracking
 
-                active_plans = dict(state.get("active_plans", {}))
-                active_plans.pop(str(plan_path), None)
-                state["active_plans"] = active_plans
+            try:
+                self._write_reserved_destination(plan_path, dest_path)
+            except BaseException:
+                # The claim promises a file that now does not exist. Withdraw
+                # both, or a retry is suppressed and the plan is lost.
+                self._withdraw_export_claim(content_hash, dest_path)
+                raise
 
             rel_path = dest_path.relative_to(self.project_dir)
             log_warning(f"Exported plan to {rel_path}", self.config)
@@ -775,11 +922,17 @@ class PlanExport:
         if not self.config.export_rejected:
             return None
         try:
-            with session_state(GLOBAL_SESSION_ID) as state:
-                # _copy_plan_to_dir called inside lock — same atomicity contract as export()
-                dest_path = self._copy_plan_to_dir(plan_path, rejected=True)
-                backup_path_str = str(dest_path)
+            # Reserved and written before any state is touched, for the same
+            # reason as export(): the global lock must not span a file copy.
+            dest_path = self._reserve_destination(plan_path, rejected=True)
+            try:
+                self._write_reserved_destination(plan_path, dest_path)
+            except BaseException:
+                self._release_reservation(dest_path)
+                raise
+            backup_path_str = str(dest_path)
 
+            with session_state(GLOBAL_SESSION_ID) as state:
                 # Update active_plans only. Do NOT touch tracking — preserves get_unexported().
                 # Upsert: create entry if absent (e.g. after Option 1 recovery removed it)
                 # so get_current_plan() can find the plan via active_plans fallback in PostToolUse.
@@ -823,6 +976,10 @@ class PlanExport:
                 new_tracking[content_hash] = {
                     "exported_to": backup_path,
                     "exported_at": datetime.now().isoformat(),
+                    # Marked so that accepting this same plan later is
+                    # recognized as a different export, not a duplicate of
+                    # this one.
+                    "rejected": True,
                 }
                 state["tracking"] = new_tracking
 

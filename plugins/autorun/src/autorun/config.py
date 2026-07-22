@@ -685,6 +685,45 @@ CONFIG = {
     # simultaneous sessions; callers keep daemon-local cache when persistence
     # is briefly contended.
     "hook_state_lock_timeout_seconds": 0.25,
+    # ─── State store: which backend holds session state ───
+    # "json"   — one file rewritten on every change. The original.
+    # "sqlite" — one row per field. Selecting it also converts whatever the
+    #            JSON file holds, once, keeping the original renamed beside it.
+    #
+    # Switching back to "json" after a conversion is refused rather than
+    # silently serving empty state; export current state first with
+    # `autorun --state-rollback`. A conversion that fails leaves existing
+    # state authoritative and refuses to open, rather than running two
+    # writable stores at once.
+    "state_backend": "json",
+    # ─── State store: advisory in-memory bounds ───
+    # These bound ADVISORY state only — counters and flags the daemon keeps
+    # between durable checkpoints. No record, task, event, or exported plan is
+    # ever discarded by them; retention below is the only thing that deletes
+    # stored data, and it deletes nothing unless configured to.
+    #
+    # They exist because a daemon can serve thousands of sessions for weeks,
+    # and an advisory value has no durable home, so nothing else would ever
+    # remove it. At the limit the oldest advisory entries are dropped; the
+    # next read of a dropped key falls back to storage.
+    "volatile_state_max_entries": 4096,
+    "volatile_state_max_bytes": 8 * 1024 * 1024,
+    "volatile_state_max_age_seconds": 86400.0,
+    # ─── State store: write-ahead log maintenance ───
+    # Bound the SQLite sidecar, not the data. A checkpoint moves committed
+    # pages from the log into the database; the limit caps how large the log
+    # grows before that happens. Larger values mean fewer checkpoints and a
+    # bigger sidecar. Neither discards anything.
+    # Provisional: chosen to keep the log reclaimed, not by comparison.
+    "state_wal_autocheckpoint_pages": 1000,
+    "state_journal_size_limit_bytes": 8 * 1024 * 1024,
+    # Bound on parameters per SELECT when reading a named set of fields, kept
+    # under SQLite's variable limit. Larger requests are split into several
+    # statements rather than refused.
+    "state_query_parameter_chunk": 500,
+    # How many suffixed names an export tries before giving up. Reaching this
+    # means something is wrong, not that the directory is busy.
+    "plan_export_max_destination_attempts": 1000,
     # Daemon dispatch budgets must be below client/wrapper timeouts so the
     # daemon can return a platform-correct fail-open/fail-closed response.
     "daemon_dispatch_timeouts_seconds": {

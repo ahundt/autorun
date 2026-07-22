@@ -165,8 +165,11 @@ def _stale_clear_marker_example() -> str:
 
     Derives from CONFIG to avoid duplicating the marker literal — keeps
     test_marker_literal_single_source_of_truth's invariant intact.
+
+    Shows the list form, because clearing several stale tasks one marker at a
+    time is the common case and repeating the line is pure noise.
     """
-    return CONFIG["ghost_clear_marker_template"].replace("{id}", "<id>")
+    return CONFIG["ghost_clear_marker_template"].replace("{id}", "<id>[,<id>...]")
 
 
 # === Configuration (dataclass pattern from PlanExportConfig) ===
@@ -275,19 +278,102 @@ def _stale_clear_marker_regex() -> re.Pattern:
     return _marker_regex(CONFIG["ghost_clear_marker_template"])
 
 
+# One argument inside a marker: a bare task id, or a name=value option.
+_MARKER_ARGUMENT = r"[A-Za-z0-9_.=-]+"
+
+# The keyword that names where delegated work went. Named rather than
+# positional, because "(77, 78)" would otherwise be ambiguous between two
+# tasks and one task handed to a session called "78".
+_MARKER_SESSION_KEYWORD = "session"
+
+
 @cache
 def _marker_regex(template: str) -> re.Pattern:
-    """Regex matching one AI-printable marker template's {id} slot."""
+    """Regex matching one AI-printable marker template's argument slot.
+
+    The slot accepts a comma-delimited list rather than a single id, so one
+    marker can name every task it applies to. Writing one marker per task was
+    the only option before, which made handing three tasks to a subagent
+    three near-identical lines.
+    """
     prefix, suffix = template.split("{id}")
-    return re.compile(re.escape(prefix) + r"([A-Za-z0-9_.-]+)" + re.escape(suffix))
+    # At least one argument is required, so an empty marker does not match at
+    # all rather than matching and naming nothing.
+    arguments = rf"{_MARKER_ARGUMENT}(?:\s*,\s*{_MARKER_ARGUMENT})*\s*,?"
+    return re.compile(
+        re.escape(prefix) + rf"\s*({arguments})\s*" + re.escape(suffix)
+    )
+
+
+# One argument, tokenized: an optional ``name=`` followed by a value.
+# Whitespace, separators, and a trailing comma all fall out of the pattern,
+# so there is no hand-rolled splitting to get wrong.
+_MARKER_ARGUMENT_TOKEN = re.compile(
+    r"(?:(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*)?(?P<value>[A-Za-z0-9_.-]+)"
+)
+
+
+def _parse_marker_arguments(raw: str) -> tuple[list[str], "str | None"]:
+    """Split one marker's arguments into task ids and an optional session.
+
+    A bare argument is a task id. ``name=value`` is an option. An option
+    nobody recognizes is dropped rather than treated as an id, so a typo does
+    nothing instead of delegating a task called ``priority=high``.
+    """
+    ids: list[str] = []
+    options: dict[str, str] = {}
+    for token in _MARKER_ARGUMENT_TOKEN.finditer(raw or ""):
+        key, value = token.group("key"), token.group("value")
+        if key is None:
+            ids.append(value)
+        else:
+            options[key.lower()] = value
+    return ids, options.get(_MARKER_SESSION_KEYWORD)
+
+
+@cache
+def _marker_literal_prefix(template: str) -> str:
+    """The fixed text before a marker's arguments, e.g. ``MARKER_NAME(``."""
+    return template.split("{id}")[0]
+
+
+def _extract_marker_entries(template: str, *texts: object) -> list:
+    """Every occurrence of one marker, as (task ids, session) pairs.
+
+    This runs on every Stop and every PostToolUse, and almost no hook carries
+    a marker, so the cost that matters is the cost of finding nothing. Two
+    things keep that cheap, both following what LazyTranscript already does:
+
+    Each text is tested for the marker's fixed prefix before the pattern is
+    applied. That test is CPython's own substring search — a single pass with
+    no backtracking — and it rejects the common case outright. The compiled
+    pattern and the prefix are both cached, so neither is rebuilt per call.
+
+    The texts are also scanned separately rather than concatenated. Joining
+    them copied every byte on every call, which for a transcript at its 64 KiB
+    ingest cap (see normalize_hook_payload) was a wasted copy per marker per
+    hook — twice over, since two markers are scanned.
+    """
+    prefix = _marker_literal_prefix(template)
+    pattern = None
+    entries = []
+    for text in texts:
+        if not isinstance(text, str) or prefix not in text:
+            continue
+        if pattern is None:
+            pattern = _marker_regex(template)
+        for raw in pattern.findall(text):
+            ids, session = _parse_marker_arguments(raw)
+            if ids or session:
+                entries.append((ids, session))
+    return entries
 
 
 def _extract_marker_task_ids(template: str, *texts: object) -> list[str]:
     """Return unique task ids matching one marker template across texts."""
-    combined = "".join(text for text in texts if isinstance(text, str) and text)
-    if not combined:
-        return []
-    return list(dict.fromkeys(str(m) for m in _marker_regex(template).findall(combined)))
+    ids = [task_id for entry_ids, _session in _extract_marker_entries(template, *texts)
+           for task_id in entry_ids]
+    return list(dict.fromkeys(ids))
 
 
 def extract_stale_clear_task_ids(*texts: object) -> list[str]:
@@ -300,9 +386,26 @@ def extract_delegate_task_ids(*texts: object) -> list[str]:
     return _extract_marker_task_ids(CONFIG["delegate_marker_template"], *texts)
 
 
+def extract_delegate_markers(*texts: object) -> list:
+    """Delegation markers as (task ids, session) pairs.
+
+    Callers that only need the ids use ``extract_delegate_task_ids``; this
+    keeps the session each group of tasks was handed to, which is what makes
+    an unreturned delegation traceable.
+    """
+    return _extract_marker_entries(CONFIG["delegate_marker_template"], *texts)
+
+
 def _delegate_marker_example() -> str:
-    """Delegation marker with a placeholder id, for guidance text."""
-    return CONFIG["delegate_marker_template"].replace("{id}", "<id>")
+    """Delegation marker with placeholder arguments, for guidance text.
+
+    Shows both extras the grammar accepts: several ids in one marker, and an
+    optional ``session=`` naming where the work went, which is the only way a
+    delegation that never reports back can be traced back to its subagent.
+    """
+    return CONFIG["delegate_marker_template"].replace(
+        "{id}", "<id>[,<id>...][,session=<session-id>]"
+    )
 
 
 # === TaskLifecycle Class ===
@@ -1304,8 +1407,83 @@ class TaskLifecycle:
         if ctx.event == "SubagentStop":
             return None
 
+        return self._check_stop_with_delegation(ctx)
+
+    def apply_delegation_markers(self, ctx, blocking_tasks: "List[Dict] | None" = None):
+        """Honor any delegation markers in what the AI just said.
+
+        Called from both pathways that can see a marker — PostToolUse, which
+        fires only after a tool call, and the stop gate, which fires when the
+        AI has stopped talking. A marker printed in a plain-text reply reaches
+        only the second, and that is the common case, since "print this
+        marker" invites exactly that.
+
+        Restricted to tasks that are blocking right now, so a marker cannot
+        resurrect or alter one that is already finished, ignored, or unrelated
+        to the decision at hand.
+
+        Returns the delegated ids. Never raises: a marker that cannot be
+        applied must leave the caller's decision exactly as it would have
+        been, not replace it with an error.
+        """
+        try:
+            transcript_text = ctx.transcript.text if ctx.transcript else ""
+            entries = extract_delegate_markers(ctx.tool_result_str, transcript_text)
+            if not entries:
+                return []
+
+            if blocking_tasks is None:
+                blocking_tasks = self.get_incomplete_tasks(exclude_blocking=True)
+            blocking_ids = {str(task["id"]) for task in blocking_tasks}
+
+            # Applied per marker rather than as one flat list, so each group
+            # of tasks keeps the session its own marker named.
+            delegated: list[str] = []
+            for marker_ids, session in entries:
+                delegated.extend(
+                    self.delegate_tasks_from_markers(
+                        marker_ids, allowed_task_ids=blocking_ids, session=session
+                    )
+                )
+            delegated = list(dict.fromkeys(delegated))
+            if delegated:
+                ctx.add_chain_notification(
+                    f"Marked delegated (non-blocking until it reports back): "
+                    f"{', '.join(f'#{d}' for d in delegated)}",
+                    channel="both",
+                )
+            return delegated
+        except Exception as exc:  # noqa: BLE001 - a marker must not break the caller
+            logger.warning("Could not apply delegation markers: %s", exc)
+            return []
+
+    def _apply_delegate_markers(self, ctx, incomplete_tasks: List[Dict]) -> List[Dict]:
+        """Apply markers and report what still blocks the stop."""
+        if not incomplete_tasks:
+            return incomplete_tasks
+        if not self.apply_delegation_markers(ctx, incomplete_tasks):
+            return incomplete_tasks
+        return self.get_incomplete_tasks(exclude_blocking=True)
+
+    def _check_stop_with_delegation(self, ctx) -> Optional[str]:
+        """The stop gate proper, with delegation markers already honored."""
+
         # Find incomplete tasks (exclude paused/ignored - they're explicitly parked)
         incomplete_tasks = self.get_incomplete_tasks(exclude_blocking=True)
+
+        # Apply delegation markers here as well as on PostToolUse.
+        #
+        # The block message tells the AI to print AUTORUN_TASK_DELEGATED(N) to
+        # hand a task to a subagent. It usually does so in a plain-text reply
+        # with no tool call — and PostToolUse only fires after a tool call, so
+        # on that path the marker is never read. This hook then blocks again on
+        # the very task the AI just delegated, prints the same instruction, and
+        # the AI complies again: a loop with no exit that the AI cannot escape
+        # by doing what it was told.
+        #
+        # Both pathways are kept. PostToolUse applies the marker as soon as it
+        # appears; this applies it at the only moment it has to be right.
+        incomplete_tasks = self._apply_delegate_markers(ctx, incomplete_tasks)
 
         if not incomplete_tasks:
 
@@ -1485,6 +1663,7 @@ class TaskLifecycle:
         task_ids: Iterable[str],
         *,
         allowed_task_ids: Iterable[str] | None = None,
+        session: "str | None" = None,
     ) -> list[str]:
         """Mark task ids delegated from AI-printed delegation markers.
 
@@ -1501,19 +1680,29 @@ class TaskLifecycle:
             allowed_task_ids: Optional current blocking task-id set. When
                 provided, markers naming unrelated or already non-blocking
                 tasks are ignored, matching clear_stale_task_markers().
+            session: Optional id of the session the work was handed to,
+                recorded on each task. A delegation that never reports back
+                is otherwise untraceable — the task says only that it went
+                somewhere.
         """
         reason = CONFIG["delegate_reason"]
         delegated: list[str] = []
         allowed = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids is not None else None
+        updates: Dict[str, object] = {"status": "delegated"}
+        if session:
+            updates["metadata"] = {"delegated_to_session": str(session)}
         for tid in list(dict.fromkeys(str(task_id) for task_id in task_ids)):
             if allowed is not None and tid not in allowed:
                 continue
             try:
                 # update_task returns None on success and "ghost_skip" when
                 # ghost-task protection refused the write.
-                if self.update_task(tid, {"status": "delegated"}, reason) != "ghost_skip":
+                if self.update_task(tid, dict(updates), reason) != "ghost_skip":
                     delegated.append(tid)
-                    self.log_event("DELEGATE", f"task#{tid}", reason, "delegated")
+                    self.log_event(
+                        "DELEGATE", f"task#{tid}", reason, "delegated",
+                        {"session": session} if session else None,
+                    )
             except Exception:
                 continue
         return delegated

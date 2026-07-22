@@ -102,6 +102,7 @@ markers = [
     "serial: marks tests that must run serially (not in parallel)",
     "stress: marks stress tests",
     "race: marks race condition tests",
+    "benchmark: marks storage cost measurements (AUTORUN_ENABLE_STATE_BENCHMARK=1)",
 ]
 asyncio_mode = "auto"
 

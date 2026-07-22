@@ -320,9 +320,20 @@ class TestThreadSafeDB:
         assert dispatch_timeout_for_event("PostToolUse") < dispatch_timeout_for_event("PreToolUse")
         assert dispatch_timeout_for_event("unknown-event") <= configured["PostToolUse"]
 
-    def test_set_updates_cache_when_persistence_times_out(self, monkeypatch):
-        """Contended disk persistence must not block the daemon cache path."""
+    def test_set_disowns_a_value_when_persistence_times_out(self, monkeypatch):
+        """A contended write is reported and dropped, never kept in memory.
+
+        Keeping it would make the cache disagree with storage: every later
+        reader in this process would see the new value while another process,
+        and this one after a restart, saw the old one, with nothing to say
+        which was right. The daemon log recorded seventeen of these in a
+        single observation window.
+
+        The waiting budget still comes from configuration and is still short —
+        the fix is in what happens after the wait fails, not in waiting longer.
+        """
         import autorun.core as core
+        from autorun.session_manager import SessionPersistenceError
 
         calls = []
 
@@ -339,10 +350,14 @@ class TestThreadSafeDB:
         monkeypatch.setattr(core, "session_state", TimeoutSession)
 
         db = ThreadSafeDB(state_timeout=0.123)
-        db.set("session-1:file_policy", "SEARCH")
+        with pytest.raises(SessionPersistenceError) as raised:
+            db.set("session-1:file_policy", "SEARCH")
 
         assert calls == [("session-1", 0.123)]
-        assert db.get("session-1:file_policy") == "SEARCH"
+        assert "session-1" in str(raised.value) and "file_policy" in str(raised.value)
+        assert db.get("session-1:file_policy", "unset") == "unset", (
+            "The cache is serving a value that never reached storage."
+        )
 
     def test_batch_writes_flushes_one_session_once(self, monkeypatch):
         """Dispatch batching should avoid one persistent save per magic attribute."""

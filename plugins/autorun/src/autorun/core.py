@@ -42,8 +42,10 @@ from pathlib import Path
 from typing import Any, Optional, Dict, List, Callable, Set, Union
 from functools import lru_cache
 
+from collections import OrderedDict
+
 # Reuse existing session_manager (CRITICAL: preserves RAII, locks, backends)
-from .session_manager import session_state
+from .session_manager import SessionPersistenceError, session_state
 from .config import CONFIG
 from .platforms import (
     PLATFORMS as _PLATFORMS,
@@ -63,6 +65,15 @@ IDLE_TIMEOUT = 1800  # 30 minutes
 # shared JSON file; advisory hook paths should skip persistence on contention
 # instead of waiting long enough to time out active sessions.
 HOOK_STATE_LOCK_TIMEOUT = float(CONFIG.get("hook_state_lock_timeout_seconds", 0.25))
+
+# Advisory in-memory state has no durable home, so nothing else would ever
+# remove it. A daemon can serve thousands of sessions over days, and every
+# counter left behind is held until it exits. These bounds are what stops
+# that; they are limits, not a tuning target, so the numbers are chosen to be
+# comfortably larger than any live working set.
+VOLATILE_MAX_ENTRIES = int(CONFIG.get("volatile_state_max_entries", 4096))
+VOLATILE_MAX_BYTES = int(CONFIG.get("volatile_state_max_bytes", 8 * 1024 * 1024))
+VOLATILE_MAX_AGE_SECONDS = float(CONFIG.get("volatile_state_max_age_seconds", 86400.0))
 _DISPATCH_TIMEOUT_BY_EVENT = dict(CONFIG.get("daemon_dispatch_timeouts_seconds", {}))
 
 
@@ -433,6 +444,75 @@ def coerce_tool_result_to_str(tool_result) -> str:
 
 
 # === THREAD-SAFE DB WRAPPER (In-memory cache layer for daemon performance) ===
+def _attach_state_failure_notice(response, ctx, message: str) -> dict:
+    """Add a failure notice to an already-built hook response.
+
+    Used when persistence fails after the handlers have run, so there is no
+    longer a chain to accumulate a notification into.
+
+    The notice is shaped by the target harness's own wire contract rather
+    than written out by hand. Harnesses differ in where human text and
+    model-visible text belong, and one of them accepts no hook response at
+    all; inventing Claude's field layout for all of them would either be
+    stripped by validation or, worse, attach fields to a response the harness
+    does not expect. Whatever the handlers already put in those fields is
+    appended to, not replaced, because it is still true.
+    """
+    result = dict(response) if isinstance(response, dict) else {}
+
+    from .platforms import get_platform
+
+    platform = get_platform(ctx.cli_type)
+    if platform is not None and platform.schema_type == "none":
+        # This harness reads no hook response, so there is nowhere to put the
+        # notice. The log keeps the record; the failure is logged before this
+        # is called.
+        return result
+
+    protocol = platform.hook_protocol if platform else _PLATFORMS["claude"].hook_protocol
+
+    existing_human = result.get("systemMessage") or ""
+    existing_ai = (result.get("hookSpecificOutput") or {}).get("additionalContext") or ""
+
+    shaped = protocol.context_response(
+        event_name=to_harness_cli_event(ctx.event, ctx.cli_type),
+        system_message=f"{existing_human}\n{message}".strip(),
+        root_reason="",
+        additional_context=f"{existing_ai}\n{message}".strip(),
+    )
+    if not shaped:
+        # A harness that carries no hook response has nowhere to put this. The
+        # log is then the only record, which is why the failure is logged
+        # before this is called.
+        return result
+
+    for field_name in ("systemMessage", "hookSpecificOutput"):
+        if field_name in shaped:
+            result[field_name] = shaped[field_name]
+    return validate_hook_response(ctx.event, result, ctx.cli_type)
+
+
+def report_state_persistence_failure(ctx, fields, session_id: str, error: Exception) -> None:
+    """Say out loud that state a handler set was never stored.
+
+    Sent to the caller as well as the user. The caller is the only party that
+    still knows what it was trying to record and can repeat it; the user is
+    the one who will otherwise meet the consequences later, with nothing
+    connecting them to this moment.
+    """
+    named = ", ".join(str(field) for field in fields) or "state"
+    try:
+        ctx.add_chain_notification(
+            f"⚠️ autorun could not save {named} for session {session_id}: "
+            f"{error}. The value has been discarded rather than kept in "
+            "memory, so nothing is pretending it was saved. Re-issue the "
+            "change if it still matters.",
+            channel="both",
+        )
+    except Exception as notify_error:  # noqa: BLE001 - reporting must not block
+        logger.warning("Could not report a state persistence failure: %s", notify_error)
+
+
 class ThreadSafeDB:
     """
     Thread-safe in-memory cache on top of session_manager.py's persistent storage.
@@ -452,12 +532,33 @@ class ThreadSafeDB:
         - Daemon restart: Cache rebuilds from persistent JSON
     """
 
-    def __init__(self, state_timeout: float = HOOK_STATE_LOCK_TIMEOUT):
+    def __init__(
+        self,
+        state_timeout: float = HOOK_STATE_LOCK_TIMEOUT,
+        volatile_max_entries: int = VOLATILE_MAX_ENTRIES,
+        volatile_max_bytes: int = VOLATILE_MAX_BYTES,
+        volatile_max_age_seconds: float = VOLATILE_MAX_AGE_SECONDS,
+        persist_volatile_state: bool = False,
+    ):
         self._lock = threading.RLock()
         self._cache: Dict[str, Any] = {}
         self._loaded_sessions: Set[str] = set()
         self._state_timeout = state_timeout
         self._batch = threading.local()
+        # Advisory entries, oldest first, with the age and size used to
+        # enforce the limits below. Durable keys never appear here, so
+        # eviction cannot reach a value some decision depends on.
+        self._volatile: "OrderedDict[str, tuple[float, int]]" = OrderedDict()
+        self._volatile_max_entries = volatile_max_entries
+        self._volatile_max_bytes = volatile_max_bytes
+        self._volatile_max_age_seconds = volatile_max_age_seconds
+        self._volatile_bytes = 0
+        # "Advisory, in memory" is only meaningful while something outlives one
+        # hook. Without a daemon each hook is its own process, so an advisory
+        # value would be discarded before anything could read it back — a
+        # countdown kept that way never advances past one. Direct mode
+        # therefore persists it instead.
+        self._persist_volatile_state = persist_volatile_state
 
     def _split_key(self, key: str) -> tuple[str, str]:
         """Split a magic-state key into session id and field name."""
@@ -473,7 +574,10 @@ class ThreadSafeDB:
         """Hydrate one session once, then serve present and missing fields from memory."""
         with self._lock:
             if key in self._cache:
-                return self._cache[key]
+                if self._volatile_entry_expired(key):
+                    self._drop_volatile(key)
+                else:
+                    return self._cache[key]
 
             session_id, field = self._split_key(key)
             if session_id in self._loaded_sessions:
@@ -499,6 +603,9 @@ class ThreadSafeDB:
         with self._lock:
             # Update memory cache
             self._cache[key] = value
+            # This key now has a durable home, so it is no longer subject to
+            # advisory eviction.
+            self._drop_volatile_bookkeeping(key)
             if self._batch_depth() > 0:
                 self._batch.dirty[key] = value
                 return
@@ -522,11 +629,19 @@ class ThreadSafeDB:
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
 
     def set_volatile(self, key: str, value: Any) -> None:
-        """Set daemon-lifetime advisory state without persistent JSON I/O."""
+        """Set bounded advisory state without persistent JSON I/O.
+
+        Falls through to a durable write when nothing outlives this process,
+        because otherwise the value is gone before it can be read again.
+        """
+        if self._persist_volatile_state:
+            self.set(key, value)
+            return
         if isinstance(value, (list, dict, set)):
             value = copy.deepcopy(value)
         with self._lock:
             self._cache[key] = value
+            self._track_volatile(key, value)
 
     def update_volatile(self, key: str, updater: Callable[[Any], Any], default=None) -> Any:
         """Atomically update advisory state in the daemon cache only.
@@ -534,7 +649,14 @@ class ThreadSafeDB:
         Hydrate the session first so a daemon restart resumes from the latest
         durable checkpoint. Callers must persist correctness- or safety-critical
         transitions separately; this path is for counters between checkpoints.
+
+        Without a daemon there are no "between checkpoints": every hook is a
+        new process, so the update is made durable instead. A counter that
+        resets on every read never reaches any threshold, which silently
+        disables whatever it was counting toward.
         """
+        if self._persist_volatile_state:
+            return self.update(key, updater, default)
         with self._lock:
             current = self.get(key, default)
             if isinstance(current, (list, dict, set)):
@@ -542,7 +664,80 @@ class ThreadSafeDB:
             value = updater(current)
             cached = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
             self._cache[key] = cached
+            self._track_volatile(key, cached)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
+
+    # --- bounded advisory memory ------------------------------------------
+
+    def volatile_entry_count(self) -> int:
+        """Advisory entries currently held."""
+        with self._lock:
+            return len(self._volatile)
+
+    def volatile_byte_estimate(self) -> int:
+        """Approximate bytes held by advisory entries."""
+        with self._lock:
+            return self._volatile_bytes
+
+    @staticmethod
+    def _estimate_bytes(value: Any) -> int:
+        """Rough size of one advisory value.
+
+        Deliberately approximate: the limit exists to stop unbounded growth,
+        and an exact measurement would cost more than the value it guards.
+        """
+        try:
+            return len(json.dumps(value, default=str))
+        except (TypeError, ValueError):
+            return len(repr(value))
+
+    def _track_volatile(self, key: str, value: Any) -> None:
+        """Record an advisory entry and enforce the configured limits."""
+        size = self._estimate_bytes(value)
+        previous = self._volatile.pop(key, None)
+        if previous is not None:
+            self._volatile_bytes -= previous[1]
+        self._volatile[key] = (time.monotonic(), size)
+        self._volatile_bytes += size
+        self._evict_volatile_over_limits()
+
+    def _volatile_entry_expired(self, key: str) -> bool:
+        entry = self._volatile.get(key)
+        if entry is None:
+            return False
+        return (time.monotonic() - entry[0]) > self._volatile_max_age_seconds
+
+    def _drop_volatile_bookkeeping(self, key: str) -> None:
+        """Stop treating a key as advisory, leaving its cached value in place."""
+        entry = self._volatile.pop(key, None)
+        if entry is not None:
+            self._volatile_bytes -= entry[1]
+
+    def _drop_volatile(self, key: str) -> None:
+        """Forget an advisory entry entirely."""
+        self._drop_volatile_bookkeeping(key)
+        self._cache.pop(key, None)
+
+    def _evict_volatile_over_limits(self) -> None:
+        """Discard the oldest advisory entries until the limits are met.
+
+        Only keys recorded as advisory are eligible. A durable value evicted
+        here would be silently reconstructed from disk at best, and at worst
+        change what the daemon allows or blocks.
+        """
+        now = time.monotonic()
+        for key in [
+            key for key, (written, _size) in self._volatile.items()
+            if (now - written) > self._volatile_max_age_seconds
+        ]:
+            self._drop_volatile(key)
+
+        while (
+            len(self._volatile) > self._volatile_max_entries
+            or self._volatile_bytes > self._volatile_max_bytes
+        ):
+            oldest, _entry = next(iter(self._volatile.items()))
+            self._drop_volatile(oldest)
 
     @contextlib.contextmanager
     def synchronized_session(self, session_id: str):
@@ -615,26 +810,53 @@ class ThreadSafeDB:
                 dirty = getattr(self._batch, "dirty", {})
                 self._batch.dirty = {}
                 if dirty:
+                    # Raises if any group failed, after removing those keys
+                    # from the cache. The dispatch that opened the batch turns
+                    # that into a report on the response.
                     self._persist_many(dict(dirty))
 
     def _persist_many(self, values: Dict[str, Any]) -> None:
+        """Write cached values through to storage, or disown them.
+
+        A failure here used to be logged and otherwise ignored, which left the
+        cache serving a value storage had refused. Every later reader in this
+        process then saw one thing while another process, and this one after a
+        restart, saw another, with nothing to say which was right.
+
+        So a failure now does two things: the affected keys are removed from
+        the cache, sending the next read back to storage, and the failure is
+        raised. Callers on hook paths report it rather than propagating it —
+        state bookkeeping is not worth failing a tool call over — but nothing
+        may treat the write as though it landed.
+        """
         grouped: Dict[str, Dict[str, Any]] = {}
         for key, value in values.items():
             session_id, field = self._split_key(key)
             grouped.setdefault(session_id, {})[field] = value
 
+        failures = []
         for session_id, fields in grouped.items():
             try:
                 with session_state(session_id, timeout=self._state_timeout) as state:
                     for field, value in fields.items():
                         state[field] = value
             except Exception as e:
-                logger.warning(
-                    "ThreadSafeDB cached %d field(s) for %r but skipped persistent state: %s",
-                    len(fields),
-                    session_id,
-                    e,
-                )
+                for field in fields:
+                    self._cache.pop(f"{session_id}:{field}", None)
+                # The session is no longer known to be fully hydrated, so the
+                # next read must go back to storage rather than concluding a
+                # missing field was never set.
+                self._loaded_sessions.discard(session_id)
+                failures.append((session_id, sorted(fields), e))
+
+        if failures:
+            described = "; ".join(
+                f"{session_id} ({', '.join(fields)}): {error}"
+                for session_id, fields, error in failures
+            )
+            raise SessionPersistenceError(
+                f"State was not saved and has been dropped from memory: {described}"
+            ) from failures[0][2]
 
 
 # === TRI-LAYER IDENTITY RESOLUTION (Optional, for resume robustness) ===
@@ -1267,7 +1489,17 @@ class EventContext:
         own_session = object.__getattribute__(self, "_session_id")
         target_session = session_id or own_session
         if store:
-            store.set(f"{target_session}:{name}", value)
+            try:
+                store.set(f"{target_session}:{name}", value)
+            except SessionPersistenceError as exc:
+                # Reported rather than raised: a hook that fails here would
+                # block a tool call over bookkeeping. The value is already
+                # gone from the shared cache; drop it from this request too so
+                # the rest of the dispatch cannot decide from state that does
+                # not exist.
+                report_state_persistence_failure(self, [name], target_session, exc)
+                object.__getattribute__(self, "_state").pop(name, None)
+                return
         else:
             persisted = copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
             with session_state(target_session, timeout=HOOK_STATE_LOCK_TIMEOUT) as state:
@@ -1879,10 +2111,27 @@ class AutorunApp:
         DRY: Single method handles all event types with minimal branching.
         """
         store = getattr(ctx, "_store", None)
-        if store is not None and hasattr(store, "batch_writes"):
+        if store is None or not hasattr(store, "batch_writes"):
+            return self._dispatch_unbatched(ctx)
+
+        response = None
+        try:
             with store.batch_writes():
-                return self._dispatch_unbatched(ctx)
-        return self._dispatch_unbatched(ctx)
+                response = self._dispatch_unbatched(ctx)
+        except SessionPersistenceError as exc:
+            # The handlers finished and produced a response; only the flush
+            # that follows them failed. Losing the response as well would turn
+            # a bookkeeping failure into a broken hook, so the response is
+            # returned with the failure attached to it.
+            logger.error("State batch was not saved: %s", exc)
+            response = _attach_state_failure_notice(
+                response,
+                ctx,
+                f"⚠️ autorun could not save session state at the end of this "
+                f"{ctx.event} hook: {exc}. The affected values were discarded "
+                "rather than kept in memory.",
+            )
+        return response
 
     def _dispatch_unbatched(self, ctx: EventContext) -> Dict:
         """Dispatch implementation; caller may wrap store persistence batching."""

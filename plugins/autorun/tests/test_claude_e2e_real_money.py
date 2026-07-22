@@ -2229,6 +2229,253 @@ class TestClaudeE2ERealMoney:
 
 
 # =============================================================================
+# STATE DURABILITY THROUGH THE REAL HOOK PATH ($0.000 — no API calls)
+# =============================================================================
+
+
+class TestClaudeStateDurabilityThroughHooks:
+    """State written by one hook process must be there for the next one.
+
+    Every other test in this file sends one hook event at a time. Real
+    sessions do not behave that way: a single assistant message carrying
+    several tool calls makes the harness fire several hooks at once, and each
+    one is a separate process reaching the same session's state.
+
+    That is where the reported failure lived. Three TaskUpdate calls in one
+    turn produced one recorded update, and the daemon log showed
+
+        Task tracking error: Could not acquire state lock for
+        '__task_lifecycle__<session>' after 0.25s
+
+    twice at the same instant. The two lost updates were transitions to
+    "completed", so a task the assistant had finished stayed "pending" in
+    autorun's mirror and blocked Stop indefinitely — unrepairable, because
+    the harness answered "Task not found" to every retry.
+
+    These run through hook_entry.py as real subprocesses, so they exercise
+    process-level contention that an in-process test cannot reproduce. No API
+    calls, so no cost.
+    """
+
+    def _isolated_env(self):
+        env = os.environ.copy()
+        env["AUTORUN_USE_DAEMON"] = "0"
+        return env
+
+    def _sid(self, name: str) -> str:
+        return f"e2e-state-{name}-{uuid.uuid4().hex[:8]}"
+
+    def _payload(self, event: str, session_id: str, **extra) -> dict:
+        return {
+            "hook_event_name": event,
+            "session_id": session_id,
+            "_cwd": "/tmp",
+            "_pid": os.getpid(),
+            **extra,
+        }
+
+    def _run(self, hook_resources, payload, timeout=30):
+        return run_hook(
+            hook_resources["hook_script"],
+            hook_resources["plugin_root"],
+            payload,
+            env=self._isolated_env(),
+            timeout=timeout,
+        )
+
+    def _spawn(self, hook_resources, payload):
+        """Start a hook process without waiting, so several can overlap."""
+        return subprocess.Popen(
+            [
+                "uv", "run", "--project", str(hook_resources["plugin_root"]),
+                "python", str(hook_resources["hook_script"]), "--cli", "claude",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=self._isolated_env(),
+        )
+
+    def _run_concurrently(self, hook_resources, payloads, timeout=120):
+        """Run hooks in overlapping processes; return (rc, stdout, stderr) each."""
+        processes = [self._spawn(hook_resources, p) for p in payloads]
+        results = []
+        for process, payload in zip(processes, payloads):
+            stdout, stderr = process.communicate(json.dumps(payload), timeout=timeout)
+            results.append((process.returncode, stdout, stderr))
+        return results
+
+    def _task_payload(self, session_id, task_id, event="TaskCreate", **fields):
+        if event == "TaskCreate":
+            return self._payload(
+                "PostToolUse", session_id,
+                tool_name="TaskCreate",
+                tool_input={"subject": f"Task {task_id}", "description": "e2e"},
+                tool_result=f"Task #{task_id} created successfully: Task {task_id}",
+                session_transcript=[],
+            )
+        return self._payload(
+            "PostToolUse", session_id,
+            tool_name="TaskUpdate",
+            tool_input={"taskId": task_id, **fields},
+            tool_result=f"Updated task #{task_id} status",
+            session_transcript=[],
+        )
+
+    def _stored_tasks(self, session_id):
+        """Read the task mirror the way the Stop hook does."""
+        sys.path.insert(0, str(_PLUGIN_ROOT / "src"))
+        from autorun.task_lifecycle import TaskLifecycle
+
+        return TaskLifecycle(session_id=session_id).tasks
+
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def test_state_written_by_one_hook_process_is_visible_to_the_next(
+        self, hook_resources
+    ):
+        """The whole point of persistence: separate processes, one session."""
+        session_id = self._sid("crossprocess")
+
+        rc, stdout, stderr, resp = self._run(
+            hook_resources,
+            self._payload("UserPromptSubmit", session_id,
+                          prompt="/ar:f", session_transcript=[]),
+        )
+        assert rc == 0, f"policy command failed: rc={rc} stderr={stderr}"
+
+        rc, stdout, stderr, resp = self._run(
+            hook_resources,
+            self._payload("UserPromptSubmit", session_id,
+                          prompt="/ar:st", session_transcript=[]),
+        )
+        combined = f"{stdout} {stderr}"
+        assert "SEARCH" in combined, (
+            "A policy set in one hook process was not visible to the next. "
+            "Every hook is a separate process, so anything that lives only in "
+            f"memory is already gone. Got: {combined[:400]}"
+        )
+
+    def test_parallel_task_updates_in_one_turn_all_reach_the_mirror(
+        self, hook_resources
+    ):
+        """The reported failure, reproduced through real processes.
+
+        Each update is a separate hook process contending for the same
+        session's state on a sub-second budget. Every one of them must land:
+        a lost "completed" leaves Stop blocked on finished work with no way
+        to repair it.
+        """
+        session_id = self._sid("parallel")
+        task_ids = ["1", "2", "3"]
+
+        for task_id in task_ids:
+            rc, _out, err, _resp = self._run(
+                hook_resources, self._task_payload(session_id, task_id))
+            assert rc == 0, f"task creation failed: {err}"
+
+        results = self._run_concurrently(
+            hook_resources,
+            [self._task_payload(session_id, task_id, event="TaskUpdate",
+                                status="completed")
+             for task_id in task_ids],
+        )
+        for returncode, _stdout, stderr in results:
+            assert returncode == 0, f"a concurrent hook failed: {stderr}"
+
+        recorded = self._stored_tasks(session_id)
+        stuck = {
+            task_id: recorded.get(task_id, {}).get("status")
+            for task_id in task_ids
+            if recorded.get(task_id, {}).get("status") != "completed"
+        }
+        assert not stuck, (
+            "A task the assistant completed is still incomplete in autorun's "
+            "mirror. Stop will block on it and the harness answers 'Task not "
+            f"found' to every repair attempt. Stuck: {stuck}"
+        )
+
+    def test_a_dropped_task_update_is_reported_rather_than_silent(
+        self, hook_resources
+    ):
+        """If contention does win, the response has to say so.
+
+        Silence is what made the original failure unrecoverable: the tool call
+        succeeded, so nothing indicated the mirror had diverged until a much
+        later Stop blocked on a finished task.
+        """
+        session_id = self._sid("reported")
+        self._run(hook_resources, self._task_payload(session_id, "1"))
+
+        results = self._run_concurrently(
+            hook_resources,
+            [self._task_payload(session_id, "1", event="TaskUpdate",
+                                status="completed") for _ in range(6)],
+        )
+
+        recorded = self._stored_tasks(session_id)
+        reported = any(
+            "did not record" in stdout or "could not save" in stdout
+            for _rc, stdout, _err in results
+        )
+        assert recorded.get("1", {}).get("status") == "completed" or reported, (
+            "An update neither landed nor was reported. One of the two must "
+            f"happen. Responses: {[out[:200] for _rc, out, _err in results]}"
+        )
+
+    def test_concurrent_hooks_emit_nothing_on_stderr(self, hook_resources):
+        """Any stderr from a hook silently disables every hook protection.
+
+        Claude Code treats stderr as a hook error and discards the response,
+        so a stray warning under load would turn off rm blocking, git safety,
+        and the policy gate at once — while still appearing to work.
+        """
+        session_id = self._sid("stderr")
+        self._run(hook_resources, self._task_payload(session_id, "1"))
+
+        results = self._run_concurrently(
+            hook_resources,
+            [self._task_payload(session_id, "1", event="TaskUpdate",
+                                status="in_progress") for _ in range(5)],
+        )
+
+        noisy = [stderr for _rc, _out, stderr in results if stderr.strip()]
+        assert not noisy, (
+            "A hook wrote to stderr under concurrent load. Claude Code reads "
+            "that as a hook error and ignores the response entirely, so every "
+            f"protection this plugin provides would be off. Output: {noisy}"
+        )
+
+    def test_concurrent_state_writes_do_not_lose_a_read_modify_write(
+        self, hook_resources
+    ):
+        """Generic session state has the same exposure as task state."""
+        session_id = self._sid("rmw")
+
+        results = self._run_concurrently(
+            hook_resources,
+            [self._payload("UserPromptSubmit", session_id,
+                           prompt=command, session_transcript=[])
+             for command in ("/ar:a", "/ar:j", "/ar:f")],
+        )
+        for returncode, _stdout, stderr in results:
+            assert returncode == 0, f"a concurrent policy hook failed: {stderr}"
+
+        rc, stdout, stderr, _resp = self._run(
+            hook_resources,
+            self._payload("UserPromptSubmit", session_id,
+                          prompt="/ar:st", session_transcript=[]),
+        )
+        combined = f"{stdout} {stderr}"
+        assert any(policy in combined for policy in ("ALLOW", "JUSTIFY", "SEARCH")), (
+            "After three concurrent policy changes the session reports no "
+            f"policy at all, so the state was lost rather than ordered. "
+            f"Got: {combined[:400]}"
+        )
+
+
+# =============================================================================
 # Module documentation
 # =============================================================================
 
