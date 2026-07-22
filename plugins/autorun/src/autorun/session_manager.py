@@ -316,10 +316,9 @@ def _build_store(key: str):
       state_backend   prior conversion   outcome
       -------------   ----------------   -------------------------------------
       "json"          none               JSON store, as it always was
-      "json"          COMPLETE           refused: the original file was renamed
-                                         by the conversion, so serving would
-                                         mean serving nothing. Points at
-                                         --state-rollback.
+      "json"          COMPLETE           SQLite store: explicit migration
+                                         receipt overrides the untouched
+                                         source default until rollback.
       "sqlite"        legacy JSON exists refused; run --state-migrate while
                                          the scoped daemon is stopped
       "sqlite"        no legacy state    initialize an empty SQLite store
@@ -342,32 +341,19 @@ def _build_store(key: str):
     json_path = os.path.join(key, "daemon_state.json")
     receipt_path = os.path.join(key, "daemon_state.migration.json")
     migrator = StateMigrator(json_path, db_path, receipt_path)
+    status = migrator.status()
+
+    # A COMPLETE receipt is the durable activation record. It must outrank the
+    # source default so cutover is one explicit maintenance command rather
+    # than a migration followed by a code edit. migrate() is idempotent here
+    # and revalidates generation/digest evidence before the database is used.
+    if status["phase"] == "COMPLETE":
+        migrator.migrate()
+        store = SQLiteStore(db_path)
+        store.initialize()
+        return store
 
     if backend == "json":
-        # Selecting JSON after a conversion is the dangerous direction. The
-        # original file was renamed by the conversion, so a JSON store would
-        # open a path that is not there and serve empty state — every policy,
-        # task, and claim silently gone, with nothing reporting a problem.
-        # Refuse, and say how to come back properly.
-        status = migrator.status()
-        if status["phase"] == "COMPLETE":
-            conflict = (
-                f"Unexpected legacy JSON has reappeared at {json_path}; "
-                "serving it would create split authority."
-                if status["source_present"]
-                else f"{json_path} no longer exists. Starting now would serve empty state."
-            )
-            raise SessionBackendError(
-                "state_backend is 'json', but state was converted to SQLite "
-                f"and SQLite remains authoritative. {conflict} This would lose "
-                "everything recorded since the "
-                "conversion.\n"
-                "  To return to JSON, export current state first:\n"
-                "    autorun --state-rollback\n"
-                "  To keep using the converted store, set state_backend back "
-                "to 'sqlite'.\n"
-                f"  The pre-conversion file is kept at {status['backup']}"
-            )
         return _JSONStore(
             json_path,
             os.path.join(key, "daemon_state.json.lock"),
@@ -380,7 +366,6 @@ def _build_store(key: str):
             "reading from a store that does not hold this session's state."
         )
 
-    status = migrator.status()
     if status["phase"] != "COMPLETE" and status["source_present"]:
         raise SessionBackendError(
             "state_backend is 'sqlite', but legacy JSON state still exists. "
@@ -580,27 +565,27 @@ def all_session_state(timeout: float = DEFAULT_SESSION_TIMEOUT,
 # HOW TO MOVE A DEPLOYMENT ONTO THIS STORE
 #
 #   1. Look first:   autorun --state-status
-#      Reports the configured backend and whether a conversion has run. It
+#      Reports the configured default, effective backend, and conversion. It
 #      changes nothing, so it is safe at any point.
 #   2. Quiesce and convert: autorun --state-migrate
 #      The command refuses while the scoped daemon is active. The original is
 #      renamed, never deleted, to
 #      daemon_state.json.migrated.<yyyy-mm-dd-hhmm>.
-#   3. Set "state_backend": "sqlite", then start/retry the daemon or hook.
+#   3. Start/retry the daemon or hook. The COMPLETE migration receipt is the
+#      durable activation record, so no source/config edit is required.
 #   4. Watch for: "Could not acquire state lock", "Task tracking error", and
 #      "skipped persistent state" in the daemon log. They should stop.
 #
-#   To go back:      autorun --state-rollback, then set "state_backend" back
-#      to "json". Rollback exports what the database holds now, not the file
-#      that was retired, so anything written since the conversion comes back
-#      with it. Setting the backend to "json" without rolling back first is
-#      refused rather than silently serving empty state.
+#   To go back:      autorun --state-rollback. Rollback exports what the
+#      database holds now, not the file that was retired, so anything written
+#      since the conversion comes back with it. Editing the source default
+#      cannot override a COMPLETE receipt; rollback is the authority switch.
 #
 # WHEN THIS CODE, AND THE CODE IT REPLACES, CAN BE RETIRED
 #
 #   Retire the JSON store (_JSONStore, and the "json" branch of
 #   _build_store) only after all of:
-#     - no supported deployment has "state_backend": "json";
+#     - no supported deployment still has effective JSON authority;
 #     - no daemon_state.json remains that has not been converted, since
 #       _JSONStore is also how a rollback is read back; and
 #     - StateMigrator.rollback has no remaining callers, because retiring the
@@ -2433,9 +2418,9 @@ class StateMigrator:
             raise SessionBackendError(
                 "SQLite state is authoritative; refusing a legacy JSON "
                 f"transaction from migration phase {phase!r}. Upgrade and "
-                "restart this autorun daemon with state_backend='sqlite', or "
-                "run `autorun --state-rollback` from the converted install "
-                "before selecting JSON."
+                "restart this autorun daemon so it follows the COMPLETE "
+                "receipt, or run `autorun --state-rollback` from the "
+                "converted install before selecting JSON."
             )
 
     # --- migration ---------------------------------------------------------

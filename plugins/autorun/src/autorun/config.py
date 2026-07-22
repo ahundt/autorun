@@ -690,11 +690,11 @@ CONFIG = {
     # "sqlite" — one row per field. Existing JSON must first be converted with
     #            `autorun --state-migrate` while the scoped daemon is stopped.
     #
-    # Switching back to "json" after a conversion is refused rather than
-    # silently serving empty state; export current state first with
-    # `autorun --state-rollback`. A conversion that fails leaves existing
-    # state authoritative and refuses to open, rather than running two
-    # writable stores at once.
+    # This is the pre-migration/fresh-install default. A COMPLETE migration
+    # receipt durably activates SQLite without editing this source setting;
+    # `autorun --state-rollback` restores JSON authority. A failed conversion
+    # leaves existing state authoritative and refuses to open rather than
+    # running two writable stores at once.
     "state_backend": "json",
     # ─── State store: advisory in-memory bounds ───
     # These bound ADVISORY state only — counters and flags the daemon keeps

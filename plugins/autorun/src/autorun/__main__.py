@@ -172,13 +172,15 @@ def _run_state_command(args) -> int:
             )
         else:
             print(f"Wrote {result['fields']} fields back to {result['source']}. "
-                  "Set state_backend to 'json' to use it.")
+                  "JSON authority is restored.")
         return 0
 
     if args.state_status:
         status = migrator.status()
         configured = CONFIG.get("state_backend", "json")
-        print(f"configured backend : {configured}")
+        effective = "sqlite" if status["phase"] == "COMPLETE" else configured
+        print(f"configured default : {configured}")
+        print(f"effective backend  : {effective}")
         print(f"state directory    : {directory}")
         print(f"conversion phase   : {status['phase']}")
         print(f"json present       : {status['source_present']}")
@@ -188,13 +190,9 @@ def _run_state_command(args) -> int:
                   f"{status['sessions']} sessions")
         if status["backup"]:
             print(f"pre-conversion copy: {status['backup']}")
-        if configured == "json" and status["phase"] == "COMPLETE":
-            print("\nstate_backend is 'json' but SQLite is authoritative. "
-                  "Run `autorun --state-rollback` before starting, or set "
-                  "state_backend back to 'sqlite'.")
-            if status["source_present"]:
-                print("An unexpected legacy JSON file is also present. It is "
-                      "not authoritative and will not be merged or served.")
+        if status["phase"] == "COMPLETE" and status["source_present"]:
+            print("\nAn unexpected legacy JSON file is also present. It is "
+                  "not authoritative and will not be merged or served.")
         return 0
 
     raise AssertionError("state maintenance dispatch reached no operation")
@@ -484,8 +482,7 @@ For more information: https://github.com/ahundt/autorun
     info_group.add_argument(
         "--state-rollback",
         action="store_true",
-        help="Export state from the SQLite store back to daemon_state.json, so "
-             "state_backend can be set to 'json' again without losing work",
+        help="Export SQLite state back to daemon_state.json and restore JSON authority",
     )
     info_group.add_argument(
         "--state-maintenance",

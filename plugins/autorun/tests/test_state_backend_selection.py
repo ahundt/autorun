@@ -232,36 +232,21 @@ class TestAcrossProcesses:
 
 
 class TestSwitchingBack:
-    """The dangerous direction, and the path provided for it."""
+    """The receipt is the durable authority switch in both directions."""
 
-    def test_selecting_json_after_a_conversion_is_refused(
+    def test_complete_migration_selects_sqlite_without_editing_config_source(
         self, state_dir, monkeypatch
     ):
-        """Silently serving empty state is the failure worth preventing.
-
-        The conversion renames the original file, so a JSON store would open
-        a path that is not there, find nothing, and report nothing wrong.
-        """
         _seed_legacy(state_dir)
         _migrate_legacy(state_dir)
-        monkeypatch.setitem(sm._CONFIG, "state_backend", "sqlite")
-        sm._reset_for_testing()
-        with session_state("sess-a"):
-            pass
-
         monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
         sm._reset_for_testing()
 
-        with pytest.raises(sm.SessionBackendError) as raised:
-            sm._get_store()
+        assert isinstance(sm._get_store(), SQLiteStore)
+        with session_state("sess-a") as state:
+            assert state["file_policy"] == "SEARCH"
 
-        message = str(raised.value)
-        assert "--state-rollback" in message, (
-            f"The refusal does not say how to go back. Got: {message}"
-        )
-        assert "empty state" in message
-
-    def test_json_backend_refuses_a_source_that_reappears_after_conversion(
+    def test_complete_migration_ignores_a_source_that_reappears_after_conversion(
         self, state_dir, monkeypatch
     ):
         _seed_legacy(state_dir)
@@ -272,8 +257,10 @@ class TestSwitchingBack:
         monkeypatch.setitem(sm._CONFIG, "state_backend", "json")
         sm._reset_for_testing()
 
-        with pytest.raises(sm.SessionBackendError, match="split authority"):
-            sm._get_store()
+        assert isinstance(sm._get_store(), SQLiteStore)
+        with session_state("stale") as state:
+            assert "writer" not in state
+        assert (state_dir / "daemon_state.json").exists()
 
     def test_state_status_reports_complete_sqlite_authority_even_if_json_reappears(
         self, state_dir, monkeypatch, capsys
@@ -289,7 +276,7 @@ class TestSwitchingBack:
 
         assert main(["--state-status"]) == 0
         output = capsys.readouterr().out
-        assert "SQLite is authoritative" in output
+        assert "effective backend  : sqlite" in output
         assert "unexpected legacy JSON" in output
 
     def test_rollback_then_json_serves_the_converted_state(
