@@ -16,9 +16,7 @@ CLAUDE CODE BUG WORKAROUND:
 
 import contextlib
 import json
-import sys
 import tempfile
-from io import StringIO
 from pathlib import Path
 from typing import Generator
 from unittest.mock import patch, MagicMock
@@ -98,8 +96,7 @@ def mock_session_start_context(
     with patch("autorun.plan_export.PlanExportConfig.load", return_value=mock_config):
         with patch("autorun.plan_export.get_plan_from_transcript", return_value=plan_path):
             with patch("autorun.plan_export.load_tracking", return_value=tracking):
-                with patch("autorun.plan_export.SessionLock"):
-                    yield
+                yield
 
 
 def parse_last_json_output(output: str) -> dict:
@@ -321,12 +318,13 @@ class TestAtomicSaveTracking:
 class TestThreadSafety:
     """Tests for thread safety in SessionStart handler."""
 
-    def test_handler_uses_session_lock(self):
-        """Verify handle_session_start uses SessionLock."""
+    def test_handler_does_not_use_deprecated_session_lock(self):
+        """State and publication helpers own the real lock scopes."""
         import inspect
 
         source = inspect.getsource(handle_session_start)
-        assert "SessionLock" in source, "handle_session_start should use SessionLock"
+        assert "SessionLock(" not in source
+        assert "exporter.export(" in source
 
     def test_handler_catches_lock_timeout(self):
         """Verify handle_session_start handles SessionTimeoutError."""

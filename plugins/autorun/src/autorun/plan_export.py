@@ -87,7 +87,7 @@ TEMPLATE VARIABLES:
 GOALS:
     - DRY: Reuse autorun's session_state() for thread-safe persistence
     - Clean API: PlanExport class encapsulates all state and logic
-    - No redundant locking: autorun's SessionLock is sufficient
+    - No redundant locking: state and publication own separate RAII scopes
 
 GOTCHAS:
     1. EventContext state is scoped to session_id. On Option 1, NEW session has
@@ -112,21 +112,24 @@ DESIGN:
     2. PostToolUse(ExitPlanMode) - Export immediately (Option 2 - regular accept)
     3. SessionStart - Recover unexported plans (Option 1 - fresh context workaround)
 
-    State stored in GLOBAL_SESSION_ID JSON store (not session-scoped):
+    State stored under GLOBAL_SESSION_ID in the selected backend:
     - active_plans: {plan_path: {cwd, session_id, recorded_at}}
     - tracking: {content_hash: {exported_to, exported_at}}
 
 THREAD SAFETY & MULTIPROCESS CONCURRENCY:
     - All state access goes through session_state(GLOBAL_SESSION_ID)
-    - session_state() uses filelock for cross-process exclusion
-    - SessionLock supports reentrant locking (same thread can acquire multiple times)
+    - session_state() uses the active backend's cross-process transaction
     - atomic_update_*() methods ensure read-modify-write is atomic
-    - JSON save is called on context exit for durability
-    - A content-scoped FileLock serializes file publication; SessionLock
-      separately protects shared tracking state.
+    - backend commit is called on context exit for durability
+    - A content-scoped FileLock serializes file publication; session_state()
+      separately protects shared tracking state
+
+    REPLACES: SessionLock, a deprecated no-op compatibility shim. Plan export
+    uses session_state() for tracking and PlanExport._publication_lock for file
+    publication; neither relies on the shim for exclusion.
 
 STATE PERSISTENCE:
-    State is stored in daemon_state.json (filelock+JSON format):
+    State is stored in the effective JSON or SQLite backend:
     - Uses GLOBAL_SESSION_ID = "__plan_export__" (NOT session-scoped)
     - Survives: daemon restarts, Option 1 session clears, VS Code restarts, reboots
     - Two state dictionaries:
@@ -139,15 +142,15 @@ STATE PERSISTENCE:
 
 LIFECYCLE:
     Short-term (within session):
-        Write plan → ThreadSafeDB cache + JSON store → survives
-        Edit plan → updates cache + JSON store → survives
+        Write plan → ThreadSafeDB cache + effective state backend → survives
+        Edit plan → updates cache + effective state backend → survives
         ExitPlanMode (Option 2) → export immediately → survives
 
     Long-term (across sessions):
-        Daemon restart → JSON persists, cache rebuilds → survives
+        Daemon restart → selected backend persists, cache rebuilds → survives
         Option 1 (fresh context) → NEW session_id, but GLOBAL store survives
-        VS Code restart → JSON persists → survives
-        Machine reboot → JSON persists → survives
+        VS Code restart → selected backend persists → survives
+        Machine reboot → selected backend persists → survives
 
 HOOK FLOW:
     PLAN MODE:
@@ -162,7 +165,7 @@ HOOK FLOW:
            ↓
       NEW session starts (different session_id)
            ↓
-      SessionStart → get_unexported() reads from GLOBAL JSON store
+      SessionStart → get_unexported() reads from GLOBAL backend state
            ↓
       Finds foo.md, exports, clears from active_plans
 
@@ -188,7 +191,7 @@ from filelock import FileLock, Timeout as FileLockTimeout
 from .core import EventContext, app, logger
 from .durable_io import atomic_write_json, reserve_unique_path, sync_file
 from .session_manager import (
-    session_state, SessionLock, SessionTimeoutError, get_session_manager,
+    session_state, SessionTimeoutError, get_session_manager,
 )
 from .config import CONFIG, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 
@@ -801,7 +804,11 @@ class PlanExport:
 
     @contextlib.contextmanager
     def _publication_lock(self, lock_path: Path, content_hash: str):
-        """Own the content publication lock for exactly one RAII scope."""
+        """Own one content publication lock as an RAII scope.
+
+        Replacement for the deprecated no-op ``SessionLock`` in plan export;
+        ``SessionLock`` carries the reverse reference to this method.
+        """
         try:
             with FileLock(str(lock_path), timeout=30.0):
                 yield
@@ -1207,50 +1214,45 @@ def handle_session_start(hook_input: dict) -> None:
         return
 
     try:
-        lock_context = SessionLock(session_id, timeout=5.0)
-    except Exception:
-        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
-        return
+        exporter = PlanExport(ctx, config)
 
-    try:
-        with lock_context:
-            exporter = PlanExport(ctx, config)
-
-            # Try transcript-based recovery first
-            plan_path = get_plan_from_transcript(transcript_path)
-            if not plan_path:
-                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
-                return
-
-            # Skip empty plans
-            try:
-                content = plan_path.read_text(encoding="utf-8")
-                if not content.strip():
-                    print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
-                    return
-            except (IOError, UnicodeDecodeError):
-                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
-                return
-
-            # Check if already exported (content-hash dedup)
-            content_hash = get_content_hash(plan_path)
-            tracking = load_tracking()
-            if content_hash in tracking:
-                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
-                return
-
-            # Export the plan (force=True: dedup already checked above via load_tracking)
-            result = exporter.export(plan_path, force=True)
-            if result["success"]:
-                record_export(plan_path, result.get("destination", ""))
-                if config.notify_claude:
-                    print(json.dumps(validate_hook_response("SessionStart", {
-                        "continue": True,
-                        "systemMessage": f"📋 Recovered unexported plan: {result['message']}",
-                    }, cli_type=cli_type)))
-                    return
-
+        # Try transcript-based recovery first. State access and publication
+        # acquire their own real RAII scopes; the deprecated SessionLock shim
+        # is intentionally not part of this production path.
+        plan_path = get_plan_from_transcript(transcript_path)
+        if not plan_path:
             print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
+            return
+
+        # Skip empty plans
+        try:
+            content = plan_path.read_text(encoding="utf-8")
+            if not content.strip():
+                print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
+                return
+        except (IOError, UnicodeDecodeError):
+            print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
+            return
+
+        # Check if already exported (content-hash dedup)
+        content_hash = get_content_hash(plan_path)
+        tracking = load_tracking()
+        if content_hash in tracking:
+            print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
+            return
+
+        # Export the plan (force=True: dedup already checked above via load_tracking)
+        result = exporter.export(plan_path, force=True)
+        if result["success"]:
+            record_export(plan_path, result.get("destination", ""))
+            if config.notify_claude:
+                print(json.dumps(validate_hook_response("SessionStart", {
+                    "continue": True,
+                    "systemMessage": f"📋 Recovered unexported plan: {result['message']}",
+                }, cli_type=cli_type)))
+                return
+
+        print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))
 
     except SessionTimeoutError:
         print(json.dumps(validate_hook_response("SessionStart", {"continue": True}, cli_type=cli_type)))

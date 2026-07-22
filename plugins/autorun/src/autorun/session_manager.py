@@ -58,7 +58,12 @@ class SessionPersistenceError(SessionStateError):
 
 
 class _StateProxy:
-    """dict-like view of one session_id's keys within the shared JSON store."""
+    """Dict-like view of one session within the supported JSON backend.
+
+    ``sync()`` and ``close()`` are deprecated no-op compatibility methods.
+    Their replacement is the RAII lifetime of ``session_state()``; the outer
+    context commits on normal exit and discards changes on exceptional exit.
+    """
 
     def __init__(self, data: dict, prefix: str, store: "_JSONStore"):
         self._data = data
@@ -139,14 +144,25 @@ class _StateProxy:
             self[k] = v
 
     def sync(self):
-        pass  # no-op for API compat — writes are deferred to context exit
+        """DEPRECATED NO-OP; exit ``session_state()`` to commit changes."""
+        pass
 
     def close(self):
-        pass  # no-op for API compat — store is shared
+        """DEPRECATED NO-OP; exit ``session_state()`` to release its scope."""
+        pass
 
 
 class _JSONStore:
     """Thread-safe + process-safe JSON file store.
+
+    SUPPORTED TRANSITION BACKEND - NOT DEPRECATED. Fresh and rolled-back
+    deployments still select this store. Replacement: SQLiteStore after an
+    explicit migration publishes a validated COMPLETE receipt. SQLiteStore's
+    docstring links back here so either side explains the transition.
+
+    Retire when no supported deployment has effective JSON authority, no
+    unconverted ``daemon_state.json`` remains, and ``StateMigrator.rollback``
+    has no callers. Until all three are true this is also the recovery path.
 
     Within one process: threading.RLock serializes concurrent threads.
     Across processes: filelock serializes concurrent writers.
@@ -283,7 +299,16 @@ class _JSONStore:
 
 
 class SessionLock:
-    """No-op shim — filelock inside _JSONStore.session() handles concurrency."""
+    """DEPRECATED COMPATIBILITY SHIM that intentionally provides no lock.
+
+    Replacement: use ``session_state()`` for state mutation and
+    ``PlanExport._publication_lock`` for content publication. Both replacements
+    own real lock lifetimes through context managers and refer back to this
+    shim in their transition documentation.
+
+    Remove when production imports are zero and the next major compatibility
+    window permits removing downstream imports. Do not add new callers.
+    """
 
     def __init__(self, session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT,
                  state_dir=None):
@@ -297,8 +322,10 @@ class SessionLock:
 
 
 _store_lock = threading.Lock()
-_stores: dict[str, "_JSONStore"] = {}
-_store: "_JSONStore | None" = None  # compatibility alias for legacy test cleanup
+_stores: dict[str, "_JSONStore | SQLiteStore"] = {}
+# DEPRECATED TEST ALIAS: use _reset_for_testing() instead of assigning _store.
+# Remove when repository and downstream tests no longer mutate this name.
+_store: "_JSONStore | SQLiteStore | None" = None
 
 
 def _state_dir_key(state_dir: "str | None" = None) -> str:
@@ -335,6 +362,11 @@ def _build_store(key: str):
     Selecting the row store never converts live JSON implicitly. Existing
     state requires the explicit, daemon-quiesced migration command; a truly
     empty installation may initialize SQLite directly.
+
+    USES: StateMigrator to validate or create the durable authority receipt.
+    Retire StateMigrator when no supported installation can contain legacy
+    JSON, no rollback caller remains, and receipt-era databases no longer need
+    generation validation during startup.
     """
     backend = str(_CONFIG.get("state_backend", "json")).strip().lower()
     db_path = os.path.join(key, "daemon_state.sqlite3")
@@ -505,7 +537,9 @@ class SessionStateManager:
 
 
 _managers: dict[str, SessionStateManager] = {}
-_manager: "SessionStateManager | None" = None  # compatibility alias for legacy test cleanup
+# DEPRECATED TEST ALIAS: use _reset_for_testing() instead of assigning _manager.
+# Remove when repository and downstream tests no longer mutate this name.
+_manager: "SessionStateManager | None" = None
 _manager_lock = threading.Lock()
 
 
@@ -529,6 +563,12 @@ def get_session_manager(state_dir: "str | None" = None) -> SessionStateManager:
 @contextlib.contextmanager
 def session_state(session_id: str, timeout: float = DEFAULT_SESSION_TIMEOUT,
                   state_dir: "str | None" = None, **_):
+    """Own one session mutation as a lock/commit/rollback RAII scope.
+
+    REPLACES explicit lifecycle calls including ``_StateProxy.sync``,
+    ``_StateProxy.close``, ``_SQLiteStateProxy.sync``, and
+    ``_SQLiteStateProxy.close``. Those deprecated no-ops link back here.
+    """
     with get_session_manager(state_dir).session_state(session_id, timeout) as s:
         yield s
 
@@ -968,8 +1008,9 @@ class _SQLiteStateProxy:
     """The dict-like view a session context yields.
 
     Deliberately the same surface as the JSON store's proxy, including the
-    no-op ``sync`` and ``close`` that predate both backends, so that callers
-    do not need to know which store is underneath.
+    deprecated no-op ``sync`` and ``close`` that predate both backends, so
+    callers do not need to know which store is underneath. ``session_state``
+    is their context-managed replacement and links back to both proxy types.
     """
 
     __slots__ = ("_buffer",)
@@ -1019,10 +1060,12 @@ class _SQLiteStateProxy:
             self[key] = value
 
     def sync(self):
-        pass  # Writes are staged at context exit; kept for API compatibility.
+        """DEPRECATED NO-OP; exit ``session_state()`` to commit changes."""
+        pass
 
     def close(self):
-        pass  # The store outlives any one context; kept for API compatibility.
+        """DEPRECATED NO-OP; exit ``session_state()`` to release its scope."""
+        pass
 
 
 class StateUnitOfWork:
@@ -1082,7 +1125,13 @@ class StateUnitOfWork:
 
 
 class SQLiteStore:
-    """Row-oriented state storage with one owned connection per operation."""
+    """Row-oriented state storage with one owned connection per operation.
+
+    REPLACEMENT FOR: _JSONStore after a COMPLETE migration receipt. _JSONStore
+    remains supported for fresh and rolled-back deployments, and its docstring
+    carries the forward link here. ``StateMigrator.rollback`` deliberately
+    restores that JSON authority, so this class cannot delete the old path.
+    """
 
     def __init__(self, db_path):
         self._db_path = str(db_path)
@@ -2017,6 +2066,10 @@ class RetentionPolicy:
 class StateRetention:
     """Bounded growth, on purpose rather than by accident.
 
+    REPLACEMENT FOR SQLITE: TaskLifecycle.cli_gc. TaskLifecycle.cli_gc remains
+    supported for JSON because it scans the legacy flat-key representation;
+    its docstring carries the forward link here and its own retirement gate.
+
     The CLI exposes report-only maintenance; deletion remains an explicit
     library policy with archive-before-delete semantics. This keeps routine
     inspection safe while making bounded retention available to a caller that
@@ -2319,6 +2372,13 @@ def _artifact_timestamp() -> str:
 
 class StateMigrator:
     """Move legacy JSON state into the row store, resumably.
+
+    USED BY: _build_store and the explicit state maintenance CLI. _build_store
+    carries the reverse link and selects the store from this class's receipt.
+
+    Retire when no supported installation can still contain legacy JSON, no
+    rollback caller remains, and startup no longer needs receipt generation
+    validation. This gate is intentionally later than JSON-store retirement.
 
     The migration spans a file and a database, and nothing makes those two
     one transaction. A crash can therefore land between them, so each step is
@@ -2854,7 +2914,12 @@ class StateMigrator:
 
 
 def _reset_for_testing():
-    """Reset module-level singletons. For use in test fixtures ONLY."""
+    """Reset module-level singletons. For use in test fixtures ONLY.
+
+    REPLACES direct mutation of the deprecated ``_store`` and ``_manager``
+    test aliases. Those aliases carry the reverse link here and can be removed
+    when repository and downstream tests no longer assign them.
+    """
     global _store, _manager
     _stores.clear()
     _managers.clear()

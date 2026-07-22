@@ -435,7 +435,7 @@ class TaskLifecycle:
 
     Per-Session Isolation:
     - Each AI session uses unique global key: "__task_lifecycle__{session_id}"
-    - State stored in shared JSON store but keyed per session
+    - State stored in the effective backend and keyed per session
     - Audit logs are per-session files
     """
 
@@ -548,7 +548,7 @@ class TaskLifecycle:
 
         CRITICAL INVARIANTS:
         1. Migrations are idempotent (safe to run multiple times)
-        2. Runs inside session_state() context (SessionLock protection)
+        2. Runs inside the ``session_state()`` backend transaction/lock scope
         3. Updates both tasks AND schema_version atomically
         4. Each version bump preserves backward compatibility
 
@@ -2309,6 +2309,16 @@ class TaskLifecycle:
     ) -> int:
         """Garbage-collect stale task lifecycle data (archive-then-purge).
 
+        JSON-ONLY COMPATIBILITY PATH - NOT DEPRECATED while JSON remains a
+        supported fresh-install and rollback backend. Replacement for SQLite:
+        StateRetention in ``session_manager.py``; its docstring links back to
+        this method. SQLite is refused before discovery or deletion because
+        this implementation scans legacy flat JSON keys.
+
+        Retire when JSON authority is no longer supported and every destructive
+        caller uses ``StateRetention`` with explicit age, archive, confirmation,
+        and deletion policy. Until then this is the JSON maintenance path.
+
         ⚠️  DESTRUCTIVE OPERATION - PERMANENTLY DELETES SESSION DATA ⚠️
 
         SAFETY GUARANTEES (fail-safe design):
@@ -2318,7 +2328,7 @@ class TaskLifecycle:
         4. Uses session_state() for lock protection (never bypasses locking)
         5. Archives non-empty data to JSON before deletion (restorable backup)
         6. dry_run=True preview mode - reports without modifications
-        7. Atomic archive-then-clear within single SessionLock (no data loss window)
+        7. Archive-then-clear under one ``session_state()`` backend scope
         8. Requires confirmation by default (confirm=True) - must type 'yes' to proceed
 
         LIFECYCLE & USAGE:
@@ -2332,7 +2342,7 @@ class TaskLifecycle:
         1. Find session IDs matching pattern
         2. For each session:
            a. Check if current session → skip (protected)
-           b. Acquire SessionLock via session_state(global_key, timeout=2s)
+           b. Acquire the backend scope via session_state(global_key, timeout=2s)
            c. Read tasks, check incomplete → skip if found
            d. Check age against TTL → skip if too recent
            e. Archive to JSON (if archive=True) - within lock
