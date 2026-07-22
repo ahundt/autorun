@@ -7,7 +7,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 @contextlib.contextmanager
@@ -55,6 +55,26 @@ def sync_file(path: Path) -> None:
     with path.open("rb") as handle:
         os.fsync(handle.fileno())
     sync_directory(path.parent)
+
+
+def reserve_unique_path(
+    candidates: Iterable[Path], *, exhausted_message: str
+) -> Path:
+    """Atomically reserve the first unused path from ``candidates``.
+
+    Checking ``exists()`` and writing later lets concurrent publishers choose
+    the same name. Exclusive creation makes selection and reservation one
+    filesystem operation. The caller replaces the empty reservation with its
+    durable artifact and removes it if publication fails.
+    """
+    for candidate in candidates:
+        try:
+            with open(candidate, "x", encoding="utf-8"):
+                pass
+            return candidate
+        except FileExistsError:
+            continue
+    raise OSError(exhausted_message)
 
 
 def atomic_write_json(path: Path, payload: Any, *, sort_keys: bool = False) -> None:

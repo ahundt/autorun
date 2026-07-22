@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -39,6 +41,7 @@ from autorun.session_manager import (  # noqa: E402
     StateRetention,
     TaskRepository,
 )
+import autorun.session_manager as session_manager_module  # noqa: E402
 
 
 def test_state_maintenance_cli_reports_the_existing_database(
@@ -218,6 +221,35 @@ class TestWhatIsProtected:
             "not something to silently ignore."
         )
 
+    def test_a_session_resumed_after_archiving_is_not_deleted(
+        self, store, repo, archive_dir, monkeypatch
+    ):
+        session_id = "__task_lifecycle__resumed-during-sweep"
+        _seed(store, session_id, seconds_ago=30 * DAY)
+        retention = StateRetention(
+            store,
+            RetentionPolicy(session_max_age_seconds=7 * DAY,
+                            archive_dir=archive_dir, delete=True),
+        )
+        archive_sessions = retention._archive_sessions
+
+        def archive_then_resume(session_ids):
+            archive = archive_sessions(session_ids)
+            repo.put_task(
+                session_id, "resumed",
+                {"id": "resumed", "status": "in_progress",
+                 "updated_at": time.time()},
+            )
+            return archive
+
+        monkeypatch.setattr(retention, "_archive_sessions", archive_then_resume)
+
+        report = retention.sweep_sessions()
+
+        assert report["deleted"] == []
+        assert report["changed_after_archive"] == [session_id]
+        assert repo.get_task(session_id, "resumed") is not MISSING
+
 
 class TestExpiryIsWholeSessions:
     def test_expiring_a_session_removes_all_of_its_rows(
@@ -294,6 +326,19 @@ class TestArchiveBeforeDelete:
             "State was deleted although its archive was never written."
         )
 
+    def test_a_failed_archive_removes_its_exclusive_reservation(
+        self, retention, archive_dir, monkeypatch
+    ):
+        def refuse(*args, **kwargs):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(session_manager_module, "atomic_write_json", refuse)
+
+        with pytest.raises(OSError, match="No space left on device"):
+            retention._publish_archive({"state": "not durable"}, "failed")
+
+        assert list(archive_dir.iterdir()) == []
+
     def test_the_archive_name_carries_a_sortable_timestamp(
         self, store, retention, archive_dir
     ):
@@ -369,8 +414,108 @@ class TestTaskPruning:
         assert report["deleted"] == []
         assert repo.get_task(session_id, "done") is not MISSING
 
+    def test_a_task_resumed_after_archiving_is_not_deleted(
+        self, store, repo, archive_dir, monkeypatch
+    ):
+        session_id = "__task_lifecycle__resumed-during-prune"
+        old = time.time() - 30 * DAY
+        repo.put_task(
+            session_id, "done",
+            {"id": "done", "status": "completed", "updated_at": old},
+        )
+        retention = StateRetention(
+            store,
+            RetentionPolicy(task_max_age_seconds=7 * DAY,
+                            archive_dir=archive_dir, delete=True),
+        )
+        archive_tasks = retention._archive_tasks
+
+        def archive_then_resume(archived_session, tasks):
+            archive = archive_tasks(archived_session, tasks)
+            repo.put_task(
+                session_id, "done",
+                {"id": "done", "status": "in_progress",
+                 "updated_at": time.time()},
+            )
+            return archive
+
+        monkeypatch.setattr(retention, "_archive_tasks", archive_then_resume)
+
+        report = retention.prune_tasks(session_id)
+
+        assert report["deleted"] == []
+        assert report["changed_after_archive"] == ["done"]
+        assert repo.get_task(session_id, "done")["status"] == "in_progress"
+
+    def test_an_event_appended_after_archiving_prevents_task_deletion(
+        self, store, repo, archive_dir, monkeypatch
+    ):
+        session_id = "__task_lifecycle__event-during-prune"
+        old = time.time() - 30 * DAY
+        repo.put_task(
+            session_id, "done",
+            {"id": "done", "status": "completed", "updated_at": old},
+        )
+        retention = StateRetention(
+            store,
+            RetentionPolicy(task_max_age_seconds=7 * DAY,
+                            archive_dir=archive_dir, delete=True),
+        )
+        archive_tasks = retention._archive_tasks
+
+        def archive_then_append_event(archived_session, tasks):
+            archive = archive_tasks(archived_session, tasks)
+            repo.append_event(
+                session_id, "done",
+                event_id="after-archive",
+                idempotency_key="after-archive",
+                event_type="OUTPUT",
+                payload={"text": "new durable output"},
+            )
+            return archive
+
+        monkeypatch.setattr(retention, "_archive_tasks", archive_then_append_event)
+
+        report = retention.prune_tasks(session_id)
+
+        assert report["deleted"] == []
+        assert report["changed_after_archive"] == ["done"]
+        assert [event["event_id"]
+                for event in repo.events(session_id, "done")] == ["after-archive"]
+
 
 class TestMaintenance:
+    def test_concurrent_archives_reserve_distinct_destinations(
+        self, store, archive_dir, monkeypatch
+    ):
+        retention = StateRetention(
+            store, RetentionPolicy(archive_dir=archive_dir, delete=True)
+        )
+        real_atomic_write = session_manager_module.atomic_write_json
+        both_ready = threading.Barrier(2)
+
+        def synchronized_write(path, payload, **kwargs):
+            both_ready.wait(timeout=5)
+            real_atomic_write(path, payload, **kwargs)
+
+        monkeypatch.setattr(
+            session_manager_module, "atomic_write_json", synchronized_write
+        )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(retention._publish_archive,
+                            {"writer": writer}, "same-prefix")
+                for writer in ("one", "two")
+            ]
+            destinations = [future.result(timeout=10) for future in futures]
+
+        assert len(set(destinations)) == 2
+        assert {
+            json.loads(destination.read_text(encoding="utf-8"))["writer"]
+            for destination in destinations
+        } == {"one", "two"}
+
     def test_a_backup_is_a_usable_database(self, store, tmp_path):
         with store.session("s") as state:
             state["a"] = 1

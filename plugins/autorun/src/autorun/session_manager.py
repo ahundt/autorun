@@ -23,7 +23,7 @@ from pathlib import Path
 from filelock import FileLock, Timeout as FileLockTimeout
 
 from .config import CONFIG as _CONFIG
-from .durable_io import atomic_write_json, sync_directory
+from .durable_io import atomic_write_json, reserve_unique_path, sync_directory
 from .task_status import (
     STATUS_POLICY, BLOCKING_TASK_STATUSES, PRUNABLE_TASK_STATUSES,
     task_status_policy,
@@ -69,13 +69,22 @@ class _StateProxy:
         return f"{self._prefix}/{key}"
 
     def get(self, key: str, default=None):
-        return self._data.get(self._k(key), default)
+        full_key = self._k(key)
+        if full_key not in self._data:
+            return default
+        return self._expose(full_key)
+
+    def _expose(self, full_key: str):
+        """Return a value while retaining enough state to detect mutation."""
+        value = self._data[full_key]
+        self._store._track_exposed_value(full_key, value)
+        return value
 
     def __getitem__(self, key: str):
         full_key = self._k(key)
         if full_key not in self._data:
             raise KeyError(key)
-        return self._data[full_key]
+        return self._expose(full_key)
 
     def __setitem__(self, key: str, value):
         self._data[self._k(key)] = value
@@ -106,10 +115,10 @@ class _StateProxy:
         return list(self._logical_keys())
 
     def values(self):
-        return [self._data[self._k(k)] for k in self._logical_keys()]
+        return [self._expose(self._k(k)) for k in self._logical_keys()]
 
     def items(self):
-        return [(k, self._data[self._k(k)]) for k in self._logical_keys()]
+        return [(k, self._expose(self._k(k))) for k in self._logical_keys()]
 
     def clear(self):
         """Remove all keys for this session."""
@@ -163,6 +172,27 @@ class _JSONStore:
         # Thread-local reentrancy tracking: _held_by.active = True while locked
         self._held_by = threading.local()
 
+    def _track_exposed_value(self, full_key: str, value) -> None:
+        """Snapshot an exposed mutable value once per outer transaction.
+
+        The proxy deliberately returns ordinary ``dict`` and ``list`` objects
+        for compatibility, so callers can mutate them without invoking
+        ``__setitem__``. A per-field snapshot detects that case without
+        copying every session or rewriting read-only contexts.
+        """
+        if (
+            not self._dirty
+            and isinstance(value, (dict, list))
+            and full_key not in self._held_by.exposed_values
+        ):
+            self._held_by.exposed_values[full_key] = copy.deepcopy(value)
+
+    def _has_in_place_mutation(self) -> bool:
+        return any(
+            full_key not in self._data or self._data[full_key] != original
+            for full_key, original in self._held_by.exposed_values.items()
+        )
+
     def _load(self) -> dict:
         try:
             with open(self._state_file, "r", encoding="utf-8") as f:
@@ -208,14 +238,18 @@ class _JSONStore:
                     # Re-read inside lock: pick up any changes from other processes
                     self._data = self._load()
                     self._dirty = False
+                    self._held_by.exposed_values = {}
                     self._held_by.active = True
                     try:
                         proxy = _StateProxy(self._data, session_id, self)
                         yield proxy
+                        if not self._dirty and self._has_in_place_mutation():
+                            self._dirty = True
                         if self._dirty:
                             self._save()
                     finally:
                         self._held_by.active = False
+                        self._held_by.exposed_values = {}
         except FileLockTimeout as e:
             raise SessionTimeoutError(
                 f"Could not acquire state lock for '{session_id}' after {timeout}s"
@@ -1891,19 +1925,7 @@ class TaskRepository:
         }
 
     def _write_task(self, conn, session_id: str, task_id: str, record: dict) -> None:
-        if not isinstance(record, dict):
-            raise SessionBackendError(
-                f"A task record must be a mapping; got {type(record).__name__} "
-                f"for task {task_id!r}."
-            )
-        status = record.get("status", "pending")
-        try:
-            task_status_policy(status)
-        except ValueError as exc:
-            raise SessionBackendError(str(exc)) from exc
-        updated_at = record.get("updated_at", time.time())
-        payload = {k: v for k, v in record.items() if k not in self._COLUMN_FIELDS}
-        encoded = _encode_state_value(f"task {task_id}", payload)
+        status, updated_at, encoded = self._storage_identity(task_id, record)
 
         self._ensure_session_row(conn, session_id, updated_at)
         try:
@@ -1920,6 +1942,24 @@ class TaskRepository:
             raise SessionBackendError(
                 f"Could not store task {task_id!r} in session {session_id!r}: {exc}"
             ) from exc
+
+    @classmethod
+    def _storage_identity(cls, task_id: str, record: dict):
+        """Return the exact columns that identify one stored task revision."""
+        if not isinstance(record, dict):
+            raise SessionBackendError(
+                f"A task record must be a mapping; got {type(record).__name__} "
+                f"for task {task_id!r}."
+            )
+        status = record.get("status", "pending")
+        try:
+            task_status_policy(status)
+        except ValueError as exc:
+            raise SessionBackendError(str(exc)) from exc
+        updated_at = record.get("updated_at", time.time())
+        payload = {k: v for k, v in record.items() if k not in cls._COLUMN_FIELDS}
+        encoded = _encode_state_value(f"task {task_id}", payload)
+        return status, updated_at, encoded
 
     @staticmethod
     def _ensure_session_row(conn, session_id: str, stamp: float) -> None:
@@ -1976,6 +2016,8 @@ class StateRetention:
     deliberately supplies age limits, an archive directory, and ``delete``.
     """
 
+    _MAX_ARCHIVE_DESTINATION_ATTEMPTS = 10_000
+
     def __init__(self, store: "SQLiteStore", policy: RetentionPolicy):
         self.store = store
         self.policy = policy
@@ -1989,12 +2031,14 @@ class StateRetention:
         would leave a session that half exists, which no caller is written to
         expect.
         """
-        eligible, protected, anomalies = self._classify_sessions()
+        eligible, protected, anomalies, captured_revisions = \
+            self._classify_sessions()
         report = {
             "eligible": eligible,
             "protected": protected,
             "anomalies": anomalies,
             "deleted": [],
+            "changed_after_archive": [],
             "archive": "",
             "report_only": not self.policy.delete,
         }
@@ -2002,13 +2046,28 @@ class StateRetention:
             return report
 
         report["archive"] = str(self._archive_sessions(eligible))
+        terminal = list(self.policy.TERMINAL_TASK_STATUSES)
+        terminal_placeholders = ",".join("?" * len(terminal))
+        deleted = []
         with self.store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
             with self.store.write_transaction(owner) as conn:
-                conn.executemany(
-                    "DELETE FROM sessions WHERE session = ?",
-                    [(session_id,) for session_id in eligible],
-                )
-        report["deleted"] = eligible
+                for session_id in eligible:
+                    revision = captured_revisions.get(session_id)
+                    if revision is None:
+                        continue
+                    cursor = conn.execute(
+                        "DELETE FROM sessions WHERE session = ? "
+                        "AND last_modified = ? AND NOT EXISTS ("
+                        "SELECT 1 FROM tasks WHERE session = ? "
+                        f"AND status NOT IN ({terminal_placeholders}))",
+                        (session_id, revision, session_id, *terminal),
+                    )
+                    if cursor.rowcount:
+                        deleted.append(session_id)
+        report["deleted"] = deleted
+        report["changed_after_archive"] = [
+            session_id for session_id in eligible if session_id not in deleted
+        ]
         return report
 
     def _classify_sessions(self):
@@ -2022,6 +2081,7 @@ class StateRetention:
             ).fetchall()
 
         eligible, protected, anomalies = [], [], []
+        eligible_revisions = {}
         for session_id, namespace, last_modified in rows:
             if last_modified > now:
                 # The clock moved, not the session. Treating it as ancient
@@ -2040,7 +2100,8 @@ class StateRetention:
                 protected.append(session_id)
                 continue
             eligible.append(session_id)
-        return eligible, protected, anomalies
+            eligible_revisions[session_id] = last_modified
+        return eligible, protected, anomalies, eligible_revisions
 
     def _has_unfinished_tasks(self, session_id: str) -> bool:
         statuses = list(self.policy.TERMINAL_TASK_STATUSES)
@@ -2063,7 +2124,8 @@ class StateRetention:
         """
         _validate_session_id(session_id)
         max_age = self.policy.task_max_age_seconds
-        report = {"eligible": [], "deleted": [], "archive": "",
+        report = {"eligible": [], "deleted": [], "changed_after_archive": [],
+                  "archive": "",
                   "report_only": not self.policy.delete}
         if max_age is None:
             return report
@@ -2078,14 +2140,31 @@ class StateRetention:
         if not eligible or not self.policy.delete:
             return report
 
-        report["archive"] = str(self._archive_tasks(session_id, eligible))
+        archive_path, archived_event_counts = self._archive_tasks(
+            session_id, eligible
+        )
+        report["archive"] = str(archive_path)
+        deleted = []
         with self.store.operation_scope(DEFAULT_SESSION_TIMEOUT) as owner:
             with self.store.write_transaction(owner) as conn:
-                conn.executemany(
-                    "DELETE FROM tasks WHERE session = ? AND task_id = ?",
-                    [(session_id, task["id"]) for task in eligible],
-                )
-        report["deleted"] = report["eligible"]
+                for task in eligible:
+                    status, updated_at, payload_json = repo._storage_identity(
+                        task["id"], task
+                    )
+                    cursor = conn.execute(
+                        "DELETE FROM tasks WHERE session = ? AND task_id = ? "
+                        "AND status = ? AND updated_at = ? AND payload_json = ? "
+                        "AND (SELECT COUNT(*) FROM task_events "
+                        "WHERE session = ? AND task_id = ?) = ?",
+                        (session_id, task["id"], status, updated_at, payload_json,
+                         session_id, task["id"], archived_event_counts[task["id"]]),
+                    )
+                    if cursor.rowcount:
+                        deleted.append(task["id"])
+        report["deleted"] = deleted
+        report["changed_after_archive"] = [
+            task_id for task_id in report["eligible"] if task_id not in deleted
+        ]
         return report
 
     # --- archive -----------------------------------------------------------
@@ -2102,19 +2181,25 @@ class StateRetention:
             }
         return self._publish_archive(payload, prefix="sessions")
 
-    def _archive_tasks(self, session_id: str, tasks) -> Path:
+    def _archive_tasks(self, session_id: str,
+                       tasks) -> tuple[Path, dict[str, int]]:
         repo = TaskRepository(self.store)
+        events = {
+            task["id"]: repo.events(session_id, task_id=task["id"])
+            for task in tasks
+        }
         payload = {
             "kind": "tasks",
             "captured_at": _artifact_timestamp(),
             "session": session_id,
             "tasks": {task["id"]: task for task in tasks},
-            "events": {
-                task["id"]: repo.events(session_id, task_id=task["id"])
-                for task in tasks
-            },
+            "events": events,
         }
-        return self._publish_archive(payload, prefix=f"tasks-{session_id}")
+        return (
+            self._publish_archive(payload, prefix=f"tasks-{session_id}"),
+            {task_id: len(task_events)
+             for task_id, task_events in events.items()},
+        )
 
     def _publish_archive(self, payload: dict, prefix: str) -> Path:
         """Write the archive and make it durable before anything is deleted.
@@ -2129,15 +2214,24 @@ class StateRetention:
             )
         self.policy.archive_dir.mkdir(parents=True, exist_ok=True)
         safe_prefix = re.sub(r"[^A-Za-z0-9_.-]", "_", prefix)[:80]
-        destination = (self.policy.archive_dir
-                       / f"{_artifact_timestamp()}-{safe_prefix}.json")
-        counter = 1
-        while destination.exists():
-            destination = (self.policy.archive_dir
-                           / f"{_artifact_timestamp()}-{safe_prefix}.{counter}.json")
-            counter += 1
-
-        atomic_write_json(destination, payload)
+        stamp = _artifact_timestamp()
+        destination = reserve_unique_path(
+            (
+                self.policy.archive_dir
+                / f"{stamp}-{safe_prefix}{f'.{counter}' if counter else ''}.json"
+                for counter in range(self._MAX_ARCHIVE_DESTINATION_ATTEMPTS)
+            ),
+            exhausted_message=(
+                f"Could not reserve an archive for {safe_prefix!r} in "
+                f"{self.policy.archive_dir}: "
+                f"{self._MAX_ARCHIVE_DESTINATION_ATTEMPTS} names are taken."
+            ),
+        )
+        try:
+            atomic_write_json(destination, payload)
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
         return destination
 
     # --- maintenance -------------------------------------------------------

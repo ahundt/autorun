@@ -186,7 +186,7 @@ from datetime import datetime
 from filelock import FileLock, Timeout as FileLockTimeout
 
 from .core import EventContext, app, logger
-from .durable_io import atomic_write_json, sync_file
+from .durable_io import atomic_write_json, reserve_unique_path, sync_file
 from .session_manager import (
     session_state, SessionLock, SessionTimeoutError, get_session_manager,
 )
@@ -710,22 +710,18 @@ class PlanExport:
             self.expand_template(self.config.filename_pattern, plan_path, useful_name)
         )
 
-        for counter in range(self._MAX_DESTINATION_ATTEMPTS):
-            suffix = "" if counter == 0 else f"_{counter}"
-            dest_path = notes_dir / f"{base_filename}{suffix}{self.config.extension}"
-            try:
-                # "x" fails if the path exists, including if it appeared a
-                # moment ago. That failure is the reservation working.
-                with open(dest_path, "x", encoding="utf-8"):
-                    pass
-                return dest_path
-            except FileExistsError:
-                continue
-
-        raise OSError(
-            f"Could not reserve a destination for {plan_path.name} in "
-            f"{notes_dir}: {self._MAX_DESTINATION_ATTEMPTS} names are already "
-            "taken. Move or remove the existing exports."
+        return reserve_unique_path(
+            (
+                notes_dir
+                / f"{base_filename}{'_' + str(counter) if counter else ''}"
+                  f"{self.config.extension}"
+                for counter in range(self._MAX_DESTINATION_ATTEMPTS)
+            ),
+            exhausted_message=(
+                f"Could not reserve a destination for {plan_path.name} in "
+                f"{notes_dir}: {self._MAX_DESTINATION_ATTEMPTS} names are "
+                "already taken. Move or remove the existing exports."
+            ),
         )
 
     def _write_reserved_destination(self, plan_path: Path, dest_path: Path) -> None:

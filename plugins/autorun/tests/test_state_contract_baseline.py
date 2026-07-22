@@ -46,6 +46,7 @@ from autorun.session_manager import (  # noqa: E402
     all_session_state,
     session_state,
 )
+import autorun.session_manager as session_manager_module  # noqa: E402
 
 
 @pytest.fixture
@@ -261,6 +262,18 @@ class TestCommitSemantics:
         with open_state("s") as state:
             assert "x" not in state
 
+    def test_an_in_place_mutation_is_discarded_when_the_body_fails(self, open_state):
+        with open_state("s") as state:
+            state["metadata"] = {"hits": 0}
+
+        with pytest.raises(RuntimeError):
+            with open_state("s") as state:
+                state["metadata"]["hits"] += 1
+                raise RuntimeError("caller failed after mutating a nested value")
+
+        with open_state("s") as state:
+            assert state["metadata"] == {"hits": 0}
+
     def test_the_store_is_usable_again_after_a_failed_body(self, open_state):
         with pytest.raises(RuntimeError):
             with open_state("s"):
@@ -354,16 +367,6 @@ class TestJsonStoreFileBehavior:
             "A context that only reads must not republish stored state."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "The JSON store marks itself dirty only on __setitem__, so a "
-            "nested value mutated through __getitem__ reaches the in-memory "
-            "dict but is never written back unless some other field in the "
-            "same context happens to trigger a save. The SQLite store gets "
-            "this right; see test_state_field_scoped_access.py."
-        ),
-    )
     def test_a_value_mutated_in_place_is_persisted(self, state_dir):
         with session_state("s", state_dir=state_dir) as state:
             state["metadata"] = {"hits": 0}
@@ -375,6 +378,60 @@ class TestJsonStoreFileBehavior:
             assert state["metadata"]["hits"] == 1, (
                 "An in-place mutation of a nested value was not persisted."
             )
+
+    @pytest.mark.parametrize("accessor", ["get", "values", "items"])
+    def test_every_value_accessor_tracks_in_place_mutation(self, state_dir, accessor):
+        with session_state("s", state_dir=state_dir) as state:
+            state["metadata"] = {"hits": 0}
+
+        with session_state("s", state_dir=state_dir) as state:
+            if accessor == "get":
+                metadata = state.get("metadata")
+            elif accessor == "values":
+                metadata = state.values()[0]
+            else:
+                metadata = state.items()[0][1]
+            metadata["hits"] += 1
+
+        with session_state("s", state_dir=state_dir) as state:
+            assert state["metadata"] == {"hits": 1}
+
+    def test_nested_session_in_place_mutation_joins_the_outer_commit(self, state_dir):
+        with session_state("inner", state_dir=state_dir) as state:
+            state["metadata"] = {"hits": 0}
+
+        with session_state("outer", state_dir=state_dir):
+            with session_state("inner", state_dir=state_dir) as state:
+                state["metadata"]["hits"] += 1
+
+        with session_state("inner", state_dir=state_dir) as state:
+            assert state["metadata"] == {"hits": 1}
+
+    def test_mutation_tracking_copies_only_the_exposed_mutable_field(
+        self, state_dir, monkeypatch
+    ):
+        with session_state("s", state_dir=state_dir) as state:
+            state["metadata"] = {"hits": 0}
+            state["unrelated"] = [{"blob": "x" * 1024} for _ in range(100)]
+
+        real_deepcopy = session_manager_module.copy.deepcopy
+        copied = []
+
+        def tracked_deepcopy(value):
+            copied.append(value)
+            return real_deepcopy(value)
+
+        monkeypatch.setattr(
+            session_manager_module.copy, "deepcopy", tracked_deepcopy
+        )
+
+        with session_state("s", state_dir=state_dir) as state:
+            assert state["metadata"] == {"hits": 0}
+
+        assert copied == [{"hits": 0}], (
+            "Tracking one exposed field copied unrelated session state, so "
+            "read latency and peak memory still grow with untouched values."
+        )
 
 
 class TestAllSessionState:
