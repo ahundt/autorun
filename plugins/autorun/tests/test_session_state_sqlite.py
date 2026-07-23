@@ -757,6 +757,28 @@ _BOOTSTRAP_PROBE = textwrap.dedent(
 @pytest.mark.subprocess
 @pytest.mark.serial
 class TestConcurrentBootstrap:
+    def test_header_validation_holds_the_sqlite_writer_slot(
+        self, db_path, monkeypatch
+    ):
+        """Validation cannot observe another initializer's partial header."""
+        validations = []
+        original = SQLiteStore._validate_existing_database
+
+        def assert_writer_transaction(store, conn):
+            validations.append(conn.in_transaction)
+            return original(store, conn)
+
+        monkeypatch.setattr(
+            SQLiteStore, "_validate_existing_database", assert_writer_transaction
+        )
+
+        SQLiteStore(db_path).initialize()
+
+        assert validations == [True, True], (
+            "Fresh initialization must validate both before and after the "
+            "auto_vacuum boundary while holding BEGIN IMMEDIATE."
+        )
+
     def test_processes_racing_to_create_the_database_all_succeed(self, db_path):
         """Several sessions can start at once on a machine with no database yet."""
         db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1221,8 +1221,6 @@ class SQLiteStore:
         modified. Guessing at either would risk corrupting data this version
         cannot interpret.
         """
-        self._validate_existing_database()
-
         try:
             os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
         except OSError as exc:
@@ -1234,16 +1232,29 @@ class SQLiteStore:
             with _managed_connection(
                 self._connect(timeout=DEFAULT_SESSION_TIMEOUT)
             ) as conn:
-                # Both of these are recorded in the file header rather than
-                # in a transaction. auto_vacuum must precede the first table.
-                conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
-                conn.execute("PRAGMA journal_mode = WAL")
-
+                # Validate while holding SQLite's writer slot. Otherwise a
+                # concurrent initializer can expose schema objects before its
+                # application_id commit and look like an unrelated database.
                 conn.execute("BEGIN IMMEDIATE")
                 try:
-                    # Another process may have initialized while this one
-                    # waited for the write lock.
+                    self._validate_existing_database(conn)
                     version = conn.execute("PRAGMA user_version").fetchone()[0]
+                    if version == 0:
+                        # auto_vacuum must be selected outside a transaction
+                        # and before the first table. Release the empty-file
+                        # probe, set it, then reacquire and revalidate because
+                        # another initializer may have won in between.
+                        conn.execute("COMMIT")
+                        conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                        # The first lock transaction materializes the empty
+                        # file header. VACUUM applies the requested mode before
+                        # schema creation; it contains no user rows to rewrite.
+                        conn.execute("VACUUM")
+                        conn.execute("BEGIN IMMEDIATE")
+                        self._validate_existing_database(conn)
+                        version = conn.execute(
+                            "PRAGMA user_version"
+                        ).fetchone()[0]
                     if version == 0:
                         for statement in _SCHEMA_STATEMENTS:
                             conn.execute(statement)
@@ -1257,6 +1268,10 @@ class SQLiteStore:
                 except BaseException:
                     _rollback_without_masking_original(conn)
                     raise
+
+                # journal_mode cannot change inside a transaction. Every
+                # initializer reaches this only after a validated commit.
+                conn.execute("PRAGMA journal_mode = WAL")
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not initialize state database {self._db_path}: {exc}"
@@ -1264,29 +1279,20 @@ class SQLiteStore:
 
         self._initialized = True
 
-    def _validate_existing_database(self) -> None:
-        """Refuse a database this code should not write to, without touching it.
+    def _validate_existing_database(self, conn) -> None:
+        """Refuse an unrecognized database inside the initialization lock.
 
-        The probe is read-only on purpose: opening an unrecognized database
-        read-write can rewrite its header or checkpoint its write-ahead log,
-        which would modify a file that turns out not to be ours.
+        The caller owns ``BEGIN IMMEDIATE``. A refusal rolls that transaction
+        back without writing application data, while concurrent initializers
+        cannot expose a partially committed schema to this probe.
         """
-        if not os.path.exists(self._db_path):
-            return
         try:
-            conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
-        except sqlite3.Error as exc:
-            raise SessionBackendError(
-                f"Could not open state database {self._db_path}: {exc}"
-            ) from exc
-        try:
-            with _managed_connection(conn):
-                application_id = conn.execute("PRAGMA application_id").fetchone()[0]
-                user_version = conn.execute("PRAGMA user_version").fetchone()[0]
-                objects = conn.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')"
-                ).fetchall()
+            application_id = conn.execute("PRAGMA application_id").fetchone()[0]
+            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            objects = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')"
+            ).fetchall()
         except sqlite3.Error as exc:
             raise SessionBackendError(
                 f"Could not read the header of {self._db_path}: {exc}"
