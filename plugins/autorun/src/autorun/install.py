@@ -2457,7 +2457,7 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
     if not skill_sources:
         return (0, 0)
 
-    dst_root = Path.home() / ".agents" / "skills"
+    dst_root = shared_agents_skills_dir()
     dst_root.mkdir(parents=True, exist_ok=True)
 
     installed = 0
@@ -2495,14 +2495,62 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
     return (installed, skipped)
 
 
+def _configured_path(key: str, default: str) -> Path:
+    """Resolve one configured location, expanding "~" at use rather than storage.
+
+    Config holds portable values like "~/.agents"; callers need absolute paths.
+    Expanding here keeps the stored value readable and machine-independent, the
+    same split `integration_search_paths` uses for its patterns.
+    """
+    from .config import CONFIG
+
+    return Path(str(CONFIG.get(key, default))).expanduser()
+
+
+def shared_agents_dir() -> Path:
+    """Return the cross-tool shared agents directory (default ~/.agents).
+
+    Not per-harness: several tools read this one location, so it is
+    configuration rather than platform data.
+    """
+    return _configured_path("shared_agents_dir", "~/.agents")
+
+
+def shared_agents_skills_dir() -> Path:
+    """Return the shared skills directory Codex and other tools scan."""
+    from .config import CONFIG
+
+    return shared_agents_dir() / str(CONFIG.get("shared_agents_skills_subdir", "skills"))
+
+
+def shared_agents_plugins_dir() -> Path:
+    """Return the shared plugins directory holding marketplace manifests."""
+    from .config import CONFIG
+
+    return shared_agents_dir() / str(
+        CONFIG.get("shared_agents_plugins_subdir", "plugins")
+    )
+
+
+def platform_skills_dir(platform: Platform) -> Path | None:
+    """Return where one harness scans for skills inside its own config dir.
+
+    None when the harness declares no config-dir-local skills directory —
+    Codex, for instance, reads :func:`shared_agents_skills_dir` instead.
+    """
+    if not platform.skills_subdir or not platform.config_dir:
+        return None
+    return Path(platform.config_dir).expanduser() / platform.skills_subdir
+
+
 def _codex_personal_marketplace_path() -> Path:
     """Return Codex's implicit home marketplace manifest path."""
-    return Path.home() / ".agents" / "plugins" / "marketplace.json"
+    return shared_agents_plugins_dir() / "marketplace.json"
 
 
 def _codex_plugin_source_dir() -> Path:
     """Return the local plugin source path referenced by the home marketplace."""
-    return Path.home() / "plugins" / _CODEX_PLUGIN_NAME
+    return _configured_path("codex_plugin_source_dir", "~/plugins") / _CODEX_PLUGIN_NAME
 
 
 def _codex_plugin_marketplace_entry() -> dict:
@@ -2938,7 +2986,7 @@ def show_custom_harness_status(spec: str) -> int:
             requirements = {}
         expected_skills = set().union(*requirements.values()) if requirements else set()
         installed_skills = _skill_dir_names(
-            Path.home() / ".agents" / "skills",
+            shared_agents_skills_dir(),
             owned_only=True,
         )
         missing_skills = sorted(expected_skills - installed_skills)
@@ -3875,7 +3923,9 @@ def install_plugins(
         if not dry_run and _claude_memory_workaround_enabled():
             claude_plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
             if claude_plugin_dir is not None and install_platform_memory(
-                PLATFORMS["claude"], claude_plugin_dir, Path.home() / ".claude"
+                PLATFORMS["claude"],
+                claude_plugin_dir,
+                Path(PLATFORMS["claude"].config_dir).expanduser(),
             ):
                 print("✓ autorun guidance written to ~/.claude/CLAUDE.md")
         # --- END --- DELETE WHEN FIXED ---
@@ -4163,8 +4213,10 @@ def _uninstall_agents_skill_links() -> None:
     touched, so a user-authored skill sharing a name survives, and links
     pointing anywhere else belong to another tool.
     """
-    claude_skills = Path.home() / ".claude" / "skills"
-    agents_skills = Path.home() / ".agents" / "skills"
+    claude_skills = platform_skills_dir(PLATFORMS["claude"])
+    agents_skills = shared_agents_skills_dir()
+    if claude_skills is None:
+        return
     if not claude_skills.is_dir():
         return
 
@@ -4380,7 +4432,7 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
 
     codex_agents = codex_dir / "AGENTS.md"
     print(f"  AGENTS.md: {'✓ installed' if codex_agents.is_file() else '✗ not installed'}")
-    skills_root = Path.home() / ".agents" / "skills"
+    skills_root = shared_agents_skills_dir()
     user_skill_names = _skill_dir_names(skills_root, owned_only=True)
     user_skill_count = len(user_skill_names)
     expected_codex_skills = set().union(*skill_requirements.values()) if skill_requirements else set()

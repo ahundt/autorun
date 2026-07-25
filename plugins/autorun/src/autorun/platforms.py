@@ -568,6 +568,10 @@ class Platform:
     memory_filename: str = ""
     # Template path relative to the plugin's src/autorun/ directory.
     memory_template: str = ""
+    # Subdirectory of config_dir this harness scans for skills. Empty means the
+    # harness has no config-dir-local skills directory — Codex reads the shared
+    # ~/.agents/skills instead, which is configuration, not platform data.
+    skills_subdir: str = ""
     # Stable slug for the sentinel pair. Changing it orphans blocks already
     # written into users' files, which uninstall would then fail to remove.
     memory_sentinel_slug: str = ""
@@ -683,6 +687,7 @@ CLAUDE = register(
         memory_filename="CLAUDE.md",
         memory_template="claude_template/CLAUDE.md",
         memory_sentinel_slug="claude-memory-md",
+        skills_subdir="skills",
         list_cmd=("claude", "plugin", "list"),
         app_bundle_ids=("com.anthropic.claudefordesktop",),
         app_paths=("/Applications/Claude.app",),

@@ -1,0 +1,165 @@
+"""Install and uninstall locations come from config, not literals.
+
+`Path.home() / ".agents" / "skills"` was written out at three separate call
+sites, `~/.agents/plugins/marketplace.json` at one more, and the Claude skills
+directory at another. A deployment that puts the shared agents directory
+somewhere else — a test harness, a sandboxed CI home, a machine following the
+`~/.agent` singular spelling that Antigravity uses — had no way to say so, and
+changing it meant finding every literal.
+
+config.py:1060-1062 already states the intent for platform metadata: "adding a
+new CLI = adding one Platform() definition there. No parallel maintenance here."
+These tests extend the same rule to install locations.
+
+Values are stored `~`-prefixed and expanded at use, matching
+`integration_search_paths` (config.py:1049) which stores patterns rather than
+resolved paths.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from autorun.config import CONFIG  # noqa: E402
+from autorun.install import (  # noqa: E402
+    _codex_personal_marketplace_path,
+    _codex_plugin_source_dir,
+    platform_skills_dir,
+    shared_agents_dir,
+    shared_agents_skills_dir,
+)
+from autorun.platforms import PLATFORMS  # noqa: E402
+
+
+# --------------------------------------------------------------------------
+# The keys exist and carry the documented defaults
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "key,default",
+    [
+        ("shared_agents_dir", "~/.agents"),
+        ("shared_agents_skills_subdir", "skills"),
+        ("shared_agents_plugins_subdir", "plugins"),
+        ("codex_plugin_source_dir", "~/plugins"),
+    ],
+)
+def test_config_declares_the_location_key(key, default):
+    assert CONFIG.get(key) == default
+
+
+def test_defaults_match_the_codex_documented_layout(monkeypatch, tmp_path):
+    """~/.agents/skills and ~/.agents/plugins/marketplace.json are Codex's.
+
+    Verified against openai/codex core-skills/src/loader.rs:334-345 and
+    core-plugins/src/marketplace.rs:20-25.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert shared_agents_skills_dir() == tmp_path / ".agents" / "skills"
+    assert (
+        _codex_personal_marketplace_path()
+        == tmp_path / ".agents" / "plugins" / "marketplace.json"
+    )
+
+
+# --------------------------------------------------------------------------
+# Overriding the config actually moves the location
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def relocated(monkeypatch, tmp_path):
+    """Point every configurable install location at a scratch tree."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(CONFIG, "shared_agents_dir", str(tmp_path / "custom-agents"))
+    monkeypatch.setitem(CONFIG, "shared_agents_skills_subdir", "my-skills")
+    monkeypatch.setitem(CONFIG, "shared_agents_plugins_subdir", "my-plugins")
+    monkeypatch.setitem(CONFIG, "codex_plugin_source_dir", str(tmp_path / "custom-src"))
+    return tmp_path
+
+
+def test_shared_agents_dir_honors_the_override(relocated):
+    assert shared_agents_dir() == relocated / "custom-agents"
+
+
+def test_skills_dir_honors_both_the_root_and_the_subdir(relocated):
+    assert shared_agents_skills_dir() == relocated / "custom-agents" / "my-skills"
+
+
+def test_marketplace_path_honors_the_override(relocated):
+    assert _codex_personal_marketplace_path() == (
+        relocated / "custom-agents" / "my-plugins" / "marketplace.json"
+    )
+
+
+def test_codex_plugin_source_dir_honors_the_override(relocated):
+    assert _codex_plugin_source_dir() == relocated / "custom-src" / "autorun"
+
+
+def test_a_tilde_value_is_expanded(monkeypatch, tmp_path):
+    """Config stores ~-prefixed values; callers must get absolute paths."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(CONFIG, "shared_agents_dir", "~/elsewhere")
+    assert shared_agents_dir() == tmp_path / "elsewhere"
+
+
+def test_an_absolute_value_is_left_alone(monkeypatch, tmp_path):
+    monkeypatch.setitem(CONFIG, "shared_agents_dir", str(tmp_path / "abs"))
+    assert shared_agents_dir() == tmp_path / "abs"
+
+
+# --------------------------------------------------------------------------
+# Per-platform skills directories come from platform data
+# --------------------------------------------------------------------------
+
+
+def test_claude_skills_dir_derives_from_platform_config_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert platform_skills_dir(PLATFORMS["claude"]) == tmp_path / ".claude" / "skills"
+
+
+def test_platform_without_a_skills_dir_returns_none():
+    """Only harnesses that declare one get a directory."""
+    assert platform_skills_dir(PLATFORMS["forgecode"]) is None
+
+
+def test_platform_skills_dir_follows_a_relocated_config_dir(monkeypatch, tmp_path):
+    """A harness whose config_dir moves takes its skills directory along."""
+    import dataclasses
+
+    moved = dataclasses.replace(
+        PLATFORMS["claude"], config_dir=str(tmp_path / "elsewhere") + "/"
+    )
+    assert platform_skills_dir(moved) == tmp_path / "elsewhere" / "skills"
+
+
+# --------------------------------------------------------------------------
+# Uninstall follows the same configuration as install
+# --------------------------------------------------------------------------
+
+
+def test_uninstall_removes_links_under_a_relocated_agents_dir(relocated, monkeypatch):
+    """The reported bug shape: uninstall must not hardcode what install configures."""
+    from autorun.install import CmdResult, uninstall_plugins
+
+    monkeypatch.setattr("autorun.install.run_cmd", lambda *a, **k: CmdResult(True, "ok"))
+    monkeypatch.setattr("autorun.install._restart_daemon_if_running", lambda: None)
+
+    source = relocated / "custom-agents" / "my-skills" / "demo"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("---\ndescription: d\n---\n", encoding="utf-8")
+
+    claude_skills = relocated / ".claude" / "skills"
+    claude_skills.mkdir(parents=True)
+    link = claude_skills / "demo"
+    link.symlink_to(source)
+
+    uninstall_plugins("all")
+
+    assert not link.is_symlink(), "link under the configured agents dir was not removed"
+    assert source.is_dir()

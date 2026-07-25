@@ -724,6 +724,12 @@ CONFIG = {
     # under SQLite's variable limit. Larger requests are split into several
     # statements rather than refused.
     "state_query_parameter_chunk": 500,
+    # How many malformed legacy keys a refused migration lists by name before
+    # summarizing the rest as a count. Every bad key is always counted and the
+    # migration always refuses; this bounds only how long the message gets, so
+    # one corrupt file cannot print megabytes. Raise it to see more names at
+    # once. Bounds a message, never the data.
+    "state_migration_max_reported_bad_keys": 20,
     # How many suffixed names an export tries before giving up. Reaching this
     # means something is wrong, not that the directory is busy.
     "plan_export_max_destination_attempts": 1000,
@@ -1043,6 +1049,27 @@ After every step and substep you must say "Wait," and execute this sequential th
     "integration_search_paths": [
         ".claude/autorun.*.local.md",   # Default pattern (like hookify)
     ],
+
+    # ─── Install / Uninstall Locations ────────────────────────────────────────
+    # Where autorun deploys shared, cross-harness assets. Install and uninstall
+    # both read these, so relocating one moves both — a literal in either would
+    # let uninstall miss what install wrote.
+    #
+    # Values may be "~"-prefixed or absolute; they are expanded at use, matching
+    # integration_search_paths above which stores patterns rather than resolved
+    # paths. Per-harness locations are NOT here: those live on
+    # autorun.platforms.Platform.config_dir, the single source of truth.
+    #
+    # Defaults follow the cross-tool convention Codex reads
+    # (core-skills/src/loader.rs:334-345 and core-plugins/src/marketplace.rs:20-25
+    # in openai/codex). Note Antigravity uses the singular "~/.agent" instead,
+    # which is exactly the kind of difference this key exists to absorb.
+    "shared_agents_dir": "~/.agents",
+    "shared_agents_skills_subdir": "skills",
+    "shared_agents_plugins_subdir": "plugins",
+    # Parent directory of the local plugin source the personal marketplace
+    # references; the plugin name is appended to it.
+    "codex_plugin_source_dir": "~/plugins",
 }
 
 
