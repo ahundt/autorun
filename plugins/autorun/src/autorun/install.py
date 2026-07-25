@@ -4114,9 +4114,89 @@ def uninstall_plugins(selection: str = "all") -> int:
         shutil.rmtree(legacy_dir)
         print(f"   Removed legacy dir: {legacy_dir}")
 
+    _uninstall_platform_memory_blocks()
+    _uninstall_agents_skill_links()
+
     print()
     print("Uninstall complete.")
     return 0
+
+
+def _platform_memory_config_dir(platform: Platform) -> Path | None:
+    """Return where a platform's memory file lives, or None if it has none.
+
+    ForgeCode resolves its base through FORGE_CONFIG and a legacy ~/forge/
+    fallback rather than the declared config_dir, so it is asked directly.
+    """
+    if not platform.memory_filename:
+        return None
+    if platform.name == "forgecode":
+        return _resolve_forge_base()
+    if not platform.config_dir:
+        return None
+    return Path(platform.config_dir).expanduser()
+
+
+def _uninstall_platform_memory_blocks() -> None:
+    """Strip autorun's guidance block from every harness memory file.
+
+    Only the sentinel-delimited region is removed; the user's own content in
+    those files is theirs. A file left holding nothing else is deleted by
+    strip_sentinel_block so uninstall leaves no empty litter.
+    """
+    for platform in PLATFORMS.values():
+        config_dir = _platform_memory_config_dir(platform)
+        if config_dir is None:
+            continue
+        try:
+            if strip_platform_memory(platform, config_dir):
+                print(f"   Removed guidance block: {config_dir / platform.memory_filename}")
+        except OSError as exc:
+            print(f"   warning: could not clean {platform.memory_filename}: {exc}")
+
+
+def _uninstall_agents_skill_links() -> None:
+    """Remove skill symlinks autorun linked from ~/.agents/skills.
+
+    Ownership is self-identifying: a symlink under ~/.claude/skills whose target
+    resolves inside ~/.agents/skills is ours. Real directories are never
+    touched, so a user-authored skill sharing a name survives, and links
+    pointing anywhere else belong to another tool.
+    """
+    claude_skills = Path.home() / ".claude" / "skills"
+    agents_skills = Path.home() / ".agents" / "skills"
+    if not claude_skills.is_dir():
+        return
+
+    for entry in sorted(claude_skills.iterdir()):
+        if not entry.is_symlink():
+            continue
+        try:
+            target = entry.readlink()
+        except OSError:
+            continue
+        resolved = target if target.is_absolute() else entry.parent / target
+        if not _is_within(resolved, agents_skills):
+            continue
+        try:
+            entry.unlink()
+            print(f"   Removed skill link: {entry}")
+        except OSError as exc:
+            print(f"   warning: could not remove {entry}: {exc}")
+
+
+def _is_within(candidate: Path, root: Path) -> bool:
+    """Report whether ``candidate`` sits inside ``root``, lexically.
+
+    Compares without resolving the leaf so a link whose target was deleted is
+    still recognized as ours and cleaned up.
+    """
+    try:
+        candidate_parts = os.path.normpath(str(candidate)).split(os.sep)
+        root_parts = os.path.normpath(str(root)).split(os.sep)
+    except (OSError, ValueError):
+        return False
+    return candidate_parts[: len(root_parts)] == root_parts
 
 
 # =============================================================================
