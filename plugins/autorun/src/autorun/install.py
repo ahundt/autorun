@@ -55,6 +55,7 @@ from pathlib import Path
 from filelock import FileLock
 
 from .command_docs import iter_command_docs
+from .durable_io import atomic_write_text
 from . import ipc
 from .platforms import (
     CUSTOM_HARNESS_FLAVOR_ALIASES,
@@ -2927,15 +2928,104 @@ _CODEX_AGENTS_START = "<!-- autorun:codex-agents-md:start -->"
 _CODEX_AGENTS_END = "<!-- autorun:codex-agents-md:end -->"
 
 
+def install_sentinel_block(target: Path, body: str, *, start: str, end: str) -> bool:
+    """Splice ``body`` into ``target`` between ``start``/``end`` markers.
+
+    Agent memory files (``AGENTS.md``, ``CLAUDE.md``) belong to the user;
+    autorun only rents a delimited region inside them. Sentinels make that
+    rental idempotent — re-installing replaces just our region — and
+    reversible, via :func:`strip_sentinel_block`.
+
+    Content outside the markers is never modified. Markers already present in
+    ``body`` are stripped first, so a template that ships its own pair (as
+    ``codex_template/AGENTS.md`` does) cannot produce nested markers.
+
+    A malformed region — one marker, or ``end`` before ``start`` — is treated
+    as absent and the block is appended, because rewriting a range we cannot
+    delimit would destroy user text.
+
+    Returns False without touching ``target`` when ``body`` is empty.
+    """
+    body = body.replace(start, "").replace(end, "").strip()
+    if not body:
+        return False
+
+    block = f"{start}\n{body}\n{end}\n"
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+    bounds = _sentinel_bounds(existing, start=start, end=end)
+
+    if bounds is not None:
+        open_at, close_at = bounds
+        prefix = existing[:open_at].rstrip("\n")
+        suffix = existing[close_at + len(end) :].lstrip("\n")
+        parts = [p for p in (prefix, block.rstrip(), suffix.rstrip()) if p]
+        new = "\n\n".join(parts) + "\n"
+    elif existing.strip() == body:
+        # An unwrapped copy of exactly this body is something autorun wrote
+        # before it used sentinels — ForgeCode's AGENTS.md was published with
+        # shutil.copy2. Adopt it in place; appending would duplicate it.
+        # Exact match only: any user edit makes the file theirs, not ours.
+        new = block
+    elif existing.strip():
+        new = existing.rstrip("\n") + "\n\n" + block
+    else:
+        new = block
+
+    atomic_write_text(target, new)
+    return True
+
+
+def strip_sentinel_block(target: Path, *, start: str, end: str) -> bool:
+    """Remove autorun's delimited region from ``target``, keeping the rest.
+
+    The uninstall half of :func:`install_sentinel_block`. Only a well-formed
+    region is removed; a lone marker is left in place rather than guessed at.
+    When nothing but our block remains the now-empty file is deleted, so
+    uninstalling leaves no litter — but a file holding any user content is
+    kept.
+
+    Returns True when a block was removed.
+    """
+    if not target.is_file():
+        return False
+
+    existing = target.read_text(encoding="utf-8")
+    bounds = _sentinel_bounds(existing, start=start, end=end)
+    if bounds is None:
+        return False
+
+    open_at, close_at = bounds
+    prefix = existing[:open_at].rstrip("\n")
+    suffix = existing[close_at + len(end) :].lstrip("\n")
+    parts = [p for p in (prefix, suffix.rstrip()) if p]
+
+    if not parts:
+        target.unlink()
+        return True
+
+    atomic_write_text(target, "\n\n".join(parts) + "\n")
+    return True
+
+
+def _sentinel_bounds(text: str, *, start: str, end: str) -> tuple[int, int] | None:
+    """Locate one well-formed sentinel region, or None if there isn't one.
+
+    Requires both markers with ``end`` after ``start``. Anything else — a
+    truncated previous write, or reversed markers — is reported as absent so
+    callers append rather than rewrite a range they cannot trust.
+    """
+    open_at = text.find(start)
+    close_at = text.find(end)
+    if open_at == -1 or close_at == -1 or close_at < open_at:
+        return None
+    return (open_at, close_at)
+
+
 def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     """Write autorun's advisory block into ~/.codex/AGENTS.md.
 
     Codex injects ~/.codex/AGENTS.md into every session
     (https://developers.openai.com/codex/guides/agents-md, 32 KiB limit).
-    We append a sentinel-delimited block so:
-      - existing user content is preserved
-      - re-installing replaces just our block (idempotent)
-      - a future uninstall can strip our block cleanly
 
     Returns True if a template was installed, False if the template is
     missing from the plugin (older builds, partial extracts).
@@ -2944,30 +3034,16 @@ def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     if not template.is_file():
         return False
 
-    raw = template.read_text(encoding="utf-8")
-    # Strip any pre-existing sentinels so we always wrap with one canonical
-    # pair — keeps the merge boundary stable regardless of whether the
-    # checked-in template author remembered to add the markers.
-    body = raw.replace(_CODEX_AGENTS_START, "").replace(_CODEX_AGENTS_END, "")
-    block = f"{_CODEX_AGENTS_START}\n{body.strip()}\n{_CODEX_AGENTS_END}\n"
+    return install_sentinel_block(
+        codex_dir / "AGENTS.md",
+        template.read_text(encoding="utf-8"),
+        start=_CODEX_AGENTS_START,
+        end=_CODEX_AGENTS_END,
+    )
 
-    target = codex_dir / "AGENTS.md"
-    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
 
-    start = existing.find(_CODEX_AGENTS_START)
-    end = existing.find(_CODEX_AGENTS_END)
-    if start != -1 and end != -1 and end > start:
-        prefix = existing[:start].rstrip("\n")
-        suffix = existing[end + len(_CODEX_AGENTS_END) :].lstrip("\n")
-        parts = [p for p in (prefix, block.rstrip(), suffix.rstrip()) if p]
-        new = "\n\n".join(parts) + "\n"
-    elif existing.strip():
-        new = existing.rstrip("\n") + "\n\n" + block
-    else:
-        new = block
-
-    target.write_text(new, encoding="utf-8")
-    return True
+_FORGECODE_AGENTS_START = "<!-- autorun:forgecode-agents-md:start -->"
+_FORGECODE_AGENTS_END = "<!-- autorun:forgecode-agents-md:end -->"
 
 
 def _resolve_forge_base() -> Path:
@@ -3023,7 +3099,15 @@ def _install_for_forgecode(
 
     agents_src = template / "AGENTS.md"
     if agents_src.is_file():
-        shutil.copy2(agents_src, base / "AGENTS.md")
+        # Sentinel merge, not copy2: ForgeCode reads <base>/AGENTS.md as custom
+        # instructions and the user may have written their own there. This is
+        # the same contract the Codex path uses for ~/.codex/AGENTS.md.
+        install_sentinel_block(
+            base / "AGENTS.md",
+            agents_src.read_text(encoding="utf-8"),
+            start=_FORGECODE_AGENTS_START,
+            end=_FORGECODE_AGENTS_END,
+        )
 
     print()
     print(f"✓ ForgeCode commands installed at {base}/commands/")

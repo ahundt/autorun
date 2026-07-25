@@ -77,8 +77,30 @@ def reserve_unique_path(
     raise OSError(exhausted_message)
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    """Publish one complete, fsynced text file with a same-directory rename.
+
+    The text counterpart of :func:`atomic_write_json`, for user-owned files
+    that are read-modify-written rather than regenerated — agent memory files
+    such as ``~/.codex/AGENTS.md``. A partial write there loses guidance the
+    user wrote, so the staged file is only renamed over the target once it is
+    complete and fsynced.
+    """
+    _atomic_publish(path, lambda handle: handle.write(text))
+
+
 def atomic_write_json(path: Path, payload: Any, *, sort_keys: bool = False) -> None:
     """Publish one complete, fsynced JSON value with a same-directory rename."""
+    _atomic_publish(path, lambda handle: json.dump(payload, handle, sort_keys=sort_keys))
+
+
+def _atomic_publish(path: Path, emit) -> None:
+    """Stage ``emit``'s output beside ``path``, fsync it, then rename it into place.
+
+    Staging in the target's own directory keeps the rename atomic: ``os.replace``
+    is only guaranteed within a filesystem. The staged file is removed on any
+    failure so a crashed publication never leaves a partial artifact visible.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, staged_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.tmp-"
@@ -86,7 +108,7 @@ def atomic_write_json(path: Path, payload: Any, *, sort_keys: bool = False) -> N
     staged = Path(staged_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=sort_keys)
+            emit(handle)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(staged, path)

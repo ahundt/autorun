@@ -4,8 +4,9 @@ The installer:
   - resolves the base path via FORGE_CONFIG env > ~/forge/ (legacy if
     present) > ~/.forge/ (default)
   - copies forgecode_template/commands/*.md to <base>/commands/
-  - copies/merges forgecode_template/AGENTS.md to <base>/AGENTS.md
-    (idempotent — re-running does not duplicate content)
+  - merges forgecode_template/AGENTS.md into <base>/AGENTS.md as a
+    sentinel-delimited block, preserving user-authored content
+    (idempotent — re-running replaces only autorun's block)
   - prints a notice that ForgeCode integration is advisory (no hooks)
 """
 from __future__ import annotations
@@ -88,6 +89,54 @@ def test_install_for_forgecode_idempotent(tmp_path, monkeypatch):
     _install_for_forgecode(marketplace, ["autorun"], force=False)
     second_agents = (tmp_path / ".forge" / "AGENTS.md").read_text()
     assert first_agents == second_agents, "Re-install must be idempotent"
+
+
+def test_install_for_forgecode_preserves_user_authored_agents_md(
+    tmp_path, monkeypatch
+):
+    """User content in <base>/AGENTS.md must survive install byte-for-byte.
+
+    ForgeCode reads <base>/AGENTS.md as custom instructions, so a user may
+    have written their own guidance there. The installer used shutil.copy2,
+    which destroyed it on every run. The idempotence test above cannot catch
+    that: overwriting with the same template always yields identical bytes, so
+    it would pass even if the function deleted the user's file first.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("FORGE_CONFIG", raising=False)
+    marketplace = _make_marketplace(tmp_path)
+
+    forge = tmp_path / ".forge"
+    forge.mkdir()
+    user_text = "# My ForgeCode notes\n\nAlways run `cargo fmt` before pushing.\n"
+    (forge / "AGENTS.md").write_text(user_text, encoding="utf-8")
+
+    _install_for_forgecode(marketplace, ["autorun"], force=False)
+
+    after = (forge / "AGENTS.md").read_text(encoding="utf-8")
+    assert user_text.rstrip("\n") in after, "user guidance was destroyed"
+    assert "autorun" in after.lower(), "autorun guidance was not installed"
+
+
+def test_install_for_forgecode_replaces_only_its_own_block_on_reinstall(
+    tmp_path, monkeypatch
+):
+    """A second install swaps autorun's region and leaves user text alone."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("FORGE_CONFIG", raising=False)
+    marketplace = _make_marketplace(tmp_path)
+
+    forge = tmp_path / ".forge"
+    forge.mkdir()
+    user_text = "# Mine\n\nPrefer ripgrep over grep.\n"
+    (forge / "AGENTS.md").write_text(user_text, encoding="utf-8")
+
+    _install_for_forgecode(marketplace, ["autorun"], force=False)
+    _install_for_forgecode(marketplace, ["autorun"], force=False)
+
+    after = (forge / "AGENTS.md").read_text(encoding="utf-8")
+    assert user_text.rstrip("\n") in after
+    assert after.count("<!-- autorun:forgecode-agents-md:start -->") == 1
 
 
 def test_install_for_forgecode_prints_advisory_notice(tmp_path, monkeypatch, capsys):
