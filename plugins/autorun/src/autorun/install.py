@@ -3090,11 +3090,33 @@ def _sentinel_bounds(text: str, *, start: str, end: str) -> tuple[int, int] | No
     return (open_at, close_at)
 
 
+def _codex_agents_override_shadow(codex_dir: Path) -> Path | None:
+    """Return the AGENTS.override.md that would hide our AGENTS.md, if any.
+
+    Codex reads ``AGENTS.override.md`` before ``AGENTS.md`` and uses the first
+    non-blank one, never the other (codex-home/src/instructions/mod.rs:9-10,
+    :26-62 in openai/codex). A blank override falls through, so only a
+    non-blank file actually shadows.
+    """
+    override = codex_dir / "AGENTS.override.md"
+    try:
+        if override.is_file() and override.read_text(encoding="utf-8").strip():
+            return override
+    except OSError:
+        return None
+    return None
+
+
 def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     """Write autorun's advisory block into ~/.codex/AGENTS.md.
 
-    Codex injects ~/.codex/AGENTS.md into every session
-    (https://developers.openai.com/codex/guides/agents-md, 32 KiB limit).
+    Codex injects ~/.codex/AGENTS.md into every root session
+    (codex-rs/core/src/thread_manager.rs:1400-1405). Sub-agents inherit the
+    parent thread's copy rather than re-reading it.
+
+    Note there is no size limit on this file. The documented 32 KiB budget
+    (`project_doc_max_bytes`) is a shared allowance across *project* AGENTS.md
+    files and does not apply here (codex-rs/core/src/agents_md.rs:106-144).
 
     Returns True if a template was installed, False if the template is
     missing from the plugin (older builds, partial extracts).
@@ -3103,12 +3125,23 @@ def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     if not template.is_file():
         return False
 
-    return install_sentinel_block(
+    installed = install_sentinel_block(
         codex_dir / "AGENTS.md",
         template.read_text(encoding="utf-8"),
         start=_CODEX_AGENTS_START,
         end=_CODEX_AGENTS_END,
     )
+
+    # Writing the block is not the same as Codex reading it.
+    shadow = _codex_agents_override_shadow(codex_dir)
+    if installed and shadow is not None:
+        print(
+            f"⚠ {shadow.name} exists in {codex_dir}, so Codex will not read "
+            f"{codex_dir / 'AGENTS.md'} — autorun's guidance is installed but "
+            "inactive. Remove or empty the override file to activate it."
+        )
+
+    return installed
 
 
 _FORGECODE_AGENTS_START = "<!-- autorun:forgecode-agents-md:start -->"
