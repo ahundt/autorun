@@ -82,6 +82,20 @@ def _hook_cli_choices() -> tuple[str, ...]:
     return tuple(platform.name for platform in hook_platforms())
 
 
+def _codex_hook_source_choices() -> tuple[str, ...]:
+    """Return Codex hook-source choices without duplicating install data."""
+    from .install import _CODEX_HOOK_SOURCE_SETTING
+
+    return _CODEX_HOOK_SOURCE_SETTING.choices
+
+
+def _codex_plugin_marketplace_choices() -> tuple[str, ...]:
+    """Return Codex marketplace choices without duplicating install data."""
+    from .install import _CODEX_PLUGIN_MARKETPLACE_SETTING
+
+    return _CODEX_PLUGIN_MARKETPLACE_SETTING.choices
+
+
 def _custom_harness_spec_help() -> str:
     """Return shared parser help for custom harness specs."""
     from .platforms import custom_harness_spec_help
@@ -405,23 +419,27 @@ For more information: https://github.com/ahundt/autorun
     )
     install_group.add_argument(
         "--codex-hook-source",
-        choices=["user", "plugin", "both", "none"],
-        default="user",
+        choices=_codex_hook_source_choices(),
+        # None, not "user": argparse cannot otherwise distinguish an explicit
+        # choice from its own default, and the default would then outrank
+        # AUTORUN_CODEX_HOOK_SOURCE. resolve_choice_setting applies "user".
+        default=None,
         help=(
             "Codex hook install source: user (~/.codex/hooks.json), plugin "
             "(autorun@personal bundled hooks), both, or none. Default: user. "
-            "AUTORUN_CODEX_HOOK_SOURCE can also set this."
+            "AUTORUN_CODEX_HOOK_SOURCE also sets this; the flag wins."
         ),
     )
     install_group.add_argument(
         "--codex-plugin-marketplace",
-        choices=["personal", "github"],
-        default="personal",
+        choices=_codex_plugin_marketplace_choices(),
+        # None so the env var can win; see --codex-hook-source above.
+        default=None,
         help=(
             "Codex plugin marketplace mode: personal installs autorun@personal "
             "from a local personal marketplace; github adds ahundt/autorun "
             "and installs autorun@autorun. Default: personal. "
-            "AUTORUN_CODEX_PLUGIN_MARKETPLACE can also set this."
+            "AUTORUN_CODEX_PLUGIN_MARKETPLACE also sets this; the flag wins."
         ),
     )
     install_group.add_argument(

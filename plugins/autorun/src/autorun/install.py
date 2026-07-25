@@ -1872,20 +1872,87 @@ def _codex_owned_plugin_hook_source(source_dir: Path) -> str | None:
     return None
 
 
-def _codex_hook_source_from_env(default: str = "user") -> str:
-    """Return the Codex hook install source selected by env or default."""
-    value = os.environ.get("AUTORUN_CODEX_HOOK_SOURCE", default).strip().lower()
-    if value not in _CODEX_HOOK_SOURCE_CHOICES:
-        return default
-    return value
+@dataclass(frozen=True, slots=True)
+class ChoiceSetting:
+    """Declaration of one install setting drawn from a fixed set of values."""
+
+    name: str
+    env_var: str
+    choices: tuple[str, ...]
+    default: str
+    config_key: str | None = None
 
 
-def _codex_plugin_marketplace_from_env(default: str = "personal") -> str:
-    """Return the Codex plugin marketplace mode selected by env or default."""
-    value = os.environ.get("AUTORUN_CODEX_PLUGIN_MARKETPLACE", default).strip().lower()
-    if value not in _CODEX_PLUGIN_MARKETPLACE_CHOICES:
-        return default
-    return value
+@dataclass(frozen=True, slots=True)
+class ResolvedChoice:
+    """A resolved :class:`ChoiceSetting` and the tier it came from."""
+
+    value: str
+    source: str
+
+
+_CODEX_HOOK_SOURCE_SETTING = ChoiceSetting(
+    name="codex_hook_source",
+    env_var="AUTORUN_CODEX_HOOK_SOURCE",
+    choices=_CODEX_HOOK_SOURCE_CHOICES,
+    default="user",
+)
+
+_CODEX_PLUGIN_MARKETPLACE_SETTING = ChoiceSetting(
+    name="codex_plugin_marketplace",
+    env_var="AUTORUN_CODEX_PLUGIN_MARKETPLACE",
+    choices=_CODEX_PLUGIN_MARKETPLACE_CHOICES,
+    default="personal",
+)
+
+
+def resolve_choice_setting(
+    setting: ChoiceSetting,
+    *,
+    cli_value: str | None = None,
+    env: dict[str, str] | os._Environ[str] | None = None,
+    config: dict | None = None,
+) -> ResolvedChoice:
+    """Resolve one fixed-choice setting using CLI > env > config > default.
+
+    Same precedence and the same ``None``-means-unspecified convention as
+    :func:`resolve_runtime_architecture_settings`. Callers must pass
+    ``cli_value=None`` when the user did not supply the flag, which requires
+    argparse ``default=None`` — otherwise an argparse-supplied default is
+    indistinguishable from an explicit choice and would outrank the
+    environment.
+
+    Resolve once, at the top-level entry point, and pass the value down.
+    Re-resolving in a callee re-applies the environment to an already-decided
+    value and discards the caller's explicit intent.
+
+    An unrecognized value at any tier falls through to the next rather than
+    raising: a typo in an environment variable should not abort an install
+    (``plugins/autorun/CLAUDE.md`` lesson 7, "fail open when data is unknown").
+    """
+    env = os.environ if env is None else env
+    config = {} if config is None else config
+
+    def _valid(raw: object) -> str | None:
+        if not isinstance(raw, str):
+            return None
+        normalized = raw.strip().lower()
+        return normalized if normalized in setting.choices else None
+
+    chosen = _valid(cli_value)
+    if chosen is not None:
+        return ResolvedChoice(chosen, "cli")
+
+    chosen = _valid(env.get(setting.env_var))
+    if chosen is not None:
+        return ResolvedChoice(chosen, f"env {setting.env_var}")
+
+    if setting.config_key is not None:
+        chosen = _valid(config.get(setting.config_key))
+        if chosen is not None:
+            return ResolvedChoice(chosen, "config")
+
+    return ResolvedChoice(setting.default, "default")
 
 
 def _codex_uses_user_hooks(codex_hook_source: str) -> bool:
@@ -2236,8 +2303,10 @@ def _install_for_codex(
     Returns:
         Tuple of (success: bool, message: str)
     """
-    codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
-    codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    # Deliberately NOT re-resolved from the environment here: install_plugins
+    # already applied CLI > env > config > default. Re-reading the env var
+    # would discard an explicit caller choice — which is how the custom-harness
+    # path below started failing under AUTORUN_CODEX_HOOK_SOURCE=plugin.
     if not install_global_assets and _codex_uses_plugin_hooks(codex_hook_source):
         return (
             False,
@@ -3403,8 +3472,8 @@ def install_plugins(
     antigravity_only: bool = False,
     qwen_only: bool = False,
     conductor: bool = True,
-    codex_hook_source: str = "user",
-    codex_plugin_marketplace: str = "personal",
+    codex_hook_source: str | None = None,
+    codex_plugin_marketplace: str | None = None,
     custom_harnesses: list[str] | tuple[str, ...] = (),
     dry_run: bool = False,
 ) -> int:
@@ -3478,8 +3547,18 @@ def install_plugins(
     print(f"autorun v{__version__}")
     print(f"Commit: {__commit__}")
     print(f"Build Time: {__build_time__}")
-    codex_hook_source = _codex_hook_source_from_env(codex_hook_source)
-    codex_plugin_marketplace = _codex_plugin_marketplace_from_env(codex_plugin_marketplace)
+    # Single resolution point for every fixed-choice install setting. Callees
+    # receive decided values and must not consult the environment again.
+    from .config import CONFIG as _CONFIG
+
+    codex_hook_source = resolve_choice_setting(
+        _CODEX_HOOK_SOURCE_SETTING, cli_value=codex_hook_source, config=_CONFIG
+    ).value
+    codex_plugin_marketplace = resolve_choice_setting(
+        _CODEX_PLUGIN_MARKETPLACE_SETTING,
+        cli_value=codex_plugin_marketplace,
+        config=_CONFIG,
+    ).value
     try:
         custom_targets = [parse_custom_harness_spec(spec) for spec in custom_harnesses]
     except ValueError as e:
@@ -4478,7 +4557,10 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--codex-hook-source",
         choices=_CODEX_HOOK_SOURCE_CHOICES,
-        default="user",
+        # None, not "user": an argparse-supplied default is indistinguishable
+        # from an explicit choice and would outrank AUTORUN_CODEX_HOOK_SOURCE.
+        # resolve_choice_setting applies the "user" default.
+        default=None,
         help=(
             "Codex hook install source: user (~/.codex/hooks.json), plugin "
             "(autorun@personal bundled hooks), both, or none. "
@@ -4488,7 +4570,8 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--codex-plugin-marketplace",
         choices=_CODEX_PLUGIN_MARKETPLACE_CHOICES,
-        default="personal",
+        # None so the env var can win; see --codex-hook-source above.
+        default=None,
         help=(
             "Codex plugin marketplace mode: personal writes ~/.agents/plugins/"
             "marketplace.json and installs autorun@personal; github adds "
