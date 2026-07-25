@@ -214,6 +214,26 @@ autorun --install --codex --codex-plugin-marketplace github
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 
+#### Sharing skills with Claude Code
+
+Codex, OpenCode, Command Code and Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
+
+```bash
+autorun --install --claude --claude-agents-skills link  # symlink shared skills into ~/.claude/skills
+autorun --install --claude --claude-agents-skills copy  # copy instead (Windows without Developer Mode)
+autorun --install --claude --claude-agents-skills none  # default: leave ~/.claude/skills untouched
+```
+
+`AUTORUN_CLAUDE_AGENTS_SKILLS` sets the same mode for unattended installs; the flag wins over the environment variable.
+
+The default is `none` so no install silently rewrites your skills directory. Skills a plugin already provides are skipped, because Claude Code deduplicates by resolved path rather than by name — a plugin copy and a shared copy are different paths, so both would appear in the skill listing. Existing directories are never replaced.
+
+Individual skill directories are linked rather than the whole `skills/` folder: Claude Code stops loading user skills entirely when that directory is itself a symlink ([anthropics/claude-code#38051](https://github.com/anthropics/claude-code/issues/38051)), so autorun refuses that layout with an explanation instead of writing something that would never load. Discovery is top level only ([#18192](https://github.com/anthropics/claude-code/issues/18192)), so links are flat. Restart Claude Code after bridging for new skills to appear.
+
+`autorun --uninstall` removes only the links it created; a real directory that happens to share a name, and links pointing anywhere else, are left alone.
+
+The shared location is configurable through `shared_agents_dir` and `shared_agents_skills_subdir` in `CONFIG`, which install and uninstall both read.
+
 #### Bundled Skills
 
 Skills are installed from each selected `plugins/*/skills/` tree and use each harness's native
@@ -981,7 +1001,8 @@ The optional display name follows the unambiguous `::` separator, so a
 `config_dir` may itself contain `:` characters.
 
 Accepted option values: `--codex-hook-source: user|plugin|both|none`;
-`--codex-plugin-marketplace: personal|github`.
+`--codex-plugin-marketplace: personal|github`;
+`--claude-agents-skills: link|copy|none`.
 
 **Maintenance:**
 

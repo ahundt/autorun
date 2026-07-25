@@ -2543,6 +2543,137 @@ def platform_skills_dir(platform: Platform) -> Path | None:
     return Path(platform.config_dir).expanduser() / platform.skills_subdir
 
 
+_AGENTS_SKILLS_SETTING = ChoiceSetting(
+    name="claude_agents_skills",
+    env_var="AUTORUN_CLAUDE_AGENTS_SKILLS",
+    choices=("link", "copy", "none"),
+    default="none",
+    config_key="claude_agents_skills",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentsSkillsBridge:
+    """What one bridge pass did, for reporting and for tests."""
+
+    linked: tuple[str, ...] = ()
+    already_linked: tuple[str, ...] = ()
+    skipped_existing: tuple[str, ...] = ()
+    skipped_plugin: tuple[str, ...] = ()
+    refused_reason: str = ""
+    fell_back_to_copy: bool = False
+    created_skills_dir: bool = False
+
+
+def bridge_agents_skills(
+    platform: Platform,
+    *,
+    mode: str = "none",
+    plugin_skill_names: set[str] | None = None,
+    dry_run: bool = False,
+) -> AgentsSkillsBridge:
+    """Make shared ~/.agents skills visible to a harness that ignores them.
+
+    Codex, OpenCode, Command Code and Gemini CLI scan the shared agents skills
+    directory directly. Claude Code reads only its own config-dir skills folder,
+    so a skill authored in the shared location is invisible to it. This links
+    each such skill into the harness's own directory.
+
+    A skill is bridged only when it has a ``SKILL.md``, the harness does not
+    already have that name, and no plugin supplies it. That last rule matters
+    because Claude Code deduplicates by resolved path, not by name: a plugin
+    copy and a shared copy are different paths, so both would be listed and the
+    skill listing is budgeted.
+
+    Modes: ``link`` symlinks (the harness follows them), ``copy`` duplicates
+    (for platforms where symlink creation needs privileges), ``none`` is the
+    default so no install silently rewrites a user's skills directory.
+
+    Refuses outright when the harness skills directory is itself a symlink:
+    Claude Code stopped loading user skills in that layout
+    (anthropics/claude-code#38051), so writing there would look like success and
+    load nothing.
+    """
+    skills_dir = platform_skills_dir(platform)
+    if mode == "none" or skills_dir is None:
+        return AgentsSkillsBridge()
+
+    source_root = shared_agents_skills_dir()
+    if not source_root.is_dir():
+        return AgentsSkillsBridge()
+
+    if skills_dir.is_symlink():
+        return AgentsSkillsBridge(
+            refused_reason=(
+                f"{skills_dir} is a symlink; {platform.display_name} does not load "
+                "user skills from a symlinked skills directory "
+                "(anthropics/claude-code#38051). Replace it with a real directory "
+                "and link individual skills instead."
+            )
+        )
+
+    created = False
+    if not skills_dir.exists():
+        if not dry_run:
+            skills_dir.mkdir(parents=True, exist_ok=True)
+        created = True
+
+    plugin_skill_names = {n.lower() for n in (plugin_skill_names or set())}
+    existing = {p.name.lower() for p in skills_dir.iterdir()} if skills_dir.is_dir() else set()
+
+    linked: list[str] = []
+    already: list[str] = []
+    skipped_existing: list[str] = []
+    skipped_plugin: list[str] = []
+    fell_back = False
+
+    for source in sorted(source_root.iterdir()):
+        if not source.is_dir() or not (source / "SKILL.md").is_file():
+            continue
+        name = source.name
+        destination = skills_dir / name
+
+        # Case-insensitive: a name that collides on macOS but not Linux would
+        # otherwise behave differently per machine.
+        if name.lower() in plugin_skill_names:
+            skipped_plugin.append(name)
+            continue
+
+        if destination.is_symlink():
+            if _same_resolved_path(destination, source):
+                already.append(name)
+                continue
+            # A link whose target moved or vanished: repair it.
+            if not dry_run:
+                destination.unlink()
+        elif name.lower() in existing:
+            skipped_existing.append(name)
+            continue
+
+        if dry_run:
+            linked.append(name)
+            continue
+
+        try:
+            if mode == "copy":
+                raise OSError("copy mode requested")
+            destination.symlink_to(source, target_is_directory=True)
+        except OSError:
+            if mode == "link":
+                fell_back = True
+            shutil.copytree(source, destination, dirs_exist_ok=True)
+        linked.append(name)
+
+    return AgentsSkillsBridge(
+        linked=tuple(linked),
+        already_linked=tuple(already),
+        skipped_existing=tuple(skipped_existing),
+        skipped_plugin=tuple(skipped_plugin),
+        fell_back_to_copy=fell_back,
+        created_skills_dir=created,
+    )
+
+
 def _codex_personal_marketplace_path() -> Path:
     """Return Codex's implicit home marketplace manifest path."""
     return shared_agents_plugins_dir() / "marketplace.json"
@@ -3617,6 +3748,7 @@ def install_plugins(
     conductor: bool = True,
     codex_hook_source: str | None = None,
     codex_plugin_marketplace: str | None = None,
+    claude_agents_skills: str | None = None,
     custom_harnesses: list[str] | tuple[str, ...] = (),
     dry_run: bool = False,
 ) -> int:
@@ -3701,6 +3833,9 @@ def install_plugins(
         _CODEX_PLUGIN_MARKETPLACE_SETTING,
         cli_value=codex_plugin_marketplace,
         config=_CONFIG,
+    ).value
+    claude_agents_skills = resolve_choice_setting(
+        _AGENTS_SKILLS_SETTING, cli_value=claude_agents_skills, config=_CONFIG
     ).value
     try:
         custom_targets = [parse_custom_harness_spec(spec) for spec in custom_harnesses]
@@ -3929,6 +4064,38 @@ def install_plugins(
             ):
                 print("✓ autorun guidance written to ~/.claude/CLAUDE.md")
         # --- END --- DELETE WHEN FIXED ---
+
+        if claude_agents_skills != "none":
+            bridge = bridge_agents_skills(
+                PLATFORMS["claude"],
+                mode=claude_agents_skills,
+                plugin_skill_names=_skill_dir_names(
+                    _autorun_plugin_dir(marketplace_root, plugins) / "skills"
+                )
+                if _autorun_plugin_dir(marketplace_root, plugins)
+                else set(),
+                dry_run=dry_run,
+            )
+            if bridge.refused_reason:
+                print(f"   ⚠ shared skills not bridged: {bridge.refused_reason}")
+            elif bridge.linked:
+                verb = "copied" if bridge.fell_back_to_copy else claude_agents_skills
+                print(
+                    f"✓ {len(bridge.linked)} shared skill(s) {verb} into "
+                    f"{platform_skills_dir(PLATFORMS['claude'])}: "
+                    f"{', '.join(bridge.linked)}"
+                )
+                print("   Restart Claude Code for new skills to load.")
+            if bridge.skipped_plugin:
+                print(
+                    f"   Skipped {len(bridge.skipped_plugin)} already provided by a "
+                    f"plugin: {', '.join(bridge.skipped_plugin)}"
+                )
+            if bridge.skipped_existing:
+                print(
+                    f"   Skipped {len(bridge.skipped_existing)} already present: "
+                    f"{', '.join(bridge.skipped_existing)}"
+                )
 
     # Install for Gemini CLI
     if "gemini" in target_clis:
@@ -4803,6 +4970,16 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--codex", action="store_true", help="Install for Codex CLI only")
     parser.add_argument(
+        "--claude-agents-skills",
+        choices=_AGENTS_SKILLS_SETTING.choices,
+        default=None,
+        help=(
+            "Bridge shared ~/.agents skills into Claude Code's skills directory: "
+            "link (symlink), copy, or none. Default: none. "
+            "AUTORUN_CLAUDE_AGENTS_SKILLS also sets this; the flag wins."
+        ),
+    )
+    parser.add_argument(
         "--codex-hook-source",
         choices=_CODEX_HOOK_SOURCE_CHOICES,
         # None, not "user": an argparse-supplied default is indistinguishable
@@ -4863,6 +5040,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         "conductor": args.conductor,
         "codex_hook_source": args.codex_hook_source,
         "codex_plugin_marketplace": args.codex_plugin_marketplace,
+        "claude_agents_skills": args.claude_agents_skills,
     }
     if args.install_dry_run:
         install_kwargs["dry_run"] = True

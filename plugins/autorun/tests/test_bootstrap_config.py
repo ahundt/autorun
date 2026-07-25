@@ -480,7 +480,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 
@@ -498,7 +498,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 
@@ -516,7 +516,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 
@@ -534,7 +534,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 
@@ -552,7 +552,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source="plugin", codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source="plugin", codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 
@@ -570,7 +570,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=True,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace="github",
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace="github", claude_agents_skills=None,
         )
         assert result == 0
 
@@ -589,7 +589,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             custom_harnesses=[spec],
         )
         assert result == 0
@@ -608,7 +608,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
             dry_run=True,
         )
         assert result == 0
@@ -639,7 +639,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=False,
             qwen_only=True,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 
@@ -657,7 +657,7 @@ class TestMainFunctionRouting:
             claude_only=False, gemini_only=False, codex_only=False,
             antigravity_only=True,
             qwen_only=False,
-            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None,
+            conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
         )
         assert result == 0
 

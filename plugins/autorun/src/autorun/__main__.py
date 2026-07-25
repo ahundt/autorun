@@ -82,6 +82,13 @@ def _hook_cli_choices() -> tuple[str, ...]:
     return tuple(platform.name for platform in hook_platforms())
 
 
+def _agents_skills_choices() -> tuple[str, ...]:
+    """Return shared-skills bridge choices without duplicating install data."""
+    from .install import _AGENTS_SKILLS_SETTING
+
+    return _AGENTS_SKILLS_SETTING.choices
+
+
 def _codex_hook_source_choices() -> tuple[str, ...]:
     """Return Codex hook-source choices without duplicating install data."""
     from .install import _CODEX_HOOK_SOURCE_SETTING
@@ -416,6 +423,18 @@ For more information: https://github.com/ahundt/autorun
         "--codex",
         action="store_true",
         help="Install for Codex CLI only (default: install for all available CLIs)",
+    )
+    install_group.add_argument(
+        "--claude-agents-skills",
+        choices=_agents_skills_choices(),
+        # None so the env var can win; see --codex-hook-source below.
+        default=None,
+        help=(
+            "Bridge shared ~/.agents skills into Claude Code's skills directory: "
+            "link (symlink), copy, or none. Default: none. Skills a plugin "
+            "already provides are skipped. "
+            "AUTORUN_CLAUDE_AGENTS_SKILLS also sets this; the flag wins."
+        ),
     )
     install_group.add_argument(
         "--codex-hook-source",
@@ -973,6 +992,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "conductor": args.conductor,
             "codex_hook_source": args.codex_hook_source,
             "codex_plugin_marketplace": args.codex_plugin_marketplace,
+            "claude_agents_skills": args.claude_agents_skills,
         }
         if args.install_dry_run:
             install_kwargs["dry_run"] = True

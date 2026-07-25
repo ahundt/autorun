@@ -476,7 +476,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
         )
 
     def test_install_module_main_codex_hook_source_routes_to_install_plugins(self):
@@ -498,7 +498,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source="plugin",
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
         )
 
     def test_install_module_main_custom_harness_routes_to_install_plugins(self):
@@ -521,7 +521,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
             custom_harnesses=[spec],
         )
 
@@ -544,7 +544,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
             dry_run=True,
         )
 
@@ -604,7 +604,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace="github",
+            codex_plugin_marketplace="github", claude_agents_skills=None,
         )
 
     def test_install_module_main_antigravity_force_routes_to_install_plugins(self):
@@ -626,7 +626,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
         )
 
     def test_install_module_main_qwen_force_routes_to_install_plugins(self):
@@ -648,7 +648,7 @@ class TestInstallMainAdapter:
             qwen_only=True,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
         )
 
     def test_install_main_legacy_codex_force_routes_to_install_plugins(self):
@@ -678,7 +678,7 @@ class TestInstallMainAdapter:
             qwen_only=False,
             conductor=True,
             codex_hook_source=None,
-            codex_plugin_marketplace=None,
+            codex_plugin_marketplace=None, claude_agents_skills=None,
         )
 
 
