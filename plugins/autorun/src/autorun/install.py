@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import argparse
+import contextlib
 import shlex
 import shutil
 import subprocess
@@ -51,6 +52,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterator
 
 from filelock import FileLock
 
@@ -1073,6 +1075,42 @@ def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
     logger.debug(f"Copied hook_entry.py → {target}")
 
 
+@contextlib.contextmanager
+def staged_replacement(target: Path, *, prefix: str) -> Iterator[Path]:
+    """Own one atomic directory publication for exactly one scope.
+
+    Yields a staging path beside ``target``; on clean exit the staged directory
+    replaces ``target``, and on any failure the previous contents are restored.
+    Staging in the target's own parent keeps the rename atomic — ``os.replace``
+    is only guaranteed within a filesystem — and keeps the rollback there too.
+
+    The lock, the temporary directory and the backup are all released on every
+    exit path, so callers never carry the cleanup themselves. This is the same
+    ownership contract as ``durable_io._owned_descriptor``, applied to a
+    directory swap instead of a file descriptor.
+
+    Concurrency: an install lock in the parent serializes publishers, matching
+    the convention used for every other install-time lock in this module.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(target.parent / ".autorun-install.lock"):
+        with tempfile.TemporaryDirectory(prefix=prefix, dir=target.parent) as tmp:
+            transaction = Path(tmp)
+            staged = transaction / "next"
+            backup = transaction / "previous"
+
+            yield staged
+
+            if target.exists() or target.is_symlink():
+                os.replace(target, backup)
+            try:
+                os.replace(staged, target)
+            except Exception:
+                if backup.exists() or backup.is_symlink():
+                    os.replace(backup, target)
+                raise
+
+
 def _copy_tree(src: Path, dst: Path) -> bool:
     """Mirror a plugin-owned resource tree into an installed location."""
     if not src.is_dir():
@@ -1199,36 +1237,13 @@ def _install_antigravity_cli_bundle(
 ) -> tuple[int, int]:
     """Atomically install one plugin into Antigravity CLI's plugin root."""
     target = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / plugin_name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    install_lock = FileLock(target.parent / ".autorun-install.lock")
-
-    with install_lock:
-        # Stage beside the target so replacement and rollback stay on one filesystem.
-        with tempfile.TemporaryDirectory(
-            prefix=".autorun-antigravity-",
-            dir=target.parent,
-        ) as tmp:
-            transaction = Path(tmp)
-            staged = transaction / plugin_name
-            backup = transaction / "previous"
-            counts = (
-                _stage_antigravity_native_bundle(plugin_dir, staged)
-                if plugin_name == "ar"
-                else _stage_antigravity_native_bundle(
-                    plugin_dir,
-                    staged,
-                    plugin_name,
-                )
-            )
-            if target.exists() or target.is_symlink():
-                os.replace(target, backup)
-            try:
-                os.replace(staged, target)
-            except Exception:
-                if backup.exists() or backup.is_symlink():
-                    os.replace(backup, target)
-                raise
-            return counts
+    with staged_replacement(target, prefix=".autorun-antigravity-") as staged:
+        counts = (
+            _stage_antigravity_native_bundle(plugin_dir, staged)
+            if plugin_name == "ar"
+            else _stage_antigravity_native_bundle(plugin_dir, staged, plugin_name)
+        )
+    return counts
 
 
 def _antigravity_validate_reports_hooks(output: str) -> bool:
@@ -2462,36 +2477,23 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
 
     installed = 0
     skipped = 0
-    install_lock = FileLock(dst_root / ".autorun-install.lock")
-    with install_lock:
-        for skill_src in skill_sources.values():
-            skill_dst = dst_root / skill_src.name
-            if skill_dst.exists() and not (skill_dst / _CODEX_SKILL_OWNED_MARKER).is_file():
-                # User-authored skill with the same name — never touch it.
-                skipped += 1
-                continue
+    for skill_src in skill_sources.values():
+        skill_dst = dst_root / skill_src.name
+        if skill_dst.exists() and not (skill_dst / _CODEX_SKILL_OWNED_MARKER).is_file():
+            # User-authored skill with the same name — never touch it.
+            skipped += 1
+            continue
 
-            with tempfile.TemporaryDirectory(
-                prefix=f".autorun-{skill_src.name}-",
-                dir=dst_root,
-            ) as tmp:
-                transaction = Path(tmp)
-                staged = transaction / "next"
-                backup = transaction / "previous"
-                shutil.copytree(skill_src, staged)
-                (staged / _CODEX_SKILL_OWNED_MARKER).write_text(
-                    "Autorun-owned. Safe to delete to un-claim this directory; the\nnext autorun install will then leave it alone as user-authored.\n",
-                    encoding="utf-8",
-                )
-                if skill_dst.exists():
-                    os.replace(skill_dst, backup)
-                try:
-                    os.replace(staged, skill_dst)
-                except Exception:
-                    if backup.exists():
-                        os.replace(backup, skill_dst)
-                    raise
-            installed += 1
+        # Locked per skill rather than once around the loop: the same lock file
+        # still serializes concurrent installers, and a failure on one skill no
+        # longer holds the lock while unwinding the rest.
+        with staged_replacement(skill_dst, prefix=f".autorun-{skill_src.name}-") as staged:
+            shutil.copytree(skill_src, staged)
+            (staged / _CODEX_SKILL_OWNED_MARKER).write_text(
+                "Autorun-owned. Safe to delete to un-claim this directory; the\nnext autorun install will then leave it alone as user-authored.\n",
+                encoding="utf-8",
+            )
+        installed += 1
     return (installed, skipped)
 
 
@@ -2829,27 +2831,13 @@ def _ensure_codex_plugin_source(
         if target.exists() and not target.is_symlink() and not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file():
             return (False, f"user-owned directory exists at {target}")
 
-        with tempfile.TemporaryDirectory(
-            prefix=".autorun-plugin-source-",
-            dir=target.parent,
-        ) as tmp:
-            transaction = Path(tmp)
-            staged = transaction / "next"
-            backup = transaction / "previous"
-            _copy_codex_plugin_source(
-                plugin_dir,
-                staged,
-                include_hooks=include_hooks,
-                codex_hook_source=codex_hook_source,
-            )
-            if target.exists() or target.is_symlink():
-                os.replace(target, backup)
-            try:
-                os.replace(staged, target)
-            except Exception:
-                if backup.exists() or backup.is_symlink():
-                    os.replace(backup, target)
-                raise
+    with staged_replacement(target, prefix=".autorun-plugin-source-") as staged:
+        _copy_codex_plugin_source(
+            plugin_dir,
+            staged,
+            include_hooks=include_hooks,
+            codex_hook_source=codex_hook_source,
+        )
     return (True, "copy")
 
 
