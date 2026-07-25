@@ -556,6 +556,22 @@ class Platform:
     app_bundle_ids: tuple[str, ...] = ()
     app_paths: tuple[str, ...] = ()
 
+    # === Agent memory file ===
+    # Harness-global instructions file that the harness injects into every
+    # session. autorun rents one sentinel-delimited region inside it and never
+    # touches the surrounding user content. Empty memory_filename means the
+    # harness has no such file and the shared installer skips it.
+    #
+    # Content is per-harness by design: guidance that names Claude Code's
+    # compaction behavior is false for Codex, so each platform points at its own
+    # template rather than sharing one body.
+    memory_filename: str = ""
+    # Template path relative to the plugin's src/autorun/ directory.
+    memory_template: str = ""
+    # Stable slug for the sentinel pair. Changing it orphans blocks already
+    # written into users' files, which uninstall would then fail to remove.
+    memory_sentinel_slug: str = ""
+
 
 # === Registry ==============================================================
 # Module-level dict — declaration order = detection priority.
@@ -664,6 +680,9 @@ CLAUDE = register(
         template_dir=None,  # hooks live at plugin root
         hooks_path_var="${CLAUDE_PLUGIN_ROOT}",
         install_fn_name="_install_for_claude",
+        memory_filename="CLAUDE.md",
+        memory_template="claude_template/CLAUDE.md",
+        memory_sentinel_slug="claude-memory-md",
         list_cmd=("claude", "plugin", "list"),
         app_bundle_ids=("com.anthropic.claudefordesktop",),
         app_paths=("/Applications/Claude.app",),
@@ -883,6 +902,11 @@ CODEX = register(
         template_dir=None,  # user-level install at ~/.codex/hooks.json
         hooks_path_var="${PLUGIN_ROOT}",  # ${CLAUDE_PLUGIN_ROOT} also set as compat
         install_fn_name="_install_for_codex",
+        memory_filename="AGENTS.md",
+        memory_template="codex_template/AGENTS.md",
+        # Predates the shared installer; keep the slug so uninstall still finds
+        # blocks written by earlier autorun versions.
+        memory_sentinel_slug="codex-agents-md",
         list_cmd=("codex", "plugin", "list"),
         app_bundle_ids=("com.openai.codex",),
         app_paths=("/Applications/Codex.app",),
@@ -937,6 +961,9 @@ FORGECODE = register(
         config_dir="~/.forge/",
         template_dir="forgecode_template",
         install_fn_name="_install_for_forgecode",
+        memory_filename="AGENTS.md",
+        memory_template="forgecode_template/AGENTS.md",
+        memory_sentinel_slug="forgecode-agents-md",
         # tool_names empty: not relevant without hooks (advisory AGENTS.md only)
     )
 )

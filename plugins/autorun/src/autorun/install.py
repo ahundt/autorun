@@ -61,6 +61,7 @@ from .platforms import (
     CUSTOM_HARNESS_FLAVOR_ALIASES,
     CUSTOM_HARNESS_SPEC_FORMAT,
     PLATFORMS,
+    Platform,
     custom_harness_spec_help,
 )
 
@@ -971,20 +972,33 @@ def _install_pdf_deps() -> CmdResult:
 #   4. Simplify _install_for_gemini to install from plugin_dir directly.
 
 
+def _bug_workaround_enabled(key: str) -> bool:
+    """Resolve one bug-workaround gate: env var wins over CONFIG, default on.
+
+    Shared by every `AUTORUN_BUG_*_WORKAROUND_ENABLED` gate so the accepted
+    token set stays identical across them — `false`/`0`/`never` disable,
+    `true`/`1`/`auto`/`always` enable, anything else falls through to CONFIG.
+    The per-bug wrappers below carry the issue link and deletion instructions
+    required by the Bug Workaround Policy in plugins/autorun/CLAUDE.md.
+    """
+    from .config import CONFIG
+
+    env = os.environ.get(key, "").lower().strip()
+    if env in ("false", "0", "never"):
+        return False
+    if env in ("true", "1", "auto", "always"):
+        return True
+    return bool(CONFIG.get(key, True))
+
+
 def _bug_24115_workaround_enabled() -> bool:
     """Check if the Claude Code marketplace-source scan workaround is enabled.
 
     BUG #24115 regression gate. Env var wins over CONFIG.
     """
-    from .config import CONFIG
-
-    _KEY = "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED"
-    env = os.environ.get(_KEY, "").lower().strip()
-    if env in ("false", "0", "never"):
-        return False
-    if env in ("true", "1", "auto", "always"):
-        return True
-    return bool(CONFIG.get(_KEY, True))
+    return _bug_workaround_enabled(
+        "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED"
+    )
 
 
 def _bug_14449_workaround_enabled() -> bool:
@@ -992,15 +1006,22 @@ def _bug_14449_workaround_enabled() -> bool:
 
     BUG #14449 regression gate. Env var wins over CONFIG.
     """
-    from .config import CONFIG
+    return _bug_workaround_enabled(
+        "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED"
+    )
 
-    _KEY = "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED"
-    env = os.environ.get(_KEY, "").lower().strip()
-    if env in ("false", "0", "never"):
-        return False
-    if env in ("true", "1", "auto", "always"):
-        return True
-    return bool(CONFIG.get(_KEY, True))
+
+def _claude_memory_workaround_enabled() -> bool:
+    """Check if the Claude Code memory-guidance workaround is enabled.
+
+    BUG #54673 regression gate — Claude Code exposes no token counts to hooks
+    and this model family receives no API context-awareness tags, so the model
+    guesses at remaining capacity and defers real work on the guess. Env var
+    wins over CONFIG. Delete when Anthropic exposes the measurement.
+    """
+    return _bug_workaround_enabled(
+        "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED"
+    )
 
 
 def _gemini_template_dir(plugin_dir: Path) -> Path:
@@ -2993,8 +3014,11 @@ def _count_latest_codex_plugin_cache_skills() -> int:
     return max(counts, default=0)
 
 
-_CODEX_AGENTS_START = "<!-- autorun:codex-agents-md:start -->"
-_CODEX_AGENTS_END = "<!-- autorun:codex-agents-md:end -->"
+# Derived from platform data so the slug lives in exactly one place.
+_CODEX_AGENTS_START, _CODEX_AGENTS_END = (
+    f"<!-- autorun:{PLATFORMS['codex'].memory_sentinel_slug}:{edge} -->"
+    for edge in ("start", "end")
+)
 
 
 def install_sentinel_block(target: Path, body: str, *, start: str, end: str) -> bool:
@@ -3090,6 +3114,59 @@ def _sentinel_bounds(text: str, *, start: str, end: str) -> tuple[int, int] | No
     return (open_at, close_at)
 
 
+def platform_memory_sentinels(platform: Platform) -> tuple[str, str]:
+    """Return the (start, end) sentinel pair for a platform's memory block."""
+    slug = platform.memory_sentinel_slug
+    return (f"<!-- autorun:{slug}:start -->", f"<!-- autorun:{slug}:end -->")
+
+
+def install_platform_memory(
+    platform: Platform, plugin_dir: Path, config_dir: Path
+) -> bool:
+    """Install autorun's guidance block into one harness's memory file.
+
+    One pathway for every harness that has a global instructions file. The
+    differences that matter — filename, template, sentinel slug — are declared
+    as data on :class:`~autorun.platforms.Platform`, so adding a harness needs
+    no new installer code.
+
+    Content is deliberately per-harness rather than shared: guidance naming
+    Claude Code's compaction behavior would be false for Codex, and a claim the
+    reader cannot act on is worse than no guidance.
+
+    Returns True when a block was written, False when the platform declares no
+    memory file or its template is missing (older builds, partial extracts).
+    """
+    if not platform.memory_filename or not platform.memory_template:
+        return False
+
+    template = plugin_dir.joinpath("src", "autorun", *platform.memory_template.split("/"))
+    if not template.is_file():
+        return False
+
+    start, end = platform_memory_sentinels(platform)
+    return install_sentinel_block(
+        config_dir / platform.memory_filename,
+        template.read_text(encoding="utf-8"),
+        start=start,
+        end=end,
+    )
+
+
+def strip_platform_memory(platform: Platform, config_dir: Path) -> bool:
+    """Remove autorun's guidance block from one harness's memory file.
+
+    The uninstall counterpart of :func:`install_platform_memory`. User content
+    around the block is preserved; a file left holding nothing else is removed.
+    """
+    if not platform.memory_filename:
+        return False
+    start, end = platform_memory_sentinels(platform)
+    return strip_sentinel_block(
+        config_dir / platform.memory_filename, start=start, end=end
+    )
+
+
 def _codex_agents_override_shadow(codex_dir: Path) -> Path | None:
     """Return the AGENTS.override.md that would hide our AGENTS.md, if any.
 
@@ -3121,16 +3198,7 @@ def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     Returns True if a template was installed, False if the template is
     missing from the plugin (older builds, partial extracts).
     """
-    template = plugin_dir / "src" / "autorun" / "codex_template" / "AGENTS.md"
-    if not template.is_file():
-        return False
-
-    installed = install_sentinel_block(
-        codex_dir / "AGENTS.md",
-        template.read_text(encoding="utf-8"),
-        start=_CODEX_AGENTS_START,
-        end=_CODEX_AGENTS_END,
-    )
+    installed = install_platform_memory(PLATFORMS["codex"], plugin_dir, codex_dir)
 
     # Writing the block is not the same as Codex reading it.
     shadow = _codex_agents_override_shadow(codex_dir)
@@ -3144,8 +3212,9 @@ def _install_codex_agents_md(plugin_dir: Path, codex_dir: Path) -> bool:
     return installed
 
 
-_FORGECODE_AGENTS_START = "<!-- autorun:forgecode-agents-md:start -->"
-_FORGECODE_AGENTS_END = "<!-- autorun:forgecode-agents-md:end -->"
+_FORGECODE_AGENTS_START, _FORGECODE_AGENTS_END = platform_memory_sentinels(
+    PLATFORMS["forgecode"]
+)
 
 
 def _resolve_forge_base() -> Path:
@@ -3199,17 +3268,10 @@ def _install_for_forgecode(
     for src in cmds_src.glob("*.md"):
         shutil.copy2(src, cmds_dst / src.name)
 
-    agents_src = template / "AGENTS.md"
-    if agents_src.is_file():
-        # Sentinel merge, not copy2: ForgeCode reads <base>/AGENTS.md as custom
-        # instructions and the user may have written their own there. This is
-        # the same contract the Codex path uses for ~/.codex/AGENTS.md.
-        install_sentinel_block(
-            base / "AGENTS.md",
-            agents_src.read_text(encoding="utf-8"),
-            start=_FORGECODE_AGENTS_START,
-            end=_FORGECODE_AGENTS_END,
-        )
+    # Sentinel merge, not copy2: ForgeCode reads <base>/AGENTS.md as custom
+    # instructions and the user may have written their own there. Shared with
+    # every other harness that has a memory file; differences are platform data.
+    install_platform_memory(PLATFORMS["forgecode"], plugin_dir, base)
 
     print()
     print(f"✓ ForgeCode commands installed at {base}/commands/")
@@ -3796,6 +3858,27 @@ def install_plugins(
 
         claude_success = len(claude_succeeded) == len(plugins)
         all_succeeded = all_succeeded and claude_success
+
+        # --- BUG #54673 WORKAROUND START --- DELETE WHEN FIXED ---
+        # Claude Code exposes no token counts to hooks, and Opus 4.7+ / Fable 5 /
+        # Mythos 5 receive no API context-awareness tags either:
+        #   https://platform.claude.com/docs/en/build-with-claude/context-windows#context-awareness
+        #   https://github.com/anthropics/claude-code/issues/54673
+        # With no measurement available, the model guesses at remaining capacity
+        # and states the guess as fact — measured claims were wrong by more than
+        # 50 percentage points — and defers real work on the strength of it. The
+        # memory block supplies the interpretation the measurement would have.
+        # Disable: AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_
+        # WORKAROUND_ENABLED=false. Delete this block when Anthropic exposes
+        # token counts to hooks; read theirs instead.
+        # Evidence: notes/2026-07-24-2045-claude-code-opus-5-premature-context-exhaustion.md
+        if not dry_run and _claude_memory_workaround_enabled():
+            claude_plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+            if claude_plugin_dir is not None and install_platform_memory(
+                PLATFORMS["claude"], claude_plugin_dir, Path.home() / ".claude"
+            ):
+                print("✓ autorun guidance written to ~/.claude/CLAUDE.md")
+        # --- END --- DELETE WHEN FIXED ---
 
     # Install for Gemini CLI
     if "gemini" in target_clis:
