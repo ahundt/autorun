@@ -42,6 +42,7 @@ import logging
 import os
 import argparse
 import contextlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -4411,6 +4412,211 @@ def _is_within(candidate: Path, root: Path) -> bool:
 # =============================================================================
 
 
+@dataclass(frozen=True, slots=True)
+class HealthFinding:
+    """One diagnosed install problem, with the action that resolves it."""
+
+    code: str
+    detail: str
+    remedy: str
+
+
+_MEMORY_SENTINEL_RE = re.compile(r"<!--\s*autorun:([a-z0-9-]+):start\s*-->")
+
+# Codex rejects any other top-level key and drops every hook in the file:
+# HooksFile is #[serde(deny_unknown_fields)] in openai/codex
+# hooks/src/engine/hook_config.rs:10-17, reported at engine/discovery.rs:327-336.
+_CODEX_HOOKS_ALLOWED_TOP_LEVEL = {"description", "hooks"}
+
+
+def check_install_health() -> list[HealthFinding]:
+    """Diagnose install states that produce no signal on their own.
+
+    Each check corresponds to a defect that shipped silently: guidance written
+    where the harness will never read it, links whose targets vanished, a skill
+    listed twice, a block no uninstall can find, and a hooks file one stray key
+    disables entirely.
+
+    Advisory only — reports, never repairs. Every probe is individually
+    guarded so an unreadable directory downgrades one finding rather than
+    aborting a status pass (`plugins/autorun/CLAUDE.md` lesson 7).
+    """
+    findings: list[HealthFinding] = []
+    for probe in (
+        _health_memory_blocks,
+        _health_skill_links,
+        _health_duplicate_skills,
+        _health_codex_hooks,
+    ):
+        try:
+            findings.extend(probe())
+        except Exception as exc:  # diagnostics must never abort the status pass
+            findings.append(
+                HealthFinding(
+                    code="health-check-failed",
+                    detail=f"{probe.__name__} could not complete: {exc}",
+                    remedy="Report this; the remaining checks still ran.",
+                )
+            )
+    return findings
+
+
+def _health_memory_blocks() -> list[HealthFinding]:
+    """Guidance the harness will not read, and blocks nothing owns."""
+    findings: list[HealthFinding] = []
+    known_slugs = {
+        p.memory_sentinel_slug for p in PLATFORMS.values() if p.memory_sentinel_slug
+    }
+
+    for platform in PLATFORMS.values():
+        config_dir = _platform_memory_config_dir(platform)
+        if config_dir is None:
+            continue
+        target = config_dir / platform.memory_filename
+        if not target.is_file():
+            continue
+        try:
+            text = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        start, _ = platform_memory_sentinels(platform)
+        if start in text and platform.name == "codex":
+            shadow = _codex_agents_override_shadow(config_dir)
+            if shadow is not None:
+                findings.append(
+                    HealthFinding(
+                        code="memory-shadowed-by-override",
+                        detail=(
+                            f"{target} holds autorun guidance, but {shadow.name} "
+                            f"exists in {config_dir} and takes precedence, so "
+                            "Codex never reads it."
+                        ),
+                        remedy=f"Remove or empty {shadow} to activate the guidance.",
+                    )
+                )
+
+        for slug in set(_MEMORY_SENTINEL_RE.findall(text)) - known_slugs:
+            findings.append(
+                HealthFinding(
+                    code="memory-orphaned-block",
+                    detail=(
+                        f"{target} contains an autorun block with slug "
+                        f"{slug!r}, which no current platform declares. "
+                        "Uninstall will not remove it."
+                    ),
+                    remedy=f"Delete the {slug} block from {target} by hand.",
+                )
+            )
+    return findings
+
+
+def _health_skill_links() -> list[HealthFinding]:
+    """Links into the shared agents directory whose target is gone."""
+    findings: list[HealthFinding] = []
+    agents_skills = shared_agents_skills_dir()
+
+    for platform in PLATFORMS.values():
+        skills_dir = platform_skills_dir(platform)
+        if skills_dir is None or not skills_dir.is_dir():
+            continue
+        for entry in sorted(skills_dir.iterdir()):
+            if not entry.is_symlink():
+                continue
+            try:
+                raw = entry.readlink()
+            except OSError:
+                continue
+            resolved = raw if raw.is_absolute() else entry.parent / raw
+            if not _is_within(resolved, agents_skills):
+                continue  # another tool's link
+            if not entry.exists():
+                findings.append(
+                    HealthFinding(
+                        code="skill-link-broken",
+                        detail=f"{entry} points at {resolved}, which no longer exists.",
+                        remedy=(
+                            "Re-run `autorun --install --claude-agents-skills link` "
+                            "to repair it, or delete the link."
+                        ),
+                    )
+                )
+    return findings
+
+
+def _health_duplicate_skills() -> list[HealthFinding]:
+    """One skill reaching a harness by two distinct paths.
+
+    Claude Code deduplicates by resolved path, not by name, so two copies are
+    listed twice and the skill listing is budgeted.
+    """
+    findings: list[HealthFinding] = []
+    agents_skills = shared_agents_skills_dir()
+    if not agents_skills.is_dir():
+        return findings
+    shared_names = _skill_dir_names(agents_skills)
+
+    for platform in PLATFORMS.values():
+        skills_dir = platform_skills_dir(platform)
+        if skills_dir is None or not skills_dir.is_dir():
+            continue
+        for entry in sorted(skills_dir.iterdir()):
+            if entry.is_symlink() or not entry.is_dir():
+                continue  # a link to the shared copy is one skill, not two
+            if entry.name not in shared_names:
+                continue
+            findings.append(
+                HealthFinding(
+                    code="skill-duplicate",
+                    detail=(
+                        f"{entry.name!r} exists both at {entry} and in "
+                        f"{agents_skills}. {platform.display_name} deduplicates "
+                        "by resolved path, so it is listed twice."
+                    ),
+                    remedy=(
+                        f"Delete whichever copy is stale, then link the survivor: "
+                        f"ln -s {agents_skills / entry.name} {entry}"
+                    ),
+                )
+            )
+    return findings
+
+
+def _health_codex_hooks() -> list[HealthFinding]:
+    """Top-level keys that make Codex discard every hook in the file."""
+    findings: list[HealthFinding] = []
+    hooks_path = Path(PLATFORMS["codex"].config_dir).expanduser() / "hooks.json"
+    if not hooks_path.is_file():
+        return findings
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [
+            HealthFinding(
+                code="codex-hooks-unparseable",
+                detail=f"{hooks_path} could not be parsed: {exc}",
+                remedy="Repair the JSON; Codex ignores the whole file until then.",
+            )
+        ]
+
+    if not isinstance(data, dict):
+        return findings
+    unknown = sorted(set(data) - _CODEX_HOOKS_ALLOWED_TOP_LEVEL)
+    if unknown:
+        findings.append(
+            HealthFinding(
+                code="codex-hooks-unknown-top-level-key",
+                detail=(
+                    f"{hooks_path} has top-level key(s) {', '.join(unknown)}. "
+                    "Codex accepts only 'description' and 'hooks' and drops every "
+                    "hook in the file when it sees another."
+                ),
+                remedy=f"Remove {', '.join(unknown)} from {hooks_path}.",
+            )
+        )
+    return findings
+
+
 def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     """Show installation status of all plugins, UV environment, and CLI tools.
 
@@ -4684,6 +4890,19 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
         print("-" * 60)
         if show_custom_harness_status(spec) != 0:
             all_ok = False
+
+    # Health checks: install states that produce no signal on their own.
+    findings = check_install_health()
+    if findings:
+        print()
+        print("-" * 60)
+        print(f"Health: {len(findings)} issue(s) found")
+        for finding in findings:
+            print(f"  ⚠ [{finding.code}] {finding.detail}")
+            print(f"      fix: {finding.remedy}")
+    else:
+        print()
+        print("Health: no issues found")
 
     return 0 if all_ok else 1
 
