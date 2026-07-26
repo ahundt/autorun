@@ -288,6 +288,22 @@ def format_suggestion(msg: str, cli_type: str) -> str:
     return format_commands_for_cli(msg, cli_type)
 
 
+AI_ECHO_CHANNEL = "ai-echo"
+"""Channel for AI-targeted text the user has already been shown.
+
+The Stop hook prints its denial, then re-delivers the same text to the AI on the
+next PostToolUse because Claude Code drops additionalContext on Stop
+(anthropics/claude-code#18534). The workaround below upgrades channel="ai" into
+systemMessage so AI text actually arrives -- which would print that block to the
+user a second time. This channel opts out of that upgrade only; delivery to the
+AI is unchanged, on every Stop-block generation.
+
+Suppression is by channel, never by comparing text. An AI repeating a mistake
+produces an unchanged task list and therefore identical block text every time,
+so skipping repeats would stop feeding it the override actions.
+"""
+
+
 # --- BUG #18534 WORKAROUND START --- DELETE THIS FUNCTION WHEN BUG IS FIXED ---
 # https://github.com/anthropics/claude-code/issues/18534
 # Claude Code PostToolUse additionalContext is documented but silently dropped.
@@ -1922,10 +1938,16 @@ class EventContext:
             ai_text = self._resolve_channel(to_ai, msg_reason)
 
             # Merge accumulated chain notifications
+            # ai_echo_only tracks whether the AI text is made up solely of
+            # already-shown content, so the systemMessage fallback below does
+            # not reprint it to the user.
+            ai_echo_only = False
             if self._chain_notifications:
                 human_channels = _bug_18534_human_channels(cli_type)  # BUG #18534: WHEN FIXED, REPLACE WITH: human_channels = {"human", "both"}
                 human_notifs = [m for m, c in self._chain_notifications if c in human_channels]
-                ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both")]
+                ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both", AI_ECHO_CHANNEL)]
+                echo_notifs = [m for m, c in self._chain_notifications if c == AI_ECHO_CHANNEL]
+                ai_echo_only = bool(echo_notifs) and len(echo_notifs) == len(ai_notifs) and not ai_text
                 if human_notifs:
                     prefix = "\n".join(human_notifs)
                     human_text = f"{prefix}\n{human_text}" if human_text else prefix
@@ -1939,7 +1961,10 @@ class EventContext:
             #   (claude-code-hooks-api.md:202-210).
             # NOTE: reason="" keyed on human_text (not sys_msg) to preserve backwards compat:
             #   to_human=False → human_text=None → reason=msg_reason (old AI-injection path kept)
-            sys_msg = human_text or ai_text or ""
+            # The fallback is skipped when ai_text is purely echoed content: the
+            # user has already seen it, and repeating it is the duplicate this
+            # channel exists to prevent.
+            sys_msg = human_text or ("" if ai_echo_only else ai_text) or ""
             resp = protocol.context_response(
                 event_name=get_cli_event_name(self._event, cli_type),
                 system_message=sys_msg,
@@ -1998,7 +2023,7 @@ class EventContext:
                 if platform and platform.schema_type == "permissive":
                     # Gemini-family CLIs support additionalContext for SessionStart.
                     human_notifs = [m for m, c in self._chain_notifications if c in ("human", "both")]
-                    ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both")]
+                    ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both", AI_ECHO_CHANNEL)]
                     if human_notifs:
                         prefix = "\n".join(human_notifs)
                         human_text = f"{prefix}\n{human_text}" if human_text else prefix

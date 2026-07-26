@@ -660,9 +660,18 @@ class TestPendingStopInjection:
         assert any("CANNOT STOP" in msg for msg, _ in post_ctx._chain_notifications), (
             "deliver_pending_stop_injection must add Stop injection as chain notification"
         )
-        # Notification must use 'ai' channel so it reaches additionalContext
-        assert any(ch == "ai" for _, ch in post_ctx._chain_notifications), (
-            "pending_stop_injection must be delivered on 'ai' channel → additionalContext"
+        # Must land in additionalContext so the AI actually receives the block.
+        # AI_ECHO_CHANNEL rather than plain "ai": the Stop hook already printed
+        # this text to the user, and the #18534 workaround upgrades "ai" into
+        # systemMessage, which would print it a second time. Both channels reach
+        # additionalContext; only "ai" is also shown to the user.
+        from autorun.core import AI_ECHO_CHANNEL
+
+        assert any(
+            ch in ("ai", AI_ECHO_CHANNEL) for _, ch in post_ctx._chain_notifications
+        ), "pending_stop_injection must be delivered on an AI channel → additionalContext"
+        assert not any(ch == "human" for _, ch in post_ctx._chain_notifications), (
+            "the block must not be re-printed to the user; the Stop hook already did"
         )
 
 

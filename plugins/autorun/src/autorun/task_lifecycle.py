@@ -52,7 +52,7 @@ from datetime import datetime
 from functools import cache
 
 from . import ipc
-from .core import EventContext, format_command_for_cli, logger
+from .core import AI_ECHO_CHANNEL, EventContext, format_command_for_cli, logger
 from .session_manager import (
     DEFAULT_SESSION_TIMEOUT,
     MISSING,
@@ -2878,7 +2878,12 @@ def register_hooks(app_instance) -> None:
         if not claimed:
             return None
 
-        ctx.add_chain_notification(injection, channel="ai")
+        # AI_ECHO_CHANNEL, not "ai": the Stop hook already printed this exact
+        # text to the user. Under the #18534 workaround channel="ai" is upgraded
+        # into systemMessage so it actually reaches the AI, which would print the
+        # block a second time. This channel keeps the AI delivery and drops only
+        # the duplicate human copy — every generation still re-delivers.
+        ctx.add_chain_notification(injection, channel=AI_ECHO_CHANNEL)
         return None  # Flushed by _run_chain → ctx.respond("allow","") → additionalContext
 
     @app_instance.on("PostToolUse")
