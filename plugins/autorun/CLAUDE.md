@@ -166,18 +166,24 @@ Claude Code treats ANY stderr output from hooks as "hook error" and ignores the 
 
 **Problem**: Claude Code ignores `permissionDecision:"deny"` at exit 0. Tool executes anyway despite JSON deny decision.
 
-**Solution**: Auto-detect CLI and apply exit-2 workaround for Claude Code only. Gemini CLI respects JSON decision field correctly.
+**Solution**: Apply the exit-2 workaround only on platforms that declare `has_exit2_workaround` (today: Claude Code). Gemini CLI respects the JSON decision field correctly.
 
 **Behavior**:
 - **Claude Code**: Uses exit 2 + stderr (only way blocking works due to bug #4669)
 - **Gemini CLI**: Uses JSON `decision` field (works correctly per spec)
-- **Auto-detect**: Based on `GEMINI_SESSION_ID` and `GEMINI_PROJECT_DIR` environment variables
+- **Applicability**: `Platform.has_exit2_workaround` in `platforms.py`, not a hardcoded harness name. Detection itself uses `GEMINI_SESSION_ID` / `GEMINI_PROJECT_DIR`.
 
-**Configuration**:
+**Configuration** (resolution order — first tier that names a recognized value wins):
 
-Environment variable (set before running Claude Code/Gemini):
+1. `AUTORUN_EXIT2_WORKAROUND` env var, which `--exit2-mode` writes
+2. `AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED` env var
+3. the CONFIG entry of that same name
+4. `Platform.has_exit2_workaround`
+
+Values at any tier: `true`/`1`/`auto` (affected platforms only), `always` (all platforms), `false`/`0`/`never` (off). An unrecognized value falls through to the next tier rather than disabling blocking.
+
 ```bash
-# Auto-detect (default - recommended)
+# Affected platforms only (default - recommended)
 export AUTORUN_EXIT2_WORKAROUND=auto
 
 # Force enable for testing
@@ -264,7 +270,7 @@ All SDK bug workarounds (Claude Code, Gemini CLI, future CLIs) **MUST** follow a
 
 | Bug | Platform | Key | Default | Effect |
 |-----|----------|-----|---------|--------|
-| [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_EXIT2_WORKAROUND` (legacy) | `auto` | stderr + exit 2 |
+| [#4669](https://github.com/anthropics/claude-code/issues/4669): deny ignored at exit 0 | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED`; `AUTORUN_EXIT2_WORKAROUND` and `--exit2-mode` remain as higher-precedence aliases | `True` | stderr + exit 2 |
 | [#18534](https://github.com/anthropics/claude-code/issues/18534): additionalContext dropped | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED` | `True` | channel="ai" → "both" |
 | [#24115](https://github.com/anthropics/claude-code/issues/24115): plugin loader scans marketplace-source hooks/ AND cache; strict Zod rejects Gemini event names with `invalid_key` | Claude Code | `AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED` | `True` | Claude events ONLY in `plugins/autorun/hooks/`; Gemini events live under `src/autorun/gemini_template/` (outside Claude's scan path) |
 | [#14449](https://github.com/google-gemini/gemini-cli/issues/14449) ([PR #14460](https://github.com/google-gemini/gemini-cli/pull/14460)): Gemini hardcodes extension hooks at `<ext>/hooks/hooks.json`; manifest `hooks` field ignored | Gemini CLI | `AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED` | `True` | Installer materializes `~/.gemini/extensions/<name>/` from template dir; `hook_entry.py` copied into `<ext>/hooks/` so `${extensionPath}/hooks/hook_entry.py` resolves |

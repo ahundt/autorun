@@ -46,10 +46,6 @@ TASK_GET_TOOLS = {"TaskGet", "task_get", "tracker_get_task"}
 TASK_COMBINED_TOOLS = {"write_todos"}
 # Codex exposes native task/checklist progress as update_plan.
 CODEX_PLAN_TASK_TOOLS = {"update_plan"}
-ALL_TASK_TOOLS = (
-    TASK_CREATE_TOOLS | TASK_UPDATE_TOOLS | TASK_LIST_TOOLS | TASK_GET_TOOLS |
-    TASK_COMBINED_TOOLS | CODEX_PLAN_TASK_TOOLS
-)
 
 # Truncation limits for log/debug output (avoid magic numbers across codebase)
 LOG_SNIPPET_MAX_LEN = 120     # tool results, error messages, evidence in log output
@@ -784,12 +780,6 @@ CONFIG = {
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py
     "plan_accepted_marker": "PLAN ACCEPTED",
 
-    # --- Plan Acceptance Notification ---
-    "plan_acceptance_notify": {
-        "tdd_scaffolding": True,
-        "task_update_enforcement": True,
-        "dependency_wiring": True,
-    },
     "tdd_scaffolding_message": (
         "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
         "1. {{task_create}}({{task_title}}=\"[TDD] Step N: [test description]\"): one per plan step "
@@ -864,6 +854,31 @@ CONFIG = {
     # manifest's `hooks` field is honored — then install.py can point Gemini
     # directly at the plugin root and skip the template materialization.
     "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED": True,
+
+    # BUG #4669: Claude Code ignores permissionDecision:"deny" at exit 0. The
+    # tool runs anyway despite the JSON deny decision, so the only way blocking
+    # works is stderr + exit 2. Gemini CLI honours the JSON decision correctly.
+    # https://github.com/anthropics/claude-code/issues/4669
+    # Workaround: client.output_hook_response prints the reason to stderr and
+    # returns exit code 2 on deny, for affected platforms only.
+    # Evidence: plugins/autorun/CLAUDE.md "Bug #4669 Workaround"; applicability
+    # is declared per platform as Platform.has_exit2_workaround.
+    # Override: env var of the same name (true|false|always|never). The older
+    # AUTORUN_EXIT2_WORKAROUND spelling and the `--exit2-mode` flag remain
+    # supported and take precedence over this key.
+    # Set to False when Anthropic honours deny at exit 0.
+    "AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED": True,
+
+    # BUG #54673: Claude Code exposes no token counts to hooks, and Opus 4.7+ /
+    # Fable 5 / Mythos 5 receive no API context-awareness tags either, so the
+    # model guesses at remaining capacity and defers real work on the guess.
+    # https://github.com/anthropics/claude-code/issues/54673
+    # Workaround: install a guidance block into ~/.claude/CLAUDE.md supplying the
+    # interpretation the measurement would have. Override: env var of the same
+    # name (true|false|always|never).
+    # Evidence: notes/2026-07-24-2045-claude-code-opus-5-premature-context-exhaustion.md
+    # Set to False when Anthropic exposes token counts to hooks.
+    "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED": True,
 
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
@@ -1064,17 +1079,6 @@ After every step and substep you must say "Wait," and execute this sequential th
     # (core-skills/src/loader.rs:334-345 and core-plugins/src/marketplace.rs:20-25
     # in openai/codex). Note Antigravity uses the singular "~/.agent" instead,
     # which is exactly the kind of difference this key exists to absorb.
-    # BUG #54673: Claude Code exposes no token counts to hooks, and Opus 4.7+ /
-    # Fable 5 / Mythos 5 receive no API context-awareness tags either, so the
-    # model guesses at remaining capacity and defers real work on the guess.
-    # https://github.com/anthropics/claude-code/issues/54673
-    # Workaround: install a guidance block into ~/.claude/CLAUDE.md supplying the
-    # interpretation the measurement would have. Override: env var of the same
-    # name (true|false|always|never).
-    # Evidence: notes/2026-07-24-2045-claude-code-opus-5-premature-context-exhaustion.md
-    # Set to False when Anthropic exposes token counts to hooks.
-    "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED": True,
-
     "shared_agents_dir": "~/.agents",
     "shared_agents_skills_subdir": "skills",
     "shared_agents_plugins_subdir": "plugins",
@@ -1163,26 +1167,68 @@ def detect_cli_type(payload: dict = None) -> str:
     return "claude"
 
 
+# --- BUG #4669 WORKAROUND START --- DELETE WHEN FIXED ---
+# Claude Code ignores permissionDecision:"deny" at exit 0 — the tool runs
+# anyway despite the JSON deny decision, so stderr + exit 2 is the only way
+# blocking actually works. Gemini CLI honours the JSON decision per spec.
+#   https://github.com/anthropics/claude-code/issues/4669
+# Disable: AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_
+# WORKAROUND_ENABLED=false (env var or CONFIG entry of the same name).
+# Applicability is Platform.has_exit2_workaround, never a hardcoded name.
+# Removal: delete this block and replace the two call sites in
+# client.output_hook_response with False, leaving only Pathway B.
+BUG_4669_FLAG = (
+    "AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED"
+)
+
+# Predates the bug-workaround policy and is documented in CLAUDE.md, the README
+# and `--exit2-mode`, which writes it. Kept as an alias and checked first so an
+# explicit `--exit2-mode never` still wins over the newer key.
+BUG_4669_LEGACY_FLAG = "AUTORUN_EXIT2_WORKAROUND"
+
+
 def should_use_exit2_workaround(payload: dict = None) -> bool:
-    """Check if exit-2 workaround should be applied for bug #4669.
+    """Report whether a deny must be delivered as stderr + exit 2 (bug #4669).
 
-    SINGLE FLAG CHECK for pathway selection.
+    Single flag check for pathway selection in
+    :func:`client.output_hook_response`.
 
-    Modes (AUTORUN_EXIT2_WORKAROUND env var):
-    - "auto" (default): Use workaround ONLY for Claude Code
-    - "always": Force workaround for all CLIs (testing)
-    - "never": Disable workaround for all CLIs (testing/future)
+    Resolution order, matching every other bug workaround in this codebase:
+      1. ``AUTORUN_EXIT2_WORKAROUND`` (legacy spelling, also set by
+         ``--exit2-mode``)
+      2. ``AUTORUN_BUG_..._BUG_4669_WORKAROUND_ENABLED`` env var
+      3. the CONFIG entry of that same name
+      4. whether the detected platform declares ``has_exit2_workaround``
+
+    Values at any tier: ``true``/``1``/``auto`` (affected platforms only),
+    ``always`` (every platform), ``false``/``0``/``never`` (off).
 
     Returns:
-        bool: True → Pathway A (exit 2 + stderr)
-              False → Pathway B (exit 0 only)
-
-    Reference: notes/hooks_api_reference.md lines 326-440
+        True  → Pathway A (JSON + stderr + exit 2)
+        False → Pathway B (JSON + exit 0)
     """
     import os
-    mode = os.environ.get('AUTORUN_EXIT2_WORKAROUND', 'auto').lower()
-    if mode == "always":
-        return True
-    if mode == "never":
+
+    def _platform_is_affected() -> bool:
+        platform = _PLATFORMS.get(detect_cli_type(payload))
+        return bool(platform and platform.has_exit2_workaround)
+
+    for key in (BUG_4669_LEGACY_FLAG, BUG_4669_FLAG):
+        mode = os.environ.get(key, "").strip().lower()
+        if not mode:
+            continue
+        if mode == "always":
+            return True
+        if mode in {"false", "0", "never"}:
+            return False
+        if mode in {"true", "1", "auto"}:
+            return _platform_is_affected()
+        # An unrecognized spelling falls through to the next tier rather than
+        # aborting: a typo in an env var must not silently disable blocking.
+
+    if not CONFIG.get(BUG_4669_FLAG, True):
         return False
-    return detect_cli_type(payload) == "claude"
+    return _platform_is_affected()
+
+
+# --- BUG #4669 WORKAROUND END --- DELETE WHEN FIXED ---
