@@ -44,7 +44,7 @@ uv run python -m plugins.autorun.src.autorun.install --install --force
 pip install -e . && python -m plugins.autorun.src.autorun.install --install --force
 
 # REQUIRED: Install as UV tool for global CLI availability
-# This makes 'autorun' and 'claude-session-tools' commands globally available
+# This makes the 'autorun' and 'autorun-install' commands globally available
 # which are needed for proper daemon operation and session management
 cd plugins/autorun && uv tool install --force --editable .
 
@@ -163,7 +163,7 @@ Built-in protections for: `rm` → `trash`, `git reset --hard` → `git stash`, 
 | `/ar:globalstatus` | Show global blocks and allows |
 | `/ar:globalclear` | Clear all global blocks and allows |
 
-See `plugins/autorun/src/autorun/config.py:63-276` for DEFAULT_INTEGRATIONS list.
+See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS list.
 
 **Hook Error Prevention**: See `plugins/autorun/CLAUDE.md` "Hook Error Prevention" section. Key rule: NEVER add deprecated fields to `[tool.uv]` in pyproject.toml — UV stderr warnings silently disable ALL hooks.
 
@@ -209,7 +209,7 @@ See `plugins/autorun/src/autorun/config.py:63-276` for DEFAULT_INTEGRATIONS list
 | `/ar:cache ok [5m\|N\|perm]` | Override the gate (same grammar as `/ar:ok`). |
 | `/ar:cache no` | Cancel outstanding overrides. |
 
-Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAllow`, `parse_scope_args`, `session_state`, `check_blocked_commands`, `detect_cli_type`. See plan at `~/.claude/plans/make-a-plan-to-sunny-sparkle.md`.
+Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAllow`, `parse_scope_args`, `session_state`, `check_blocked_commands`, `detect_cli_type`. 
 
 **Developer/Admin**:
 
@@ -276,14 +276,14 @@ autorun/                          # Git repository root
 ├── plugins/
 │   ├── autorun/                  # Main plugin
 │   │   ├── src/autorun/          # Python source
-│   │   ├── commands/               # Slash commands (77 files)
+│   │   ├── commands/               # Slash commands
 │   │   ├── agents/                 # Tmux automation agents
 │   │   ├── skills/                 # Claude Code skills
 │   │   └── hooks/                  # Event hooks
 │   └── pdf-extractor/              # PDF extraction plugin
 ├── src/autorun_marketplace/      # Marketplace registration
 ├── pyproject.toml                  # UV workspace config
-└── README.md                       # Full documentation (1800+ lines)
+└── README.md                       # Full documentation
 ```
 
 ## Testing
@@ -308,10 +308,10 @@ uv run pytest plugins/autorun/tests/ --cov=plugins/autorun/src/autorun --cov-rep
 
 ## Full Documentation
 
-See `README.md` (1800+ lines) for complete details:
+See `README.md` for complete details:
 - Installation options: "Quick Start" and "UV Installation" sections
-- Three-stage verification internals: "Three-Stage Autorun System" section (~line 430)
-- Safety guards with defaults: "Command Blocking Commands" section (~line 683)
-- Tmux/byobu integration: "Tmux Integration" section (~line 478)
-- Plugin architecture: "Plugin Architecture and Integration Guide" section (~line 924)
-- Troubleshooting: "Troubleshooting" section (~line 1709)
+- Three-stage verification internals: "Three-Stage Autorun System" section
+- Safety guards with defaults: the command-blocking sections
+- Tmux/byobu integration: "Tmux Integration" section
+- Plugin architecture: "Plugin Architecture and Integration Guide" section
+- Troubleshooting: "Troubleshooting" section

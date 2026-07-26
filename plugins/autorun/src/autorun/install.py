@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from filelock import FileLock
 
@@ -1076,8 +1076,17 @@ def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
     logger.debug(f"Copied hook_entry.py → {target}")
 
 
+class StagedReplacementRefused(Exception):
+    """A precondition declined the publication before anything was staged."""
+
+
 @contextlib.contextmanager
-def staged_replacement(target: Path, *, prefix: str) -> Iterator[Path]:
+def staged_replacement(
+    target: Path,
+    *,
+    prefix: str,
+    precondition: Callable[[], str | None] | None = None,
+) -> Iterator[Path]:
     """Own one atomic directory publication for exactly one scope.
 
     Yields a staging path beside ``target``; on clean exit the staged directory
@@ -1095,6 +1104,15 @@ def staged_replacement(target: Path, *, prefix: str) -> Iterator[Path]:
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(target.parent / ".autorun-install.lock"):
+        # Ownership checks belong in the SAME critical section as the write.
+        # Checking under one lock, releasing, then reacquiring to publish leaves
+        # a window in which a user-authored directory can appear and be silently
+        # replaced — which is exactly what the check exists to prevent.
+        if precondition is not None:
+            refusal = precondition()
+            if refusal:
+                raise StagedReplacementRefused(refusal)
+
         with tempfile.TemporaryDirectory(prefix=prefix, dir=target.parent) as tmp:
             transaction = Path(tmp)
             staged = transaction / "next"
@@ -2824,21 +2842,33 @@ def _ensure_codex_plugin_source(
         return (False, f"missing Codex plugin manifest at {manifest}")
 
     target = _codex_plugin_source_dir()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    install_lock = FileLock(target.parent / ".autorun-install.lock")
-    with install_lock:
-        if target.is_symlink() and not _same_resolved_path(target, plugin_dir):
-            return (False, f"user-owned symlink exists at {target}")
-        if target.exists() and not target.is_symlink() and not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file():
-            return (False, f"user-owned directory exists at {target}")
 
-    with staged_replacement(target, prefix=".autorun-plugin-source-") as staged:
-        _copy_codex_plugin_source(
-            plugin_dir,
-            staged,
-            include_hooks=include_hooks,
-            codex_hook_source=codex_hook_source,
-        )
+    def _refuse_if_user_owned() -> str | None:
+        """Ownership check, run under the publication lock."""
+        if target.is_symlink() and not _same_resolved_path(target, plugin_dir):
+            return f"user-owned symlink exists at {target}"
+        if (
+            target.exists()
+            and not target.is_symlink()
+            and not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file()
+        ):
+            return f"user-owned directory exists at {target}"
+        return None
+
+    try:
+        with staged_replacement(
+            target,
+            prefix=".autorun-plugin-source-",
+            precondition=_refuse_if_user_owned,
+        ) as staged:
+            _copy_codex_plugin_source(
+                plugin_dir,
+                staged,
+                include_hooks=include_hooks,
+                codex_hook_source=codex_hook_source,
+            )
+    except StagedReplacementRefused as refusal:
+        return (False, str(refusal))
     return (True, "copy")
 
 

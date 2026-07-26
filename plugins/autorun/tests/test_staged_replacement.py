@@ -174,3 +174,61 @@ def test_staging_happens_beside_the_target(tmp_path):
         seen.append(staged)
         _write_tree(staged, "new")
     assert seen[0].parent.parent == target.parent
+
+
+# --------------------------------------------------------------------------
+# Preconditions must run inside the lock, not before it
+# --------------------------------------------------------------------------
+
+
+def test_a_precondition_refusal_leaves_the_target_untouched(tmp_path):
+    """Ownership checks belong in the same critical section as the write.
+
+    `_ensure_codex_plugin_source` checked "is this directory user-authored?"
+    inside one lock scope, released it, then reacquired it to publish. A
+    user-authored directory created in that window was silently replaced —
+    defeating the guard's entire purpose.
+    """
+    from autorun.install import StagedReplacementRefused
+
+    target = _write_tree(tmp_path / "plugin", "theirs")
+
+    with pytest.raises(StagedReplacementRefused, match="user-owned"):
+        with staged_replacement(
+            target, prefix=".t-", precondition=lambda: "user-owned directory"
+        ) as staged:
+            _write_tree(staged, "ours")
+
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "theirs"
+
+
+def test_a_passing_precondition_publishes_normally(tmp_path):
+    target = tmp_path / "plugin"
+    with staged_replacement(target, prefix=".t-", precondition=lambda: None) as staged:
+        _write_tree(staged, "ours")
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "ours"
+
+
+def test_the_precondition_sees_state_under_the_lock(tmp_path):
+    """It must observe the target as it is at publication time."""
+    target = _write_tree(tmp_path / "plugin", "existing")
+    seen = {}
+
+    def _check():
+        seen["existed"] = (target / "SKILL.md").read_text(encoding="utf-8")
+        return None
+
+    with staged_replacement(target, prefix=".t-", precondition=_check) as staged:
+        _write_tree(staged, "new")
+
+    assert seen["existed"] == "existing"
+
+
+def test_a_refusal_leaves_no_staging_directory(tmp_path):
+    from autorun.install import StagedReplacementRefused
+
+    target = tmp_path / "plugin"
+    with pytest.raises(StagedReplacementRefused):
+        with staged_replacement(target, prefix=".probe-", precondition=lambda: "no"):
+            pass
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".probe-")] == []

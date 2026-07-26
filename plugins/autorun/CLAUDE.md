@@ -4,7 +4,7 @@
 
 - Path contains: `~/.claude/plugins/cache/`
 - Path contains: `/.claude/plugins/cache/`
-- You see version numbers like `0.5.0/` in the path
+- You see a version number like `0.12.0/` in the path
 
 ## CORRECT Location: Git Repository
 
@@ -53,7 +53,7 @@ install step can take 1-2 minutes on first run or when dependencies change.
 
 **DO NOT read from:**
 ```
-~/.claude/plugins/cache/autorun/autorun/0.5.0/
+~/.claude/plugins/cache/autorun/autorun/0.12.0/
 ```
 
 **Why NOT:**
@@ -68,7 +68,7 @@ install step can take 1-2 minutes on first run or when dependencies change.
 
 Claude Code plugin installation process:
 1. `/plugin install https://github.com/ahundt/autorun.git`
-2. Claude copies repository to: `~/.claude/plugins/cache/autorun/autorun/0.5.0/`
+2. Claude copies repository to: `~/.claude/plugins/cache/autorun/autorun/0.12.0/`
 3. Plugin loads from cache location
 4. **Problem**: AI may read cached code instead of git repository
 5. **Issue**: Changes in dev repo may not be reflected in cache until reinstalled
@@ -88,7 +88,7 @@ autorun/                             # Git repository root
 
 ~/.claude/plugins/cache/autorun/     # Plugin cache (DO NOT EDIT)
 └── autorun/
-    └── 0.5.0/                         # Cached copy (READ-ONLY)
+    └── 0.12.0/                        # Cached copy (READ-ONLY)
         ├── src/autorun/             # May be outdated!
         ├── tests/
         └── ...
@@ -130,7 +130,7 @@ Rules extracted from the `/ar:cache` build and earlier fixes. Follow them when a
 # Should show git repository
 git status
 
-# Should show: "On branch fix-v0.4.1-opentelemetry-import"
+# Should show a branch name and a clean-or-known working tree
 # If error: "not a git repository", you're in the WRONG location
 
 # Check current working directory
@@ -200,7 +200,7 @@ autorun --exit2-mode never   # Disable workaround for all CLIs
 - Response format: Both `decision` (Gemini) and `hookSpecificOutput.permissionDecision` (Claude) fields included
 - Exit codes: 0 for allow/Gemini-deny, 2 for Claude-deny (stderr contains reason)
 
-**Reference**: `notes/hooks_api_reference.md` lines 326-440 (workaround details), lines 1187-1221 (outcome matrices)
+**Reference**: `plugins/autorun/src/autorun/client.py:output_hook_response()` and `config.py:detect_cli_type()`
 
 ## Dynamic Content in Slash Commands
 
