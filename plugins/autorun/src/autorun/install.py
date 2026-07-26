@@ -3276,8 +3276,14 @@ def _sentinel_bounds(text: str, *, start: str, end: str) -> tuple[int, int] | No
     callers append rather than rewrite a range they cannot trust.
     """
     open_at = text.find(start)
-    close_at = text.find(end)
-    if open_at == -1 or close_at == -1 or close_at < open_at:
+    if open_at == -1:
+        return None
+    # Search for the terminator *after* the opener. A truncated earlier write can
+    # leave a lone `end` above a well-formed block; anchoring the search at 0
+    # would find that stray one, report "no region", and make every install
+    # append another copy of the guidance while strip could never remove it.
+    close_at = text.find(end, open_at + len(start))
+    if close_at == -1:
         return None
     return (open_at, close_at)
 
@@ -3439,7 +3445,11 @@ def _install_for_forgecode(
     # Sentinel merge, not copy2: ForgeCode reads <base>/AGENTS.md as custom
     # instructions and the user may have written their own there. Shared with
     # every other harness that has a memory file; differences are platform data.
-    install_platform_memory(PLATFORMS["forgecode"], plugin_dir, base)
+    guidance_written = install_platform_memory(PLATFORMS["forgecode"], plugin_dir, base)
+    if not guidance_written:
+        msg = f"forgecode_template/AGENTS.md missing under {template}"
+        print(f"✗ {msg}")
+        return (False, msg)
 
     print()
     print(f"✓ ForgeCode commands installed at {base}/commands/")
@@ -4299,6 +4309,20 @@ def uninstall_plugins(selection: str = "all") -> int:
             print("ok")
         else:
             print(f"warning: {result.output}")
+
+    # Everything below is autorun-wide, not per-plugin: the uv tool, the shared
+    # marketplace cache and the guidance blocks are installed once regardless of
+    # which plugins were selected. Removing them for a partial uninstall would
+    # delete artifacts the remaining plugins still need.
+    full_uninstall = set(plugins) >= set(_parse_selection("all"))
+    if not full_uninstall:
+        print()
+        print(
+            f"Partial uninstall: kept the autorun CLI, plugin cache and guidance "
+            f"blocks (still needed by the remaining plugin(s))."
+        )
+        print("Uninstall complete.")
+        return 0
 
     # Uninstall UV tool
     print("   UV tool...", end=" ", flush=True)

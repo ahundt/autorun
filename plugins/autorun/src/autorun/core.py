@@ -1947,7 +1947,11 @@ class EventContext:
                 human_notifs = [m for m, c in self._chain_notifications if c in human_channels]
                 ai_notifs = [m for m, c in self._chain_notifications if c in ("ai", "both", AI_ECHO_CHANNEL)]
                 echo_notifs = [m for m, c in self._chain_notifications if c == AI_ECHO_CHANNEL]
-                ai_echo_only = bool(echo_notifs) and len(echo_notifs) == len(ai_notifs) and not ai_text
+                # Suppress the human fallback whenever the only content that would
+                # reach it is already-shown text. Keyed on the human side being
+                # empty, not on echo being the sole notification: another handler
+                # queueing an unrelated message must not re-expose the echo.
+                ai_echo_only = bool(echo_notifs) and not human_notifs and not ai_text
                 if human_notifs:
                     prefix = "\n".join(human_notifs)
                     human_text = f"{prefix}\n{human_text}" if human_text else prefix
@@ -1987,7 +1991,11 @@ class EventContext:
             if self._chain_notifications:
                 # For Stop, we merge everything into the main message since
                 # Claude doesn't support additionalContext here.
-                notifs = [m for m, c in self._chain_notifications]
+                # AI_ECHO_CHANNEL is already-shown text: deliverable to the AI,
+                # never re-printed to the user on any pathway.
+                notifs = [
+                    m for m, c in self._chain_notifications if c != AI_ECHO_CHANNEL
+                ]
                 prefix = "\n".join(notifs)
                 stop_msg = f"{prefix}\n{stop_msg}" if stop_msg else prefix
                 self._chain_notifications.clear()
@@ -2030,10 +2038,18 @@ class EventContext:
                     if ai_notifs:
                         ai_text = "\n".join(ai_notifs)
                 else:
-                    # Claude: merge everything into systemMessage
-                    notifs = [m for m, c in self._chain_notifications]
+                    # Claude: merge into systemMessage. AI_ECHO_CHANNEL is
+                    # already-shown text and is excluded — this pathway has no
+                    # additionalContext to carry it, so including it would only
+                    # reprint the block to the user.
+                    notifs = [
+                        m
+                        for m, c in self._chain_notifications
+                        if c != AI_ECHO_CHANNEL
+                    ]
                     prefix = "\n".join(notifs)
-                    human_text = f"{prefix}\n{human_text}" if human_text else prefix
+                    if prefix:
+                        human_text = f"{prefix}\n{human_text}" if human_text else prefix
                 self._chain_notifications.clear()
 
             # Claude Code SessionStart Schema:

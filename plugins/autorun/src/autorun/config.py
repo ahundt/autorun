@@ -1064,6 +1064,17 @@ After every step and substep you must say "Wait," and execute this sequential th
     # (core-skills/src/loader.rs:334-345 and core-plugins/src/marketplace.rs:20-25
     # in openai/codex). Note Antigravity uses the singular "~/.agent" instead,
     # which is exactly the kind of difference this key exists to absorb.
+    # BUG #54673: Claude Code exposes no token counts to hooks, and Opus 4.7+ /
+    # Fable 5 / Mythos 5 receive no API context-awareness tags either, so the
+    # model guesses at remaining capacity and defers real work on the guess.
+    # https://github.com/anthropics/claude-code/issues/54673
+    # Workaround: install a guidance block into ~/.claude/CLAUDE.md supplying the
+    # interpretation the measurement would have. Override: env var of the same
+    # name (true|false|always|never).
+    # Evidence: notes/2026-07-24-2045-claude-code-opus-5-premature-context-exhaustion.md
+    # Set to False when Anthropic exposes token counts to hooks.
+    "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED": True,
+
     "shared_agents_dir": "~/.agents",
     "shared_agents_skills_subdir": "skills",
     "shared_agents_plugins_subdir": "plugins",
