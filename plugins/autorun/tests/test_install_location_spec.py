@@ -35,6 +35,11 @@ DEPLOY_DIR_LITERALS = {
     ".agent",
 }
 
+# Every call that turns a string into a filesystem destination. `_expand_home`
+# belongs here for the same reason `expanduser` does: it is a path constructor,
+# so a literal handed to it is a hardcoded destination like any other.
+_PATH_CONSTRUCTORS = {"Path", "expanduser", "joinpath", "_expand_home"}
+
 # Locations autorun reads or writes that belong to a specific third-party tool
 # and are fixed by that tool's own spec, so a literal is correct. Each entry
 # names why it is exempt.
@@ -42,6 +47,20 @@ ALLOWED_LITERAL_FILES = {
     # Reads another tool's fixed layout rather than deploying autorun assets.
     "plan_export.py": "plan export reads Claude Code's own fixed config paths",
     "ai_monitor.py": "session state dir, already overridable via AUTORUN_TEST_STATE_DIR",
+}
+
+# Uninstall functions whose deletions are proven safe by the NAME of what they
+# remove rather than by an ownership marker. Only add an entry when no other
+# tool can produce that name — otherwise the marker is the only honest proof.
+OWNERSHIP_PROVEN_BY_NAME = {
+    "_remove_install_locks": (
+        "removes files literally named .autorun-install.lock, which only "
+        "staged_replacement creates"
+    ),
+    "_remove_claude_plugin_trees": (
+        "removes directories named after autorun's own marketplace inside "
+        "Claude Code's plugin root"
+    ),
 }
 
 
@@ -84,7 +103,7 @@ def _path_built_literals(path: Path) -> list[tuple[int, str]]:
         elif isinstance(node, ast.Call):
             func = node.func
             name = getattr(func, "id", None) or getattr(func, "attr", None)
-            if name in {"Path", "expanduser", "joinpath"}:
+            if name in _PATH_CONSTRUCTORS:
                 for arg in node.args:
                     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                         found.append((arg.lineno, arg.value))
@@ -157,6 +176,42 @@ def test_every_configured_location_key_has_a_helper():
         )
 
 
+def _uninstall_functions() -> dict[str, ast.FunctionDef]:
+    """Return every function that participates in teardown.
+
+    Discovered by name rather than listed, because the previous version of this
+    check named two functions explicitly and silently stopped covering the
+    surface as soon as one was renamed or a third was added — which is the same
+    drift the checker exists to prevent.
+    """
+    tree = ast.parse((SRC / "install.py").read_text(encoding="utf-8"))
+    found = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and ("uninstall" in node.name or node.name.startswith("_remove_"))
+    }
+    assert found, "no uninstall functions found in install.py"
+    return found
+
+
+def _literals_in(node: ast.AST) -> list[tuple[int, str]]:
+    """Path-construction literals inside one function, same rule as above."""
+    found: list[tuple[int, str]] = []
+    for child in ast.walk(node):
+        if isinstance(child, ast.BinOp) and isinstance(child.op, ast.Div):
+            for side in (child.left, child.right):
+                if isinstance(side, ast.Constant) and isinstance(side.value, str):
+                    found.append((side.lineno, side.value))
+        elif isinstance(child, ast.Call):
+            name = getattr(child.func, "id", None) or getattr(child.func, "attr", None)
+            if name in _PATH_CONSTRUCTORS:
+                for arg in child.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        found.append((arg.lineno, arg.value))
+    return found
+
+
 def test_uninstall_and_install_share_every_location_helper():
     """Both sides must call the same helpers, or cleanup misses artifacts."""
     src = (SRC / "install.py").read_text(encoding="utf-8")
@@ -168,13 +223,101 @@ def test_uninstall_and_install_share_every_location_helper():
 
     uninstall_body = "".join(
         _function_body(fn)
-        for fn in ("_uninstall_agents_skill_links", "_uninstall_platform_memory_blocks")
+        for fn in ("_uninstall_bridged_skills", "_uninstall_platform_memory_blocks")
     )
     assert "shared_agents_skills_dir()" in uninstall_body
     assert "platform_skills_dir(" in uninstall_body
     # And it must not reconstruct paths by hand.
     assert 'Path.home() / ".agents"' not in uninstall_body
     assert 'Path.home() / ".claude"' not in uninstall_body
+
+
+def test_no_uninstall_function_hardcodes_a_deploy_location():
+    """Deletion is the higher-risk direction, so it is checked function by
+    function rather than only file-wide.
+
+    The file-wide budget in `test_no_source_file_hardcodes_a_harness_config_
+    directory` allows install.py a fixed number of harness-dir literals for the
+    defaults Platform.config_dir is compared against. That budget would happily
+    absorb a hardcoded `Path.home() / ".gemini" / "extensions"` inside an
+    uninstall function, where a literal that drifts from install means either
+    leaving artifacts behind or deleting the wrong directory.
+    """
+    forbidden = DEPLOY_DIR_LITERALS | {".claude", ".codex", ".gemini", ".qwen", ".forge"}
+    offenders: list[str] = []
+    for name, node in sorted(_uninstall_functions().items()):
+        for lineno, value in _literals_in(node):
+            if value in forbidden:
+                offenders.append(f"install.py:{lineno}: {name}() builds {value!r}")
+
+    assert not offenders, (
+        "Uninstall must resolve locations through the same helpers install "
+        "uses — platform_skills_dir, platform_extensions_dir, "
+        "shared_agents_skills_dir, _platform_memory_config_dir:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_uninstall_never_deletes_without_checking_ownership():
+    """Every rmtree/unlink in teardown must be gated on autorun's marker.
+
+    Uninstall removes directories inside ~/.claude, ~/.gemini and ~/.agents,
+    which are full of things the user and other tools own. `read_owned_marker`
+    (or, for links, `_is_within` the shared skills dir) is what separates ours
+    from theirs; a deletion reached without one is a data-loss bug.
+    """
+    destructive = {"rmtree", "unlink", "rmdir"}
+    offenders: list[str] = []
+    for name, node in sorted(_uninstall_functions().items()):
+        if name in OWNERSHIP_PROVEN_BY_NAME:
+            continue
+        deletes = [
+            child
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call)
+            and getattr(child.func, "attr", None) in destructive
+        ]
+        if not deletes:
+            continue
+        guards = {
+            getattr(child.func, "attr", None) or getattr(child.func, "id", None)
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call)
+        }
+        if not guards & {"read_owned_marker", "_is_within", "strip_platform_memory"}:
+            offenders.append(
+                f"{name}() deletes without consulting an ownership marker"
+            )
+
+    assert not offenders, "\n  ".join(offenders)
+
+
+def test_every_marked_install_location_has_an_uninstall_counterpart():
+    """A write_owned_marker with no reader is an artifact nothing removes.
+
+    The marker is the contract: install claims a location, uninstall honours
+    the claim. Counting both sides catches a new install path that claims
+    something teardown was never taught about.
+    """
+    tree = ast.parse((SRC / "install.py").read_text(encoding="utf-8"))
+    writers = sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "write_owned_marker"
+    )
+    readers = sum(
+        1
+        for name, node in _uninstall_functions().items()
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call)
+        and getattr(child.func, "id", None) == "read_owned_marker"
+    )
+    assert readers >= 3, (
+        f"install.py claims {writers} location(s) with write_owned_marker but "
+        f"only {readers} uninstall function(s) read the marker back. Every "
+        f"claimed location needs teardown that honours the claim."
+    )
 
 
 def test_platform_memory_declarations_are_complete_or_absent():

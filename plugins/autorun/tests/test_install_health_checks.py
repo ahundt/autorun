@@ -246,3 +246,65 @@ def test_health_checks_never_raise_on_an_unreadable_tree(home, monkeypatch):
 
     monkeypatch.setattr(Path, "iterdir", _boom)
     assert isinstance(check_install_health(), list)
+
+
+# --------------------------------------------------------------------------
+# Stale artifacts from a failed or interrupted uninstall
+# --------------------------------------------------------------------------
+
+
+def _mark_owned(directory: Path) -> Path:
+    from autorun.install import write_owned_marker
+
+    directory.mkdir(parents=True, exist_ok=True)
+    write_owned_marker(directory, plugin="ar")
+    return directory
+
+
+def test_orphaned_extension_is_reported_when_the_harness_binary_is_gone(
+    home, monkeypatch
+):
+    """The state an interrupted uninstall leaves: the marker still claims the
+    directory, but nothing is left that would ever come back for it."""
+    monkeypatch.setattr("autorun.install.shutil.which", lambda _name: None)
+    _mark_owned(home / ".gemini" / "extensions" / "ar")
+
+    assert "extension-orphaned" in _codes(check_install_health())
+
+
+def test_no_orphan_reported_while_the_harness_is_still_installed(home, monkeypatch):
+    monkeypatch.setattr("autorun.install.shutil.which", lambda name: f"/usr/bin/{name}")
+    _mark_owned(home / ".gemini" / "extensions" / "ar")
+
+    assert "extension-orphaned" not in _codes(check_install_health())
+
+
+def test_an_unowned_extension_is_never_reported_as_ours(home, monkeypatch):
+    monkeypatch.setattr("autorun.install.shutil.which", lambda _name: None)
+    other = home / ".gemini" / "extensions" / "conductor"
+    other.mkdir(parents=True)
+
+    assert "extension-orphaned" not in _codes(check_install_health())
+
+
+def test_a_left_behind_install_lock_is_reported(home):
+    from autorun.install import _INSTALL_LOCK_NAME
+
+    skills = home / ".agents" / "skills"
+    skills.mkdir(parents=True)
+    (skills / _INSTALL_LOCK_NAME).write_text("", encoding="utf-8")
+
+    findings = check_install_health()
+    assert "install-lock-left-behind" in _codes(findings)
+    assert any("rm " in f.remedy for f in findings if f.code == "install-lock-left-behind")
+
+
+def test_health_checks_survive_an_unreadable_directory(home, monkeypatch):
+    """One failing probe must downgrade to a finding, not abort the pass."""
+    def _explode() -> list:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("autorun.install._health_stale_artifacts", _explode)
+
+    findings = check_install_health()
+    assert "health-check-failed" in _codes(findings)
