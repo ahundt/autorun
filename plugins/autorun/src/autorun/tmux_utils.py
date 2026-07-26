@@ -1535,8 +1535,6 @@ CLAUDE_MODE_PLAN = 'plan'  # "plan mode on" - planning without execution
 CLAUDE_MODE_BYPASS = 'bypass'  # "bypass permissions on" - requires --dangerously-skip-permissions
 CLAUDE_MODE_ACCEPT_EDITS = 'accept_edits'  # "accept edits on" - auto-accept file edits
 
-# Mode cycle order for Shift+Tab (wraps around)
-CLAUDE_MODE_CYCLE = [CLAUDE_MODE_DEFAULT, CLAUDE_MODE_PLAN, CLAUDE_MODE_ACCEPT_EDITS]
 # Note: bypass mode only available if --dangerously-skip-permissions was passed
 
 

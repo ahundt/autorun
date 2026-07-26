@@ -145,7 +145,7 @@ def test_cli_status_text_format():
             TaskLifecycle.cli_status,
             session_id=session_id,
             verbose=False,
-            format='text'
+            output_format='text'
         )
 
     assert exit_code == 0, "cli_status should succeed"
@@ -164,7 +164,7 @@ def test_cli_status_verbose_shows_details():
         TaskLifecycle.cli_status,
         session_id=session_id,
         verbose=True,
-        format='text'
+        output_format='text'
     )
 
     assert exit_code == 0, "cli_status should succeed"
@@ -183,7 +183,7 @@ def test_cli_status_json_format():
         TaskLifecycle.cli_status,
         session_id=session_id,
         verbose=False,
-        format='json'
+        output_format='json'
     )
 
     assert exit_code == 0, "cli_status should succeed"
@@ -207,7 +207,7 @@ def test_cli_status_table_format():
         TaskLifecycle.cli_status,
         session_id=session_id,
         verbose=False,
-        format='table'
+        output_format='table'
     )
 
     assert exit_code == 0, "cli_status should succeed"
@@ -226,7 +226,7 @@ def test_cli_status_no_session_id_fails():
             TaskLifecycle.cli_status,
             session_id=None,
             verbose=False,
-            format='text'
+            output_format='text'
         )
 
     assert exit_code == 1, "cli_status should fail when session ID missing"
@@ -249,7 +249,7 @@ def test_cli_export_json_format():
         exit_code = TaskLifecycle.cli_export(
             session_id=session_id,
             output_path=str(output_path),
-            format='json',
+            output_format='json',
             include_completed=False
         )
 
@@ -278,7 +278,7 @@ def test_cli_export_with_completed_tasks():
         exit_code = TaskLifecycle.cli_export(
             session_id=session_id,
             output_path=str(output_path),
-            format='json',
+            output_format='json',
             include_completed=True
         )
 
@@ -304,7 +304,7 @@ def test_cli_export_csv_format():
         exit_code = TaskLifecycle.cli_export(
             session_id=session_id,
             output_path=str(output_path),
-            format='csv',
+            output_format='csv',
             include_completed=False
         )
 
@@ -331,7 +331,7 @@ def test_cli_export_markdown_format():
         exit_code = TaskLifecycle.cli_export(
             session_id=session_id,
             output_path=str(output_path),
-            format='markdown',
+            output_format='markdown',
             include_completed=False
         )
 

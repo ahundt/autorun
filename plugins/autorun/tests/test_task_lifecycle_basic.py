@@ -112,7 +112,7 @@ def test_deduplication():
 def test_cli_methods():
     """Test CLI class methods."""
     # Test cli_status
-    exit_code = TaskLifecycle.cli_status(session_id='test-cli-basic', format='text', verbose=False)
+    exit_code = TaskLifecycle.cli_status(session_id='test-cli-basic', output_format='text', verbose=False)
     assert exit_code == 0
     print("✅ CLI status method works")
 

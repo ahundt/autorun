@@ -139,33 +139,6 @@ def check_python_version():
     return True
 
 
-def get_python_version_info():
-    """
-    Get formatted Python version information.
-
-    Returns:
-        str: Formatted Python version string
-    """
-    return "{}.{}.{}".format(
-        sys.version_info[0],
-        sys.version_info[1],
-        sys.version_info[2]
-    )
-
-
-def is_uv_environment():
-    """
-    Check if running in a UV virtual environment.
-
-    Returns:
-        bool: True if in UV virtual environment
-    """
-    # Check for UV-specific environment variables or paths
-    import os
-    venv_path = os.environ.get('VIRTUAL_ENV', '')
-    return '.venv' in venv_path or 'uv' in venv_path.lower()
-
-
 def check_and_exit():
     """Check Python version and sys.exit() with a helpful message if < 3.10.
 

@@ -51,9 +51,6 @@ HOOK_TIMEOUT_BY_CLI = {
 }
 HOOK_TIMEOUT = HOOK_TIMEOUT_BY_CLI["gemini"]
 BOOTSTRAP_LOCKFILE = "/tmp/autorun_bootstrap.lock"
-BOOTSTRAP_MSG = (
-    "autorun deps not installed. Run: uv pip install autorun && autorun --install"
-)
 DEBUG_LOG_MAX_BYTES = 1_000_000
 DEBUG_VALUE_MAX_CHARS = 4_000
 

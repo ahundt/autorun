@@ -2077,13 +2077,13 @@ class TaskLifecycle:
     # === CLI Interface (Typer-like patterns - class methods) ===
 
     @classmethod
-    def cli_status(cls, session_id: str | None = None, verbose: bool = False, format: str = "text") -> int:
+    def cli_status(cls, session_id: str | None = None, verbose: bool = False, output_format: str = "text") -> int:
         """Show task status for session (CLI command).
 
         Args:
             session_id: Session ID to show (None = current/latest)
             verbose: Show full task details including metadata
-            format: Output format ('text', 'json', 'table')
+            output_format: Output output_format ('text', 'json', 'table')
 
         Returns:
             Exit code (0 = success, 1 = error)
@@ -2099,14 +2099,14 @@ class TaskLifecycle:
             manager = cls(session_id=session_id)
             tasks = manager.tasks
 
-            if format == "json":
+            if output_format == "json":
                 # Wrap tasks in metadata for CLI usability
                 incomplete_count = len([t for t in tasks.values() if t["status"] not in cls.COMPLETED_STATUSES])
                 output = {"session_id": session_id, "total_tasks": len(tasks), "incomplete_tasks": incomplete_count, "tasks": tasks}
                 print(json.dumps(output, indent=2))
                 return 0
 
-            elif format == "table":
+            elif output_format == "table":
                 # Simple text table
                 prioritized = manager.get_prioritized_tasks()
                 print(f"Task Status - Session {session_id[:8]}...")
@@ -2118,7 +2118,7 @@ class TaskLifecycle:
                     print(f"  {task['id']}: {status_icon} {task['subject']} ({task['status']})")
                 return 0
 
-            else:  # format == 'text'
+            else:  # output_format == 'text'
                 # Simple text output (default)
                 incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
 
@@ -2143,13 +2143,13 @@ class TaskLifecycle:
             return 1
 
     @classmethod
-    def cli_export(cls, session_id: str, output_path: str, format: str = "json", include_completed: bool = False) -> int:
+    def cli_export(cls, session_id: str, output_path: str, output_format: str = "json", include_completed: bool = False) -> int:
         """Export task data to file (CLI command).
 
         Args:
             session_id: Session ID to export
             output_path: Output file path
-            format: Export format ('json', 'csv', 'markdown')
+            output_format: Export output_format ('json', 'csv', 'markdown')
             include_completed: Include completed/deleted tasks
 
         Returns:
@@ -2165,12 +2165,12 @@ class TaskLifecycle:
             output_file = Path(output_path)
             output_file.parent.mkdir(parents=True, exist_ok=True)
 
-            if format == "json":
+            if output_format == "json":
                 output_file.write_text(
                     json.dumps({"session_id": session_id, "exported_at": time.time(), "tasks": tasks, "plan_tasks_map": manager.plan_tasks_map}, indent=2)
                 )
 
-            elif format == "csv":
+            elif output_format == "csv":
                 import csv
 
                 with open(output_file, "w", newline="", encoding="utf-8") as f:
@@ -2187,7 +2187,7 @@ class TaskLifecycle:
                             }
                         )
 
-            elif format == "markdown":
+            elif output_format == "markdown":
                 md_lines = [
                     f"# Task Export - Session {session_id}",
                     f"\nExported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",

@@ -81,13 +81,13 @@ def main():
     # Dispatch to TaskLifecycle class methods
     if args.status is not None:
         session_id = None if args.status == 'current' else args.status
-        return TaskLifecycle.cli_status(session_id=session_id, verbose=args.verbose, format=args.format)
+        return TaskLifecycle.cli_status(session_id=session_id, verbose=args.verbose, output_format=args.format)
 
     elif args.export:
         return TaskLifecycle.cli_export(
             session_id=args.export[0],
             output_path=args.export[1],
-            format=args.export_format,
+            output_format=args.export_format,
             include_completed=args.include_completed
         )
 

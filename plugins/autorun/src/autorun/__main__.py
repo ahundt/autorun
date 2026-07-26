@@ -1173,7 +1173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return TaskLifecycle.cli_status(
                 session_id=session_id,
                 verbose=args.verbose,
-                format=args.format
+                output_format=args.format
             )
 
         # task export
@@ -1185,7 +1185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return TaskLifecycle.cli_export(
                 session_id=session_id,
                 output_path=args.output,
-                format=args.format,
+                output_format=args.format,
                 include_completed=args.include_completed
             )
 
