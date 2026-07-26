@@ -576,6 +576,21 @@ class Platform:
     # written into users' files, which uninstall would then fail to remove.
     memory_sentinel_slug: str = ""
 
+    # === Uninstall metadata ===
+    # Uninstall is declared beside install so the two cannot drift. A harness
+    # that materializes extensions needs both fields: the CLI owns its own
+    # registry, so deleting the directory without telling it leaves a dangling
+    # entry in `<cli> extensions list`; and the CLI may be gone by uninstall
+    # time, so the directory must be removable without it.
+    #
+    # Subdirectory of config_dir holding installed extensions. Empty means the
+    # harness has no extension directory of its own — Claude installs through
+    # `claude plugin`, ForgeCode is template-only.
+    extensions_subdir: str = ""
+    # argv template that removes one installed unit. "{name}" is substituted
+    # with the extension name.
+    uninstall_cmd: tuple[str, ...] = ()
+
 
 # === Registry ==============================================================
 # Module-level dict — declaration order = detection priority.
@@ -767,6 +782,8 @@ GEMINI = register(
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_gemini",
         list_cmd=("gemini", "extensions", "list"),
+        extensions_subdir="extensions",
+        uninstall_cmd=("gemini", "extensions", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
         task_management_style="bulk_todos",
         task_create_tools=frozenset({"task_create", "tracker_create_task"}),
@@ -832,6 +849,8 @@ ANTIGRAVITY = register(
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_antigravity",
         list_cmd=("agy", "plugin", "list"),
+        extensions_subdir="plugins",
+        uninstall_cmd=("agy", "plugin", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
         task_management_style="bulk_todos",
         task_create_tools=GEMINI.task_create_tools,
@@ -877,6 +896,8 @@ QWEN = register(
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_qwen",
         list_cmd=("qwen", "extensions", "list"),
+        extensions_subdir="extensions",
+        uninstall_cmd=("qwen", "extensions", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
         task_management_style="bulk_todos",
         task_create_tools=GEMINI.task_create_tools,

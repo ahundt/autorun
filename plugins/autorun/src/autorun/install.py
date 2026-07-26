@@ -48,12 +48,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterator, Mapping
 
 from filelock import FileLock
 
@@ -1043,6 +1043,22 @@ def _gemini_template_dir(plugin_dir: Path) -> Path:
     return plugin_dir / "src" / "autorun" / "gemini_template"
 
 
+def _plugin_registry_name(plugin_dir: Path) -> str:
+    """Return the name a plugin directory registers under in the marketplace.
+
+    The directory name and the registered name differ — ``plugins/autorun``
+    registers as ``ar`` — and it is the registered name that ``--uninstall ar``
+    selects on. Ownership markers therefore record this, not the directory
+    name, or a partial uninstall would match nothing.
+    """
+    manifest = plugin_dir / ".claude-plugin" / "plugin.json"
+    try:
+        declared = json.loads(manifest.read_text(encoding="utf-8")).get("name")
+    except (OSError, AttributeError, json.JSONDecodeError):
+        declared = None
+    return declared if isinstance(declared, str) and declared else plugin_dir.name
+
+
 def _gemini_extension_name(plugin_dir: Path) -> str:
     """Return the harness-facing extension name from a plugin manifest."""
     template = _gemini_template_dir(plugin_dir)
@@ -1076,6 +1092,134 @@ def _copy_hook_entry_to_gemini_ext(plugin_dir: Path, ext_dir: Path) -> None:
     logger.debug(f"Copied hook_entry.py → {target}")
 
 
+# =============================================================================
+# Ownership markers
+# =============================================================================
+#
+# Every location autorun installs into is shared: with the user, with other
+# tools, and with other plugins. Removal therefore cannot be driven by name —
+# `~/.claude/skills/streamline-text` looks identical whether autorun copied it
+# there or the user wrote it. A marker file autorun writes at creation time
+# makes ownership self-identifying, so uninstall deletes exactly what install
+# produced and leaves everything else alone.
+
+OWNED_MARKER_NAME = ".autorun-owned"
+
+# Serializes concurrent publishers in staged_replacement. Named here because
+# teardown and the --status health probe both have to find it again.
+_INSTALL_LOCK_NAME = ".autorun-install.lock"
+
+_OWNED_MARKER_NOTE = (
+    "Created by autorun. Delete this file to un-claim the directory: autorun "
+    "will then treat it as user-authored and neither replace nor remove it."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedMarker:
+    """What autorun recorded when it created a directory.
+
+    ``plugin`` names the marketplace plugin the contents came from, so a
+    partial uninstall can remove one plugin's artifacts and keep another's.
+    ``files`` lists the entries autorun wrote into a directory it *shares*
+    rather than owns outright — ForgeCode's ``commands/`` holds the user's own
+    command files next to ours, so removal there must be per-file.
+    An empty ``files`` means the whole directory is autorun's.
+
+    ``settings`` records install choices that later runs need to *recall*, not
+    re-resolve: `--status` distinguishes "the user asked for both Codex hook
+    sources" from "duplicate hooks got installed by accident", and only the
+    previous install knows which. Remembered state is deliberately kept out of
+    :func:`resolve_choice_setting` — a value read back from disk must never
+    outrank the configuration the user is supplying now.
+    """
+
+    plugin: str = ""
+    files: tuple[str, ...] = ()
+    settings: Mapping[str, str] = field(default_factory=dict)
+
+
+def write_owned_marker(
+    directory: Path,
+    *,
+    plugin: str = "",
+    files: tuple[str, ...] | list[str] = (),
+    settings: Mapping[str, str] | None = None,
+) -> None:
+    """Claim ``directory`` for autorun, recording what it may later remove."""
+    payload = {
+        "note": _OWNED_MARKER_NOTE,
+        "plugin": plugin,
+        "files": sorted(files),
+        "settings": dict(settings or {}),
+    }
+    atomic_write_text(
+        directory / OWNED_MARKER_NAME, json.dumps(payload, indent=2) + "\n"
+    )
+
+
+def read_owned_marker(directory: Path) -> OwnedMarker | None:
+    """Return what autorun recorded for ``directory``, or None if not ours.
+
+    Markers written before the manifest format was introduced are plain prose
+    with ``key=value`` lines. They still mean "autorun created this", so they
+    decode to an OwnedMarker carrying whatever settings they recorded — an
+    upgrade must not strand directories that older installs claimed, nor forget
+    the hook source they chose.
+    """
+    marker = directory / OWNED_MARKER_NAME
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return OwnedMarker(settings=_parse_legacy_marker_settings(text))
+    if not isinstance(payload, dict):
+        return OwnedMarker()
+    plugin = payload.get("plugin")
+    files = payload.get("files")
+    settings = payload.get("settings")
+    return OwnedMarker(
+        plugin=plugin if isinstance(plugin, str) else "",
+        files=tuple(f for f in files if isinstance(f, str))
+        if isinstance(files, list)
+        else (),
+        settings={
+            key: value
+            for key, value in (settings or {}).items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+        if isinstance(settings, dict)
+        else {},
+    )
+
+
+def _parse_legacy_marker_settings(text: str) -> dict[str, str]:
+    """Recover ``key=value`` settings from a pre-JSON marker file."""
+    recovered: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            recovered[key.strip()] = value.strip()
+    return recovered
+
+
+def _marker_covers_plugins(marker: OwnedMarker, plugins: list[str] | None) -> bool:
+    """Report whether a marked artifact is in scope for this uninstall.
+
+    ``plugins`` is None for a full uninstall, which claims everything autorun
+    owns. For a partial uninstall an artifact is in scope only when its
+    recorded plugin was selected; an artifact from an older install that
+    recorded no plugin stays, because guessing wrong deletes a plugin the user
+    is keeping.
+    """
+    if plugins is None:
+        return True
+    return bool(marker.plugin) and marker.plugin in plugins
+
+
 class StagedReplacementRefused(Exception):
     """A precondition declined the publication before anything was staged."""
 
@@ -1103,7 +1247,7 @@ def staged_replacement(
     the convention used for every other install-time lock in this module.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(target.parent / ".autorun-install.lock"):
+    with FileLock(target.parent / _INSTALL_LOCK_NAME):
         # Ownership checks belong in the SAME critical section as the write.
         # Checking under one lock, releasing, then reacquiring to publish leaves
         # a window in which a user-authored directory can appear and be silently
@@ -1148,10 +1292,13 @@ def _copy_tree(src: Path, dst: Path) -> bool:
 
 
 def _count_skill_dirs(skills_dir: Path) -> int:
-    """Count top-level Gemini/Claude skill directories in a copied skills tree."""
-    if not skills_dir.is_dir():
-        return 0
-    return sum(1 for child in skills_dir.iterdir() if child.is_dir() and (child / "SKILL.md").is_file())
+    """Count top-level skill directories in a copied skills tree.
+
+    Deliberately thin: "what counts as a skill directory" is decided in exactly
+    one place, :func:`_skill_dir_names`, so a change to that rule cannot leave
+    the count and the listing disagreeing.
+    """
+    return len(_skill_dir_names(skills_dir))
 
 
 def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
@@ -1161,7 +1308,7 @@ def _skill_dir_names(skills_dir: Path, *, owned_only: bool = False) -> set[str]:
     return {
         child.name
         for child in skills_dir.iterdir()
-        if child.is_dir() and (child / "SKILL.md").is_file() and (not owned_only or (child / _CODEX_SKILL_OWNED_MARKER).is_file())
+        if child.is_dir() and (child / "SKILL.md").is_file() and (not owned_only or read_owned_marker(child) is not None)
     }
 
 
@@ -1255,13 +1402,19 @@ def _install_antigravity_cli_bundle(
     plugin_name: str = "ar",
 ) -> tuple[int, int]:
     """Atomically install one plugin into Antigravity CLI's plugin root."""
-    target = Path.home() / ".gemini" / "antigravity-cli" / "plugins" / plugin_name
+    extensions_dir = platform_extensions_dir(PLATFORMS["antigravity"])
+    if extensions_dir is None:  # pragma: no cover - declared in platforms.py
+        raise OSError("antigravity platform declares no extensions directory")
+    target = extensions_dir / plugin_name
     with staged_replacement(target, prefix=".autorun-antigravity-") as staged:
         counts = (
             _stage_antigravity_native_bundle(plugin_dir, staged)
             if plugin_name == "ar"
             else _stage_antigravity_native_bundle(plugin_dir, staged, plugin_name)
         )
+        # Claimed inside the staging scope so the marker is published in the
+        # same atomic rename as the bundle it describes.
+        write_owned_marker(staged, plugin=_plugin_registry_name(plugin_dir))
     return counts
 
 
@@ -1744,13 +1897,35 @@ def _install_gemini_family_extensions(
         # hook_entry.py lives outside the template (shared with Claude) and is
         # copied in after install completes via _copy_hook_entry_to_gemini_ext.
 
+        # A forced reinstall is not atomic and the CLI owns both halves. The
+        # uninstall strips commands/ and skills/ while leaving the extension
+        # registered, so a failure between the two leaves it half-installed —
+        # and `extensions install` then declines to repair it, reporting
+        # "already installed". Retry once without repeating the uninstall,
+        # because a second uninstall cannot help once the first has run.
+        forced_uninstall = False
         if force:
             run_cmd([cli_name, "extensions", "uninstall", ext_name])
+            forced_uninstall = True
 
         # Install directly from the persistent source path
-        result = run_cmd([cli_name, "extensions", "install", str(gemini_src), "--consent"])
+        install_argv = [cli_name, "extensions", "install", str(gemini_src), "--consent"]
+        result = run_cmd(install_argv)
+        if not result.ok and forced_uninstall and not result.has_text("already installed"):
+            print(f"   Retrying {ext_name} install after the forced uninstall...")
+            result = run_cmd(install_argv)
 
-        if result.ok or result.has_text("already installed"):
+        if _gemini_integrity_store_failure(result.output):
+            _report_gemini_integrity_store_failure(cli_name, ext_name, config_dir)
+
+        # After a forced uninstall, "already installed" means the install did
+        # NOT run: the extension is stuck registered but stripped. Counting that
+        # as success is what hid this failure behind a green install.
+        install_happened = result.ok or (
+            result.has_text("already installed") and not forced_uninstall
+        )
+
+        if install_happened:
             print(f"   ✓ {ext_name} installed successfully")
             installed_dir = config_dir / "extensions" / ext_name
             if installed_dir.is_dir():
@@ -1759,6 +1934,12 @@ def _install_gemini_family_extensions(
                     installed_dir,
                     ext_name,
                     hook_cli_name,
+                )
+                # Claim the extension directory so uninstall can remove exactly
+                # what this install produced, without matching on the name —
+                # `ar` could equally be an extension the user wrote.
+                write_owned_marker(
+                    installed_dir, plugin=_plugin_registry_name(plugin_dir)
                 )
                 if n > 0:
                     print(f"   ✓ Generated {n} TOML command files for /{ext_name}:* commands")
@@ -1783,6 +1964,37 @@ def _install_gemini_family_extensions(
         msg = f"All plugins failed to install: {', '.join(failed_plugins)}"
         print(f"✗ {msg}")
         return (False, msg)
+
+
+_GEMINI_INTEGRITY_STORE_FILE = "extension_integrity.json"
+
+
+def _gemini_integrity_store_failure(output: str) -> bool:
+    """Report whether an install failed on Gemini's extension integrity store.
+
+    Gemini refuses to install when it cannot verify that store, which happens
+    after an uninstall/reinstall cycle. The message names the remedy; autorun
+    was flattening the whole thing into "Status: False".
+    """
+    return _GEMINI_INTEGRITY_STORE_FILE in (output or "")
+
+
+def _report_gemini_integrity_store_failure(
+    cli_name: str, ext_name: str, config_dir: Path
+) -> None:
+    """Print the concrete recovery steps for a broken integrity store.
+
+    Deliberately advisory: the store is the harness's own file, and deleting
+    another tool's state without being asked is not autorun's call. The steps
+    are the ones the CLI itself prescribes.
+    """
+    store = config_dir / _GEMINI_INTEGRITY_STORE_FILE
+    print(f"     {ext_name} is now registered but missing its commands and skills.")
+    print(f"     {cli_name} cannot verify {store}, so it will not reinstall over it.")
+    print("     Recover with:")
+    print(f"       rm {store}")
+    print(f"       {cli_name} extensions uninstall {ext_name}")
+    print("       autorun --install")
 
 
 def _resolve_plugin_dir(marketplace_root: Path, name: str) -> Path | None:
@@ -1897,7 +2109,6 @@ def _autorun_plugin_dir(marketplace_root: Path, plugins: list[str]) -> Path | No
 _CODEX_AUTORUN_COMMAND_MARK = "/hooks/hook_entry.py --cli codex"
 _CODEX_PLUGIN_NAME = "autorun"
 _CODEX_PLUGIN_SOURCE_PATH = "./plugins/autorun"
-_CODEX_PLUGIN_OWNED_MARKER = ".autorun-owned"
 _CODEX_PERSONAL_MARKETPLACE_NAME = "personal"
 _CODEX_GITHUB_MARKETPLACE_NAME = "autorun"
 _CODEX_GITHUB_MARKETPLACE_SOURCE = "ahundt/autorun"
@@ -1905,26 +2116,19 @@ _CODEX_HOOK_SOURCE_CHOICES = ("user", "plugin", "both", "none")
 _CODEX_PLUGIN_MARKETPLACE_CHOICES = ("personal", "github")
 
 
-def _codex_plugin_owned_marker_text(codex_hook_source: str) -> str:
-    """Return metadata stored in the existing autorun-owned plugin marker."""
-    return f"Autorun-owned Codex plugin source copy. Safe to delete; rerun `autorun --install --codex` to recreate it.\ncodex_hook_source={codex_hook_source}\n"
-
-
 def _codex_owned_plugin_hook_source(source_dir: Path) -> str | None:
-    """Read the selected hook source from autorun's existing ownership marker."""
-    marker = source_dir / _CODEX_PLUGIN_OWNED_MARKER
-    if not marker.is_file():
+    """Return the hook source the install that created ``source_dir`` chose.
+
+    Remembered state, read back for reporting only: `--status` cannot otherwise
+    tell a deliberate ``both`` from accidentally duplicated hooks. It is not an
+    input to :func:`resolve_choice_setting`, because a value recovered from
+    disk must never outrank what the user is configuring now.
+    """
+    marker = read_owned_marker(source_dir)
+    if marker is None:
         return None
-    try:
-        for line in marker.read_text(encoding="utf-8").splitlines():
-            key, sep, value = line.partition("=")
-            if sep and key.strip() == "codex_hook_source":
-                value = value.strip()
-                if value in _CODEX_HOOK_SOURCE_CHOICES:
-                    return value
-    except OSError:
-        return None
-    return None
+    value = marker.settings.get(_CODEX_HOOK_SOURCE_SETTING.name, "")
+    return value if value in _CODEX_HOOK_SOURCE_CHOICES else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2448,9 +2652,6 @@ def _install_for_codex(
     return (True, "success")
 
 
-_CODEX_SKILL_OWNED_MARKER = ".autorun-owned"
-
-
 def _collect_plugin_skill_sources(
     plugin_dirs: list[Path] | tuple[Path, ...],
 ) -> dict[str, Path]:
@@ -2498,7 +2699,7 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
     skipped = 0
     for skill_src in skill_sources.values():
         skill_dst = dst_root / skill_src.name
-        if skill_dst.exists() and not (skill_dst / _CODEX_SKILL_OWNED_MARKER).is_file():
+        if skill_dst.exists() and read_owned_marker(skill_dst) is None:
             # User-authored skill with the same name — never touch it.
             skipped += 1
             continue
@@ -2508,12 +2709,31 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
         # longer holds the lock while unwinding the rest.
         with staged_replacement(skill_dst, prefix=f".autorun-{skill_src.name}-") as staged:
             shutil.copytree(skill_src, staged)
-            (staged / _CODEX_SKILL_OWNED_MARKER).write_text(
-                "Autorun-owned. Safe to delete to un-claim this directory; the\nnext autorun install will then leave it alone as user-authored.\n",
-                encoding="utf-8",
+            # skills/<name>/ sits directly under the plugin directory, so its
+            # grandparent IS the plugin this skill shipped with. Recording the
+            # plugin lets a partial uninstall remove one plugin's skills and
+            # keep the rest.
+            write_owned_marker(
+                staged, plugin=_plugin_registry_name(skill_src.parent.parent)
             )
         installed += 1
     return (installed, skipped)
+
+
+def _expand_home(value: str | Path) -> Path:
+    """Resolve a "~"-prefixed location through one seam.
+
+    Both ``Path.home()`` and ``Path.expanduser()`` read ``$HOME`` in production,
+    so this changes nothing at runtime — but they are *different* seams under
+    test, and the codebase had installs resolving through one and uninstalls
+    through the other. A test that redirects only ``Path.home`` then saw
+    teardown look in the real home directory. Everything derived from
+    ``Platform.config_dir`` or from CONFIG goes through here.
+    """
+    path = Path(value)
+    if path.parts and path.parts[0] == "~":
+        return Path.home().joinpath(*path.parts[1:])
+    return path.expanduser()
 
 
 def _configured_path(key: str, default: str) -> Path:
@@ -2525,7 +2745,7 @@ def _configured_path(key: str, default: str) -> Path:
     """
     from .config import CONFIG
 
-    return Path(str(CONFIG.get(key, default))).expanduser()
+    return _expand_home(str(CONFIG.get(key, default)))
 
 
 def shared_agents_dir() -> Path:
@@ -2553,6 +2773,17 @@ def shared_agents_plugins_dir() -> Path:
     )
 
 
+def platform_extensions_dir(platform: Platform) -> Path | None:
+    """Return where one harness materializes installed extensions.
+
+    None when the harness has no extension directory of its own — Claude
+    installs through ``claude plugin`` and ForgeCode is template-only.
+    """
+    if not platform.extensions_subdir or not platform.config_dir:
+        return None
+    return _expand_home(platform.config_dir) / platform.extensions_subdir
+
+
 def platform_skills_dir(platform: Platform) -> Path | None:
     """Return where one harness scans for skills inside its own config dir.
 
@@ -2561,7 +2792,7 @@ def platform_skills_dir(platform: Platform) -> Path | None:
     """
     if not platform.skills_subdir or not platform.config_dir:
         return None
-    return Path(platform.config_dir).expanduser() / platform.skills_subdir
+    return _expand_home(platform.config_dir) / platform.skills_subdir
 
 
 _AGENTS_SKILLS_SETTING = ChoiceSetting(
@@ -2683,6 +2914,15 @@ def bridge_agents_skills(
             if mode == "link":
                 fell_back = True
             shutil.copytree(source, destination, dirs_exist_ok=True)
+            # A symlink identifies itself — its target resolves into the shared
+            # skills directory. A copy does not, so it is claimed explicitly;
+            # without this, `copy` mode is a one-way door that uninstall cannot
+            # reverse. Only ever written to a directory this loop created: names
+            # already present were skipped above. No plugin is recorded because
+            # the content came from the shared agents directory rather than
+            # from a marketplace plugin, which also keeps a partial uninstall
+            # from removing a bridge the remaining plugins still benefit from.
+            write_owned_marker(destination)
         linked.append(name)
 
     return AgentsSkillsBridge(
@@ -2817,9 +3057,10 @@ def _copy_codex_plugin_source(
     )
     if include_hooks:
         _write_codex_plugin_hooks(plugin_dir, target)
-    (target / _CODEX_PLUGIN_OWNED_MARKER).write_text(
-        _codex_plugin_owned_marker_text(codex_hook_source),
-        encoding="utf-8",
+    write_owned_marker(
+        target,
+        plugin=_CODEX_PLUGIN_NAME,
+        settings={_CODEX_HOOK_SOURCE_SETTING.name: codex_hook_source},
     )
 
 
@@ -2850,7 +3091,7 @@ def _ensure_codex_plugin_source(
         if (
             target.exists()
             and not target.is_symlink()
-            and not (target / _CODEX_PLUGIN_OWNED_MARKER).is_file()
+            and read_owned_marker(target) is None
         ):
             return f"user-owned directory exists at {target}"
         return None
@@ -3468,9 +3709,18 @@ def _install_for_forgecode(
     cmds_dst = base / "commands"
     cmds_dst.mkdir(exist_ok=True)
 
+    # <base>/commands/ is shared: ForgeCode reads the user's own command files
+    # from it too. Record exactly which names came from the template so
+    # uninstall removes ours and leaves theirs, rather than clearing the
+    # directory.
     cmds_src = template / "commands"
-    for src in cmds_src.glob("*.md"):
+    copied: list[str] = []
+    for src in sorted(cmds_src.glob("*.md")):
         shutil.copy2(src, cmds_dst / src.name)
+        copied.append(src.name)
+    write_owned_marker(
+        cmds_dst, plugin=_plugin_registry_name(plugin_dir), files=copied
+    )
 
     # Sentinel merge, not copy2: ForgeCode reads <base>/AGENTS.md as custom
     # instructions and the user may have written their own there. Shared with
@@ -3519,22 +3769,6 @@ def _install_conductor(force: bool = False) -> tuple[bool, str]:
     else:
         print(f"   Conductor installation failed: {result.output}")
         return (False, result.output)
-
-
-def _verify_gemini_installation() -> bool:
-    """Verify Gemini workspace installation.
-
-    Returns:
-        True if autorun-workspace is installed
-    """
-    result = run_cmd(["gemini", "extensions", "list"])
-    # Check by directory existence (more reliable than parsing CLI output)
-    gemini_ext = Path.home() / ".gemini" / "extensions"
-    for name in ["ar", "autorun-workspace", "autorun"]:
-        if (gemini_ext / name / "hooks" / "hooks.json").exists():
-            return True
-    # Fallback: check CLI output
-    return result.ok and ("autorun" in result.output)
 
 
 def _verify_conductor_installation() -> bool:
@@ -4089,7 +4323,7 @@ def install_plugins(
             if claude_plugin_dir is not None and install_platform_memory(
                 PLATFORMS["claude"],
                 claude_plugin_dir,
-                Path(PLATFORMS["claude"].config_dir).expanduser(),
+                _platform_memory_config_dir(PLATFORMS["claude"]),
             ):
                 print("✓ autorun guidance written to ~/.claude/CLAUDE.md")
         # --- END --- DELETE WHEN FIXED ---
@@ -4345,11 +4579,18 @@ def uninstall_plugins(selection: str = "all") -> int:
     # which plugins were selected. Removing them for a partial uninstall would
     # delete artifacts the remaining plugins still need.
     full_uninstall = set(plugins) >= set(_parse_selection("all"))
+
+    # Per-plugin artifacts in the other harnesses come out either way; a partial
+    # uninstall removes only the selected plugins' extensions and skills.
+    scope = None if full_uninstall else plugins
+    _uninstall_harness_extensions(scope)
+    _uninstall_shared_agents_skills(scope)
+
     if not full_uninstall:
         print()
         print(
-            f"Partial uninstall: kept the autorun CLI, plugin cache and guidance "
-            f"blocks (still needed by the remaining plugin(s))."
+            "Partial uninstall: kept the autorun CLI, plugin cache and guidance "
+            "blocks (still needed by the remaining plugin(s))."
         )
         print("Uninstall complete.")
         return 0
@@ -4362,24 +4603,229 @@ def uninstall_plugins(selection: str = "all") -> int:
     else:
         print(f"warning: {result.output}")
 
-    # Remove cache entries
-    cache_base = Path.home() / ".claude" / "plugins" / "cache" / MARKETPLACE
-    if cache_base.exists():
-        shutil.rmtree(cache_base)
-        print(f"   Removed cache: {cache_base}")
-
-    # Remove legacy manual install dir
-    legacy_dir = Path.home() / ".claude" / "plugins" / "autorun"
-    if legacy_dir.exists():
-        shutil.rmtree(legacy_dir)
-        print(f"   Removed legacy dir: {legacy_dir}")
-
+    _remove_claude_plugin_trees()
     _uninstall_platform_memory_blocks()
-    _uninstall_agents_skill_links()
+    _uninstall_bridged_skills()
+    _uninstall_harness_commands()
+    _uninstall_codex_plugin_package()
+    _remove_install_locks()
+
+    # Stop rather than restart: the code the daemon is running has just been
+    # removed, and a restart would relaunch it from whatever stale copy is
+    # still resolvable. Install restarts; uninstall stops.
+    _stop_daemon_if_running()
 
     print()
     print("Uninstall complete.")
+    _report_retained_state()
     return 0
+
+
+def _report_retained_state() -> None:
+    """Name the one thing uninstall deliberately keeps.
+
+    ``~/.autorun`` holds session state, task history and logs. Deleting a
+    user's history as a side effect of removing a tool is not recoverable, so
+    it stays — but silently leaving a directory behind reads as an oversight
+    rather than a decision, so say which and why.
+    """
+    # Resolved now, not read from ipc.AUTORUN_CONFIG_DIR: that constant is
+    # bound at import time, so it reports the wrong directory whenever HOME or
+    # AUTORUN_HOME changed afterwards.
+    state_dir = ipc._get_autorun_config_dir()
+    if not state_dir.is_dir():
+        return
+    print()
+    print(f"Kept {state_dir} — it holds session state, task history and logs.")
+    print("Delete it yourself if you want those gone too.")
+
+
+def _stop_daemon_if_running() -> None:
+    """Stop the autorun daemon and clear the files it leaves behind.
+
+    The mirror of :func:`_restart_daemon_if_running`. Non-fatal, for the same
+    reason: an uninstall that cannot reach the daemon must still complete.
+    """
+    try:
+        from autorun.restart_daemon import _stop_daemon, cleanup_stale_files, get_daemon_pid
+
+        pid = get_daemon_pid()
+    except Exception as exc:
+        logger.debug(f"Could not check daemon state before stop: {exc}")
+        return
+
+    if not pid:
+        return
+
+    print()
+    print("Stopping daemon...")
+    try:
+        _stop_daemon(pid)
+        cleanup_stale_files()
+        print("   Daemon stopped")
+    except Exception as exc:
+        logger.warning(f"Daemon stop failed: {exc}")
+        print(f"   Daemon stop failed (non-fatal): {exc}")
+
+
+def _uninstall_harness_extensions(plugins: list[str] | None) -> None:
+    """Remove extension directories autorun installed into other harnesses.
+
+    Two steps per extension, and both are needed. The harness CLI owns its own
+    registry, so removing the directory without telling it leaves a dangling
+    entry in ``<cli> extensions list``; and the CLI may be uninstalled before
+    autorun is, so the directory has to come out whether or not the command
+    succeeds.
+
+    ``plugins`` is None for a full uninstall. Only directories carrying
+    autorun's ownership marker are considered — an extension the user installed
+    themselves is never touched, however it is named.
+    """
+    for platform in PLATFORMS.values():
+        extensions = platform_extensions_dir(platform)
+        if extensions is None or not extensions.is_dir():
+            continue
+        for entry in sorted(extensions.iterdir()):
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            marker = read_owned_marker(entry)
+            if marker is None or not _marker_covers_plugins(marker, plugins):
+                continue
+            if platform.uninstall_cmd:
+                run_cmd([part.format(name=entry.name) for part in platform.uninstall_cmd])
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            if not entry.exists():
+                print(f"   Removed {platform.display_name} extension: {entry}")
+
+
+def _uninstall_shared_agents_skills(plugins: list[str] | None) -> None:
+    """Remove plugin skills autorun copied into the shared agents directory.
+
+    The counterpart of :func:`_install_codex_skills`. Those copies carry an
+    ownership marker naming the plugin they shipped with, so a partial
+    uninstall removes one plugin's skills and a user-authored skill of the same
+    name is left alone.
+    """
+    skills_root = shared_agents_skills_dir()
+    if not skills_root.is_dir():
+        return
+    for entry in sorted(skills_root.iterdir()):
+        if not entry.is_dir() or entry.is_symlink():
+            continue
+        marker = read_owned_marker(entry)
+        if marker is None or not _marker_covers_plugins(marker, plugins):
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        if not entry.exists():
+            print(f"   Removed shared skill: {entry}")
+
+
+def _uninstall_harness_commands() -> None:
+    """Remove command files autorun copied into a harness's shared directory.
+
+    ForgeCode's ``<base>/commands/`` holds the user's own command files beside
+    autorun's, so the marker records the exact filenames install wrote and only
+    those are removed. A directory left holding nothing but the marker was
+    created by autorun and is removed with it.
+    """
+    for directory in (_resolve_forge_base() / "commands",):
+        marker = read_owned_marker(directory)
+        if marker is None:
+            continue
+        for name in marker.files:
+            target = directory / name
+            if target.is_file():
+                target.unlink()
+        (directory / OWNED_MARKER_NAME).unlink(missing_ok=True)
+        remaining = list(directory.iterdir()) if directory.is_dir() else []
+        if not remaining:
+            directory.rmdir()
+        print(f"   Removed {len(marker.files)} command file(s) from {directory}")
+
+
+def _uninstall_codex_plugin_package() -> None:
+    """Withdraw autorun from the Codex personal marketplace it published to.
+
+    Two artifacts, both written by :func:`_install_codex_plugin_marketplace`:
+    the ``autorun`` entry in the home marketplace manifest, and the plugin
+    source directory that entry points at. The manifest is the user's file —
+    other plugins' entries and any surrounding keys stay exactly as they are.
+    """
+    path = _codex_personal_marketplace_path()
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"   warning: could not clean {path}: {exc}")
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("plugins"), list):
+            remaining = [
+                plugin
+                for plugin in data["plugins"]
+                if not (isinstance(plugin, dict) and plugin.get("name") == _CODEX_PLUGIN_NAME)
+            ]
+            if len(remaining) != len(data["plugins"]):
+                data["plugins"] = remaining
+                atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+                print(f"   Removed marketplace entry: {_CODEX_PLUGIN_NAME} in {path}")
+
+    source = _codex_plugin_source_dir()
+    if source.is_dir() and not source.is_symlink() and read_owned_marker(source) is not None:
+        shutil.rmtree(source, ignore_errors=True)
+        if not source.exists():
+            print(f"   Removed Codex plugin source: {source}")
+
+
+def _claude_plugins_dir() -> Path:
+    """Return Claude Code's plugin root, derived from its declared config dir."""
+    return _expand_home(PLATFORMS["claude"].config_dir) / "plugins"
+
+
+def _remove_claude_plugin_trees() -> None:
+    """Remove the plugin trees Claude Code materialized for this marketplace.
+
+    Ownership is proven by the path, not by a marker: both trees are named
+    after autorun's own marketplace and no other tool writes there. autorun
+    does not create the surrounding ``plugins/`` directory, so it is left.
+    """
+    plugins_root = _claude_plugins_dir()
+    for directory in (plugins_root / "cache" / MARKETPLACE, plugins_root / MARKETPLACE):
+        if directory.is_dir():
+            shutil.rmtree(directory, ignore_errors=True)
+            if not directory.exists():
+                print(f"   Removed {directory}")
+
+
+def _install_lock_parents() -> set[Path]:
+    """Return every directory :func:`staged_replacement` can leave a lock in.
+
+    The lock lives in the *parent* of the published directory, so it outlives
+    the artifact it protected. Shared by teardown and by the `--status` health
+    probe so both look in the same places.
+    """
+    parents = {
+        shared_agents_skills_dir(),
+        shared_agents_plugins_dir(),
+        _codex_plugin_source_dir().parent,
+    }
+    for platform in PLATFORMS.values():
+        for directory in (platform_skills_dir(platform), platform_extensions_dir(platform)):
+            if directory is not None:
+                parents.add(directory)
+    return parents
+
+
+def _remove_install_locks() -> None:
+    """Delete the lock files :func:`staged_replacement` leaves behind.
+
+    Each is a zero-byte file, harmless but unmistakably autorun's litter in
+    directories the user owns.
+    """
+    for parent in sorted(_install_lock_parents()):
+        lock = parent / _INSTALL_LOCK_NAME
+        if lock.is_file():
+            lock.unlink(missing_ok=True)
 
 
 def _platform_memory_config_dir(platform: Platform) -> Path | None:
@@ -4394,7 +4840,7 @@ def _platform_memory_config_dir(platform: Platform) -> Path | None:
         return _resolve_forge_base()
     if not platform.config_dir:
         return None
-    return Path(platform.config_dir).expanduser()
+    return _expand_home(platform.config_dir)
 
 
 def _uninstall_platform_memory_blocks() -> None:
@@ -4415,36 +4861,47 @@ def _uninstall_platform_memory_blocks() -> None:
             print(f"   warning: could not clean {platform.memory_filename}: {exc}")
 
 
-def _uninstall_agents_skill_links() -> None:
-    """Remove skill symlinks autorun linked from ~/.agents/skills.
+def _uninstall_bridged_skills() -> None:
+    """Remove the shared skills autorun bridged into each harness.
 
-    Ownership is self-identifying: a symlink under ~/.claude/skills whose target
-    resolves inside ~/.agents/skills is ours. Real directories are never
-    touched, so a user-authored skill sharing a name survives, and links
-    pointing anywhere else belong to another tool.
+    Ownership is self-identifying in both bridge modes, by different means:
+
+    - ``link`` mode leaves a symlink whose target resolves inside the shared
+      agents skills directory. The link itself is the evidence.
+    - ``copy`` mode leaves a real directory, indistinguishable from one the
+      user wrote, so :func:`bridge_agents_skills` claims it with an ownership
+      marker at copy time. Without that claim ``copy`` mode was a one-way door.
+
+    In neither mode is an unclaimed real directory touched, so a user-authored
+    skill that happens to share a name survives, and a link pointing somewhere
+    else belongs to another tool.
     """
-    claude_skills = platform_skills_dir(PLATFORMS["claude"])
     agents_skills = shared_agents_skills_dir()
-    if claude_skills is None:
-        return
-    if not claude_skills.is_dir():
-        return
+    for platform in PLATFORMS.values():
+        skills_dir = platform_skills_dir(platform)
+        if skills_dir is None or not skills_dir.is_dir():
+            continue
 
-    for entry in sorted(claude_skills.iterdir()):
-        if not entry.is_symlink():
-            continue
-        try:
-            target = entry.readlink()
-        except OSError:
-            continue
-        resolved = target if target.is_absolute() else entry.parent / target
-        if not _is_within(resolved, agents_skills):
-            continue
-        try:
-            entry.unlink()
-            print(f"   Removed skill link: {entry}")
-        except OSError as exc:
-            print(f"   warning: could not remove {entry}: {exc}")
+        for entry in sorted(skills_dir.iterdir()):
+            if entry.is_symlink():
+                try:
+                    target = entry.readlink()
+                except OSError:
+                    continue
+                resolved = target if target.is_absolute() else entry.parent / target
+                if not _is_within(resolved, agents_skills):
+                    continue
+                try:
+                    entry.unlink()
+                    print(f"   Removed skill link: {entry}")
+                except OSError as exc:
+                    print(f"   warning: could not remove {entry}: {exc}")
+                continue
+
+            if entry.is_dir() and read_owned_marker(entry) is not None:
+                shutil.rmtree(entry, ignore_errors=True)
+                if not entry.exists():
+                    print(f"   Removed bridged skill copy: {entry}")
 
 
 def _is_within(candidate: Path, root: Path) -> bool:
@@ -4501,6 +4958,7 @@ def check_install_health() -> list[HealthFinding]:
         _health_skill_links,
         _health_duplicate_skills,
         _health_codex_hooks,
+        _health_stale_artifacts,
     ):
         try:
             findings.extend(probe())
@@ -4639,7 +5097,7 @@ def _health_duplicate_skills() -> list[HealthFinding]:
 def _health_codex_hooks() -> list[HealthFinding]:
     """Top-level keys that make Codex discard every hook in the file."""
     findings: list[HealthFinding] = []
-    hooks_path = Path(PLATFORMS["codex"].config_dir).expanduser() / "hooks.json"
+    hooks_path = _expand_home(PLATFORMS["codex"].config_dir) / "hooks.json"
     if not hooks_path.is_file():
         return findings
     try:
@@ -4668,6 +5126,62 @@ def _health_codex_hooks() -> list[HealthFinding]:
                 remedy=f"Remove {', '.join(unknown)} from {hooks_path}.",
             )
         )
+    return findings
+
+
+def _health_stale_artifacts() -> list[HealthFinding]:
+    """Directories autorun claimed in a harness that is no longer installed.
+
+    The state a failed or interrupted uninstall leaves: the marker still says
+    the directory is autorun's, but the harness CLI is gone, so nothing will
+    ever come back to clean it. Reported rather than removed — `--status` is
+    advisory, and a harness can be temporarily off PATH.
+
+    Also reports lock files, which outlive the artifact they protected because
+    :func:`staged_replacement` puts them in the parent directory.
+    """
+    findings: list[HealthFinding] = []
+
+    for platform in PLATFORMS.values():
+        extensions = platform_extensions_dir(platform)
+        if extensions is None or not extensions.is_dir():
+            continue
+        if shutil.which(platform.binary):
+            continue
+        owned = [
+            entry
+            for entry in sorted(extensions.iterdir())
+            if entry.is_dir()
+            and not entry.is_symlink()
+            and read_owned_marker(entry) is not None
+        ]
+        for entry in owned:
+            findings.append(
+                HealthFinding(
+                    code="extension-orphaned",
+                    detail=(
+                        f"{entry} was installed by autorun, but the "
+                        f"{platform.display_name} binary {platform.binary!r} is "
+                        "not on PATH, so nothing will clean it up."
+                    ),
+                    remedy=(
+                        f"Run `autorun --uninstall` while {platform.binary} is "
+                        f"available, or delete {entry}."
+                    ),
+                )
+            )
+
+    for parent in sorted(_install_lock_parents()):
+        lock = parent / _INSTALL_LOCK_NAME
+        if lock.is_file():
+            findings.append(
+                HealthFinding(
+                    code="install-lock-left-behind",
+                    detail=f"{lock} remains from a previous install.",
+                    remedy=f"Safe to delete: rm {lock}",
+                )
+            )
+
     return findings
 
 

@@ -28,6 +28,7 @@ from autorun.install import (
     CmdResult,
     _build_codex_hook_block,
     _build_codex_plugin_hooks_json,
+    _codex_owned_plugin_hook_source,
     _first_nonempty_line,
     _reproducible_build_time,
     _update_package_metadata,
@@ -1166,8 +1167,10 @@ def test_install_for_codex_both_hook_source_installs_user_and_plugin_hooks(tmp_p
     plugin_hooks = tmp_path / "plugins" / "autorun" / "hooks" / "hooks.json"
     assert plugin_hooks.is_file()
     assert "--cli codex" in plugin_hooks.read_text(encoding="utf-8")
-    marker = tmp_path / "plugins" / "autorun" / ".autorun-owned"
-    assert "codex_hook_source=both" in marker.read_text(encoding="utf-8")
+    # Asserted through the accessor rather than the file text: the marker's
+    # storage format is an implementation detail, and pinning it here is what
+    # made the switch to a shared marker look like a behavior regression.
+    assert _codex_owned_plugin_hook_source(tmp_path / "plugins" / "autorun") == "both"
 
 
 def test_install_for_codex_user_mode_removes_owned_plugin_hooks_and_keeps_user_hooks(tmp_path, monkeypatch):
@@ -1218,7 +1221,7 @@ def test_install_for_codex_user_mode_removes_owned_plugin_hooks_and_keeps_user_h
     assert "user-post-tool-use.sh" in serialized
     plugin_source = tmp_path / "plugins" / "autorun"
     assert not (plugin_source / "hooks" / "hooks.json").exists()
-    assert "codex_hook_source=user" in (plugin_source / ".autorun-owned").read_text(encoding="utf-8")
+    assert _codex_owned_plugin_hook_source(plugin_source) == "user"
 
 
 def test_install_for_codex_none_hook_source_removes_user_and_plugin_hooks(tmp_path, monkeypatch):
