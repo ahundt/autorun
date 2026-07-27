@@ -931,7 +931,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # Runs AFTER TIER 1 allows (so `/ar:ok <cmd>` still overrides when armed)
     # and BEFORE TIER 2 blocks. OFF by default: FeatureToggle.is_enabled()
     # short-circuits before any I/O beyond a single session_state read.
-    # See plans/make-a-plan-to-sunny-sparkle.md §6.4 + cache_guard.py.
+    # Keep cache command grammar in cache_guard.py; commands/cache.md documents it.
     try:
         from .cache_guard import CacheGuard
 

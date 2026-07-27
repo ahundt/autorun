@@ -63,7 +63,6 @@ printf '%s' "$INPUT" | autorun --cache-snapshot >/dev/null 2>&1 &
 
 ## See also
 
-- Plan: `~/.claude/plans/make-a-plan-to-sunny-sparkle.md`
-- Grammar rationale: plan §6.5.1 (`/ar:cache ok` vs `/ar:ok cache`).
-- Magic classes reused: `ScopedAllow`, `parse_scope_args`, `session_state`,
+- Implementation: `plugins/autorun/src/autorun/cache_guard.py`.
+- Shared primitives: `ScopedAllow`, `parse_scope_args`, `session_state`,
   `check_blocked_commands`, `detect_cli_type`.

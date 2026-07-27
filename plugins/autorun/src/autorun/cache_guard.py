@@ -1,7 +1,5 @@
 """/ar:cache — cache-pressure / cache-miss protection gate.
 
-Plan: /Users/athundt/.claude/plans/make-a-plan-to-sunny-sparkle.md
-
 Single-file feature. Exports:
     parse_quantity, PERMANENT           — token/percent parser
     is_cache_enabled, set_cache_enabled — toggle query/update

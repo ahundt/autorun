@@ -353,7 +353,7 @@ class TestHookTimeouts:
 
     Claude Code timeout unit: seconds (timeout: 10 = 10 seconds).
     Gemini CLI timeout unit: milliseconds (timeout: 5000 = 5 seconds).
-    Source: notes/hooks_api_reference.md:825 (Claude), :857 (Gemini).
+    Source: docs/hooks_api_reference.md:825 (Claude), :857 (Gemini).
     """
 
     def test_claude_hooks_timeout_adequate(self):

@@ -173,7 +173,7 @@ def output_hook_response(response: dict | str, event: str = "unknown", cli_type:
     Returns:
         int: Exit code (0, 1, or 2)
 
-    Reference: notes/hooks_api_reference.md lines 395-427
+    Reference: docs/hooks_api_reference.md lines 395-427
     """
     from .config import should_use_exit2_workaround
     from .core import validate_hook_response

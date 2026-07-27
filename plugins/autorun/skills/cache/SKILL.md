@@ -136,8 +136,8 @@ uses. No new state file, no new lock.
 - **"I want the rich statusline numbers."** Add one line to your *own*
   statusline script: `printf '%s' "$INPUT" | autorun --cache-snapshot >/dev/null 2>&1 &`.
 
-## 9. Plan reference
+## 9. Implementation reference
 
-Full design: `~/.claude/plans/make-a-plan-to-sunny-sparkle.md`. Key sections:
-§6.1 (reused magic classes), §6.5 (usage detection), §6.5.1 (grammar decision),
-§6.7 (block message), §6.8 (multiprocess), §7 (ASCII diagrams).
+See `plugins/autorun/src/autorun/cache_guard.py` for parsing, usage detection,
+block-message construction, and multiprocess-safe override handling. See
+`plugins/autorun/commands/cache.md` for the user-facing command grammar.
