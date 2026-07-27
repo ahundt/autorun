@@ -120,9 +120,10 @@ gemini --version  # Should show 0.28.0 or later
 /ar:j               # Justify new files
 /ar:f               # Find and modify existing files only (strictest)
 /ar:go <task>       # Start autonomous execution
+/ar:task pause [N] [duration] [reason] # Pause task enforcement; `/ar:task resume` resumes
 /ar:sos             # Emergency stop
-/ar:tasks           # Toggle task staleness reminders on/off or set threshold
-/ar:task-status     # Show task lifecycle status and incomplete tasks
+/ar:task            # Show task, pause, prompting, and recovery status
+/ar:tasks           # Equivalent plural task-command root
 /ar:pn              # Create new structured plan
 /ar:pr              # Refine existing plan
 /ar:pe              # Show plan export status
@@ -147,7 +148,7 @@ installation, use Gemini's native skill surface for `pdf-extractor`; the
 
 #### Task Staleness Reminders (v0.9)
 
-Task staleness reminders work identically in both CLIs. When 25+ tool calls pass without TaskCreate/TaskUpdate, autorun injects a reminder. Use `/ar:tasks` to configure.
+Task staleness reminders use the same state machine across harnesses. After the configured number of tool calls without TaskCreate/TaskUpdate, autorun injects a reminder. Use `/ar:task prompts` to configure it.
 
 ### Gemini Vision + Autorun Safety
 

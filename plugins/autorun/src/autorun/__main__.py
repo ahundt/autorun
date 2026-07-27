@@ -41,6 +41,7 @@ v0.7: Daemon mode is now default (85-90% complete architecture)
 Set AUTORUN_USE_DAEMON=0 to revert to legacy main.py if needed
 Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
 """
+
 # Python 2 / version guard — AI assistants frequently invoke `python` (Python 2 on many
 # systems) instead of `python3`, wasting tokens trying to debug confusing import errors.
 # This guard outputs a clear, actionable error message so the AI (and user) knows exactly
@@ -52,10 +53,10 @@ Benefits: 10-30x faster (1-5ms vs 50-150ms), 78% code reduction via DRY
 from __future__ import annotations
 
 import sys as _sys
+
 if _sys.version_info < (3, 10):
     _sys.stderr.write(
-        "ERROR: autorun requires Python 3.10+. You are running Python " +
-        ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
+        "ERROR: autorun requires Python 3.10+. You are running Python " + ".".join(str(v) for v in _sys.version_info[:2]) + ".\n"
         "Fix: Use `uv run python -m autorun` or `python3 -m autorun`.\n"
         "     Install uv: https://docs.astral.sh/uv/getting-started/installation/\n"
     )
@@ -151,10 +152,7 @@ def _run_state_command(args) -> int:
     if args.state_maintenance:
         database = os.path.join(directory, "daemon_state.sqlite3")
         if not os.path.exists(database):
-            print(
-                "State maintenance did not run: no SQLite state database "
-                f"exists at {database}."
-            )
+            print(f"State maintenance did not run: no SQLite state database exists at {database}.")
             return 1
         try:
             store = SQLiteStore(database)
@@ -187,13 +185,9 @@ def _run_state_command(args) -> int:
             print(f"State {operation} did not run: {exc}")
             return 1
         if args.state_migrate:
-            print(
-                f"Migrated {result['fields']} fields in {result['sessions']} sessions "
-                f"to {migrator.status()['database']}."
-            )
+            print(f"Migrated {result['fields']} fields in {result['sessions']} sessions to {migrator.status()['database']}.")
         else:
-            print(f"Wrote {result['fields']} fields back to {result['source']}. "
-                  "JSON authority is restored.")
+            print(f"Wrote {result['fields']} fields back to {result['source']}. JSON authority is restored.")
         return 0
 
     if args.state_status:
@@ -207,13 +201,11 @@ def _run_state_command(args) -> int:
         print(f"json present       : {status['source_present']}")
         print(f"database present   : {status['database_present']}")
         if status["fields"]:
-            print(f"converted          : {status['fields']} fields in "
-                  f"{status['sessions']} sessions")
+            print(f"converted          : {status['fields']} fields in {status['sessions']} sessions")
         if status["backup"]:
             print(f"pre-conversion copy: {status['backup']}")
         if status["phase"] == "COMPLETE" and status["source_present"]:
-            print("\nAn unexpected legacy JSON file is also present. It is "
-                  "not authoritative and will not be merged or served.")
+            print("\nAn unexpected legacy JSON file is also present. It is not authoritative and will not be merged or served.")
         return 0
 
     raise AssertionError("state maintenance dispatch reached no operation")
@@ -347,9 +339,9 @@ For more information: https://github.com/ahundt/autorun
         const="all",
         metavar="PLUGINS",
         help="Install autorun plugins to Claude Code and/or Gemini CLI. "
-             "This registers the plugins, installs hooks, and makes slash commands available. "
-             "Default: all plugins (autorun + pdf-extractor). "
-             "Specify plugins: --install autorun or --install autorun,pdf-extractor",
+        "This registers the plugins, installs hooks, and makes slash commands available. "
+        "Default: all plugins (autorun + pdf-extractor). "
+        "Specify plugins: --install autorun or --install autorun,pdf-extractor",
     )
     install_group.add_argument(
         "--force",
@@ -360,10 +352,7 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--install-dry-run",
         action="store_true",
-        help=(
-            "Preview install targets without writing hooks, plugin state, "
-            "dependencies, or restarting daemons"
-        ),
+        help=("Preview install targets without writing hooks, plugin state, dependencies, or restarting daemons"),
     )
     install_group.add_argument(
         "--tool",
@@ -383,11 +372,11 @@ For more information: https://github.com/ahundt/autorun
     )
     install_group.add_argument(
         "--exit2-mode",
-        choices=['auto', 'always', 'never'],
+        choices=["auto", "always", "never"],
         default=None,
         help="Bug #4669 workaround mode: 'auto' (detect CLI - default), 'always' (force exit-2), 'never' (disable). "
-             "Controls whether deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI). "
-             "Can also be set via AUTORUN_EXIT2_WORKAROUND environment variable.",
+        "Controls whether deny decisions use exit code 2 + stderr (Claude Code) or JSON decision field (Gemini CLI). "
+        "Can also be set via AUTORUN_EXIT2_WORKAROUND environment variable.",
     )
     install_group.add_argument(
         "--claude",
@@ -402,10 +391,7 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--antigravity",
         action="store_true",
-        help=(
-            "Install for Google Antigravity CLI only "
-            "(native agy plugin bundle, Gemini importer fallback)"
-        ),
+        help=("Install for Google Antigravity CLI only (native agy plugin bundle, Gemini importer fallback)"),
     )
     install_group.add_argument(
         "--qwen",
@@ -487,9 +473,9 @@ For more information: https://github.com/ahundt/autorun
         choices=_hook_cli_choices(),
         default=None,
         help="Hook-capable CLI type calling this invocation. Choices come from "
-             "autorun.platforms hook registry. "
-             "Passed by hook_entry.py so every pathway receives CLI identity. "
-             "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
+        "autorun.platforms hook registry. "
+        "Passed by hook_entry.py so every pathway receives CLI identity. "
+        "When present, also sets AUTORUN_CLI_TYPE env var for downstream use.",
     )
 
     info_group = parser.add_argument_group("Information")
@@ -497,8 +483,7 @@ For more information: https://github.com/ahundt/autorun
         "--status",
         "-s",
         action="store_true",
-        help="Show installation status: which plugins are installed, where they're located, "
-             "and which CLIs (Claude Code, Gemini) have them enabled",
+        help="Show installation status: which plugins are installed, where they're located, and which CLIs (Claude Code, Gemini) have them enabled",
     )
     info_group.add_argument(
         "--version",
@@ -534,24 +519,22 @@ For more information: https://github.com/ahundt/autorun
     info_group.add_argument(
         "--restart-all-daemons",
         action="store_true",
-        help="Risky maintenance mode: restart current daemon and stop all matching "
-             "autorun daemons, which can interrupt active sessions in other installs",
+        help="Risky maintenance mode: restart current daemon and stop all matching autorun daemons, which can interrupt active sessions in other installs",
     )
     info_group.add_argument(
         "--cache-snapshot",
         action="store_true",
         help="Read Claude Code statusline JSON from stdin and persist "
-             "context_window/rate_limits snapshot for /ar:cache. Opt-in "
-             "tap; users invoke by piping their statusline stdin through "
-             "`autorun --cache-snapshot`. Always exits 0 (fail-open).",
+        "context_window/rate_limits snapshot for /ar:cache. Opt-in "
+        "tap; users invoke by piping their statusline stdin through "
+        "`autorun --cache-snapshot`. Always exits 0 (fail-open).",
     )
     info_group.add_argument(
         "--capability-snapshot",
         nargs="?",
         const="-",
         metavar="FILE",
-        help="Write a read-only JSON inventory of registered platforms, commands, "
-             "skills, and hook chains. Use '-' or omit FILE to print to stdout.",
+        help="Write a read-only JSON inventory of registered platforms, commands, skills, and hook chains. Use '-' or omit FILE to print to stdout.",
     )
 
     # Update group
@@ -576,7 +559,7 @@ For more information: https://github.com/ahundt/autorun
         "file",
         help="AutoFile - control file creation policy",
         description="Control file creation and modification policies (AutoFile system). "
-                    "Equivalent to /ar:a (allow), /ar:j (justify), /ar:f (find), /ar:st (status) slash commands.",
+        "Equivalent to /ar:a (allow), /ar:j (justify), /ar:f (find), /ar:st (status) slash commands.",
     )
     file_subparsers = file_parser.add_subparsers(dest="file_command", help="AutoFile operations")
 
@@ -855,9 +838,7 @@ def set_bootstrap_config(enabled: bool) -> int:
         if "--no-bootstrap" in content:
             print("Bootstrap already disabled")
         else:
-            new_content = re.sub(
-                r'(hook_entry\.py)(["\\s])', r"\1 --no-bootstrap\2", content
-            )
+            new_content = re.sub(r'(hook_entry\.py)(["\\s])', r"\1 --no-bootstrap\2", content)
             with open(hooks_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
             print(f"Bootstrap disabled (added --no-bootstrap to {hooks_path})")
@@ -879,9 +860,15 @@ def run_direct() -> int:
     import json
     import sys as _sys
 
-    from .core import EventContext, ThreadSafeDB, normalize_hook_payload
+    from .core import (
+        EventContext,
+        ThreadSafeDB,
+        normalize_hook_payload,
+        resolve_session_identity,
+    )
     from .config import detect_cli_type
-    from .client import output_hook_response
+    from .client import get_stable_process_identity, output_hook_response
+
     # Import plugins to register all handlers on the shared `app` object
     from . import plugins as _plugins  # noqa: F401 (side-effect: registers handlers)
     from .core import app
@@ -896,9 +883,17 @@ def run_direct() -> int:
 
     cli_type = detect_cli_type(payload)
     normalized = normalize_hook_payload(payload)
+    process = get_stable_process_identity()
+    identity = resolve_session_identity(
+        pid=process.pid,
+        process_started_at_units=process.started_at_units,
+        fallback_id=normalized["session_id"],
+        transcript_path=normalized.get("transcript_path"),
+    )
 
     ctx = EventContext(
-        session_id=normalized["session_id"] or "direct-mode",
+        session_id=identity.key,
+        session_identity_authority=identity.authority,
         event=normalized["hook_event_name"],
         prompt=normalized["prompt"],
         tool_name=normalized["tool_name"],
@@ -966,12 +961,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     # Propagate --cli to env so run_hook_handler() / run_client() can use it
-    if getattr(args, 'cli', None):
-        os.environ['AUTORUN_CLI_TYPE'] = args.cli
+    if getattr(args, "cli", None):
+        os.environ["AUTORUN_CLI_TYPE"] = args.cli
 
     # Bug #4669 workaround configuration (set env var from CLI arg)
-    if hasattr(args, 'exit2_mode') and args.exit2_mode is not None:
-        os.environ['AUTORUN_EXIT2_WORKAROUND'] = args.exit2_mode
+    if hasattr(args, "exit2_mode") and args.exit2_mode is not None:
+        os.environ["AUTORUN_EXIT2_WORKAROUND"] = args.exit2_mode
 
     # Bootstrap config
     if args.no_bootstrap:
@@ -1010,12 +1005,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return show_status(custom_harnesses=args.custom_harness)
 
     # Restart daemon mode
-    if (
-        args.state_status
-        or args.state_migrate
-        or args.state_rollback
-        or args.state_maintenance
-    ):
+    if args.state_status or args.state_migrate or args.state_rollback or args.state_maintenance:
         return _run_state_command(args)
 
     if args.restart_daemon or args.restart_all_daemons:
@@ -1024,12 +1014,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return restart_daemon(all_daemons=args.restart_all_daemons)
 
     # Cache snapshot tap (opt-in; user's statusline pipes JSON here)
-    if getattr(args, 'cache_snapshot', False):
+    if getattr(args, "cache_snapshot", False):
         from autorun.cache_guard import persist_statusline_snapshot
+
         return persist_statusline_snapshot(sys.stdin)
 
     # Capability snapshot (read-only diagnostic; does not install hooks or use daemon)
-    if getattr(args, 'capability_snapshot', None) is not None:
+    if getattr(args, "capability_snapshot", None) is not None:
         from autorun.capability_snapshot import write_capability_snapshot
 
         write_capability_snapshot(args.capability_snapshot)
@@ -1053,28 +1044,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "file":
         from autorun.session_manager import get_session_manager
 
-        if not hasattr(args, 'file_command') or args.file_command is None:
+        if not hasattr(args, "file_command") or args.file_command is None:
             # No subcommand specified - show help
-            file_parser = create_parser().add_subparsers().choices['file']
+            file_parser = create_parser().add_subparsers().choices["file"]
             file_parser.print_help()
             return 1
 
         session_id = os.environ.get("CLAUDE_SESSION_ID")
-        is_global = getattr(args, 'file_global', False)
+        is_global = getattr(args, "file_global", False)
 
         # Get session manager
         mgr = get_session_manager()
 
         # Normalize aliases to canonical names
         file_cmd = args.file_command
-        alias_map = {
-            "a": "allow",
-            "j": "justify",
-            "f": "search",
-            "find": "search",
-            "st": "status",
-            "s": "status"
-        }
+        alias_map = {"a": "allow", "j": "justify", "f": "search", "find": "search", "st": "status", "s": "status"}
         file_cmd = alias_map.get(file_cmd, file_cmd)
 
         # file status
@@ -1086,7 +1070,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 policy_desc = {
                     "allow-all": "ALLOW ALL: Full permission to create/modify files",
                     "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
-                    "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files"
+                    "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files",
                 }.get(global_policy, f"Unknown policy: {global_policy}")
                 print(f"Global AutoFile policy: {global_policy}")
                 print(f"{policy_desc}")
@@ -1107,7 +1091,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     policy_desc = {
                         "allow-all": "ALLOW ALL: Full permission to create/modify files",
                         "justify-create": "JUSTIFIED: Search existing first. Require justification for new files",
-                        "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files"
+                        "strict-search": "STRICT SEARCH: ONLY modify existing files. NO new files",
                     }.get(session_policy, f"Unknown policy: {session_policy}")
                     print(f"Session AutoFile policy: {session_policy}")
                     print(f"{policy_desc}")
@@ -1126,11 +1110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         # Set policy (allow, justify, search) - file_cmd already normalized above
-        policy_value = {
-            "allow": "allow-all",
-            "justify": "justify-create",
-            "search": "strict-search"
-        }.get(file_cmd)
+        policy_value = {"allow": "allow-all", "justify": "justify-create", "search": "strict-search"}.get(file_cmd)
 
         if not policy_value:
             # CLI error message - use stdout (not stderr which breaks hooks)
@@ -1164,21 +1144,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "task":
         from autorun.task_lifecycle import TaskLifecycle
 
-        if not hasattr(args, 'task_command') or args.task_command is None:
+        if not hasattr(args, "task_command") or args.task_command is None:
             # No subcommand specified - show help
-            task_parser = create_parser().add_subparsers().choices['task']
+            task_parser = create_parser().add_subparsers().choices["task"]
             task_parser.print_help()
             return 1
 
-        session_id = getattr(args, 'session', None) or os.environ.get("CLAUDE_SESSION_ID")
+        session_id = getattr(args, "session", None) or os.environ.get("CLAUDE_SESSION_ID")
 
         # task status
         if args.task_command == "status":
-            return TaskLifecycle.cli_status(
-                session_id=session_id,
-                verbose=args.verbose,
-                output_format=args.format
-            )
+            return TaskLifecycle.cli_status(session_id=session_id, verbose=args.verbose, output_format=args.format)
 
         # task export
         elif args.task_command == "export":
@@ -1186,30 +1162,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # CLI error message - use stdout (not stderr which breaks hooks)
                 print("Error: --session required when CLAUDE_SESSION_ID not set")
                 return 1
-            return TaskLifecycle.cli_export(
-                session_id=session_id,
-                output_path=args.output,
-                output_format=args.format,
-                include_completed=args.include_completed
-            )
+            return TaskLifecycle.cli_export(session_id=session_id, output_path=args.output, output_format=args.format, include_completed=args.include_completed)
 
         # task clear
         elif args.task_command == "clear":
-            return TaskLifecycle.cli_clear(
-                session_id=session_id,
-                all_sessions=args.all,
-                confirm=not args.no_confirm
-            )
+            return TaskLifecycle.cli_clear(session_id=session_id, all_sessions=args.all, confirm=not args.no_confirm)
 
         # task gc
         elif args.task_command == "gc":
-            return TaskLifecycle.cli_gc(
-                archive=not args.no_archive,
-                dry_run=args.dry_run,
-                pattern=args.pattern,
-                ttl_days=args.ttl,
-                confirm=not args.no_confirm
-            )
+            return TaskLifecycle.cli_gc(archive=not args.no_archive, dry_run=args.dry_run, pattern=args.pattern, ttl_days=args.ttl, confirm=not args.no_confirm)
 
     # Default: run as hook handler
     return run_hook_handler()

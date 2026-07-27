@@ -3,7 +3,7 @@
 
 import pytest
 
-from autorun.core import EventContext, normalize_hook_payload
+from autorun.core import EventContext, normalize_hook_payload, validate_hook_response
 from autorun.main import build_hook_response
 
 
@@ -133,6 +133,17 @@ class TestDualPlatformResponse:
                 assert resp["decision"] in ("block", "deny")
                 assert resp["reason"] == "Reason"
                 assert "systemMessage" not in resp, (cli_type, event, resp)
+
+    @pytest.mark.parametrize("event", ["Stop", "SubagentStop"])
+    def test_claude_stop_schema_preserves_documented_additional_context(self, event):
+        response = {
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "additionalContext": "Run the test suite before finishing",
+            }
+        }
+
+        assert validate_hook_response(event, response, cli_type="claude") == response
 
     def test_stop_injection_gemini(self):
         """Gemini Stop event should use decision='deny' and continue=True."""
@@ -475,9 +486,7 @@ def test_payload_normalization_uses_selected_protocol(cli_type, external, intern
 
 
 def test_claude_stop_payload_preserves_current_structured_fields():
-    background_tasks = [
-        {"id": "task-1", "status": "running", "description": "Run tests"}
-    ]
+    background_tasks = [{"id": "task-1", "status": "running", "description": "Run tests"}]
     session_crons = [{"id": "cron-1", "schedule": "*/5 * * * *"}]
     normalized = normalize_hook_payload(
         {

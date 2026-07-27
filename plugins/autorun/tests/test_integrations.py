@@ -17,6 +17,10 @@
 """
 Tests for unified integrations system (superset of hookify).
 """
+
+import os
+import subprocess as _subprocess
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -98,6 +102,42 @@ class TestIntegrationDataclass:
         assert intg.tool_matcher == "Bash"
         assert intg.conditions == ()
         assert intg.enabled is True
+        assert intg.dedup_category is None
+        assert intg.dedup_window_seconds is None
+
+    def test_from_dict_temporal_dedup_policy(self):
+        intg = Integration.from_dict(
+            "git",
+            {
+                "action": "warn",
+                "suggestion": "Git rules",
+                "dedup_category": "integration_warning",
+                "dedup_window_seconds": 2.5,
+            },
+        )
+
+        assert intg.dedup_category == "integration_warning"
+        assert intg.dedup_window_seconds == 2.5
+
+    @pytest.mark.parametrize(
+        "invalid_window",
+        [0, -1, float("inf"), float("-inf"), float("nan"), "not-seconds"],
+    )
+    def test_invalid_temporal_dedup_window_disables_suppression(
+        self,
+        invalid_window,
+    ):
+        intg = Integration.from_dict(
+            "git",
+            {
+                "action": "warn",
+                "suggestion": "Git rules",
+                "dedup_category": "integration_warning",
+                "dedup_window_seconds": invalid_window,
+            },
+        )
+
+        assert intg.dedup_window_seconds == 0.0
 
 
 class TestExtractFrontmatter:
@@ -292,6 +332,7 @@ class TestWhenPredicates:
     def test_predicate_timeout(self, mock_run):
         """Timeout on bash predicate returns False."""
         import subprocess
+
         mock_run.side_effect = subprocess.TimeoutExpired("cmd", 2)
 
         result = check_when_predicate("sleep 10", None)
@@ -305,8 +346,8 @@ class TestWhenPredicates:
         # rev-parse --verify HEAD, then git diff HEAD --quiet -- <file>.
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=b"true\n"),  # is-inside-work-tree
-            MagicMock(returncode=0),                     # rev-parse --verify HEAD
-            MagicMock(returncode=1),                     # diff: has changes
+            MagicMock(returncode=0),  # rev-parse --verify HEAD
+            MagicMock(returncode=1),  # diff: has changes
         ]
         ctx = MagicMock(tool_input={"command": "git checkout -- file.txt"}, cwd="/tmp/repo")
 
@@ -323,8 +364,8 @@ class TestWhenPredicates:
         """_file_has_unstaged_changes returns False if file clean."""
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=b"true\n"),  # probe
-            MagicMock(returncode=0),                     # verify HEAD
-            MagicMock(returncode=0),                     # diff: clean
+            MagicMock(returncode=0),  # verify HEAD
+            MagicMock(returncode=0),  # diff: clean
         ]
         ctx = MagicMock(tool_input={"command": "git checkout -- clean.txt"}, cwd="/tmp/repo")
 
@@ -343,46 +384,28 @@ class TestConditions:
 
     def test_basic_contains_match(self):
         """Basic contains operator."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish"}
-        )
-        conditions = (
-            {"field": "command", "operator": "contains", "pattern": "publish"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish"})
+        conditions = ({"field": "command", "operator": "contains", "pattern": "publish"},)
 
         assert check_conditions(conditions, ctx) is True
 
     def test_basic_contains_no_match(self):
         """Contains operator returns False if not found."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm install"}
-        )
-        conditions = (
-            {"field": "command", "operator": "contains", "pattern": "publish"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm install"})
+        conditions = ({"field": "command", "operator": "contains", "pattern": "publish"},)
 
         assert check_conditions(conditions, ctx) is False
 
     def test_regex_match(self):
         """Regex operator matching."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish"}
-        )
-        conditions = (
-            {"field": "command", "operator": "regex_match", "pattern": r"npm\s+publish"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish"})
+        conditions = ({"field": "command", "operator": "regex_match", "pattern": r"npm\s+publish"},)
 
         assert check_conditions(conditions, ctx) is True
 
     def test_and_conditions(self):
         """Multiple conditions are AND-ed."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish --tag latest"}
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish --tag latest"})
         conditions = (
             {"field": "command", "operator": "contains", "pattern": "publish"},
             {"field": "command", "operator": "contains", "pattern": "--tag"},
@@ -392,10 +415,7 @@ class TestConditions:
 
     def test_and_conditions_fail(self):
         """AND-ed conditions fail if any doesn't match."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish"}
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish"})
         conditions = (
             {"field": "command", "operator": "contains", "pattern": "publish"},
             {"field": "command", "operator": "contains", "pattern": "--tag"},
@@ -590,6 +610,7 @@ class TestRedirectSubstitution:
 # DEEP TDD: Cache Invalidation Tests
 # =============================================================================
 
+
 class TestCacheInvalidation:
     """Test cache invalidation behavior."""
 
@@ -656,6 +677,7 @@ Test message"""
 # DEEP TDD: User File Loading Tests
 # =============================================================================
 
+
 class TestUserFileLoading:
     """Test loading user integration files."""
 
@@ -718,6 +740,7 @@ No patterns defined"""
 # =============================================================================
 # DEEP TDD: Frontmatter Edge Cases
 # =============================================================================
+
 
 class TestExtractFrontmatterEdgeCases:
     """Test edge cases in frontmatter extraction."""
@@ -818,6 +841,7 @@ Line 3"""
 # DEEP TDD: When Predicate Edge Cases
 # =============================================================================
 
+
 class TestWhenPredicateEdgeCases:
     """Test edge cases for when predicates."""
 
@@ -843,11 +867,11 @@ class TestWhenPredicateEdgeCases:
         # v4: each file runs probe+verify+diff; first file clean, second dirty.
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=b"true\n"),  # probe (file1)
-            MagicMock(returncode=0),                     # verify HEAD (file1)
-            MagicMock(returncode=0),                     # diff file1: clean
+            MagicMock(returncode=0),  # verify HEAD (file1)
+            MagicMock(returncode=0),  # diff file1: clean
             MagicMock(returncode=0, stdout=b"true\n"),  # probe (file2)
-            MagicMock(returncode=0),                     # verify HEAD (file2)
-            MagicMock(returncode=1),                     # diff file2: dirty
+            MagicMock(returncode=0),  # verify HEAD (file2)
+            MagicMock(returncode=1),  # diff file2: dirty
         ]
         ctx = MagicMock(tool_input={"command": "git checkout -- file1.txt file2.txt"}, cwd="/tmp/repo")
 
@@ -862,8 +886,8 @@ class TestWhenPredicateEdgeCases:
         # repo-wide HEAD diff (matches "discards any uncommitted change").
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=b"true\n"),  # probe
-            MagicMock(returncode=0),                     # verify HEAD
-            MagicMock(returncode=1),                     # repo-wide diff: dirty
+            MagicMock(returncode=0),  # verify HEAD
+            MagicMock(returncode=1),  # repo-wide diff: dirty
         ]
         ctx = MagicMock(tool_input={"command": "git checkout file.txt"}, cwd="/tmp/repo")
 
@@ -890,10 +914,7 @@ class TestWhenPredicateEdgeCases:
     @patch("subprocess.run")
     def test_stash_exists_predicate(self, mock_run):
         """_stash_exists returns True when stash has entries."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout="stash@{0}: WIP on main: abc1234 commit msg\n"
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="stash@{0}: WIP on main: abc1234 commit msg\n")
 
         result = check_when_predicate("_stash_exists", None)
 
@@ -935,8 +956,8 @@ class TestWhenPredicateEdgeCases:
         # v4: delegates to _file_differs_from_ref → probe+verify+diff.
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=b"true\n"),  # probe
-            MagicMock(returncode=0),                     # verify HEAD
-            MagicMock(returncode=1),                     # diff: dirty
+            MagicMock(returncode=0),  # verify HEAD
+            MagicMock(returncode=1),  # diff: dirty
         ]
         ctx = MagicMock(tool_input={"command": "git restore file.txt"}, cwd="/tmp/repo")
 
@@ -1033,6 +1054,7 @@ class TestWhenPredicateEdgeCases:
 # DEEP TDD: git restore config.py integration tests
 # =============================================================================
 
+
 class TestGitRestoreConfig:
     """Test git restore entry in DEFAULT_INTEGRATIONS."""
 
@@ -1062,21 +1084,20 @@ class TestGitRestoreConfig:
             if pattern == "git restore":
                 continue
             suggestion = config.get("suggestion", "")
-            assert "git restore" not in suggestion, \
-                f"'{pattern}' suggestion still mentions 'git restore'"
+            assert "git restore" not in suggestion, f"'{pattern}' suggestion still mentions 'git restore'"
 
     def test_git_checkout_no_longer_redirects_to_restore(self):
         """git checkout redirect should NOT use git restore."""
         for pattern in ["git checkout", "git checkout --", "git checkout ."]:
             if pattern in DEFAULT_INTEGRATIONS:
                 redirect = DEFAULT_INTEGRATIONS[pattern].get("redirect", "")
-                assert "git restore" not in redirect, \
-                    f"'{pattern}' redirect still uses 'git restore'"
+                assert "git restore" not in redirect, f"'{pattern}' redirect still uses 'git restore'"
 
 
 # =============================================================================
 # DEEP TDD: {file} substitution in redirect templates
 # =============================================================================
+
 
 class TestFileSubstitution:
     """Test {file} placeholder substitution in redirect commands."""
@@ -1131,42 +1152,28 @@ class TestFileSubstitution:
 # DEEP TDD: Conditions Edge Cases
 # =============================================================================
 
+
 class TestConditionsEdgeCases:
     """Test edge cases for hookify-style conditions."""
 
     def test_equals_operator(self):
         """equals operator for exact match."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish"}
-        )
-        conditions = (
-            {"field": "command", "operator": "equals", "pattern": "npm publish"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish"})
+        conditions = ({"field": "command", "operator": "equals", "pattern": "npm publish"},)
 
         assert check_conditions(conditions, ctx) is True
 
     def test_equals_operator_no_match(self):
         """equals operator fails on partial match."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish --tag beta"}
-        )
-        conditions = (
-            {"field": "command", "operator": "equals", "pattern": "npm publish"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish --tag beta"})
+        conditions = ({"field": "command", "operator": "equals", "pattern": "npm publish"},)
 
         assert check_conditions(conditions, ctx) is False
 
     def test_unknown_operator_falls_through(self):
         """Unknown operator falls through (doesn't fail the condition)."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "npm publish"}
-        )
-        conditions = (
-            {"field": "command", "operator": "unknown_op", "pattern": "publish"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "npm publish"})
+        conditions = ({"field": "command", "operator": "unknown_op", "pattern": "publish"},)
 
         # Unknown operator falls through all if statements
         # This means the condition doesn't fail, so returns True
@@ -1175,37 +1182,22 @@ class TestConditionsEdgeCases:
 
     def test_missing_field_in_context(self):
         """Condition with field not in context."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "test"}
-        )
-        conditions = (
-            {"field": "nonexistent", "operator": "contains", "pattern": "test"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "test"})
+        conditions = ({"field": "nonexistent", "operator": "contains", "pattern": "test"},)
 
         assert check_conditions(conditions, ctx) is False
 
     def test_condition_with_regex_special_chars(self):
         """Regex condition with special characters."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "rm -rf /tmp/*"}
-        )
-        conditions = (
-            {"field": "command", "operator": "regex_match", "pattern": r"rm.*\*"},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "rm -rf /tmp/*"})
+        conditions = ({"field": "command", "operator": "regex_match", "pattern": r"rm.*\*"},)
 
         assert check_conditions(conditions, ctx) is True
 
     def test_empty_pattern_in_condition(self):
         """Condition with empty pattern."""
-        ctx = MagicMock(
-            tool_name="Bash",
-            tool_input={"command": "test"}
-        )
-        conditions = (
-            {"field": "command", "operator": "contains", "pattern": ""},
-        )
+        ctx = MagicMock(tool_name="Bash", tool_input={"command": "test"})
+        conditions = ({"field": "command", "operator": "contains", "pattern": ""},)
 
         # Empty string is contained in any string
         assert check_conditions(conditions, ctx) is True
@@ -1214,6 +1206,7 @@ class TestConditionsEdgeCases:
 # =============================================================================
 # DEEP TDD: Pattern Validation Edge Cases
 # =============================================================================
+
 
 class TestPatternValidationEdgeCases:
     """Test edge cases for pattern validation."""
@@ -1312,6 +1305,7 @@ class TestPatternValidationEdgeCases:
 # DEEP TDD: Integration Dataclass Edge Cases
 # =============================================================================
 
+
 class TestIntegrationDataclassEdgeCases:
     """Test edge cases for Integration dataclass."""
 
@@ -1391,6 +1385,7 @@ class TestIntegrationDataclassEdgeCases:
 # DEEP TDD: Pattern Specificity Edge Cases
 # =============================================================================
 
+
 class TestPatternSpecificityEdgeCases:
     """Test edge cases for pattern specificity calculation."""
 
@@ -1426,6 +1421,7 @@ class TestPatternSpecificityEdgeCases:
 # =============================================================================
 # DEEP TDD: Load Integrations Edge Cases
 # =============================================================================
+
 
 class TestLoadIntegrationsEdgeCases:
     """Test edge cases for load_all_integrations."""
@@ -1482,24 +1478,15 @@ class TestLoadIntegrationsEdgeCases:
 # env-leak bugs). Covers the `git checkout HEAD -- <file>` bypass reported
 # in the transcript that prompted this PR.
 # =============================================================================
-import os
-import subprocess as _subprocess
-
-
 def _init_git_repo(path, committed_content="original\n"):
     """Create a minimal git repo at `path` with one commit. Returns repo path."""
-    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1",
-           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
     _subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True, env=env)
-    for key, val in [("user.email", "t@t"), ("user.name", "t"),
-                     ("commit.gpgsign", "false")]:
-        _subprocess.run(["git", "-C", str(path), "config", key, val],
-                        check=True, env=env)
+    for key, val in [("user.email", "t@t"), ("user.name", "t"), ("commit.gpgsign", "false")]:
+        _subprocess.run(["git", "-C", str(path), "config", key, val], check=True, env=env)
     (path / "seed.txt").write_text(committed_content)
     _subprocess.run(["git", "-C", str(path), "add", "seed.txt"], check=True, env=env)
-    _subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"],
-                    check=True, env=env)
+    _subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"], check=True, env=env)
     return path
 
 
@@ -1527,27 +1514,32 @@ class TestGitDiffQuietHelper:
 
     def test_cwd_none_returns_false(self):
         from autorun.integrations import _git_diff_quiet
+
         assert _git_diff_quiet(None, "HEAD", None) is False
 
     def test_not_a_git_repo_returns_false(self, tmp_path):
         from autorun.integrations import _git_diff_quiet
+
         # tmp_path is not a git repo
         assert _git_diff_quiet(str(tmp_path), "HEAD", None) is False
 
     def test_fresh_repo_no_head_returns_false(self, tmp_path):
         from autorun.integrations import _git_diff_quiet
+
         _subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         # No commits yet, HEAD is undefined
         assert _git_diff_quiet(str(tmp_path), "HEAD", None) is False
 
     def test_clean_repo_returns_false(self, tmp_path):
         from autorun.integrations import _git_diff_quiet
+
         _init_git_repo(tmp_path)
         assert _git_diff_quiet(str(tmp_path), "HEAD", None) is False
         assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is False
 
     def test_unstaged_change_returns_true(self, tmp_path):
         from autorun.integrations import _git_diff_quiet
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("modified\n")
         assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
@@ -1560,6 +1552,7 @@ class TestGitDiffQuietHelper:
         New `git diff HEAD --quiet` compares to HEAD → catches staged changes.
         """
         from autorun.integrations import _git_diff_quiet
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged-content\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
@@ -1568,19 +1561,23 @@ class TestGitDiffQuietHelper:
 
     def test_subprocess_error_fails_safe(self, tmp_path, monkeypatch):
         from autorun.integrations import _git_diff_quiet
+
         _init_git_repo(tmp_path)
 
         def boom(*a, **kw):
             raise OSError("git binary exploded")
+
         monkeypatch.setattr("autorun.integrations.subprocess.run", boom)
         assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
 
     def test_timeout_fails_safe(self, tmp_path, monkeypatch):
         from autorun.integrations import _git_diff_quiet
+
         _init_git_repo(tmp_path)
 
         def timeout(*a, **kw):
             raise _subprocess.TimeoutExpired("git", 2)
+
         monkeypatch.setattr("autorun.integrations.subprocess.run", timeout)
         assert _git_diff_quiet(str(tmp_path), "HEAD", "seed.txt") is True
 
@@ -1617,6 +1614,7 @@ class TestFileDiffersFromRef:
     def test_staged_only_returns_true(self, tmp_path):
         """Regression: the exact bug from the transcript."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
@@ -1625,6 +1623,7 @@ class TestFileDiffersFromRef:
 
     def test_unstaged_only_returns_true(self, tmp_path):
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("unstaged\n")
         ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
@@ -1632,6 +1631,7 @@ class TestFileDiffersFromRef:
 
     def test_clean_returns_false(self, tmp_path):
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
         assert _file_differs_from_ref(ctx) is False
@@ -1639,6 +1639,7 @@ class TestFileDiffersFromRef:
     def test_multiline_transcript_reproducer(self, tmp_path):
         """The exact bash payload from the original bug report."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "universal-app-shell").mkdir()
         (tmp_path / "universal-app-shell" / "App.tsx").write_text("seed\n")
@@ -1647,15 +1648,14 @@ class TestFileDiffersFromRef:
         # Now create staged-only changes (the exact bug condition):
         (tmp_path / "universal-app-shell" / "App.tsx").write_text("applied-stash\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "universal-app-shell/App.tsx"], check=True)
-        cmd = ("git checkout HEAD -- universal-app-shell/App.tsx\n"
-               "git status --short universal-app-shell/App.tsx\n"
-               "wc -l universal-app-shell/App.tsx")
+        cmd = "git checkout HEAD -- universal-app-shell/App.tsx\ngit status --short universal-app-shell/App.tsx\nwc -l universal-app-shell/App.tsx"
         ctx = _make_ctx(cmd, tmp_path)
         assert _file_differs_from_ref(ctx) is True
 
     def test_segment_scoped_not_cross_command(self, tmp_path):
         """Tokens from subsequent shell-chained commands must NOT be parsed as files."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "a.txt").write_text("seed\n")
         (tmp_path / "b.txt").write_text("seed\n")
@@ -1672,6 +1672,7 @@ class TestFileDiffersFromRef:
     def test_ref_argument_extracted(self, tmp_path):
         """git checkout <branch> -- <file> uses <branch> as ref, not HEAD."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         # Create a second branch with different content
         _subprocess.run(["git", "-C", str(tmp_path), "checkout", "-qb", "feature"], check=True)
@@ -1686,6 +1687,7 @@ class TestFileDiffersFromRef:
     def test_at_symbol_ref(self, tmp_path):
         """@ is a synonym for HEAD in git."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         ctx = _make_ctx("git checkout @ -- seed.txt", tmp_path)
@@ -1694,6 +1696,7 @@ class TestFileDiffersFromRef:
     def test_quoted_path_with_space(self, tmp_path):
         """File paths with spaces must be handled by shlex tokenization."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         spaced = tmp_path / "my file.ts"
         spaced.write_text("seed\n")
@@ -1706,17 +1709,20 @@ class TestFileDiffersFromRef:
     def test_cwd_missing_returns_false(self):
         """No repo context → fail-soft allow (predicate inapplicable)."""
         from autorun.integrations import _file_differs_from_ref
+
         ctx = _make_ctx("git checkout HEAD -- x.ts", None)
         assert _file_differs_from_ref(ctx) is False
 
     def test_exception_fails_safe(self, tmp_path, monkeypatch):
         """Internal error → fail-safe block (return True)."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
 
         def boom(*a, **kw):
             raise OSError("catastrophe")
+
         monkeypatch.setattr("autorun.integrations.subprocess.run", boom)
         ctx = _make_ctx("git checkout HEAD -- seed.txt", tmp_path)
         assert _file_differs_from_ref(ctx) is True
@@ -1724,6 +1730,7 @@ class TestFileDiffersFromRef:
     def test_restore_source_argument(self, tmp_path):
         """git restore --source=HEAD~1 <file> compares to HEAD~1."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("v2\n")
         _subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "v2"], check=True)
@@ -1741,6 +1748,7 @@ class TestBackwardCompatAlias:
             _file_differs_from_ref,
             _file_has_unstaged_changes,
         )
+
         # The old key exists and points to the new function (or the alias wrapper).
         assert "_file_has_unstaged_changes" in _WHEN_PREDICATES
         assert "_file_differs_from_ref" in _WHEN_PREDICATES
@@ -1755,6 +1763,7 @@ class TestBackwardCompatAlias:
             _WHEN_PREDICATES,
             _repo_differs_from_head,
         )
+
         assert "_has_unstaged_changes" in _WHEN_PREDICATES
         assert "_repo_differs_from_head" in _WHEN_PREDICATES
         new = _WHEN_PREDICATES["_repo_differs_from_head"]
@@ -1766,12 +1775,14 @@ class TestRepoDiffersFromHead:
 
     def test_clean_repo_returns_false(self, tmp_path):
         from autorun.integrations import _repo_differs_from_head
+
         _init_git_repo(tmp_path)
         ctx = _make_ctx("git checkout .", tmp_path)
         assert _repo_differs_from_head(ctx) is False
 
     def test_unstaged_returns_true(self, tmp_path):
         from autorun.integrations import _repo_differs_from_head
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         ctx = _make_ctx("git checkout .", tmp_path)
@@ -1780,6 +1791,7 @@ class TestRepoDiffersFromHead:
     def test_staged_only_returns_true(self, tmp_path):
         """Regression: `git checkout .` destroys BOTH worktree and index."""
         from autorun.integrations import _repo_differs_from_head
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
@@ -1798,6 +1810,7 @@ class TestCheckoutTargetsFileWithChanges:
         tmp repo to exercise the intended code path.
         """
         from autorun.integrations import _checkout_targets_file_with_changes
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
@@ -1808,6 +1821,7 @@ class TestCheckoutTargetsFileWithChanges:
     def test_branch_target_allows(self, tmp_path):
         """`git checkout <branch>` must NOT be blocked."""
         from autorun.integrations import _checkout_targets_file_with_changes
+
         _init_git_repo(tmp_path)
         _subprocess.run(["git", "-C", str(tmp_path), "branch", "feature"], check=True)
         ctx = _make_ctx("git checkout feature", tmp_path)
@@ -1842,6 +1856,7 @@ class TestRestoreSemantics:
     def test_restore_staged_no_source_is_allowed(self, tmp_path):
         """`git restore --staged <file>` just unstages — non-destructive."""
         from autorun.integrations import _restore_is_destructive
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged\n")
         _subprocess.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
@@ -1850,6 +1865,7 @@ class TestRestoreSemantics:
 
     def test_restore_worktree_blocks_when_dirty(self, tmp_path):
         from autorun.integrations import _restore_is_destructive
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         ctx = _make_ctx("git restore seed.txt", tmp_path)
@@ -1858,6 +1874,7 @@ class TestRestoreSemantics:
     def test_restore_combined_SW_blocks_when_dirty(self, tmp_path):
         """`git restore -SW <file>` unstages AND discards worktree — destructive."""
         from autorun.integrations import _restore_is_destructive
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         ctx = _make_ctx("git restore -SW seed.txt", tmp_path)
@@ -1869,18 +1886,22 @@ class TestConfigMigration:
 
     def test_checkout_dashdash_uses_file_differs(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         assert DEFAULT_INTEGRATIONS["git checkout --"]["when"] == "_file_differs_from_ref"
 
     def test_checkout_uses_file_differs(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         assert DEFAULT_INTEGRATIONS["git checkout"]["when"] == "_file_differs_from_ref"
 
     def test_checkout_dot_uses_repo_differs(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         assert DEFAULT_INTEGRATIONS["git checkout ."]["when"] == "_repo_differs_from_head"
 
     def test_reset_hard_is_unconditional(self):
         from autorun.config import DEFAULT_INTEGRATIONS
+
         assert "when" not in DEFAULT_INTEGRATIONS["git reset --hard"]
 
 
@@ -1891,6 +1912,7 @@ class TestConfigMigration:
 # subprocess via _git_diff_quiet.
 # =============================================================================
 
+
 class TestParseDestructiveGitCmd:
     """Every branch of argument parsing, independent of any subprocess."""
 
@@ -1898,6 +1920,7 @@ class TestParseDestructiveGitCmd:
 
     def test_checkout_head_dash_file(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- file.ts")
         assert p.verb == "checkout"
         assert p.ref == "HEAD"
@@ -1905,6 +1928,7 @@ class TestParseDestructiveGitCmd:
 
     def test_checkout_dash_file_no_ref(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout -- file.ts")
         assert p.verb == "checkout"
         assert p.ref == "HEAD"
@@ -1912,61 +1936,73 @@ class TestParseDestructiveGitCmd:
 
     def test_checkout_branch_ref_dash_file(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout feature -- file.ts")
         assert p.ref == "feature"
 
     def test_checkout_remote_tracking_ref(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout origin/main -- file.ts")
         assert p.ref == "origin/main"
 
     def test_checkout_tag_ref(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout v1.2.3 -- file.ts")
         assert p.ref == "v1.2.3"
 
     def test_checkout_commit_hash_ref(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout abc1234 -- file.ts")
         assert p.ref == "abc1234"
 
     def test_checkout_reflog_ref(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD@{1} -- file.ts")
         assert p.ref == "HEAD@{1}"
 
     def test_checkout_at_synonym(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout @ -- file.ts")
         assert p.ref == "@"
 
     def test_checkout_fetch_head(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout FETCH_HEAD -- file.ts")
         assert p.ref == "FETCH_HEAD"
 
     def test_checkout_multiple_files(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts b.ts c.ts")
         assert p.files == ("a.ts", "b.ts", "c.ts")
 
     def test_checkout_pathspec_dot(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- .")
         assert p.files == (".",)
 
     def test_checkout_glob_pathspec(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- 'src/**/*.ts'")
         assert p.files == ("src/**/*.ts",)
 
     def test_checkout_quoted_path_with_space(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd('git checkout HEAD -- "my file.ts"')
         assert p.files == ("my file.ts",)
 
     def test_checkout_unicode_path(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- 日本.ts")
         assert p.files == ("日本.ts",)
 
@@ -1974,6 +2010,7 @@ class TestParseDestructiveGitCmd:
 
     def test_restore_plain_file(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git restore file.ts")
         assert p.verb == "restore"
         assert p.ref == "HEAD"
@@ -1981,24 +2018,28 @@ class TestParseDestructiveGitCmd:
 
     def test_restore_source_equals(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git restore --source=HEAD~1 file.ts")
         assert p.ref == "HEAD~1"
         assert p.files == ("file.ts",)
 
     def test_restore_source_space_separated(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git restore --source HEAD~1 file.ts")
         assert p.ref == "HEAD~1"
         assert p.files == ("file.ts",)
 
     def test_restore_short_s_separated(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git restore -s HEAD~1 file.ts")
         assert p.ref == "HEAD~1"
         assert p.files == ("file.ts",)
 
     def test_restore_dashdash_separator(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git restore --source=v1.0 -- file.ts")
         assert p.ref == "v1.0"
         assert p.files == ("file.ts",)
@@ -2008,27 +2049,32 @@ class TestParseDestructiveGitCmd:
     def test_segment_scoping_semicolon(self):
         """Tokens from second command must not be consumed as pathspec."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts; rm b.ts")
         assert p.files == ("a.ts",)
 
     def test_segment_scoping_and(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts && rm b.ts")
         assert p.files == ("a.ts",)
 
     def test_segment_scoping_newline(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts\nls b.ts")
         assert p.files == ("a.ts",)
 
     def test_segment_scoping_pipe(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout HEAD -- a.ts | cat")
         assert p.files == ("a.ts",)
 
     def test_segment_scoping_first_match_wins(self):
         """Earlier segments ignored; first matching git segment parsed."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("echo hi; git checkout HEAD -- a.ts")
         assert p.files == ("a.ts",)
 
@@ -2036,24 +2082,29 @@ class TestParseDestructiveGitCmd:
 
     def test_empty_command_returns_none(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         assert _parse_destructive_git_cmd("") is None
 
     def test_non_git_command_returns_none(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         assert _parse_destructive_git_cmd("rm -rf /") is None
 
     def test_git_status_returns_none(self):
         """Non-destructive git commands don't match."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         assert _parse_destructive_git_cmd("git status") is None
 
     def test_git_log_returns_none(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         assert _parse_destructive_git_cmd("git log --oneline") is None
 
     def test_git_stash_returns_none(self):
         """git stash isn't checkout/restore — handled by a different rule."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         assert _parse_destructive_git_cmd("git stash push") is None
 
     # ---- branch-switch forms (no file destructive intent via this predicate) --
@@ -2063,12 +2114,14 @@ class TestParseDestructiveGitCmd:
         predicate falls back to repo-wide diff. _checkout_targets_file_with_changes
         handles the benign-vs-destructive distinction."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout main")
         assert p.verb == "checkout"
         assert p.files == ()  # no pathspec, no `--`
 
     def test_checkout_dash_b_new_branch(self):
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout -b new-branch")
         # -b is a flag; no pathspec extracted. Ref stays HEAD.
         assert p.files == ()
@@ -2085,6 +2138,7 @@ class TestParseDestructiveGitCmd:
         destructive op bypasses the block rule.
         """
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout --no-overlay HEAD -- file.ts")
         assert p.verb == "checkout"
         assert p.ref == "HEAD", f"flag before ref leaked into ref field: {p.ref!r}"
@@ -2109,6 +2163,7 @@ class TestDestructiveGitCmdFlagBypass:
     def test_short_flag_before_ref_preserves_ref(self):
         """`git checkout -q HEAD -- file` → ref must be HEAD, not `-q`."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout -q HEAD -- file.ts")
         assert p.ref == "HEAD", f"short flag leaked into ref: {p.ref!r}"
         assert p.files == ("file.ts",)
@@ -2116,6 +2171,7 @@ class TestDestructiveGitCmdFlagBypass:
     def test_long_flag_before_ref_preserves_ref(self):
         """`git checkout --force HEAD -- file` → ref must be HEAD."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout --force HEAD -- file.ts")
         assert p.ref == "HEAD"
         assert p.files == ("file.ts",)
@@ -2123,6 +2179,7 @@ class TestDestructiveGitCmdFlagBypass:
     def test_multiple_flags_before_ref_preserves_ref(self):
         """`git checkout -q --force HEAD -- file` → ref must be HEAD."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout -q --force HEAD -- file.ts")
         assert p.ref == "HEAD"
         assert p.files == ("file.ts",)
@@ -2130,6 +2187,7 @@ class TestDestructiveGitCmdFlagBypass:
     def test_flag_no_ref_defaults_head(self):
         """`git checkout -q -- file` (flag, no ref) → defaults to HEAD."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git checkout -q -- file.ts")
         assert p.ref == "HEAD"
         assert p.files == ("file.ts",)
@@ -2138,9 +2196,11 @@ class TestDestructiveGitCmdFlagBypass:
         """End-to-end: `git checkout -q HEAD -- seed.txt` must be detected
         as destructive when the file has staged changes (was bypass before)."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged-change\n")
         import subprocess as sp
+
         sp.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
         ctx = _make_ctx("git checkout -q HEAD -- seed.txt", tmp_path)
         assert _file_differs_from_ref(ctx) is True, "short flag bypass regression"
@@ -2148,9 +2208,11 @@ class TestDestructiveGitCmdFlagBypass:
     def test_long_flag_bypass_is_blocked(self, tmp_path):
         """End-to-end: `git checkout --force HEAD -- seed.txt` blocks."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged-change\n")
         import subprocess as sp
+
         sp.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
         ctx = _make_ctx("git checkout --force HEAD -- seed.txt", tmp_path)
         assert _file_differs_from_ref(ctx) is True, "long flag bypass regression"
@@ -2160,9 +2222,8 @@ class TestDestructiveGitCmdFlagBypass:
     def test_git_dash_C_is_recognized(self, tmp_path):
         """`git -C <path> checkout HEAD -- file` must parse to a checkout."""
         from autorun.integrations import _parse_destructive_git_cmd
-        p = _parse_destructive_git_cmd(
-            f"git -C {tmp_path} checkout HEAD -- file.ts"
-        )
+
+        p = _parse_destructive_git_cmd(f"git -C {tmp_path} checkout HEAD -- file.ts")
         assert p is not None, "git -C <path> bypass: parser returned None"
         assert p.verb == "checkout"
         assert p.ref == "HEAD"
@@ -2171,27 +2232,27 @@ class TestDestructiveGitCmdFlagBypass:
     def test_git_git_dir_equals_is_recognized(self):
         """`git --git-dir=<path> checkout HEAD -- file` must parse."""
         from autorun.integrations import _parse_destructive_git_cmd
-        p = _parse_destructive_git_cmd(
-            "git --git-dir=/repo/.git checkout HEAD -- file.ts"
-        )
+
+        p = _parse_destructive_git_cmd("git --git-dir=/repo/.git checkout HEAD -- file.ts")
         assert p is not None
         assert p.verb == "checkout"
 
     def test_git_c_config_override_is_recognized(self):
         """`git -c user.email=a@b checkout HEAD -- file` must parse."""
         from autorun.integrations import _parse_destructive_git_cmd
-        p = _parse_destructive_git_cmd(
-            "git -c user.email=t@t checkout HEAD -- file.ts"
-        )
+
+        p = _parse_destructive_git_cmd("git -c user.email=t@t checkout HEAD -- file.ts")
         assert p is not None
         assert p.verb == "checkout"
 
     def test_git_dash_C_bypass_is_blocked(self, tmp_path):
         """End-to-end: `git -C <tmp_path> checkout HEAD -- seed.txt` blocks."""
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("staged-change\n")
         import subprocess as sp
+
         sp.run(["git", "-C", str(tmp_path), "add", "seed.txt"], check=True)
         # The predicate uses ctx.cwd for the diff probe; after the fix
         # _find_destructive_segment still recognizes the checkout verb, so
@@ -2199,12 +2260,11 @@ class TestDestructiveGitCmdFlagBypass:
         # probe against ctx.cwd (not -C target) returns False if cwd isn't
         # a git repo, but the important thing is the parser recognizes it.
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd(f"git -C {tmp_path} checkout HEAD -- seed.txt")
         assert p is not None, "git -C bypass regression"
         # Actual block uses ctx.cwd; if we set cwd to tmp_path we get True.
-        ctx2 = _make_ctx(
-            f"git -C {tmp_path} checkout HEAD -- seed.txt", tmp_path
-        )
+        ctx2 = _make_ctx(f"git -C {tmp_path} checkout HEAD -- seed.txt", tmp_path)
         assert _file_differs_from_ref(ctx2) is True
 
     # ---- git restore flag handling ----
@@ -2212,6 +2272,7 @@ class TestDestructiveGitCmdFlagBypass:
     def test_restore_short_flag_before_source_preserves_ref(self):
         """`git restore -q --source=HEAD~1 file` → ref must be HEAD~1."""
         from autorun.integrations import _parse_destructive_git_cmd
+
         p = _parse_destructive_git_cmd("git restore -q --source=HEAD~1 file.ts")
         assert p.verb == "restore"
         assert p.ref == "HEAD~1"
@@ -2223,6 +2284,7 @@ class TestPredicateFailureModes:
 
     def test_ctx_tool_input_is_none(self):
         from autorun.integrations import _file_differs_from_ref
+
         ctx = MagicMock()
         ctx.tool_input = None
         # Missing command extraction → None → fail-soft False
@@ -2234,6 +2296,7 @@ class TestPredicateFailureModes:
 
     def test_ctx_empty_tool_input(self):
         from autorun.integrations import _file_differs_from_ref
+
         ctx = MagicMock()
         ctx.tool_input = {}
         ctx.configure_mock(cwd=None)
@@ -2241,6 +2304,7 @@ class TestPredicateFailureModes:
 
     def test_ctx_no_tool_input_attr(self):
         from autorun.integrations import _file_differs_from_ref
+
         ctx = MagicMock(spec=[])  # no tool_input attr
         assert _file_differs_from_ref(ctx) is False
 
@@ -2248,6 +2312,7 @@ class TestPredicateFailureModes:
         """ctx.cwd may be a pathlib.Path, not a str — subprocess accepts both."""
         from pathlib import Path
         from autorun.integrations import _file_differs_from_ref
+
         _init_git_repo(tmp_path)
         (tmp_path / "seed.txt").write_text("dirty\n")
         ctx = MagicMock()
@@ -2261,23 +2326,33 @@ class TestLegacySymbolExport:
 
     def test_file_has_unstaged_changes_importable(self):
         from autorun.integrations import _file_has_unstaged_changes
+
         assert callable(_file_has_unstaged_changes)
 
     def test_has_unstaged_changes_importable(self):
         from autorun.integrations import _has_unstaged_changes
+
         assert callable(_has_unstaged_changes)
 
     def test_legacy_keys_in_predicates_dict(self):
         from autorun.integrations import _WHEN_PREDICATES
+
         # Every legacy key used by config.py (past or present) must still resolve.
-        for legacy in ("_has_unstaged_changes", "_file_has_unstaged_changes",
-                       "_has_uncommitted_changes", "has_uncommitted_changes",
-                       "_stash_exists", "_restore_is_destructive",
-                       "_checkout_targets_file_with_changes", "_not_in_pipe"):
+        for legacy in (
+            "_has_unstaged_changes",
+            "_file_has_unstaged_changes",
+            "_has_uncommitted_changes",
+            "has_uncommitted_changes",
+            "_stash_exists",
+            "_restore_is_destructive",
+            "_checkout_targets_file_with_changes",
+            "_not_in_pipe",
+        ):
             assert legacy in _WHEN_PREDICATES, f"missing legacy key: {legacy}"
 
     def test_new_keys_in_predicates_dict(self):
         from autorun.integrations import _WHEN_PREDICATES
+
         for new in ("_repo_differs_from_head", "_file_differs_from_ref"):
             assert new in _WHEN_PREDICATES, f"missing new key: {new}"
 
@@ -2290,8 +2365,7 @@ class TestVersionBumpGuard:
     """
 
     def test_entries_present_and_block_by_default(self):
-        for key in ("version-bump-command", "version-bump-manifest-edit",
-                    "version-bump-manifest-write"):
+        for key in ("version-bump-command", "version-bump-manifest-edit", "version-bump-manifest-write"):
             assert key in DEFAULT_INTEGRATIONS, f"missing {key}"
             assert DEFAULT_INTEGRATIONS[key]["action"] == "block"
 
@@ -2303,82 +2377,128 @@ class TestVersionBumpGuard:
         assert "/ar:ok" in msg
         assert "AUTORUN_VERSION_BUMP_GUARD_ENABLED" in msg
 
-    @pytest.mark.parametrize("cmd", [
-        "npm version patch", "yarn version", "pnpm version major",
-        "cargo set-version 0.4.2", "poetry version minor", "uv version --bump patch",
-        "hatch version 1.2.3", "bump2version patch", "bumpversion minor",
-        "mvn versions:set -DnewVersion=2.0",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "npm version patch",
+            "yarn version",
+            "pnpm version major",
+            "cargo set-version 0.4.2",
+            "poetry version minor",
+            "uv version --bump patch",
+            "hatch version 1.2.3",
+            "bump2version patch",
+            "bumpversion minor",
+            "mvn versions:set -DnewVersion=2.0",
+        ],
+    )
     def test_bash_patterns_match_bump_commands(self, cmd):
         from autorun.command_detection import command_matches_pattern
+
         patterns = DEFAULT_INTEGRATIONS["version-bump-command"]["patterns"]
         assert any(command_matches_pattern(cmd, p) for p in patterns), cmd
 
-    @pytest.mark.parametrize("cmd", [
-        "cargo build", "cargo test", "npm install", "npm run build",
-        "poetry install", "uv sync", "uv run pytest", "git status",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cargo build",
+            "cargo test",
+            "npm install",
+            "npm run build",
+            "poetry install",
+            "uv sync",
+            "uv run pytest",
+            "git status",
+        ],
+    )
     def test_bash_patterns_ignore_non_bump_commands(self, cmd):
         from autorun.command_detection import command_matches_pattern
+
         patterns = DEFAULT_INTEGRATIONS["version-bump-command"]["patterns"]
         assert not any(command_matches_pattern(cmd, p) for p in patterns), cmd
 
-    @pytest.mark.parametrize("path,pattern", [
-        ("/u/proj/Cargo.toml", "Cargo.toml"),
-        ("/u/proj/package.json", "package.json"),
-        ("/u/proj/pyproject.toml", "pyproject.toml"),
-    ])
+    @pytest.mark.parametrize(
+        "path,pattern",
+        [
+            ("/u/proj/Cargo.toml", "Cargo.toml"),
+            ("/u/proj/package.json", "package.json"),
+            ("/u/proj/pyproject.toml", "pyproject.toml"),
+        ],
+    )
     def test_file_patterns_match_manifest_basename(self, path, pattern):
         from autorun.command_detection import command_matches_pattern
+
         patterns = DEFAULT_INTEGRATIONS["version-bump-manifest-edit"]["patterns"]
         assert pattern in patterns
         assert command_matches_pattern(path, pattern)
 
-    @pytest.mark.parametrize("new_string", [
-        'version = "0.4.2"', "version = '1.0.0'", 'version = 1.2.3',
-        '__version__ = "2.3.4"', '  "version": "1.2.3"', 'version: 1.4.0',
-        '<version>3.2.1</version>',
-    ])
+    @pytest.mark.parametrize(
+        "new_string",
+        [
+            'version = "0.4.2"',
+            "version = '1.0.0'",
+            "version = 1.2.3",
+            '__version__ = "2.3.4"',
+            '  "version": "1.2.3"',
+            "version: 1.4.0",
+            "<version>3.2.1</version>",
+        ],
+    )
     def test_edit_condition_matches_version_assignment(self, new_string):
         # version-bump-manifest-edit reads tool_input["new_string"] (Edit/replace).
         conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-edit"]["conditions"])
-        ctx = MagicMock(tool_name="Edit",
-                        tool_input={"file_path": "/p/Cargo.toml", "new_string": new_string})
+        ctx = MagicMock(tool_name="Edit", tool_input={"file_path": "/p/Cargo.toml", "new_string": new_string})
         assert check_conditions(conds, ctx) is True, new_string
 
-    @pytest.mark.parametrize("new_string", [
-        'serde = "1.0.200"', 'name = "mypkg"', 'tokio = { version = "1.40" }',
-        'min_version = "3.8"', 'api_version = 2', 'let version = "0.4.2";',
-    ])
+    @pytest.mark.parametrize(
+        "new_string",
+        [
+            'serde = "1.0.200"',
+            'name = "mypkg"',
+            'tokio = { version = "1.40" }',
+            'min_version = "3.8"',
+            "api_version = 2",
+            'let version = "0.4.2";',
+        ],
+    )
     def test_edit_condition_ignores_non_version_edits(self, new_string):
         conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-edit"]["conditions"])
-        ctx = MagicMock(tool_name="Edit",
-                        tool_input={"file_path": "/p/Cargo.toml", "new_string": new_string})
+        ctx = MagicMock(tool_name="Edit", tool_input={"file_path": "/p/Cargo.toml", "new_string": new_string})
         assert check_conditions(conds, ctx) is False, new_string
 
     def test_write_condition_matches_version_in_content(self):
         # version-bump-manifest-write reads tool_input["content"] (Write/write_file).
         conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-write"]["conditions"])
-        ctx = MagicMock(tool_name="Write",
-                        tool_input={"file_path": "/p/package.json",
-                                    "content": '{\n  "name": "x",\n  "version": "1.2.3"\n}'})
+        ctx = MagicMock(tool_name="Write", tool_input={"file_path": "/p/package.json", "content": '{\n  "name": "x",\n  "version": "1.2.3"\n}'})
         assert check_conditions(conds, ctx) is True
 
     def test_edit_condition_does_not_match_write_only_field(self):
         # An Edit call has no "content"; the write-integration's condition must fail
         # so the two integrations route Edit->edit, Write->write (no double-fire).
         conds = tuple(DEFAULT_INTEGRATIONS["version-bump-manifest-write"]["conditions"])
-        ctx = MagicMock(tool_name="Edit",
-                        tool_input={"file_path": "/p/Cargo.toml", "new_string": 'version = "0.4.2"'})
+        ctx = MagicMock(tool_name="Edit", tool_input={"file_path": "/p/Cargo.toml", "new_string": 'version = "0.4.2"'})
         assert check_conditions(conds, ctx) is False
 
-    @pytest.mark.parametrize("val,expected", [
-        (None, True), ("", True), ("true", True), ("1", True), ("on", True),
-        ("always", True), ("false", False), ("0", False), ("no", False),
-        ("off", False), ("never", False), ("FALSE", False),
-    ])
+    @pytest.mark.parametrize(
+        "val,expected",
+        [
+            (None, True),
+            ("", True),
+            ("true", True),
+            ("1", True),
+            ("on", True),
+            ("always", True),
+            ("false", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+            ("never", False),
+            ("FALSE", False),
+        ],
+    )
     def test_toggle_helper(self, monkeypatch, val, expected):
         from autorun.config import _version_bump_guard_enabled
+
         if val is None:
             monkeypatch.delenv("AUTORUN_VERSION_BUMP_GUARD_ENABLED", raising=False)
         else:
@@ -2391,56 +2511,86 @@ class TestVersionBumpGuard:
     # tests pin down exactly which /ar:ok patterns actually grant permission, so
     # the in-message guidance stays correct.
 
-    @pytest.mark.parametrize("cmd,pattern", [
-        ("cargo set-version 9.9.9", "cargo set-version"),
-        ("npm version patch", "npm version"),
-        ("uv version --bump minor", "uv version"),
-    ])
+    @pytest.mark.parametrize(
+        "cmd,pattern",
+        [
+            ("cargo set-version 9.9.9", "cargo set-version"),
+            ("npm version patch", "npm version"),
+            ("uv version --bump minor", "uv version"),
+        ],
+    )
     def test_literal_allow_grants_per_command(self, cmd, pattern):
         from autorun.plugins import _match
+
         assert _match(cmd, pattern, "literal") is True
 
-    @pytest.mark.parametrize("file_path,pattern", [
-        ("/u/proj/Cargo.toml", "Cargo.toml"),
-        ("/u/proj/package.json", "package.json"),
-        ("/u/proj/pyproject.toml", "pyproject.toml"),
-    ])
+    @pytest.mark.parametrize(
+        "file_path,pattern",
+        [
+            ("/u/proj/Cargo.toml", "Cargo.toml"),
+            ("/u/proj/package.json", "package.json"),
+            ("/u/proj/pyproject.toml", "pyproject.toml"),
+        ],
+    )
     def test_literal_allow_grants_per_manifest(self, file_path, pattern):
         # For file events cmd == file_path, so /ar:ok '<manifest>' bypasses it.
         from autorun.plugins import _match
+
         assert _match(file_path, pattern, "literal") is True
 
-    @pytest.mark.parametrize("cmd", [
-        "cargo set-version 9.9.9", "/u/proj/Cargo.toml", "/u/proj/package.json",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cargo set-version 9.9.9",
+            "/u/proj/Cargo.toml",
+            "/u/proj/package.json",
+        ],
+    )
     def test_bare_version_literal_does_not_grant(self, cmd):
         # Regression guard: a literal `/ar:ok 'version'` must NOT be advertised —
         # `version` is not a whole word in `set-version` and is absent from
         # manifest paths, so it grants nothing. The regex form is required.
         from autorun.plugins import _match
+
         assert _match(cmd, "version", "literal") is False
 
-    @pytest.mark.parametrize("cmd", [
-        "cargo set-version 9.9.9", "npm version patch", "poetry version minor",
-        "/u/proj/Cargo.toml", "/u/proj/package.json", "/u/proj/pyproject.toml",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cargo set-version 9.9.9",
+            "npm version patch",
+            "poetry version minor",
+            "/u/proj/Cargo.toml",
+            "/u/proj/package.json",
+            "/u/proj/pyproject.toml",
+        ],
+    )
     def test_regex_oneshot_allow_grants_all_bumps(self, cmd):
         # The documented unified grant: /ar:ok 'regex:<...>' bypasses every
         # version-bump integration (bash + file) in one command.
         from autorun.plugins import _match
         from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+
         assert _match(cmd, _VERSION_BUMP_ALLOW_REGEX, "regex") is True
 
-    @pytest.mark.parametrize("cmd", [
-        "cargo build", "npm install", "uv run pytest", "/u/proj/src/main.rs",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cargo build",
+            "npm install",
+            "uv run pytest",
+            "/u/proj/src/main.rs",
+        ],
+    )
     def test_regex_oneshot_allow_does_not_overreach(self, cmd):
         from autorun.plugins import _match
         from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+
         assert _match(cmd, _VERSION_BUMP_ALLOW_REGEX, "regex") is False
 
     def test_hint_documents_consent_mechanism(self):
         from autorun.config import _VERSION_BUMP_ALLOW_REGEX
+
         msg = DEFAULT_INTEGRATIONS["version-bump-command"]["suggestion"]
         # Correct, working escape forms must be present; the broken bare-literal
         # 'version' hint must NOT be.
@@ -2467,14 +2617,12 @@ class TestVersionBumpGuard:
         store = ThreadSafeDB()
 
         def decision(tool, tool_input):
-            ctx = EventContext(session_id=sid, event="PreToolUse",
-                               tool_name=tool, tool_input=tool_input, store=store)
+            ctx = EventContext(session_id=sid, event="PreToolUse", tool_name=tool, tool_input=tool_input, store=store)
             r = plugins.app.dispatch(ctx)
             return (r or {}).get("hookSpecificOutput", {}).get("permissionDecision", "")
 
         bump_cmd = ("Bash", {"command": "cargo set-version 9.9.9"})
-        bump_file = ("Edit", {"file_path": "/p/Cargo.toml",
-                              "new_string": 'version = "0.4.2"'})
+        bump_file = ("Edit", {"file_path": "/p/Cargo.toml", "new_string": 'version = "0.4.2"'})
 
         # 1) No grant -> both blocked.
         assert decision(*bump_cmd) == "deny"
@@ -2482,9 +2630,7 @@ class TestVersionBumpGuard:
 
         # 2) Grant the unified regex allow for the rest of the session.
         #    The regex: prefix must be UNQUOTED (quoting makes it a literal).
-        grant = EventContext(
-            session_id=sid, event="UserPromptSubmit",
-            prompt=f"/ar:ok regex:{_VERSION_BUMP_ALLOW_REGEX} perm", store=store)
+        grant = EventContext(session_id=sid, event="UserPromptSubmit", prompt=f"/ar:ok regex:{_VERSION_BUMP_ALLOW_REGEX} perm", store=store)
         plugins.app.dispatch(grant)
 
         # 3) Both the bash bump and the manifest edit are now allowed.
@@ -2511,48 +2657,90 @@ class TestPublishGuard:
         assert "/ar:ok" in msg
         assert "AUTORUN_PUBLISH_GUARD_ENABLED" in msg
 
-    @pytest.mark.parametrize("cmd", [
-        "npm publish", "yarn publish", "pnpm publish --access public",
-        "cargo publish", "poetry publish", "uv publish", "hatch publish",
-        "flit publish", "twine upload dist/*", "gem push pkg.gem",
-        "mvn deploy", "gradle publish", "dotnet nuget push pkg.nupkg",
-        "docker push myimage:latest",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "npm publish",
+            "yarn publish",
+            "pnpm publish --access public",
+            "cargo publish",
+            "poetry publish",
+            "uv publish",
+            "hatch publish",
+            "flit publish",
+            "twine upload dist/*",
+            "gem push pkg.gem",
+            "mvn deploy",
+            "gradle publish",
+            "dotnet nuget push pkg.nupkg",
+            "docker push myimage:latest",
+        ],
+    )
     def test_patterns_match_publish_commands(self, cmd):
         from autorun.command_detection import command_matches_pattern
+
         patterns = DEFAULT_INTEGRATIONS["publish-command"]["patterns"]
         assert any(command_matches_pattern(cmd, p) for p in patterns), cmd
 
-    @pytest.mark.parametrize("cmd", [
-        "cargo build", "npm install", "npm run build", "docker build .",
-        "docker run img", "git push origin main", "cargo test", "uv sync",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cargo build",
+            "npm install",
+            "npm run build",
+            "docker build .",
+            "docker run img",
+            "git push origin main",
+            "cargo test",
+            "uv sync",
+        ],
+    )
     def test_patterns_ignore_non_publish_commands(self, cmd):
         from autorun.command_detection import command_matches_pattern
+
         patterns = DEFAULT_INTEGRATIONS["publish-command"]["patterns"]
         assert not any(command_matches_pattern(cmd, p) for p in patterns), cmd
 
-    @pytest.mark.parametrize("cmd", [
-        "cargo publish", "npm publish", "twine upload dist/*",
-        "gem push x.gem", "docker push img", "dotnet nuget push x", "mvn deploy",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cargo publish",
+            "npm publish",
+            "twine upload dist/*",
+            "gem push x.gem",
+            "docker push img",
+            "dotnet nuget push x",
+            "mvn deploy",
+        ],
+    )
     def test_regex_oneshot_covers_publishes(self, cmd):
         import re
         from autorun.config import _PUBLISH_ALLOW_REGEX
+
         assert re.search(_PUBLISH_ALLOW_REGEX, cmd), cmd
 
     @pytest.mark.parametrize("cmd", ["git push origin main", "docker build .", "cargo build"])
     def test_regex_oneshot_excludes_non_publishes(self, cmd):
         import re
         from autorun.config import _PUBLISH_ALLOW_REGEX
+
         assert not re.search(_PUBLISH_ALLOW_REGEX, cmd), cmd
 
-    @pytest.mark.parametrize("val,expected", [
-        (None, True), ("true", True), ("on", True),
-        ("false", False), ("0", False), ("off", False), ("never", False),
-    ])
+    @pytest.mark.parametrize(
+        "val,expected",
+        [
+            (None, True),
+            ("true", True),
+            ("on", True),
+            ("false", False),
+            ("0", False),
+            ("off", False),
+            ("never", False),
+        ],
+    )
     def test_toggle_helper(self, monkeypatch, val, expected):
         from autorun.config import _publish_guard_enabled
+
         if val is None:
             monkeypatch.delenv("AUTORUN_PUBLISH_GUARD_ENABLED", raising=False)
         else:
@@ -2569,14 +2757,12 @@ class TestPublishGuard:
         store = ThreadSafeDB()
 
         def decision(cmd):
-            ctx = EventContext(session_id=sid, event="PreToolUse", tool_name="Bash",
-                               tool_input={"command": cmd}, store=store)
+            ctx = EventContext(session_id=sid, event="PreToolUse", tool_name="Bash", tool_input={"command": cmd}, store=store)
             r = plugins.app.dispatch(ctx)
             return (r or {}).get("hookSpecificOutput", {}).get("permissionDecision", "")
 
         assert decision("cargo publish") == "deny"
-        grant = EventContext(session_id=sid, event="UserPromptSubmit",
-                             prompt="/ar:ok 'cargo publish' perm", store=store)
+        grant = EventContext(session_id=sid, event="UserPromptSubmit", prompt="/ar:ok 'cargo publish' perm", store=store)
         plugins.app.dispatch(grant)
         assert decision("cargo publish") != "deny"
         assert decision("npm publish") == "deny"  # different command still blocked

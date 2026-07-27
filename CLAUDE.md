@@ -129,6 +129,7 @@ Without three-stage: Claude might stop after Stage 1 with incomplete work.
 |-------|------|--------|-------------|
 | `/ar:go <task>` | `/ar:run` | `/autorun` | Start autonomous execution |
 | `/ar:gp <task>` | `/ar:proc` | `/autoproc` | Procedural mode with Wait Process |
+| `/ar:task` | `/ar:tasks` | - | Show task status or dispatch pause, resume, ignore, prompts, and recovery |
 | `/ar:x` | `/ar:stop` | `/autostop` | Graceful stop |
 | `/ar:sos` | `/ar:estop` | `/estop` | Emergency stop |
 
@@ -193,10 +194,12 @@ See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS lis
 
 | Command | Description |
 |---------|-------------|
-| `/ar:tasks` | Toggle task staleness reminders on/off or set threshold |
-| `/ar:tasks stale on\|off\|min <N>` | Enable/disable stale-task escape hatch or set consecutive-block threshold (v0.10.2) |
-| `/ar:task-status` | Show task lifecycle status and incomplete tasks |
-| `/ar:task-ignore <id>` | Mark task as ignored (user override to unblock stop) |
+| `/ar:task`, `/ar:tasks` | Show task, pause, prompting, and recovery status |
+| `/ar:task pause [N] [duration] [reason]` | Pause task enforcement; count and duration may be combined |
+| `/ar:task resume` | Resume task enforcement |
+| `/ar:task ignore <id> [reason]` | Mark one task ignored |
+| `/ar:task prompts on\|off\|<N>` | Configure task-staleness prompting |
+| `/ar:task recovery on\|off\|min <N>` | Configure repeated-Stop stale-task recovery |
 
 **Cache-Miss / Compaction Protection** (off by default):
 

@@ -28,8 +28,12 @@ Usage:
 
 # Tool name sets for different CLIs (Claude Code, Gemini CLI, Codex CLI)
 BASH_TOOLS = {
-    "Bash", "bash_command", "run_shell_command",
-    "exec_command", "functions.exec_command", "shell",
+    "Bash",
+    "bash_command",
+    "run_shell_command",
+    "exec_command",
+    "functions.exec_command",
+    "shell",
 }
 WRITE_TOOLS = {"Write", "write_file"}
 EDIT_TOOLS = {"Edit", "edit_file", "replace"}
@@ -48,7 +52,7 @@ TASK_COMBINED_TOOLS = {"write_todos"}
 CODEX_PLAN_TASK_TOOLS = {"update_plan"}
 
 # Truncation limits for log/debug output (avoid magic numbers across codebase)
-LOG_SNIPPET_MAX_LEN = 120     # tool results, error messages, evidence in log output
+LOG_SNIPPET_MAX_LEN = 120  # tool results, error messages, evidence in log output
 PATTERN_DISPLAY_MAX_LEN = 50  # regex/command patterns in error messages (security)
 
 
@@ -115,7 +119,7 @@ _CODEX_FIND_SUGGESTION = (
 _VERSION_ASSIGNMENT_RE = (
     r'(?m)^[ \t]*(?:__)?version(?:__)?[ \t]*[:=][ \t]*["\']?\d+\.\d+'
     r'|"version"[ \t]*:[ \t]*"\d+\.\d+'
-    r'|<version>\s*\d+\.\d+'
+    r"|<version>\s*\d+\.\d+"
 )
 
 # One-shot `/ar:ok` regex that bypasses EVERY version-bump integration in a
@@ -167,6 +171,14 @@ _PUBLISH_ALLOW_HINT = (
     "Disable the guard entirely: set AUTORUN_PUBLISH_GUARD_ENABLED=false and "
     "restart the daemon (autorun --restart-daemon)."
 )
+
+MESSAGE_DEDUP_DEFAULT_WINDOW_SECONDS = 3.0
+MESSAGE_DEDUP_DEFAULT_ENTRY_CAP = 128
+SCOPED_ALLOW_DEFAULT_GRACE_SECONDS = 1.0
+CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS = 5.0
+TASK_PAUSE_DEFAULT_TTL_SECONDS = 5 * 60
+TASK_PAUSE_GENERATION_TOKEN_BYTES = 16
+
 
 DEFAULT_INTEGRATIONS = {
     "rm": {
@@ -404,6 +416,7 @@ DEFAULT_INTEGRATIONS = {
     # NEW v0.7: Warning example (action: warn = allow + message)
     "git": {
         "action": "warn",
+        "dedup_category": "integration_warning",
         "suggestion": "Git commit rules: 1) Concrete terms (specific file paths, exact error messages) 2) No vague language ('improve', 'enhance', 'update') 3) Include technical details (line numbers, function names, test results) 4) Reference specific sources when making claims 5) No transient internal AI session details (plan phases, task IDs, CI run numbers, session references)",
     },
     # ─── Version bumps require explicit user consent ──────────────────────────
@@ -417,14 +430,20 @@ DEFAULT_INTEGRATIONS = {
     "version-bump-command": {
         "action": "block",
         "patterns": [
-            "npm version", "yarn version", "pnpm version",
-            "cargo set-version", "poetry version", "uv version",
-            "hatch version", "bump2version", "bumpversion", "mvn versions:set",
+            "npm version",
+            "yarn version",
+            "pnpm version",
+            "cargo set-version",
+            "poetry version",
+            "uv version",
+            "hatch version",
+            "bump2version",
+            "bumpversion",
+            "mvn versions:set",
         ],
         "name": "version-bump-command",
         "suggestion": (
-            "Blocked: bumping the package version requires explicit user consent. "
-            "The user has not asked for a version bump." + _VERSION_BUMP_ALLOW_HINT
+            "Blocked: bumping the package version requires explicit user consent. The user has not asked for a version bump." + _VERSION_BUMP_ALLOW_HINT
         ),
     },
     "version-bump-manifest-edit": {
@@ -432,38 +451,46 @@ DEFAULT_INTEGRATIONS = {
         "event": "file",
         "tool_matcher": "Edit|Write",
         "patterns": [
-            "Cargo.toml", "package.json", "pyproject.toml", "setup.py",
-            "setup.cfg", "build.gradle", "build.gradle.kts", "pom.xml",
-            "composer.json", "Chart.yaml", "pubspec.yaml",
+            "Cargo.toml",
+            "package.json",
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "build.gradle",
+            "build.gradle.kts",
+            "pom.xml",
+            "composer.json",
+            "Chart.yaml",
+            "pubspec.yaml",
         ],
         "name": "version-bump-manifest-edit",
         "conditions": [
-            {"field": "new_string", "operator": "regex_match",
-             "pattern": _VERSION_ASSIGNMENT_RE},
+            {"field": "new_string", "operator": "regex_match", "pattern": _VERSION_ASSIGNMENT_RE},
         ],
-        "suggestion": (
-            "Blocked: this edit changes the package version field in a manifest, "
-            "which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT
-        ),
+        "suggestion": ("Blocked: this edit changes the package version field in a manifest, which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT),
     },
     "version-bump-manifest-write": {
         "action": "block",
         "event": "file",
         "tool_matcher": "Edit|Write",
         "patterns": [
-            "Cargo.toml", "package.json", "pyproject.toml", "setup.py",
-            "setup.cfg", "build.gradle", "build.gradle.kts", "pom.xml",
-            "composer.json", "Chart.yaml", "pubspec.yaml",
+            "Cargo.toml",
+            "package.json",
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "build.gradle",
+            "build.gradle.kts",
+            "pom.xml",
+            "composer.json",
+            "Chart.yaml",
+            "pubspec.yaml",
         ],
         "name": "version-bump-manifest-write",
         "conditions": [
-            {"field": "content", "operator": "regex_match",
-             "pattern": _VERSION_ASSIGNMENT_RE},
+            {"field": "content", "operator": "regex_match", "pattern": _VERSION_ASSIGNMENT_RE},
         ],
-        "suggestion": (
-            "Blocked: this write sets the package version field in a manifest, "
-            "which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT
-        ),
+        "suggestion": ("Blocked: this write sets the package version field in a manifest, which requires explicit user consent." + _VERSION_BUMP_ALLOW_HINT),
     },
     # ─── Publishing a package/release requires explicit consent ───────────────
     # Publishes are public and usually irreversible (a released version cannot be
@@ -472,15 +499,24 @@ DEFAULT_INTEGRATIONS = {
     "publish-command": {
         "action": "block",
         "patterns": [
-            "npm publish", "yarn publish", "pnpm publish",
-            "cargo publish", "poetry publish", "uv publish", "hatch publish",
-            "flit publish", "twine upload", "gem push", "mvn deploy",
-            "gradle publish", "dotnet nuget push", "docker push",
+            "npm publish",
+            "yarn publish",
+            "pnpm publish",
+            "cargo publish",
+            "poetry publish",
+            "uv publish",
+            "hatch publish",
+            "flit publish",
+            "twine upload",
+            "gem push",
+            "mvn deploy",
+            "gradle publish",
+            "dotnet nuget push",
+            "docker push",
         ],
         "name": "publish-command",
         "suggestion": (
-            "Blocked: publishing a package/release to a registry requires explicit "
-            "user consent. The user has not asked to publish." + _PUBLISH_ALLOW_HINT
+            "Blocked: publishing a package/release to a registry requires explicit user consent. The user has not asked to publish." + _PUBLISH_ALLOW_HINT
         ),
     },
 }
@@ -495,6 +531,7 @@ DEFAULT_INTEGRATIONS = {
 #   false|0|no|off|never           — guard removed
 def _version_bump_guard_enabled() -> bool:
     import os
+
     val = os.environ.get("AUTORUN_VERSION_BUMP_GUARD_ENABLED")
     if val is not None:
         return val.strip().lower() not in {"false", "0", "no", "off", "never"}
@@ -517,6 +554,7 @@ if not _version_bump_guard_enabled():
 #   false|0|no|off|never           — guard removed
 def _publish_guard_enabled() -> bool:
     import os
+
     val = os.environ.get("AUTORUN_PUBLISH_GUARD_ENABLED")
     if val is not None:
         return val.strip().lower() not in {"false", "0", "no", "off", "never"}
@@ -529,12 +567,27 @@ if not _publish_guard_enabled():
 
 # Configuration - Three-stage completion system with clear instruction/confirmation naming
 CONFIG = {
+    # Temporal suppression is opt-in per message category. It applies only to
+    # byte-identical informational output from concurrent hook invocations;
+    # safety decisions, state transitions, failures, command replies, and Stop
+    # generations are never eligible. Claims use session-state transactions,
+    # expire on access, and stay bounded without a cleanup thread.
+    "message_dedup_enabled": True,
+    "message_dedup_window_seconds": MESSAGE_DEDUP_DEFAULT_WINDOW_SECONDS,
+    "message_dedup_max_entries_per_session": MESSAGE_DEDUP_DEFAULT_ENTRY_CAP,
+    "message_dedup_categories": {
+        "integration_warning": True,
+        "informational_notification": True,
+    },
+    "scoped_allow_default_grace_seconds": SCOPED_ALLOW_DEFAULT_GRACE_SECONDS,
+    "codex_transcript_allow_grace_seconds": CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS,
+    "task_pause_default_ttl_seconds": TASK_PAUSE_DEFAULT_TTL_SECONDS,
+    "task_pause_generation_token_bytes": TASK_PAUSE_GENERATION_TOKEN_BYTES,
     # ─── Stage 1: Initial Work ────────────────────────────────────────────────
     # What we inject to AI (descriptive text explaining what Stage 1 is)
     "stage1_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan",
     # What AI outputs when Stage 1 complete (ALL-CAPS confirmation)
     "stage1_message": "AUTORUN_INITIAL_TASKS_COMPLETED",
-
     # What we inject to guide AI through Stage 1 (detailed methodology)
     "stage1_instruction": """
 1. Read through ENTIRE task description carefully
@@ -544,13 +597,11 @@ CONFIG = {
 5. Verify bias mitigation: not skipping steps, checking own work
 6. Execute the task with full tool permissions (Bash, Edit, Write, etc.)
 7. After EVERY step, say "Wait," and execute the Wait Process""",
-
     # ─── Stage 2: Critical Evaluation ─────────────────────────────────────────
     # What we inject to AI (descriptive text - same as output for Stage 2)
     "stage2_completion": "critically evaluating previous work and continuing tasks as needed",
     # What AI outputs when Stage 2 complete (same as completion for Stage 2)
     "stage2_message": "CRITICALLY_EVALUATING_PREVIOUS_WORK_AND_CONTINUING_TASKS_AS_NEEDED",
-
     # What we inject to guide AI through Stage 2 (detailed methodology)
     "stage2_instruction": """
 1. Critique work overall and line-by-line against best practices
@@ -559,13 +610,11 @@ CONFIG = {
 4. Synthesize insights from all critiques and solutions
 5. Choose optimal solution with compelling justification
 6. If errors found, execute corrective steps immediately""",
-
     # ─── Stage 3: Final Verification ──────────────────────────────────────────
     # What we inject to AI (compound descriptive text explaining Stage 3)
     "stage3_completion": "starting tasks, analyzing user requirements, and developing comprehensive plan AND critically evaluated own work and verified all tasks are completed",
     # What AI outputs when Stage 3 complete (ALL-CAPS confirmation)
     "stage3_message": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-
     # What we inject to guide AI through Stage 3 (detailed methodology)
     "stage3_instruction": """
 1. Verify ALL requirements from original request are met
@@ -574,18 +623,15 @@ CONFIG = {
 4. Verify all file references match actual codebase
 5. Confirm code examples are syntactically correct
 6. If ANY requirement missing, return to relevant stage""",
-
     # ─── Descriptive Completion Markers ──────────────────────────────────────
     # NOTE: These are DESCRIPTIVE strings the AI outputs to communicate what it accomplished.
     # The hook system recognizes BOTH the short stage markers AND these descriptive versions.
     # Markdown command files use these descriptive strings for clarity.
     "completion_marker": "AUTORUN_ALL_TASKS_COMPLETED_AND_VERIFIED_SUCCESSFULLY",
-
     # ─── Emergency Stop ───────────────────────────────────────────────────────
     # NOTE: This is a DESCRIPTIVE string that the AI outputs to communicate its action.
     # It should describe WHAT the AI is doing, not just be a state variable name.
     "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
-
     # ─── Task Staleness Reminder (v0.9) ───────────────────────────────────────
     # Tool calls without TaskCreate/TaskUpdate before injecting reminder.
     "task_staleness_threshold": 25,
@@ -598,8 +644,8 @@ CONFIG = {
         "\nTASK UPDATE REQUIRED: {threshold} tool calls without {{task_create}} or {{task_update}}. "
         "Your next action must be one of these Task tools: "
         "1. {{task_list}}: review current tasks and their status "
-        "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"|\"completed\"): update status "
-        "3. {{task_create}}({{task_title}}=\"...\", description=\"...\"): one per specific newly discovered step "
+        '2. {{task_update}}({{task_id_param}}=N, status="in_progress"|"completed"): update status '
+        '3. {{task_create}}({{task_title}}="...", description="..."): one per specific newly discovered step '
         "4. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): update dependencies if order changed. "
         "Do not call any tool except these until you have updated your task list. "
         "Your next non-Task tool call will be blocked. Disable: /ar:tasks off"
@@ -608,8 +654,8 @@ CONFIG = {
         "\nTASK UPDATE OVERDUE: {threshold} more tool calls without a Task tool. "
         "Your next action must be one of these Task tools: "
         "1. {{task_list}}: review current tasks "
-        "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"|\"completed\"): update status "
-        "3. {{task_create}}({{task_title}}=\"...\", description=\"...\"): one per specific newly discovered step. "
+        '2. {{task_update}}({{task_id_param}}=N, status="in_progress"|"completed"): update status '
+        '3. {{task_create}}({{task_title}}="...", description="..."): one per specific newly discovered step. '
         "Do not call any other tool. Your next non-Task tool call will be blocked. "
         "Disable: /ar:tasks off"
     ),
@@ -617,24 +663,21 @@ CONFIG = {
     "task_staleness_no_tasks_message": (
         "\nNO TASKS EXIST: {threshold} tool calls with zero tasks tracking your work. "
         "Your next action must be {{task_create}}: "
-        "1. {{task_create}}({{task_title}}=\"[step]: [action]\", description=\"...\"): one per specific step, NOT one broad task "
-        "2. {{task_update}}({{task_id_param}}=N, status=\"in_progress\"): mark the task you are starting "
+        '1. {{task_create}}({{task_title}}="[step]: [action]", description="..."): one per specific step, NOT one broad task '
+        '2. {{task_update}}({{task_id_param}}=N, status="in_progress"): mark the task you are starting '
         "3. {{task_update}}({{task_id_param}}=N, addBlockedBy=[M]): wire dependencies if tasks have order. "
         "Do not call any other tool until you have created at least one task. "
         "Disable: /ar:tasks off"
     ),
     # Appended to stop-block injection when Stage 3 attempted with outstanding tasks.
     "task_outstanding_stage3_message": (
-        "\n⚠️ STAGE 3 RESET: {count} outstanding task(s): {names}. "
-        "Complete or discard them (see actions above), Stage 2 continues."
+        "\n⚠️ STAGE 3 RESET: {count} outstanding task(s): {names}. Complete or discard them (see actions above), Stage 2 continues."
     ),
-
     # ─── Ghost-Task / Stale-Ref Workaround (v0.10.2) ─────────────────────────
     # SINGLE SOURCE OF TRUTH for the marker literal. Both the injection builder
     # (uses .format(id=…)) and the detection regex (uses .split("{id}") +
     # re.escape) derive from this one string.
     "ghost_clear_marker_template": "AUTORUN_TASKS_CLEAR_STALE_TASK({id})",
-
     # SINGLE SOURCE OF TRUTH for the delegation marker, same derivation rules as
     # the stale-clear marker above. Exists because "delegated" is an autorun
     # status, not a harness one: no supported harness's task-update tool accepts
@@ -642,27 +685,21 @@ CONFIG = {
     # AI needs a way to request delegation that does not depend on the harness's
     # tool schema. Printing this marker is that way.
     "delegate_marker_template": "AUTORUN_TASK_DELEGATED({id})",
-
+    "task_pause_resume_marker_template": "AUTORUN_TASK_RECOVERY({id})",
     "delegate_reason": "delegated to a subagent via marker; non-blocking until it reports back",
-
-    "ghost_clear_reason": (
-        "stale ref: marker emitted after "
-        "ghost_clear_min_consecutive_blocks identical stop blocks"
-    ),
-
+    "ghost_clear_reason": ("stale ref: marker emitted after ghost_clear_min_consecutive_blocks identical stop blocks"),
     "ghost_clear_injection_template": (
         "\n"
         "⚠  STALE-TASK ESCAPE HATCH — this same set of ids has blocked Stop "
         "{threshold} times in a row with no tool call in between. If a task "
         "above is a stale reference (TaskList does not show it, or TaskUpdate "
-        "returns \"Task not found\"), print one of the following on its own "
+        'returns "Task not found"), print one of the following on its own '
         "line, exactly, for each stale id you want to clear:\n"
         "{marker_lines}\n"
         "These will be detected and marked `ignored` (non-blocking). Do NOT "
         "emit them for real, in-progress tasks — only for ones Claude's own "
         "Task DB no longer knows about. Disable: /ar:tasks stale off\n"
     ),
-
     # ─── Cache Guard (/ar:cache) ─────────────────────────────────────────────
     # How much of the JSONL transcript to tail-scan on each PreToolUse call.
     # Larger values find usage stats in sessions with large tool_result payloads.
@@ -674,7 +711,6 @@ CONFIG = {
     # Clock-skew tolerance: timestamps this far in the future are treated as
     # "just now" (age=0) instead of unknown (fail-open).
     "cache_guard_clock_skew_tolerance_s": 60.0,
-
     # ─── Hook Performance Budgets ───────────────────────────────────────────
     # Maximum time a hook-path state read/write may wait on the shared JSON
     # state lock. Longer waits cause Claude/Codex hook timeouts under many
@@ -774,16 +810,14 @@ CONFIG = {
         # compatibility if a user invokes the wrapper with --cli forgecode.
         "forgecode": 5.0,
     },
-
     # ─── Plan Acceptance ───────────────────────────────────────────────────
     # v0.7: Plan approval detected via PostToolUse hook on ExitPlanMode tool
     # Legacy "PLAN ACCEPTED" text marker kept for backward compatibility with main.py
     "plan_accepted_marker": "PLAN ACCEPTED",
-
     "tdd_scaffolding_message": (
         "\nTDD SCAFFOLDING REQUIRED: you must create TDD and EXEC tasks before writing ANY implementation code: "
-        "1. {{task_create}}({{task_title}}=\"[TDD] Step N: [test description]\"): one per plan step "
-        "2. {{task_create}}({{task_title}}=\"[EXEC] Step N: [impl description]\"): one per plan step "
+        '1. {{task_create}}({{task_title}}="[TDD] Step N: [test description]"): one per plan step '
+        '2. {{task_create}}({{task_title}}="[EXEC] Step N: [impl description]"): one per plan step '
         "3. {{task_update}}({{task_id_param}}=[EXEC_ID], addBlockedBy=[[TDD_ID]]): wire each EXEC blocked by TDD "
         "4. {{task_list}}: verify all tasks visible. "
         "Do not write implementation code until TDD tasks are created and wired."
@@ -792,7 +826,7 @@ CONFIG = {
     "plan_planning_task_reminder": (
         "\nPLANNING TASKS REQUIRED: a plan is active with no tasks tracking it. "
         "Your next action must be {{task_create}}: "
-        "1. {{task_create}}({{task_title}}=\"[PLANNING] Step N: [name]\") "
+        '1. {{task_create}}({{task_title}}="[PLANNING] Step N: [name]") '
         "2. {{task_update}}({{task_id_param}}=N, addBlockedBy=[N-1]): wire sequential dependencies "
         "3. {{task_list}}: verify all tasks visible. "
         "Do not call any other tool until planning tasks exist."
@@ -800,13 +834,12 @@ CONFIG = {
     "plan_execution_task_reminder": (
         "\nEXECUTION TASKS REQUIRED: plan accepted, no implementation tasks created. "
         "Your next action must be {{task_create}}: "
-        "1. {{task_create}}({{task_title}}=\"[TDD] Step N: Write tests for [step]\") "
-        "2. {{task_create}}({{task_title}}=\"[EXEC] Step N: [step description]\") "
+        '1. {{task_create}}({{task_title}}="[TDD] Step N: Write tests for [step]") '
+        '2. {{task_create}}({{task_title}}="[EXEC] Step N: [step description]") '
         "3. Wire dependencies: each [EXEC] addBlockedBy its [TDD] task "
         "4. {{task_list}}: verify all tasks visible. "
         "Do not write code until execution tasks are created and wired."
     ),
-
     # ─── Bug Workarounds ──────────────────────────────────────────────────────
     # BUG #18534: Claude Code PostToolUse additionalContext broken.
     # PostToolUse hookSpecificOutput.additionalContext is documented but silently
@@ -821,7 +854,6 @@ CONFIG = {
     # Override: set as env var with same name (true|false|always|never) — env var takes precedence.
     # Set to False to disable workaround when Anthropic fixes SDK #18534.
     "AUTORUN_BUG_CLAUDE_CODE_IGNORES_ADDITIONAL_CONTEXT_JSON_ENTRY_BUG_18534_WORKAROUND_ENABLED": True,
-
     # BUG #24115: Claude Code plugin loader reads hooks/ from the marketplace
     # source dir in addition to the installed cache. Any Gemini event name in
     # `plugins/autorun/hooks/*.json` fails Claude's strict Zod schema with
@@ -838,7 +870,6 @@ CONFIG = {
     # (keep a single hooks/hooks.json with both Claude & Gemini events separated
     # by CLI type at runtime).
     "AUTORUN_BUG_CLAUDE_CODE_MARKETPLACE_SOURCE_SCAN_BUG_24115_WORKAROUND_ENABLED": True,
-
     # BUG #14449: Gemini CLI hardcodes extension hooks at
     # `<extension_root>/hooks/hooks.json`; the `hooks` field in
     # `gemini-extension.json` is ignored at runtime.
@@ -854,7 +885,6 @@ CONFIG = {
     # manifest's `hooks` field is honored — then install.py can point Gemini
     # directly at the plugin root and skip the template materialization.
     "AUTORUN_BUG_GEMINI_CLI_HOOKS_JSON_HARDCODED_BUG_14449_WORKAROUND_ENABLED": True,
-
     # BUG #4669: Claude Code ignores permissionDecision:"deny" at exit 0. The
     # tool runs anyway despite the JSON deny decision, so the only way blocking
     # works is stderr + exit 2. Gemini CLI honours the JSON decision correctly.
@@ -868,7 +898,6 @@ CONFIG = {
     # supported and take precedence over this key.
     # Set to False when Anthropic honours deny at exit 0.
     "AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED": True,
-
     # BUG #54673: Claude Code exposes no token counts to hooks, and Opus 4.7+ /
     # Fable 5 / Mythos 5 receive no API context-awareness tags either, so the
     # model guesses at remaining capacity and defers real work on the guess.
@@ -879,12 +908,10 @@ CONFIG = {
     # Evidence: notes/2026-07-24-2045-claude-code-opus-5-premature-context-exhaustion.md
     # Set to False when Anthropic exposes token counts to hooks.
     "AUTORUN_BUG_CLAUDE_CODE_NO_TOKEN_COUNT_FOR_HOOKS_BUG_54673_WORKAROUND_ENABLED": True,
-
     # ─── Timing ───────────────────────────────────────────────────────────────
     "max_recheck_count": 3,
     "monitor_stop_delay_seconds": 300,
     "stage3_countdown_calls": 5,
-
     # ─── Injection Template ───────────────────────────────────────────────────
     "injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals.
 
@@ -912,7 +939,6 @@ This system ensures thorough, high-quality work through a structured three-stage
     * When Stage 3 is complete, output **{stage3_message}** for final completion
 8.  **FINAL OUTPUT ON SUCCESS TO STOP SYSTEM:** Only when all three stages are complete and verified, output **{stage3_message}** to stop the system
 9.  **FILE CREATION POLICY:** {policy_instructions}""",
-
     # ─── Recheck Template ─────────────────────────────────────────────────────
     "recheck_template": """AUTORUN TASK VERIFICATION: The task appears complete but requires careful verification before final confirmation.
 
@@ -933,7 +959,6 @@ Only if you are ABSOLUTELY CERTAIN everything is complete, tested, and meets all
 If ANY aspect is incomplete, uncertain, or needs additional work, continue until truly finished.
 
 This is verification attempt #{recheck_count} of {max_recheck_count}.""",
-
     # ─── Forced Compliance Template ───────────────────────────────────────────
     "forced_compliance_template": """AUTORUN FORCED COMPLIANCE OVERRIDE: System has detected prolonged verification cycles.
 
@@ -954,7 +979,6 @@ After completing the above forced requirements, output: {stage3_message}
 
 NOTE: This is a forced compliance override to prevent infinite verification loops.
 Ensure core functionality is working before final completion.""",
-
     # ─── Procedural Injection Template (Wait Process Methodology) ─────────────
     "procedural_injection_template": """Your primary objective is to continue the **UNINTERRUPTED, FULLY AUTONOMOUS, NONINTERACTIVE, PATIENT, AND SAFE EXECUTION** of your current tasks and goals using the **Sequential Improvement Methodology**.
 
@@ -984,48 +1008,43 @@ After every step and substep you must say "Wait," and execute this sequential th
 **CRITICAL ESCAPE TO STOP SYSTEM:** Only if risk is irreversible, output: **{emergency_stop}**
 
 **FILE CREATION POLICY:** {policy_instructions}""",
-
     # ─── Policies ─────────────────────────────────────────────────────────────
     "policies": {
         "ALLOW": ("allow-all", "ALLOW ALL: Full permission to create/modify files."),
         "JUSTIFY": ("justify-create", "JUSTIFIED: Search existing first. Include <AUTOFILE_JUSTIFICATION>reason</AUTOFILE_JUSTIFICATION> for new files."),
-        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep}. NO new files.")
+        "SEARCH": ("strict-search", "STRICT SEARCH: ONLY modify existing files. Use {glob} and {grep}. NO new files."),
     },
-
     # ─── Policy Blocked Messages ──────────────────────────────────────────────
     "policy_blocked": {
         "SEARCH": 'Blocked: STRICT SEARCH policy active. To proceed: 1) Identify what functionality this file provides, 2) Search for existing files handling similar functionality with {glob} and patterns like "*related-topic*", 3) Use {grep} to find files with relevant classes/functions/imports, 4) Modify the most appropriate existing file. Search examples: "*auth*" for authentication, "*api*" for endpoints, "*config*" for settings, "*model*" for data structures.',
-        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files related to your functionality with {glob} and {grep}, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation."
+        "JUSTIFY": "Blocked: JUSTIFIED CREATION policy requires justification. To proceed: 1) Search for existing files related to your functionality with {glob} and {grep}, 2) Evaluate if existing files can be extended, 3) If no existing file works, include <AUTOFILE_JUSTIFICATION>Specific technical reason why existing files cannot accommodate this functionality</AUTOFILE_JUSTIFICATION> in your reasoning during the same prompt where you request the file creation, then retry file creation.",
     },
-
     # ─── Command Mappings ─────────────────────────────────────────────────────
     # Values must match keys in COMMAND_HANDLERS (case-sensitive)
     # Commands support /ar: prefix with short and long forms
     "command_mappings": {
         # ─── New Short Forms (/ar: prefix) ────────────────────────────────────
-        "/ar:a": "ALLOW",           # Allow all file creation
-        "/ar:j": "JUSTIFY",         # Justify new files
-        "/ar:f": "SEARCH",          # Find existing files only
-        "/ar:st": "STATUS",         # Show status
-        "/ar:go": "activate",       # Start autorun
-        "/ar:gp": "activate",       # Start autoproc (procedural)
-        "/ar:x": "stop",            # Graceful stop
-        "/ar:sos": "emergency_stop", # Emergency stop
-        "/ar:tm": "tmux_session",   # Tmux session management
-        "/ar:tt": "tmux_test",      # Tmux test workflow
-
+        "/ar:a": "ALLOW",  # Allow all file creation
+        "/ar:j": "JUSTIFY",  # Justify new files
+        "/ar:f": "SEARCH",  # Find existing files only
+        "/ar:st": "STATUS",  # Show status
+        "/ar:go": "activate",  # Start autorun
+        "/ar:gp": "activate",  # Start autoproc (procedural)
+        "/ar:x": "stop",  # Graceful stop
+        "/ar:sos": "emergency_stop",  # Emergency stop
+        "/ar:tm": "tmux_session",  # Tmux session management
+        "/ar:tt": "tmux_test",  # Tmux test workflow
         # ─── New Long Forms (/ar: prefix) ─────────────────────────────────────
-        "/ar:allow": "ALLOW",       # Allow all file creation
-        "/ar:justify": "JUSTIFY",   # Justify new files
-        "/ar:find": "SEARCH",       # Find existing files only
-        "/ar:status": "STATUS",     # Show status
-        "/ar:run": "activate",      # Start autorun
-        "/ar:proc": "activate",     # Start autoproc (procedural)
-        "/ar:stop": "stop",         # Graceful stop
-        "/ar:estop": "emergency_stop", # Emergency stop
-        "/ar:tmux": "tmux_session", # Tmux session management
-        "/ar:ttest": "tmux_test",   # Tmux test workflow (ttest to avoid collision with test.md)
-
+        "/ar:allow": "ALLOW",  # Allow all file creation
+        "/ar:justify": "JUSTIFY",  # Justify new files
+        "/ar:find": "SEARCH",  # Find existing files only
+        "/ar:status": "STATUS",  # Show status
+        "/ar:run": "activate",  # Start autorun
+        "/ar:proc": "activate",  # Start autoproc (procedural)
+        "/ar:stop": "stop",  # Graceful stop
+        "/ar:estop": "emergency_stop",  # Emergency stop
+        "/ar:tmux": "tmux_session",  # Tmux session management
+        "/ar:ttest": "tmux_test",  # Tmux test workflow (ttest to avoid collision with test.md)
         # ─── Plan Commands ─────────────────────────────────────────────────────
         "/ar:pn": "NEW_PLAN",
         "/ar:pr": "REFINE_PLAN",
@@ -1035,7 +1054,6 @@ After every step and substep you must say "Wait," and execute this sequential th
         "/ar:planrefine": "REFINE_PLAN",
         "/ar:planupdate": "UPDATE_PLAN",
         "/ar:planprocess": "PROCESS_PLAN",
-
         # ─── Legacy Commands (backward compatibility) ─────────────────────────
         "/autorun": "activate",
         "/autoproc": "activate",
@@ -1045,26 +1063,22 @@ After every step and substep you must say "Wait," and execute this sequential th
         "/afa": "ALLOW",
         "/afj": "JUSTIFY",
         "/afst": "STATUS",
-
         # ─── Command Blocking (NEW in v0.6.0) ───────────────────────────────────────
         "/ar:no": "BLOCK_PATTERN",
         "/ar:ok": "ALLOW_PATTERN",
         "/ar:clear": "CLEAR_PATTERN",
         "/ar:globalno": "GLOBAL_BLOCK_PATTERN",
         "/ar:globalok": "GLOBAL_ALLOW_PATTERN",
-        "/ar:globalstatus": "GLOBAL_BLOCK_STATUS"
+        "/ar:globalstatus": "GLOBAL_BLOCK_STATUS",
     },
-
     # Built-in command integrations (suggestions for dangerous commands)
     "default_integrations": DEFAULT_INTEGRATIONS,
-
     # ─── Integration Search Paths (File-based Extensions) ─────────────────────
     # User can create .md files matching these patterns to add custom integrations
     # Format: .claude/autorun.{name}.local.md (same pattern as hookify)
     "integration_search_paths": [
-        ".claude/autorun.*.local.md",   # Default pattern (like hookify)
+        ".claude/autorun.*.local.md",  # Default pattern (like hookify)
     ],
-
     # ─── Install / Uninstall Locations ────────────────────────────────────────
     # Where autorun deploys shared, cross-harness assets. Install and uninstall
     # both read these, so relocating one moves both — a literal in either would
@@ -1177,9 +1191,7 @@ def detect_cli_type(payload: dict = None) -> str:
 # Applicability is Platform.has_exit2_workaround, never a hardcoded name.
 # Removal: delete this block and replace the two call sites in
 # client.output_hook_response with False, leaving only Pathway B.
-BUG_4669_FLAG = (
-    "AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED"
-)
+BUG_4669_FLAG = "AUTORUN_BUG_CLAUDE_CODE_DENY_IGNORED_AT_EXIT_ZERO_BUG_4669_WORKAROUND_ENABLED"
 
 # Predates the bug-workaround policy and is documented in CLAUDE.md, the README
 # and `--exit2-mode`, which writes it. Kept as an alias and checked first so an

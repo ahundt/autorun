@@ -13,6 +13,7 @@ from autorun.client import (
     get_stable_pid,
     is_tool_gate_event,
     prepare_payload_for_daemon,
+    StableProcessIdentity,
 )
 from autorun.config import CONFIG
 from autorun.platforms import hook_platforms
@@ -30,7 +31,10 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     """Direct `autorun --cli codex` must not let ambient Gemini env win later."""
     monkeypatch.setenv("AUTORUN_CLI_TYPE", "codex")
     monkeypatch.setenv("GEMINI_CLI", "1")
-    monkeypatch.setattr("autorun.client.get_stable_pid", lambda: 12345)
+    monkeypatch.setattr(
+        "autorun.client.get_stable_process_identity",
+        lambda: StableProcessIdentity(12345, 67890),
+    )
 
     payload, cli_type = prepare_payload_for_daemon(
         {
@@ -44,6 +48,7 @@ def test_client_forwards_explicit_cli_type_to_daemon(monkeypatch):
     assert cli_type == "codex"
     assert payload["cli_type"] == "codex"
     assert payload["_pid"] == 12345
+    assert payload["_pid_started_at_units"] == 67890
     assert "_cwd" in payload
 
 

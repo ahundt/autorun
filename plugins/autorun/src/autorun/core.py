@@ -41,7 +41,7 @@ import hashlib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Dict, List, Callable, Set, Union
+from typing import Any, Optional, Dict, List, Callable, Set, Union, Literal
 from functools import lru_cache
 
 from collections import OrderedDict
@@ -676,9 +676,7 @@ class ThreadSafeDB:
                 self._loaded_sessions.discard(session_id)
                 if isinstance(exc, SessionPersistenceError):
                     raise
-                raise SessionPersistenceError(
-                    f"State update was not saved for {session_id} ({field}): {exc}"
-                ) from exc
+                raise SessionPersistenceError(f"State update was not saved for {session_id} ({field}): {exc}") from exc
             self._cache[key] = persisted
             self._loaded_sessions.add(session_id)
             return copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
@@ -781,16 +779,10 @@ class ThreadSafeDB:
         change what the daemon allows or blocks.
         """
         now = time.monotonic()
-        for key in [
-            key for key, (written, _size) in self._volatile.items()
-            if (now - written) > self._volatile_max_age_seconds
-        ]:
+        for key in [key for key, (written, _size) in self._volatile.items() if (now - written) > self._volatile_max_age_seconds]:
             self._drop_volatile(key)
 
-        while (
-            len(self._volatile) > self._volatile_max_entries
-            or self._volatile_bytes > self._volatile_max_bytes
-        ):
+        while len(self._volatile) > self._volatile_max_entries or self._volatile_bytes > self._volatile_max_bytes:
             oldest, _entry = next(iter(self._volatile.items()))
             self._drop_volatile(oldest)
 
@@ -905,59 +897,131 @@ class ThreadSafeDB:
                 failures.append((session_id, sorted(fields), e))
 
         if failures:
-            described = "; ".join(
-                f"{session_id} ({', '.join(fields)}): {error}"
-                for session_id, fields, error in failures
-            )
-            raise SessionPersistenceError(
-                f"State was not saved and has been dropped from memory: {described}"
-            ) from failures[0][2]
+            described = "; ".join(f"{session_id} ({', '.join(fields)}): {error}" for session_id, fields, error in failures)
+            raise SessionPersistenceError(f"State was not saved and has been dropped from memory: {described}") from failures[0][2]
 
 
-# === TRI-LAYER IDENTITY RESOLUTION (Optional, for resume robustness) ===
-def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
-    """
-    Resolve stable session key for resume robustness.
+_HISTORY_IDENTITY_DIGEST_BYTES = 16
+_UNRESOLVED_SESSION_KEYS = frozenset({"", "unknown", "default_session", "direct-mode", "unresolved"})
+SessionIdentityAuthority = Literal[
+    "explicit-shared",
+    "history",
+    "payload",
+    "process-birth",
+    "weak-process",
+    "unresolved",
+]
 
-    Priority:
-    1. AUTORUN_SESSION_ID env var (explicit override)
-    2. JSONL history file scan (survives claude --resume)
-    3. session_id from payload (fallback)
 
-    Usage: Enable with AUTORUN_USE_IDENTITY=1
-    """
+@dataclass(frozen=True, slots=True)
+class ResolvedSessionIdentity:
+    """State key plus evidence strength; opaque keys are never reparsed."""
+
+    key: str
+    authority: SessionIdentityAuthority
+
+    @property
+    def may_grant_task_pause(self) -> bool:
+        return self.authority in {"explicit-shared", "history", "payload"}
+
+
+def _canonical_transcript_token(transcript_path: str) -> str:
+    canonical = str(Path(transcript_path).expanduser().resolve(strict=False))
+    return hashlib.blake2b(
+        canonical.encode("utf-8"),
+        digest_size=_HISTORY_IDENTITY_DIGEST_BYTES,
+    ).hexdigest()
+
+
+def _discover_transcript_paths(pid: int) -> tuple[str, ...]:
+    """Return deterministic canonical transcript candidates for one process."""
     import platform
 
-    # Layer 1: Explicit env var
-    if env_id := os.environ.get("AUTORUN_SESSION_ID"):
-        return f"explicit:{env_id}"
+    candidates: set[str] = set()
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return ()
+    if platform.system() == "Linux":
+        try:
+            for fd in Path(f"/proc/{pid}/fd").iterdir():
+                target = str(fd.readlink())
+                if target.endswith(".jsonl") and ".claude" in target:
+                    candidates.add(str(Path(target).expanduser().resolve(strict=False)))
+        except (PermissionError, FileNotFoundError, OSError):
+            return ()
+    elif platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["lsof", "-p", str(pid), "-Fn"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return ()
+        for line in result.stdout.splitlines():
+            path = line[1:] if line.startswith("n") else ""
+            if path.endswith(".jsonl") and ".claude" in path:
+                candidates.add(str(Path(path).expanduser().resolve(strict=False)))
+    return tuple(sorted(candidates))
 
-    # Layer 2: JSONL file (for resume robustness)
-    if os.environ.get("AUTORUN_USE_IDENTITY") == "1":
-        if platform.system() == "Linux":
-            try:
-                fd_dir = Path(f"/proc/{pid}/fd")
-                for fd in fd_dir.iterdir():
-                    target = fd.readlink()
-                    if ".jsonl" in str(target) and ".claude" in str(target):
-                        return f"history:{Path(target).name}"
-            except (PermissionError, FileNotFoundError, OSError):
-                pass
-        elif platform.system() == "Darwin":
-            try:
-                result = subprocess.run(["lsof", "-p", str(pid), "-Fn"], capture_output=True, text=True, timeout=2.0)
-                for line in result.stdout.splitlines():
-                    if line.startswith("n") and ".jsonl" in line and ".claude" in line:
-                        return f"history:{Path(line[1:]).name}"
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass
 
-    # Layer 3: Fallback to session_id from payload
-    if not fallback_id or fallback_id == "unknown":
-        # Use stable PID-based identity if session_id is missing (startup hooks)
-        # pid is the Claude session PID (parent of the hook process)
-        return f"pid:{pid}" if pid else "default_session"
-    return fallback_id
+def resolve_session_identity(
+    *,
+    pid: int | None,
+    process_started_at_units: int | None,
+    fallback_id: str,
+    transcript_path: str | None = None,
+    use_history_identity: bool | None = None,
+) -> ResolvedSessionIdentity:
+    """Resolve a state key without confusing process identity with a session."""
+    if explicit_id := os.environ.get("AUTORUN_SESSION_ID"):
+        return ResolvedSessionIdentity(
+            key=f"explicit:{explicit_id}",
+            authority="explicit-shared",
+        )
+
+    use_history = os.environ.get("AUTORUN_USE_IDENTITY") == "1" if use_history_identity is None else use_history_identity
+    if use_history:
+        candidates = (transcript_path,) if transcript_path else _discover_transcript_paths(pid or 0)
+        if len(candidates) == 1:
+            return ResolvedSessionIdentity(
+                key=f"history:{_canonical_transcript_token(candidates[0])}",
+                authority="history",
+            )
+
+    normalized_fallback = fallback_id.strip() if isinstance(fallback_id, str) else ""
+    if normalized_fallback not in _UNRESOLVED_SESSION_KEYS:
+        return ResolvedSessionIdentity(
+            key=normalized_fallback,
+            authority="payload",
+        )
+
+    has_process_birth = (
+        isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+        and isinstance(process_started_at_units, int)
+        and not isinstance(process_started_at_units, bool)
+        and process_started_at_units > 0
+    )
+    if has_process_birth:
+        return ResolvedSessionIdentity(
+            key=f"pid-birth:{pid}:{process_started_at_units}",
+            authority="process-birth",
+        )
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        return ResolvedSessionIdentity(key=f"pid:{pid}", authority="weak-process")
+    return ResolvedSessionIdentity(key="unresolved", authority="unresolved")
+
+
+def resolve_session_key(pid: int, cwd: str, fallback_id: str) -> str:
+    """Compatibility wrapper returning only the resolved state key."""
+    del cwd
+    return resolve_session_identity(
+        pid=pid,
+        process_started_at_units=None,
+        fallback_id=fallback_id,
+    ).key
 
 
 # === LAZY TRANSCRIPT ===
@@ -1025,10 +1089,7 @@ class LazyTranscript:
             if str(role).lower() != "assistant":
                 continue
             text = self._content_text(message.get("content"))
-            provider_id = (
-                entry.get("id") or entry.get("message_id")
-                or message.get("id") or message.get("message_id")
-            )
+            provider_id = entry.get("id") or entry.get("message_id") or message.get("id") or message.get("message_id")
             digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
             identity = f"id:{provider_id}" if provider_id else f"index:{index}:{digest}"
             return identity, text
@@ -1074,8 +1135,30 @@ HOOK_SCHEMAS = {
         "hso": {"hookEventName", "additionalContext"},
     },
     "SessionStart": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage"}, "hso": {}},
-    "Stop": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"}, "hso": {}},
-    "SubagentStop": {"root": {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason"}, "hso": {}},
+    "Stop": {
+        "root": {
+            "continue",
+            "stopReason",
+            "suppressOutput",
+            "systemMessage",
+            "decision",
+            "reason",
+            "hookSpecificOutput",
+        },
+        "hso": {"hookEventName", "additionalContext"},
+    },
+    "SubagentStop": {
+        "root": {
+            "continue",
+            "stopReason",
+            "suppressOutput",
+            "systemMessage",
+            "decision",
+            "reason",
+            "hookSpecificOutput",
+        },
+        "hso": {"hookEventName", "additionalContext"},
+    },
 }
 
 CODEX_COMMON_ROOT_FIELDS = frozenset({"continue", "stopReason", "suppressOutput", "systemMessage"})
@@ -1390,6 +1473,7 @@ class EventContext:
     #                                               Distinct purpose from the two in-memory views above.
     __slots__ = (
         "_session_id",
+        "_session_identity_authority",
         "_event",
         "_prompt",
         "_tool_name",
@@ -1469,8 +1553,14 @@ class EventContext:
         last_assistant_message: str = "",
         background_tasks: List = None,
         session_crons: List = None,
+        session_identity_authority: SessionIdentityAuthority = "unresolved",
     ):
         object.__setattr__(self, "_session_id", session_id)
+        object.__setattr__(
+            self,
+            "_session_identity_authority",
+            session_identity_authority,
+        )
         object.__setattr__(self, "_event", event)
         object.__setattr__(self, "_prompt", prompt)
         object.__setattr__(self, "_tool_name", tool_name)
@@ -1496,9 +1586,7 @@ class EventContext:
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, "_source", source)
         object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
-        object.__setattr__(
-            self, "_last_assistant_message", last_assistant_message or ""
-        )
+        object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
         object.__setattr__(self, "_background_tasks", tuple(background_tasks or ()))
         object.__setattr__(self, "_session_crons", tuple(session_crons or ()))
         object.__setattr__(self, "_chain_notifications", [])
@@ -1507,6 +1595,10 @@ class EventContext:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def session_identity_authority(self) -> SessionIdentityAuthority:
+        return self._session_identity_authority
 
     @property
     def event(self) -> str:
@@ -1680,10 +1772,7 @@ class EventContext:
             if isinstance(exc, SessionPersistenceError):
                 error = exc
             else:
-                error = SessionPersistenceError(
-                    f"State update was not saved for {target_session} "
-                    f"({name}): {exc}"
-                )
+                error = SessionPersistenceError(f"State update was not saved for {target_session} ({name}): {exc}")
             report_state_persistence_failure(self, [name], target_session, error)
             if error is exc:
                 raise
@@ -2034,9 +2123,7 @@ class EventContext:
                 # Claude doesn't support additionalContext here.
                 # AI_ECHO_CHANNEL is already-shown text: deliverable to the AI,
                 # never re-printed to the user on any pathway.
-                notifs = [
-                    m for m, c in self._chain_notifications if c != AI_ECHO_CHANNEL
-                ]
+                notifs = [m for m, c in self._chain_notifications if c != AI_ECHO_CHANNEL]
                 prefix = "\n".join(notifs)
                 stop_msg = f"{prefix}\n{stop_msg}" if stop_msg else prefix
                 self._chain_notifications.clear()
@@ -2083,11 +2170,7 @@ class EventContext:
                     # already-shown text and is excluded — this pathway has no
                     # additionalContext to carry it, so including it would only
                     # reprint the block to the user.
-                    notifs = [
-                        m
-                        for m, c in self._chain_notifications
-                        if c != AI_ECHO_CHANNEL
-                    ]
+                    notifs = [m for m, c in self._chain_notifications if c != AI_ECHO_CHANNEL]
                     prefix = "\n".join(notifs)
                     if prefix:
                         human_text = f"{prefix}\n{human_text}" if human_text else prefix
@@ -2531,12 +2614,18 @@ class AutorunDaemon:
 
             # Resolve session identity (supports tri-layer for resume robustness)
             raw_session_id = normalized["session_id"]
-            session_id = resolve_session_key(pid, payload.get("_cwd", ""), raw_session_id)
+            identity = resolve_session_identity(
+                pid=pid,
+                process_started_at_units=payload.get("_pid_started_at_units"),
+                fallback_id=raw_session_id,
+                transcript_path=normalized.get("transcript_path"),
+            )
 
             # Build context with shared store for magic state persistence
             # _cwd is injected by client.py:197 and used by plan_export.py:project_dir
             ctx = EventContext(
-                session_id=session_id,
+                session_id=identity.key,
+                session_identity_authority=identity.authority,
                 event=normalized["hook_event_name"],
                 prompt=normalized["prompt"],
                 tool_name=normalized["tool_name"],

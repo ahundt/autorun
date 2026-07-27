@@ -5,20 +5,22 @@ temporary permission grants with use counts, time-based TTLs, or permanent mode.
 
 Used by: /ar:ok, /ar:globalok command handlers in plugins.py.
 """
+
 from __future__ import annotations
 
 import dataclasses
+import math
 import re
 import time
 from dataclasses import dataclass
+from collections.abc import Sequence
 
+from .config import CONFIG, SCOPED_ALLOW_DEFAULT_GRACE_SECONDS
 
 _PERMANENT_KEYWORDS = frozenset({"permanent", "perm", "p"})
 
 # Matches duration strings like "5m", "1h", "30s", "2h30m", "1h15m30s"
-_DURATION_RE = re.compile(
-    r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$"
-)
+_DURATION_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 
 def parse_duration(s: str) -> float | None:
@@ -76,6 +78,79 @@ def parse_scope_args(desc: str | None) -> tuple[float | None, int | None, bool]:
     return (ttl, uses, False)
 
 
+@dataclass(frozen=True, slots=True)
+class ScopeSpec:
+    """Validated count/time scope without a pattern or policy decision."""
+
+    ttl_seconds: float | None = None
+    remaining_uses: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.ttl_seconds is not None and (
+            isinstance(self.ttl_seconds, bool) or not isinstance(self.ttl_seconds, (int, float)) or not math.isfinite(self.ttl_seconds) or self.ttl_seconds <= 0
+        ):
+            raise ValueError(f"ttl_seconds must be a finite number greater than 0, got {self.ttl_seconds!r}; pass positive seconds or None")
+        if self.remaining_uses is not None and (isinstance(self.remaining_uses, bool) or not isinstance(self.remaining_uses, int) or self.remaining_uses <= 0):
+            raise ValueError(f"remaining_uses must be an integer greater than 0, got {self.remaining_uses!r}; pass a positive count or None")
+
+    @property
+    def permanent(self) -> bool:
+        return self.ttl_seconds is None and self.remaining_uses is None
+
+
+def parse_scope_tokens(
+    tokens: Sequence[str],
+    *,
+    default_scope: ScopeSpec,
+    count_unit: str,
+) -> ScopeSpec:
+    """Parse explicit count/duration tokens; reject ambiguous combinations."""
+    if not tokens:
+        return default_scope
+
+    ttl_seconds: float | None = None
+    remaining_uses: int | None = None
+    permanent = False
+    for raw in tokens:
+        token = raw.strip().lower()
+        if token in _PERMANENT_KEYWORDS:
+            if permanent or ttl_seconds is not None or remaining_uses is not None:
+                raise ValueError("perm cannot be combined with a count or duration; pass perm alone to keep the scope active until resumed")
+            permanent = True
+            continue
+
+        if token.isdecimal():
+            if permanent or remaining_uses is not None:
+                raise ValueError(f"{count_unit} count may be provided once; got {raw!r}; pass one positive count")
+            count = int(token)
+            if count <= 0:
+                raise ValueError(f"{count_unit} count must be greater than 0, got {count}; pass a positive count or omit it for the configured default")
+            remaining_uses = count
+            continue
+
+        duration = parse_duration(token)
+        if duration is None:
+            raise ValueError(
+                f"scope token must be a positive {count_unit} count, duration "
+                f"(for example 5m), or perm; got {raw!r}; pass a supported "
+                "scope token or start a free-form reason with a word"
+            )
+        if permanent:
+            raise ValueError("perm cannot be combined with a count or duration; pass perm alone to keep the scope active until resumed")
+        if ttl_seconds is not None:
+            raise ValueError(f"duration may be provided once; got {raw!r}; pass one duration, optionally with one count")
+        ttl_seconds = duration
+
+    return (
+        ScopeSpec()
+        if permanent
+        else ScopeSpec(
+            ttl_seconds=ttl_seconds,
+            remaining_uses=remaining_uses,
+        )
+    )
+
+
 def fingerprint_call(session_id: str, tool_name: str, cmd: str) -> str:
     """Stable 16-char fingerprint for parallel-hook deduplication.
 
@@ -83,6 +158,7 @@ def fingerprint_call(session_id: str, tool_name: str, cmd: str) -> str:
     so cache-override grace is byte-identical to /ar:ok grace windows.
     """
     import hashlib
+
     return hashlib.md5(f"{session_id}:{tool_name}:{cmd}".encode()).hexdigest()[:16]
 
 
@@ -108,11 +184,143 @@ def fingerprint_call(session_id: str, tool_name: str, cmd: str) -> str:
 # The last_call_id fingerprint (hash of session_id:tool_name:cmd) further
 # restricts the grace to parallel invocations of the exact same call in the
 # same session, preventing global allows from bleeding into concurrent sessions.
-_PARALLEL_GRACE_SECONDS: float = 1.0
+_PARALLEL_GRACE_SECONDS: float = SCOPED_ALLOW_DEFAULT_GRACE_SECONDS
 
 
-@dataclass(frozen=True)
-class ScopedAllow:
+def _configured_parallel_grace_seconds() -> float:
+    value = CONFIG.get(
+        "scoped_allow_default_grace_seconds",
+        SCOPED_ALLOW_DEFAULT_GRACE_SECONDS,
+    )
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return SCOPED_ALLOW_DEFAULT_GRACE_SECONDS
+    if not math.isfinite(parsed) or parsed <= 0:
+        return SCOPED_ALLOW_DEFAULT_GRACE_SECONDS
+    return parsed
+
+
+@dataclass(frozen=True, slots=True)
+class GrantClaim:
+    """Result of atomically claiming one logical use of a scoped grant."""
+
+    allowed: bool
+    replay: bool
+    grant: ScopedGrant
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScopedGrant:
+    """Pattern-neutral immutable time/count grant."""
+
+    granted_at: float = 0.0
+    ttl_seconds: float | None = None
+    remaining_uses: int | None = None
+    consumed_at: float = 0.0
+    last_call_id: str = ""
+    grace_seconds: float | None = None
+
+    def _time_is_active(self, timestamp: float) -> bool:
+        if self.granted_at > 0 and timestamp < self.granted_at:
+            return False
+        return not (self.ttl_seconds is not None and self.granted_at > 0 and (timestamp - self.granted_at) >= self.ttl_seconds)
+
+    def is_active(self, *, now: float | None = None) -> bool:
+        """Return whether time/count scope remains, excluding replay grace."""
+        timestamp = time.time() if now is None else now
+        if not self._time_is_active(timestamp):
+            return False
+        return self.remaining_uses is None or self.remaining_uses > 0
+
+    def claim_once(
+        self,
+        call_id: str,
+        *,
+        now: float | None = None,
+    ) -> GrantClaim:
+        """Claim one logical call; matching concurrent retries do not decrement."""
+        if not call_id:
+            return GrantClaim(False, False, self)
+        timestamp = time.time() if now is None else now
+        if not self._time_is_active(timestamp):
+            return GrantClaim(False, False, self)
+
+        grace_seconds = self.grace_seconds if self.grace_seconds is not None else _configured_parallel_grace_seconds()
+        elapsed = timestamp - self.consumed_at
+        if self.last_call_id == call_id and self.consumed_at > 0 and 0 <= elapsed < grace_seconds:
+            return GrantClaim(True, True, self)
+
+        if self.remaining_uses is None:
+            return GrantClaim(True, False, self)
+        if self.remaining_uses <= 0:
+            return GrantClaim(False, False, self)
+        claimed = dataclasses.replace(
+            self,
+            remaining_uses=self.remaining_uses - 1,
+            consumed_at=timestamp,
+            last_call_id=call_id,
+        )
+        return GrantClaim(True, False, claimed)
+
+    def _scope_dict(self) -> dict:
+        data: dict = {}
+        if self.granted_at > 0:
+            data["granted_at"] = self.granted_at
+        if self.ttl_seconds is not None:
+            data["ttl_seconds"] = self.ttl_seconds
+        if self.remaining_uses is not None:
+            data["remaining_uses"] = self.remaining_uses
+        if self.consumed_at > 0:
+            data["consumed_at"] = self.consumed_at
+        if self.last_call_id:
+            data["last_call_id"] = self.last_call_id
+        if self.grace_seconds is not None:
+            data["grace_seconds"] = self.grace_seconds
+        return data
+
+    def to_dict(self) -> dict:
+        return self._scope_dict()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ScopedGrant:
+        return cls(
+            granted_at=data.get("granted_at", 0.0),
+            ttl_seconds=data.get("ttl_seconds"),
+            remaining_uses=data.get("remaining_uses"),
+            consumed_at=data.get("consumed_at", 0.0),
+            last_call_id=data.get("last_call_id", ""),
+            grace_seconds=data.get("grace_seconds"),
+        )
+
+    def status_label(
+        self,
+        *,
+        count_unit: str,
+        now: float | None = None,
+    ) -> str:
+        parts: list[str] = []
+        if self.remaining_uses is not None:
+            count = self.remaining_uses
+            unit = count_unit if count == 1 else f"{count_unit}s"
+            parts.append(f"{count} {unit}")
+        if self.ttl_seconds is not None and self.granted_at > 0:
+            timestamp = time.time() if now is None else now
+            remaining = max(
+                0,
+                math.ceil(self.ttl_seconds - (timestamp - self.granted_at)),
+            )
+            if remaining >= 60:
+                parts.append(f"{int(remaining // 60)}m{int(remaining % 60)}s")
+            else:
+                parts.append(f"{int(remaining)}s")
+        if not parts:
+            return "permanent"
+        return ", ".join(parts) + " remaining"
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedAllow(ScopedGrant):
     """Composable capability for temporary permission grants.
 
     Immutable — consume() returns a new instance. JSON-serializable via
@@ -129,17 +337,12 @@ class ScopedAllow:
     global allow consumed by session A will not grant grace to session B even
     if session B runs the same command within the grace window.
     """
-    pattern: str
+
+    pattern: str = ""
     pattern_type: str = "literal"
     suggestion: str = ""
-    granted_at: float = 0.0
-    ttl_seconds: float | None = None
-    remaining_uses: int | None = None
-    consumed_at: float = 0.0     # Timestamp of last consume(); enables grace period
-    last_call_id: str = ""       # Fingerprint of the call that consumed this allow
-    grace_seconds: float | None = None
 
-    def is_valid(self, call_id: str = "") -> bool:
+    def is_valid(self, call_id: str = "", *, now: float | None = None) -> bool:
         """Check if this allow is still active (not expired/exhausted).
 
         Args:
@@ -154,17 +357,14 @@ class ScopedAllow:
         This lets the second autorun invocation (RTK-spawned) for the same
         Bash tool call pass TIER 1 instead of falling to TIER 2 blocks.
         """
-        if self.ttl_seconds is not None and self.granted_at > 0:
-            if (time.time() - self.granted_at) > self.ttl_seconds:
-                return False
+        timestamp = time.time() if now is None else now
+        if not self._time_is_active(timestamp):
+            return False
         if self.remaining_uses is not None:
             if self.remaining_uses <= 0:
-                grace_seconds = (
-                    self.grace_seconds
-                    if self.grace_seconds is not None
-                    else _PARALLEL_GRACE_SECONDS
-                )
-                if self.consumed_at > 0 and (time.time() - self.consumed_at) < grace_seconds:
+                grace_seconds = self.grace_seconds if self.grace_seconds is not None else _configured_parallel_grace_seconds()
+                elapsed = timestamp - self.consumed_at
+                if self.consumed_at > 0 and 0 <= elapsed < grace_seconds:
                     # If we have a stored fingerprint and a caller fingerprint, they must match.
                     # This prevents a global allow's grace from being claimed by a different session.
                     # Falls back to time-only if either fingerprint is absent (legacy state).
@@ -174,7 +374,12 @@ class ScopedAllow:
                 return False
         return True
 
-    def consume(self, call_id: str = "") -> ScopedAllow:
+    def consume(
+        self,
+        call_id: str = "",
+        *,
+        now: float | None = None,
+    ) -> ScopedAllow:
         """Return new ScopedAllow with one use consumed (immutable).
 
         Args:
@@ -193,28 +398,20 @@ class ScopedAllow:
             return dataclasses.replace(
                 self,
                 remaining_uses=max(0, new_count),
-                consumed_at=time.time(),
+                consumed_at=time.time() if now is None else now,
                 last_call_id=call_id,
             )
         return dataclasses.replace(self, remaining_uses=new_count)
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict (for session_manager storage)."""
-        d: dict = {"pattern": self.pattern, "pattern_type": self.pattern_type}
+        d: dict = {
+            "pattern": self.pattern,
+            "pattern_type": self.pattern_type,
+            **self._scope_dict(),
+        }
         if self.suggestion:
             d["suggestion"] = self.suggestion
-        if self.granted_at > 0:
-            d["granted_at"] = self.granted_at
-        if self.ttl_seconds is not None:
-            d["ttl_seconds"] = self.ttl_seconds
-        if self.remaining_uses is not None:
-            d["remaining_uses"] = self.remaining_uses
-        if self.consumed_at > 0:
-            d["consumed_at"] = self.consumed_at
-        if self.last_call_id:
-            d["last_call_id"] = self.last_call_id
-        if self.grace_seconds is not None:
-            d["grace_seconds"] = self.grace_seconds
         return d
 
     @classmethod
@@ -232,18 +429,6 @@ class ScopedAllow:
             grace_seconds=d.get("grace_seconds"),
         )
 
-    def status_label(self) -> str:
+    def status_label(self, *, now: float | None = None) -> str:
         """Human-readable remaining scope for /ar:blocks display."""
-        parts: list[str] = []
-        if self.remaining_uses is not None:
-            n = self.remaining_uses
-            parts.append(f"{n} use{'s' if n != 1 else ''}")
-        if self.ttl_seconds is not None and self.granted_at > 0:
-            remaining = max(0, self.ttl_seconds - (time.time() - self.granted_at))
-            if remaining >= 60:
-                parts.append(f"{int(remaining // 60)}m{int(remaining % 60)}s")
-            else:
-                parts.append(f"{int(remaining)}s")
-        if not parts:
-            return "permanent"
-        return ", ".join(parts) + " remaining"
+        return ScopedGrant.status_label(self, count_unit="use", now=now)

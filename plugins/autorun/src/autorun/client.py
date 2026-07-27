@@ -40,6 +40,7 @@ import json
 import asyncio
 import subprocess
 import datetime
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -58,6 +59,7 @@ from . import ipc
 DEBUG_LOG = ipc.AUTORUN_LOG_FILE
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 _STABLE_PID_PARENT_SCAN_DEPTH = 12
+_PROCESS_BIRTH_UNITS_PER_SECOND = 1_000_000
 
 
 def _hook_platform_process_markers() -> tuple[str, ...]:
@@ -249,18 +251,32 @@ def output_hook_response(response: dict | str, event: str = "unknown", cli_type:
         return 0
 
 
-def get_stable_pid() -> int:
-    """Traverse up process tree to find the stable CLI process ID.
+@dataclass(frozen=True, slots=True)
+class StableProcessIdentity:
+    """PID and birth time captured from the same live process object."""
+
+    pid: int
+    started_at_units: int | None
+
+
+def get_stable_process_identity() -> StableProcessIdentity:
+    """Traverse to a stable CLI process and capture its birth time.
 
     Avoids using the ephemeral hook_entry.py/uv/python PID. Looks for any
     hook-capable platform registered in platforms.py, so new harnesses do not
-    need a separate branch here. Falls back to ppid if discovery fails.
+    need a separate branch here. Missing birth evidence remains explicit so it
+    cannot be mistaken for session authority.
     """
+    fallback_pid = os.getppid()
     try:
         import psutil
+    except ImportError:
+        return StableProcessIdentity(fallback_pid, None)
 
+    try:
         markers = _hook_platform_process_markers()
         current = psutil.Process()
+        stable = None
         for _ in range(_STABLE_PID_PARENT_SCAN_DEPTH):
             parent = current.parent()
             if not parent:
@@ -271,11 +287,25 @@ def get_stable_pid() -> int:
             except Exception:
                 cmdline = ""
             if any(marker in name or marker in cmdline for marker in markers):
-                return parent.pid
+                stable = parent
+                break
             current = parent
-    except (ImportError, Exception):
-        pass
-    return os.getppid()
+        stable = stable or psutil.Process(fallback_pid)
+        try:
+            started_at_units = round(stable.create_time() * _PROCESS_BIRTH_UNITS_PER_SECOND)
+        except (psutil.Error, ValueError, AttributeError, TypeError):
+            started_at_units = None
+        return StableProcessIdentity(
+            pid=stable.pid,
+            started_at_units=started_at_units,
+        )
+    except psutil.Error:
+        return StableProcessIdentity(fallback_pid, None)
+
+
+def get_stable_pid() -> int:
+    """Compatibility accessor for callers that need only the stable PID."""
+    return get_stable_process_identity().pid
 
 
 def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
@@ -288,7 +318,9 @@ def prepare_payload_for_daemon(payload: dict | None) -> tuple[dict, str]:
     payload = dict(payload or {})
 
     # Inject context for daemon lifecycle management.
-    payload["_pid"] = get_stable_pid()
+    process = get_stable_process_identity()
+    payload["_pid"] = process.pid
+    payload["_pid_started_at_units"] = process.started_at_units
     if "_cwd" not in payload:
         # Every supported harness reports the project directory in the payload's
         # "cwd" field (Claude Code, Gemini CLI, Qwen Code, Antigravity, Codex).

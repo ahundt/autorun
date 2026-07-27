@@ -16,6 +16,7 @@ Tests verify:
 - Task reminders work without ar:plannew/ar:planrefine
 - Full chain dispatch with real EventContext + ThreadSafeDB
 """
+
 import threading
 import time
 import pytest
@@ -24,7 +25,7 @@ from autorun.core import EventContext, ThreadSafeDB
 from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 from autorun import plugins
 from autorun import task_lifecycle
-from autorun.session_manager import session_state, SessionStateManager
+from autorun.session_manager import SessionStateManager
 
 
 @pytest.fixture
@@ -97,6 +98,7 @@ def make_stop_ctx(
 
 # === Test 1: Chain registration order ===
 
+
 class TestStopChainOrder:
     """Verify prevent_premature_stop is registered before autorun_injection."""
 
@@ -104,17 +106,13 @@ class TestStopChainOrder:
         """Task lifecycle Stop handler must be in the Stop chain."""
         stop_chain = plugins.app.chains.get("Stop", [])
         handler_names = [h.__name__ for h in stop_chain]
-        assert "prevent_premature_stop" in handler_names, (
-            f"prevent_premature_stop not in Stop chain. Handlers: {handler_names}"
-        )
+        assert "prevent_premature_stop" in handler_names, f"prevent_premature_stop not in Stop chain. Handlers: {handler_names}"
 
     def test_autorun_injection_registered_in_stop_chain(self):
         """autorun_injection must be in the Stop chain."""
         stop_chain = plugins.app.chains.get("Stop", [])
         handler_names = [h.__name__ for h in stop_chain]
-        assert "autorun_injection" in handler_names, (
-            f"autorun_injection not in Stop chain. Handlers: {handler_names}"
-        )
+        assert "autorun_injection" in handler_names, f"autorun_injection not in Stop chain. Handlers: {handler_names}"
 
     def test_prevent_premature_stop_fires_before_autorun_injection(self):
         """prevent_premature_stop MUST come before autorun_injection in chain.
@@ -128,20 +126,16 @@ class TestStopChainOrder:
         pps_idx = handler_names.index("prevent_premature_stop")
         ai_idx = handler_names.index("autorun_injection")
 
-        assert pps_idx < ai_idx, (
-            f"prevent_premature_stop (idx={pps_idx}) must fire BEFORE "
-            f"autorun_injection (idx={ai_idx}). Chain: {handler_names}"
-        )
+        assert pps_idx < ai_idx, f"prevent_premature_stop (idx={pps_idx}) must fire BEFORE autorun_injection (idx={ai_idx}). Chain: {handler_names}"
 
 
 # === Test 2: Task lifecycle blocks stop with outstanding tasks ===
 
+
 class TestTaskLifecycleBlocksStop:
     """Verify that outstanding tasks block stop regardless of autorun state."""
 
-    def test_stop_blocked_with_8_open_tasks_autorun_inactive(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_stop_blocked_with_8_open_tasks_autorun_inactive(self, isolated_task_config, isolated_session):
         """Bug reproduction: 10 tasks (2 done, 8 open), autorun NOT active.
 
         Task lifecycle should still block stop even when autorun is off.
@@ -167,16 +161,10 @@ class TestTaskLifecycleBlocksStop:
         ctx = make_stop_ctx(session_id=sid, autorun_active=False)
         result = manager.handle_stop(ctx)
 
-        assert result is not None, (
-            "handle_stop must block when 8 tasks are outstanding"
-        )
-        assert result.get("continue") is True, (
-            "continue must be True to keep AI working (block stop)"
-        )
+        assert result is not None, "handle_stop must block when 8 tasks are outstanding"
+        assert result.get("continue") is True, "continue must be True to keep AI working (block stop)"
 
-    def test_stop_blocked_with_open_tasks_autorun_stage3_completed(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_stop_blocked_with_open_tasks_autorun_stage3_completed(self, isolated_task_config, isolated_session):
         """Bug reproduction: autorun at STAGE_2_COMPLETED (stage3 countdown done).
 
         Even when autorun's three-stage system thinks it's done,
@@ -200,14 +188,10 @@ class TestTaskLifecycleBlocksStop:
         )
         result = manager.handle_stop(ctx)
 
-        assert result is not None, (
-            "handle_stop must block even at STAGE_2_COMPLETED with open tasks"
-        )
+        assert result is not None, "handle_stop must block even at STAGE_2_COMPLETED with open tasks"
         assert result.get("continue") is True
 
-    def test_stop_allowed_when_all_tasks_completed(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_stop_allowed_when_all_tasks_completed(self, isolated_task_config, isolated_session):
         """Stop should be allowed when all tasks are completed."""
         sid = f"test-stop-all-done-{time.time()}"
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
@@ -218,19 +202,16 @@ class TestTaskLifecycleBlocksStop:
         ctx = make_stop_ctx(session_id=sid)
         result = manager.handle_stop(ctx)
 
-        assert result is None, (
-            "handle_stop must return None (allow stop) when all tasks completed"
-        )
+        assert result is None, "handle_stop must return None (allow stop) when all tasks completed"
 
 
 # === Test 3: Full chain dispatch with outstanding tasks ===
 
+
 class TestFullStopChainDispatch:
     """Test full app.dispatch() Stop chain with real task lifecycle."""
 
-    def test_full_chain_blocks_stop_with_outstanding_tasks(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_full_chain_blocks_stop_with_outstanding_tasks(self, isolated_task_config, isolated_session):
         """Full Stop chain dispatch must block when tasks are outstanding.
 
         This is the end-to-end test: create tasks via TaskLifecycle,
@@ -261,20 +242,16 @@ class TestFullStopChainDispatch:
             "This means prevent_premature_stop didn't block. "
             f"Chain handlers: {[h.__name__ for h in plugins.app.chains.get('Stop', [])]}"
         )
-        assert result.get("continue") is True, (
-            "Full Stop chain must set continue=True to keep AI working (block stop)"
-        )
+        assert result.get("continue") is True, "Full Stop chain must set continue=True to keep AI working (block stop)"
         # autorun_injection should NOT have deactivated autorun
         assert ctx.autorun_active is True, (
-            "autorun_active must remain True — autorun_injection should not have "
-            "fired because prevent_premature_stop blocked first"
+            "autorun_active must remain True — autorun_injection should not have fired because prevent_premature_stop blocked first"
         )
 
-    def test_full_chain_allows_stop_when_no_tasks(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_full_chain_allows_stop_when_no_tasks(self, isolated_task_config, isolated_session):
         """Full Stop chain allows stop when no tasks exist and stage3 complete."""
         from autorun.config import CONFIG
+
         sid = f"test-chain-allow-{time.time()}"
 
         # No tasks created — task lifecycle returns None
@@ -298,19 +275,16 @@ class TestFullStopChainDispatch:
             # Stop block text lives in "reason"; "systemMessage" is deliberately
             # unset because Claude Code renders it as a second, duplicate UI row
             # (see response_to_reject_stop_and_continue in platforms.py).
-            assert "CANNOT STOP" not in result.get("reason", ""), (
-                "Full Stop chain should not block when no tasks exist"
-            )
+            assert "CANNOT STOP" not in result.get("reason", ""), "Full Stop chain should not block when no tasks exist"
 
 
 # === Test 4: Task reminders work without ar:plannew/ar:planrefine ===
 
+
 class TestTaskRemindersIndependentOfPlanMode:
     """Task lifecycle must work regardless of how the session was started."""
 
-    def test_stop_blocked_without_autorun_active(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_stop_blocked_without_autorun_active(self, isolated_task_config, isolated_session):
         """Tasks block stop even when autorun_active is False.
 
         User creates tasks manually (not via /ar:plannew) — task lifecycle
@@ -324,14 +298,10 @@ class TestTaskRemindersIndependentOfPlanMode:
         ctx = make_stop_ctx(session_id=sid, autorun_active=False)
         result = manager.handle_stop(ctx)
 
-        assert result is not None, (
-            "Task lifecycle must block stop even when autorun is not active"
-        )
+        assert result is not None, "Task lifecycle must block stop even when autorun is not active"
         assert result.get("continue") is True
 
-    def test_session_start_resumes_tasks_without_plan_mode(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_session_start_resumes_tasks_without_plan_mode(self, isolated_task_config, isolated_session):
         """SessionStart should inject task context even without plan mode."""
         sid = f"test-resume-no-plan-{time.time()}"
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
@@ -346,13 +316,9 @@ class TestTaskRemindersIndependentOfPlanMode:
         ctx.event = "SessionStart"
         result = manager.handle_session_start(ctx)
 
-        assert result is not None, (
-            "SessionStart must inject task context when tasks are outstanding"
-        )
+        assert result is not None, "SessionStart must inject task context when tasks are outstanding"
 
-    def test_staleness_reminder_fires_with_tasks_but_no_autorun(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_staleness_reminder_fires_with_tasks_but_no_autorun(self, isolated_task_config, isolated_session):
         """Task staleness reminder must fire even without autorun mode.
 
         The staleness counter (tool_calls_since_task_update) should trigger
@@ -370,6 +336,7 @@ class TestTaskRemindersIndependentOfPlanMode:
 
 
 # === Test 5: Task lifecycle enabled check ===
+
 
 class TestTaskLifecycleEnabled:
     """Verify is_enabled() correctly controls hook registration."""
@@ -391,12 +358,11 @@ class TestTaskLifecycleEnabled:
 
 # === Test 6: Fail-open logging on exceptions ===
 
+
 class TestFailOpenLogging:
     """Verify that exceptions in prevent_premature_stop are logged, not swallowed."""
 
-    def test_fail_open_logs_warning_on_exception(
-        self, isolated_task_config, isolated_session, caplog
-    ):
+    def test_fail_open_logs_warning_on_exception(self, isolated_task_config, isolated_session, caplog):
         """When prevent_premature_stop raises, it must log a warning with session info.
 
         This is the safety net: if the system can't check tasks, it allows stop
@@ -424,12 +390,11 @@ class TestFailOpenLogging:
 
         # But the exception must be logged
         warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("Stop hook error" in msg or "fail-open" in msg for msg in warning_msgs), (
-            f"Exception must be logged as warning. Logged: {warning_msgs}"
-        )
+        assert any("Stop hook error" in msg or "fail-open" in msg for msg in warning_msgs), f"Exception must be logged as warning. Logged: {warning_msgs}"
 
 
 # === Test 7: Context compaction resilience ===
+
 
 class TestContextCompactionResilience:
     """Verify task state survives context compaction.
@@ -438,9 +403,7 @@ class TestContextCompactionResilience:
     The session_id stays the same. The daemon's ThreadSafeDB retains task state.
     """
 
-    def test_tasks_persist_across_simulated_compaction(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_tasks_persist_across_simulated_compaction(self, isolated_task_config, isolated_session):
         """Tasks created in pre-compaction context must block stop in post-compaction context.
 
         Simulates: create tasks → compaction → new Stop event with same session_id.
@@ -460,20 +423,14 @@ class TestContextCompactionResilience:
         # (this is what happens when a new hook event fires after compaction)
         manager2 = TaskLifecycle(session_id=sid, config=isolated_task_config)
         incomplete = manager2.get_incomplete_tasks(exclude_blocking=True)
-        assert len(incomplete) == 5, (
-            f"Tasks must survive compaction. Expected 5, got {len(incomplete)}"
-        )
+        assert len(incomplete) == 5, f"Tasks must survive compaction. Expected 5, got {len(incomplete)}"
 
         # Post-compaction: stop must be blocked
         ctx = make_stop_ctx(session_id=sid, autorun_active=False)
         result = manager2.handle_stop(ctx)
-        assert result is not None, (
-            "Stop must be blocked after compaction with outstanding tasks"
-        )
+        assert result is not None, "Stop must be blocked after compaction with outstanding tasks"
 
-    def test_session_start_compact_source_reinjects_tasks(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_session_start_compact_source_reinjects_tasks(self, isolated_task_config, isolated_session):
         """SessionStart with source='compact' must re-inject task context.
 
         Per Claude Code docs, context compaction triggers SessionStart with
@@ -508,18 +465,11 @@ class TestContextCompactionResilience:
         # Note: source='compact' comes in the payload, not stored on ctx directly
         result = manager.handle_session_start(ctx)
 
-        assert result is not None, (
-            "SessionStart after compaction must re-inject task context "
-            "when tasks are outstanding"
-        )
+        assert result is not None, "SessionStart after compaction must re-inject task context when tasks are outstanding"
         msg = result.get("systemMessage", "")
-        assert "Active task" in msg, (
-            f"Task injection must include task subjects. Got: {msg[:200]}"
-        )
+        assert "Active task" in msg, f"Task injection must include task subjects. Got: {msg[:200]}"
 
-    def test_tasks_not_in_lifecycle_store_allows_stop(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_tasks_not_in_lifecycle_store_allows_stop(self, isolated_task_config, isolated_session):
         """If tasks exist only in Claude's internal system (not tracked by lifecycle),
         the stop hook cannot block because it has no visibility into those tasks.
 
@@ -536,13 +486,11 @@ class TestContextCompactionResilience:
 
         ctx = make_stop_ctx(session_id=sid, autorun_active=False)
         result = manager.handle_stop(ctx)
-        assert result is None, (
-            "Stop must be allowed when lifecycle store has no tasks "
-            "(even if Claude's internal system has tasks — lifecycle can't see them)"
-        )
+        assert result is None, "Stop must be allowed when lifecycle store has no tasks (even if Claude's internal system has tasks — lifecycle can't see them)"
 
 
 # === Test 8: handle_task_create regex coverage ===
+
 
 class TestTaskCreateRegexCoverage:
     """Verify handle_task_create parses all known TaskCreate result formats."""
@@ -552,17 +500,21 @@ class TestTaskCreateRegexCoverage:
         sid = f"test-regex-{time.time()}"
         return TaskLifecycle(session_id=sid, config=isolated_task_config)
 
-    @pytest.mark.parametrize("result_text,expected_id", [
-        ("Task #42 created successfully", "42"),
-        ("Created task #99 successfully", "99"),
-        ("Task 7 created", "7"),
-        ("#123", "123"),
-        ("Task #1 created successfully: Fix login bug", "1"),
-        ("Created task #500 successfully: Implement streaming", "500"),
-    ])
+    @pytest.mark.parametrize(
+        "result_text,expected_id",
+        [
+            ("Task #42 created successfully", "42"),
+            ("Created task #99 successfully", "99"),
+            ("Task 7 created", "7"),
+            ("#123", "123"),
+            ("Task #1 created successfully: Fix login bug", "1"),
+            ("Created task #500 successfully: Implement streaming", "500"),
+        ],
+    )
     def test_task_id_extraction(self, manager, result_text, expected_id):
         """handle_task_create must extract task ID from all result formats."""
         from unittest.mock import MagicMock
+
         ctx = MagicMock()
         ctx.tool_result = result_text
         ctx.tool_input = {"subject": "Test task", "description": ""}
@@ -571,27 +523,20 @@ class TestTaskCreateRegexCoverage:
         manager.handle_task_create(ctx)
 
         tasks = manager.tasks
-        assert expected_id in tasks, (
-            f"Task ID {expected_id} not found after parsing '{result_text}'. "
-            f"Tasks: {list(tasks.keys())}"
-        )
+        assert expected_id in tasks, f"Task ID {expected_id} not found after parsing '{result_text}'. Tasks: {list(tasks.keys())}"
 
 
 # === Test 9: pending_stop_injection — Stop-hook AI delivery fix ===
 
+
 class TestPendingStopInjection:
     """Verify Stop-hook injection reaches AI via PostToolUse deferred delivery.
 
-    Root bug: Stop events lack hookSpecificOutput support (HOOK_SCHEMAS hso:{}).
-    ctx.block(injection) → decision+reason only → user terminal, NOT AI context.
-    Fix: handle_stop() stores injection in ctx.pending_stop_injection (session
-    state) so deliver_pending_stop_injection PostToolUse handler can deliver it
-    via additionalContext on the AI's next tool call.
+    The established block response uses decision+reason. The deferred replay
+    preserves actionable guidance through the context pathway across harnesses.
     """
 
-    def test_handle_stop_sets_pending_injection(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_handle_stop_sets_pending_injection(self, isolated_task_config, isolated_session):
         """handle_stop() must store injection in pending_stop_injection."""
         sid = f"test-pending-stop-{time.time()}"
         store = ThreadSafeDB()
@@ -604,23 +549,12 @@ class TestPendingStopInjection:
         assert result is not None, "handle_stop must block with incomplete task"
         assert result.get("continue") is True, "continue must be True to keep AI working"
 
-        # Core assertion: injection stored in session state for PostToolUse delivery
         pending = ctx.pending_stop_injection
-        assert pending is not None, (
-            "handle_stop() must store injection in ctx.pending_stop_injection. "
-            "Stop events have no hookSpecificOutput, so decision+reason only reach "
-            "the user terminal. pending_stop_injection defers AI delivery to PostToolUse."
-        )
-        assert "CANNOT STOP" in pending, (
-            f"pending_stop_injection must contain stop message. Got: {pending[:100]}"
-        )
-        assert "Unfinished work" in pending, (
-            "pending_stop_injection must include the task subject in the task list"
-        )
+        assert pending is not None, "handle_stop() must store injection in ctx.pending_stop_injection."
+        assert "CANNOT STOP" in pending
+        assert "Unfinished work" in pending
 
-    def test_pending_injection_cleared_after_delivery(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_pending_injection_cleared_after_delivery(self, isolated_task_config, isolated_session):
         """deliver_pending_stop_injection handler must clear pending after delivery."""
         sid = f"test-pending-clear-{time.time()}"
         store = ThreadSafeDB()
@@ -644,18 +578,14 @@ class TestPendingStopInjection:
         # Find and call deliver_pending_stop_injection from the PostToolUse chain
         post_chain = plugins.app.chains.get("PostToolUse", [])
         handler_names = [h.__name__ for h in post_chain]
-        assert "deliver_pending_stop_injection" in handler_names, (
-            f"deliver_pending_stop_injection not in PostToolUse chain: {handler_names}"
-        )
+        assert "deliver_pending_stop_injection" in handler_names, f"deliver_pending_stop_injection not in PostToolUse chain: {handler_names}"
 
         deliver_idx = handler_names.index("deliver_pending_stop_injection")
         deliver_fn = post_chain[deliver_idx]
         result = deliver_fn(post_ctx)
 
         assert result is None, "deliver_pending_stop_injection must return None (chain continues)"
-        assert post_ctx.pending_stop_injection is None, (
-            "pending_stop_injection must be cleared after delivery to avoid repeat injection"
-        )
+        assert post_ctx.pending_stop_injection is None, "pending_stop_injection must be cleared after delivery to avoid repeat injection"
         # Chain notification must contain the injection text
         assert any("CANNOT STOP" in msg for msg, _ in post_ctx._chain_notifications), (
             "deliver_pending_stop_injection must add Stop injection as chain notification"
@@ -667,15 +597,14 @@ class TestPendingStopInjection:
         # additionalContext; only "ai" is also shown to the user.
         from autorun.core import AI_ECHO_CHANNEL
 
-        assert any(
-            ch in ("ai", AI_ECHO_CHANNEL) for _, ch in post_ctx._chain_notifications
-        ), "pending_stop_injection must be delivered on an AI channel → additionalContext"
-        assert not any(ch == "human" for _, ch in post_ctx._chain_notifications), (
-            "the block must not be re-printed to the user; the Stop hook already did"
+        assert any(ch in ("ai", AI_ECHO_CHANNEL) for _, ch in post_ctx._chain_notifications), (
+            "pending_stop_injection must be delivered on an AI channel → additionalContext"
         )
+        assert not any(ch == "human" for _, ch in post_ctx._chain_notifications), "the block must not be re-printed to the user; the Stop hook already did"
 
 
 # === Test 10: End-to-end PostToolUse TaskCreate → Stop blocked ===
+
 
 class TestPostToolUseTaskCreateBlocksStop:
     """Verify that tasks created via PostToolUse chain (real Claude Code path)
@@ -692,9 +621,7 @@ class TestPostToolUseTaskCreateBlocksStop:
     This test verifies the full chain: PostToolUse(TaskCreate) → tracked → Stop blocked.
     """
 
-    def test_task_created_via_post_tool_use_blocks_stop(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_task_created_via_post_tool_use_blocks_stop(self, isolated_task_config, isolated_session):
         """Full E2E: PostToolUse(TaskCreate) → task tracked → Stop blocked.
 
         Simulates the exact sequence Claude Code sends:
@@ -716,7 +643,7 @@ class TestPostToolUseTaskCreateBlocksStop:
         )
 
         # Run through full PostToolUse chain
-        post_result = plugins.app._run_chain(create_ctx, "PostToolUse")
+        plugins.app._run_chain(create_ctx, "PostToolUse")
         # PostToolUse handlers return None (allow tool to complete)
 
         # Step 2: Verify task was tracked in lifecycle store
@@ -727,18 +654,11 @@ class TestPostToolUseTaskCreateBlocksStop:
             f"Tracked tasks: {list(tasks.keys())}. "
             f"If empty, track_task_operations didn't fire — check PostToolUse matcher."
         )
-        assert tasks["1"]["status"] == "pending", (
-            f"Newly created task must be 'pending', not '{tasks['1']['status']}'"
-        )
-        assert tasks["1"]["subject"] == "Fix login bug", (
-            f"Task subject must match. Got: {tasks['1']['subject']}"
-        )
+        assert tasks["1"]["status"] == "pending", f"Newly created task must be 'pending', not '{tasks['1']['status']}'"
+        assert tasks["1"]["subject"] == "Fix login bug", f"Task subject must match. Got: {tasks['1']['subject']}"
         # Must NOT be a ghost task
         is_ghost = tasks["1"].get("metadata", {}).get("ghost_task", False)
-        assert not is_ghost, (
-            "Task created via PostToolUse(TaskCreate) must NOT be a ghost task. "
-            "Ghost tasks are NON_BLOCKING and won't prevent Stop."
-        )
+        assert not is_ghost, "Task created via PostToolUse(TaskCreate) must NOT be a ghost task. Ghost tasks are NON_BLOCKING and won't prevent Stop."
 
         # Step 3: Simulate Stop — must be blocked
         stop_ctx = make_stop_ctx(session_id=sid, store=store, autorun_active=False)
@@ -749,19 +669,13 @@ class TestPostToolUseTaskCreateBlocksStop:
             "If this fails, PostToolUse(TaskCreate) didn't track the task — "
             "check claude-hooks.json PostToolUse matcher includes TaskCreate."
         )
-        assert stop_result.get("continue") is True, (
-            "continue must be True to keep AI working (block stop)"
-        )
+        assert stop_result.get("continue") is True, "continue must be True to keep AI working (block stop)"
         # Stop block text lives in "reason"; "systemMessage" is deliberately
         # unset because Claude Code renders it as a second, duplicate UI row
         # (see response_to_reject_stop_and_continue in platforms.py).
-        assert "Fix login bug" in stop_result.get("reason", ""), (
-            "Stop message must include the task subject"
-        )
+        assert "Fix login bug" in stop_result.get("reason", ""), "Stop message must include the task subject"
 
-    def test_task_updated_via_post_tool_use_unblocks_stop(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_task_updated_via_post_tool_use_unblocks_stop(self, isolated_task_config, isolated_session):
         """After marking task completed via PostToolUse(TaskUpdate), Stop is allowed."""
         sid = f"test-e2e-update-unblock-{time.time()}"
         store = ThreadSafeDB()
@@ -791,9 +705,7 @@ class TestPostToolUseTaskCreateBlocksStop:
         # Stop should now be allowed
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
         incomplete = manager.get_incomplete_tasks(exclude_blocking=True)
-        assert len(incomplete) == 0, (
-            f"All tasks completed, but {len(incomplete)} still incomplete"
-        )
+        assert len(incomplete) == 0, f"All tasks completed, but {len(incomplete)} still incomplete"
 
         stop_ctx = make_stop_ctx(session_id=sid, store=store)
         stop_result = plugins.app._run_chain(stop_ctx, "Stop")
@@ -802,13 +714,9 @@ class TestPostToolUseTaskCreateBlocksStop:
             # Stop block text lives in "reason"; "systemMessage" is deliberately
             # unset because Claude Code renders it as a second, duplicate UI row
             # (see response_to_reject_stop_and_continue in platforms.py).
-            assert "CANNOT STOP" not in stop_result.get("reason", ""), (
-                "Stop should be allowed when all tasks are completed"
-            )
+            assert "CANNOT STOP" not in stop_result.get("reason", ""), "Stop should be allowed when all tasks are completed"
 
-    def test_multiple_tasks_some_pending_blocks_stop(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_multiple_tasks_some_pending_blocks_stop(self, isolated_task_config, isolated_session):
         """Stop blocked when some tasks completed but others still pending."""
         sid = f"test-e2e-partial-{time.time()}"
         store = ThreadSafeDB()
@@ -845,19 +753,16 @@ class TestPostToolUseTaskCreateBlocksStop:
         stop_ctx = make_stop_ctx(session_id=sid, store=store)
         stop_result = plugins.app._run_chain(stop_ctx, "Stop")
 
-        assert stop_result is not None, (
-            "Stop must be blocked with 1 pending task (Task 3)"
-        )
+        assert stop_result is not None, "Stop must be blocked with 1 pending task (Task 3)"
         assert stop_result.get("continue") is True
         # Stop block text lives in "reason"; "systemMessage" is deliberately
         # unset because Claude Code renders it as a second, duplicate UI row
         # (see response_to_reject_stop_and_continue in platforms.py).
-        assert "Task 3" in stop_result.get("reason", ""), (
-            "Stop message must list the pending task"
-        )
+        assert "Task 3" in stop_result.get("reason", ""), "Stop message must list the pending task"
 
 
 # === Test 11: Gemini write_todos routing (TASK_COMBINED_TOOLS) ===
+
 
 class TestWriteTodosRouting:
     """Verify write_todos (Gemini CLI) is routed correctly in track_task_operations.
@@ -871,9 +776,7 @@ class TestWriteTodosRouting:
     Added: commit 10d3b72 (TASK_COMBINED_TOOLS), commit 72291c3 (defensive guard)
     """
 
-    def test_write_todos_create_tracks_task(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_create_tracks_task(self, isolated_task_config, isolated_session):
         """write_todos with 'created' in result → handle_task_create."""
         sid = f"test-write-todos-create-{time.time()}"
         store = ThreadSafeDB()
@@ -890,15 +793,10 @@ class TestWriteTodosRouting:
 
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
         tasks = manager.tasks
-        assert "1" in tasks, (
-            f"write_todos with 'created' in result must track task. "
-            f"Tracked: {list(tasks.keys())}"
-        )
+        assert "1" in tasks, f"write_todos with 'created' in result must track task. Tracked: {list(tasks.keys())}"
         assert tasks["1"]["subject"] == "Fix Gemini bug"
 
-    def test_write_todos_update_changes_status(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_update_changes_status(self, isolated_task_config, isolated_session):
         """write_todos with taskId in input → handle_task_update."""
         sid = f"test-write-todos-update-{time.time()}"
         store = ThreadSafeDB()
@@ -926,13 +824,9 @@ class TestWriteTodosRouting:
         plugins.app._run_chain(update_ctx, "PostToolUse")
 
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
-        assert manager.tasks["1"]["status"] == "completed", (
-            "write_todos with taskId must route to handle_task_update"
-        )
+        assert manager.tasks["1"]["status"] == "completed", "write_todos with taskId must route to handle_task_update"
 
-    def test_write_todos_list_does_not_create(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_list_does_not_create(self, isolated_task_config, isolated_session):
         """write_todos without taskId or 'created' → no task creation."""
         sid = f"test-write-todos-list-{time.time()}"
         store = ThreadSafeDB()
@@ -948,13 +842,9 @@ class TestWriteTodosRouting:
         plugins.app._run_chain(ctx, "PostToolUse")
 
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
-        assert len(manager.tasks) == 0, (
-            "write_todos list/get must NOT create tasks"
-        )
+        assert len(manager.tasks) == 0, "write_todos list/get must NOT create tasks"
 
-    def test_write_todos_bulk_refresh_keeps_explicit_tasks(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_bulk_refresh_keeps_explicit_tasks(self, isolated_task_config, isolated_session):
         """Planner bulk refresh replaces only planner-sourced tasks."""
         sid = f"test-write-todos-bulk-keeps-explicit-{time.time()}"
         store = ThreadSafeDB()
@@ -978,9 +868,7 @@ class TestWriteTodosRouting:
         assert tasks["1"]["subject"] == "Planner task"
         assert tasks["1"]["metadata"]["source"] == "planner"
 
-    def test_write_todos_none_tool_input(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_none_tool_input(self, isolated_task_config, isolated_session):
         """write_todos with tool_input=None must not crash (defensive guard).
 
         Regression test for commit 72291c3: tool_input = ctx.tool_input or {}
@@ -998,16 +886,12 @@ class TestWriteTodosRouting:
             store=store,
         )
         # Must not raise AttributeError
-        result = plugins.app._run_chain(ctx, "PostToolUse")
+        plugins.app._run_chain(ctx, "PostToolUse")
         # Should proceed without crash — task created via result parsing
         manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
-        assert "1" in manager.tasks, (
-            "write_todos with None tool_input should still create via result parsing"
-        )
+        assert "1" in manager.tasks, "write_todos with None tool_input should still create via result parsing"
 
-    def test_write_todos_blocks_stop(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_blocks_stop(self, isolated_task_config, isolated_session):
         """Full E2E: write_todos creates task → Stop blocked."""
         sid = f"test-write-todos-stop-{time.time()}"
         store = ThreadSafeDB()
@@ -1025,14 +909,10 @@ class TestWriteTodosRouting:
         stop_ctx = make_stop_ctx(session_id=sid, store=store, autorun_active=False)
         stop_result = plugins.app._run_chain(stop_ctx, "Stop")
 
-        assert stop_result is not None, (
-            "Stop must be blocked when write_todos created a pending task"
-        )
+        assert stop_result is not None, "Stop must be blocked when write_todos created a pending task"
         assert stop_result.get("continue") is True
 
-    def test_write_todos_update_then_stop_allowed(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_update_then_stop_allowed(self, isolated_task_config, isolated_session):
         """Full E2E: write_todos create → write_todos complete → Stop allowed."""
         sid = f"test-write-todos-complete-{time.time()}"
         store = ThreadSafeDB()
@@ -1066,12 +946,11 @@ class TestWriteTodosRouting:
             # Stop block text lives in "reason"; "systemMessage" is deliberately
             # unset because Claude Code renders it as a second, duplicate UI row
             # (see response_to_reject_stop_and_continue in platforms.py).
-            assert "CANNOT STOP" not in stop_result.get("reason", ""), (
-                "Stop should be allowed after write_todos completed all tasks"
-            )
+            assert "CANNOT STOP" not in stop_result.get("reason", ""), "Stop should be allowed after write_todos completed all tasks"
 
 
 # === Test 12: Staleness counter reset for TASK_COMBINED_TOOLS ===
+
 
 class TestStalenessCounterWriteTodos:
     """Verify check_task_staleness resets counter on write_todos events.
@@ -1081,9 +960,7 @@ class TestStalenessCounterWriteTodos:
     false staleness reminders on Gemini CLI.
     """
 
-    def test_write_todos_resets_staleness_counter(
-        self, isolated_task_config, isolated_session
-    ):
+    def test_write_todos_resets_staleness_counter(self, isolated_task_config, isolated_session):
         """write_todos must reset tool_calls_since_task_update to 0."""
         sid = f"test-staleness-reset-{time.time()}"
         store = ThreadSafeDB()
@@ -1122,9 +999,6 @@ class TestStalenessCounterWriteTodos:
             store=store,
         )
         check_ctx.task_staleness_enabled = True
-        # Read the counter value before write_todos
-        counter_before = check_ctx.tool_calls_since_task_update or 0
-
         # Now fire write_todos — should reset counter
         todos_ctx = EventContext(
             session_id=sid,
@@ -1147,13 +1021,11 @@ class TestStalenessCounterWriteTodos:
             store=store,
         )
         after_ctx.task_staleness_enabled = True
-        assert after_ctx.tool_calls_since_task_update == 0, (
-            f"write_todos must reset staleness counter to 0. "
-            f"Got: {after_ctx.tool_calls_since_task_update}"
-        )
+        assert after_ctx.tool_calls_since_task_update == 0, f"write_todos must reset staleness counter to 0. Got: {after_ctx.tool_calls_since_task_update}"
 
 
 # === Test 13: PreToolUse matcher RTK compatibility ===
+
 
 class TestPreToolUseMatcherRTKCompat:
     """Verify PreToolUse is catch-all for 100% enforcement coverage.
@@ -1176,28 +1048,23 @@ class TestPreToolUseMatcherRTKCompat:
         """
         import json
         from pathlib import Path
+
         hooks_path = Path(__file__).parent.parent / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         pre_tool_groups = hooks["hooks"]["PreToolUse"]
         for group in pre_tool_groups:
-            assert "matcher" not in group, (
-                "PreToolUse must be catch-all (no matcher) for 100% enforcement. "
-                f"Group: {group}"
-            )
+            assert "matcher" not in group, f"PreToolUse must be catch-all (no matcher) for 100% enforcement. Group: {group}"
 
     def test_posttooluse_is_catch_all(self):
         """PostToolUse must be catch-all (3 handlers need ALL tools)."""
         import json
         from pathlib import Path
+
         hooks_path = Path(__file__).parent.parent / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         post_tool_groups = hooks["hooks"]["PostToolUse"]
         has_catch_all = any("matcher" not in g for g in post_tool_groups)
-        assert has_catch_all, (
-            "PostToolUse must be catch-all (no updatedInput conflict, "
-            "3 handlers need ALL tools). "
-            f"Groups: {post_tool_groups}"
-        )
+        assert has_catch_all, f"PostToolUse must be catch-all (no updatedInput conflict, 3 handlers need ALL tools). Groups: {post_tool_groups}"
 
     def test_pretooluse_not_overly_broad(self):
         """PreToolUse must NOT match tools it doesn't handle.
@@ -1208,21 +1075,17 @@ class TestPreToolUseMatcherRTKCompat:
         """
         import json
         from pathlib import Path
+
         hooks_path = Path(__file__).parent.parent / "hooks" / "hooks.json"
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
-        matchers = "|".join(
-            g.get("matcher", "") for g in hooks["hooks"]["PreToolUse"]
-        )
-        unnecessary_tools = ["Read", "Grep", "Glob", "Agent", "TaskCreate",
-                             "TaskUpdate", "TaskList", "TaskGet"]
+        matchers = "|".join(g.get("matcher", "") for g in hooks["hooks"]["PreToolUse"])
+        unnecessary_tools = ["Read", "Grep", "Glob", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
         found = [t for t in unnecessary_tools if t in matchers.split("|")]
-        assert not found, (
-            f"PreToolUse matcher includes unnecessary tools: {found}. "
-            f"Only Write|Edit|Bash|ExitPlanMode needed. Matcher: {matchers}"
-        )
+        assert not found, f"PreToolUse matcher includes unnecessary tools: {found}. Only Write|Edit|Bash|ExitPlanMode needed. Matcher: {matchers}"
 
 
 # === Stop-block redelivery is scoped to one block generation ===
+
 
 class TestStopBlockRepeatedDeliverySuppression:
     """Each Stop block delivers its injection to the AI exactly once — and
@@ -1257,26 +1120,22 @@ class TestStopBlockRepeatedDeliverySuppression:
             stop_ctx = make_stop_ctx(session_id=sid, store=store)
             stop_result = plugins.app._run_chain(stop_ctx, "Stop")
             assert stop_result is not None, f"Stop #{attempt} must block"
-            assert stop_ctx.pending_stop_injection, (
-                f"Stop #{attempt} must re-arm pending_stop_injection"
-            )
+            assert stop_ctx.pending_stop_injection, f"Stop #{attempt} must re-arm pending_stop_injection"
 
             pt_ctx = EventContext(
-                session_id=sid, event="PostToolUse", tool_name="Bash",
-                tool_input={"command": "echo hi"}, tool_result="hi", store=store,
+                session_id=sid,
+                event="PostToolUse",
+                tool_name="Bash",
+                tool_input={"command": "echo hi"},
+                tool_result="hi",
+                store=store,
             )
             pt_result = plugins.app._run_chain(pt_ctx, "PostToolUse")
-            delivered = (pt_result or {}).get("hookSpecificOutput", {}).get(
-                "additionalContext", ""
-            )
+            delivered = (pt_result or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
             assert "Unfinished work" in delivered, (
-                f"Stop block #{attempt} must re-deliver the task list to the AI "
-                f"even though the text is identical to the previous block. "
-                f"Got: {pt_result!r}"
+                f"Stop block #{attempt} must re-deliver the task list to the AI even though the text is identical to the previous block. Got: {pt_result!r}"
             )
-            assert "/ar:sos" in delivered or "ar:sos" in delivered, (
-                f"Stop block #{attempt} must re-deliver the override actions"
-            )
+            assert "/ar:sos" in delivered or "ar:sos" in delivered, f"Stop block #{attempt} must re-deliver the override actions"
 
     def test_single_stop_block_delivers_only_once(self):
         """Within ONE Stop block, a second PostToolUse must not re-deliver.
@@ -1294,25 +1153,29 @@ class TestStopBlockRepeatedDeliverySuppression:
 
         first = plugins.app._run_chain(
             EventContext(
-                session_id=sid, event="PostToolUse", tool_name="Bash",
-                tool_input={"command": "echo 1"}, tool_result="1", store=store,
+                session_id=sid,
+                event="PostToolUse",
+                tool_name="Bash",
+                tool_input={"command": "echo 1"},
+                tool_result="1",
+                store=store,
             ),
             "PostToolUse",
         )
-        assert "Unfinished work" in (first or {}).get(
-            "hookSpecificOutput", {}
-        ).get("additionalContext", ""), "First delivery must carry the task list"
+        assert "Unfinished work" in (first or {}).get("hookSpecificOutput", {}).get("additionalContext", ""), "First delivery must carry the task list"
 
         second = plugins.app._run_chain(
             EventContext(
-                session_id=sid, event="PostToolUse", tool_name="Bash",
-                tool_input={"command": "echo 2"}, tool_result="2", store=store,
+                session_id=sid,
+                event="PostToolUse",
+                tool_name="Bash",
+                tool_input={"command": "echo 2"},
+                tool_result="2",
+                store=store,
             ),
             "PostToolUse",
         )
-        assert "Unfinished work" not in (second or {}).get(
-            "hookSpecificOutput", {}
-        ).get("additionalContext", ""), (
+        assert "Unfinished work" not in (second or {}).get("hookSpecificOutput", {}).get("additionalContext", ""), (
             f"No second delivery within the same Stop block. Got: {second!r}"
         )
 
@@ -1335,8 +1198,11 @@ class TestStopBlockRepeatedDeliverySuppression:
         def fire(n):
             res = plugins.app._run_chain(
                 EventContext(
-                    session_id=sid, event="PostToolUse", tool_name="Bash",
-                    tool_input={"command": f"echo {n}"}, tool_result=str(n),
+                    session_id=sid,
+                    event="PostToolUse",
+                    tool_name="Bash",
+                    tool_input={"command": f"echo {n}"},
+                    tool_result=str(n),
                     store=store,
                 ),
                 "PostToolUse",
@@ -1350,16 +1216,8 @@ class TestStopBlockRepeatedDeliverySuppression:
         for t in threads:
             t.join()
 
-        deliveries = [
-            r for r in results
-            if "Unfinished work" in (r or {}).get("hookSpecificOutput", {}).get(
-                "additionalContext", ""
-            )
-        ]
-        assert len(deliveries) == 1, (
-            f"Exactly one of the concurrent PostToolUse hooks may deliver the "
-            f"Stop-block text; got {len(deliveries)}."
-        )
+        deliveries = [r for r in results if "Unfinished work" in (r or {}).get("hookSpecificOutput", {}).get("additionalContext", "")]
+        assert len(deliveries) == 1, f"Exactly one of the concurrent PostToolUse hooks may deliver the Stop-block text; got {len(deliveries)}."
 
     def test_changed_stop_block_text_is_still_delivered(self):
         """New task state must still be delivered — the guard is per-text, not permanent."""
@@ -1372,8 +1230,12 @@ class TestStopBlockRepeatedDeliverySuppression:
         plugins.app._run_chain(stop_ctx1, "Stop")
         first_text = stop_ctx1.pending_stop_injection
         pt_ctx1 = EventContext(
-            session_id=sid, event="PostToolUse", tool_name="Bash",
-            tool_input={"command": "echo hi"}, tool_result="hi", store=store,
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="Bash",
+            tool_input={"command": "echo hi"},
+            tool_result="hi",
+            store=store,
         )
         plugins.app._run_chain(pt_ctx1, "PostToolUse")
 
@@ -1385,17 +1247,20 @@ class TestStopBlockRepeatedDeliverySuppression:
         assert second_text != first_text
 
         pt_ctx2 = EventContext(
-            session_id=sid, event="PostToolUse", tool_name="Bash",
-            tool_input={"command": "echo hi"}, tool_result="hi", store=store,
+            session_id=sid,
+            event="PostToolUse",
+            tool_name="Bash",
+            tool_input={"command": "echo hi"},
+            tool_result="hi",
+            store=store,
         )
         pt_result2 = plugins.app._run_chain(pt_ctx2, "PostToolUse")
-        assert pt_result2 is not None, (
-            "Changed Stop-block text must still be delivered on the next PostToolUse"
-        )
+        assert pt_result2 is not None, "Changed Stop-block text must still be delivered on the next PostToolUse"
         assert "Second task" in pt_result2.get("hookSpecificOutput", {}).get("additionalContext", "")
 
 
 # === /ar:tasks off caveat only shown when actually relevant ===
+
 
 class TestStopBlockTasksOffCaveat:
     """The Stop-block message must tell the AI that /ar:tasks off does
@@ -1412,9 +1277,7 @@ class TestStopBlockTasksOffCaveat:
         ctx.task_staleness_enabled = False
         result = manager.handle_stop(ctx)
         assert result is not None
-        assert "/ar:tasks off does NOT apply here" in result.get("reason", ""), (
-            f"Stop block must caveat /ar:tasks off when it was disabled. Got: {result}"
-        )
+        assert "/ar:tasks off does NOT apply here" in result.get("reason", ""), f"Stop block must caveat /ar:tasks off when it was disabled. Got: {result}"
 
     def test_caveat_absent_by_default(self):
         """Common case: /ar:tasks off was never touched — no caveat noise."""
@@ -1425,6 +1288,4 @@ class TestStopBlockTasksOffCaveat:
         assert ctx.task_staleness_enabled is True, "Default must be enabled"
         result = manager.handle_stop(ctx)
         assert result is not None
-        assert "/ar:tasks off does NOT apply here" not in result.get("reason", ""), (
-            f"Stop block must NOT show the caveat in the common case. Got: {result}"
-        )
+        assert "/ar:tasks off does NOT apply here" not in result.get("reason", ""), f"Stop block must NOT show the caveat in the common case. Got: {result}"

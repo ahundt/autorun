@@ -32,9 +32,10 @@ import re
 import fnmatch
 import shlex
 import time
+from dataclasses import dataclass
 from functools import lru_cache, cache
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Callable
 
 from .core import app, EventContext, logger, format_command_for_cli, format_suggestion
 from .config import (
@@ -45,16 +46,33 @@ from .config import (
     FILE_TOOLS,
     PLAN_TOOLS,
     PATTERN_DISPLAY_MAX_LEN,
+    CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS,
 )
 from .platforms import is_task_progress_tool, is_task_tool, platform_for
-from .session_manager import session_state
-from .scoped_allow import ScopedAllow, parse_scope_args, parse_duration, _PERMANENT_KEYWORDS
+from .session_manager import SessionPersistenceError, session_state
+from .scoped_allow import (
+    ScopeSpec,
+    ScopedAllow,
+    parse_scope_args,
+    parse_scope_tokens,
+    parse_duration,
+    _PERMANENT_KEYWORDS,
+)
 from .command_detection import (
     command_matches_pattern,
     command_tokens_for,
     shell_command_from_tool_input,
 )
 from .integrations import load_all_integrations, invalidate_caches, check_when_predicate, check_conditions
+from .message_delivery import MessageDelivery, claim_message_delivery
+from .task_pause import (
+    TaskPauseIdentityError,
+    activate_task_pause,
+    resume_task_pause,
+    task_enforcement_is_paused,
+    task_pause_allows_stop,
+    task_pause_status,
+)
 from .transcript_commands import latest_transcript_command
 
 # Import plan_export to register its @app.on() handlers with daemon
@@ -207,6 +225,7 @@ def handle_status(ctx: EventContext) -> str:
         lines.append("\n📊 Command Control Status\n")
         lines.extend(control_lines)
 
+    lines.append(task_pause_status(ctx))
     return "\n".join(lines)
 
 
@@ -622,7 +641,11 @@ def _make_block_op(scope: str, op: str):
         if op == "allow":
             if not args:
                 prefix = "global" if scope == "global" else ""
-                return f"❌ Usage: /ar:{prefix}ok <pattern> [count] [duration] [permanent|perm|p]"
+                usage = format_command_for_cli(
+                    f"/ar:{prefix}ok <pattern> [count] [duration] [permanent|perm|p]",
+                    ctx.cli_type,
+                )
+                return f"❌ Usage: {usage}"
             try:
                 pattern, desc, ptype = _parse_allow_args(args)
             except ValueError as e:
@@ -632,7 +655,16 @@ def _make_block_op(scope: str, op: str):
             default_scope = not explicit_permanent and ttl is None and uses is None
             if default_scope:
                 uses = 1  # Safe default: one user-visible command
-            grace_seconds = 5.0 if default_scope and ctx.cli_type == "codex" else None
+            grace_seconds = (
+                float(
+                    CONFIG.get(
+                        "codex_transcript_allow_grace_seconds",
+                        CODEX_TRANSCRIPT_ALLOW_GRACE_SECONDS,
+                    )
+                )
+                if default_scope and ctx.cli_type == "codex"
+                else None
+            )
             sa = ScopedAllow(
                 pattern=pattern,
                 pattern_type=ptype,
@@ -689,6 +721,8 @@ _TRANSCRIPT_POLICY_COMMANDS = frozenset(
         "/ar:globalno",
         "/ar:clear",
         "/ar:globalclear",
+        "/ar:task",
+        "/ar:tasks",
     }
 )
 _TRANSCRIPT_POLICY_COMMAND_MARKERS_KEY = "processed_transcript_policy_commands"
@@ -911,6 +945,7 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
     # TIER 2: Collect ALL matching blocks + warns (stacking: deny wins over warn)
     deny_parts: list = []
     warn_parts: list = []
+    warn_deliveries: list[MessageDelivery | None] = []
     # Dedup by pattern string only (not by decision). This ensures that if the user adds
     # /ar:no git (deny), it suppresses the DEFAULT "git" (warn) integration for the same
     # pattern — user's explicit block replaces the default regardless of action type.
@@ -1011,6 +1046,15 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
                             if decision == "warn":
                                 logger.info(f"Integration warning for '{pattern}': {intg.name}")
                                 warn_parts.append(msg)
+                                delivery = None
+                                if intg.dedup_category:
+                                    delivery = MessageDelivery(
+                                        category=intg.dedup_category,
+                                        identity=f"{intg.source}:{intg.name}:{pattern}",
+                                        window_seconds=intg.dedup_window_seconds,
+                                        channels=("human", "ai"),
+                                    )
+                                warn_deliveries.append(delivery)
                             else:
                                 deny_parts.append(msg)
                         break  # First matching pattern in this intg is enough
@@ -1038,6 +1082,27 @@ def check_blocked_commands(ctx: EventContext) -> Optional[Dict]:
         if deny_parts:
             return ctx.deny(combined)
         else:
+            # Temporal suppression is explicit and all-or-nothing for a
+            # combined response. One unclassified warning or transcript policy
+            # notice makes the whole message non-deduplicable.
+            eligible = (
+                not transcript_policy_notice
+                and len(warn_deliveries) == len(warn_parts)
+                and warn_deliveries
+                and all(delivery is not None for delivery in warn_deliveries)
+            )
+            if eligible:
+                categories = {delivery.category for delivery in warn_deliveries}
+                windows = {delivery.window_seconds for delivery in warn_deliveries}
+                if len(categories) == 1 and len(windows) == 1:
+                    delivery = MessageDelivery(
+                        category=next(iter(categories)),
+                        identity="|".join(sorted(item.identity for item in warn_deliveries)),
+                        window_seconds=next(iter(windows)),
+                        channels=("human", "ai"),
+                    )
+                    if not claim_message_delivery(ctx, delivery, combined):
+                        return ctx.allow()
             return ctx.respond("allow", combined)
 
     if transcript_policy_notice:
@@ -1064,6 +1129,13 @@ def handle_activate(ctx: EventContext) -> str:
     task = prompt.split(maxsplit=1)[1] if " " in prompt else ""
 
     is_procedural = _is_procedural_mode(prompt)
+
+    # A new run is an explicit user signal to resume task enforcement.
+    try:
+        resume_task_pause(ctx)
+    except SessionPersistenceError as exc:
+        logger.warning("Could not clear task pause before autorun activation: %s", exc)
+        return "❌ Autorun was not started because its task-enforcement pause could not be cleared. Resolve the session-state error and retry."
 
     # Magic state - all persist automatically!
     ctx.autorun_active = True
@@ -1102,16 +1174,22 @@ def handle_sos(ctx: EventContext) -> str:
 
 @app.command("/ar:task-ignore", "/task-ignore")
 def handle_task_ignore(ctx: EventContext) -> str:
-    """Mark a tracked task ignored so a Stop block can clear."""
+    """Compatibility entry point for the canonical ``ar:task ignore``."""
     prompt = ctx.activation_prompt or ctx.prompt or ""
     parts = prompt.split(maxsplit=2)
-    if len(parts) < 2 or not parts[1].strip():
-        usage = format_command_for_cli("/ar:task-ignore <id> [reason]", ctx.cli_type)
+    return _task_ignore(ctx, tuple(parts[1:]))
+
+
+def _task_ignore(ctx: EventContext, arguments: tuple[str, ...]) -> str:
+    """Mark one tracked task ignored without changing other task state."""
+    if not arguments or not arguments[0].strip():
+        usage = format_command_for_cli(
+            "/ar:task ignore <id> [reason]",
+            ctx.cli_type,
+        )
         return f"❌ Usage: {usage}"
-
-    task_id = parts[1].strip()
-    reason = parts[2].strip() if len(parts) > 2 and parts[2].strip() else "User ignored"
-
+    task_id = arguments[0].strip()
+    reason = " ".join(arguments[1:]).strip() or "User ignored"
     try:
         manager = task_lifecycle.TaskLifecycle(ctx=ctx)
     except Exception as exc:
@@ -1721,6 +1799,8 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     Fires when task_staleness_enforce_next is True (set by check_task_staleness
     or remind_until_tasks_created). One-shot per crossing then resets.
     """
+    if task_enforcement_is_paused(ctx):
+        return None
     if not ctx.task_staleness_enforce_next:
         return None
 
@@ -1787,6 +1867,8 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     if ctx.cli_type == "gemini":
         return None
 
+    if task_enforcement_is_paused(ctx):
+        return None
     if not ctx.task_staleness_enabled:
         return None
 
@@ -1887,6 +1969,8 @@ def remind_until_tasks_created(ctx: EventContext) -> Optional[Dict]:
 
     Fires on EVERY PostToolUse until TaskCreate is detected.
     """
+    if task_enforcement_is_paused(ctx):
+        return None
     awaiting_planning = ctx.plan_awaiting_planning_tasks
     awaiting_execution = ctx.plan_awaiting_execution_tasks
 
@@ -1938,18 +2022,16 @@ def handle_cache(ctx: EventContext) -> str:
     )
 
 
-@app.command("/ar:tasks")
-def toggle_task_staleness(ctx: EventContext) -> str:
-    """Toggle task staleness reminder on/off or set threshold.
+def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
+    """Show or configure task-staleness prompting.
 
     Usage:
-      /ar:tasks          — show status (enabled/disabled, count, threshold)
-      /ar:tasks on       — enable reminders
-      /ar:tasks off      — disable reminders
-      /ar:tasks <number> — set threshold (e.g. /ar:tasks 10)
+      ar:task prompts          — show prompting status
+      ar:task prompts on       — enable reminders
+      ar:task prompts off      — disable reminders
+      ar:task prompts <number> — set a positive tool-call threshold
     """
-    parts = (ctx.activation_prompt or ctx.prompt or "").split()
-    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    arg = arguments[0].strip().lower() if arguments else ""
 
     if arg == "on":
         ctx.task_staleness_enabled = True
@@ -1963,24 +2045,6 @@ def toggle_task_staleness(ctx: EventContext) -> str:
         ctx.task_staleness_threshold = int(arg)
         ctx.tool_calls_since_task_update = 0
         return f"Task staleness threshold set to {arg} tool calls."
-    elif arg in ("stale", "ghost"):  # "ghost" kept as alias
-        sub = parts[2].strip().lower() if len(parts) > 2 else ""
-        cfg = task_lifecycle.TaskLifecycleConfig.load()
-        if sub == "on":
-            cfg.ghost_clear_enabled = True
-            cfg.save()
-            return "Stale-task clear: enabled."
-        elif sub == "off":
-            cfg.ghost_clear_enabled = False
-            cfg.save()
-            return "Stale-task clear: disabled."
-        elif sub == "min" and len(parts) > 3 and parts[3].isdigit() and int(parts[3]) >= 1:
-            ctx.ghost_clear_min_consecutive_blocks_override = int(parts[3])
-            return f"Stale-task clear threshold (this session): {parts[3]} consecutive identical blocks."
-        else:
-            enabled = "on" if cfg.ghost_clear_enabled else "off"
-            n = getattr(ctx, "ghost_clear_min_consecutive_blocks_override", None) or cfg.ghost_clear_min_consecutive_blocks
-            return f"Stale-task clear: {enabled}, min consecutive blocks: {n}.\nUsage: /ar:tasks stale on | off | min <N>"
     elif arg:
         # Catches: "0", negative numbers like "-5", non-numeric strings
         return f"Invalid threshold '{arg}'. Use a positive integer (e.g. /ar:tasks 10)."
@@ -2045,8 +2109,170 @@ def toggle_task_staleness(ctx: EventContext) -> str:
             lines.append("\n💡 Gemini Note: Tasks are natively managed via the Conductor extension.")
             lines.append("   Use /conductor:status to see full track details.")
 
-        lines.append("Usage: /ar:tasks on|off|<number> | /ar:task-status for full details")
+        command = format_command_for_cli(
+            "/ar:task prompts on|off|<positive-count>",
+            ctx.cli_type,
+        )
+        lines.append(f"Usage: {command}")
         return "\n".join(lines)
+
+
+_TASK_ROOTS = frozenset({"ar:task", "ar:tasks"})
+
+
+@dataclass(frozen=True, slots=True)
+class TaskCommand:
+    operation: str
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPauseArguments:
+    scope: ScopeSpec
+    reason: str
+
+
+def _parse_task_command(prompt: str) -> TaskCommand:
+    try:
+        parts = shlex.split(prompt)
+    except ValueError as exc:
+        raise ValueError(f"task command has invalid quoting: {exc}") from exc
+    if not parts:
+        raise ValueError("task command must start with ar:task or ar:tasks")
+    first = parts[0].lstrip("/").lower()
+    if first == "ar" and len(parts) > 1 and parts[1].lower() in {"task", "tasks"}:
+        arguments = parts[2:]
+    elif first in _TASK_ROOTS:
+        arguments = parts[1:]
+    else:
+        raise ValueError("task command must start with ar:task or ar:tasks")
+    operation = arguments[0].lower() if arguments else "status"
+    return TaskCommand(operation, tuple(arguments[1:]))
+
+
+def _parse_task_pause_arguments(
+    arguments: tuple[str, ...],
+    *,
+    default_scope: ScopeSpec,
+) -> TaskPauseArguments:
+    remaining = list(arguments)
+    scope_tokens: list[str] = []
+    while remaining:
+        token = remaining[0].lower()
+        if token in _PERMANENT_KEYWORDS or token.isdecimal() or parse_duration(token) is not None:
+            scope_tokens.append(remaining.pop(0))
+            continue
+        break
+    if remaining and re.match(r"^[+-]?\d", remaining[0]):
+        raise ValueError(
+            f"invalid count or duration {remaining[0]!r}; pass a positive logical Stop count, a duration such as 5m, or start the reason with a word"
+        )
+    scope = parse_scope_tokens(
+        scope_tokens,
+        default_scope=default_scope,
+        count_unit="logical Stop",
+    )
+    return TaskPauseArguments(scope=scope, reason=" ".join(remaining))
+
+
+def _task_pause(ctx: EventContext, arguments: tuple[str, ...]) -> str:
+    config = task_lifecycle.TaskLifecycleConfig.load()
+    parsed = _parse_task_pause_arguments(
+        arguments,
+        default_scope=ScopeSpec(
+            ttl_seconds=config.task_pause_default_ttl_seconds,
+        ),
+    )
+    activate_task_pause(
+        ctx,
+        scope=parsed.scope,
+        reason=parsed.reason,
+    )
+    resume_command = format_command_for_cli("/ar:task resume", ctx.cli_type)
+    return f"{task_pause_status(ctx)}\nUse {resume_command} to resume explicitly."
+
+
+def _task_resume(ctx: EventContext, arguments: tuple[str, ...]) -> str:
+    if arguments:
+        command = format_command_for_cli("/ar:task resume", ctx.cli_type)
+        return f"❌ task resume accepts no values; pass only {command}"
+    if resume_task_pause(ctx):
+        return "▶️ Task enforcement resumed."
+    return "▶️ Task enforcement is already active."
+
+
+def _task_recovery(ctx: EventContext, arguments: tuple[str, ...]) -> str:
+    cfg = task_lifecycle.TaskLifecycleConfig.load()
+    operation = arguments[0].lower() if arguments else "status"
+    if operation == "on" and len(arguments) == 1:
+        cfg.ghost_clear_enabled = True
+        cfg.save()
+        return "Task recovery: enabled."
+    if operation == "off" and len(arguments) == 1:
+        cfg.ghost_clear_enabled = False
+        cfg.save()
+        return "Task recovery: disabled."
+    if operation == "min" and len(arguments) == 2:
+        value = arguments[1]
+        if value.isdecimal() and int(value) > 0:
+            ctx.ghost_clear_min_consecutive_blocks_override = int(value)
+            return f"Task recovery threshold (this session): {value} consecutive identical Stop blocks."
+        return f"❌ recovery minimum must be an integer greater than 0, got {value!r}; pass " + format_command_for_cli(
+            "/ar:task recovery min <positive-count>",
+            ctx.cli_type,
+        )
+    if operation != "status" or len(arguments) > 1:
+        command = format_command_for_cli(
+            "/ar:task recovery status|on|off|min <positive-count>",
+            ctx.cli_type,
+        )
+        return f"❌ Unknown recovery values; pass {command}"
+    enabled = "on" if cfg.ghost_clear_enabled else "off"
+    threshold = getattr(ctx, "ghost_clear_min_consecutive_blocks_override", None) or cfg.ghost_clear_min_consecutive_blocks
+    return f"Task recovery: {enabled}, minimum consecutive identical Stop blocks: {threshold}."
+
+
+def _task_status(ctx: EventContext, arguments: tuple[str, ...]) -> str:
+    if arguments:
+        command = format_command_for_cli("/ar:task status", ctx.cli_type)
+        return f"❌ task status accepts no values; pass only {command}"
+    return f"{task_pause_status(ctx)}\n{_task_prompts(ctx, ())}"
+
+
+_TASK_OPERATIONS: dict[
+    str,
+    Callable[[EventContext, tuple[str, ...]], str],
+] = {
+    "status": _task_status,
+    "pause": _task_pause,
+    "resume": _task_resume,
+    "ignore": _task_ignore,
+    "prompts": _task_prompts,
+    "recovery": _task_recovery,
+}
+
+
+@app.command("/ar:task", "/ar:tasks")
+def handle_task_command(ctx: EventContext) -> str:
+    """Dispatch the singular/plural task command family."""
+    try:
+        command = _parse_task_command(ctx.activation_prompt or ctx.prompt or "")
+        operation = command.operation
+        arguments = command.arguments
+        # Preserve established spellings while routing them through the new
+        # focused handlers.
+        if operation in {"on", "off"} or operation.isdecimal():
+            operation, arguments = "prompts", (command.operation, *arguments)
+        elif operation in {"stale", "ghost"}:
+            operation = "recovery"
+        handler = _TASK_OPERATIONS.get(operation)
+        if handler is None:
+            accepted = ", ".join(_TASK_OPERATIONS)
+            return f"❌ Invalid or unknown task operation {command.operation!r}; pass one of: {accepted}"
+        return handler(ctx, arguments)
+    except (TaskPauseIdentityError, SessionPersistenceError, ValueError) as exc:
+        logger.warning("Task command failed: %s", exc)
+        return f"❌ {exc}"
 
 
 # === STOP HOOK HANDLERS ===
@@ -2064,6 +2290,8 @@ def autorun_injection(ctx: EventContext) -> Optional[Dict]:
     """
     if not ctx.autorun_active:
         return None
+    if task_pause_allows_stop(ctx):
+        return ctx.allow()
 
     result = ctx.tool_result or ""
     transcript = ctx.transcript.text

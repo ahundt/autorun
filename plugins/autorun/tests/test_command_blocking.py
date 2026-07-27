@@ -34,17 +34,17 @@ from autorun.main import command_matches_pattern
 from autorun.command_detection import command_tokens_for
 from autorun.config import DEFAULT_INTEGRATIONS
 import autorun.integrations as integ
+
 # Canonical daemon-path imports
 from autorun.core import EventContext, ThreadSafeDB
+from autorun.platforms import hook_platforms
 from autorun import plugins
 
 
 def _make_ctx(cmd: str = "ls", session_id: str = None) -> EventContext:
     """Create isolated EventContext with in-memory ThreadSafeDB for tests."""
     return EventContext(
-        session_id=session_id or f"test-{id(object())}",
-        event="PreToolUse", tool_name="Bash",
-        tool_input={"command": cmd}, store=ThreadSafeDB()
+        session_id=session_id or f"test-{id(object())}", event="PreToolUse", tool_name="Bash", tool_input={"command": cmd}, store=ThreadSafeDB()
     )
 
 
@@ -114,14 +114,15 @@ class TestPatternMatching:
 
     def test_command_tokens_for_prefix_control(self):
         """Token slices can either include or reject prefixed command forms."""
-        assert command_tokens_for("sudo sed -i s/a/b/ file", "sed") == (
-            "sed", "-i", "s/a/b/", "file"
+        assert command_tokens_for("sudo sed -i s/a/b/ file", "sed") == ("sed", "-i", "s/a/b/", "file")
+        assert (
+            command_tokens_for(
+                "sudo sed -i s/a/b/ file",
+                "sed",
+                allow_prefixes=False,
+            )
+            == ()
         )
-        assert command_tokens_for(
-            "sudo sed -i s/a/b/ file",
-            "sed",
-            allow_prefixes=False,
-        ) == ()
         assert command_tokens_for("grep x file | head -20", "head") == ("head", "-20")
 
 
@@ -149,10 +150,12 @@ class TestSessionBlockManagement:
         """Multiple blocks are stored and retrieved correctly."""
         ctx = self._ctx()
         acc = plugins.ScopeAccessor(ctx, "session")
-        acc.set([
-            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
-            {"pattern": "dd", "suggestion": "dangerous disk op", "pattern_type": "literal"},
-        ])
+        acc.set(
+            [
+                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                {"pattern": "dd", "suggestion": "dangerous disk op", "pattern_type": "literal"},
+            ]
+        )
         blocks = acc.get()
         assert len(blocks) == 2
         patterns = {b["pattern"] for b in blocks}
@@ -163,10 +166,12 @@ class TestSessionBlockManagement:
         """Removing a block by filtering and re-setting."""
         ctx = self._ctx()
         acc = plugins.ScopeAccessor(ctx, "session")
-        acc.set([
-            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
-            {"pattern": "dd", "suggestion": "dangerous disk op", "pattern_type": "literal"},
-        ])
+        acc.set(
+            [
+                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                {"pattern": "dd", "suggestion": "dangerous disk op", "pattern_type": "literal"},
+            ]
+        )
         blocks = acc.get()
         acc.set([b for b in blocks if b["pattern"] != "rm"])
         remaining = acc.get()
@@ -186,10 +191,12 @@ class TestSessionBlockManagement:
         """ScopeAccessor.set([]) clears all session blocks."""
         ctx = self._ctx()
         acc = plugins.ScopeAccessor(ctx, "session")
-        acc.set([
-            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
-            {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
-        ])
+        acc.set(
+            [
+                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+            ]
+        )
         acc.set([])
         assert acc.get() == []
 
@@ -197,10 +204,12 @@ class TestSessionBlockManagement:
         """Filtering by pattern removes only the specified block."""
         ctx = self._ctx()
         acc = plugins.ScopeAccessor(ctx, "session")
-        acc.set([
-            {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
-            {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
-        ])
+        acc.set(
+            [
+                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+            ]
+        )
         blocks = acc.get()
         acc.set([b for b in blocks if b["pattern"] != "rm"])
         remaining = acc.get()
@@ -250,10 +259,12 @@ class TestGlobalBlockManagement:
         with _isolated_global_store():
             ctx = self._ctx()
             acc = plugins.ScopeAccessor(ctx, "global")
-            acc.set([
-                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
-                {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
-            ])
+            acc.set(
+                [
+                    {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                    {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+                ]
+            )
             blocks = acc.get()
             assert len(blocks) == 2
 
@@ -262,10 +273,12 @@ class TestGlobalBlockManagement:
         with _isolated_global_store():
             ctx = self._ctx()
             acc = plugins.ScopeAccessor(ctx, "global")
-            acc.set([
-                {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
-                {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
-            ])
+            acc.set(
+                [
+                    {"pattern": "rm", "suggestion": "use trash", "pattern_type": "literal"},
+                    {"pattern": "dd", "suggestion": "dangerous", "pattern_type": "literal"},
+                ]
+            )
             blocks = acc.get()
             acc.set([b for b in blocks if b["pattern"] != "rm"])
             remaining = acc.get()
@@ -331,8 +344,10 @@ class TestBlockPrecedence:
         store = ThreadSafeDB()
         return EventContext(
             session_id=f"test-prec-{id(self)}-{command[:8].replace(' ', '_')}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": command}, store=store
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            store=store,
         )
 
     def test_session_block_produces_deny(self):
@@ -377,8 +392,10 @@ class TestShouldBlockCommand:
         store = ThreadSafeDB()
         return EventContext(
             session_id=f"test-sbc-{id(self)}-{command[:8].replace(' ', '_')}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": command}, store=store
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            store=store,
         )
 
     def test_blocked_command_returns_deny(self):
@@ -415,29 +432,38 @@ class TestPlatformAwareShellFileInspection:
         store = ThreadSafeDB()
         return EventContext(
             session_id=f"test-shell-read-{cli_type}-{id(self)}-{command[:8].replace(' ', '_')}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": command}, store=store, cli_type=cli_type
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            store=store,
+            cli_type=cli_type,
         )
 
-    @pytest.mark.parametrize("command", [
-        "cat README.md",
-        "head -20 README.md",
-        "tail -n 40 daemon.log",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat README.md",
+            "head -20 README.md",
+            "tail -n 40 daemon.log",
+        ],
+    )
     def test_codex_allows_native_read_only_shell_inspection(self, command):
         """Codex has no exposed Read tool here, so bounded shell reads are native."""
         result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
         assert result is None, f"Codex read-only shell inspection must pass through: {result!r}"
 
-    @pytest.mark.parametrize("command", [
-        "cat README.md > /tmp/out.txt",
-        "head -20 README.md >> /tmp/out.txt",
-        "tail -n 40 daemon.log > /tmp/out.txt",
-        "tail -f daemon.log",
-        "tail -F daemon.log",
-        "sudo tail -f daemon.log",
-        "sudo cat README.md",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat README.md > /tmp/out.txt",
+            "head -20 README.md >> /tmp/out.txt",
+            "tail -n 40 daemon.log > /tmp/out.txt",
+            "tail -f daemon.log",
+            "tail -F daemon.log",
+            "sudo tail -f daemon.log",
+            "sudo cat README.md",
+        ],
+    )
     def test_codex_still_blocks_shell_read_writes_or_unbounded_follow(self, command):
         """Codex native file inspection must not become a shell-write bypass."""
         result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
@@ -445,10 +471,13 @@ class TestPlatformAwareShellFileInspection:
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         assert perm == "deny", f"Unsafe shell read form must be denied, got {perm!r}"
 
-    @pytest.mark.parametrize("cli_type,expected", [
-        ("claude", "Read tool"),
-        ("gemini", "read_file tool"),
-    ])
+    @pytest.mark.parametrize(
+        "cli_type,expected",
+        [
+            ("claude", "Read tool"),
+            ("gemini", "read_file tool"),
+        ],
+    )
     def test_claude_and_gemini_keep_dedicated_read_tool_routing(self, cli_type, expected):
         """Harnesses with dedicated file-read tools should retain their guardrail."""
         result = plugins.check_blocked_commands(self._ctx("cat README.md", cli_type=cli_type))
@@ -458,22 +487,28 @@ class TestPlatformAwareShellFileInspection:
         assert perm == "deny"
         assert expected in msg
 
-    @pytest.mark.parametrize("command", [
-        "sed -n '1,20p' README.md",
-        "sed 's/old/new/g' README.md",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "sed -n '1,20p' README.md",
+            "sed 's/old/new/g' README.md",
+        ],
+    )
     def test_read_only_sed_is_allowed_for_shell_inspection(self, command):
         """sed only needs the edit-tool guard when it modifies files in place."""
         result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
         assert result is None, f"Read-only sed must not be blocked: {result!r}"
 
-    @pytest.mark.parametrize("command", [
-        "sed -i 's/old/new/g' README.md",
-        "sed -i.bak 's/old/new/g' README.md",
-        "sed -Ei 's/old/new/g' README.md",
-        "sed --in-place 's/old/new/g' README.md",
-        "sudo sed -i 's/old/new/g' README.md",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "sed -i 's/old/new/g' README.md",
+            "sed -i.bak 's/old/new/g' README.md",
+            "sed -Ei 's/old/new/g' README.md",
+            "sed --in-place 's/old/new/g' README.md",
+            "sudo sed -i 's/old/new/g' README.md",
+        ],
+    )
     def test_sed_in_place_still_blocks_with_codex_edit_guidance(self, command):
         """In-place sed remains an edit operation and should suggest Codex's edit path."""
         result = plugins.check_blocked_commands(self._ctx(command, cli_type="codex"))
@@ -484,7 +519,6 @@ class TestPlatformAwareShellFileInspection:
         assert "apply_patch" in msg
 
 
-
 class TestPredicateFunctions:
     """Test predicate-based conditional blocking — daemon path."""
 
@@ -492,17 +526,22 @@ class TestPredicateFunctions:
         store = ThreadSafeDB()
         return EventContext(
             session_id=f"test-pred-{id(self)}-{command[:8].replace(' ', '_')}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": command}, store=store
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            store=store,
         )
 
     def test_predicate_returns_true_blocks(self):
         """When the repo-diff predicate returns True, git checkout . is denied."""
         # v4: config.py now uses `_repo_differs_from_head`; legacy name kept as alias.
-        with patch.dict(integ._WHEN_PREDICATES, {
-            "_repo_differs_from_head": lambda ctx: True,
-            "_has_unstaged_changes": lambda ctx: True,  # legacy alias
-        }):
+        with patch.dict(
+            integ._WHEN_PREDICATES,
+            {
+                "_repo_differs_from_head": lambda ctx: True,
+                "_has_unstaged_changes": lambda ctx: True,  # legacy alias
+            },
+        ):
             result = plugins.check_blocked_commands(self._ctx("git checkout ."))
             assert result is not None
             perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
@@ -510,13 +549,16 @@ class TestPredicateFunctions:
 
     def test_predicate_returns_false_allows(self):
         """When ALL relevant predicates return False, git checkout . is not denied."""
-        with patch.dict(integ._WHEN_PREDICATES, {
-            "_repo_differs_from_head": lambda ctx: False,
-            "_has_unstaged_changes": lambda ctx: False,  # legacy alias
-            "_file_differs_from_ref": lambda ctx: False,
-            "_file_has_unstaged_changes": lambda ctx: False,  # legacy alias
-            "_checkout_targets_file_with_changes": lambda ctx: False,
-        }):
+        with patch.dict(
+            integ._WHEN_PREDICATES,
+            {
+                "_repo_differs_from_head": lambda ctx: False,
+                "_has_unstaged_changes": lambda ctx: False,  # legacy alias
+                "_file_differs_from_ref": lambda ctx: False,
+                "_file_has_unstaged_changes": lambda ctx: False,  # legacy alias
+                "_checkout_targets_file_with_changes": lambda ctx: False,
+            },
+        ):
             result = plugins.check_blocked_commands(self._ctx("git checkout ."))
             if result is not None:
                 perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
@@ -551,13 +593,13 @@ class TestPredicateFunctions:
         assert result is not None
         msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
         assert msg, "block message must not be empty"
-        assert "trash" in msg.lower() or "rm" in msg.lower(), \
-            f"rm block message must mention trash or rm, got: {msg[:100]!r}"
+        assert "trash" in msg.lower() or "rm" in msg.lower(), f"rm block message must mention trash or rm, got: {msg[:100]!r}"
 
 
 # ============================================================================
 # Daemon-path tests — use EventContext + plugins.check_blocked_commands()
 # ============================================================================
+
 
 class TestRuleStacking:
     """Verify the stacking fix: multiple matching rules combine, deny wins over warn.
@@ -571,9 +613,7 @@ class TestRuleStacking:
     def _ctx(self, command: str, session_id: str = None) -> EventContext:
         store = ThreadSafeDB()
         return EventContext(
-            session_id=session_id or f"test-stack-{id(self)}-{command[:8]}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": command}, store=store
+            session_id=session_id or f"test-stack-{id(self)}-{command[:8]}", event="PreToolUse", tool_name="Bash", tool_input={"command": command}, store=store
         )
 
     def _msg(self, result: dict) -> str:
@@ -588,10 +628,8 @@ class TestRuleStacking:
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         assert perm == "deny", f"Expected deny (rm blocks), got {perm!r}"
         msg = self._msg(result)
-        assert "rm" in msg.lower() or "trash" in msg.lower(), \
-            "combined message must mention rm block"
-        assert "CLAUDE.md" in msg or "git" in msg.lower(), \
-            "combined message must include git warn"
+        assert "rm" in msg.lower() or "trash" in msg.lower(), "combined message must mention rm block"
+        assert "CLAUDE.md" in msg or "git" in msg.lower(), "combined message must include git warn"
 
     def test_deny_wins_over_warn(self):
         """Decision is deny whenever any deny-action integration matches, regardless of warns."""
@@ -609,8 +647,106 @@ class TestRuleStacking:
         perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
         assert perm == "allow", f"warn-only must be allow, got {perm!r}"
         msg = result.get("systemMessage", "") + result.get("reason", "")
-        assert "CLAUDE.md" in msg or "git" in msg.lower(), \
-            "warn message should mention CLAUDE.md or git requirements"
+        assert "CLAUDE.md" in msg or "git" in msg.lower(), "warn message should mention CLAUDE.md or git requirements"
+
+    def test_parallel_identical_git_warning_is_temporally_deduplicated(self):
+        store = ThreadSafeDB()
+        session_id = f"test-temporal-git-{id(self)}"
+        first = plugins.check_blocked_commands(
+            EventContext(
+                session_id,
+                "PreToolUse",
+                tool_name="Bash",
+                tool_input={"command": "git status"},
+                store=store,
+                cli_type="codex",
+            )
+        )
+        second = plugins.check_blocked_commands(
+            EventContext(
+                session_id,
+                "PreToolUse",
+                tool_name="Bash",
+                tool_input={"command": "git status"},
+                store=store,
+                cli_type="codex",
+            )
+        )
+
+        first_text = (
+            first.get("systemMessage", "")
+            + first.get("reason", "")
+            + first.get("hookSpecificOutput", {}).get("additionalContext", "")
+            + first.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        )
+        second_text = (
+            second.get("systemMessage", "")
+            + second.get("reason", "")
+            + second.get("hookSpecificOutput", {}).get("additionalContext", "")
+            + second.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+        )
+        assert "Git commit rules" in first_text
+        assert second_text == ""
+
+    @pytest.mark.parametrize("platform", hook_platforms(), ids=lambda item: item.name)
+    def test_git_warning_dedup_preserves_first_response_for_every_hook_platform(
+        self,
+        platform,
+    ):
+        store = ThreadSafeDB()
+        session_id = f"test-temporal-git-{platform.name}-{id(self)}"
+
+        def invoke():
+            return plugins.check_blocked_commands(
+                EventContext(
+                    session_id,
+                    "PreToolUse",
+                    tool_name="Bash",
+                    tool_input={"command": "git status"},
+                    store=store,
+                    cli_type=platform.name,
+                )
+            )
+
+        first, second = invoke(), invoke()
+
+        def rendered(response):
+            return (
+                response.get("systemMessage", "")
+                + response.get("reason", "")
+                + response.get("hookSpecificOutput", {}).get(
+                    "additionalContext",
+                    "",
+                )
+                + response.get("hookSpecificOutput", {}).get(
+                    "permissionDecisionReason",
+                    "",
+                )
+            )
+
+        assert "Git commit rules" in rendered(first)
+        assert rendered(second) == ""
+
+    def test_identical_deny_is_never_temporally_deduplicated(self):
+        store = ThreadSafeDB()
+        session_id = f"test-temporal-deny-{id(self)}"
+        results = [
+            plugins.check_blocked_commands(
+                EventContext(
+                    session_id,
+                    "PreToolUse",
+                    tool_name="Bash",
+                    tool_input={"command": "rm important.txt"},
+                    store=store,
+                    cli_type="codex",
+                )
+            )
+            for _ in range(2)
+        ]
+
+        for result in results:
+            assert result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+            assert result.get("hookSpecificOutput", {}).get("permissionDecisionReason")
 
     def test_deny_only_produces_deny(self):
         """rm alone (deny-only) → permissionDecision=deny."""
@@ -623,28 +759,19 @@ class TestRuleStacking:
     def test_deduplication_session_block_and_default_integration(self):
         """Same pattern in session block AND default integration appears only once."""
         store = ThreadSafeDB()
-        ctx = EventContext(
-            session_id=f"test-dedup-{id(self)}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": "rm foo"}, store=store
-        )
+        ctx = EventContext(session_id=f"test-dedup-{id(self)}", event="PreToolUse", tool_name="Bash", tool_input={"command": "rm foo"}, store=store)
         # Add a session block for the same "rm" pattern that's also in DEFAULT_INTEGRATIONS
         ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash-dedup-marker"}]
         result = plugins.check_blocked_commands(ctx)
         assert result is not None
         msg = self._msg(result)
         # The session block message should appear exactly once (dedup by pattern string)
-        assert msg.count("use trash-dedup-marker") == 1, \
-            f"Deduped message should appear once, got: {msg.count('use trash-dedup-marker')}"
+        assert msg.count("use trash-dedup-marker") == 1, f"Deduped message should appear once, got: {msg.count('use trash-dedup-marker')}"
 
     def test_session_allow_short_circuits_all_blocks(self):
         """Session allow pattern beats session block and default integrations."""
         store = ThreadSafeDB()
-        ctx = EventContext(
-            session_id=f"test-allow-sc-{id(self)}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": "rm foo"}, store=store
-        )
+        ctx = EventContext(session_id=f"test-allow-sc-{id(self)}", event="PreToolUse", tool_name="Bash", tool_input={"command": "rm foo"}, store=store)
         ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "use trash"}]
         ctx.session_allowed_patterns = [{"pattern": "rm"}]
         result = plugins.check_blocked_commands(ctx)
@@ -673,11 +800,7 @@ class TestRuleStacking:
         User's explicit /ar:no block replaces the default regardless of action type.
         """
         store = ThreadSafeDB()
-        ctx = EventContext(
-            session_id=f"test-dedup-warn-{id(self)}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": "git status"}, store=store
-        )
+        ctx = EventContext(session_id=f"test-dedup-warn-{id(self)}", event="PreToolUse", tool_name="Bash", tool_input={"command": "git status"}, store=store)
         # Simulate /ar:no git with a custom deny message
         ctx.session_blocked_patterns = [{"pattern": "git", "suggestion": "custom-git-block-msg"}]
         result = plugins.check_blocked_commands(ctx)
@@ -686,16 +809,13 @@ class TestRuleStacking:
         assert perm == "deny", f"session block must deny, got {perm!r}"
         msg = self._msg(result)
         assert "custom-git-block-msg" in msg, "custom session block message must appear"
-        assert "CLAUDE.md" not in msg, \
-            "DEFAULT git warn must NOT appear when session block claims same pattern"
+        assert "CLAUDE.md" not in msg, "DEFAULT git warn must NOT appear when session block claims same pattern"
 
     def test_session_no_does_not_suppress_more_specific_pattern(self):
         """/ar:no rm (deny) does NOT suppress DEFAULT rm -rf (different pattern → both shown)."""
         store = ThreadSafeDB()
         ctx = EventContext(
-            session_id=f"test-dedup-specific-{id(self)}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": "rm -rf /tmp/testdir"}, store=store
+            session_id=f"test-dedup-specific-{id(self)}", event="PreToolUse", tool_name="Bash", tool_input={"command": "rm -rf /tmp/testdir"}, store=store
         )
         # Session block for "rm" — different from "rm -rf"
         ctx.session_blocked_patterns = [{"pattern": "rm", "suggestion": "custom-rm-block-msg"}]
@@ -707,8 +827,7 @@ class TestRuleStacking:
         # "rm" session block MUST appear
         assert "custom-rm-block-msg" in msg, "session block for 'rm' must appear"
         # DEFAULT "rm -rf" integration is a DIFFERENT pattern — MUST also appear
-        assert "rm -rf" in msg.lower() or "trash" in msg.lower(), \
-            "DEFAULT rm -rf message must also appear (different pattern from 'rm')"
+        assert "rm -rf" in msg.lower() or "trash" in msg.lower(), "DEFAULT rm -rf message must also appear (different pattern from 'rm')"
 
     def test_safe_command_returns_none(self):
         """Commands matching no integration return None (pure pass-through).
@@ -757,8 +876,10 @@ class TestGitCommandTargeting:
         store = ThreadSafeDB()
         return EventContext(
             session_id=f"test-gittgt-{id(self)}-{command[:12].replace(' ', '_')}",
-            event="PreToolUse", tool_name="Bash",
-            tool_input={"command": command}, store=store
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": command},
+            store=store,
         )
 
     def test_git_checkout_dot_is_denied(self):
@@ -800,8 +921,7 @@ class TestGitCommandTargeting:
     def test_git_stash_is_not_in_default_integrations(self):
         """git stash and variants are safe alternatives — not blocked."""
         for pattern in ("git stash", "git stash push", "git stash pop"):
-            assert pattern not in DEFAULT_INTEGRATIONS, \
-                f"'{pattern}' is a safe alternative and should NOT be blocked"
+            assert pattern not in DEFAULT_INTEGRATIONS, f"'{pattern}' is a safe alternative and should NOT be blocked"
 
     def test_git_revert_is_not_in_default_integrations(self):
         """git revert creates a new commit — safe, not blocked."""
@@ -809,10 +929,8 @@ class TestGitCommandTargeting:
 
     def test_git_restore_is_in_default_integrations_as_block(self):
         """git restore IS in DEFAULT_INTEGRATIONS as block (discards unstaged changes)."""
-        assert "git restore" in DEFAULT_INTEGRATIONS, \
-            "git restore discards unstaged changes and should be in DEFAULT_INTEGRATIONS"
-        assert DEFAULT_INTEGRATIONS["git restore"].get("action") in ("block", None), \
-            "git restore should be block action (None defaults to block)"
+        assert "git restore" in DEFAULT_INTEGRATIONS, "git restore discards unstaged changes and should be in DEFAULT_INTEGRATIONS"
+        assert DEFAULT_INTEGRATIONS["git restore"].get("action") in ("block", None), "git restore should be block action (None defaults to block)"
 
     def test_git_reset_head_has_no_redirect(self):
         """git reset HEAD~ has no redirect (keeps changes in working dir)."""
@@ -850,17 +968,14 @@ class TestGrepFalsePositiveProtection:
     def _ctx(self, tool_name: str, tool_input: dict, session_id: str = None) -> EventContext:
         store = ThreadSafeDB()
         return EventContext(
-            session_id=session_id or f"test-grep-fp-{id(self)}-{tool_name}",
-            event="PreToolUse", tool_name=tool_name,
-            tool_input=tool_input, store=store
+            session_id=session_id or f"test-grep-fp-{id(self)}-{tool_name}", event="PreToolUse", tool_name=tool_name, tool_input=tool_input, store=store
         )
 
     def test_read_tool_with_grep_in_path_returns_none(self):
         """Read tool (Claude) with 'grep' in file path must not trigger grep block."""
         ctx = self._ctx("Read", {"file_path": "/path/to/grep_results.py"})
         result = plugins.check_blocked_commands(ctx)
-        assert result is None, \
-            f"Read tool must return None (hook-level: never reaches daemon for Read), got {result!r}"
+        assert result is None, f"Read tool must return None (hook-level: never reaches daemon for Read), got {result!r}"
 
     def test_read_tool_simple_returns_none(self):
         """Read tool with any file path must always return None."""
@@ -872,8 +987,7 @@ class TestGrepFalsePositiveProtection:
         """Grep AI tool (Claude Code 'Grep') must not trigger grep block."""
         ctx = self._ctx("Grep", {"pattern": "command_matches", "path": "src/"})
         result = plugins.check_blocked_commands(ctx)
-        assert result is None, \
-            f"Grep AI tool must return None (not a bash command), got {result!r}"
+        assert result is None, f"Grep AI tool must return None (not a bash command), got {result!r}"
 
     def test_glob_ai_tool_returns_none(self):
         """Glob AI tool must not trigger any block."""
@@ -889,8 +1003,7 @@ class TestGrepFalsePositiveProtection:
         """
         ctx = self._ctx("grep_search", {"pattern": "rm -rf", "path": "."})
         result = plugins.check_blocked_commands(ctx)
-        assert result is None, \
-            f"Gemini grep_search AI tool must return None (not bash), got {result!r}"
+        assert result is None, f"Gemini grep_search AI tool must return None (not bash), got {result!r}"
 
     def test_gemini_read_file_tool_returns_none(self):
         """Gemini CLI read_file tool must not trigger grep block.
@@ -900,8 +1013,7 @@ class TestGrepFalsePositiveProtection:
         """
         ctx = self._ctx("read_file", {"file_path": "/path/to/grep_test.py"})
         result = plugins.check_blocked_commands(ctx)
-        assert result is None, \
-            f"Gemini read_file tool must return None, got {result!r}"
+        assert result is None, f"Gemini read_file tool must return None, got {result!r}"
 
     def test_gemini_glob_tool_returns_none(self):
         """Gemini CLI glob tool must not trigger any block."""
@@ -934,8 +1046,7 @@ class TestGrepFalsePositiveProtection:
         # Should be None (no block) or allow — NOT deny for grep in pipe
         if result is not None:
             perm = result.get("hookSpecificOutput", {}).get("permissionDecision")
-            assert perm != "deny", \
-                f"grep in pipe must not be denied, got {perm!r} for 'ps aux | grep python'"
+            assert perm != "deny", f"grep in pipe must not be denied, got {perm!r} for 'ps aux | grep python'"
 
     def test_pytest_command_with_grep_in_test_filter_not_blocked(self):
         """pytest -k 'grep' must not trigger grep block.
@@ -952,8 +1063,7 @@ class TestGrepFalsePositiveProtection:
             msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
             # If there IS a response, it must not be a grep deny
             if perm == "deny":
-                assert "grep" not in msg.lower() or "bash grep" in msg.lower(), \
-                    f"pytest -k 'grep' must not trigger grep block, got: {msg[:100]!r}"
+                assert "grep" not in msg.lower() or "bash grep" in msg.lower(), f"pytest -k 'grep' must not trigger grep block, got: {msg[:100]!r}"
 
 
 if __name__ == "__main__":

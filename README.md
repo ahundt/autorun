@@ -592,6 +592,7 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:st` | `/ar:status` | `/afst` | Show current policy status |
 | `/ar:go` | `/ar:run` | `/autorun` | Start autonomous task execution |
 | `/ar:gp` | `/ar:proc` | `/autoproc` | Procedural autonomous workflow |
+| `/ar:task` | `/ar:tasks` | - | Show task status or dispatch pause, resume, ignore, prompts, and recovery |
 | `/ar:gc` | `/ar:commit` | - | Display Git Commit Requirements (17-step process) |
 | `/ar:ph` | `/ar:philosophy` | - | Display Universal System Design Philosophy (17 principles) |
 | `/ar:pn` | `/ar:plannew` | - | Create new structured plan |
@@ -613,10 +614,12 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:globalclear` | - | - | Clear all global blocks and allows |
 | `/ar:reload` | - | - | Reload integration rules from config files |
 | `/ar:restart-daemon` | - | - | Restart the daemon for the current autorun install/source tree |
-| `/ar:tasks` | - | - | Toggle task staleness reminders on/off or set threshold |
-| `/ar:tasks stale [on\|off\|min <N>]` | - | - | Stale-task escape hatch: after N identical consecutive stop blocks, inject clear-marker instructions (v0.10.2) |
-| `/ar:task-status` | - | - | Show task lifecycle status and incomplete tasks |
-| `/ar:task-ignore <id>` | - | - | Mark task as ignored (unblock stop) |
+| `/ar:task` | `/ar:tasks` | - | Show pause, prompting, recovery, and tracked-task status |
+| `/ar:task pause [N] [duration] [reason]` | - | - | Pause task enforcement; count and duration may be combined |
+| `/ar:task resume` | - | - | Resume task enforcement explicitly |
+| `/ar:task ignore <id> [reason]` | - | - | Mark one task ignored so it no longer blocks Stop |
+| `/ar:task prompts on\|off\|<N>` | - | - | Configure task-staleness prompting |
+| `/ar:task recovery on\|off\|min <N>` | - | - | Configure repeated-Stop stale-task recovery |
 | `/ar:cache` | - | - | Cache-miss / compaction protection gate (off by default) — show status |
 | `/ar:cache on [5m\|1h\|perm]` | - | - | Enable the gate (optionally for a window) |
 | `/ar:cache off [5m\|1h\|perm]` | - | - | Disable the gate (optionally temporarily, prior state restores) |
@@ -758,6 +761,11 @@ Start a task and walk away. Autorun keeps the supported agent working through im
   - Uses Sequential Improvement Methodology
   - Includes wait process and best practices generation
 
+- **/ar:task pause** \[N\] \[duration\] \[reason\] - Pause task enforcement while talking with the AI
+  - Defaults to the configured duration; count and duration may be combined
+  - Keeps PreToolUse safety hooks and tracked task state unchanged
+  - Use `/ar:task resume`, `/ar:go`, or `/ar:proc` to resume explicitly
+
 - **/ar:x** or **/ar:stop** - Stop gracefully after current task completion
   - Allows AI to finish current work before stopping
   - Cleans up processes and state files properly
@@ -797,10 +805,12 @@ Structured planning for complex development tasks — reduces mistakes and ensur
 
 Ensures AI continues working while tasks are outstanding. The stop hook blocks session exit until tasks are complete or explicitly cleared.
 
-**Slash commands:**
+**Task commands:**
 
-- **/ar:task-status** — Show current tasks and incomplete work
-- **/ar:task-ignore** \<id> — Mark task as ignored (user override to unblock stop)
+- **/ar:task** or **/ar:tasks** — Show task and enforcement status
+- **/ar:task pause** \[N\] \[duration\] \[reason\] — Temporarily pause task enforcement
+- **/ar:task resume** — Resume task enforcement
+- **/ar:task ignore** \<id> \[reason\] — Mark one task ignored
 
 **CLI:**
 
@@ -817,14 +827,14 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 
 #### Task Staleness Reminders (v0.9) and Stale-Task Escape Hatch (v0.10.2)
 
-Injects a reminder when 25+ tool calls pass without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work. Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding.
+Injects a reminder after the configured number of tool calls without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work. Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding.
 
-- **/ar:tasks** — Show status (enabled/disabled, count, threshold)
-- **/ar:tasks on/off** — Enable/disable reminders
-- **/ar:tasks \<number>** — Set threshold (default: 25 tool calls)
-- **/ar:tasks stale** — Show stale-task escape hatch status
-- **/ar:tasks stale on/off** — Enable/disable escape hatch (default: on)
-- **/ar:tasks stale min \<N>** — Require N consecutive identical stop blocks before showing escape hatch (default: 2, session-only)
+- **/ar:task prompts** — Show prompting status
+- **/ar:task prompts on/off** — Enable or disable reminders
+- **/ar:task prompts \<N>** — Set a positive tool-call threshold
+- **/ar:task recovery** — Show stale-task recovery status
+- **/ar:task recovery on/off** — Enable or disable recovery
+- **/ar:task recovery min \<N>** — Set the consecutive identical-Stop threshold for this session
 
 **Stale-task escape hatch:** When the same set of task IDs blocks Stop N times in a row with no non-task tool call between them, the stop injection gains an escape hatch instructing the AI to emit `AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for any task that Claude's Task DB no longer knows about. A PostToolUse hook detects the marker and marks the task `ignored` (non-blocking), allowing the stop.
 

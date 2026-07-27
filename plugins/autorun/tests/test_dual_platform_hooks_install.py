@@ -887,7 +887,11 @@ class TestWheelPluginAssets:
             assert json.loads(archive.read("autorun/gemini_template/hooks/hooks.json")) == load_hooks_json(GEMINI_HOOKS_JSON)
 
         venv = tmp_path / "venv"
-        subprocess.run(["uv", "venv", str(venv)], check=True, capture_output=True)
+        subprocess.run(
+            ["uv", "venv", "--python", sys.executable, str(venv)],
+            check=True,
+            capture_output=True,
+        )
         venv_python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         install_result = subprocess.run(
             [

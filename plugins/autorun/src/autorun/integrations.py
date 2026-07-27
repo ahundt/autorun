@@ -26,9 +26,11 @@ Features:
 - Semantic when predicates (Python or bash)
 - O(1) cached file loading (mtime-based)
 """
+
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import subprocess
@@ -84,18 +86,21 @@ class Integration:
     - patterns: multiple OR patterns in one file
     - when: semantic predicates (Python function or bash command)
     """
-    patterns: tuple[str, ...]              # Tuple for hashability
-    action: str                            # "block" or "warn"
+
+    patterns: tuple[str, ...]  # Tuple for hashability
+    action: str  # "block" or "warn"
     message: str
     redirect: str | None = None
     when: str = "always"
     event: str = "bash"
     tool_matcher: str = "Bash"
-    conditions: tuple[dict, ...] = ()      # Hookify conditions (AND-ed)
+    conditions: tuple[dict, ...] = ()  # Hookify conditions (AND-ed)
     enabled: bool = True
     name: str = ""
-    source: str = "default"                # "default" or "user"
+    source: str = "default"  # "default" or "user"
     platform_overrides: tuple[tuple[str, IntegrationPlatformOverride], ...] = ()
+    dedup_category: str | None = None
+    dedup_window_seconds: float | None = None
 
     @staticmethod
     def _redirect_from_config(config: dict) -> str | None:
@@ -108,10 +113,19 @@ class Integration:
             return commands[0] if isinstance(commands, list) else commands
         return None
 
+    @staticmethod
+    def _dedup_window_from_config(config: dict) -> float | None:
+        value = config.get("dedup_window_seconds")
+        if value in (None, ""):
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return parsed if math.isfinite(parsed) and parsed > 0 else 0.0
+
     @classmethod
-    def _platform_overrides_from_config(
-        cls, config: dict
-    ) -> tuple[tuple[str, IntegrationPlatformOverride], ...]:
+    def _platform_overrides_from_config(cls, config: dict) -> tuple[tuple[str, IntegrationPlatformOverride], ...]:
         """Parse platform_overrides without leaking mutable config dicts."""
         raw = config.get("platform_overrides") or {}
         if not isinstance(raw, dict):
@@ -121,14 +135,16 @@ class Integration:
         for cli_type, override in sorted(raw.items()):
             if not isinstance(override, dict):
                 raise TypeError(f"platform_overrides[{cli_type!r}] must be a mapping")
-            overrides.append((
-                str(cli_type),
-                IntegrationPlatformOverride(
-                    action=override.get("action"),
-                    message=override.get("suggestion", override.get("message")),
-                    redirect=cls._redirect_from_config(override),
-                ),
-            ))
+            overrides.append(
+                (
+                    str(cli_type),
+                    IntegrationPlatformOverride(
+                        action=override.get("action"),
+                        message=override.get("suggestion", override.get("message")),
+                        redirect=cls._redirect_from_config(override),
+                    ),
+                )
+            )
         return tuple(overrides)
 
     def _override_for_cli(self, cli_type: str | None) -> IntegrationPlatformOverride | None:
@@ -190,6 +206,8 @@ class Integration:
             name=config.get("name", pattern),
             source="default",
             platform_overrides=cls._platform_overrides_from_config(config),
+            dedup_category=config.get("dedup_category") or None,
+            dedup_window_seconds=cls._dedup_window_from_config(config),
         )
 
 
@@ -302,6 +320,8 @@ def load_all_integrations() -> list[Integration]:
                     conditions=tuple(fm.get("conditions", [])),
                     name=fm.get("name", md_file.stem),
                     source="user",
+                    dedup_category=fm.get("dedup_category") or None,
+                    dedup_window_seconds=Integration._dedup_window_from_config(fm),
                 )
                 # Validate and log warnings
                 for warn in _validate_integration(intg, str(md_file)):
@@ -365,7 +385,7 @@ def _extract_frontmatter(content: str) -> tuple[dict, str]:
             elif value.lower() in ("true", "false"):
                 value = value.lower() == "true"
             # Parse quoted string
-            elif value.startswith(("\"", "'")) and value.endswith(value[0]):
+            elif value.startswith(('"', "'")) and value.endswith(value[0]):
                 value = value[1:-1]
 
             frontmatter[key] = value
@@ -413,49 +433,39 @@ def _validate_integration(intg: Integration, source: str) -> list[str]:
     """
     warnings = []
 
+    if intg.dedup_category and intg.dedup_window_seconds is not None and intg.dedup_window_seconds <= 0:
+        warnings.append(
+            f"[{source}] dedup_window_seconds must be a finite number greater "
+            "than 0; temporal suppression is disabled for this integration. "
+            "Pass positive seconds or omit the field for the configured default."
+        )
+
     # Check for overly broad patterns
     TOO_BROAD_PATTERNS = {".*", ".", "", "*", "**", ".+"}
     for pattern in intg.patterns:
         if pattern in TOO_BROAD_PATTERNS:
-            warnings.append(
-                f"[{source}] Pattern '{pattern}' is too broad and may match all commands. "
-                "Consider using a more specific pattern."
-            )
+            warnings.append(f"[{source}] Pattern '{pattern}' is too broad and may match all commands. Consider using a more specific pattern.")
         elif len(pattern) == 1 and pattern.isalpha():
-            warnings.append(
-                f"[{source}] Pattern '{pattern}' is very short (single character). "
-                "This may cause false positives."
-            )
+            warnings.append(f"[{source}] Pattern '{pattern}' is very short (single character). This may cause false positives.")
 
     # Validate redirect template if present
     redirect_values = [("default", intg.redirect)]
-    redirect_values.extend(
-        (f"platform:{cli_type}", override.redirect)
-        for cli_type, override in intg.platform_overrides
-    )
+    redirect_values.extend((f"platform:{cli_type}", override.redirect) for cli_type, override in intg.platform_overrides)
     for redirect_source, redirect in redirect_values:
         if not redirect:
             continue
         # Check for common template errors
         if "{arg}" in redirect and "{args}" not in redirect:
-            warnings.append(
-                f"[{source}] Redirect '{redirect}' ({redirect_source}) uses "
-                "{arg} but should use {args}."
-            )
+            warnings.append(f"[{source}] Redirect '{redirect}' ({redirect_source}) uses {{arg}} but should use {{args}}.")
         # Check for unbalanced braces
         open_braces = redirect.count("{")
         close_braces = redirect.count("}")
         if open_braces != close_braces:
-            warnings.append(
-                f"[{source}] Redirect '{redirect}' ({redirect_source}) has unbalanced braces."
-            )
+            warnings.append(f"[{source}] Redirect '{redirect}' ({redirect_source}) has unbalanced braces.")
 
     for cli_type, override in intg.platform_overrides:
         if override.action is not None and override.action not in {"block", "warn"}:
-            warnings.append(
-                f"[{source}] platform_overrides[{cli_type!r}] action "
-                f"{override.action!r} is not one of: block, warn."
-            )
+            warnings.append(f"[{source}] platform_overrides[{cli_type!r}] action {override.action!r} is not one of: block, warn.")
 
     return warnings
 
@@ -466,9 +476,15 @@ def _validate_integration(intg: Integration, source: str) -> list[str]:
 
 
 _NO_MATCHED_PATTERN: Final[object] = object()
-_PIPE_AWARE_READ_COMMANDS: Final[frozenset[str]] = frozenset({
-    "grep", "find", "cat", "head", "tail",
-})
+_PIPE_AWARE_READ_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "grep",
+        "find",
+        "cat",
+        "head",
+        "tail",
+    }
+)
 
 
 def _set_current_pattern(ctx: any, pattern: str | None) -> tuple[dict | None, object]:
@@ -537,13 +553,7 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
 
         # Fallback: run as bash command
         try:
-            result = subprocess.run(
-                when,
-                shell=True,
-                capture_output=True,
-                timeout=2,
-                text=True
-            )
+            result = subprocess.run(when, shell=True, capture_output=True, timeout=2, text=True)
             return result.returncode == 0
         except subprocess.TimeoutExpired:
             logger.warning(f"When predicate '{when}' timed out")
@@ -558,12 +568,7 @@ def check_when_predicate(when: str, ctx: any, pattern: str | None = None) -> boo
 def _has_uncommitted_changes(ctx: any) -> bool:
     """Check if git has uncommitted changes."""
     try:
-        result = subprocess.run(
-            "git diff --quiet --exit-code",
-            shell=True,
-            capture_output=True,
-            timeout=2
-        )
+        result = subprocess.run("git diff --quiet --exit-code", shell=True, capture_output=True, timeout=2)
         return result.returncode != 0
     except Exception:
         return False
@@ -576,11 +581,19 @@ def _has_uncommitted_changes(ctx: any) -> bool:
 #   3. Shell env leakage (GIT_DIR/GIT_WORK_TREE) → scrub before subprocess.
 #   4. Fail-open on error → fail-safe True (block destructive op when hook is broken).
 _PREDICATE_TIMEOUT: Final[float] = 2.0
-_SCRUBBED_GIT_ENV_KEYS: Final[frozenset] = frozenset({
-    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG",
-    "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_NAMESPACE",
-    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
-})
+_SCRUBBED_GIT_ENV_KEYS: Final[frozenset] = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_CONFIG",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+    }
+)
 
 
 def _scrubbed_env() -> dict:
@@ -588,9 +601,7 @@ def _scrubbed_env() -> dict:
     return {k: v for k, v in os.environ.items() if k not in _SCRUBBED_GIT_ENV_KEYS}
 
 
-def _git_diff_quiet(
-    cwd: str | None, ref: str, file_path: str | None = None
-) -> bool:
+def _git_diff_quiet(cwd: str | None, ref: str, file_path: str | None = None) -> bool:
     """Return True iff working tree+index differs from `ref` (optionally for one file).
 
     Contract:
@@ -606,13 +617,19 @@ def _git_diff_quiet(
     try:
         probe = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
-            capture_output=True, timeout=_PREDICATE_TIMEOUT, cwd=cwd, env=env,
+            capture_output=True,
+            timeout=_PREDICATE_TIMEOUT,
+            cwd=cwd,
+            env=env,
         )
         if probe.returncode != 0 or probe.stdout.strip() != b"true":
             return False
         verify = subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", ref],
-            capture_output=True, timeout=_PREDICATE_TIMEOUT, cwd=cwd, env=env,
+            capture_output=True,
+            timeout=_PREDICATE_TIMEOUT,
+            cwd=cwd,
+            env=env,
         )
         if verify.returncode != 0:
             return False
@@ -620,13 +637,20 @@ def _git_diff_quiet(
         if file_path is not None:
             argv += ["--", file_path]
         r = subprocess.run(
-            argv, capture_output=True, timeout=_PREDICATE_TIMEOUT, cwd=cwd, env=env,
+            argv,
+            capture_output=True,
+            timeout=_PREDICATE_TIMEOUT,
+            cwd=cwd,
+            env=env,
         )
         return r.returncode != 0
     except Exception as e:
         logger.warning(
             "_git_diff_quiet fail-safe block cwd=%r ref=%r file=%r err=%s",
-            cwd, ref, file_path, e,
+            cwd,
+            ref,
+            file_path,
+            e,
         )
         return True
 
@@ -650,19 +674,14 @@ def _has_unstaged_changes(ctx: any) -> bool:
 def _stash_exists(ctx: any) -> bool:
     """Check if git stash exists."""
     try:
-        result = subprocess.run(
-            "git stash list",
-            shell=True,
-            capture_output=True,
-            timeout=2,
-            text=True
-        )
+        result = subprocess.run("git stash list", shell=True, capture_output=True, timeout=2, text=True)
         return bool(result.stdout.strip())
     except Exception:
         return False
 
 
 # ---- Pure parser for destructive-git commands (no I/O, fully unit-testable) --
+
 
 @dataclass(frozen=True, slots=True)
 class _DestructiveGitCommand:
@@ -680,6 +699,7 @@ class _DestructiveGitCommand:
       files: pathspecs scoped to the matched shell segment only. May be empty,
              in which case the predicate falls back to a repo-wide diff.
     """
+
     verb: str
     ref: str
     files: tuple[str, ...]
@@ -697,6 +717,7 @@ def _find_destructive_segment(cmd: str) -> list[str]:
     command had `git -C <path> checkout ...` or `git checkout ...` form.
     """
     from autorun.command_detection import _SHELL_OPERATORS, _shlex_split_safe
+
     for segment in _SHELL_OPERATORS.split(cmd):
         segment = segment.strip()
         if not segment:
@@ -758,7 +779,7 @@ def _extract_pathspecs(tokens: list[str], verb: str) -> tuple[str, ...]:
     """
     if "--" in tokens:
         dd = tokens.index("--")
-        return tuple(t for t in tokens[dd + 1:] if t and not t.startswith("-"))
+        return tuple(t for t in tokens[dd + 1 :] if t and not t.startswith("-"))
     if verb != "restore":
         return ()
     # `git restore` without `--`: consume positional args, skipping flags.
@@ -787,13 +808,14 @@ def _parse_destructive_git_cmd(cmd: str) -> _DestructiveGitCommand | None:
     tokens = _find_destructive_segment(cmd)
     if not tokens:
         return None
-    verb = tokens[1]   # "checkout" or "restore"
+    verb = tokens[1]  # "checkout" or "restore"
     ref = _extract_checkout_ref(tokens) if verb == "checkout" else _extract_restore_ref(tokens)
     files = _extract_pathspecs(tokens, verb)
     return _DestructiveGitCommand(verb=verb, ref=ref, files=files)
 
 
 # ---- Predicate using the pure parser + hardened subprocess helper ------------
+
 
 def _file_differs_from_ref(ctx: any) -> bool:
     """Return True iff the git checkout/restore in ctx would alter tracked content.
@@ -938,6 +960,7 @@ def _not_in_pipe(ctx: any) -> bool:
         # Try bashlex for robust pipe detection (handles quotes, complex syntax)
         try:
             import bashlex
+
             parts = bashlex.parse(cmd)
 
             matched_any = False
@@ -969,14 +992,9 @@ def _not_in_pipe(ctx: any) -> bool:
                     stripped = _tokens_from_read_command(tokens, current_pattern)
                     if stripped:
                         cmd_name = os.path.basename(stripped[0])
-                        if (
-                            (current_pattern is None and cmd_name in _PIPE_AWARE_READ_COMMANDS)
-                            or cmd_name == current_pattern
-                        ):
+                        if (current_pattern is None and cmd_name in _PIPE_AWARE_READ_COMMANDS) or cmd_name == current_pattern:
                             matched_any = True
-                            if not child_in_pipeline and _command_has_file_args(
-                                stripped, current_pattern
-                            ):
+                            if not child_in_pipeline and _command_has_file_args(stripped, current_pattern):
                                 return True
 
                 # Recursively check bashlex child containers. Pipelines inside
@@ -1009,6 +1027,7 @@ def _not_in_pipe(ctx: any) -> bool:
 
         # Split command to check for file-like arguments
         import shlex
+
         try:
             tokens = shlex.split(cmd)
         except ValueError:
@@ -1026,10 +1045,7 @@ def _not_in_pipe(ctx: any) -> bool:
         # Any non-flag argument is potentially a file argument
         if current_pattern is None:
             direct_tokens = strip_transparent_command_wrappers(tokens)
-            has_file_args = any(
-                t for t in direct_tokens[1:]
-                if t != "--" and not t.startswith("-")
-            )
+            has_file_args = any(t for t in direct_tokens[1:] if t != "--" and not t.startswith("-"))
         else:
             has_file_args = _command_has_file_args(tokens, current_pattern)
 
@@ -1226,6 +1242,7 @@ def check_conditions(conditions: tuple[dict, ...], ctx: any) -> bool:
     # Try hookify import
     try:
         from hookify.core.rule_engine import RuleEngine, Condition
+
         engine = RuleEngine()
 
         for cond_dict in conditions:
