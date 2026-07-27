@@ -18,7 +18,8 @@
 
 UV workspace containing 2 Claude Code plugins: **autorun**, **pdf-extractor**.
 
-**For Gemini CLI:** See [GEMINI.md](GEMINI.md) for Gemini-specific installation and configuration.
+**For Gemini CLI:** See
+[README.md — Gemini CLI Installation](README.md#gemini-cli-installation).
 
 ## Installation (Claude Code)
 

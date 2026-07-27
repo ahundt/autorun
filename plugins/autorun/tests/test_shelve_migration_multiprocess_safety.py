@@ -590,11 +590,15 @@ class TestRuntimeStateIsolationSpecification:
             plugin_root / "CLAUDE.md"
         ).read_text(encoding="utf-8")
         root_claude = repo_root / "CLAUDE.md"
+        root_gemini = repo_root / "GEMINI.md"
         root_agents = repo_root / "AGENTS.md"
         assert root_agents.is_file(), "Top-level AGENTS.md guidance is missing"
-        assert root_agents.samefile(root_claude), (
-            "Top-level AGENTS.md must reuse CLAUDE.md instead of drifting"
-        )
+        for alias in (root_claude, root_gemini):
+            assert alias.is_symlink(), f"{alias.name} must link to canonical AGENTS.md"
+            assert alias.readlink() == Path("AGENTS.md")
+            assert alias.samefile(root_agents), (
+                f"{alias.name} must reuse AGENTS.md instead of drifting"
+            )
         root_guidance = root_agents.read_text(encoding="utf-8")
         assert relative_path in root_guidance
         for essential in (

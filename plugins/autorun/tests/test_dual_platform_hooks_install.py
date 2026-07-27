@@ -490,7 +490,9 @@ class TestManifestFiles:
             "workspace __version__": f'__version__ = "{expected}"' in workspace_init,
             "autorun __version__": f'__version__ = "{expected}"' in autorun_init,
             "README expected output": f"autorun-workspace@{expected}" in readme,
-            "GEMINI expected output": f"ar@{expected}" in gemini_md,
+            "GEMINI canonical release heading": (
+                f"## autorun Plugin (v{expected})" in gemini_md
+            ),
             "GEMINI stale 0.11.0": "0.11.0" not in gemini_md,
             "CLAUDE release heading": f"## autorun Plugin (v{expected})" in claude_md,
         }
@@ -513,7 +515,9 @@ class TestManifestFiles:
             "pdf __version__": f'__version__ = "{pdf_expected}"' in pdf_init,
             "pdf skill version": f"version: {pdf_expected}" in pdf_skill,
             "CLAUDE pdf release heading": f"## pdf-extractor Plugin (v{pdf_expected})" in claude_md,
-            "GEMINI pdf expected output": f"pdf-extractor@{pdf_expected}" in gemini_md,
+            "GEMINI canonical pdf release heading": (
+                f"## pdf-extractor Plugin (v{pdf_expected})" in gemini_md
+            ),
         }
         for plugin in marketplace.get("plugins", []):
             if plugin.get("name") == "pdf-extractor":
