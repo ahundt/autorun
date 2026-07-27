@@ -1,0 +1,15 @@
+# Sources
+
+This skill is Copyright (c) 2026 Andrew Hundt. All rights reserved.
+
+Consulted 2026-07-21 while writing and revising this skill. Each entry notes what it confirmed, so future updates can re-verify against the origin.
+
+- **Primary: Andrew Hundt's direct instructions and iterative corrections** (2026-07 working sessions). They define the core process this skill encodes: the written fact-inventory before editing with cross-checks against the list and the surrounding context afterwards, backup-before-edit, restore-after-streamline, counts naming what they count, entity identification, and the no-facts-lost standard. The web sources below corroborate and sharpen details; they did not originate the process.
+
+- [GMU Writing Center, "Revising Prose for Concision: 10 Tips"](https://writingcenter.gmu.edu/writing-resources/writing-as-process/revising-prose-for-concision-10-tips): document-level-first revision order, weak-adverb deletion, subject-verb proximity, metadiscourse removal.
+- [UNC Writing Center, "Writing Concisely"](https://writingcenter.unc.edu/tips-and-tools/conciseness-handout/): prepositional-phrase trimming, sentence combining, filler openers, and that clarity can require adding words.
+- [Duke Thompson Writing Program, "Revising for Style: Clarity and Conciseness"](https://twp.duke.edu/sites/twp.duke.edu/files/documents/clarity_conciseness_.pdf): nominalizations back into verbs, expletive constructions, and that the passive voice often omits the actor (adopted here as a fact-loss guardrail).
+- [ONS content style guide, plain language](https://service-manual.ons.gov.uk/content/writing-for-users/plain-language): consistent terminology (one name per concept) and glossing unavoidable technical terms.
+- [Anthropic skills repository](https://github.com/anthropics/skills), `skill-creator` skill: pushy trigger descriptions to combat undertriggering, explain-why over bare imperatives, SKILL.md body-length targets, and that subjective-output writing skills generally do not need eval suites.
+- `function-signature-and-parameter-guidance` skill (local, `~/.claude/skills/`): origin of the fact-inventory process, measured brevity (A8), cold-reader audit (A9), unit-definition and count rules, example-is-one-case principle.
+- **Andrew Hundt's 2026-07-21/22 session corrections** (v0.5.0 additions): datetime-stamped (yyyy-mm-dd-hhmm) backup filenames; document-meta narration as a cleanup target with cross-references replaced by the fact itself; reported precision matched to measured variability, with range disclosure; checking freshly written sentences hardest in the cold-reader audit (referent failures were reintroduced twice by mid-edit rewrites); the corrupted-glyph scan in the diff-verify pass (a `×` and `‡` fused into one broken combining character); positive-first framing with the pitfall as trailing rationale, avoiding double negatives; the generalize-from-incident converse added to the example rule (a context-bound fix, "one significant figure", was first written as a universal rule and had to be corrected); and the numbered-list conversion script (scripts/number_lists.py).
