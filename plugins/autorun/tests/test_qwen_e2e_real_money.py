@@ -23,13 +23,22 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import live_model_env, run_isolated_hook
+from e2e_support import (
+    find_task_recovery_marker,
+    installed_task_pause_command_is_current,
+    live_model_env,
+    run_isolated_hook,
+    task_pause_recovery_prompt,
+)
 
 
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
 PLUGIN_ROOT = Path(__file__).parent.parent
 REPO_ROOT = PLUGIN_ROOT.parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
+QWEN_TASK_COMMAND = (
+    Path.home() / ".qwen" / "extensions" / "ar" / "commands" / "ar" / "task.toml"
+)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _TRAILING_STYLE_RE = re.compile(r"(?:\[[0-9;]*m\]?)+$")
 
@@ -99,36 +108,40 @@ def _run_qwen_hook(payload: dict, timeout: int = 20) -> subprocess.CompletedProc
     )
 
 
-def _qwen_live_command(model: str, marker: str) -> list[str]:
-    """Build one bounded, no-tool, no-history Qwen model smoke command."""
+def _qwen_live_command(model: str, prompt: str) -> list[str]:
+    """Build one sandboxed Qwen prompt with the current CLI surface."""
     return [
         "qwen",
-        "--bare",
         "--auth-type",
         "openai",
         "--model",
         model,
         "--output-format",
         "json",
+        "--sandbox",
+        "--chat-recording",
+        "false",
         "--max-session-turns",
         "1",
         "--max-wall-time",
         "180s",
         "--max-tool-calls",
         "0",
-        "--chat-recording",
-        "false",
-        f"Reply with exactly {marker} and no other text.",
+        prompt,
     ]
 
 
 def test_qwen_live_command_has_strict_resource_bounds():
-    """One paid smoke must stay single-turn, tool-free, and history-free."""
+    """One paid smoke must use noninteractive JSON and sandboxed execution."""
     command = _qwen_live_command("glm-5.2", "OK")
+    assert command[command.index("--output-format") + 1] == "json"
+    assert command[command.index("--chat-recording") + 1] == "false"
     assert command[command.index("--max-session-turns") + 1] == "1"
     assert command[command.index("--max-tool-calls") + 1] == "0"
-    assert command[command.index("--chat-recording") + 1] == "false"
-    assert "--bare" in command
+    assert command[-1] == "OK"
+    assert "--sandbox" in command
+    assert "--bare" not in command
+    assert "--safe-mode" not in command
 
 
 def test_qwen_zai_env_maps_token_to_openai_api_key(monkeypatch):
@@ -201,10 +214,17 @@ def test_qwen_pre_tool_use_denies_dangerous_shell_command_without_daemon():
         "one real Qwen/Z.AI GLM-5.2 API call."
     ),
 )
-def test_qwen_zai_glm52_basic_response_real_money():
-    """Run one minimal Qwen Code call against Z.AI GLM-5.2."""
+def test_qwen_zai_glm52_task_pause_recovery_real_money(tmp_path):
+    """Prove Qwen returns the generation-bound task-pause recovery token."""
     if not shutil.which("qwen"):
         pytest.skip("Qwen Code not installed (qwen command not found)")
+    if not installed_task_pause_command_is_current(QWEN_TASK_COMMAND):
+        pytest.skip(
+            "Qwen's installed autorun command assets predate task pause. "
+            "After active sessions are safe to interrupt, run "
+            "`uv run --project plugins/autorun python -m autorun --install --force` "
+            "and rerun this test."
+        )
 
     required = ("Z_AI_BASE_URL", "Z_AI_AUTH_TOKEN", "Z_AI_MODEL")
     missing = [name for name in required if not os.environ.get(name)]
@@ -212,17 +232,17 @@ def test_qwen_zai_glm52_basic_response_real_money():
         pytest.skip(f"Missing Z.AI env vars for Qwen live test: {', '.join(missing)}")
 
     model = _clean_zai_model(os.environ.get("Z_AI_MODEL"))
-    marker = "QWEN_ZAI_GLM52_OK"
     result = subprocess.run(
-        _qwen_live_command(model, marker),
+        _qwen_live_command(model, task_pause_recovery_prompt("qwen")),
         capture_output=True,
         text=True,
         timeout=200,
         env=_qwen_zai_openai_env(),
+        cwd=tmp_path,
     )
 
     combined = result.stdout + "\n" + result.stderr
     if "Insufficient balance or no resource package" in combined:
         pytest.skip("Z.AI returned 429 Insufficient balance or no resource package")
     assert result.returncode == 0, combined[-2000:]
-    assert marker in combined, combined[-2000:]
+    assert find_task_recovery_marker(combined), combined[-2000:]

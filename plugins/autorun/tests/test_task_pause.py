@@ -1,6 +1,7 @@
 """User-owned task pauses suspend enforcement without mutating tasks."""
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import multiprocessing
 from threading import Barrier
 
@@ -51,6 +52,7 @@ def _context(
     *,
     message: str = "assistant-stop-a",
     authority: str = "payload",
+    cwd: str | None = None,
 ) -> EventContext:
     return EventContext(
         session_id=session_id,
@@ -60,6 +62,7 @@ def _context(
         store=ThreadSafeDB(),
         session_identity_authority=authority,
         cli_type="codex",
+        cwd=cwd,
     )
 
 
@@ -188,6 +191,35 @@ def test_process_only_identity_rejects_pause_with_actionable_guidance():
     assert response.startswith("❌")
     assert "session" in response.lower()
     assert "AUTORUN_SESSION_ID" in response
+    assert not task_enforcement_is_paused(ctx)
+
+
+def test_explicit_shared_identity_is_visible_in_pause_status():
+    ctx = _context(
+        "team-release-discussion",
+        event="UserPromptSubmit",
+        prompt="ar:task pause discuss",
+        authority="explicit-shared",
+    )
+    ctx.activation_prompt = ctx.prompt
+
+    response = plugins.handle_task_command(ctx)
+
+    assert "shared" in response.lower()
+    assert "AUTORUN_SESSION_ID" in response
+
+
+def test_non_user_event_cannot_activate_pause_from_command_text():
+    ctx = _context(
+        "pause-assistant-command",
+        event="PostToolUse",
+        prompt="ar:task pause escape unfinished work",
+    )
+    ctx.activation_prompt = ctx.prompt
+
+    response = plugins.app.dispatch(ctx)
+
+    assert "Task enforcement pause: active" not in str(response)
     assert not task_enforcement_is_paused(ctx)
 
 
@@ -368,6 +400,66 @@ def test_ar_go_clears_pause_before_activation():
 
     assert response.startswith("✅ Autorun")
     assert not task_enforcement_is_paused(ctx)
+
+
+@pytest.mark.parametrize("command", ["ar:go Finish release checks", "ar:proc Finish release checks"])
+def test_autorun_start_commands_clear_pause(command):
+    ctx = _context(
+        f"pause-start-{command.split()[0]}",
+        event="UserPromptSubmit",
+        prompt=command,
+    )
+    ctx.activation_prompt = ctx.prompt
+    activate_task_pause(ctx, scope=ScopeSpec(), reason="")
+
+    plugins.handle_activate(ctx)
+
+    assert not task_enforcement_is_paused(ctx)
+
+
+def test_pause_state_is_shared_by_session_not_working_directory():
+    first = _context("pause-cwd-shared", cwd="/tmp/project-a")
+    second = _context("pause-cwd-shared", cwd="/tmp/project-b")
+    activate_task_pause(first, scope=ScopeSpec(ttl_seconds=300.0), reason="")
+
+    assert task_enforcement_is_paused(second)
+
+
+def test_pause_state_does_not_cross_session_ids_in_same_working_directory():
+    first = _context("pause-session-a", cwd="/tmp/shared-project")
+    second = _context("pause-session-b", cwd="/tmp/shared-project")
+    activate_task_pause(first, scope=ScopeSpec(ttl_seconds=300.0), reason="")
+
+    assert not task_enforcement_is_paused(second)
+
+
+def test_pause_resume_and_expiry_do_not_mutate_tasks(tmp_path):
+    ctx = _context("pause-task-integrity")
+    manager = TaskLifecycle(
+        ctx=ctx,
+        config=plugins.task_lifecycle.TaskLifecycleConfig(
+            storage_dir=tmp_path / "task-lifecycle",
+        ),
+    )
+    manager.create_task("release", {"subject": "Prepare release"}, "created")
+    tasks_before = deepcopy(manager.tasks)
+
+    pause = activate_task_pause(
+        ctx,
+        scope=ScopeSpec(ttl_seconds=300.0),
+        reason="",
+        now=100.0,
+    )
+    assert resume_task_pause(ctx, expected_generation=pause.generation)
+    activate_task_pause(
+        ctx,
+        scope=ScopeSpec(ttl_seconds=1.0),
+        reason="",
+        now=200.0,
+    )
+    assert not task_enforcement_is_paused(ctx, now=201.0)
+
+    assert manager.tasks == tasks_before
 
 
 def test_session_start_injects_current_pause_once_without_arming_enforcement():

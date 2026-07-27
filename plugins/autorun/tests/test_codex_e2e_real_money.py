@@ -25,7 +25,11 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import live_model_env
+from e2e_support import (
+    find_task_recovery_marker,
+    live_model_env,
+    task_pause_recovery_prompt,
+)
 
 
 ENABLE_REAL_MONEY_TESTS = os.environ.get("AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY", "0") == "1"
@@ -359,6 +363,29 @@ class TestCodexE2ERealMoney:
         assert "invalid user prompt submit JSON output" not in combined.lower()
         assert "decision\\\":\\\"approve" not in combined
         assert run.completed.returncode == 0, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+
+    @pytest.mark.serial
+    @pytest.mark.timeout(180)
+    def test_codex_task_pause_recovery_marker_in_real_cli(
+        self,
+        codex_cli_check,
+        tmp_path,
+    ):
+        """Prove Codex receives the no-slash task pause and recovery token."""
+        run = _run_codex_exec_case(
+            "real-cli-task-pause-recovery",
+            task_pause_recovery_prompt("codex"),
+            tmp_path,
+        )
+        combined = run.combined_output
+
+        assert "UserPromptSubmit hook (failed)" not in combined
+        assert find_task_recovery_marker(combined), (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
+        assert run.completed.returncode == 0, (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
 
     @pytest.mark.serial
     @pytest.mark.timeout(180)

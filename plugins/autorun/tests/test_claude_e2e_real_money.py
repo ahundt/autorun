@@ -61,7 +61,12 @@ from pathlib import Path
 
 import pytest
 
-from e2e_support import live_model_env, model_override
+from e2e_support import (
+    find_task_recovery_marker,
+    live_model_env,
+    model_override,
+    task_pause_recovery_prompt,
+)
 
 # =============================================================================
 # LOG DIRECTORY — full subprocess output persisted here for post-failure debug
@@ -1890,6 +1895,30 @@ class TestClaudeE2ERealMoney:
             f"Full output in: {log_path}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
+        )
+
+    def test_claude_task_pause_recovery_marker_in_live_session(
+        self,
+        tmp_path,
+        claude_cli_check,
+    ):
+        """Prove Claude receives and returns the generation-bound pause token."""
+        result, log_path = self._run_claude(
+            tmp_path,
+            "task_pause_recovery",
+            [task_pause_recovery_prompt("claude")],
+            timeout=240,
+            cwd=str(tmp_path),
+        )
+        combined = f"{result.stdout}\n{result.stderr}"
+
+        assert result.returncode == 0, (
+            f"claude -p task pause failed. Full output in: {log_path}\n"
+            f"{combined[-4000:]}"
+        )
+        assert find_task_recovery_marker(combined), (
+            "Claude did not return the generated AUTORUN_TASK_RECOVERY token. "
+            f"Full output in: {log_path}\n{combined[-4000:]}"
         )
 
     @slow_claude_model_behavior

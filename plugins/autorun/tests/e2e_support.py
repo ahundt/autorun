@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+
+from autorun.core import format_command_for_cli
 
 
 REAL_MONEY_ENV = "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"
@@ -19,6 +22,12 @@ RETIRED_GEMINI_BACKEND_REASON = (
     "capability tests active and run live Google model E2E through Antigravity. "
     f"Set {RETIRED_GEMINI_BACKEND_ENV}=1 only to diagnose the retired backend."
 )
+TASK_PAUSE_E2E_DURATION = "1m"
+TASK_PAUSE_E2E_REASON = "verify live task recovery"
+TASK_RECOVERY_MARKER_PATTERN = re.compile(
+    r"AUTORUN_TASK_RECOVERY\([A-Za-z0-9_-]+\)"
+)
+TASK_PAUSE_COMMAND_SENTINEL = "generation-bound recovery marker"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +85,30 @@ def live_model_env(base: dict[str, str] | None = None) -> dict[str, str]:
     env.pop("AUTORUN_USE_DAEMON", None)
     env.pop("AUTORUN_TEST_MODE", None)
     return env
+
+
+def task_pause_recovery_prompt(cli: str) -> str:
+    """Ask one live harness to prove it received the generated recovery token."""
+    command = format_command_for_cli("/ar:tasks pause", cli)
+    return (
+        f"{command} {TASK_PAUSE_E2E_DURATION} {TASK_PAUSE_E2E_REASON}\n"
+        "Read the AUTORUN_TASK_RECOVERY token supplied by the autorun hook. "
+        "Reply with exactly that complete token on one line and no other text."
+    )
+
+
+def find_task_recovery_marker(output: str) -> str | None:
+    """Return the first generation-bound recovery token rendered by a harness."""
+    match = TASK_RECOVERY_MARKER_PATTERN.search(output)
+    return match.group(0) if match else None
+
+
+def installed_task_pause_command_is_current(command_file: Path) -> bool:
+    """Return whether a harness has the task-pause command generation installed."""
+    try:
+        return TASK_PAUSE_COMMAND_SENTINEL in command_file.read_text()
+    except OSError:
+        return False
 
 
 def run_isolated_hook(

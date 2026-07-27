@@ -1,5 +1,6 @@
 """Keep every registered backend tied to an explicit E2E boundary."""
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
 from pathlib import Path
@@ -10,15 +11,19 @@ from autorun.platforms import PLATFORMS
 from e2e_support import (
     BACKEND_E2E_CONTRACTS,
     RETIRED_GEMINI_BACKEND_ENV,
+    find_task_recovery_marker,
+    installed_task_pause_command_is_current,
     live_model_env,
     model_override,
     retired_gemini_backend_enabled,
     run_isolated_hook,
+    task_pause_recovery_prompt,
 )
 from test_codex_e2e_real_money import _codex_exec_command
 
 
 TEST_ROOT = Path(__file__).parent
+CONCURRENT_WARNING_CALLS = 4
 
 
 def test_every_registered_backend_has_an_e2e_contract():
@@ -67,6 +72,75 @@ def test_registered_hook_backends_execute_isolated_process(cli, tmp_path):
     assert result.returncode == 0, result.stderr
     if result.stdout.strip():
         assert isinstance(json.loads(result.stdout), dict)
+
+
+@pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+def test_task_pause_command_returns_recovery_marker_through_real_hook_process(
+    cli,
+    tmp_path,
+):
+    """Every hook harness must expose the same generation-bound pause capability."""
+    plugin_root = TEST_ROOT.parent
+    result = run_isolated_hook(
+        plugin_root=plugin_root,
+        hook_script=plugin_root / "hooks" / "hook_entry.py",
+        cli=cli,
+        payload={
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": f"task-pause-{cli}-{uuid.uuid4().hex}",
+            "cwd": str(tmp_path),
+            "prompt": task_pause_recovery_prompt(cli),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert find_task_recovery_marker(result.stdout), result.stdout
+
+
+def test_installed_task_pause_command_generation_check_is_fail_closed(tmp_path):
+    """Paid tests must not exercise stale installed command assets."""
+    missing = tmp_path / "missing.toml"
+    stale = tmp_path / "stale.toml"
+    current = tmp_path / "current.toml"
+    stale.write_text('prompt = "legacy task staleness command"')
+    current.write_text('prompt = "generation-bound recovery marker"')
+
+    assert not installed_task_pause_command_is_current(missing)
+    assert not installed_task_pause_command_is_current(stale)
+    assert installed_task_pause_command_is_current(current)
+
+
+@pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+def test_concurrent_git_warning_is_attempted_once_through_real_hook_processes(
+    cli,
+    tmp_path,
+):
+    """Cross-process hook entrypoints share one atomic warning claim per session."""
+    plugin_root = TEST_ROOT.parent
+    platform = PLATFORMS[cli]
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": f"dedup-{cli}-{uuid.uuid4().hex}",
+        "cwd": str(tmp_path),
+        "tool_name": platform.tool_names["bash"],
+        "tool_input": {"command": "git commit -m e2e-dedup-check"},
+    }
+
+    def invoke(_index):
+        return run_isolated_hook(
+            plugin_root=plugin_root,
+            hook_script=plugin_root / "hooks" / "hook_entry.py",
+            cli=cli,
+            payload=payload,
+        )
+
+    with ThreadPoolExecutor(max_workers=CONCURRENT_WARNING_CALLS) as pool:
+        results = list(pool.map(invoke, range(CONCURRENT_WARNING_CALLS)))
+
+    assert all(result.returncode == 0 for result in results)
+    assert (
+        sum("Git commit rules:" in result.stdout for result in results) == 1
+    ), [result.stdout for result in results]
 
 
 def test_paid_model_defaults_are_small_and_bounded(tmp_path, monkeypatch):

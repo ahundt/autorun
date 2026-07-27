@@ -11,10 +11,13 @@ from pathlib import Path
 import pytest
 
 from e2e_support import (
+    find_task_recovery_marker,
+    installed_task_pause_command_is_current,
     live_model_env,
     model_override,
     real_money_enabled,
     run_isolated_hook,
+    task_pause_recovery_prompt,
 )
 
 
@@ -23,6 +26,19 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 # the Gemini API but is not in Antigravity's catalog; 3.6 Flash is the current
 # low-cost AGY model and avoids relying on a display label the CLI may reject.
 DEFAULT_MODEL = "gemini-3.6-flash-low"
+ANTIGRAVITY_TASK_COMMAND = (
+    Path.home()
+    / ".gemini"
+    / "antigravity-cli"
+    / "plugins"
+    / "ar"
+    / "commands"
+    / "ar"
+    / "task.toml"
+)
+ANTIGRAVITY_HEADLESS_PERMISSION_DENIAL = (
+    'a tool required the "command" permission that headless mode cannot prompt for'
+)
 
 
 def _find_hook_script() -> Path:
@@ -40,12 +56,12 @@ def _antigravity_model() -> str:
     return model_override("AUTORUN_ANTIGRAVITY_E2E_MODEL", DEFAULT_MODEL)
 
 
-def _antigravity_print_command(tmp_path: Path, marker: str) -> list[str]:
+def _antigravity_print_command(tmp_path: Path, prompt: str) -> list[str]:
     """Use the cheapest capable model with bounded, sandboxed print mode."""
     return [
         "agy",
         "--print",
-        f"ar:st\nReply with exactly {marker} and no other text.",
+        prompt,
         "--model",
         _antigravity_model(),
         "--sandbox",
@@ -59,7 +75,7 @@ def _antigravity_print_command(tmp_path: Path, marker: str) -> list[str]:
 def test_antigravity_print_command_is_bounded_and_isolated(tmp_path, monkeypatch):
     """The paid command must use the low-cost model and isolated resources."""
     monkeypatch.delenv("AUTORUN_ANTIGRAVITY_E2E_MODEL", raising=False)
-    command = _antigravity_print_command(tmp_path, "OK")
+    command = _antigravity_print_command(tmp_path, "Reply exactly: OK")
     assert command[command.index("--model") + 1] == DEFAULT_MODEL
     assert "--sandbox" in command
     assert command[command.index("--log-file") + 1].startswith(str(tmp_path))
@@ -105,13 +121,22 @@ def test_antigravity_pre_tool_use_denies_dangerous_command_without_daemon(tmp_pa
     not real_money_enabled(),
     reason="Set AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY=1 for one Antigravity call.",
 )
-def test_antigravity_status_hook_in_minimal_live_model_session(tmp_path):
-    """Prove Antigravity can complete one prompt with autorun hooks loaded."""
+def test_antigravity_task_pause_recovery_in_minimal_live_model_session(tmp_path):
+    """Prove Antigravity receives the generated task-pause recovery token."""
     if not shutil.which("agy"):
         pytest.skip("Antigravity CLI not installed")
-    marker = "ANTIGRAVITY_AUTORUN_OK"
+    if not installed_task_pause_command_is_current(ANTIGRAVITY_TASK_COMMAND):
+        pytest.skip(
+            "Antigravity's installed autorun command assets predate task pause. "
+            "After active sessions are safe to interrupt, run "
+            "`uv run --project plugins/autorun python -m autorun --install --force` "
+            "and rerun this test."
+        )
     result = subprocess.run(
-        _antigravity_print_command(tmp_path, marker),
+        _antigravity_print_command(
+            tmp_path,
+            task_pause_recovery_prompt("antigravity"),
+        ),
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -119,6 +144,13 @@ def test_antigravity_status_hook_in_minimal_live_model_session(tmp_path):
         env=live_model_env(),
     )
     combined = f"{result.stdout}\n{result.stderr}"
+    if ANTIGRAVITY_HEADLESS_PERMISSION_DENIAL in combined:
+        pytest.skip(
+            "Antigravity headless mode cannot prompt for the native task-command "
+            "permission. Add the narrow `/ar:tasks` command permission to "
+            "~/.gemini/antigravity-cli/settings.json, then rerun this test; do "
+            "not use --dangerously-skip-permissions."
+        )
     assert result.returncode == 0, combined[-4000:]
-    assert marker in combined, combined[-4000:]
+    assert find_task_recovery_marker(combined), combined[-4000:]
     assert "hook" not in combined.lower() or "failed" not in combined.lower()

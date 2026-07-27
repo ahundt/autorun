@@ -274,9 +274,14 @@ def task_pause_guidance(
         now=now,
     )
     reason = f"\nReason: {current.reason}" if current.reason else ""
+    shared_identity = (
+        "\nSession scope: shared by the explicit AUTORUN_SESSION_ID value."
+        if ctx.session_identity_authority == "explicit-shared"
+        else ""
+    )
     marker = f"AUTORUN_TASK_RECOVERY({current.generation})"
     return (
-        f"⏸️ Task enforcement pause: active ({scope}){reason}\n"
+        f"⏸️ Task enforcement pause: active ({scope}){reason}{shared_identity}\n"
         "AI recovery: when the requested discussion is satisfied, return this "
         f"exact marker on its own line:\n{marker}"
     )
