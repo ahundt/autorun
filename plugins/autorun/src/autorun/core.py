@@ -462,6 +462,13 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
         "source": payload.get("source", "startup"),
+        # Current Claude Code Stop payload fields (v2.1.145+). Preserve them
+        # without interpretation so Stop policies can prefer structured state
+        # over transcript inference while older harnesses keep safe defaults.
+        "stop_hook_active": bool(payload.get("stop_hook_active", False)),
+        "last_assistant_message": payload.get("last_assistant_message", ""),
+        "background_tasks": payload.get("background_tasks") or [],
+        "session_crons": payload.get("session_crons") or [],
         # Expanded at normalise time so downstream consumers can read a filesystem-ready path.
         "transcript_path": os.path.expanduser(payload["transcript_path"]) if payload.get("transcript_path") else None,
     }
@@ -1399,6 +1406,10 @@ class EventContext:
         "_source",
         "_chain_notifications",
         "_transcript_path",
+        "_stop_hook_active",
+        "_last_assistant_message",
+        "_background_tasks",
+        "_session_crons",
     )
 
     # Stage constants for type consistency
@@ -1454,6 +1465,10 @@ class EventContext:
         permission_mode: str = "default",
         source: str = "startup",
         transcript_path: str = None,
+        stop_hook_active: bool = False,
+        last_assistant_message: str = "",
+        background_tasks: List = None,
+        session_crons: List = None,
     ):
         object.__setattr__(self, "_session_id", session_id)
         object.__setattr__(self, "_event", event)
@@ -1480,6 +1495,12 @@ class EventContext:
         object.__setattr__(self, "_transcript_path", transcript_path)
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, "_source", source)
+        object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
+        object.__setattr__(
+            self, "_last_assistant_message", last_assistant_message or ""
+        )
+        object.__setattr__(self, "_background_tasks", tuple(background_tasks or ()))
+        object.__setattr__(self, "_session_crons", tuple(session_crons or ()))
         object.__setattr__(self, "_chain_notifications", [])
 
     # === Read-only accessors for payload data ===
@@ -1510,6 +1531,26 @@ class EventContext:
         back to fail-open behaviour on ``None``.
         """
         return self._transcript_path
+
+    @property
+    def stop_hook_active(self) -> bool:
+        """Whether Claude reports that this Stop hook is already continuing."""
+        return self._stop_hook_active
+
+    @property
+    def last_assistant_message(self) -> str:
+        """The current harness's structured final assistant message, if any."""
+        return self._last_assistant_message
+
+    @property
+    def background_tasks(self) -> tuple:
+        """Structured background tasks reported with the current Stop event."""
+        return self._background_tasks
+
+    @property
+    def session_crons(self) -> tuple:
+        """Structured session cron jobs reported with the current Stop event."""
+        return self._session_crons
 
     @property
     def prompt(self) -> str:
@@ -2508,6 +2549,10 @@ class AutorunDaemon:
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
                 transcript_path=normalized.get("transcript_path"),
+                stop_hook_active=normalized["stop_hook_active"],
+                last_assistant_message=normalized["last_assistant_message"],
+                background_tasks=normalized["background_tasks"],
+                session_crons=normalized["session_crons"],
             )
 
             # Dispatch — run in thread pool to avoid blocking the asyncio event loop.

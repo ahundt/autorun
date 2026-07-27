@@ -917,6 +917,10 @@ def run_direct() -> int:
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
         transcript_path=normalized.get("transcript_path"),
+        stop_hook_active=normalized["stop_hook_active"],
+        last_assistant_message=normalized["last_assistant_message"],
+        background_tasks=normalized["background_tasks"],
+        session_crons=normalized["session_crons"],
     )
 
     response = app.dispatch(ctx)

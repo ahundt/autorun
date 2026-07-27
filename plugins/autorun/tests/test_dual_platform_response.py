@@ -474,5 +474,46 @@ def test_payload_normalization_uses_selected_protocol(cli_type, external, intern
     assert normalized["hook_event_name"] == internal
 
 
+def test_claude_stop_payload_preserves_current_structured_fields():
+    background_tasks = [
+        {"id": "task-1", "status": "running", "description": "Run tests"}
+    ]
+    session_crons = [{"id": "cron-1", "schedule": "*/5 * * * *"}]
+    normalized = normalize_hook_payload(
+        {
+            "cli_type": "claude",
+            "hook_event_name": "Stop",
+            "session_id": "structured-stop",
+            "stop_hook_active": True,
+            "last_assistant_message": "I am still running the tests.",
+            "background_tasks": background_tasks,
+            "session_crons": session_crons,
+        }
+    )
+
+    assert normalized["stop_hook_active"] is True
+    assert normalized["last_assistant_message"] == "I am still running the tests."
+    assert normalized["background_tasks"] == background_tasks
+    assert normalized["session_crons"] == session_crons
+
+
+def test_event_context_exposes_structured_stop_fields_without_mutation():
+    background_tasks = [{"id": "task-1", "status": "running"}]
+    session_crons = [{"id": "cron-1"}]
+    ctx = EventContext(
+        "structured-stop",
+        "Stop",
+        stop_hook_active=True,
+        last_assistant_message="Still working.",
+        background_tasks=background_tasks,
+        session_crons=session_crons,
+    )
+
+    assert ctx.stop_hook_active is True
+    assert ctx.last_assistant_message == "Still working."
+    assert ctx.background_tasks == tuple(background_tasks)
+    assert ctx.session_crons == tuple(session_crons)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
