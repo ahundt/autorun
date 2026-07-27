@@ -2737,19 +2737,35 @@ class StateMigrator:
         assigning it to one would file it somewhere it never belonged.
         """
         grouped: dict = {}
+        rejected: list = []
         for key, value in legacy.items():
             if not isinstance(key, str) or "/" not in key:
-                raise SessionBackendError(
-                    f"Legacy key {key!r} has no session separator, so there is "
-                    "no way to tell which session it belongs to. Remove or "
-                    "correct it and run the migration again."
+                rejected.append(
+                    f"{key!r}: no session separator, so there is no way to "
+                    "tell which session it belongs to"
                 )
+                continue
             session_id, field = key.split("/", 1)
             if not session_id.strip():
-                raise SessionBackendError(
-                    f"Legacy key {key!r} names an empty session."
-                )
+                rejected.append(f"{key!r}: names an empty session")
+                continue
             grouped.setdefault(session_id, {})[field] = value
+
+        if rejected:
+            # Scan every key before refusing. Reporting only the first turns
+            # cutover into fix-one-run-again, which is how the 2026-07-23
+            # migration needed four attempts to clear three leaked test keys.
+            cap = _CONFIG.get("state_migration_max_reported_bad_keys", 20)
+            shown, hidden = rejected[:cap], len(rejected) - min(len(rejected), cap)
+            listing = "\n".join(f"  {entry}" for entry in shown)
+            if hidden:
+                listing += f"\n  ... and {hidden} more"
+            raise SessionBackendError(
+                f"{len(rejected)} legacy key(s) cannot be assigned to a "
+                f"session:\n{listing}\n"
+                "Remove or correct them and run the migration again. Existing "
+                "state is unchanged and still authoritative."
+            )
         return grouped, len(legacy)
 
     def _stage_path(self, generation: str | None = None) -> Path:
@@ -2765,8 +2781,7 @@ class StateMigrator:
                      generation: str, source_digest: str) -> None:
         """Create a complete database off to one side, then leave it closed."""
         stage_path.unlink(missing_ok=True)
-        Path(str(stage_path) + "-wal").unlink(missing_ok=True)
-        Path(str(stage_path) + "-shm").unlink(missing_ok=True)
+        self._discard_stage_sidecars(stage_path)
 
         store = SQLiteStore(stage_path)
         store.initialize()
@@ -2871,12 +2886,31 @@ class StateMigrator:
                 f"{generation} and source digest {source_digest}."
             )
 
+    @staticmethod
+    def _discard_stage_sidecars(stage_path: Path) -> None:
+        """Remove a staged database's ``-wal``/``-shm`` companions.
+
+        A SQLite database is up to three files, but ``os.replace`` renames
+        one. Publishing without this leaves a sidecar pair behind under the
+        staging name for every migration generation.
+
+        Safe at both call sites because the stage is closed before either
+        runs, so neither file is in use: before building, the stage names a
+        database about to be overwritten; after publishing, the stage path
+        no longer names a database at all. Deliberately NOT called on the
+        failure paths -- a stage that failed verification is the evidence.
+        """
+        for suffix in ("-wal", "-shm"):
+            Path(str(stage_path) + suffix).unlink(missing_ok=True)
+
     def _publish(self, stage_path: Path, generation, source_digest) -> None:
         """Put the verified database in place under its real name."""
         if self._db_path.exists():
             # A crash may have published before its receipt write. Only the
             # exact prepared generation is safe to adopt.
             self._validate_generation(self._db_path, generation, source_digest)
+            # The rename already happened, but its sidecars can still be here.
+            self._discard_stage_sidecars(stage_path)
             return
         if not stage_path.exists():
             raise SessionBackendError(
@@ -2886,6 +2920,9 @@ class StateMigrator:
             )
         self._validate_generation(stage_path, generation, source_digest)
         os.replace(stage_path, self._db_path)
+        # After the rename, never before: a crash between the two would
+        # otherwise strip sidecars from a stage that is still authoritative.
+        self._discard_stage_sidecars(stage_path)
         sync_directory(self._db_path.parent)
 
     # --- receipt -----------------------------------------------------------

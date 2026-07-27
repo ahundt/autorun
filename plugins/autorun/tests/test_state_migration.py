@@ -516,3 +516,171 @@ class TestLegacyStateStillReadable:
             assert state["field"] == "value"
             assert state["stored_none"] is None
             assert state["with/slash"] == "field name contains the separator"
+
+
+class TestTheStagingArtifactsAreCleanedUp:
+    """Publication moves the staged database; its sidecars must not survive.
+
+    ``os.replace`` renames one file. A SQLite database is up to three:
+    the main file plus ``-wal`` and ``-shm``. Renaming only the first leaves
+    the other two behind under the staging name, once per migration
+    generation, forever. They hold no data once the stage is published --
+    the stage is closed and checkpointed before verification -- so this is
+    not a correctness problem. It is the plan's resource-ownership rule:
+    every staging artifact has one owner and deterministic cleanup on
+    success and on failure.
+
+    ``_build_stage`` already deletes both sidecars before it builds. The
+    asymmetry between that and ``_publish`` is the defect.
+    """
+
+    @staticmethod
+    def _staging_artifacts(paths):
+        """Every path that belongs to a staged database, sidecars included."""
+        return sorted(
+            p.name for p in paths["dir"].iterdir()
+            if ".sqlite3.stage." in p.name
+        )
+
+    def test_a_successful_migration_leaves_no_staging_artifact(self, paths):
+        _write_legacy(paths, LEGACY)
+
+        _migrator(paths).migrate()
+
+        assert self._staging_artifacts(paths) == [], (
+            "Staging artifacts outlived the migration that created them. "
+            "_publish renames the staged database but leaves its -wal and "
+            "-shm behind, so every generation accumulates another pair."
+        )
+
+    def test_only_the_expected_files_remain(self, paths):
+        """State on success: the database, the receipt, the retired source."""
+        _write_legacy(paths, LEGACY)
+
+        _migrator(paths).migrate()
+
+        remaining = sorted(p.name for p in paths["dir"].iterdir())
+        assert "daemon_state.sqlite3" in remaining
+        assert "daemon_state.migration.json" in remaining
+        assert any(n.startswith("daemon_state.json.migrated.") for n in remaining)
+        assert not [n for n in remaining if ".stage." in n], (
+            f"Unexpected staging leftovers in {remaining}"
+        )
+
+    def test_repeated_generations_do_not_accumulate_sidecars(self, paths):
+        """A second migration must not add to the first one's leftovers."""
+        _write_legacy(paths, LEGACY)
+        _migrator(paths).migrate()
+
+        # Roll back to legacy, then convert again: a second generation.
+        _migrator(paths).rollback()
+        _migrator(paths).migrate()
+
+        assert self._staging_artifacts(paths) == [], (
+            "A second migration generation left its own staging artifacts."
+        )
+
+    def test_a_failed_verification_keeps_the_stage_for_diagnosis(
+        self, paths, monkeypatch
+    ):
+        """Cleanup must not become deletion-on-error.
+
+        When the copy does not reproduce its source the staged database is
+        the evidence. Removing it would destroy the only artifact an
+        operator can inspect, so failure keeps everything.
+        """
+        _write_legacy(paths, LEGACY)
+        migrator = _migrator(paths)
+        monkeypatch.setattr(
+            type(migrator), "_reconstruct_legacy_view",
+            lambda self, store: {"plain/field": "something else"},
+        )
+
+        with pytest.raises(SessionBackendError, match="verif"):
+            migrator.migrate()
+
+        assert self._staging_artifacts(paths), (
+            "The staged database was removed after a verification failure, "
+            "destroying the evidence needed to diagnose it."
+        )
+        assert paths["json"].exists(), "the source was retired despite the failure"
+
+
+class TestEveryMalformedKeyIsReportedAtOnce:
+    """One migration attempt should teach the operator about every bad key.
+
+    Refusing on the first unparseable key turns cutover into a loop: run,
+    read one name, quarantine it, run again. The live cutover on
+    2026-07-23 hit three such keys -- two empty-session and one
+    whitespace-padded, all leaked test artifacts -- and needed four
+    attempts and two intermediate safety copies to get through them.
+
+    Nothing about the refusal changes: the source stays authoritative and
+    nothing is published. Only the completeness of the report changes.
+    """
+
+    THREE_BAD = {
+        "good/field": "kept",
+        "no-separator-anywhere": "no session",
+        "/leading-separator": "empty session",
+        "   /whitespace-only": "whitespace session",
+    }
+
+    def test_one_attempt_names_all_three(self, paths):
+        _write_legacy(paths, self.THREE_BAD)
+
+        with pytest.raises(SessionBackendError) as raised:
+            _migrator(paths).migrate()
+
+        message = str(raised.value)
+        for bad in (
+            "no-separator-anywhere",
+            "/leading-separator",
+            "   /whitespace-only",
+        ):
+            assert bad in message, (
+                f"{bad!r} is missing from the refusal, so the operator has to "
+                f"fix one key and run again to discover it. Got: {message}"
+            )
+
+    def test_the_count_is_stated(self, paths):
+        _write_legacy(paths, self.THREE_BAD)
+
+        with pytest.raises(SessionBackendError, match=r"\b3\b"):
+            _migrator(paths).migrate()
+
+    def test_the_source_is_still_authoritative(self, paths):
+        """Reporting more must not change what the refusal protects."""
+        _write_legacy(paths, self.THREE_BAD)
+
+        with pytest.raises(SessionBackendError):
+            _migrator(paths).migrate()
+
+        assert paths["json"].exists(), "the source was retired despite refusing"
+        assert not paths["db"].exists(), "a database was published despite refusing"
+
+    def test_a_long_list_is_bounded_and_says_how_many_it_hid(self, paths):
+        """A pathological file must not produce an unreadable message."""
+        from autorun.config import CONFIG
+
+        cap = CONFIG["state_migration_max_reported_bad_keys"]
+        _write_legacy(paths, {f"bad-key-{i:03d}": i for i in range(cap + 7)})
+
+        with pytest.raises(SessionBackendError) as raised:
+            _migrator(paths).migrate()
+
+        message = str(raised.value)
+        assert message.count("bad-key-") <= cap, (
+            "Every malformed key was inlined; the cap did not apply."
+        )
+        assert "7 more" in message, (
+            f"The hidden remainder is not reported. Got: {message}"
+        )
+
+    def test_a_clean_file_still_migrates(self, paths):
+        """The scan must not have turned a good file into a refusal."""
+        _write_legacy(paths, LEGACY)
+
+        _migrator(paths).migrate()
+
+        assert paths["db"].exists()
