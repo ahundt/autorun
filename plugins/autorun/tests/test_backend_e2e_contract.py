@@ -17,7 +17,6 @@ from e2e_support import (
     model_override,
     retired_gemini_backend_enabled,
     run_isolated_hook,
-    task_pause_recovery_prompt,
 )
 from test_codex_e2e_real_money import _codex_exec_command
 
@@ -75,25 +74,55 @@ def test_registered_hook_backends_execute_isolated_process(cli, tmp_path):
 
 
 @pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+@pytest.mark.parametrize("root", ["task", "tasks"])
 def test_task_pause_command_returns_recovery_marker_through_real_hook_process(
+    cli,
+    root,
+    tmp_path,
+):
+    """Every hook harness and transport form preserves reason-only pause semantics."""
+    plugin_root = TEST_ROOT.parent
+    reason = "discuss the release boundary before implementation"
+    for prefix in PLATFORMS[cli].command_prefixes:
+        result = run_isolated_hook(
+            plugin_root=plugin_root,
+            hook_script=plugin_root / "hooks" / "hook_entry.py",
+            cli=cli,
+            payload={
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": f"task-pause-{cli}-{uuid.uuid4().hex}",
+                "cwd": str(tmp_path),
+                "prompt": f"{prefix}{root} pause {reason}",
+            },
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert find_task_recovery_marker(result.stdout), result.stdout
+        assert reason in result.stdout
+        assert "permanent" in result.stdout
+
+
+@pytest.mark.parametrize("cli", ["claude", "gemini", "antigravity", "qwen", "codex"])
+def test_bare_task_pause_is_five_minutes_through_real_hook_process(
     cli,
     tmp_path,
 ):
-    """Every hook harness must expose the same generation-bound pause capability."""
     plugin_root = TEST_ROOT.parent
+    prefix = PLATFORMS[cli].command_display_prefix
     result = run_isolated_hook(
         plugin_root=plugin_root,
         hook_script=plugin_root / "hooks" / "hook_entry.py",
         cli=cli,
         payload={
             "hook_event_name": "UserPromptSubmit",
-            "session_id": f"task-pause-{cli}-{uuid.uuid4().hex}",
+            "session_id": f"bare-task-pause-{cli}-{uuid.uuid4().hex}",
             "cwd": str(tmp_path),
-            "prompt": task_pause_recovery_prompt(cli),
+            "prompt": f"{prefix}task pause",
         },
     )
 
     assert result.returncode == 0, result.stderr
+    assert "5m0s" in result.stdout
     assert find_task_recovery_marker(result.stdout), result.stdout
 
 

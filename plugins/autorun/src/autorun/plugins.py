@@ -71,6 +71,7 @@ from .task_pause import (
     resume_task_pause,
     task_enforcement_is_paused,
     task_pause_allows_stop,
+    task_pause_guidance,
     task_pause_status,
 )
 from .transcript_commands import latest_transcript_command
@@ -1857,6 +1858,40 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
 # which puts the message in reason + systemMessage (core.py:960-962).
 
 
+def _advance_task_progress_counter(
+    ctx: EventContext,
+    *,
+    reset_at: int | None = None,
+) -> tuple[int, bool]:
+    """Atomically advance the shared no-task-update cadence.
+
+    ``reset_at`` turns a threshold crossing into a one-winner transition, so
+    concurrent hook calls cannot all emit the same periodic guidance.
+    """
+    outcome = {"due": False}
+
+    def advance(current):
+        count = (current or 0) + 1
+        if reset_at is not None and count >= reset_at:
+            outcome["due"] = True
+            return 0
+        return count
+
+    count = ctx.state_update_volatile(
+        "tool_calls_since_task_update",
+        advance,
+        0,
+    )
+    return count, outcome["due"]
+
+
+def _reset_task_progress_cadence(ctx: EventContext) -> None:
+    """Reset reminder cadence and any pending task-progress enforcement."""
+    ctx.tool_calls_since_task_update = 0
+    ctx.task_staleness_reminder_count = 0
+    ctx.task_staleness_enforce_next = False
+
+
 @app.on("PostToolUse")
 def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """Inject reminder when AI hasn't updated tasks recently (v0.9).
@@ -1867,25 +1902,39 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     if ctx.cli_type == "gemini":
         return None
 
-    if task_enforcement_is_paused(ctx):
+    pause_guidance = task_pause_guidance(
+        ctx,
+        periodic_recovery_only=True,
+    )
+    if pause_guidance:
+        if is_task_update_call(ctx):
+            _reset_task_progress_cadence(ctx)
+            return None
+        threshold = (
+            ctx.task_staleness_threshold
+            or CONFIG["task_staleness_threshold"]
+        )
+        _count, guidance_due = _advance_task_progress_counter(
+            ctx,
+            reset_at=threshold,
+        )
+        if guidance_due:
+            ctx.add_chain_notification(pause_guidance, channel="both")
         return None
+
     if not ctx.task_staleness_enabled:
         return None
 
     # Reset counter when AI actively manages tasks; skip increment.
     if is_task_update_call(ctx):
-        ctx.tool_calls_since_task_update = 0
-        ctx.task_staleness_reminder_count = 0
-        ctx.task_staleness_enforce_next = False
+        _reset_task_progress_cadence(ctx)
         return None
 
-    count = ctx.state_update_volatile(
-        "tool_calls_since_task_update",
-        lambda current: (current or 0) + 1,
-        0,
+    threshold = (
+        ctx.task_staleness_threshold
+        or CONFIG["task_staleness_threshold"]
     )
-
-    threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+    count, _due = _advance_task_progress_counter(ctx)
     no_tasks_threshold = CONFIG.get("task_staleness_no_tasks_threshold", 5)
 
     # Checkpoint only at semantic decision boundaries. Persisting every fifth
@@ -2153,7 +2202,8 @@ def _parse_task_command(prompt: str) -> TaskCommand:
 def _parse_task_pause_arguments(
     arguments: tuple[str, ...],
     *,
-    default_scope: ScopeSpec,
+    bare_default_scope: ScopeSpec,
+    reason_only_default_scope: ScopeSpec,
 ) -> TaskPauseArguments:
     remaining = list(arguments)
     scope_tokens: list[str] = []
@@ -2167,6 +2217,11 @@ def _parse_task_pause_arguments(
         raise ValueError(
             f"invalid count or duration {remaining[0]!r}; pass a positive logical Stop count, a duration such as 5m, or start the reason with a word"
         )
+    default_scope = (
+        reason_only_default_scope
+        if remaining and not scope_tokens
+        else bare_default_scope
+    )
     scope = parse_scope_tokens(
         scope_tokens,
         default_scope=default_scope,
@@ -2179,9 +2234,10 @@ def _task_pause(ctx: EventContext, arguments: tuple[str, ...]) -> str:
     config = task_lifecycle.TaskLifecycleConfig.load()
     parsed = _parse_task_pause_arguments(
         arguments,
-        default_scope=ScopeSpec(
+        bare_default_scope=ScopeSpec(
             ttl_seconds=config.task_pause_default_ttl_seconds,
         ),
+        reason_only_default_scope=ScopeSpec(),
     )
     activate_task_pause(
         ctx,

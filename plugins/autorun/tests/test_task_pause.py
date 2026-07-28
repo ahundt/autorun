@@ -25,6 +25,8 @@ from autorun.task_lifecycle import TaskLifecycle
 
 PROCESS_JOIN_TIMEOUT_SECONDS = 30.0
 QUEUE_READ_TIMEOUT_SECONDS = 5.0
+PAUSE_REMINDER_THRESHOLD = 25
+CONCURRENT_REMINDER_PROCESSES = 8
 
 
 def _process_task_pause_claim(
@@ -45,6 +47,33 @@ def _process_task_pause_claim(
         session_manager._reset_for_testing()
 
 
+def _process_pause_guidance_check(
+    backend: str,
+    session_id: str,
+    barrier,
+    results,
+) -> None:
+    """Cross one reminder boundary from an isolated spawned interpreter."""
+    session_manager._CONFIG["state_backend"] = backend
+    session_manager._reset_for_testing()
+    try:
+        ctx = EventContext(
+            session_id=session_id,
+            event="PostToolUse",
+            prompt="",
+            tool_name="exec_command",
+            store=None,
+            session_identity_authority="payload",
+            cli_type="codex",
+        )
+        ctx.task_staleness_threshold = PAUSE_REMINDER_THRESHOLD
+        barrier.wait()
+        plugins.check_task_staleness(ctx)
+        results.put(len(ctx._chain_notifications))
+    finally:
+        session_manager._reset_for_testing()
+
+
 def _context(
     session_id: str,
     event: str = "Stop",
@@ -53,22 +82,41 @@ def _context(
     message: str = "assistant-stop-a",
     authority: str = "payload",
     cwd: str | None = None,
+    store: ThreadSafeDB | None = None,
+    tool_name: str = "",
 ) -> EventContext:
     return EventContext(
         session_id=session_id,
         event=event,
         prompt=prompt,
         last_assistant_message=message,
-        store=ThreadSafeDB(),
+        store=store or ThreadSafeDB(),
         session_identity_authority=authority,
         cli_type="codex",
         cwd=cwd,
+        tool_name=tool_name,
     )
 
 
-def test_default_task_pause_is_five_minutes_and_preserves_reason(monkeypatch):
+def test_bare_task_pause_defaults_to_five_minutes(monkeypatch):
     ctx = _context(
         "pause-default",
+        event="UserPromptSubmit",
+        prompt="ar:task pause",
+    )
+    ctx.activation_prompt = ctx.prompt
+    monkeypatch.setattr("autorun.task_pause.time.time", lambda: 100.0)
+
+    response = plugins.handle_task_command(ctx)
+
+    assert "5m0s" in response
+    assert task_enforcement_is_paused(ctx, now=399.9)
+    assert not task_enforcement_is_paused(ctx, now=400.0)
+
+
+def test_reason_only_task_pause_is_indefinite_and_preserves_reason(monkeypatch):
+    ctx = _context(
+        "pause-reason-default",
         event="UserPromptSubmit",
         prompt="ar:task pause Discuss the release boundary",
     )
@@ -77,9 +125,24 @@ def test_default_task_pause_is_five_minutes_and_preserves_reason(monkeypatch):
 
     response = plugins.handle_task_command(ctx)
 
+    assert "permanent" in response
+    assert "Discuss the release boundary" in response
+    assert task_enforcement_is_paused(ctx, now=100_000_000.0)
+
+
+def test_explicit_duration_with_reason_remains_bounded(monkeypatch):
+    ctx = _context(
+        "pause-explicit-duration",
+        event="UserPromptSubmit",
+        prompt="ar:task pause 5m Discuss the release boundary",
+    )
+    ctx.activation_prompt = ctx.prompt
+    monkeypatch.setattr("autorun.task_pause.time.time", lambda: 100.0)
+
+    response = plugins.handle_task_command(ctx)
+
     assert "5m0s" in response
     assert "Discuss the release boundary" in response
-    assert task_enforcement_is_paused(ctx, now=399.9)
     assert not task_enforcement_is_paused(ctx, now=400.0)
 
 
@@ -158,7 +221,211 @@ def test_pause_without_scope_accepts_freeform_reason():
     )
     ctx.activation_prompt = ctx.prompt
 
-    assert "why is the lock safe" in plugins.handle_task_command(ctx)
+    response = plugins.handle_task_command(ctx)
+
+    assert "permanent" in response
+    assert "why is the lock safe" in response
+
+
+def test_reason_pause_repeats_ai_recovery_guidance_at_configured_cadence():
+    store = ThreadSafeDB()
+    session_id = "pause-periodic-guidance"
+    activation = _context(
+        session_id,
+        event="UserPromptSubmit",
+        prompt="ar:task pause discuss the release boundary",
+        store=store,
+    )
+    activation.activation_prompt = activation.prompt
+    plugins.handle_task_command(activation)
+
+    for index in range(3):
+        ctx = _context(
+            session_id,
+            event="PostToolUse",
+            store=store,
+            tool_name="exec_command",
+        )
+        ctx.task_staleness_threshold = 3
+        plugins.check_task_staleness(ctx)
+        if index < 2:
+            assert not ctx._chain_notifications
+
+    assert len(ctx._chain_notifications) == 1
+    message, channel = ctx._chain_notifications[0]
+    assert channel == "both"
+    assert "discuss the release boundary" in message
+    assert "AUTORUN_TASK_RECOVERY(" in message
+    assert not ctx.task_staleness_enforce_next
+
+
+def test_task_update_resets_reason_pause_recovery_cadence():
+    store = ThreadSafeDB()
+    session_id = "pause-guidance-reset"
+    activation = _context(
+        session_id,
+        event="UserPromptSubmit",
+        prompt="ar:task pause discuss the release boundary",
+        store=store,
+    )
+    activation.activation_prompt = activation.prompt
+    plugins.handle_task_command(activation)
+
+    first = _context(
+        session_id,
+        event="PostToolUse",
+        store=store,
+        tool_name="exec_command",
+    )
+    first.task_staleness_threshold = 2
+    plugins.check_task_staleness(first)
+
+    task_update = _context(
+        session_id,
+        event="PostToolUse",
+        store=store,
+        tool_name="update_plan",
+    )
+    task_update.task_staleness_threshold = 2
+    plugins.check_task_staleness(task_update)
+    assert task_update.tool_calls_since_task_update == 0
+
+    after_reset = _context(
+        session_id,
+        event="PostToolUse",
+        store=store,
+        tool_name="exec_command",
+    )
+    after_reset.task_staleness_threshold = 2
+    plugins.check_task_staleness(after_reset)
+    assert not after_reset._chain_notifications
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "ar:task pause",
+        "ar:task pause 5m discuss the release boundary",
+    ],
+)
+def test_periodic_recovery_guidance_requires_indefinite_reason_pause(prompt):
+    store = ThreadSafeDB()
+    session_id = "pause-no-periodic-guidance"
+    activation = _context(
+        session_id,
+        event="UserPromptSubmit",
+        prompt=prompt,
+        store=store,
+    )
+    activation.activation_prompt = activation.prompt
+    plugins.handle_task_command(activation)
+
+    for _index in range(3):
+        ctx = _context(
+            session_id,
+            event="PostToolUse",
+            store=store,
+            tool_name="exec_command",
+        )
+        ctx.task_staleness_threshold = 3
+        plugins.check_task_staleness(ctx)
+
+    assert not ctx._chain_notifications
+
+
+def test_parallel_pause_recovery_threshold_has_one_notification():
+    store = ThreadSafeDB()
+    session_id = "pause-guidance-parallel"
+    activation = _context(
+        session_id,
+        event="UserPromptSubmit",
+        prompt="ar:task pause discuss the release boundary",
+        store=store,
+    )
+    activation.activation_prompt = activation.prompt
+    plugins.handle_task_command(activation)
+    activation.tool_calls_since_task_update = PAUSE_REMINDER_THRESHOLD - 1
+    barrier = Barrier(CONCURRENT_REMINDER_PROCESSES)
+
+    def check(_index):
+        ctx = _context(
+            session_id,
+            event="PostToolUse",
+            store=store,
+            tool_name="exec_command",
+        )
+        ctx.task_staleness_threshold = PAUSE_REMINDER_THRESHOLD
+        barrier.wait()
+        plugins.check_task_staleness(ctx)
+        return ctx._chain_notifications
+
+    with ThreadPoolExecutor(
+        max_workers=CONCURRENT_REMINDER_PROCESSES,
+    ) as pool:
+        notifications = list(
+            pool.map(check, range(CONCURRENT_REMINDER_PROCESSES))
+        )
+
+    assert sum(bool(items) for items in notifications) == 1
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_spawned_processes_emit_one_pause_recovery_reminder(
+    backend,
+    tmp_path,
+    monkeypatch,
+):
+    previous_backend = session_manager._CONFIG["state_backend"]
+    monkeypatch.setenv(
+        "AUTORUN_TEST_STATE_DIR",
+        str(tmp_path / backend / "state"),
+    )
+    session_manager._CONFIG["state_backend"] = backend
+    session_manager._reset_for_testing()
+    session_id = f"pause-guidance-process-{backend}"
+    try:
+        activation = EventContext(
+            session_id=session_id,
+            event="UserPromptSubmit",
+            prompt="ar:task pause discuss the release boundary",
+            store=None,
+            session_identity_authority="payload",
+            cli_type="codex",
+        )
+        activation.activation_prompt = activation.prompt
+        plugins.handle_task_command(activation)
+        activation.state_update_volatile(
+            "tool_calls_since_task_update",
+            lambda _current: PAUSE_REMINDER_THRESHOLD - 1,
+            0,
+        )
+
+        spawn = multiprocessing.get_context("spawn")
+        barrier = spawn.Barrier(CONCURRENT_REMINDER_PROCESSES)
+        results = spawn.Queue()
+        processes = [
+            spawn.Process(
+                target=_process_pause_guidance_check,
+                args=(backend, session_id, barrier, results),
+            )
+            for _index in range(CONCURRENT_REMINDER_PROCESSES)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=PROCESS_JOIN_TIMEOUT_SECONDS)
+            assert process.exitcode == 0
+
+        assert (
+            sum(
+                results.get(timeout=QUEUE_READ_TIMEOUT_SECONDS)
+                for _process in processes
+            )
+            == 1
+        )
+    finally:
+        session_manager._CONFIG["state_backend"] = previous_backend
+        session_manager._reset_for_testing()
 
 
 @pytest.mark.parametrize("token", ["0", "-1", "2m3m", "2", "perm"])

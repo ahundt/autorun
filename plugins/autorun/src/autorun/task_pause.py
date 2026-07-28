@@ -247,8 +247,13 @@ def task_pause_guidance(
     *,
     now: float | None = None,
     report_unavailable: bool = False,
+    periodic_recovery_only: bool = False,
 ) -> str | None:
-    """Return active pause guidance from one atomic read, or ``None``."""
+    """Return active pause guidance from one atomic read, or ``None``.
+
+    Periodic recovery applies only to a reason-bearing indefinite pause. Timed
+    and counted pauses recover through their configured scope.
+    """
     current: TaskPause | None = None
 
     def inspect(value: object) -> dict[str, object] | None:
@@ -267,6 +272,12 @@ def task_pause_guidance(
             return "⚠️ Task enforcement pause status unavailable; normal enforcement remains active. Resolve the session-state error and retry."
         return None
     if current is None:
+        return None
+    if periodic_recovery_only and (
+        not current.reason
+        or current.grant.ttl_seconds is not None
+        or current.grant.remaining_uses is not None
+    ):
         return None
 
     scope = current.grant.status_label(

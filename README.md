@@ -615,7 +615,7 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:reload` | - | - | Reload integration rules from config files |
 | `/ar:restart-daemon` | - | - | Restart the daemon for the current autorun install/source tree |
 | `/ar:task` | `/ar:tasks` | - | Show pause, prompting, recovery, and tracked-task status |
-| `/ar:task pause [N] [duration] [reason]` | - | - | Pause task enforcement; count and duration may be combined |
+| `/ar:task pause [N] [duration] [reason]` | - | - | Bare pause defaults to five minutes; reason-only pauses until AI recovery; explicit scopes may be combined |
 | `/ar:task resume` | - | - | Resume task enforcement explicitly |
 | `/ar:task ignore <id> [reason]` | - | - | Mark one task ignored so it no longer blocks Stop |
 | `/ar:task prompts on\|off\|<N>` | - | - | Configure task-staleness prompting |
@@ -762,7 +762,8 @@ Start a task and walk away. Autorun keeps the supported agent working through im
   - Includes wait process and best practices generation
 
 - **/ar:task pause** \[N\] \[duration\] \[reason\] - Pause task enforcement while talking with the AI
-  - Defaults to the configured duration; count and duration may be combined
+  - Bare pause defaults to five minutes; reason-only pause has no time limit and supplies periodic AI recovery guidance
+  - Explicit count and duration may be combined and remain authoritative when followed by a reason
   - Keeps PreToolUse safety hooks and tracked task state unchanged
   - Use `/ar:task resume`, `/ar:go`, or `/ar:proc` to resume explicitly
 
@@ -808,7 +809,7 @@ Ensures AI continues working while tasks are outstanding. The stop hook blocks s
 **Task commands:**
 
 - **/ar:task** or **/ar:tasks** — Show task and enforcement status
-- **/ar:task pause** \[N\] \[duration\] \[reason\] — Temporarily pause task enforcement
+- **/ar:task pause** \[N\] \[duration\] \[reason\] — Bare pause defaults to five minutes; reason-only pause continues until AI recovery
 - **/ar:task resume** — Resume task enforcement
 - **/ar:task ignore** \<id> \[reason\] — Mark one task ignored
 

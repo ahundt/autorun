@@ -196,7 +196,7 @@ See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS lis
 | Command | Description |
 |---------|-------------|
 | `/ar:task`, `/ar:tasks` | Show task, pause, prompting, and recovery status |
-| `/ar:task pause [N] [duration] [reason]` | Pause task enforcement; count and duration may be combined |
+| `/ar:task pause [N] [duration] [reason]` | Bare pause defaults to five minutes; reason-only pause continues until AI recovery; explicit count and duration may be combined |
 | `/ar:task resume` | Resume task enforcement |
 | `/ar:task ignore <id> [reason]` | Mark one task ignored |
 | `/ar:task prompts on\|off\|<N>` | Configure task-staleness prompting |
