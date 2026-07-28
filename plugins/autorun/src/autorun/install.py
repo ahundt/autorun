@@ -5408,7 +5408,10 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
     codex_agents = codex_dir / "AGENTS.md"
     print(f"  AGENTS.md: {'✓ installed' if codex_agents.is_file() else '✗ not installed'}")
     skills_root = shared_agents_skills_dir()
-    user_skill_names = _skill_dir_names(skills_root, owned_only=True)
+    # Availability is independent of ownership. The installer deliberately
+    # preserves an unmarked user-authored skill when its name matches a plugin
+    # skill, and Codex can load that directory normally.
+    user_skill_names = _skill_dir_names(skills_root)
     user_skill_count = len(user_skill_names)
     expected_codex_skills = set().union(*skill_requirements.values()) if skill_requirements else set()
     missing_codex_skills = sorted(expected_codex_skills - user_skill_names)

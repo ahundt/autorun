@@ -637,16 +637,19 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
     assert "skills: unsupported by ForgeCode" in out
 
 
-def test_show_status_fails_when_selected_codex_skill_is_missing(tmp_path, monkeypatch, capsys):
-    """A nonzero skill count must not hide one missing selected plugin skill."""
+def _configure_show_status_skill_fixture(
+    tmp_path,
+    monkeypatch,
+    *,
+    plugin_skills,
+    installed_skills,
+    owned_skills=(),
+):
     monkeypatch.setenv("HOME", str(tmp_path))
     marketplace = tmp_path / "marketplace"
-    for plugin_name, skill_name in (
-        ("autorun", "cache"),
-        ("pdf-extractor", "pdf-extractor"),
-    ):
+    for plugin_name, skill_name in plugin_skills:
         skill_dir = marketplace / "plugins" / plugin_name / "skills" / skill_name
-        skill_dir.mkdir(parents=True)
+        skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(
             f"---\nname: {skill_name}\ndescription: fixture\n---\n",
             encoding="utf-8",
@@ -672,15 +675,54 @@ def test_show_status_fails_when_selected_codex_skill_is_missing(tmp_path, monkey
         "autorun.install.run_cmd",
         lambda *_args, **_kwargs: CmdResult(True, "autorun enabled\npdf-extractor enabled\n"),
     )
-    cache_skill = tmp_path / ".agents" / "skills" / "cache"
-    cache_skill.mkdir(parents=True)
-    (cache_skill / "SKILL.md").write_text("# cache\n", encoding="utf-8")
-    (cache_skill / ".autorun-owned").write_text("", encoding="utf-8")
+    for skill_name in installed_skills:
+        skill_dir = tmp_path / ".agents" / "skills" / skill_name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"# {skill_name}\n", encoding="utf-8")
+        if skill_name in owned_skills:
+            (skill_dir / ".autorun-owned").write_text("", encoding="utf-8")
+    return marketplace
+
+
+def test_show_status_fails_when_selected_codex_skill_is_missing(tmp_path, monkeypatch, capsys):
+    """A nonzero skill count must not hide one missing selected plugin skill."""
+    _configure_show_status_skill_fixture(
+        tmp_path,
+        monkeypatch,
+        plugin_skills=(
+            ("autorun", "cache"),
+            ("pdf-extractor", "pdf-extractor"),
+        ),
+        installed_skills=("cache",),
+        owned_skills=("cache",),
+    )
 
     assert show_status() == 1
     out = capsys.readouterr().out
     assert "missing selected plugin skills: pdf-extractor" in out
     assert "repair: autorun --install --codex --force" in out
+
+
+def test_show_status_accepts_preserved_user_authored_codex_skill(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """An available user skill must not be reported missing because it is unowned."""
+    _configure_show_status_skill_fixture(
+        tmp_path,
+        monkeypatch,
+        plugin_skills=(
+            ("autorun", "cache"),
+            ("autorun", "streamline-text"),
+        ),
+        installed_skills=("cache", "streamline-text"),
+        owned_skills=("cache",),
+    )
+
+    show_status()
+    out = capsys.readouterr().out
+    assert "missing selected plugin skills: streamline-text" not in out
 
 
 # ─── Hot-fix regression tests: schema correctness + path resolution ──────────
