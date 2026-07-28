@@ -101,7 +101,7 @@ def test_mp4_resolution_minimum(mp4_file, min_width):
 def test_skill_audit_no_failures():
     """Audit script must have 0 FAILs (score >= 85%)."""
     audit_script = Path(
-        "~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh"
+        "~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh"
     ).expanduser()
     skill_dir = Path("~/.claude/skills/cli-demo-recorder").expanduser()
     if not audit_script.exists():

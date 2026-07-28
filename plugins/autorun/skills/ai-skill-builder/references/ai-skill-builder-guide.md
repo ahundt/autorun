@@ -1,4 +1,4 @@
-# Claude Skill Builder Guide — Extracted from Anthropic PDF
+# AI Skill Builder Guide — Extracted from Anthropic PDF
 
 **Source**: The Complete Guide to Building Skills for Claude (January 2026)
 

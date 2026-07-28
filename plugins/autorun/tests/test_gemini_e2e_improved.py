@@ -1062,32 +1062,19 @@ class TestGeminiHighQualityMocks:
 
 
 class TestGeminiExtensionVerification:
-    """Verify Gemini extension configuration (NO COST - file checks only).
+    """Verify legacy Gemini extension source configuration (NO COST)."""
 
-    Falls back to source directory when extension is not installed.
-    """
-
-    def _find_plugin_dir(self) -> Path:
-        """Find plugin directory (installed extension or source fallback)."""
-        candidates = [
-            Path.home() / ".gemini/extensions/ar",
-            Path(__file__).parent.parent,  # Source dir
-        ]
-        for candidate in candidates:
-            if (candidate / "hooks").exists():
-                return candidate
-        pytest.skip(
-            "Plugin directory not found. Searched:\n"
-            + "\n".join(f"  - {p}" for p in candidates)
-        )
+    @staticmethod
+    def _source_plugin_dir() -> Path:
+        """Return the repository plugin source used to build extensions."""
+        return Path(__file__).parent.parent
 
     def test_extension_directory_structure(self):
-        """Verify plugin directory structure is correct."""
-        base_dir = self._find_plugin_dir()
+        """Verify the source inputs assembled into the legacy extension."""
+        base_dir = self._source_plugin_dir()
 
-        # Check required directories
         required_dirs = [
-            base_dir / "hooks",
+            base_dir / "src/autorun/gemini_template/hooks",
             base_dir / "commands",
             base_dir / "skills",
         ]
@@ -1097,9 +1084,9 @@ class TestGeminiExtensionVerification:
                 f"Required directory missing: {required_dir}"
 
     def test_gemini_hooks_config_valid(self):
-        """Verify hooks.json is valid and complete."""
-        base_dir = self._find_plugin_dir()
-        hooks_file = base_dir / "hooks/hooks.json"
+        """Verify the repository's legacy hooks template is valid and complete."""
+        base_dir = self._source_plugin_dir()
+        hooks_file = base_dir / "src/autorun/gemini_template/hooks/hooks.json"
         assert hooks_file.exists(), f"hooks.json not found at: {hooks_file}"
 
         # Read and parse

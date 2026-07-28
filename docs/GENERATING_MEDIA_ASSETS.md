@@ -62,4 +62,4 @@ Output files (all gitignored):
 
 ## PDF Assets
 
-- `plugins/autorun/skills/claude-skill-builder/claude-skill-builder-guide.pdf` — Static reference document (not generated). Gitignored via `*.pdf`.
+- `plugins/autorun/skills/ai-skill-builder/ai-skill-builder-guide.pdf` — Static reference document (not generated). Gitignored via `*.pdf`.

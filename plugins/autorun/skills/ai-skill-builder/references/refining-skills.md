@@ -1,7 +1,7 @@
 # Refining Existing Skills - Complete Guide
 
 **Source**: Anthropic's "The Complete Guide to Building Skills for Claude" (January 2026)
-**PDF**: `../claude-skill-builder-guide.pdf`
+**PDF**: `../ai-skill-builder-guide.pdf`
 
 This guide covers improving and modernizing existing Claude skills to match current best practices.
 
@@ -487,7 +487,7 @@ Bash: chmod +x script.sh
 ### Reference Materials
 
 **Official Guide**:
-- PDF: `../claude-skill-builder-guide.pdf`
+- PDF: `../ai-skill-builder-guide.pdf`
 - Extracted content in SKILL.md
 
 **Templates**:

@@ -802,7 +802,7 @@ def determine_target_clis(
         List of CLI names to install for (e.g., ["claude", "gemini", "codex"])
 
     Logic:
-        - If no platform flags: install for all available CLIs
+        - If no platform flags: install for available maintained CLIs
         - If any platform flags: install for the selected available CLIs
     """
     selected = []
@@ -819,8 +819,13 @@ def determine_target_clis(
     if selected:
         return [name for name in selected if available.get(name)]
 
-    # Default: install for all available CLIs (insertion order from PLATFORMS)
-    return [name for name, avail in available.items() if avail]
+    # Default: install available maintained CLIs in PLATFORMS declaration order.
+    # Legacy integrations remain reachable through their explicit flags.
+    return [
+        name
+        for name, avail in available.items()
+        if avail and (platform := PLATFORMS.get(name)) is not None and platform.install_by_default
+    ]
 
 
 # =============================================================================
@@ -2671,6 +2676,46 @@ def _collect_plugin_skill_sources(
     return skill_sources
 
 
+def _migrate_owned_codex_skill_names(
+    dst_root: Path,
+    skill_sources: Mapping[str, Path],
+) -> None:
+    """Remove superseded autorun-owned skill names after replacements publish."""
+    from .config import CONFIG
+
+    migrations = CONFIG.get("skill_name_migrations", {})
+    if not isinstance(migrations, Mapping):
+        return
+
+    for old_name, new_name in migrations.items():
+        if not isinstance(old_name, str) or not isinstance(new_name, str):
+            continue
+        replacement = skill_sources.get(new_name)
+        if replacement is None:
+            continue
+
+        old_path = dst_root / old_name
+        expected_plugin = _plugin_registry_name(replacement.parent.parent)
+        with FileLock(dst_root / _INSTALL_LOCK_NAME):
+            if not old_path.is_dir() or old_path.is_symlink():
+                continue
+            marker = read_owned_marker(old_path)
+            if marker is None or (marker.plugin and marker.plugin != expected_plugin):
+                continue
+
+            with tempfile.TemporaryDirectory(
+                prefix=f".autorun-migrate-{old_name}-",
+                dir=dst_root,
+            ) as tmp:
+                quarantined = Path(tmp) / old_name
+                os.replace(old_path, quarantined)
+                try:
+                    shutil.rmtree(quarantined)
+                except Exception:
+                    os.replace(quarantined, old_path)
+                    raise
+
+
 def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> tuple[int, int]:
     """Copy selected plugin skills into Codex's global skills directory.
 
@@ -2717,6 +2762,7 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
                 staged, plugin=_plugin_registry_name(skill_src.parent.parent)
             )
         installed += 1
+    _migrate_owned_codex_skill_names(dst_root, skill_sources)
     return (installed, skipped)
 
 
@@ -4038,9 +4084,9 @@ def install_plugins(
         Exit code: 0 = success, 1 = failure
 
     Behavior:
-        - Default (no CLI flags): Installs for all available CLIs with maximum capability
+        - Default (no CLI flags): Installs for maintained available CLIs
         - --claude: Installs only for Claude Code (error if not available)
-        - --gemini: Installs only for Gemini CLI (error if not available)
+        - --gemini: Explicitly installs the legacy Gemini CLI (error if unavailable)
         - --antigravity: Installs Google Antigravity native plugin, with Gemini importer fallback
         - --qwen: Installs only for Qwen Code (error if not available)
         - --codex: Installs only for Codex CLI (error if not available)
@@ -5729,7 +5775,11 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tool", action="store_true", help="Also install UV CLI tools")
     parser.add_argument("--claude", action="store_true", help="Install for Claude Code only")
-    parser.add_argument("--gemini", action="store_true", help="Install for Gemini CLI only")
+    parser.add_argument(
+        "--gemini",
+        action="store_true",
+        help="Explicitly install for the legacy Gemini CLI (not selected by default)",
+    )
     parser.add_argument(
         "--antigravity",
         action="store_true",

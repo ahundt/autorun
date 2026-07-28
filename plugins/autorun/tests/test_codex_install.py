@@ -68,7 +68,7 @@ def test_detect_available_clis_includes_codex_qwen_and_forgecode(monkeypatch):
     assert "forgecode" in avail
 
 
-def test_determine_target_clis_default_returns_all_available():
+def test_determine_target_clis_default_excludes_legacy_gemini():
     available = {
         "claude": True,
         "gemini": True,
@@ -78,10 +78,35 @@ def test_determine_target_clis_default_returns_all_available():
         "forgecode": False,
     }
     targets = determine_target_clis(False, False, available)
+    assert "gemini" not in targets
     assert "codex" in targets
     assert "antigravity" in targets
     assert "qwen" in targets
     assert "forgecode" not in targets
+
+
+def test_determine_target_clis_explicit_gemini_remains_available():
+    available = {
+        "claude": True,
+        "gemini": True,
+        "antigravity": True,
+        "qwen": True,
+        "codex": True,
+        "forgecode": True,
+    }
+    assert determine_target_clis(False, True, available) == ["gemini"]
+
+
+def test_determine_target_clis_default_does_not_fall_back_to_legacy_gemini():
+    available = {
+        "claude": False,
+        "gemini": True,
+        "antigravity": False,
+        "qwen": False,
+        "codex": False,
+        "forgecode": False,
+    }
+    assert determine_target_clis(False, False, available) == []
 
 
 def test_determine_target_clis_codex_only():
@@ -243,7 +268,7 @@ def test_install_plugins_runs_direct_platform_installers(monkeypatch, tmp_path):
     assert install_plugins("all", force=True) == 0
 
     assert any(call.startswith("claude plugin marketplace add ") for call in calls)
-    assert "gemini" in calls
+    assert "gemini" not in calls
     assert "antigravity" in calls
     assert "qwen" in calls
     assert "codex" in calls
@@ -1029,6 +1054,41 @@ def test_install_for_codex_skills_replaces_stale_autorun_owned(tmp_path, monkeyp
     text = (skill_dir / "SKILL.md").read_text()
     assert "STALE CONTENT" not in text
     assert "test fixture skill" in text
+
+
+def test_install_for_codex_migrates_autorun_owned_renamed_skill(tmp_path, monkeypatch):
+    """A successful renamed-skill install removes only autorun's old copy."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["ai-skill-builder"])
+    old_skill = tmp_path / ".agents" / "skills" / "claude-skill-builder"
+    old_skill.mkdir(parents=True)
+    (old_skill / "SKILL.md").write_text("OLD AUTORUN SKILL\n", encoding="utf-8")
+    (old_skill / ".autorun-owned").write_text(
+        json.dumps({"plugin": "autorun", "files": [], "settings": {}}),
+        encoding="utf-8",
+    )
+
+    _install_codex_skills(fake_marketplace / "plugins" / "autorun")
+
+    assert not old_skill.exists()
+    new_skill = tmp_path / ".agents" / "skills" / "ai-skill-builder"
+    assert (new_skill / "SKILL.md").is_file()
+    assert (new_skill / ".autorun-owned").is_file()
+
+
+def test_install_for_codex_preserves_user_owned_old_skill_name(tmp_path, monkeypatch):
+    """The rename migration must not delete an unmarked old-name directory."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["ai-skill-builder"])
+    old_skill = tmp_path / ".agents" / "skills" / "claude-skill-builder"
+    old_skill.mkdir(parents=True)
+    old_skill_md = old_skill / "SKILL.md"
+    old_skill_md.write_text("USER OWNED OLD NAME\n", encoding="utf-8")
+
+    _install_codex_skills(fake_marketplace / "plugins" / "autorun")
+
+    assert old_skill_md.read_text(encoding="utf-8") == "USER OWNED OLD NAME\n"
+    assert (tmp_path / ".agents" / "skills" / "ai-skill-builder" / "SKILL.md").is_file()
 
 
 # ─── Codex plugin marketplace packaging ─────────────────────────────────────

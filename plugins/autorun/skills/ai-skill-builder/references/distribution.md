@@ -29,7 +29,7 @@ ls ~/.claude/skills/your-skill-name/README.md  # must NOT exist (inside skill fo
 ls -d ~/.claude/skills/your-skill-name         # no underscores, no capitals
 
 # 3. Run the audit script
-bash ~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh \
+bash ~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh \
     ~/.claude/skills/your-skill-name
 
 # Target score: 85%+ before distributing

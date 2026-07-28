@@ -13,7 +13,7 @@
 3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
 4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
 5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-6. **Works across AI coding harnesses**: Same safety policies across Claude Code, Gemini CLI, Antigravity, Qwen Code, Codex CLI, and ForgeCode
+6. **Works across maintained AI coding harnesses**: Same safety policies across Claude Code, Antigravity, Qwen Code, Codex CLI, and ForgeCode; legacy Gemini CLI remains available by explicit opt-in
 7. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 8. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
@@ -55,7 +55,7 @@ autorun --install
 /ar:sos                  # Emergency stop
 ```
 
-> Works with **Claude Code**, **Gemini CLI**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, and **ForgeCode** — see [Multi-CLI Support](#multi-cli-support).
+> Works with **Claude Code**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, and **ForgeCode**. Legacy **Gemini CLI** support remains explicit opt-in — see [Multi-CLI Support](#multi-cli-support).
 
 > Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`.
 
@@ -191,7 +191,7 @@ claude plugin marketplace list
 
 ### Multi-CLI Support
 
-**autorun supports Claude Code, Gemini CLI, Google Antigravity, Qwen Code, Codex CLI, and ForgeCode**, providing shared safety features, command handlers, and autonomous execution capabilities across supported harnesses.
+**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, and ForgeCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
 
 #### Codex CLI Support
 
@@ -245,7 +245,7 @@ assume a skill is an `/ar:*` command. The read-only
 |-------|---------|
 | `autorun-maintainer` | Diagnose, install, and validate autorun across harnesses |
 | `cache` | Configure cache-miss and compaction protection |
-| `claude-skill-builder` | Create and review Claude skills |
+| `ai-skill-builder` | Create and review portable Agent Skills |
 | `cli-demo-recorder` | Record reproducible CLI and TUI demos |
 | `mermaid-diagrams` | Render Mermaid diagrams |
 | `parallel-subagent` | Investigate ambiguous failures with parallel approaches |
@@ -260,7 +260,7 @@ limitation instead of claiming skill parity.
 
 For hook schema details, see [docs/codex-cli-hooks-api.md](docs/codex-cli-hooks-api.md).
 
-#### Gemini CLI Requirements
+#### Legacy Gemini CLI Requirements (Explicit Opt-In)
 
 **Version**: Gemini CLI v0.28.0 or later (hooks require explicit enablement)
 
@@ -290,7 +290,7 @@ gemini --version  # Should show 0.28.0 or later
 
 For troubleshooting, see [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md).
 
-#### Gemini CLI Installation
+#### Legacy Gemini CLI Installation
 
 ```bash
 # Clone and install
@@ -974,7 +974,7 @@ The `autorun` CLI command is available after installation for managing plugins, 
 autorun --install                    # Register plugins/hooks for installed supported CLIs
 autorun --install autorun            # Register only autorun plugin
 autorun --install --claude           # Register for Claude Code only
-autorun --install --gemini           # Register for Gemini CLI only
+autorun --install --gemini           # Explicitly register the legacy Gemini CLI
 autorun --install --qwen             # Register for Qwen Code only
 autorun --install --codex            # Register for Codex CLI only
 autorun --install --codex --codex-hook-source plugin

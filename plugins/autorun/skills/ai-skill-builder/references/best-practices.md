@@ -25,7 +25,6 @@ Quick reference guide for building effective Claude skills based on Anthropic's 
 name: skill-name
 description: This skill should be used when the user wants to "trigger phrase 1",
   "trigger phrase 2", or needs help with [domain].
-version: 0.1.0
 ---
 ```
 
@@ -35,12 +34,11 @@ version: 0.1.0
 name: skill-name
 description: Does X for Y inputs. Use when user asks for "trigger phrase 1",
   "trigger phrase 2", or needs help with [domain].
-version: 1.0.0
-author: Your Name
-tags: [category1, category2]
-dependencies:
-  - tool-name
-  - mcp-server-name
+metadata:
+  version: 1.0.0
+  author: Your Name
+  tags: category1,category2
+  dependencies: tool-name,mcp-server-name
 ---
 ```
 

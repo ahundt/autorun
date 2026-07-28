@@ -2,7 +2,8 @@
 name: your-skill-name-here
 description: This skill should be used when the user wants to "trigger phrase 1",
   "trigger phrase 2", or needs guidance on [domain]. Brief capability summary.
-version: 0.1.0
+metadata:
+  version: 0.1.0
 ---
 
 # Skill Name

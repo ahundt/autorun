@@ -1096,6 +1096,12 @@ After every step and substep you must say "Wait," and execute this sequential th
     "shared_agents_dir": "~/.agents",
     "shared_agents_skills_subdir": "skills",
     "shared_agents_plugins_subdir": "plugins",
+    # Old name -> replacement name for autorun-owned shared skill directories.
+    # Install removes an old directory only after publishing its replacement
+    # and rechecking the ownership marker under the shared install lock.
+    "skill_name_migrations": {
+        "claude-skill-builder": "ai-skill-builder",
+    },
     # Parent directory of the local plugin source the personal marketplace
     # references; the plugin name is appended to it.
     "codex_plugin_source_dir": "~/plugins",

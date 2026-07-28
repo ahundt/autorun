@@ -1,6 +1,6 @@
 #!/bin/bash
 ##############################################################################
-# Claude Skill Auditor
+# AI Skill Auditor
 #
 # Validates a skill against Anthropic's best practices.
 # Source: "The Complete Guide to Building Skills for Claude" (January 2026)
@@ -112,7 +112,7 @@ audit_skill() {
         elif [ -f "$skill_path/readme.md" ] || [ -f "$skill_path/README.md" ]; then
             fix_rename="mv '$skill_path/README.md' '$skill_path/SKILL.md'"
         fi
-        print_fail "SKILL.md not found — Claude only loads files named exactly 'SKILL.md'" "$fix_rename"
+        print_fail "SKILL.md not found — Agent Skills hosts load this exact filename" "$fix_rename"
     fi
 
     if [ -f "$skill_path/README.md" ]; then
@@ -124,7 +124,7 @@ audit_skill() {
         if [ "$git_root" = "$skill_realpath" ]; then
             print_pass "README.md present — OK (skill folder IS the GitHub repo root; README.md is the landing page for human visitors)"
         else
-            print_warn "README.md in skill folder — Claude ignores it" \
+            print_warn "README.md in skill folder — Agent Skills hosts do not load it as instructions" \
                 "Move content to SKILL.md or references/. Exception: when distributing via GitHub, a README.md at the REPO ROOT (outside the skill folder) is acceptable as a landing page for human visitors — just not inside the skill folder itself."
         fi
     else
@@ -136,7 +136,7 @@ audit_skill() {
         # Reserved prefix check — Anthropic reserves 'claude' and 'anthropic' prefixes for their own official skills
         if [[ "$skill_name" =~ ^(claude|anthropic) ]]; then
             print_warn "Skill name '$skill_name' starts with reserved prefix 'claude' or 'anthropic'" \
-                "Anthropic reserves the 'claude' and 'anthropic' name prefixes for their own official skills — rename before public distribution (e.g., 'claude-skill-builder' → 'skill-builder')."
+                "Anthropic reserves the 'claude' and 'anthropic' name prefixes for their own official skills — rename before public distribution (e.g., 'claude-helper' → 'agent-helper')."
         fi
     else
         local kebab_fix
@@ -187,9 +187,9 @@ audit_skill() {
 
                 # Trigger-phrase format (critical for Claude auto-activation)
                 if echo "$frontmatter" | grep -q '"'; then
-                    print_pass "description has quoted trigger phrases (enables Claude auto-activation)"
+                    print_pass "description has quoted trigger phrases (supports agent auto-activation)"
                 else
-                    print_fail "description has no quoted trigger phrases — Claude won't auto-activate without them" \
+                    print_fail "description has no quoted trigger phrases — agents cannot reliably auto-activate it" \
                         'Add: description: This skill should be used when user wants to "build a skill", "create a skill".'
                 fi
 
@@ -217,14 +217,15 @@ audit_skill() {
                     'Add: description: This skill should be used when user wants to "trigger phrase", or needs help with [domain].'
             fi
 
-            # version field
+            # Agent Skills reserves top-level frontmatter keys. Version belongs
+            # under metadata rather than at the top level.
             if echo "$frontmatter" | grep -q "^version:"; then
                 local version_value
                 version_value=$(echo "$frontmatter" | grep "^version:" | cut -d: -f2- | tr -d ' ')
-                print_pass "version: $version_value"
+                print_fail "top-level version field '$version_value' is not portable Agent Skills frontmatter" \
+                    "Move it under metadata, for example: metadata: { version: '$version_value' }"
             else
-                print_warn "version field missing" \
-                    "Add 'version: 0.1.0' to frontmatter (use semantic versioning: patch/minor/major)"
+                print_pass "No unsupported top-level version field"
             fi
 
         else
@@ -233,7 +234,6 @@ audit_skill() {
      ---
      name: $skill_name
      description: This skill should be used when user wants to \"build a skill\", \"create a skill\".
-     version: 0.1.0
      ---"
         fi
     fi

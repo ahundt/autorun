@@ -21,7 +21,7 @@ would lose the reason.
    - Cross-project corroboration via ai-session-search; the `[independent]` markers.
 4. *"there is also a skill writing skill you should use (also the eval script … contains some
    bugs like hardcoded strings it insists be present which is a false assumption)"*
-   - Applied `claude-skill-builder`; fixed its path handling and warning strings (`a6ec825`).
+   - Applied `ai-skill-builder`; fixed its path handling and warning strings (`a6ec825`).
 5. *"you are proliferating a lot of files you need to properly consolidate this skill"*
    - Six files to four; `mistakes-and-fixes.md` folded into the passes it justified.
 6. *"shouldnt the checklist and the guides be consolidated in the main skill file too also does
@@ -251,13 +251,13 @@ that these failure modes are structural. Retrieved via `ai-session-search`.
 ## Method
 
 - [Anthropic: The Complete Guide to Building Skills for Claude](https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf)
-  (January 2026), via the local `claude-skill-builder` skill — progressive disclosure levels,
+  (January 2026), via the local `ai-skill-builder` skill — progressive disclosure levels,
   trigger-phrase description format, required `references/sources.md` with per-source
   "what it confirmed" notes.
 
 ## Discrepancies
 
-`claude-skill-builder/scripts/audit-skill.sh` produced three warnings on this skill. All three
+`ai-skill-builder/scripts/audit-skill.sh` produced three warnings on this skill. All three
 were traced to the checker rather than the skill, and the script was **fixed in place** —
 path handling repaired, and each warning amended to state its intent and permit self-credit
 when a differently-shaped skill meets it.
@@ -275,7 +275,7 @@ when a differently-shaped skill meets it.
   the duplication that merging removed. Warning amended to accept inline examples.
 - **The same script warns when SKILL.md lacks "quantitative outcomes"**, grepping for
   `faster|reduction|improvement|save.*time|NN%` (line 314). This contradicts
-  `claude-skill-builder/references/best-practices.md:62-91`, which states outcome-focused
+  `ai-skill-builder/references/best-practices.md:62-91`, which states outcome-focused
   language belongs in a GitHub README and is *wrong* for SKILL.md. Warning rejected as
   internally inconsistent; no invented metrics were added. The real measurements this skill
   does carry (`Ω(k)`, 49.8–61.7 µs, median 148-character descriptions) are facts, not

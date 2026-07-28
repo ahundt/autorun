@@ -548,6 +548,9 @@ class Platform:
     unsupported_response_fields_by_event: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     # === Install metadata ===
+    # False keeps an archived/legacy integration available through its explicit
+    # CLI flag without selecting it during the default maintained-harness install.
+    install_by_default: bool = True
     config_dir: str = ""
     template_dir: str | None = None
     hooks_path_var: str = ""
@@ -737,6 +740,7 @@ GEMINI = register(
         name="gemini",
         display_name="Legacy Gemini CLI",
         binary="gemini",
+        install_by_default=False,
         detect_env_vars=("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI"),
         detect_session_keys=("GEMINI_SESSION_ID", "sessionId", "session_id"),
         detect_event_names=frozenset(

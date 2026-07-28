@@ -1,6 +1,6 @@
 # Sources
 
-Checked: 2026-03
+Checked: 2026-07
 
 ## Primary
 
@@ -9,11 +9,23 @@ Checked: 2026-03
   progressive disclosure structure, SKILL.md/kebab-case naming rules, YAML frontmatter
   requirements, 5,000-word hard limit, description field constraints (1024 chars, no angle
   brackets, trigger-phrase format), folder taxonomy (references/, scripts/, assets/),
-  distribution channels, testing framework. Local copy: `../claude-skill-builder-guide.pdf`
+  distribution channels, testing framework. Local copy: `../ai-skill-builder-guide.pdf`
 
 - [Claude Code documentation](https://docs.anthropic.com)
   — confirmed allowed-tools frontmatter field format, skill loading behavior, plugin
   structure vs standalone skill structure, skill auto-detection via YAML frontmatter
+
+- [Agent Skills specification](https://agentskills.io/specification)
+  — confirmed the portable `SKILL.md`, `scripts/`, `references/`, and `assets/`
+  package shared across compatible agent hosts
+
+- [OpenAI: Build skills](https://learn.chatgpt.com/docs/build-skills)
+  — confirmed Codex/ChatGPT skill discovery, explicit invocation, progressive
+  disclosure, and the shared Agent Skills standard
+
+- [Qwen Code: Agent Skills](https://qwenlm.github.io/qwen-code-docs/en/users/features/skills/)
+  — confirmed Qwen personal, project, and extension skill locations plus
+  model- and user-invocation behavior
 
 - [Model Context Protocol specification](https://modelcontextprotocol.io)
   — confirmed MCP server tool list/parameter schema behavior referenced in Category 3
@@ -37,7 +49,7 @@ Checked: 2026-03
   — confirmed Markdown rendering behavior for SKILL.md content
 
 - [Semantic Versioning](https://semver.org/)
-  — confirmed MAJOR.MINOR.PATCH format used in skill version fields
+  — confirmed MAJOR.MINOR.PATCH format used when a skill records a version in metadata
 
 ## Discrepancies
 

@@ -381,12 +381,12 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--claude",
         action="store_true",
-        help="Install for Claude Code only (default: install for both CLIs if available)",
+        help="Install for Claude Code only (default: install maintained available harnesses)",
     )
     install_group.add_argument(
         "--gemini",
         action="store_true",
-        help="Install for Gemini CLI only (default: install for both CLIs if available)",
+        help="Explicitly install for the legacy Gemini CLI (not selected by default)",
     )
     install_group.add_argument(
         "--antigravity",
@@ -408,7 +408,7 @@ For more information: https://github.com/ahundt/autorun
     install_group.add_argument(
         "--codex",
         action="store_true",
-        help="Install for Codex CLI only (default: install for all available CLIs)",
+        help="Install for Codex CLI only (default: install for maintained available CLIs)",
     )
     install_group.add_argument(
         "--claude-agents-skills",

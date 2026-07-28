@@ -574,6 +574,15 @@ class TestInstallMainAdapter:
         assert "agy is an alias for antigravity" in help_text
         assert "--custom-harness-status" not in help_text
 
+    def test_install_module_help_marks_gemini_as_explicit_legacy_target(self):
+        """Direct module help must not imply legacy Gemini is a default target."""
+        install = get_install_module()
+
+        help_text = install._create_install_module_parser().format_help()
+
+        assert "Explicitly install for the legacy Gemini CLI" in help_text
+        assert "not selected by default" in help_text
+
     def test_install_module_main_status_with_custom_harness_routes_to_show_status(self):
         """Direct module status reuses --status and forwards custom harness specs."""
         install = get_install_module()

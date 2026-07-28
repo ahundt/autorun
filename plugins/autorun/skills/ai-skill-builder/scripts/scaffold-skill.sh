@@ -1,8 +1,8 @@
 #!/bin/bash
 ##############################################################################
-# Claude Skill Scaffolder
+# AI Skill Scaffolder
 #
-# Creates a new Claude skill with proper structure and templates
+# Creates a new Agent Skill with proper structure and templates
 #
 # Usage:
 #   bash scaffold-skill.sh <skill-name> [category]
@@ -113,7 +113,7 @@ get_category_info() {
 
 # Main function
 main() {
-    print_header "Claude Skill Scaffolder"
+    print_header "AI Skill Scaffolder"
 
     # Parse arguments
     SKILL_NAME=$1
@@ -277,15 +277,15 @@ This skill follows these steps:
 
 1. **Fill in TODOs**: Replace all [TODO] sections with actual content
 2. **Add Examples**: Include real examples from your use case
-3. **Test Triggering**: Verify Claude detects the skill
+3. **Test Triggering**: Verify the target agent detects the skill
 4. **Validate Function**: Test the complete workflow
 5. **Measure Performance**: Compare to baseline metrics
 6. **Get Feedback**: Test with target users
 7. **Distribute**: Share on GitHub and community
 
 For guidance, see:
-- Template: ~/.claude/skills/claude-skill-builder/templates/SKILL-template.md
-- Best Practices: ~/.claude/skills/claude-skill-builder/references/best-practices.md
+- Template: ~/.claude/skills/ai-skill-builder/templates/SKILL-template.md
+- Best Practices: ~/.claude/skills/ai-skill-builder/references/best-practices.md
 EOF
     print_success "SKILL.md created"
 
@@ -387,9 +387,9 @@ EOF
     echo "  5. Iterate based on feedback"
     echo ""
     print_info "Resources:"
-    echo "  - Template: ~/.claude/skills/claude-skill-builder/templates/SKILL-template.md"
-    echo "  - Guide: ~/.claude/skills/claude-skill-builder/SKILL.md"
-    echo "  - Best Practices: ~/.claude/skills/claude-skill-builder/references/best-practices.md"
+    echo "  - Template: ~/.claude/skills/ai-skill-builder/templates/SKILL-template.md"
+    echo "  - Guide: ~/.claude/skills/ai-skill-builder/SKILL.md"
+    echo "  - Best Practices: ~/.claude/skills/ai-skill-builder/references/best-practices.md"
     echo ""
     print_success "Happy skill building! 🎉"
 }

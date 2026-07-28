@@ -31,20 +31,21 @@ ls -d ~/.claude/skills/your-skill-name
 **Cause A: No YAML frontmatter**
 
 ```yaml
-# ❌ Wrong — no frontmatter, Claude never sees the skill's description
-# Claude Skill Builder
-Build Claude Code skills...
+# ❌ Wrong — no frontmatter, the agent host never sees the skill's description
+# AI Skill Builder
+Build Agent Skills...
 
 # ✅ Fix — add frontmatter as the VERY FIRST thing in the file
 ---
 name: your-skill-name
 description: This skill should be used when the user wants to "trigger phrase 1",
   "trigger phrase 2", or needs help with [domain].
-version: 0.1.0
+metadata:
+  version: 0.1.0
 ---
 
-# Claude Skill Builder
-Build Claude Code skills...
+# AI Skill Builder
+Build Agent Skills...
 ```
 
 **Cause B: Description is outcome-focused instead of trigger-phrase format**
@@ -95,7 +96,7 @@ mv ~/.claude/skills/my-skill/README.md ~/.claude/skills/my-skill/SKILL.md
 
 Run the audit script before every distribution:
 ```bash
-bash ~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh ~/.claude/skills/your-skill
+bash ~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh ~/.claude/skills/your-skill
 ```
 
 ---
@@ -270,7 +271,7 @@ When any of the above problems occur, work through this checklist in order:
 
 ```bash
 # Step 1: Structural validation
-bash ~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh ~/.claude/skills/your-skill
+bash ~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh ~/.claude/skills/your-skill
 # Fix all P0 (critical) issues before moving on
 
 # Step 2: File size check

@@ -1,22 +1,25 @@
 ---
-name: claude-skill-builder
-description: Guides creation and improvement of Claude Code skills using Anthropic's official
-  methodology. Use when user wants to "create a skill", "build a skill", "make a new skill",
-  "write a new skill", "improve an existing skill", "audit my skill", "refine my skill",
-  "test a skill", "package a skill for distribution", or needs guidance on skill structure,
-  progressive disclosure, description quality, testing, or distribution.
-version: 1.1.0
+name: ai-skill-builder
+description: Guides creation and improvement of portable Agent Skills using the shared SKILL.md
+  format and Anthropic's established methodology. Use when the user wants to "create a skill",
+  "build a skill", "make a new skill", "write a new skill", "improve an existing skill",
+  "audit my skill", "refine my skill", "test a skill", "package a skill for distribution",
+  or needs guidance on skill structure, progressive disclosure, description quality, testing,
+  cross-harness compatibility, or distribution.
 allowed-tools: Read Write Edit Bash Glob Grep WebSearch WebFetch
 ---
 
-# Claude Skill Builder
+# AI Skill Builder
 
-Build Claude Code skills following Anthropic's official methodology — from planning through
-distribution.
+Build Agent Skills for Claude Code, Codex, Qwen Code, Antigravity, and compatible
+hosts using the shared `SKILL.md` format and Anthropic's methodology.
 
-**PRIMARY SOURCE**: "The Complete Guide to Building Skills for Claude" (Anthropic, January 2026)
+**Primary methodology source**: "The Complete Guide to Building Skills for Claude"
+(Anthropic, January 2026)
 - PDF: https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf
-- Local copy: `./claude-skill-builder-guide.pdf`
+- Extracted local reference: `references/ai-skill-builder-guide.md`
+
+**Portable format source**: https://agentskills.io/specification
 
 ---
 
@@ -26,7 +29,8 @@ To create a skill from scratch, follow the 4-phase process below.
 To improve an existing skill, read `references/refining-skills.md`.
 To validate a skill's structure, run `scripts/audit-skill.sh`.
 
-**Invoke with:** `/claude-skill-builder` or ask about creating, improving, or auditing a skill.
+**Invoke with:** ask for `ai-skill-builder`; supported hosts may expose it as
+`/ai-skill-builder`, `$ai-skill-builder`, or through their skills picker.
 
 ---
 
@@ -52,9 +56,9 @@ Phase 1 covers Steps 1–2 below; Phases 2–4 correspond to Steps 3–5.
 ### Step 1: Discover Requirements
 
 **Research the domain first** — before writing instructions, verify current best practices
-for the skill's subject. Use `WebSearch` and `WebFetch` to check official docs, community
+for the skill's subject. Use the host's web tools to check official docs, community
 standards, and authoritative examples. Outdated or incorrect guidance in a skill is worse
-than no guidance: Claude will follow it confidently.
+than no guidance: an agent will follow it confidently.
 
 **Retain all sources**: every URL consulted must be recorded in the skill with its full
 link and a note of what it confirmed. Without sources, guidance cannot be verified or
@@ -94,7 +98,7 @@ For progressive disclosure writing tips and success metrics: `references/best-pr
 **Critical Rules:**
 - ✅ File MUST be named `SKILL.md` (not README.md)
 - ✅ Folder name MUST be **kebab-case** — no spaces, no capitals (`my-skill` not `My Skill`)
-- ✅ YAML frontmatter MUST include `name`, `description`, and `version` fields
+- ✅ YAML frontmatter MUST include `name` and `description`; put a version under `metadata`
 - ✅ Description MUST include specific trigger phrases — what users SAY to activate the skill
 - ✅ Description must be **under 1024 characters** (hard limit — longer descriptions are truncated)
 - ✅ No XML angle brackets (`<` or `>`) in any frontmatter field
@@ -110,7 +114,6 @@ description: What it does. Use when user asks to "specific phrase", "another phr
              # MUST include: what it does + when to use it (trigger conditions)
              # Under 1024 characters. No XML angle brackets.
              # Do NOT start with "claude" or "anthropic" (reserved namespaces).
-version: 0.1.0                 # Required; use semantic versioning
 ---
 ```
 
@@ -124,7 +127,7 @@ allowed-tools: "Bash(python:*) WebFetch"  # Optional: restrict which tools the s
 compatibility: Claude Code     # Optional: 1-500 chars; environment requirements
 metadata:                      # Optional: custom key-value pairs
   author: Your Name
-  version: 1.0.0               # Version inside metadata (Anthropic's spec); also accepted at top level
+  version: 1.0.0               # Version belongs inside metadata
   mcp-server: your-server      # If skill requires a specific MCP server
   category: productivity
   tags: [automation, workflow]
@@ -135,7 +138,7 @@ metadata:                      # Optional: custom key-value pairs
 **Positioning language** (outcome-focused: "generate tests 87% faster") belongs in README.md or
 GitHub landing page — NOT in the description field. See `references/best-practices.md`.
 
-**Folder structure (standalone skills at `~/.claude/skills/`):**
+**Folder structure (Claude Code standalone example):**
 ```
 ~/.claude/skills/your-skill-name/
 ├── SKILL.md                         # Required — loaded when skill triggers (<5k words)
@@ -166,15 +169,15 @@ To start from template: copy `references/examples/SKILL-template.md`
 
 Three testing approaches (run in order):
 
-1. **Triggering tests** — verify Claude activates on expected phrases; does NOT activate on unrelated requests
+1. **Triggering tests** — verify the agent activates on expected phrases and not on unrelated requests
 2. **Functional tests** — validate the skill's core workflow produces correct output for known inputs
 3. **Performance tests** — measure improvement over baseline (time saved, error reduction, consistency)
 
 **Debugging trigger issues**:
 ```
-Ask Claude: "When would you use the [skill name] skill?"
+Ask the agent: "When would you use the [skill name] skill?"
 ```
-Claude will quote its description back at you. Adjust based on what's missing or too vague.
+The agent should quote its description back. Adjust based on what's missing or too vague.
 
 **Fixing undertriggering**: Add more specific trigger phrases and relevant technical terms.
 
@@ -187,7 +190,7 @@ description: Processes PDF legal documents for contract review. Use for "review 
 
 To validate skill structure, naming, and frontmatter:
 ```bash
-bash ~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
+bash scripts/audit-skill.sh /path/to/YOUR-SKILL
 ```
 
 For automated quality review, use the built-in `skill-creator` skill:
@@ -259,7 +262,7 @@ migration scenarios, before/after examples, and performance tracking:
 
 ## Additional Resources
 
-### Reference Files (loaded as needed by Claude)
+### Reference Files (loaded as needed by the agent)
 - **`references/research.md`** — Research strategies before writing skill instructions:
   how to find authoritative sources, evaluate quality, and translate knowledge into skill content
 - **`references/best-practices.md`** — Progressive disclosure writing tips, success metrics
@@ -285,11 +288,11 @@ migration scenarios, before/after examples, and performance tracking:
 ### Scripts (run directly — do not load into context)
 - **`scripts/audit-skill.sh`** — Skill structure smoke test with scored output (0-100%)
   ```bash
-  bash ~/.claude/skills/claude-skill-builder/scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
+  bash scripts/audit-skill.sh /path/to/YOUR-SKILL
   ```
 - **`scripts/scaffold-skill.sh`** — Create a new skill directory with correct structure
   ```bash
-  bash ~/.claude/skills/claude-skill-builder/scripts/scaffold-skill.sh my-skill-name
+  bash scripts/scaffold-skill.sh my-skill-name
   ```
 
 ---

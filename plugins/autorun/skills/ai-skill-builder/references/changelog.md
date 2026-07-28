@@ -1,4 +1,4 @@
-# Claude Skill Builder - Self-Critique & Improvements
+# AI Skill Builder - Self-Critique & Improvements
 
 **Date**: February 15, 2026
 **Version**: v1.0 → v1.1
@@ -329,7 +329,7 @@ This document critiques the initial implementation and documents all improvement
 **Audit Results**:
 ```bash
 bash ./scripts/audit-skill.sh \
-     ~/.claude/skills/claude-skill-builder
+     ~/.claude/skills/ai-skill-builder
 ```
 
 **Expected score**: 95-100%
@@ -478,4 +478,4 @@ A comprehensive skill that:
 
 **Document Version**: 1.0
 **Last Updated**: February 15, 2026
-**Maintained By**: Claude Skill Builder project
+**Maintained By**: AI Skill Builder project
