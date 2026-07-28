@@ -5231,12 +5231,18 @@ def _health_stale_artifacts() -> list[HealthFinding]:
     return findings
 
 
-def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
+def show_status(
+    custom_harnesses: list[str] | tuple[str, ...] = (),
+    *,
+    include_legacy_gemini: bool = False,
+) -> int:
     """Show installation status of all plugins, UV environment, and CLI tools.
 
     Args:
         custom_harnesses: Optional custom harness specs to include in the same
             status pass. Specs use name=flavor:binary:config_dir[::display].
+        include_legacy_gemini: Check the retired Gemini CLI compatibility
+            install. Defaults to false; Antigravity and Qwen remain active.
 
     Returns:
         Exit code: 0 = all installed, 1 = some missing
@@ -5332,39 +5338,60 @@ def show_status(custom_harnesses: list[str] | tuple[str, ...] = ()) -> int:
         else:
             print("\n  venv: not found")
 
-    # Check Gemini CLI
+    # Check retired Gemini CLI only when explicitly requested.
     print()
     print("-" * 60)
-    print("Gemini CLI:")
+    if include_legacy_gemini:
+        print("Legacy Gemini CLI:")
+        gemini_ok = shutil.which("gemini") is not None
+        if gemini_ok:
+            print("  gemini CLI: found")
 
-    gemini_ok = shutil.which("gemini") is not None
-    if gemini_ok:
-        print("  gemini CLI: found")
+            result = run_cmd(["gemini", "extensions", "list"])
+            if result.ok:
+                for plugin, expected_skills in skill_requirements.items():
+                    is_installed = plugin in result.output
+                    installed_skills = _skill_dir_names(
+                        Path.home()
+                        / ".gemini"
+                        / "extensions"
+                        / plugin
+                        / "skills"
+                    )
+                    missing_skills = sorted(
+                        expected_skills - installed_skills
+                    )
+                    complete = is_installed and not missing_skills
+                    print(
+                        f"  {plugin}: "
+                        f"{'✓ installed' if complete else '✗ incomplete'}"
+                    )
+                    if missing_skills:
+                        print(
+                            f"    missing skills: {', '.join(missing_skills)}"
+                        )
+                    if not complete:
+                        all_ok = False
 
-        result = run_cmd(["gemini", "extensions", "list"])
-        if result.ok:
-            # Check for each plugin separately (new Gemini architecture)
-            for plugin, expected_skills in skill_requirements.items():
-                is_installed = plugin in result.output
-                installed_skills = _skill_dir_names(Path.home() / ".gemini" / "extensions" / plugin / "skills")
-                missing_skills = sorted(expected_skills - installed_skills)
-                complete = is_installed and not missing_skills
-                print(f"  {plugin}: {'✓ installed' if complete else '✗ incomplete'}")
-                if missing_skills:
-                    print(f"    missing skills: {', '.join(missing_skills)}")
-                if not complete:
-                    all_ok = False
-
-            conductor = "conductor" in result.output
-            print(f"  conductor: {'✓ installed' if conductor else '✗ not installed (optional)'}")
-
-            # Note: Commands and skills work natively via extension manifest.
+                conductor = "conductor" in result.output
+                print(
+                    "  conductor: "
+                    f"{'✓ installed' if conductor else '✗ not installed (optional)'}"
+                )
+            else:
+                print(f"  extensions list failed: {result.output}")
+                all_ok = False
         else:
-            print(f"  extensions list failed: {result.output}")
-            all_ok = False
+            print("  gemini CLI: not found")
+            print(
+                "  Legacy compatibility install: autorun --install "
+                "--gemini --force"
+            )
     else:
-        print("  gemini CLI: not found")
-        print("  Install: npm install -g @google-labs/gemini-cli")
+        print(
+            "Legacy Gemini CLI: not checked "
+            "(retired; pass --gemini with --status to inspect compatibility)"
+        )
 
     # Check Codex CLI user-level install.
     print()
@@ -5855,7 +5882,10 @@ def _install_module_main(argv: list[str] | None = None) -> int:
     if args.uninstall:
         return uninstall_plugins(args.selection)
     if args.status:
-        return show_status(custom_harnesses=args.custom_harness)
+        return show_status(
+            custom_harnesses=args.custom_harness,
+            include_legacy_gemini=args.gemini,
+        )
 
     install_kwargs = {
         "tool": args.tool,

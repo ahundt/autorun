@@ -683,7 +683,25 @@ class TestMainFunctionRouting:
         ) as mock_status:
             result = main(["--status", "--custom-harness", spec])
 
-        mock_status.assert_called_once_with(custom_harnesses=[spec])
+        mock_status.assert_called_once_with(
+            custom_harnesses=[spec],
+            include_legacy_gemini=False,
+        )
+        assert result == 0
+
+    def test_status_gemini_flag_opts_into_legacy_check(self):
+        """Top-level status checks retired Gemini only by explicit request."""
+        from autorun.__main__ import main
+
+        with mock.patch(
+            "autorun.install.show_status", return_value=0
+        ) as mock_status:
+            result = main(["--status", "--gemini"])
+
+        mock_status.assert_called_once_with(
+            custom_harnesses=[],
+            include_legacy_gemini=True,
+        )
         assert result == 0
 
 

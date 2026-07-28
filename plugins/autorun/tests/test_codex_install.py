@@ -531,7 +531,9 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
         if cmd[:3] == ["claude", "plugin", "list"]:
             return CmdResult(True, "autorun enabled\npdf-extractor enabled\n")
         if cmd[:3] == ["gemini", "extensions", "list"]:
-            return CmdResult(True, "ar\npdf-extractor\nconductor\n")
+            raise AssertionError(
+                "default status must not invoke the retired Gemini CLI"
+            )
         if cmd[:3] == ["agy", "plugin", "list"]:
             return CmdResult(True, "ar enabled\n")
         if cmd[:3] == ["qwen", "extensions", "list"]:
@@ -621,6 +623,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
 
     assert show_status() == 0
     out = capsys.readouterr().out
+    assert "Legacy Gemini CLI: not checked" in out
     assert "Codex CLI:" in out
     assert "hooks.json: ✓ installed" in out
     assert "skills: ✓ 2 user, 2 plugin source, 2 plugin cache" in out

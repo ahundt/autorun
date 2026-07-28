@@ -1009,7 +1009,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.status:
         from autorun.install import show_status
 
-        return show_status(custom_harnesses=args.custom_harness)
+        return show_status(
+            custom_harnesses=args.custom_harness,
+            include_legacy_gemini=args.gemini,
+        )
 
     # Restart daemon mode
     if args.state_status or args.state_migrate or args.state_rollback or args.state_maintenance:

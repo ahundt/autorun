@@ -297,16 +297,17 @@ For troubleshooting, see [TROUBLESHOOTING.md](plugins/autorun/TROUBLESHOOTING.md
 git clone https://github.com/ahundt/autorun.git && cd autorun
 
 # Option 1: UV (recommended)
-uv run python -m plugins.autorun.src.autorun.install --install --force
+uv run python -m plugins.autorun.src.autorun.install --install --gemini --force
 uv run python plugins/autorun/scripts/restart_daemon.py
 
 # Option 2: pip fallback
 pip install -e . && \
-python -m plugins.autorun.src.autorun.install --install --force && \
+python -m plugins.autorun.src.autorun.install --install --gemini --force && \
 python plugins/autorun/scripts/restart_daemon.py
 
 # Verify installation
 gemini extensions list
+autorun --status --gemini
 # Should show: autorun-workspace@0.12.0
 
 # Test in Gemini CLI
@@ -995,7 +996,8 @@ autorun --uninstall                  # Uninstall plugins and UV tools
 **Information:**
 
 ```bash
-autorun --status                     # Show installation status for all CLIs
+autorun --status                     # Show maintained-harness installation status
+autorun --status --gemini            # Also inspect retired Gemini CLI compatibility
 autorun --status --custom-harness 'lab=codex:codex-lab:/path/to/config::Codex Lab'
                                       # Include a custom target in normal status output
 autorun --version                    # Show version

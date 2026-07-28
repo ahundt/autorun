@@ -423,7 +423,9 @@ class TestInstallPathwayRouting:
         content = main_file.read_text(encoding="utf-8")
 
         assert "from autorun.install import show_status" in content
-        assert "return show_status(custom_harnesses=args.custom_harness)" in content
+        assert "return show_status(" in content
+        assert "custom_harnesses=args.custom_harness" in content
+        assert "include_legacy_gemini=args.gemini" in content
 
     def test_sync_removed(self):
         """Verify --sync flag has been removed (was broken, replaced by --install --force)."""
@@ -592,7 +594,23 @@ class TestInstallMainAdapter:
             result = install._install_module_main(["--status", "--custom-harness", spec])
 
         assert result == 0
-        mock_status.assert_called_once_with(custom_harnesses=[spec])
+        mock_status.assert_called_once_with(
+            custom_harnesses=[spec],
+            include_legacy_gemini=False,
+        )
+
+    def test_install_module_status_gemini_flag_opts_into_legacy_check(self):
+        """Direct module status checks retired Gemini only by explicit request."""
+        install = get_install_module()
+
+        with mock.patch.object(install, "show_status", return_value=0) as mock_status:
+            result = install._install_module_main(["--status", "--gemini"])
+
+        assert result == 0
+        mock_status.assert_called_once_with(
+            custom_harnesses=[],
+            include_legacy_gemini=True,
+        )
 
     def test_install_module_main_codex_plugin_marketplace_routes_to_install_plugins(self):
         """Verify direct module install honors --codex-plugin-marketplace."""
