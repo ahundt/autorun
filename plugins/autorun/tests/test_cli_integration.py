@@ -18,11 +18,13 @@ import sys
 from pathlib import Path
 from io import StringIO
 
+import pytest
+
 # Add src to path
 plugin_root = Path(__file__).parent.parent
 sys.path.insert(0, str(plugin_root / 'src'))
 
-from autorun.__main__ import create_parser
+from autorun.__main__ import create_parser, main
 
 
 # ============================================================================
@@ -219,6 +221,109 @@ def test_task_clear_parsing():
     # With --no-confirm
     args = parse_args(['task', 'clear', '--no-confirm'])
     assert args.no_confirm is True, "No-confirm flag should be set"
+
+
+def test_task_cli_help_lists_harness_neutral_session_sources():
+    parser = create_parser()
+    task = parser._subparsers._group_actions[0].choices["task"]
+    operation_action = task._subparsers._group_actions[0]
+    help_text = "\n".join(
+        operation.format_help()
+        for operation in operation_action.choices.values()
+    )
+
+    for key in (
+        "AUTORUN_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "QWEN_SESSION_ID",
+        "ANTIGRAVITY_SESSION_ID",
+    ):
+        assert key in help_text
+
+
+def test_every_session_scoped_task_cli_uses_codex_thread_id(
+    monkeypatch,
+    tmp_path,
+):
+    from autorun.task_lifecycle import TaskLifecycle
+
+    session_id = "codex-thread-from-environment"
+    monkeypatch.setenv("CODEX_THREAD_ID", session_id)
+    for key in (
+        "AUTORUN_SESSION_ID",
+        "AUTORUN_CLI_TYPE",
+        "CLAUDE_SESSION_ID",
+        "CODEX_SESSION_ID",
+        "QWEN_SESSION_ID",
+        "ANTIGRAVITY_SESSION_ID",
+        "AGY_SESSION_ID",
+        "GEMINI_SESSION_ID",
+        "_FORGE_CONVERSATION_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    observed = []
+    monkeypatch.setattr(
+        TaskLifecycle,
+        "cli_status",
+        lambda **kwargs: observed.append(("status", kwargs)) or 0,
+    )
+    monkeypatch.setattr(
+        TaskLifecycle,
+        "cli_export",
+        lambda **kwargs: observed.append(("export", kwargs)) or 0,
+    )
+    monkeypatch.setattr(
+        TaskLifecycle,
+        "cli_clear",
+        lambda **kwargs: observed.append(("clear", kwargs)) or 0,
+    )
+    monkeypatch.setattr(
+        TaskLifecycle,
+        "cli_gc",
+        lambda **kwargs: observed.append(("gc", kwargs)) or 0,
+    )
+
+    assert main(["task", "status"]) == 0
+    assert main(["task", "export", str(tmp_path / "tasks.json")]) == 0
+    assert main(["task", "clear", "--no-confirm"]) == 0
+    assert main(["task", "gc", "--dry-run"]) == 0
+
+    assert [operation for operation, _kwargs in observed] == [
+        "status",
+        "export",
+        "clear",
+        "gc",
+    ]
+    for operation, kwargs in observed:
+        key = "current_session_id" if operation == "gc" else "session_id"
+        assert kwargs[key] == session_id
+
+
+def test_task_cli_rejects_ambiguous_nested_harness_sessions(
+    monkeypatch,
+    capsys,
+):
+    from autorun.task_lifecycle import TaskLifecycle
+
+    monkeypatch.delenv("AUTORUN_CLI_TYPE", raising=False)
+    monkeypatch.delenv("AUTORUN_SESSION_ID", raising=False)
+    monkeypatch.setenv("CLAUDE_SESSION_ID", "outer-claude")
+    monkeypatch.setenv("CODEX_THREAD_ID", "inner-codex")
+    monkeypatch.setattr(
+        TaskLifecycle,
+        "cli_status",
+        lambda **_kwargs: pytest.fail(
+            "ambiguous identity must fail before task persistence is read"
+        ),
+    )
+
+    assert main(["task", "status"]) == 1
+    output = capsys.readouterr().out
+    assert "Ambiguous standalone session identities" in output
+    assert "--session" in output
+    assert "AUTORUN_CLI_TYPE" in output
 
     print("✅ Task clear parsing works")
 

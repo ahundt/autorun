@@ -22,7 +22,10 @@ from autorun.platforms import (
     PLATFORMS,
     HookProtocol,
     Platform,
+    SessionIdentityResolutionError,
     register,
+    resolve_standalone_session_identity,
+    standalone_session_help,
     get_platform,
     detection_platforms,
     hook_platforms,
@@ -57,6 +60,134 @@ def test_hook_platforms_excludes_forgecode():
     names = [p.name for p in hook_platforms()]
     assert "forgecode" not in names
     assert {"claude", "gemini", "antigravity", "qwen", "codex"}.issubset(set(names))
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "environment", "expected"),
+    [
+        ("claude", {"CLAUDE_SESSION_ID": "claude-session"}, "claude-session"),
+        ("codex", {"CODEX_THREAD_ID": "codex-thread"}, "codex-thread"),
+        ("codex", {"CODEX_SESSION_ID": "codex-compat"}, "codex-compat"),
+        ("qwen", {"QWEN_SESSION_ID": "qwen-session"}, "qwen-session"),
+        (
+            "antigravity",
+            {"ANTIGRAVITY_SESSION_ID": "agy-session"},
+            "agy-session",
+        ),
+        ("antigravity", {"AGY_SESSION_ID": "agy-short"}, "agy-short"),
+        ("gemini", {"GEMINI_SESSION_ID": "legacy-gemini"}, "legacy-gemini"),
+        (
+            "forgecode",
+            {"_FORGE_CONVERSATION_ID": "forge-conversation"},
+            "forge-conversation",
+        ),
+    ],
+)
+def test_standalone_session_resolver_uses_platform_registry(
+    platform_name,
+    environment,
+    expected,
+):
+    assert (
+        resolve_standalone_session_identity(environ=environment).session_id
+        == expected
+    )
+    assert (
+        resolve_standalone_session_identity(environ=environment).platform_name
+        == platform_name
+    )
+
+
+def test_explicit_session_and_autorun_identity_take_precedence():
+    environment = {
+        "AUTORUN_SESSION_ID": "shared-session",
+        "CLAUDE_SESSION_ID": "claude-session",
+        "CODEX_THREAD_ID": "codex-session",
+    }
+
+    explicit = resolve_standalone_session_identity(
+        "explicit-session",
+        environ=environment,
+    )
+    shared = resolve_standalone_session_identity(environ=environment)
+
+    assert (explicit.session_id, explicit.source) == (
+        "explicit-session",
+        "--session",
+    )
+    assert (shared.session_id, shared.source) == (
+        "shared-session",
+        "AUTORUN_SESSION_ID",
+    )
+
+
+def test_explicit_harness_selects_its_identity_in_nested_environment():
+    resolved = resolve_standalone_session_identity(
+        environ={
+            "AUTORUN_CLI_TYPE": "codex",
+            "CLAUDE_SESSION_ID": "outer-claude",
+            "CODEX_THREAD_ID": "inner-codex",
+        },
+    )
+
+    assert (resolved.session_id, resolved.platform_name) == (
+        "inner-codex",
+        "codex",
+    )
+
+
+def test_same_identity_from_multiple_harnesses_is_unambiguous():
+    resolved = resolve_standalone_session_identity(
+        environ={
+            "CLAUDE_SESSION_ID": "shared-logical-session",
+            "QWEN_SESSION_ID": "shared-logical-session",
+        },
+    )
+
+    assert resolved.session_id == "shared-logical-session"
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [
+        {
+            "CLAUDE_SESSION_ID": "outer-claude",
+            "CODEX_THREAD_ID": "inner-codex",
+        },
+        {
+            "ANTIGRAVITY_SESSION_ID": "agy-long",
+            "AGY_SESSION_ID": "agy-short",
+        },
+    ],
+)
+def test_ambiguous_session_environment_requires_explicit_selection(
+    environment,
+):
+    with pytest.raises(SessionIdentityResolutionError) as exc_info:
+        resolve_standalone_session_identity(environ=environment)
+
+    message = str(exc_info.value)
+    assert "--session" in message
+    assert "AUTORUN_CLI_TYPE" in message
+    assert all(name in message for name in environment)
+
+
+def test_missing_session_error_and_help_are_harness_neutral():
+    with pytest.raises(SessionIdentityResolutionError) as exc_info:
+        resolve_standalone_session_identity(environ={})
+
+    help_text = standalone_session_help()
+    error_text = str(exc_info.value)
+    for key in (
+        "CLAUDE_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "QWEN_SESSION_ID",
+        "ANTIGRAVITY_SESSION_ID",
+        "GEMINI_SESSION_ID",
+    ):
+        assert key in help_text
+    assert "--session" in error_text
+    assert "CLAUDE_SESSION_ID not set" not in error_text
 
 
 # ─── Immutability (multi-thread / multi-session safety) ───────────────────────

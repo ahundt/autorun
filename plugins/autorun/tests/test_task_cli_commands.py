@@ -140,7 +140,13 @@ def test_cli_status_text_format():
     manager = create_test_manager_with_tasks(session_id)
 
     # Mock CLAUDE_SESSION_ID env var
-    with patch.dict('os.environ', {'CLAUDE_SESSION_ID': session_id}):
+    with patch.dict(
+        'os.environ',
+        {
+            'AUTORUN_CLI_TYPE': 'claude',
+            'CLAUDE_SESSION_ID': session_id,
+        },
+    ):
         exit_code, output = capture_stdout(
             TaskLifecycle.cli_status,
             session_id=session_id,
@@ -582,7 +588,13 @@ def test_cli_gc_protects_current_session():
     time.sleep(0.1)
 
     # Mock this as the current session
-    with patch.dict('os.environ', {'CLAUDE_SESSION_ID': session_id}):
+    with patch.dict(
+        'os.environ',
+        {
+            'AUTORUN_CLI_TYPE': 'claude',
+            'CLAUDE_SESSION_ID': session_id,
+        },
+    ):
         exit_code, output = capture_stdout(
             TaskLifecycle.cli_gc,
             archive=True,

@@ -55,11 +55,32 @@ def pytest_configure(config):
     os.environ["AUTORUN_TEST_STATE_DIR"] = str(test_state_dir)
     os.environ["AUTORUN_HOME"] = str(test_autorun_home)
 
-    # PLATFORM ISOLATION: Ensure tests start in a clean environment (not affected by 
-    # the active Gemini CLI session used to run these tests).
-    for env_var in ["GEMINI_CLI", "GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR"]:
-        if env_var in os.environ:
-            del os.environ[env_var]
+    src_path = str(Path(__file__).parent.parent / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+    # PLATFORM ISOLATION: derive every harness selector from the registry so
+    # running pytest inside Claude, Codex, Qwen, Agy, Gemini, or Forge cannot
+    # silently change response schemas or session selection. Individual tests
+    # opt back into a platform after collection.
+    from autorun.platforms import PLATFORMS
+
+    platform_env_vars = {
+        key
+        for platform in PLATFORMS.values()
+        for key in (
+            *platform.detect_env_vars,
+            *platform.standalone_session_env_vars,
+        )
+    }
+    platform_env_vars.update(
+        {
+            "AUTORUN_CLI_TYPE",
+            "AUTORUN_SESSION_ID",
+        }
+    )
+    for env_var in platform_env_vars:
+        os.environ.pop(env_var, None)
 
     # TMUX ISOLATION: tmux tests often shell out directly with ["tmux", ...].
     # If pytest itself is launched from inside the user's live byobu/tmux
@@ -81,9 +102,6 @@ def pytest_configure(config):
     # Resolve the compatible tmux client once and put its directory first for
     # this pytest process only. On Apple Silicon this prefers /opt/homebrew over
     # an older /usr/local client.
-    src_path = str(Path(__file__).parent.parent / "src")
-    if src_path not in sys.path:
-        sys.path.insert(0, src_path)
     try:
         from autorun.tmux_utils import resolve_tmux_binary
 

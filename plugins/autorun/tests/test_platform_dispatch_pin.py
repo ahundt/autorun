@@ -53,6 +53,7 @@ from autorun.core import (
     ({"sessionId": "abc"}, "gemini"),
     ({"session_id": "abc"}, "gemini"),
     # Codex session-id key
+    ({"CODEX_THREAD_ID": "thread"}, "codex"),
     ({"CODEX_SESSION_ID": "xyz"}, "codex"),
     # Gemini event names
     ({"hook_event_name": "BeforeTool"}, "gemini"),
@@ -71,7 +72,7 @@ def test_detect_cli_type_pin(payload, expected, monkeypatch):
     """detect_cli_type's payload-driven decisions are stable."""
     # Clear env vars to isolate from runtime
     for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
-              "CODEX_SESSION_ID", "CODEX_PROJECT_DIR", "FORGE_CONFIG"):
+              "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_PROJECT_DIR", "FORGE_CONFIG"):
         monkeypatch.delenv(k, raising=False)
     assert detect_cli_type(payload) == expected
 
@@ -80,6 +81,7 @@ def test_detect_cli_type_pin(payload, expected, monkeypatch):
     ("GEMINI_SESSION_ID", "gemini"),
     ("GEMINI_PROJECT_DIR", "gemini"),
     ("GEMINI_CLI", "gemini"),
+    ("CODEX_THREAD_ID", "codex"),
     ("CODEX_SESSION_ID", "codex"),
     ("CODEX_PROJECT_DIR", "codex"),
     ("FORGE_CONFIG", "forgecode"),
@@ -87,7 +89,7 @@ def test_detect_cli_type_pin(payload, expected, monkeypatch):
 def test_detect_cli_type_env_var_pin(env_var, expected, monkeypatch):
     """env-var fallback detection (when payload has no signals)."""
     for k in ("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
-              "CODEX_SESSION_ID", "CODEX_PROJECT_DIR", "FORGE_CONFIG"):
+              "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_PROJECT_DIR", "FORGE_CONFIG"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv(env_var, "set")
     assert detect_cli_type() == expected

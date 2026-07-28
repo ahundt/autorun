@@ -26,7 +26,7 @@ def _clean_env(monkeypatch) -> None:
         "GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI",
         "ANTIGRAVITY_SESSION_ID", "ANTIGRAVITY_PROJECT_DIR", "AGY_SESSION_ID",
         "QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE",
-        "CODEX_SESSION_ID", "CODEX_PROJECT_DIR",
+        "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_PROJECT_DIR",
         "FORGE_CONFIG",
     ):
         monkeypatch.delenv(var, raising=False)

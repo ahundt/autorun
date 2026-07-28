@@ -213,6 +213,8 @@ def _run_state_command(args) -> int:
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser with all CLI options."""
+    from autorun.platforms import standalone_session_help
+
     parser = argparse.ArgumentParser(
         prog="autorun",
         description="""Autorun - Claude Code plugin for autonomous task execution and lifecycle management.
@@ -688,7 +690,7 @@ Aliases: file status, file st, file s (all equivalent)""",
     status_parser.add_argument(
         "--session",
         metavar="SESSION_ID",
-        help="Session ID (default: $CLAUDE_SESSION_ID)",
+        help=standalone_session_help(),
     )
     status_parser.add_argument(
         "--verbose",
@@ -718,7 +720,7 @@ Aliases: file status, file st, file s (all equivalent)""",
     export_parser.add_argument(
         "--session",
         metavar="SESSION_ID",
-        help="Session ID (default: $CLAUDE_SESSION_ID)",
+        help=standalone_session_help(),
     )
     export_parser.add_argument(
         "--format",
@@ -743,7 +745,7 @@ Aliases: file status, file st, file s (all equivalent)""",
     clear_parser.add_argument(
         "--session",
         metavar="SESSION_ID",
-        help="Session ID to clear (default: $CLAUDE_SESSION_ID)",
+        help=standalone_session_help(),
     )
     clear_parser.add_argument(
         "--all",
@@ -768,6 +770,11 @@ Aliases: file status, file st, file s (all equivalent)""",
         "-n",
         action="store_true",
         help="Preview without making changes (RECOMMENDED first)",
+    )
+    gc_parser.add_argument(
+        "--session",
+        metavar="SESSION_ID",
+        help=standalone_session_help(),
     )
     gc_parser.add_argument(
         "--no-confirm",
@@ -1142,6 +1149,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Task subcommand (modern CLI structure)
     if args.command == "task":
+        from autorun.platforms import (
+            SessionIdentityResolutionError,
+            resolve_standalone_session_identity,
+        )
         from autorun.task_lifecycle import TaskLifecycle
 
         if not hasattr(args, "task_command") or args.task_command is None:
@@ -1150,7 +1161,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_parser.print_help()
             return 1
 
-        session_id = getattr(args, "session", None) or os.environ.get("CLAUDE_SESSION_ID")
+        session_id = None
+        if not (args.task_command == "clear" and args.all):
+            try:
+                session_id = resolve_standalone_session_identity(
+                    getattr(args, "session", None),
+                ).session_id
+            except SessionIdentityResolutionError as exc:
+                print(f"Error: {exc}")
+                return 1
 
         # task status
         if args.task_command == "status":
@@ -1158,10 +1177,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # task export
         elif args.task_command == "export":
-            if not session_id:
-                # CLI error message - use stdout (not stderr which breaks hooks)
-                print("Error: --session required when CLAUDE_SESSION_ID not set")
-                return 1
             return TaskLifecycle.cli_export(session_id=session_id, output_path=args.output, output_format=args.format, include_completed=args.include_completed)
 
         # task clear
@@ -1170,7 +1185,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # task gc
         elif args.task_command == "gc":
-            return TaskLifecycle.cli_gc(archive=not args.no_archive, dry_run=args.dry_run, pattern=args.pattern, ttl_days=args.ttl, confirm=not args.no_confirm)
+            return TaskLifecycle.cli_gc(
+                archive=not args.no_archive,
+                dry_run=args.dry_run,
+                pattern=args.pattern,
+                ttl_days=args.ttl,
+                confirm=not args.no_confirm,
+                current_session_id=session_id,
+            )
 
     # Default: run as hook handler
     return run_hook_handler()

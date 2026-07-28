@@ -23,6 +23,7 @@ Multi-session safety:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from typing import Mapping
 
 
@@ -489,6 +490,9 @@ class Platform:
     # === Detection (used by config.detect_cli_type) ===
     detect_env_vars: tuple[str, ...] = ()
     detect_session_keys: tuple[str, ...] = ()
+    # Environment keys exported to standalone child commands. Keep these
+    # separate from detect_session_keys, which also contains hook-payload keys.
+    standalone_session_env_vars: tuple[str, ...] = ()
     detect_event_names: frozenset[str] = field(default_factory=frozenset)
     detect_path_hints: tuple[str, ...] = ()
 
@@ -693,6 +697,7 @@ CLAUDE = register(
         name="claude",
         display_name="Claude Code",
         binary="claude",
+        standalone_session_env_vars=("CLAUDE_SESSION_ID",),
         has_hooks=True,
         schema_type="strict",
         hook_protocol=CLAUDE_HOOKS,
@@ -743,6 +748,7 @@ GEMINI = register(
         install_by_default=False,
         detect_env_vars=("GEMINI_SESSION_ID", "GEMINI_PROJECT_DIR", "GEMINI_CLI"),
         detect_session_keys=("GEMINI_SESSION_ID", "sessionId", "session_id"),
+        standalone_session_env_vars=("GEMINI_SESSION_ID",),
         detect_event_names=frozenset(
             {
                 "BeforeTool",
@@ -823,6 +829,10 @@ ANTIGRAVITY = register(
             "AGY_SESSION_ID",
         ),
         detect_session_keys=("ANTIGRAVITY_SESSION_ID", "AGY_SESSION_ID"),
+        standalone_session_env_vars=(
+            "ANTIGRAVITY_SESSION_ID",
+            "AGY_SESSION_ID",
+        ),
         # Native event names overlap Claude and therefore cannot identify Agy alone.
         detect_event_names=frozenset(),
         detect_path_hints=(".antigravity", ".gemini/antigravity", ".gemini/antigravity-cli"),
@@ -875,6 +885,7 @@ QWEN = register(
         binary="qwen",
         detect_env_vars=("QWEN_SESSION_ID", "QWEN_PROJECT_DIR", "QWEN_CODE"),
         detect_session_keys=("QWEN_SESSION_ID",),
+        standalone_session_env_vars=("QWEN_SESSION_ID",),
         # Native event names overlap Claude and therefore cannot identify Qwen alone.
         detect_event_names=frozenset(),
         detect_path_hints=(".qwen",),
@@ -920,8 +931,13 @@ CODEX = register(
         name="codex",
         display_name="Codex CLI",
         binary="codex",
-        detect_env_vars=("CODEX_SESSION_ID", "CODEX_PROJECT_DIR"),
-        detect_session_keys=("CODEX_SESSION_ID",),
+        detect_env_vars=(
+            "CODEX_THREAD_ID",
+            "CODEX_SESSION_ID",
+            "CODEX_PROJECT_DIR",
+        ),
+        detect_session_keys=("CODEX_THREAD_ID", "CODEX_SESSION_ID"),
+        standalone_session_env_vars=("CODEX_THREAD_ID", "CODEX_SESSION_ID"),
         detect_path_hints=(".codex",),
         has_hooks=True,
         schema_type="strict",  # same JSON schema as Claude Code
@@ -984,6 +1000,7 @@ FORGECODE = register(
         display_name="ForgeCode",
         binary="forge",
         detect_env_vars=("FORGE_CONFIG", "_FORGE_CONVERSATION_ID"),
+        standalone_session_env_vars=("_FORGE_CONVERSATION_ID",),
         detect_path_hints=(".forge",),
         has_hooks=False,
         schema_type="none",  # no hook responses
@@ -1000,6 +1017,152 @@ FORGECODE = register(
 
 
 # === Lookup API ============================================================
+
+
+@dataclass(frozen=True, slots=True)
+class StandaloneSessionIdentity:
+    """One explicit or unambiguous logical-session identity."""
+
+    session_id: str
+    source: str
+    platform_name: str | None = None
+
+
+class SessionIdentityResolutionError(ValueError):
+    """Standalone CLI session selection was missing or ambiguous."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _session_environment_keys() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            key
+            for platform in PLATFORMS.values()
+            for key in platform.standalone_session_env_vars
+        )
+    )
+
+
+def standalone_session_help() -> str:
+    """Describe standalone session selection from registry metadata."""
+    keys = ", ".join(f"${key}" for key in _session_environment_keys())
+    return (
+        "Session ID (default precedence: --session, $AUTORUN_SESSION_ID, "
+        f"then one unambiguous active-harness value from {keys})"
+    )
+
+
+def resolve_standalone_session_identity(
+    explicit_session_id: str | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> StandaloneSessionIdentity:
+    """Resolve a standalone command's logical session without harness bias."""
+    environment = os.environ if environ is None else environ
+    explicit_value = (
+        explicit_session_id.strip()
+        if isinstance(explicit_session_id, str)
+        else ""
+    )
+    if explicit_value:
+        return StandaloneSessionIdentity(
+            session_id=explicit_value,
+            source="--session",
+        )
+
+    shared = environment.get("AUTORUN_SESSION_ID", "").strip()
+    if shared:
+        return StandaloneSessionIdentity(
+            session_id=shared,
+            source="AUTORUN_SESSION_ID",
+        )
+
+    candidates: dict[str, list[tuple[str, str]]] = {}
+    for platform in PLATFORMS.values():
+        values = [
+            (key, environment.get(key, "").strip())
+            for key in platform.standalone_session_env_vars
+            if environment.get(key, "").strip()
+        ]
+        if values:
+            candidates[platform.name] = values
+
+    selected_name = environment.get("AUTORUN_CLI_TYPE", "").strip().lower()
+    selected_name = CUSTOM_HARNESS_FLAVOR_ALIASES.get(
+        selected_name,
+        selected_name,
+    )
+    if selected_name:
+        selected = PLATFORMS.get(selected_name)
+        if selected is None:
+            known = ", ".join(PLATFORMS)
+            raise SessionIdentityResolutionError(
+                f"Unknown AUTORUN_CLI_TYPE {selected_name!r}; expected one of "
+                f"{known}, or pass --session SESSION_ID.",
+                reason="invalid-harness",
+            )
+        selected_values = candidates.get(selected.name, [])
+        unique = {value for _key, value in selected_values}
+        if len(unique) == 1:
+            key = selected_values[0][0]
+            return StandaloneSessionIdentity(
+                session_id=next(iter(unique)),
+                source=key,
+                platform_name=selected.name,
+            )
+        expected = ", ".join(selected.standalone_session_env_vars)
+        if not selected_values:
+            raise SessionIdentityResolutionError(
+                f"AUTORUN_CLI_TYPE selects {selected.display_name}, but none "
+                f"of {expected} is set; pass --session SESSION_ID.",
+                reason="missing",
+            )
+        keys = ", ".join(key for key, _value in selected_values)
+        raise SessionIdentityResolutionError(
+            f"Conflicting {selected.display_name} session identities in "
+            f"{keys}; pass --session SESSION_ID.",
+            reason="ambiguous",
+        )
+
+    flattened = [
+        (platform_name, key, value)
+        for platform_name, values in candidates.items()
+        for key, value in values
+    ]
+    unique = {value for _platform, _key, value in flattened}
+    if len(unique) == 1:
+        platforms = {platform for platform, _key, _value in flattened}
+        source = (
+            flattened[0][1]
+            if len(flattened) == 1
+            else "unambiguous harness environment"
+        )
+        return StandaloneSessionIdentity(
+            session_id=next(iter(unique)),
+            source=source,
+            platform_name=(
+                next(iter(platforms))
+                if len(platforms) == 1
+                else None
+            ),
+        )
+    if not flattened:
+        raise SessionIdentityResolutionError(
+            "No standalone session identity found; pass --session SESSION_ID, "
+            "set AUTORUN_SESSION_ID, or run inside a supported harness that "
+            f"exports one of {', '.join(_session_environment_keys())}.",
+            reason="missing",
+        )
+
+    keys = ", ".join(key for _platform, key, _value in flattened)
+    raise SessionIdentityResolutionError(
+        f"Ambiguous standalone session identities are set in {keys}; pass "
+        "--session SESSION_ID or set AUTORUN_CLI_TYPE to the active harness.",
+        reason="ambiguous",
+    )
 
 
 def get_platform(name: str) -> Platform | None:

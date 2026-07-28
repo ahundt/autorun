@@ -44,7 +44,6 @@ import copy
 import hashlib
 import json
 import math
-import os
 import time
 import re
 import uuid
@@ -65,7 +64,12 @@ from .config import (
     LOG_SNIPPET_MAX_LEN,
     TASK_PAUSE_DEFAULT_TTL_SECONDS,
 )
-from .platforms import platform_for, task_tool_role
+from .platforms import (
+    SessionIdentityResolutionError,
+    platform_for,
+    resolve_standalone_session_identity,
+    task_tool_role,
+)
 from .task_pause import (
     task_pause_allows_stop,
     task_pause_guidance,
@@ -532,17 +536,15 @@ class TaskLifecycle:
             ValueError: If session_id cannot be determined
         """
         self.ctx = ctx
-        # Session ID resolution (3 sources - explicit > ctx > env)
+        # Session ID resolution (explicit > hook context > shared registry).
         if session_id:
             self.session_id = session_id
         elif ctx:
             self.session_id = ctx.session_id
-        elif os.environ.get("CLAUDE_SESSION_ID"):
-            self.session_id = os.environ["CLAUDE_SESSION_ID"]
-        elif os.environ.get("GEMINI_SESSION_ID"):
-            self.session_id = os.environ["GEMINI_SESSION_ID"]
         else:
-            raise ValueError("session_id required: pass explicitly, via ctx, or set CLAUDE_SESSION_ID env var")
+            self.session_id = (
+                resolve_standalone_session_identity().session_id
+            )
 
         # CLI Type resolution (explicit > ctx > auto-detect)
         if ctx:
@@ -2125,10 +2127,9 @@ class TaskLifecycle:
         try:
             # Auto-detect session ID if not provided
             if not session_id:
-                session_id = os.environ.get("CLAUDE_SESSION_ID")
-                if not session_id:
-                    print("Error: No session ID provided and CLAUDE_SESSION_ID not set")
-                    return 1
+                session_id = (
+                    resolve_standalone_session_identity().session_id
+                )
 
             manager = cls(session_id=session_id)
             tasks = manager.tasks
@@ -2292,10 +2293,9 @@ class TaskLifecycle:
 
             else:
                 if not session_id:
-                    session_id = os.environ.get("CLAUDE_SESSION_ID")
-                    if not session_id:
-                        print("Error: No session ID provided and CLAUDE_SESSION_ID not set")
-                        return 1
+                    session_id = (
+                        resolve_standalone_session_identity().session_id
+                    )
 
                 manager = cls(session_id=session_id)
                 tasks = manager.tasks
@@ -2340,6 +2340,7 @@ class TaskLifecycle:
         ttl_days: int | None = None,
         config: TaskLifecycleConfig | None = None,
         confirm: bool = True,
+        current_session_id: str | None = None,
     ) -> int:
         """Garbage-collect stale task lifecycle data (archive-then-purge).
 
@@ -2356,7 +2357,7 @@ class TaskLifecycle:
         ⚠️  DESTRUCTIVE OPERATION - PERMANENTLY DELETES SESSION DATA ⚠️
 
         SAFETY GUARANTEES (fail-safe design):
-        1. Protects current active session (CLAUDE_SESSION_ID) - NEVER deleted
+        1. Protects the resolved current harness session - NEVER deleted
         2. Skips sessions with incomplete tasks (in_progress/pending work)
         3. Respects TTL - only cleans sessions older than ttl_days
         4. Uses session_state() for lock protection (never bypasses locking)
@@ -2396,6 +2397,8 @@ class TaskLifecycle:
             ttl_days: Only GC sessions older than this (default: config.task_ttl_days)
             config: Config override for testing (default: load from ~/.autorun/)
             confirm: Require confirmation before deletion (default: True for safety)
+            current_session_id: Explicit current session to protect. Standalone
+                CLI dispatch resolves this from shared platform metadata.
 
         Returns:
             0 on success, 1 on fatal error, 2 on user cancellation
@@ -2440,7 +2443,19 @@ class TaskLifecycle:
             sessions_dir = mgr.state_dir
             # JSON key prefix for task lifecycle sessions (matches global_key format below)
             json_key_prefix = "__task_lifecycle__"
-            current = os.environ.get("CLAUDE_SESSION_ID", "")
+            if current_session_id is None:
+                try:
+                    current_session_id = (
+                        resolve_standalone_session_identity().session_id
+                    )
+                except SessionIdentityResolutionError as exc:
+                    if exc.reason != "missing":
+                        print(
+                            "Task GC refused because the current session is "
+                            f"not unambiguous: {exc}"
+                        )
+                        return 1
+            current = current_session_id or ""
             archive_dir = config.storage_dir / "archive"
 
             # Show prominent warning banner (unless dry-run)
@@ -2452,7 +2467,7 @@ class TaskLifecycle:
                 print("This will PERMANENTLY DELETE task data from old sessions.")
                 print()
                 print("Safety protections:")
-                print("  ✓ Current session will NOT be deleted (if CLAUDE_SESSION_ID set)")
+                print("  ✓ Resolved current harness session will NOT be deleted")
                 print("  ✓ Sessions with incomplete tasks will be SKIPPED")
                 print("  ✓ Sessions newer than TTL will be SKIPPED")
                 if archive:
@@ -2638,7 +2653,7 @@ class TaskLifecycle:
             if skip_active or skip_incomplete or skip_young:
                 print("\nProtected/Skipped:")
                 if skip_active:
-                    print(f"  • Current session: {skip_active} (CLAUDE_SESSION_ID - never GC)")
+                    print(f"  • Current session: {skip_active} (resolved harness session - never GC)")
                 if skip_incomplete:
                     print(f"  • Incomplete tasks: {skip_incomplete} (active work in progress)")
                 if skip_young:
