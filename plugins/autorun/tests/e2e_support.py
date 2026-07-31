@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 
 from autorun.core import format_command_for_cli
+from autorun.platforms import PLATFORMS, to_harness_cli_event
+from autorun.task_lifecycle import TaskLifecycleConfig
 
 
 REAL_MONEY_ENV = "AUTORUN_ENABLE_TESTS_THAT_COST_REAL_MONEY"
@@ -38,6 +40,17 @@ class BackendE2EContract:
     hook_process: bool
     live_model: bool
     isolation: str
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedStopHookResult:
+    """Observed responses and task-status snapshots from real hook processes."""
+
+    blocked_responses: tuple[dict, ...]
+    yielded_response: dict
+    next_turn_response: dict
+    status_before: dict
+    status_after: dict
 
 
 BACKEND_E2E_CONTRACTS = {
@@ -137,4 +150,96 @@ def run_isolated_hook(
         text=True,
         timeout=timeout,
         env=isolated_hook_env(plugin_root, session_id),
+    )
+
+
+def run_bounded_stop_hook_sequence(
+    *,
+    plugin_root: Path,
+    hook_script: Path,
+    cli: str,
+    session_id: str,
+    cwd: Path,
+) -> BoundedStopHookResult:
+    """Exercise N blocks, N+1 yield, and next-turn reset through hook_entry.py."""
+    config = TaskLifecycleConfig.load()
+    task_subject = "Retain this task across the bounded Stop yield"
+    stop_payload = {
+        "hook_event_name": to_harness_cli_event("Stop", cli),
+        "session_id": session_id,
+        "cwd": str(cwd),
+        "_cwd": str(cwd),
+        "stop_hook_active": False,
+        "session_transcript": [],
+    }
+
+    def invoke(payload: dict) -> dict:
+        completed = run_isolated_hook(
+            plugin_root=plugin_root,
+            hook_script=hook_script,
+            cli=cli,
+            payload=payload,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(completed.stderr)
+        return json.loads(completed.stdout) if completed.stdout.strip() else {}
+
+    platform = PLATFORMS[cli]
+    if platform.task_management_style == "plan_checklist":
+        task_tool = platform.tool_names["task_progress"]
+        task_input = {
+            "plan": [{"step": task_subject, "status": "pending"}],
+        }
+        task_result = "Plan updated"
+    else:
+        task_tool = platform.tool_names["task_create"]
+        task_input = {"subject": task_subject, "description": "E2E task"}
+        task_result = f"Task #e2e-retained-task created successfully: {task_subject}"
+    invoke(
+        {
+            "hook_event_name": to_harness_cli_event("PostToolUse", cli),
+            "session_id": session_id,
+            "cwd": str(cwd),
+            "_cwd": str(cwd),
+            "tool_name": task_tool,
+            "tool_input": task_input,
+            "tool_result": task_result,
+            "session_transcript": [],
+        }
+    )
+    status_prompt = {
+        "hook_event_name": to_harness_cli_event("UserPromptSubmit", cli),
+        "session_id": session_id,
+        "cwd": str(cwd),
+        "_cwd": str(cwd),
+        "prompt": format_command_for_cli("/ar:task status", cli),
+    }
+    status_before = invoke(status_prompt)
+    blocked = tuple(invoke(stop_payload) for _ in range(config.stop_block_max_count))
+    yielded = invoke(stop_payload)
+    status_after = invoke(status_prompt)
+    next_turn = invoke(stop_payload)
+    return BoundedStopHookResult(
+        blocked_responses=blocked,
+        yielded_response=yielded,
+        next_turn_response=next_turn,
+        status_before=status_before,
+        status_after=status_after,
+    )
+
+
+def assert_bounded_stop_hook_result(cli: str, result: BoundedStopHookResult) -> None:
+    """Assert shared lifecycle semantics using one platform's response contract."""
+    protocol = PLATFORMS[cli].hook_protocol
+    assert all(
+        response.get("decision") == protocol.stop_blocking_decision
+        for response in result.blocked_responses
+    )
+    assert result.yielded_response.get("decision") != protocol.stop_blocking_decision
+    assert result.next_turn_response.get("decision") == protocol.stop_blocking_decision
+    assert "Retain this task across the bounded Stop yield" in json.dumps(
+        result.status_before
+    )
+    assert "Retain this task across the bounded Stop yield" in json.dumps(
+        result.status_after
     )

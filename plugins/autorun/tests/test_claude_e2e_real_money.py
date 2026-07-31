@@ -62,9 +62,11 @@ from pathlib import Path
 import pytest
 
 from e2e_support import (
+    assert_bounded_stop_hook_result,
     find_task_recovery_marker,
     live_model_env,
     model_override,
+    run_bounded_stop_hook_sequence,
     task_pause_recovery_prompt,
 )
 
@@ -428,6 +430,20 @@ class TestClaudeHookEntryPoint:
         if resp is not None:
             assert resp.get("continue") is True, \
                 f"Stop without autorun should return continue: true. response={resp}"
+
+    def test_bounded_stop_sequence_retains_tasks_and_resets_on_next_prompt(
+        self,
+        hook_resources,
+        tmp_path,
+    ):
+        result = run_bounded_stop_hook_sequence(
+            plugin_root=hook_resources["plugin_root"],
+            hook_script=hook_resources["hook_script"],
+            cli="claude",
+            session_id=self._sid("bounded-stop"),
+            cwd=tmp_path,
+        )
+        assert_bounded_stop_hook_result("claude", result)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Safety guards: blocked bash commands

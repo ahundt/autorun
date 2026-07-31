@@ -11,11 +11,13 @@ from pathlib import Path
 import pytest
 
 from e2e_support import (
+    assert_bounded_stop_hook_result,
     find_task_recovery_marker,
     installed_task_pause_command_is_current,
     live_model_env,
     model_override,
     real_money_enabled,
+    run_bounded_stop_hook_sequence,
     run_isolated_hook,
     task_pause_recovery_prompt,
 )
@@ -112,6 +114,17 @@ def test_antigravity_pre_tool_use_denies_dangerous_command_without_daemon(tmp_pa
     assert response["decision"] == "deny"
     assert "trash" in response["reason"]
     assert "hookSpecificOutput" not in response
+
+
+def test_antigravity_bounded_stop_retains_tasks_and_resets_on_next_prompt(tmp_path):
+    result = run_bounded_stop_hook_sequence(
+        plugin_root=PLUGIN_ROOT,
+        hook_script=_find_hook_script(),
+        cli="antigravity",
+        session_id=f"e2e-antigravity-stop-{uuid.uuid4().hex[:8]}",
+        cwd=tmp_path,
+    )
+    assert_bounded_stop_hook_result("antigravity", result)
 
 
 @pytest.mark.e2e

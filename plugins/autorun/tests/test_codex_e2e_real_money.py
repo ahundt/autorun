@@ -25,9 +25,12 @@ from pathlib import Path
 
 import pytest
 
+from autorun.task_lifecycle import TaskLifecycleConfig
 from e2e_support import (
+    assert_bounded_stop_hook_result,
     find_task_recovery_marker,
     live_model_env,
+    run_bounded_stop_hook_sequence,
     task_pause_recovery_prompt,
 )
 
@@ -336,6 +339,19 @@ class TestCodexHookEntryPoint:
         # The block text must survive on the one field Codex actually reads.
         assert hook_output.get("permissionDecisionReason")
 
+    def test_bounded_stop_sequence_retains_tasks_and_resets_on_next_prompt(
+        self,
+        tmp_path,
+    ):
+        result = run_bounded_stop_hook_sequence(
+            plugin_root=PLUGIN_ROOT,
+            hook_script=_find_hook_script(),
+            cli="codex",
+            session_id=f"e2e-codex-stop-{uuid.uuid4().hex[:8]}",
+            cwd=tmp_path,
+        )
+        assert_bounded_stop_hook_result("codex", result)
+
 
 @paid_codex_e2e
 class TestCodexE2ERealMoney:
@@ -363,6 +379,57 @@ class TestCodexE2ERealMoney:
         assert "invalid user prompt submit JSON output" not in combined.lower()
         assert "decision\\\":\\\"approve" not in combined
         assert run.completed.returncode == 0, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+
+    @pytest.mark.serial
+    @pytest.mark.timeout(180)
+    def test_codex_no_tool_stop_recursion_ends_at_configured_bound(
+        self,
+        codex_cli_check,
+        tmp_path,
+    ):
+        """A real Codex model can end a no-tool loop without losing its task."""
+        prompt = "\n".join(
+            [
+                "Use update_plan once to create one pending task named "
+                "'Retain after this interaction'.",
+                "After update_plan succeeds, do not call any more tools.",
+                "Reply exactly BOUNDED_STOP_EXIT.",
+                "If an autorun Stop hook asks you to continue, still call no "
+                "tools and reply exactly BOUNDED_STOP_EXIT again.",
+                "Never complete, remove, or ignore the pending task.",
+            ]
+        )
+        run = _run_codex_exec_case("real-cli-bounded-stop", prompt, tmp_path)
+        combined = run.combined_output
+
+        assert run.completed.returncode == 0, (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
+        assert run.last_message.strip() == "BOUNDED_STOP_EXIT", (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
+        events = [
+            json.loads(line)
+            for line in run.completed.stdout.splitlines()
+            if line.startswith("{")
+        ]
+        pending_todos = [
+            item
+            for event in events
+            if (item := event.get("item", {})).get("type") == "todo_list"
+            and any(not todo.get("completed") for todo in item.get("items", []))
+        ]
+        exit_messages = [
+            item
+            for event in events
+            if (item := event.get("item", {})).get("type") == "agent_message"
+            and item.get("text") == "BOUNDED_STOP_EXIT"
+        ]
+        assert pending_todos, f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        assert len(exit_messages) == TaskLifecycleConfig.load().stop_block_max_count + 1, (
+            f"Full output in: {run.log_path}\n{combined[-4000:]}"
+        )
+        assert "Stop hook (failed)" not in combined
 
     @pytest.mark.serial
     @pytest.mark.timeout(180)
