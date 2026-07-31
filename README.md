@@ -825,7 +825,7 @@ autorun task gc --dry-run            # Preview cleanup of old data
 autorun task gc --no-confirm         # Clean up old task data without prompt
 ```
 
-**Key features:** Stop hook enforcement, SessionStart resume detection, plan context injection, blockedBy/blocks dependency ordering, escape hatch, full audit trail.
+**Key features:** Stop hook enforcement, bounded consecutive-Stop handling, SessionStart resume detection, plan context injection, blockedBy/blocks dependency ordering, escape hatch, full audit trail.
 
 #### Task Staleness Reminders (v0.9) and Stale-Task Escape Hatch (v0.10.2)
 
@@ -840,10 +840,16 @@ Injects a reminder after the configured number of tool calls without TaskCreate/
 
 **Stale-task escape hatch:** When the same set of task IDs blocks Stop N times in a row with no non-task tool call between them, the stop injection gains an escape hatch instructing the AI to emit `AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for any task that Claude's Task DB no longer knows about. A PostToolUse hook detects the marker and marks the task `ignored` (non-blocking), allowing the stop.
 
+**Bounded consecutive Stops:** Autorun blocks the first `stop_block_max_count`
+Stop callbacks when real tasks remain. The next Stop may end that interaction,
+but it does not complete, ignore, delete, or pause any task. Completed tool
+activity, a new user prompt, or SessionStart begins a fresh sequence, so task
+enforcement resumes automatically.
+
 **Settings** (`~/.autorun/task-lifecycle.config.json`):
 - `enabled`: Enable/disable task lifecycle tracking (default: true)
 - `max_resume_tasks`: Max tasks shown in resume/stop prompt (default: 20)
-- `stop_block_max_count`: Stop override threshold (default: 3)
+- `stop_block_max_count`: Consecutive blocked Stops before one interaction may end with its tasks retained (default: 3)
 - `task_ttl_days`: Auto-prune completed tasks after N days (default: 30)
 - `debug_logging`: Enable audit logging (default: false)
 - `ghost_clear_enabled`: Enable stale-task escape hatch (default: true)

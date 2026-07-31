@@ -75,17 +75,13 @@ class TestFailureModes:
 
         print("✅ Problem 1 handled: Task explosion capped at max_resume_tasks")
 
-    def test_02_stuck_task_always_blocks_without_user_action(self):
-        """Problem 2: Stuck task - stop always blocked until user acts.
-
-        The escape hatch requires USER action (/ar:sos or /ar:task-ignore),
-        not automatic override after N attempts. Automatic override caused
-        premature stoppage.
-        """
-        print("\n=== Problem 2: Stuck task always blocks (no auto-override) ===")
+    def test_02_stuck_task_yields_after_bound_without_losing_task(self):
+        """Problem 2: a stuck Stop sequence yields but retains the real task."""
+        print("\n=== Problem 2: Stuck Stop sequence yields without task loss ===")
 
         session_id = f'test-stuck-{int(time.time())}'
-        manager = TaskLifecycle(session_id=session_id)
+        config = TaskLifecycleConfig(stop_block_max_count=3)
+        manager = TaskLifecycle(session_id=session_id, config=config)
 
         # Create task with impossible blocker
         manager.create_task('1', {
@@ -96,7 +92,9 @@ class TestFailureModes:
 
         manager.update_task('1', {'addBlockedBy': ['999']}, 'Added blocker')
 
-        # Try to stop many times - should ALWAYS block
+        # First N callbacks block; N+1 yields the interaction without changing
+        # task state. Later duplicate callbacks stay quiet until an activity
+        # boundary resets the consecutive sequence.
         from unittest.mock import MagicMock
         ctx = MagicMock()
         ctx.session_id = session_id
@@ -106,24 +104,34 @@ class TestFailureModes:
         def mock_continue_running(msg=''):
             return {'continue': True, 'systemMessage': msg}
 
-        # Try more than the old max_blocks - should STILL block every time
-        for i in range(10):
+        def mock_allow(msg=''):
+            return {'continue': True, 'systemMessage': msg}
+
+        ctx.allow = MagicMock(side_effect=mock_allow)
+        for i in range(config.stop_block_max_count):
             ctx.continue_running = MagicMock(side_effect=mock_continue_running)
             result = manager.handle_stop(ctx)
-            # continue_running keeps AI working (preventing stop) — continue=True IS the block
-            assert result is not None, f"Should block stop attempt {i+1} - no auto-override"
+            assert result is not None, f"Should block stop attempt {i+1}"
             assert 'CANNOT STOP' in result['systemMessage']
 
         # Verify the message includes user escape hatch instructions
         assert '/ar:sos' in result['systemMessage'], "Should mention /ar:sos as user escape hatch"
         assert '/ar:task-ignore' in result['systemMessage'], "Should mention /ar:task-ignore"
 
+        yielded = manager.handle_stop(ctx)
+        assert "retained 1 incomplete task" in yielded["systemMessage"]
+        assert manager.tasks["1"]["status"] == "pending"
+
+        repeated = manager.handle_stop(ctx)
+        assert repeated["systemMessage"] == ""
+        assert manager.tasks["1"]["status"] == "pending"
+
         # Cleanup
         shutil.rmtree(manager.config.storage_dir / session_id, ignore_errors=True)
         with session_state(manager.global_key) as state:
             state.clear()
 
-        print("✅ Problem 2 handled: Stop always blocked - user must use /ar:sos or /ar:task-ignore")
+        print("✅ Problem 2 handled: bounded yield retains the stuck task")
 
     def test_03_format_change_multiple_regex_patterns(self):
         """Problem 3: Format change - multiple regex patterns handle it."""

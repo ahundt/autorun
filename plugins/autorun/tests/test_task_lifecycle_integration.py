@@ -399,29 +399,32 @@ class TestTaskLifecycleIntegration:
 
         print("✅ Test 10 passed: Deleted tasks don't block stop")
 
-    def test_10_stop_always_blocked_with_incomplete_tasks(self):
-        """Test that stop is always blocked when tasks are incomplete.
-
-        No auto-override after N attempts. User must use /ar:sos or
-        /ar:task-ignore to unblock. Auto-override caused premature stoppage.
-        """
-        print("\n=== Test: Stop always blocked with incomplete tasks ===")
+    def test_10_stop_yields_after_bound_and_retains_incomplete_tasks(self):
+        """Test bounded Stop callbacks without changing incomplete task state."""
+        print("\n=== Test: Stop yields after bound and retains incomplete tasks ===")
 
         # Create incomplete task
         self.manager.create_task('1', {'subject': 'Stuck task', 'description': '', 'activeForm': ''}, 'Created')
 
-        # Block stop many times - should ALWAYS block
         ctx = create_mock_context(session_id=self.session_id)
 
-        for i in range(10):
+        for i in range(self.manager.config.stop_block_max_count):
             result = self.manager.handle_stop(ctx)
             assert result['continue'] == True, f"Attempt {i+1}: continue_running keeps AI working (blocking stop)"
 
-        # Verify message includes user escape hatch instructions
+        # Every actual block still teaches the user escape hatches.
         assert '/ar:sos' in result['systemMessage']
         assert '/ar:task-ignore' in result['systemMessage']
 
-        print("✅ Test passed: Stop always blocked - no auto-override")
+        yielded = self.manager.handle_stop(ctx)
+        assert "retained 1 incomplete task" in yielded["systemMessage"]
+        assert self.manager.tasks["1"]["status"] == "pending"
+
+        repeated = self.manager.handle_stop(ctx)
+        assert repeated["systemMessage"] == ""
+        assert self.manager.tasks["1"]["status"] == "pending"
+
+        print("✅ Test passed: bounded Stop yield keeps the task authoritative")
 
     # ── Regression tests: v0.9 autorun_stage access in handle_stop() ──────────
 

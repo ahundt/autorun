@@ -1693,19 +1693,15 @@ def _ghost_marker_regex() -> re.Pattern:
 
 @app.on("PostToolUse")
 def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
-    """Reset consecutive identical stop-block counter on non-task tool calls (v0.10.2).
+    """Reset consecutive Stop state after completed tool activity.
 
-    Task tool calls (TaskUpdate, TaskList, etc.) are NOT counted as activity —
-    a failing TaskUpdate("Task not found") is exactly what happens in the ghost
-    scenario and must not reset the counter or the threshold is never reached.
+    Every tool resets the bounded no-action Stop sequence. Task tools do not
+    reset the separate identical-ID ghost sequence: a failing
+    TaskUpdate("Task not found") must still reach the stale-task threshold.
     """
     if not task_lifecycle.is_enabled():
         return None
-    # Ghost scenario: AI keeps calling Task tools (TaskUpdate → "not found", TaskList).
-    # Resetting the counter on those calls prevents the threshold from ever being
-    # reached. Only reset on non-task tool calls (real work: Read, Edit, Bash, etc.).
-    if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
-        return None
+    task_tool_activity = is_task_tool(_task_cli_hint(ctx), ctx.tool_name)
     # A Stop block arms this reset in daemon memory. Most PostToolUse calls
     # therefore avoid opening the much larger task-lifecycle JSON entirely.
     # The first Stop after a daemon restart begins a fresh consecutive sequence,
@@ -1728,7 +1724,13 @@ def reset_ghost_counter_on_activity(ctx: EventContext) -> Optional[Dict]:
         return None
     try:
         manager = task_lifecycle.TaskLifecycle(ctx=ctx)
-        manager.atomic_update_metadata(task_lifecycle._reset_ghost_counter)
+
+        def reset_activity_counters(metadata):
+            task_lifecycle._reset_stop_block_sequence(metadata)
+            if not task_tool_activity:
+                task_lifecycle._reset_ghost_counter(metadata)
+
+        manager.atomic_update_metadata(reset_activity_counters)
         ctx.state_set_volatile("ghost_counter_armed_in_daemon", False)
     except Exception:
         ctx.state_set_volatile("ghost_counter_armed_in_daemon", False)

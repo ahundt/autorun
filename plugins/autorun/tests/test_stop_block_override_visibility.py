@@ -169,6 +169,7 @@ def test_override_visible_in_pending_injection_every_block(
         storage_dir=tmp_path / "task_lifecycle",
         task_ttl_days=30,
         max_resume_tasks=10,
+        stop_block_max_count=block_count,
         ghost_clear_enabled=ghost_enabled,
         ghost_clear_min_consecutive_blocks=2,
     )
@@ -247,6 +248,7 @@ def test_override_visible_for_codex_cli_type(
         enabled=True,
         storage_dir=tmp_path / "task_lifecycle",
         max_resume_tasks=10,
+        stop_block_max_count=block_count,
         ghost_clear_enabled=True,
         ghost_clear_min_consecutive_blocks=2,
     )
@@ -403,6 +405,7 @@ def test_every_stop_block_mentions_ai_escape_path(
 ):
     """Every Stop block (1..N) must mention the AI-callable stale-clear path."""
     cfg = isolated_task_config
+    cfg.stop_block_max_count = 5
     sid = f"stop-every-{cli_type}-{time.time_ns()}"
     manager = TaskLifecycle(session_id=sid, config=cfg)
     _seed_tasks(manager, 1, prefix="seed")

@@ -170,6 +170,24 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
     )
 
 
+def _bounded_stop_message(
+    cli_type: str | None,
+    *,
+    blocked_count: int,
+    task_count: int,
+) -> str:
+    """Describe one bounded Stop yield without implying task completion."""
+    task_label = "task" if task_count == 1 else "tasks"
+    task_status = format_command_for_cli("/ar:task status", cli_type)
+    return (
+        f"Autorun allowed this interaction to end after {blocked_count} "
+        f"consecutive Stop blocks without completed activity; retained "
+        f"{task_count} incomplete {task_label}. No task was completed, ignored, "
+        f"or cleared. The next user prompt or session resume restores task "
+        f"enforcement; use {task_status} to review the retained work."
+    )
+
+
 def _task_cli_hint(ctx: EventContext) -> str | None:
     """Return explicit CLI hint for task-tool classification, if one was supplied."""
     if hasattr(ctx, "_cli_type") and not getattr(ctx, "_cli_type_explicit", False):
@@ -291,6 +309,12 @@ def _ghost_id_set_hash(tasks: Iterable[dict], hex_chars: int) -> str:
     ids = ",".join(sorted(str(t["id"]) for t in tasks))
     byte_size = max(4, min(32, hex_chars // 2))
     return hashlib.blake2s(ids.encode(), digest_size=byte_size).hexdigest()
+
+
+def _reset_stop_block_sequence(metadata: dict) -> None:
+    """Start a fresh consecutive Stop sequence."""
+    metadata["stop_block_count"] = 0
+    metadata.pop("last_delivered_stop_block_generation", None)
 
 
 def _reset_ghost_counter(metadata: dict) -> None:
@@ -1130,14 +1154,7 @@ class TaskLifecycle:
         # Fix 4: Reset stop_block_count when task reaches terminal status.
         # Placed OUTSIDE updater closure to avoid nonlocal scoping issues.
         if "status" in updates and updates["status"] in self.NON_BLOCKING_STATUSES and not ghost_state[0]:
-
-            def reset_block_count(metadata):
-                metadata["stop_block_count"] = 0
-                # Clear the delivery claim with the counter it keys on, so a
-                # recycled generation number cannot suppress a later delivery.
-                metadata.pop("last_delivered_stop_block_generation", None)
-
-            self.atomic_update_metadata(reset_block_count)
+            self.atomic_update_metadata(_reset_stop_block_sequence)
 
         return "ghost_skip" if ghost_state[0] else None
 
@@ -1651,12 +1668,14 @@ class TaskLifecycle:
 
         This is the core mechanism that ensures AI continues while tasks are outstanding.
 
-        Escape hatches (user-driven only, never automatic):
+        Task-state escape hatches (user-driven only, never automatic):
         - User runs /ar:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
         - User runs /ar:task-ignore <id> to mark specific tasks as ignored
         - User marks tasks as completed/deleted via TaskUpdate
 
-        No automatic override after N attempts - that caused premature stoppage.
+        A configured consecutive-Stop bound may yield one stuck interaction,
+        but it retains every task and re-enables enforcement on the next
+        completed activity, user prompt, or session start.
         """
         # SubagentStop fires in the PARENT's context when a child agent (spawned via
         # Agent tool) completes and returns results. Blocking SubagentStop creates a
@@ -1765,10 +1784,7 @@ class TaskLifecycle:
         if not incomplete_tasks:
 
             def reset_counter(metadata):
-                metadata["stop_block_count"] = 0
-                # Clear the delivery claim with the counter it keys on, so a
-                # recycled generation number cannot suppress a later delivery.
-                metadata.pop("last_delivered_stop_block_generation", None)
+                _reset_stop_block_sequence(metadata)
                 _reset_ghost_counter(metadata)
 
             self.atomic_update_metadata(reset_counter)
@@ -1823,6 +1839,23 @@ class TaskLifecycle:
                         channel="both",
                     )
                     return None
+
+        if block_count > self.config.stop_block_max_count:
+            ctx.pending_stop_injection = None
+            if block_count == self.config.stop_block_max_count + 1:
+                yield_message = _bounded_stop_message(
+                    _task_cli_hint(ctx),
+                    blocked_count=block_count - 1,
+                    task_count=len(incomplete_tasks),
+                )
+                self.log_event(
+                    "STOP_SEQUENCE_YIELD",
+                    "session",
+                    yield_message,
+                    "yielded",
+                )
+                return ctx.allow(yield_message)
+            return ctx.allow()
 
         # Build task list with status indicators (cap at max_resume_tasks)
         max_tasks = self.config.max_resume_tasks
@@ -2052,8 +2085,7 @@ class TaskLifecycle:
                 while len(consumed) > _MAX_CONSUMED_DELEGATION_MARKERS:
                     consumed.pop(next(iter(consumed)))
                 metadata["consumed_delegation_markers"] = consumed
-                metadata["stop_block_count"] = 0
-                metadata.pop("last_delivered_stop_block_generation", None)
+                _reset_stop_block_sequence(metadata)
                 if repository is None:
                     state["tasks"] = tasks
                 state["session_metadata"] = metadata
@@ -2861,6 +2893,21 @@ def register_hooks(app_instance) -> None:
     if not is_enabled():
         return
 
+    def reset_stop_sequence(ctx: EventContext) -> None:
+        manager = TaskLifecycle(ctx=ctx)
+        manager.atomic_update_metadata(_reset_stop_block_sequence)
+
+    @app_instance.on("UserPromptSubmit")
+    def reset_stop_sequence_on_user_prompt(ctx: EventContext) -> Optional[Dict]:
+        """Start a fresh consecutive Stop sequence for a new user turn."""
+        if not is_enabled():
+            return None
+        try:
+            reset_stop_sequence(ctx)
+        except Exception as error:
+            logger.warning(f"Task Stop-sequence prompt reset error: {error}")
+        return None
+
     @app_instance.on("PostToolUse")
     def deliver_pending_stop_injection(ctx: EventContext) -> Optional[Dict]:
         """Deliver stop-block message to AI on next PostToolUse (one-shot).
@@ -2996,12 +3043,13 @@ def register_hooks(app_instance) -> None:
 
     @app_instance.on("SessionStart")
     def resume_incomplete_tasks(ctx: EventContext) -> Optional[Dict]:
-        """Resume incomplete tasks on session start."""
+        """Reset consecutive Stop state, then resume incomplete tasks."""
         if not is_enabled():
             return None
 
         try:
             manager = TaskLifecycle(ctx=ctx)
+            manager.atomic_update_metadata(_reset_stop_block_sequence)
             return manager.handle_session_start(ctx)
         except Exception as e:
             logger.warning(f"Task resume detection error: {e}")

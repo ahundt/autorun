@@ -2289,6 +2289,7 @@ class AutorunApp:
             "Stop": [],
             "SessionStart": [],
             "PostToolUse": [],
+            "UserPromptSubmit": [],
         }
 
     def command(self, *aliases: str):
@@ -2404,8 +2405,12 @@ class AutorunApp:
         """Dispatch implementation; caller may wrap store persistence batching."""
         event = ctx.event
 
-        # UserPromptSubmit: Check commands first
+        # UserPromptSubmit: run lifecycle boundaries before command handling so
+        # both commands and ordinary prompts observe the same new-turn state.
         if event == "UserPromptSubmit":
+            result = self._run_chain(ctx, event)
+            if result is not None:
+                return result
             match = self._find_command(ctx.prompt.strip(), ctx.cli_type)
             if match:
                 ctx.activation_prompt = match.activation_prompt
