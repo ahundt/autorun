@@ -1263,11 +1263,7 @@ class TestStopBlockRepeatedDeliverySuppression:
 
 
 class TestStopBlockTasksOffCaveat:
-    """The Stop-block message must tell the AI that /ar:tasks off does
-    NOT affect Stop blocking — but only when the user has actually touched
-    /ar:tasks off (ctx.task_staleness_enabled is False), never unconditionally
-    on every block (per /ar:philosophy Principle 16, "Optimize for Common Case").
-    """
+    """Only mention the reminder/Stop distinction after reminders are disabled."""
 
     def test_caveat_shown_when_staleness_reminders_disabled(self):
         sid = f"test-bug-c-off-{time.time()}"
@@ -1277,7 +1273,7 @@ class TestStopBlockTasksOffCaveat:
         ctx.task_staleness_enabled = False
         result = manager.handle_stop(ctx)
         assert result is not None
-        assert "/ar:tasks off does NOT apply here" in result.get("reason", ""), f"Stop block must caveat /ar:tasks off when it was disabled. Got: {result}"
+        assert "/ar:tasks off only disables reminders" in result.get("reason", ""), f"Stop block must caveat /ar:tasks off when it was disabled. Got: {result}"
 
     def test_caveat_absent_by_default(self):
         """Common case: /ar:tasks off was never touched — no caveat noise."""
@@ -1288,4 +1284,4 @@ class TestStopBlockTasksOffCaveat:
         assert ctx.task_staleness_enabled is True, "Default must be enabled"
         result = manager.handle_stop(ctx)
         assert result is not None
-        assert "/ar:tasks off does NOT apply here" not in result.get("reason", ""), f"Stop block must NOT show the caveat in the common case. Got: {result}"
+        assert "/ar:tasks off only disables reminders" not in result.get("reason", ""), f"Stop block must NOT show the caveat in the common case. Got: {result}"

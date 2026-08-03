@@ -918,6 +918,8 @@ def run_direct() -> int:
         cwd=payload.get("_cwd") or payload.get("cwd") or os.getcwd(),
         permission_mode=normalized["permission_mode"],
         source=normalized["source"],
+        agent_id=normalized["agent_id"],
+        agent_type=normalized["agent_type"],
         transcript_path=normalized.get("transcript_path"),
         stop_hook_active=normalized["stop_hook_active"],
         last_assistant_message=normalized["last_assistant_message"],

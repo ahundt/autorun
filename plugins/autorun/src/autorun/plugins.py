@@ -1446,27 +1446,144 @@ def _task_staleness_instructions(ctx: EventContext) -> str:
 
 def _task_staleness_notification(ctx: EventContext, threshold: int, *, overdue: bool = False, no_tasks: bool = False) -> str:
     """Return the PostToolUse staleness reminder in the platform's native terms."""
+    agent_context = " Current subagent only." if ctx.agent_id else ""
     if platform_for(ctx.cli_type).task_management_style == "plan_checklist":
+        disable = format_command_for_cli("/ar:tasks off", ctx.cli_type)
         if no_tasks:
             return (
-                f"\nNO CHECKLIST EXISTS: {threshold} tool calls with zero checklist items tracking your work. "
-                "Your next action must be {task_progress} with one concrete item per step; "
-                "set the current step to in_progress and later steps to pending. "
-                "Do not call any other tool until the checklist exists. Disable: /ar:tasks off"
+                f"\nNO CHECKLIST EXISTS: {threshold} calls without tracked steps. "
+                "Next: {task_progress}; use concrete steps with current=in_progress and later=pending. "
+                f"No other tool first. Disable reminders: {disable}." + agent_context
             )
         level = "TASK UPDATE OVERDUE" if overdue else "TASK UPDATE REQUIRED"
         return (
-            f"\n{level}: {threshold} tool calls without a checklist update. "
-            "Your next action must be {task_progress}: update the plan list with current statuses "
-            "and any newly discovered concrete work. Your next non-task tool call will be blocked. "
-            "Disable: /ar:tasks off"
+            f"\n{level}: {threshold} calls without a plan update. "
+            "Next: {task_progress}; refresh statuses and add new work. "
+            f"The next non-task call will be blocked. Disable reminders: {disable}." + agent_context
         )
 
     if no_tasks:
-        return CONFIG["task_staleness_no_tasks_message"].format(threshold=threshold)
+        message = CONFIG["task_staleness_no_tasks_message"].format(threshold=threshold)
+        return message + agent_context
     if overdue:
-        return CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
-    return CONFIG["task_staleness_message"].format(threshold=threshold)
+        message = CONFIG["task_staleness_message_2nd"].format(threshold=threshold)
+        return message + agent_context
+    message = CONFIG["task_staleness_message"].format(threshold=threshold)
+    return message + agent_context
+
+
+_TASK_STALENESS_AGENT_SCOPES = frozenset({"all", "user", "subagent"})
+_TASK_STALENESS_SCOPE_ALIASES = {
+    "all": "all",
+    "user": "user",
+    "users": "user",
+    "primary": "user",
+    "main": "user",
+    "subagent": "subagent",
+    "subagents": "subagent",
+}
+
+
+def _task_staleness_agent_kind(ctx: EventContext) -> str:
+    """Classify by agent_id; agent_type alone can describe a main session."""
+    return "subagent" if ctx.agent_id else "user"
+
+
+def _task_staleness_scope(ctx: EventContext) -> str:
+    configured = ctx.task_staleness_agent_scope or CONFIG.get("task_staleness_agent_scope", "all")
+    return _TASK_STALENESS_SCOPE_ALIASES.get(str(configured).lower(), "all")
+
+
+def _task_staleness_applies(ctx: EventContext) -> bool:
+    scope = _task_staleness_scope(ctx)
+    return scope == "all" or scope == _task_staleness_agent_kind(ctx)
+
+
+def _task_staleness_state_session_id(ctx: EventContext) -> str:
+    """Keep cadence agent-local without splitting shared task lifecycle state."""
+    if not ctx.agent_id:
+        return ctx.session_id
+    return f"{ctx.session_id}:task-staleness-agent:{ctx.agent_id}"
+
+
+def _task_progress_state_get(ctx: EventContext, name: str, default=None):
+    return ctx.state_get(
+        name,
+        default,
+        session_id=_task_staleness_state_session_id(ctx),
+    )
+
+
+def _task_progress_state_set(ctx: EventContext, name: str, value) -> None:
+    ctx.state_set(
+        name,
+        value,
+        session_id=_task_staleness_state_session_id(ctx),
+    )
+
+
+def _task_progress_state_update(ctx: EventContext, name: str, updater, default=None):
+    return ctx.state_update_volatile(
+        name,
+        updater,
+        default,
+        session_id=_task_staleness_state_session_id(ctx),
+    )
+
+
+def _task_progress_state_update_durable(
+    ctx: EventContext,
+    name: str,
+    updater,
+    default=None,
+):
+    return ctx.state_update(
+        name,
+        updater,
+        default,
+        session_id=_task_staleness_state_session_id(ctx),
+    )
+
+
+def _positive_task_threshold(value, fallback: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return fallback
+
+
+def _task_staleness_thresholds(ctx: EventContext) -> tuple[int, int]:
+    """Resolve per-session two-phase overrides with legacy fixed fallback."""
+    legacy = ctx.task_staleness_threshold
+    default_initial = _positive_task_threshold(
+        CONFIG.get("task_staleness_initial_threshold"),
+        25,
+    )
+    default_subsequent = _positive_task_threshold(
+        CONFIG.get("task_staleness_subsequent_threshold"),
+        _positive_task_threshold(CONFIG.get("task_staleness_threshold"), 50),
+    )
+    initial = ctx.task_staleness_initial_threshold
+    subsequent = ctx.task_staleness_subsequent_threshold
+    if initial is None and legacy is not None:
+        initial = legacy
+    if subsequent is None and legacy is not None:
+        subsequent = legacy
+    return (
+        _positive_task_threshold(initial, default_initial),
+        _positive_task_threshold(subsequent, default_subsequent),
+    )
+
+
+def _task_staleness_current_threshold(ctx: EventContext) -> int:
+    initial, subsequent = _task_staleness_thresholds(ctx)
+    completed = bool(
+        _task_progress_state_get(
+            ctx,
+            "task_staleness_initial_checkpoint_complete",
+            False,
+        )
+    )
+    return subsequent if completed else initial
 
 
 @app.on("PostToolUse")
@@ -1533,8 +1650,17 @@ def detect_plan_approval(ctx: EventContext) -> Optional[Dict]:
     if plan_cfg.tdd_scaffolding:
         injection += _get_tdd_scaffolding_message(ctx)
     if plan_cfg.task_update_enforcement:
-        threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
-        ctx.tool_calls_since_task_update = max(0, threshold - 2)
+        _initial, threshold = _task_staleness_thresholds(ctx)
+        _task_progress_state_set(
+            ctx,
+            "task_staleness_initial_checkpoint_complete",
+            True,
+        )
+        _task_progress_state_set(
+            ctx,
+            "tool_calls_since_task_update",
+            max(0, threshold - 2),
+        )
 
     # v0.10: Append execution task reminder (DRY helper shared with remind_until_tasks_created)
     reminder = _get_task_creation_reminder(ctx)
@@ -1804,30 +1930,42 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
     """
     if task_enforcement_is_paused(ctx):
         return None
-    if not ctx.task_staleness_enforce_next:
+    if not _task_staleness_applies(ctx):
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        return None
+    if not _task_progress_state_get(ctx, "task_staleness_enforce_next", False):
         return None
 
     # Always let Task tools through and reset all counters
     if is_task_tool(_task_cli_hint(ctx), ctx.tool_name):
-        ctx.task_staleness_enforce_next = False
-        ctx.task_staleness_reminder_count = 0
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
         ctx.plan_task_reminder_count = 0
         return None
 
     # Conductor plan updates also reset counters (WOLOG)
     if is_task_update_call(ctx):
-        ctx.task_staleness_enforce_next = False
-        ctx.task_staleness_reminder_count = 0
+        _reset_task_progress_cadence(ctx)
         ctx.plan_task_reminder_count = 0
         return None
 
-    ctx.task_staleness_enforce_next = False  # One-shot per threshold crossing
-    reminder_count = ctx.task_staleness_reminder_count or 0
+    # One-shot per threshold crossing.
+    _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+    reminder_count = _task_progress_state_get(
+        ctx,
+        "task_staleness_reminder_count",
+        0,
+    )
 
-    threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+    threshold = _task_progress_state_get(
+        ctx,
+        "task_staleness_last_threshold",
+        _task_staleness_current_threshold(ctx),
+    )
 
     # Build context-aware instructions based on the platform's native task surface.
     instructions = _task_staleness_instructions(ctx)
+    agent_context = f" This reminder applies to subagent {ctx.agent_type or ctx.agent_id}." if ctx.agent_id else ""
 
     if reminder_count <= 1:
         # First offense: WARN — allow the tool but inject context-aware reminder
@@ -1835,7 +1973,7 @@ def enforce_task_staleness(ctx: EventContext) -> Optional[Dict]:
         warn_msg = (
             f"TASK UPDATE WARNING -- {threshold}+ tool calls without a task update. "
             "Your next action after this must be a Task tool. " + instructions + " "
-            "If you do not comply, your next non-Task tool call will be blocked."
+            "If you do not comply, your next non-Task tool call will be blocked." + agent_context
         )
         return ctx.allow(warn_msg)
     else:
@@ -1879,7 +2017,8 @@ def _advance_task_progress_counter(
             return 0
         return count
 
-    count = ctx.state_update_volatile(
+    count = _task_progress_state_update(
+        ctx,
         "tool_calls_since_task_update",
         advance,
         0,
@@ -1888,10 +2027,33 @@ def _advance_task_progress_counter(
 
 
 def _reset_task_progress_cadence(ctx: EventContext) -> None:
-    """Reset reminder cadence and any pending task-progress enforcement."""
-    ctx.tool_calls_since_task_update = 0
-    ctx.task_staleness_reminder_count = 0
-    ctx.task_staleness_enforce_next = False
+    """Reset into the steady cadence after genuine task/plan progress."""
+    _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
+    _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
+    _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+    _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
+    _task_progress_state_set(
+        ctx,
+        "task_staleness_initial_checkpoint_complete",
+        True,
+    )
+
+
+@app.on("SessionStart")
+def initialize_task_staleness_cadence(ctx: EventContext) -> None:
+    """Start a new initial phase without disturbing resume/compact state."""
+    if ctx.source not in {"startup", "clear"}:
+        return None
+    _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
+    _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
+    _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+    _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
+    _task_progress_state_set(
+        ctx,
+        "task_staleness_initial_checkpoint_complete",
+        False,
+    )
+    return None
 
 
 @app.on("PostToolUse")
@@ -1904,6 +2066,10 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
     if ctx.cli_type == "gemini":
         return None
 
+    if not _task_staleness_applies(ctx):
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        return None
+
     pause_guidance = task_pause_guidance(
         ctx,
         periodic_recovery_only=True,
@@ -1912,16 +2078,23 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         if is_task_update_call(ctx):
             _reset_task_progress_cadence(ctx)
             return None
-        threshold = (
-            ctx.task_staleness_threshold
-            or CONFIG["task_staleness_threshold"]
-        )
+        threshold = _task_staleness_current_threshold(ctx)
         _count, guidance_due = _advance_task_progress_counter(
             ctx,
             reset_at=threshold,
         )
         if guidance_due:
+            _task_progress_state_set(
+                ctx,
+                "task_staleness_initial_checkpoint_complete",
+                True,
+            )
             ctx.add_chain_notification(pause_guidance, channel="both")
+        return None
+
+    # Finite/count-only pauses suppress ordinary staleness reminders. Only an
+    # indefinite reason pause receives the periodic recovery guidance above.
+    if task_enforcement_is_paused(ctx):
         return None
 
     if not ctx.task_staleness_enabled:
@@ -1932,68 +2105,61 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
         _reset_task_progress_cadence(ctx)
         return None
 
-    threshold = (
-        ctx.task_staleness_threshold
-        or CONFIG["task_staleness_threshold"]
+    threshold = _task_staleness_current_threshold(ctx)
+    count, due = _advance_task_progress_counter(ctx, reset_at=threshold)
+    if not due:
+        # Preserve one early durable checkpoint without returning to a write on
+        # every fifth call. A daemon restart can replay at most the remaining
+        # phase span, while ordinary calls stay on volatile daemon state.
+        if count == min(5, threshold):
+            _task_progress_state_set(
+                ctx,
+                "tool_calls_since_task_update",
+                count,
+            )
+        return None
+
+    # Crossing the initial checkpoint enters the steady phase even if the AI
+    # ignores the reminder. The next crossing is therefore subsequent calls
+    # later, not another initial-interval loop.
+    _task_progress_state_set(
+        ctx,
+        "task_staleness_initial_checkpoint_complete",
+        True,
     )
-    count, _due = _advance_task_progress_counter(ctx)
-    no_tasks_threshold = CONFIG.get("task_staleness_no_tasks_threshold", 5)
+    _task_progress_state_set(ctx, "task_staleness_last_threshold", threshold)
 
-    # Checkpoint only at semantic decision boundaries. Persisting every fifth
-    # call lets one seven-way burst cross two checkpoints (5 and 10), recreating
-    # lock contention on the monolithic JSON file. A daemon restart may now
-    # replay part of this advisory countdown, but enforcement transitions and
-    # task updates remain durable.
-    if count == no_tasks_threshold or count >= threshold:
-        ctx.tool_calls_since_task_update = count
-
-    # Task state is only needed when a reminder decision can change. Persist the
-    # boundary classification in magic state so ordinary calls between the lower
-    # no-tasks threshold and the normal staleness threshold stay off the large
-    # task-lifecycle JSON payload.
-    needs_task_snapshot = count == no_tasks_threshold or count >= threshold
-    if count > no_tasks_threshold and count < threshold:
-        needs_task_snapshot = ctx.task_staleness_has_active_tasks is None
-
-    # Check one task snapshot to select threshold and message.
-    if needs_task_snapshot and task_lifecycle.is_enabled():
+    no_tasks = False
+    if task_lifecycle.is_enabled():
         try:
             manager = task_lifecycle.TaskLifecycle(ctx=ctx)
             tasks = manager.tasks
             incomplete = [task for task in tasks.values() if task["status"] not in manager.NON_BLOCKING_STATUSES]
-            ctx.state_set_volatile("task_staleness_has_active_tasks", bool(incomplete))
-            if not tasks or not incomplete:
-                # No active work: zero tasks or all complete. Both mean the AI
-                # is doing work without task tracking. Use lower no_tasks_threshold
-                # (default 5) to prompt task creation quickly.
-                if count < no_tasks_threshold:
-                    return None
-                ctx.tool_calls_since_task_update = 0
-                reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
-                ctx.task_staleness_reminder_count = reminder_count
-                ctx.task_staleness_enforce_next = True
-                msg = _task_staleness_notification(ctx, no_tasks_threshold, no_tasks=True)
-                ctx.add_chain_notification(msg, channel="both")
-                return None
+            no_tasks = not tasks or not incomplete
         except Exception:
             pass  # Fail-open — skip lifecycle check on error
 
-    if count < threshold:
-        return None
-
-    ctx.tool_calls_since_task_update = 0
-    reminder_count = (ctx.task_staleness_reminder_count or 0) + 1
-    ctx.task_staleness_reminder_count = reminder_count
+    reminder_count = _task_progress_state_update_durable(
+        ctx,
+        "task_staleness_reminder_count",
+        lambda current: (current or 0) + 1,
+        0,
+    )
 
     # Set enforce flag on EVERY threshold crossing so the next PreToolUse
     # injects the reminder via allow(reason) — a secondary delivery path.
     # PostToolUse additionalContext is broken (https://github.com/anthropics/claude-code/issues/18534)
     # so we also deliver via PreToolUse allow which sets reason + systemMessage.
-    ctx.task_staleness_enforce_next = True
+    _task_progress_state_set(ctx, "task_staleness_enforce_next", True)
 
     # 2-level escalation: REQUIRED (1st) then OVERDUE (2nd+). No 3rd level —
     # the PreToolUse deny at step 2 IS the enforcement (warn-then-deny).
-    msg = _task_staleness_notification(ctx, threshold, overdue=reminder_count >= 2)
+    msg = _task_staleness_notification(
+        ctx,
+        threshold,
+        overdue=reminder_count >= 2,
+        no_tasks=no_tasks,
+    )
 
     # Also send via systemMessage as secondary channel (may reach AI if #25987 is fixed)
     ctx.add_chain_notification(msg, channel="both")
@@ -2080,29 +2246,85 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
       ar:task prompts          — show prompting status
       ar:task prompts on       — enable reminders
       ar:task prompts off      — disable reminders
-      ar:task prompts <number> — set a positive tool-call threshold
+      ar:task prompts <number> — set both thresholds (fixed cadence)
+      ar:task prompts initial <number>
+      ar:task prompts subsequent <number>
+      ar:task prompts scope all|user|subagent
     """
     arg = arguments[0].strip().lower() if arguments else ""
 
+    def reset_counter(*, initial_phase: bool | None = None) -> None:
+        _task_progress_state_set(ctx, "tool_calls_since_task_update", 0)
+        _task_progress_state_set(ctx, "task_staleness_reminder_count", 0)
+        _task_progress_state_set(ctx, "task_staleness_enforce_next", False)
+        _task_progress_state_set(ctx, "task_staleness_last_threshold", 0)
+        if initial_phase is not None:
+            _task_progress_state_set(
+                ctx,
+                "task_staleness_initial_checkpoint_complete",
+                not initial_phase,
+            )
+
     if arg == "on":
         ctx.task_staleness_enabled = True
-        ctx.tool_calls_since_task_update = 0
-        threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
-        return f"Task staleness reminders enabled (threshold: {threshold} tool calls)."
+        reset_counter()
+        initial, subsequent = _task_staleness_thresholds(ctx)
+        return f"Task staleness reminders enabled (initial={initial}, subsequent={subsequent}, scope={_task_staleness_scope(ctx)})."
     elif arg == "off":
         ctx.task_staleness_enabled = False
         return "Task staleness reminders disabled."
     elif arg.isdigit() and int(arg) >= 1:
-        ctx.task_staleness_threshold = int(arg)
-        ctx.tool_calls_since_task_update = 0
-        return f"Task staleness threshold set to {arg} tool calls."
+        value = int(arg)
+        ctx.task_staleness_threshold = value
+        ctx.task_staleness_initial_threshold = value
+        ctx.task_staleness_subsequent_threshold = value
+        reset_counter()
+        return f"Task staleness fixed cadence set to {arg} tool calls."
+    elif arg in {"initial", "subsequent"}:
+        value_text = arguments[1].strip() if len(arguments) > 1 else ""
+        if not value_text.isdigit() or int(value_text) < 1:
+            example = format_command_for_cli(f"/ar:task prompts {arg} 25", ctx.cli_type)
+            return f"Invalid {arg} threshold {value_text!r}. Use a positive integer (e.g. {example})."
+        value = int(value_text)
+        if arg == "initial":
+            ctx.task_staleness_initial_threshold = value
+            reset_counter(initial_phase=True)
+        else:
+            ctx.task_staleness_subsequent_threshold = value
+            reset_counter()
+        return f"Task staleness {arg} threshold set to {value} tool calls."
+    elif arg == "scope":
+        value_text = arguments[1].strip().lower() if len(arguments) > 1 else ""
+        scope = _TASK_STALENESS_SCOPE_ALIASES.get(value_text)
+        if scope not in _TASK_STALENESS_AGENT_SCOPES:
+            return "Invalid task reminder scope. Use all, user, or subagent."
+        ctx.task_staleness_agent_scope = scope
+        reset_counter()
+        return f"Task staleness agent scope set to {scope}."
     elif arg:
         # Catches: "0", negative numbers like "-5", non-numeric strings
-        return f"Invalid threshold '{arg}'. Use a positive integer (e.g. /ar:tasks 10)."
+        return f"Invalid task prompt setting '{arg}'. Use on, off, a positive fixed threshold, initial N, subsequent N, or scope all|user|subagent."
     else:
         enabled = ctx.task_staleness_enabled
-        count = ctx.tool_calls_since_task_update or 0
-        threshold = ctx.task_staleness_threshold or CONFIG.get("task_staleness_threshold", 25)
+        count = _task_progress_state_get(
+            ctx,
+            "tool_calls_since_task_update",
+            0,
+        )
+        initial, subsequent = _task_staleness_thresholds(ctx)
+        threshold = _task_staleness_current_threshold(ctx)
+        phase = (
+            "subsequent"
+            if threshold == subsequent
+            and bool(
+                _task_progress_state_get(
+                    ctx,
+                    "task_staleness_initial_checkpoint_complete",
+                    False,
+                )
+            )
+            else "initial"
+        )
 
         lines = []
 
@@ -2150,7 +2372,13 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
             except Exception:
                 lines.append("Tasks: unavailable (lifecycle error)")
 
-        lines.append(f"Staleness reminders: {'on' if enabled else 'off'} ({count}/{threshold} tool calls)")
+        lines.append(
+            f"Staleness reminders: {'on' if enabled else 'off'} "
+            f"({count}/{threshold} tool calls, phase={phase}, "
+            f"initial={initial}, subsequent={subsequent}, "
+            f"scope={_task_staleness_scope(ctx)}, "
+            f"agent={_task_staleness_agent_kind(ctx)})"
+        )
         cfg = task_lifecycle.TaskLifecycleConfig.load()
         ghost_state = "on" if cfg.ghost_clear_enabled else "off"
         lines.append(f"Stale-task clear: {ghost_state} (min={cfg.ghost_clear_min_consecutive_blocks})")
@@ -2161,7 +2389,7 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
             lines.append("   Use /conductor:status to see full track details.")
 
         command = format_command_for_cli(
-            "/ar:task prompts on|off|<positive-count>",
+            "/ar:task prompts on|off|<fixed-count>|initial N|subsequent N|scope all|user|subagent",
             ctx.cli_type,
         )
         lines.append(f"Usage: {command}")
@@ -2219,11 +2447,7 @@ def _parse_task_pause_arguments(
         raise ValueError(
             f"invalid count or duration {remaining[0]!r}; pass a positive logical Stop count, a duration such as 5m, or start the reason with a word"
         )
-    default_scope = (
-        reason_only_default_scope
-        if remaining and not scope_tokens
-        else bare_default_scope
-    )
+    default_scope = reason_only_default_scope if remaining and not scope_tokens else bare_default_scope
     scope = parse_scope_tokens(
         scope_tokens,
         default_scope=default_scope,

@@ -633,10 +633,17 @@ CONFIG = {
     # It should describe WHAT the AI is doing, not just be a state variable name.
     "emergency_stop": "AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP",
     # ─── Task Staleness Reminder (v0.9) ───────────────────────────────────────
-    # Tool calls without TaskCreate/TaskUpdate before injecting reminder.
-    "task_staleness_threshold": 25,
-    # Lower threshold when zero tasks exist (AI should create tasks quickly).
-    "task_staleness_no_tasks_threshold": 5,
+    # First post-start checkpoint, then the steady cadence after either that
+    # checkpoint or any provider-native task/plan update.
+    "task_staleness_initial_threshold": 25,
+    "task_staleness_subsequent_threshold": 50,
+    # all | user | subagent. Both Claude Code and Codex identify subagent hook
+    # calls with agent_id; agent_type alone is not a reliable discriminator.
+    "task_staleness_agent_scope": "all",
+    # Backward-compatible fixed-threshold aliases. New runtime decisions use
+    # the explicit two-phase keys above.
+    "task_staleness_threshold": 50,
+    "task_staleness_no_tasks_threshold": 25,
     # Injected when threshold crossed. {threshold} replaced at runtime.
     # V4 strings: no emoji, complete tool syntax, dependency wiring, disable instruction.
     # Warn-then-deny enforcement: 2 PostToolUse levels only (1st + 2nd).
@@ -659,7 +666,7 @@ CONFIG = {
         "Do not call any other tool. Your next non-Task tool call will be blocked. "
         "Disable: /ar:tasks off"
     ),
-    # Injected when zero tasks exist and no_tasks_threshold crossed.
+    # Injected when a cadence threshold is crossed with zero active tasks.
     "task_staleness_no_tasks_message": (
         "\nNO TASKS EXIST: {threshold} tool calls with zero tasks tracking your work. "
         "Your next action must be {{task_create}}: "
@@ -690,15 +697,11 @@ CONFIG = {
     "ghost_clear_reason": ("stale ref: marker emitted after ghost_clear_min_consecutive_blocks identical stop blocks"),
     "ghost_clear_injection_template": (
         "\n"
-        "⚠  STALE-TASK ESCAPE HATCH — this same set of ids has blocked Stop "
-        "{threshold} times in a row with no tool call in between. If a task "
-        "above is a stale reference (TaskList does not show it, or TaskUpdate "
-        'returns "Task not found"), print one of the following on its own '
-        "line, exactly, for each stale id you want to clear:\n"
+        "⚠ STALE-TASK ESCAPE HATCH — the same task IDs blocked Stop {threshold} times. "
+        "Only for an ID absent from native tasks, print its marker "
+        "alone:\n"
         "{marker_lines}\n"
-        "These will be detected and marked `ignored` (non-blocking). Do NOT "
-        "emit them for real, in-progress tasks — only for ones Claude's own "
-        "Task DB no longer knows about. Disable: /ar:tasks stale off\n"
+        "Autorun marks it `ignored` (non-blocking). Never use this for real work.\n"
     ),
     # ─── Cache Guard (/ar:cache) ─────────────────────────────────────────────
     # How much of the JSONL transcript to tail-scan on each PreToolUse call.

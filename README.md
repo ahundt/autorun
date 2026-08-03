@@ -9,13 +9,14 @@
 ## Key Features
 
 1. **Fewer Interruptions**: Claude, Gemini-family CLIs, Qwen, or Codex keeps working without "continue" prompts so you can step away
-2. **Verify Plans Before Starting**: Plans get critiqued and refined before code is written
-3. **Implement, Evaluate, Verify**: AI must pass all three stages. Prevents claiming half-done work is complete
-4. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
-5. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-6. **Works across maintained AI coding harnesses**: Same safety policies across Claude Code, Antigravity, Qwen Code, Codex CLI, and ForgeCode; legacy Gemini CLI remains available by explicit opt-in
-7. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
-8. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
+2. **Planning When It Helps**: Optionally critique and refine a plan before code is written
+3. **Verification When It Helps**: Optionally run implement, evaluate, and verify stages for work that benefits from extra checks
+4. **Room to Discuss**: `/ar:tasks pause <reason>` pauses reminders and Stop enforcement without changing tasks
+5. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
+6. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
+7. **Works across maintained AI coding harnesses**: Same safety policies across Claude Code, Antigravity, Qwen Code, Codex CLI, and ForgeCode; legacy Gemini CLI remains available by explicit opt-in
+8. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
+9. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
 ![autorun Architecture](autorun-architecture.svg)
 
@@ -31,14 +32,17 @@ autorun --install
 # Expected: "AutoFile policy: allow-all"
 ```
 
-**Plan & Execute** (most common workflow):
+Use as much or as little workflow structure as the task needs: keep the safety
+hooks in the background, run a task directly, or add planning for larger work.
+
+**Optional planning and execution:**
 
 ```bash
+/ar:go Build a login form with tests    # Run directly with three-stage verification
+
 /ar:plannew Design a REST API with authentication and tests
 /ar:planrefine                          # Critique and improve the plan
 /ar:planprocess                         # Execute the plan
-
-/ar:go Build a login form with tests    # Or run a task directly
 ```
 
 **File Policy** (prevent file clutter):
@@ -619,7 +623,7 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:task pause [N] [duration] [reason]` | - | - | Bare pause defaults to five minutes; reason-only pauses until AI recovery; explicit scopes may be combined |
 | `/ar:task resume` | - | - | Resume task enforcement explicitly |
 | `/ar:task ignore <id> [reason]` | - | - | Mark one task ignored so it no longer blocks Stop |
-| `/ar:task prompts on\|off\|<N>` | - | - | Configure task-staleness prompting |
+| `/ar:task prompts on\|off\|<N>\|initial N\|subsequent N\|scope all/user/subagent` | - | - | Configure task-staleness prompting |
 | `/ar:task recovery on\|off\|min <N>` | - | - | Configure repeated-Stop stale-task recovery |
 | `/ar:cache` | - | - | Cache-miss / compaction protection gate (off by default) — show status |
 | `/ar:cache on [5m\|1h\|perm]` | - | - | Enable the gate (optionally for a window) |
@@ -805,7 +809,12 @@ Structured planning for complex development tasks — reduces mistakes and ensur
 
 ### Task Lifecycle Tracking
 
-Ensures AI continues working while tasks are outstanding. The stop hook blocks session exit until tasks are complete or explicitly cleared.
+Task tracking keeps outstanding work visible and can prevent an early exit while
+real tasks remain. Need room to discuss before continuing? Run
+`/ar:tasks pause <reason>` to pause task reminders and task-based Stop enforcement
+without changing task status. AI recovery or `/ar:tasks resume` turns enforcement
+back on; a bare pause lasts five minutes by default. Command-safety rules remain
+active throughout.
 
 **Task commands:**
 
@@ -829,16 +838,28 @@ autorun task gc --no-confirm         # Clean up old task data without prompt
 
 #### Task Staleness Reminders (v0.9) and Stale-Task Escape Hatch (v0.10.2)
 
-Injects a reminder after the configured number of tool calls without TaskCreate/TaskUpdate, preventing the AI from losing track of outstanding work. Integrates with three-stage system: resets Stage 2 Completed → Stage 2 when tasks are outstanding.
+Injects a reminder after 25 tool calls in a fresh agent session, then every 50
+calls after the first checkpoint or any native task/plan update. Every genuine
+TaskCreate/TaskUpdate/TodoWrite, Codex `update_plan`, or equivalent native plan
+update resets the active 50-call counter. Primary agents and subagents have
+independent counters; the default scope is `all`.
+
+The defaults come from `task_staleness_initial_threshold` (25),
+`task_staleness_subsequent_threshold` (50), and
+`task_staleness_agent_scope` (`all`) in `CONFIG`. Resume and compaction preserve
+the current phase; a fresh startup or clear begins a new initial phase.
 
 - **/ar:task prompts** — Show prompting status
-- **/ar:task prompts on/off** — Enable or disable reminders
-- **/ar:task prompts \<N>** — Set a positive tool-call threshold
+- **/ar:task prompts on/off** — Enable or disable reminders only; legacy `/ar:task on/off` remains equivalent and does not disable task-based Stop enforcement
+- **/ar:task prompts \<N>** — Set both intervals to N (legacy fixed cadence)
+- **/ar:task prompts initial \<N>** — Set the initial interval for this session
+- **/ar:task prompts subsequent \<N>** — Set the later interval for this session
+- **/ar:task prompts scope all\|user\|subagent** — Select which agent kinds receive reminders
 - **/ar:task recovery** — Show stale-task recovery status
 - **/ar:task recovery on/off** — Enable or disable recovery
 - **/ar:task recovery min \<N>** — Set the consecutive identical-Stop threshold for this session
 
-**Stale-task escape hatch:** When the same set of task IDs blocks Stop N times in a row with no non-task tool call between them, the stop injection gains an escape hatch instructing the AI to emit `AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for any task that Claude's Task DB no longer knows about. A PostToolUse hook detects the marker and marks the task `ignored` (non-blocking), allowing the stop.
+**Stale-task escape hatch:** When the same set of task IDs blocks Stop N times in a row with no non-task tool call between them, the stop injection gains an escape hatch instructing the AI to emit `AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)` for any task that Claude's Task DB no longer knows about. A PostToolUse hook detects the marker and marks the task `ignored` (non-blocking), allowing the stop. For a real task that needs discussion, use `/ar:tasks pause <reason>` instead. Disable stale recovery with `/ar:tasks stale off`.
 
 **Bounded consecutive Stops:** Autorun blocks the first `stop_block_max_count`
 Stop callbacks when real tasks remain. The next Stop may end that interaction,

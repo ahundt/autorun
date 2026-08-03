@@ -1,6 +1,6 @@
 ---
 description: Inspect tasks or configure pause, prompts, recovery, and ignore behavior
-argument-hint: [status|pause [N] [duration] [reason]|resume|ignore <id> [reason]|prompts ...|recovery ...]
+argument-hint: "[status|pause [N] [duration] [reason]|resume|ignore <id> [reason]|prompts ...|recovery ...|on|off|N]"
 ---
 
 # Task Control
@@ -19,7 +19,11 @@ surface without implementing a second parser.
 /ar:task resume
 /ar:task ignore 7 No longer required
 /ar:task prompts on
+/ar:task off
 /ar:task prompts 25
+/ar:task prompts initial 25
+/ar:task prompts subsequent 50
+/ar:task prompts scope all
 /ar:task recovery min 3
 ```
 
@@ -38,3 +42,16 @@ may end that pause. While discussion remains paused, autorun repeats the
 reason and recovery guidance at the configured task-progress cadence when no
 task update occurs. `/ar:task resume`, `/ar:go`, and `/ar:proc` also resume
 enforcement.
+
+Task-staleness prompting uses two phases. A fresh primary agent or subagent gets
+one initial checkpoint at the configured initial interval. The first checkpoint
+or any genuine task/plan update enters the subsequent phase, resets the counter,
+and uses the configured subsequent interval thereafter. Primary and subagent
+counters are independent. `scope all|user|subagent` controls which kinds are
+eligible; `all` is the default. A bare positive number sets both intervals to
+the same value for backward-compatible fixed cadence.
+
+Legacy `/ar:task on`, `/ar:task off`, and `/ar:task N` are aliases for
+`prompts on`, `prompts off`, and `prompts N`. They change reminder prompting
+only; task-based Stop enforcement remains active. Use `pause` when discussion
+should temporarily suspend both.

@@ -197,6 +197,7 @@ def test_injection_unchanged_at_count_one(tmp_path):
     )
     assert "CANNOT STOP" in msg
     assert "Actions: 1." in msg
+    assert "/ar:task pause <reason>" in msg
 
 
 # ─── Section 5: injection augmented at count == min_consecutive ──────────────
@@ -216,6 +217,27 @@ def test_injection_augmented_at_threshold(tmp_path):
     assert "STALE-TASK ESCAPE HATCH" in msg
     assert "AUTORUN_TASKS_CLEAR_STALE_TASK(72)" in msg
     assert "AUTORUN_TASKS_CLEAR_STALE_TASK(74)" in msg
+    assert "/ar:tasks pause <reason>" in msg
+    assert "/ar:tasks stale off" in msg
+
+
+def test_stale_task_actions_use_codex_command_syntax(tmp_path):
+    mgr = _make_mgr(tmp_path, ghost_clear_min_consecutive_blocks=2)
+    _add_task(mgr, "72", "Ghost #72")
+    ctx = EventContext(
+        session_id=_sid(tmp_path),
+        event="Stop",
+        cli_type="codex",
+        store=ThreadSafeDB(),
+    )
+
+    mgr.handle_stop(ctx)
+    result = mgr.handle_stop(ctx)
+
+    msg = result.get("reason", "")
+    assert "ar:tasks pause <reason>" in msg
+    assert "ar:tasks stale off" in msg
+    assert "/ar:tasks" not in msg
 
 
 # ─── Section 6: marker regex positive cases ───────────────────────────────────

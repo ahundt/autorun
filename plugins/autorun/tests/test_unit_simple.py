@@ -637,10 +637,13 @@ def _make_post_tool_ctx(
     *,
     autorun_active: bool = True,
     task_staleness_enabled: bool = True,
-    tool_calls_since_task_update: int = 0,
+    tool_calls_since_task_update: int | None = 0,
     task_staleness_threshold: _Optional[int] = None,
     cli_type: str = "claude",
     tool_input: dict | None = None,
+    agent_id: str | None = None,
+    agent_type: str | None = None,
+    store: ThreadSafeDB | None = None,
 ) -> EventContext:
     """Build PostToolUse EventContext for staleness tests."""
     ctx = EventContext(
@@ -649,12 +652,15 @@ def _make_post_tool_ctx(
         prompt="",
         tool_name=tool_name,
         tool_input=tool_input or {},
-        store=ThreadSafeDB(),
+        store=store if store is not None else ThreadSafeDB(),
         cli_type=cli_type,
+        agent_id=agent_id,
+        agent_type=agent_type,
     )
     ctx.autorun_active = autorun_active
     ctx.task_staleness_enabled = task_staleness_enabled
-    ctx.tool_calls_since_task_update = tool_calls_since_task_update
+    if tool_calls_since_task_update is not None:
+        ctx.tool_calls_since_task_update = tool_calls_since_task_update
     if task_staleness_threshold is not None:
         ctx.task_staleness_threshold = task_staleness_threshold
     return ctx
@@ -688,6 +694,18 @@ def test_staleness_injection_at_threshold():
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "TASK UPDATE REQUIRED" in additional
+
+
+def test_codex_staleness_reminder_uses_typable_command():
+    """Codex reminder guidance uses its prompt form, not Claude slash syntax."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-codex-command", cli_type="codex")
+    message = plugins._task_staleness_notification(ctx, 50, no_tasks=True)
+    assert "ar:tasks off" in message
+    assert "/ar:tasks" not in message
+
+    invalid = plugins._task_prompts(ctx, ("initial", "bad"))
+    assert "ar:task prompts initial 25" in invalid
+    assert "/ar:task" not in invalid
 
 
 def test_staleness_counter_resets_on_task_create():
@@ -760,16 +778,16 @@ def test_staleness_fires_no_tasks_when_all_tasks_complete():
 
 
 def test_staleness_fires_when_zero_tasks_exist():
-    """Staleness reminder fires with lower threshold when zero tasks exist."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-tasks", tool_calls_since_task_update=10, task_staleness_threshold=25)
+    """Zero-task startup uses the configured initial threshold, not a five-call loop."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-tasks", tool_calls_since_task_update=24)
     result = plugins.app.dispatch(ctx) or {}
     additional = result.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert "NO TASKS EXIST" in additional
 
 
 def test_staleness_no_fire_below_zero_tasks_threshold():
-    """Staleness reminder does NOT fire below the no_tasks_threshold (default 5)."""
-    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-below-thresh", tool_calls_since_task_update=3, task_staleness_threshold=25)
+    """Zero-task startup stays quiet before the configured initial threshold."""
+    ctx = _make_post_tool_ctx("Bash", "test-stale-zero-below-thresh", tool_calls_since_task_update=23)
     result = plugins.app.dispatch(ctx) or {}
     assert "NO TASKS EXIST" not in str(result)
     assert "TASK UPDATE" not in str(result)
@@ -800,7 +818,7 @@ def test_staleness_decision_boundary_uses_one_task_snapshot(monkeypatch):
     ctx = _make_post_tool_ctx(
         "Bash",
         "test-stale-one-snapshot-at-boundary",
-        tool_calls_since_task_update=4,
+        tool_calls_since_task_update=24,
         task_staleness_threshold=25,
     )
     accesses = 0
@@ -826,7 +844,7 @@ def test_staleness_decision_boundary_uses_one_task_snapshot(monkeypatch):
     plugins.check_task_staleness(ctx)
 
     assert accesses == 1
-    assert ctx.tool_calls_since_task_update == 5
+    assert ctx.tool_calls_since_task_update == 0
 
 
 def test_staleness_cached_active_classification_skips_intermediate_task_reads(monkeypatch):
@@ -848,6 +866,178 @@ def test_staleness_cached_active_classification_skips_intermediate_task_reads(mo
     plugins.check_task_staleness(ctx)
 
     assert ctx.tool_calls_since_task_update == 6
+
+
+# ── Two-phase, agent-scoped cadence ───────────────────────────────────────
+
+
+def test_task_staleness_two_phase_config_defaults():
+    assert CONFIG["task_staleness_initial_threshold"] == 25
+    assert CONFIG["task_staleness_subsequent_threshold"] == 50
+    assert CONFIG["task_staleness_agent_scope"] == "all"
+
+
+def test_normalized_hook_payload_preserves_subagent_identity():
+    from autorun.core import normalize_hook_payload
+
+    normalized = normalize_hook_payload(
+        {
+            "session_id": "parent-session",
+            "hook_event_name": "PostToolUse",
+            "agent_id": "agent-123",
+            "agent_type": "worker",
+        }
+    )
+
+    assert normalized["agent_id"] == "agent-123"
+    assert normalized["agent_type"] == "worker"
+
+
+def test_initial_checkpoint_fires_at_25_then_enters_subsequent_phase():
+    sid = "test-stale-initial-25"
+    _make_pending_task(sid)
+    ctx = _make_post_tool_ctx(
+        "Bash",
+        sid,
+        tool_calls_since_task_update=24,
+    )
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert "TASK UPDATE REQUIRED" in str(result)
+    assert ctx.task_staleness_initial_checkpoint_complete is True
+    assert ctx.tool_calls_since_task_update == 0
+    assert ctx.task_staleness_last_threshold == 25
+
+
+def test_subsequent_checkpoint_fires_at_50():
+    sid = "test-stale-subsequent-50"
+    _make_pending_task(sid)
+    ctx = _make_post_tool_ctx(
+        "Bash",
+        sid,
+        tool_calls_since_task_update=49,
+    )
+    ctx.task_staleness_initial_checkpoint_complete = True
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert "TASK UPDATE REQUIRED" in str(result)
+    assert ctx.tool_calls_since_task_update == 0
+    assert ctx.task_staleness_last_threshold == 50
+
+
+def test_progress_before_initial_checkpoint_enters_50_call_phase():
+    ctx = _make_post_tool_ctx(
+        "TaskUpdate",
+        "test-stale-progress-enters-steady",
+        tool_calls_since_task_update=17,
+    )
+
+    plugins.app.dispatch(ctx)
+
+    assert ctx.task_staleness_initial_checkpoint_complete is True
+    assert ctx.tool_calls_since_task_update == 0
+
+
+def test_initial_then_subsequent_intervals_and_progress_reset(monkeypatch):
+    monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 2)
+    monkeypatch.setitem(CONFIG, "task_staleness_subsequent_threshold", 3)
+    sid = "test-stale-exact-two-phase-sequence"
+    _make_pending_task(sid)
+    store = ThreadSafeDB()
+    store.set("test:daemon-store-ready", True)
+
+    def post(tool_name="Bash"):
+        ctx = _make_post_tool_ctx(
+            tool_name,
+            sid,
+            store=store,
+            tool_calls_since_task_update=None,
+        )
+        return ctx, plugins.app.dispatch(ctx) or {}
+
+    first_ctx, first_result = post()
+    assert "TASK UPDATE" not in str(first_result)
+    assert first_ctx.tool_calls_since_task_update == 1
+    second_ctx, second_result = post()
+    assert second_ctx.task_staleness_initial_checkpoint_complete is True
+    assert "TASK UPDATE REQUIRED" in str(second_result)
+    assert "TASK UPDATE" not in str(post()[1])
+    assert "TASK UPDATE" not in str(post()[1])
+    assert "TASK UPDATE OVERDUE" in str(post()[1])
+
+    update_ctx, _result = post("TaskUpdate")
+    assert update_ctx.tool_calls_since_task_update == 0
+    assert update_ctx.task_staleness_initial_checkpoint_complete is True
+    assert "TASK UPDATE" not in str(post()[1])
+    assert "TASK UPDATE" not in str(post()[1])
+    assert "TASK UPDATE REQUIRED" in str(post()[1])
+
+
+@pytest.mark.parametrize(
+    ("scope", "agent_id", "expected"),
+    [
+        ("all", None, True),
+        ("all", "agent-a", True),
+        ("user", None, True),
+        ("user", "agent-a", False),
+        ("subagent", None, False),
+        ("subagent", "agent-a", True),
+    ],
+)
+def test_task_staleness_agent_scope(monkeypatch, scope, agent_id, expected):
+    monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 1)
+    monkeypatch.setitem(CONFIG, "task_staleness_agent_scope", scope)
+    sid = f"test-stale-scope-{scope}-{agent_id or 'user'}"
+    _make_pending_task(sid)
+    ctx = _make_post_tool_ctx(
+        "Bash",
+        sid,
+        agent_id=agent_id,
+        agent_type="worker" if agent_id else None,
+    )
+
+    result = plugins.app.dispatch(ctx) or {}
+
+    assert ("TASK UPDATE REQUIRED" in str(result)) is expected
+
+
+def test_primary_and_subagent_cadence_counters_are_independent(monkeypatch):
+    monkeypatch.setitem(CONFIG, "task_staleness_initial_threshold", 2)
+    sid = "test-stale-independent-agents"
+    _make_pending_task(sid)
+    store = ThreadSafeDB()
+    primary = _make_post_tool_ctx("Bash", sid, store=store)
+    subagent = _make_post_tool_ctx(
+        "Bash",
+        sid,
+        agent_id="agent-independent",
+        agent_type="worker",
+        store=store,
+    )
+
+    assert "TASK UPDATE" not in str(plugins.app.dispatch(primary) or {})
+    assert "TASK UPDATE" not in str(plugins.app.dispatch(subagent) or {})
+    assert "TASK UPDATE REQUIRED" in str(plugins.app.dispatch(primary) or {})
+    assert "TASK UPDATE REQUIRED" in str(plugins.app.dispatch(subagent) or {})
+
+
+def test_clear_restarts_initial_phase_but_resume_and_compact_preserve_it():
+    for source, resets in (("clear", True), ("resume", False), ("compact", False)):
+        ctx = EventContext(
+            session_id=f"test-stale-session-source-{source}",
+            event="SessionStart",
+            source=source,
+            store=ThreadSafeDB(),
+        )
+        ctx.task_staleness_initial_checkpoint_complete = True
+        ctx.tool_calls_since_task_update = 9
+
+        plugins.initialize_task_staleness_cadence(ctx)
+
+        assert ctx.task_staleness_initial_checkpoint_complete is (not resets)
+        assert ctx.tool_calls_since_task_update == (0 if resets else 9)
 
 
 # ── PreToolUse warn-then-deny enforcement (v0.10.2) ─────────────────────────
@@ -1216,8 +1406,8 @@ def test_zero_tasks_sets_enforce_next():
     """Zero-tasks path should set enforce_next=True for PreToolUse escalation."""
     sid = "test-zero-enforce"
     store = ThreadSafeDB()
-    # No tasks created — zero_tasks path should fire at threshold 5
-    for i in range(5):
+    # No tasks created — startup path should fire at the initial threshold 25.
+    for _ in range(25):
         ctx = EventContext(
             session_id=sid,
             event="PostToolUse",
@@ -1229,7 +1419,7 @@ def test_zero_tasks_sets_enforce_next():
         )
         ctx.task_staleness_enabled = True
         plugins.app.dispatch(ctx)
-    # After 5 calls with zero tasks, enforce_next should be True
+    # After 25 calls with zero tasks, enforce_next should be True.
     check_ctx = EventContext(
         session_id=sid,
         event="PostToolUse",
@@ -1513,19 +1703,55 @@ def test_tasks_command_on():
 
 
 def test_tasks_command_off():
-    """/ar:tasks off disables staleness reminders."""
+    """The singular legacy /ar:task off alias disables staleness reminders."""
     sid = "test-tasks-cmd-off"
-    _dispatch("/ar:tasks off", session_id=sid)
+    _dispatch("/ar:task off", session_id=sid)
     ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
     assert ctx.task_staleness_enabled is False
 
 
 def test_tasks_command_threshold_override():
-    """/ar:tasks 5 sets per-session threshold."""
+    """Legacy /ar:tasks N selects a fixed cadence for both phases."""
     sid = "test-tasks-thresh"
     _dispatch("/ar:tasks 5", session_id=sid)
     ctx = EventContext(session_id=sid, event="PostToolUse", prompt="", tool_name="Bash", store=ThreadSafeDB())
     assert ctx.task_staleness_threshold == 5
+    assert ctx.task_staleness_initial_threshold == 5
+    assert ctx.task_staleness_subsequent_threshold == 5
+
+
+def test_tasks_command_configures_initial_and_subsequent_thresholds():
+    sid = "test-tasks-two-phase-thresholds"
+
+    _dispatch("/ar:task prompts initial 12", session_id=sid)
+    _dispatch("/ar:task prompts subsequent 40", session_id=sid)
+
+    ctx = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=ThreadSafeDB(),
+    )
+    assert ctx.task_staleness_initial_threshold == 12
+    assert ctx.task_staleness_subsequent_threshold == 40
+
+
+@pytest.mark.parametrize("scope", ["all", "user", "subagent"])
+def test_tasks_command_configures_agent_scope(scope):
+    sid = f"test-tasks-agent-scope-{scope}"
+
+    result = _dispatch(f"/ar:task prompts scope {scope}", session_id=sid)
+
+    ctx = EventContext(
+        session_id=sid,
+        event="PostToolUse",
+        prompt="",
+        tool_name="Bash",
+        store=ThreadSafeDB(),
+    )
+    assert ctx.task_staleness_agent_scope == scope
+    assert scope in str(result)
 
 
 def test_tasks_command_status():
@@ -2185,7 +2411,8 @@ class TestStalenessE2E:
         """Advisory counter resumes from its last semantic decision boundary.
 
         Simulates: AI runs 15 tool calls → session closed → claude --resume
-        → new EventContext with same session_id → counter resumes from 5. The
+        → new EventContext with same session_id → counter resumes from the
+        early durable checkpoint at 5. The
         possible replay is bounded and cannot discard a durable enforcement flag.
         """
         sid = self._sid("resume")

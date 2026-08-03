@@ -462,6 +462,11 @@ def normalize_hook_payload(payload: dict, truncate_transcript: bool = True) -> d
         "session_transcript": transcript,
         "permission_mode": payload.get("permission_mode", "default"),
         "source": payload.get("source", "startup"),
+        # Both Claude Code and Codex include agent_id only for hooks fired
+        # inside a subagent. agent_type may also describe a main --agent
+        # session, so it must never be used alone as the discriminator.
+        "agent_id": payload.get("agent_id"),
+        "agent_type": payload.get("agent_type"),
         # Current Claude Code Stop payload fields (v2.1.145+). Preserve them
         # without interpretation so Stop policies can prefer structured state
         # over transcript inference while older harnesses keep safe defaults.
@@ -1488,6 +1493,8 @@ class EventContext:
         "_cwd",
         "_permission_mode",
         "_source",
+        "_agent_id",
+        "_agent_type",
         "_chain_notifications",
         "_transcript_path",
         "_stop_hook_active",
@@ -1525,6 +1532,11 @@ class EventContext:
         "tool_calls_since_task_update": 0,  # v0.9: Counter for task staleness reminder
         "task_staleness_enabled": True,  # v0.9: Enable/disable reminder injection
         "task_staleness_threshold": None,  # v0.9: Session override (None = use CONFIG default)
+        "task_staleness_initial_threshold": None,
+        "task_staleness_subsequent_threshold": None,
+        "task_staleness_agent_scope": None,
+        "task_staleness_initial_checkpoint_complete": False,
+        "task_staleness_last_threshold": 0,
         "task_staleness_reminder_count": 0,  # v0.10.2: Escalation level (1=normal, 2=stronger, 3+=enforce)
         "task_staleness_enforce_next": False,  # v0.10.2: One-shot PreToolUse deny flag
         "plan_awaiting_planning_tasks": False,  # v0.10: Nag until [PLANNING] tasks created
@@ -1548,6 +1560,8 @@ class EventContext:
         cwd: str = None,
         permission_mode: str = "default",
         source: str = "startup",
+        agent_id: str | None = None,
+        agent_type: str | None = None,
         transcript_path: str = None,
         stop_hook_active: bool = False,
         last_assistant_message: str = "",
@@ -1585,6 +1599,8 @@ class EventContext:
         object.__setattr__(self, "_transcript_path", transcript_path)
         # Session start source from hook payload (startup/resume/clear/compact)
         object.__setattr__(self, "_source", source)
+        object.__setattr__(self, "_agent_id", agent_id or None)
+        object.__setattr__(self, "_agent_type", agent_type or None)
         object.__setattr__(self, "_stop_hook_active", bool(stop_hook_active))
         object.__setattr__(self, "_last_assistant_message", last_assistant_message or "")
         object.__setattr__(self, "_background_tasks", tuple(background_tasks or ()))
@@ -1698,6 +1714,16 @@ class EventContext:
         (permission_mode is 'default' at hook time due to a 2ms timing race — applied after hook).
         """
         return self._source
+
+    @property
+    def agent_id(self) -> "str | None":
+        """Harness subagent identifier, absent on the primary agent."""
+        return self._agent_id
+
+    @property
+    def agent_type(self) -> "str | None":
+        """Harness agent type; not by itself proof that this is a subagent."""
+        return self._agent_type
 
     def state_get(self, name: str, default=None, *, session_id: str | None = None):
         """Read a session-scoped field through the shared daemon cache."""
@@ -2642,6 +2668,8 @@ class AutorunDaemon:
                 cwd=payload.get("_cwd"),
                 permission_mode=normalized["permission_mode"],
                 source=normalized["source"],
+                agent_id=normalized["agent_id"],
+                agent_type=normalized["agent_type"],
                 transcript_path=normalized.get("transcript_path"),
                 stop_hook_active=normalized["stop_hook_active"],
                 last_assistant_message=normalized["last_assistant_message"],

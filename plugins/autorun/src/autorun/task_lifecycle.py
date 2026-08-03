@@ -146,11 +146,12 @@ def _delegate_action(cli_type: str | None) -> str:
 def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled: bool = False) -> str:
     """Return stop/resume actions in the platform's native task vocabulary."""
     sos = format_command_for_cli("/ar:sos", cli_type)
+    task_pause = format_command_for_cli("/ar:task pause <reason>", cli_type)
     task_ignore = format_command_for_cli("/ar:task-ignore <id>", cli_type)
-    act_override = f"only the user can type {sos} (emergency stop) or {task_ignore} (mark task ignored to unblock stopping)"
+    user_actions = f"{task_pause} (discussion; tasks unchanged), {sos}, or {task_ignore}"
     if staleness_reminders_disabled:
         tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
-        act_override += f" — {tasks_off} does NOT apply here, it only disables staleness *reminders*"
+        user_actions += f"; {tasks_off} only disables reminders"
     if platform_for(cli_type).task_management_style == "plan_checklist":
         return (
             "Actions: 1. You must complete or remove each checklist item before stopping "
@@ -158,7 +159,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
             '3. Finish work: {task_progress} with finished items status="completed" '
             "4. Defer/delegate: keep a concrete follow-up item pending "
             "5. Discard obsolete work: remove it from the current plan list "
-            f"6. Override: {act_override} "
+            f"6. User only: {user_actions} "
         )
     return (
         f"Actions: 1. You must complete or discard each task before stopping "
@@ -166,7 +167,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
         f"3. Do the work, then: {_ACT_COMPLETE} "
         f"4. Delegate to subagent first: {_delegate_action(cli_type)} (marks task non-blocking while subagent runs) "
         f"5. Or discard: {_ACT_DISCARD} "
-        f"6. Override: {act_override} "
+        f"6. User only: {user_actions} "
     )
 
 
@@ -1885,6 +1886,9 @@ class TaskLifecycle:
                 threshold=min_consecutive,
                 marker_lines=marker_lines,
             )
+            task_pause = format_command_for_cli("/ar:tasks pause <reason>", ctx.cli_type)
+            task_stale_off = format_command_for_cli("/ar:tasks stale off", ctx.cli_type)
+            injection += f"Real task: {task_pause}. Disable recovery: {task_stale_off}\n"
 
         # Log warning (block count is diagnostic-only, not shown to AI)
         self.log_event("STOP_WARNING", "session", f"Block #{block_count}: {total} incomplete tasks", "blocked")
