@@ -90,6 +90,11 @@ audit_skill() {
         exit 1
     fi
 
+    # Resolve to an absolute path before deriving the name. A relative path such as
+    # '.' or './my-skill/' makes basename return '.' or a trailing-slash artifact,
+    # which then fails the kebab-case and name-match checks on a valid skill.
+    skill_path=$(cd "$skill_path" && pwd -P)
+
     local skill_name
     skill_name=$(basename "$skill_path")
     local has_frontmatter=0
