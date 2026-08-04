@@ -1819,7 +1819,47 @@ def test_install_for_codex_names_the_untouched_user_skill(tmp_path, monkeypatch,
     assert "cache" in capsys.readouterr().out
 
 
-# ─── Codex staged skill route ───────────────────────────────────────────────
+# ─── Codex canonical command surface and staged skill route ─────────────────
+
+
+def test_codex_manifest_declares_the_canonical_command_surface():
+    """Omitting `commands` makes Codex scan the whole commands/ directory and
+    migrate 29 always-loaded catalog entries — 11 of them alias spellings of
+    commands already listed. CONFIG owns the canonical names so the manifest
+    and the measurement cannot drift apart."""
+    from autorun.config import CONFIG
+
+    manifest = Path(__file__).parents[1] / ".codex-plugin" / "plugin.json"
+    data = json.loads(manifest.read_text())
+    expected = [f"./commands/{name}.md" for name in CONFIG["codex_canonical_commands"]]
+
+    assert data["commands"] == expected
+    assert len(expected) == 18
+
+
+def test_every_canonical_codex_command_document_exists():
+    """A manifest entry naming a missing file is a silently dropped command."""
+    from autorun.config import CONFIG
+
+    commands_dir = Path(__file__).parents[1] / "commands"
+    missing = [
+        name
+        for name in CONFIG["codex_canonical_commands"]
+        if not (commands_dir / f"{name}.md").is_file()
+    ]
+
+    assert missing == []
+
+
+def test_canonical_codex_commands_exclude_alias_spellings():
+    """Aliases stay registered in plugins.py and stay in commands/ for human
+    completion; they just stop costing model context on every turn."""
+    from autorun.config import CONFIG
+
+    canonical = set(CONFIG["codex_canonical_commands"])
+    aliases = {"a", "f", "j", "st", "x", "sos", "task-status", "afa", "afj", "afs", "afst"}
+
+    assert canonical & aliases == set()
 
 
 def test_staged_codex_plugin_omits_skills_when_the_shared_route_is_authoritative(

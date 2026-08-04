@@ -1108,6 +1108,40 @@ After every step and substep you must say "Wait," and execute this sequential th
     # Parent directory of the local plugin source the personal marketplace
     # references; the plugin name is appended to it.
     "codex_plugin_source_dir": "~/plugins",
+    # Command documents Codex may migrate into model-visible skill entries.
+    #
+    # `.codex-plugin/plugin.json` used to omit `commands`, so Codex fell back to
+    # scanning the whole `commands/` directory and generated 29 always-loaded
+    # catalog entries costing an estimated 1,021 o200k_base tokens. Eleven of
+    # those were short aliases and legacy spellings of commands already in the
+    # list — 391 tokens advertising a second name for the same behavior.
+    #
+    # Listing the canonical names here removes those 11 entries from the model's
+    # catalog. It does NOT remove any command: every alias stays registered in
+    # plugins.py and every document stays in commands/ for human completion.
+    #
+    # Measured against Codex 0.146.0; receipt:
+    # ~/.agents/notes/2026-08-03-0335-codex-skills-live-catalog-context-cost-assessment.md
+    "codex_canonical_commands": (
+        "allow",
+        "blocks",
+        "clear",
+        "estop",
+        "find",
+        "globalclear",
+        "globalno",
+        "globalok",
+        "globalstatus",
+        "justify",
+        "no",
+        "ok",
+        "reload",
+        "status",
+        "stop",
+        "test",
+        "tmux-session-management",
+        "tmux-test-workflow",
+    ),
 }
 
 
