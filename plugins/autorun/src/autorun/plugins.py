@@ -186,18 +186,25 @@ def _make_policy_handler(policy_name: str):
     return handler
 
 
-# Data-driven registration: easy to add new policies
+# Data-driven registration: easy to add new policies.
+#
+# The `/ar:af*` spellings are not cosmetic. `commands/afa.md` and its siblings
+# ship as plugin command documents, and every harness that surfaces them
+# advertises the namespaced form — `/ar:afa` in Claude, `ar:afa` in Codex —
+# while the documents end by asserting "UserPromptSubmit hook has updated the
+# session policy". Registering only `/afa` made that sentence false for the
+# spelling users are actually shown.
 _POLICY_ALIASES = {
-    "ALLOW": ("/ar:a", "/ar:allow", "/afa"),
-    "JUSTIFY": ("/ar:j", "/ar:justify", "/afj"),
-    "SEARCH": ("/ar:f", "/ar:find", "/afs"),
+    "ALLOW": ("/ar:a", "/ar:allow", "/afa", "/ar:afa"),
+    "JUSTIFY": ("/ar:j", "/ar:justify", "/afj", "/ar:afj"),
+    "SEARCH": ("/ar:f", "/ar:find", "/afs", "/ar:afs"),
 }
 
 for policy, aliases in _POLICY_ALIASES.items():
     app.command(*aliases, policy)(_make_policy_handler(policy))
 
 
-@app.command("/ar:st", "/ar:status", "/afst", "STATUS")
+@app.command("/ar:st", "/ar:status", "/afst", "/ar:afst", "STATUS")
 def handle_status(ctx: EventContext) -> str:
     """
     Unified status: Shows file policy + session/global blocks and allows.
@@ -1171,6 +1178,23 @@ def handle_sos(ctx: EventContext) -> str:
     """Emergency stop."""
     ctx._halt_ai = True  # Signal dispatch to use continue_loop=False
     return _deactivate(ctx, f"⚠️ EMERGENCY STOP\n{CONFIG['emergency_stop']}")
+
+
+# `commands/task-status.md` declares `name: task-status`, and every harness
+# advertises the document under that name. Registering it here is what makes the
+# advertisement true; without it only the two-word `/ar:task status` form
+# dispatched and the alias silently did nothing.
+#
+# Its frontmatter `aliases: [ts, task-state]` is deliberately NOT registered.
+# That field feeds command_docs_inventory and nothing else — `task-ignore`
+# declares `aliases: [ti, ignore-task]` the same way with no `/ar:ti` handler —
+# and test_capability_snapshot pins the invariant that every runtime `/ar:*`
+# alias owns a command document of its own name.
+@app.command("/ar:task-status", "/task-status")
+def handle_task_status_alias(ctx: EventContext) -> str:
+    """Compatibility entry point for the canonical ``ar:task status``."""
+    prompt = ctx.activation_prompt or ctx.prompt or ""
+    return _task_status(ctx, tuple(prompt.split()[1:]))
 
 
 @app.command("/ar:task-ignore", "/task-ignore")

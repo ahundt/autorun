@@ -1923,3 +1923,102 @@ def test_scoped_allow_uses_shared_wrapper_detection(prefix):
     plugins.app.dispatch(grant)
     assert decision(f"{prefix}git push origin main") != "deny"
     assert decision(f"{prefix}rm -rf /tmp/unrelated") == "deny"
+
+
+class TestLegacyAutoFileCommandsDispatchInEveryAdvertisedSpelling:
+    """`commands/afa.md` and its three siblings each end with "UserPromptSubmit
+    hook has updated the session policy" — but the harnesses that surface those
+    documents advertise them as `/ar:afa` (Claude) and `ar:afa` (Codex), and
+    only the bare `/afa` spelling was registered. The document therefore
+    reported a policy change that never happened.
+
+    This is the gate that must pass before the Codex catalog stops advertising
+    these four entries: the aliases have to keep working for anyone who types
+    them, in every spelling a harness shows.
+    """
+
+    LEGACY_TO_POLICY = {
+        "afa": "ALLOW",
+        "afj": "JUSTIFY",
+        "afs": "SEARCH",
+    }
+
+    @pytest.mark.parametrize("stem,policy", sorted(LEGACY_TO_POLICY.items()))
+    @pytest.mark.parametrize("prefix", ["/", "/ar:"])
+    def test_legacy_policy_command_sets_the_policy(self, stem, policy, prefix):
+        prompt = f"{prefix}{stem}"
+        match = app._find_command(prompt)
+        assert match is not None, f"{prompt} resolves to no handler"
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"legacy-{prefix}{stem}",
+            event="UserPromptSubmit",
+            prompt=prompt,
+            store=store,
+        )
+        ctx.activation_prompt = prompt
+        match.handler(ctx)
+
+        assert ctx.file_policy == policy
+
+    @pytest.mark.parametrize("prompt", ["/afst", "/ar:afst"])
+    def test_legacy_status_command_reports_the_policy(self, prompt):
+        match = app._find_command(prompt)
+        assert match is not None, f"{prompt} resolves to no handler"
+
+        store = ThreadSafeDB()
+        ctx = EventContext(
+            session_id=f"legacy-status-{prompt.strip('/')}",
+            event="UserPromptSubmit",
+            prompt=prompt,
+            store=store,
+        )
+        ctx.activation_prompt = prompt
+        result = match.handler(ctx)
+
+        assert "AutoFile policy" in result
+
+    def test_codex_prefixless_spelling_resolves(self):
+        """Codex users type `ar:afa`, not `/ar:afa`."""
+        assert app._find_command("ar:afa", "codex") is not None
+
+
+class TestTaskStatusCompatibilityAliasDispatches:
+    """`commands/task-status.md` declares `name: task-status` and calls itself a
+    compatibility alias for `/ar:task status`. Claude advertises it as
+    `/ar:task-status` and Codex as `ar:task-status`, but no handler was
+    registered under any of those names — only the two-word `/ar:task status`
+    form worked.
+
+    This alias is also one of the eleven entries dropped from the Codex model
+    catalog, and a dropped catalog entry is only safe while the command it
+    names still executes for anyone who types it.
+
+    The document's frontmatter `aliases: [ts, task-state]` is descriptive
+    metadata for command_docs_inventory, not a dispatch promise — `task-ignore`
+    declares `aliases: [ti, ignore-task]` with no `/ar:ti` handler — so those
+    two spellings are deliberately not asserted here.
+    """
+
+    @pytest.mark.parametrize("prompt", ["/ar:task-status", "/task-status"])
+    def test_advertised_spelling_resolves(self, prompt):
+        assert app._find_command(prompt) is not None, f"{prompt} has no handler"
+
+    def test_codex_prefixless_spelling_resolves(self):
+        assert app._find_command("ar:task-status", "codex") is not None
+
+    def test_alias_reports_the_same_thing_as_the_canonical_form(self):
+        store = ThreadSafeDB()
+
+        def run(prompt: str) -> str:
+            ctx = EventContext(
+                session_id="task-status-alias",
+                event="UserPromptSubmit",
+                prompt=prompt,
+                store=store,
+            )
+            ctx.activation_prompt = prompt
+            return app._find_command(prompt).handler(ctx)
+
+        assert run("/ar:task-status") == run("/ar:task status")
