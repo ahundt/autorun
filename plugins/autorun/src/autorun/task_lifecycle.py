@@ -333,10 +333,10 @@ def _stale_clear_marker_regex() -> re.Pattern:
 # One argument inside a marker: a bare task id, or a name=value option.
 _MARKER_ARGUMENT = r"[A-Za-z0-9_.=-]+"
 
-# The keyword that names where delegated work went. Named rather than
-# positional, because "(77, 78)" would otherwise be ambiguous between two
-# tasks and one task handed to a session called "78".
-_MARKER_SESSION_KEYWORD = "session"
+# The keywords that name where delegated work went. ``session=`` remains
+# accepted for compatibility; the explicit name prevents confusion with the
+# parent hook session when a marker is copied into a child-agent prompt.
+_MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 
 
 @cache
@@ -362,7 +362,7 @@ _MARKER_ARGUMENT_TOKEN = re.compile(r"(?:(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*)
 
 
 def _parse_marker_arguments(raw: str) -> tuple[list[str], "str | None"]:
-    """Split one marker's arguments into task ids and an optional session.
+    """Split one marker's arguments into task ids and an optional agent session.
 
     A bare argument is a task id. ``name=value`` is an option. An option
     nobody recognizes is dropped rather than treated as an id, so a typo does
@@ -376,7 +376,10 @@ def _parse_marker_arguments(raw: str) -> tuple[list[str], "str | None"]:
             ids.append(value)
         else:
             options[key.lower()] = value
-    return ids, options.get(_MARKER_SESSION_KEYWORD)
+    return ids, next(
+        (options[key] for key in _MARKER_SESSION_KEYWORDS if key in options),
+        None,
+    )
 
 
 @cache
@@ -482,11 +485,11 @@ def extract_task_pause_resume_generations(*texts: object) -> list[str]:
 
 
 def extract_delegate_markers(*texts: object) -> list:
-    """Delegation markers as (task ids, session) pairs.
+    """Delegation markers as (task ids, agent session) pairs.
 
     Callers that only need the ids use ``extract_delegate_task_ids``; this
-    keeps the session each group of tasks was handed to, which is what makes
-    an unreturned delegation traceable.
+    keeps the agent session each group of tasks was handed to, which is what
+    makes an unreturned delegation traceable.
     """
     return _extract_marker_entries(CONFIG["delegate_marker_template"], *texts)
 
@@ -495,10 +498,10 @@ def _delegate_marker_example() -> str:
     """Delegation marker with placeholder arguments, for guidance text.
 
     Shows both extras the grammar accepts: several ids in one marker, and an
-    optional ``session=`` naming where the work went, which is the only way a
-    delegation that never reports back can be traced back to its subagent.
+    optional ``agent_session_id=`` naming where the work went. The legacy
+    ``session=`` spelling remains accepted.
     """
-    return CONFIG["delegate_marker_template"].replace("{id}", "<id>[,<id>...][,session=<session-id>]")
+    return CONFIG["delegate_marker_template"].replace("{id}", "<id>[,<id>...][,agent_session_id=<agent-session-id>]")
 
 
 # === TaskLifecycle Class ===
@@ -1716,6 +1719,10 @@ class TaskLifecycle:
                 digest = hashlib.sha256(tool_text.encode("utf-8")).hexdigest()
                 transcript_size = len(object.__getattribute__(ctx, "_session_transcript"))
                 sources.append((f"tool:{ctx.event}:{ctx.tool_name}:{transcript_size}:{digest}", tool_text))
+            structured = ctx.last_assistant_message
+            if structured and marker_prefix in structured:
+                digest = hashlib.sha256(structured.encode("utf-8")).hexdigest()
+                sources.append((f"assistant-structured:{digest}", structured))
             latest = ctx.transcript.latest_assistant_message() if ctx.transcript else None
             if latest and marker_prefix in latest[1]:
                 sources.append((f"assistant:{latest[0]}", latest[1]))

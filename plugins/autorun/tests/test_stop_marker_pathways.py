@@ -62,8 +62,19 @@ def _blocked_text(response) -> str:
     return str(response.get("reason") or response.get("systemMessage") or "")
 
 
-def _stop_context(session_id, assistant_text, store=None, event="Stop"):
+def _stop_context(
+    session_id,
+    assistant_text,
+    store=None,
+    event="Stop",
+    last_assistant_message=None,
+):
     """A Stop event carrying what the assistant just said, and no tool call."""
+    transcript = (
+        []
+        if last_assistant_message is not None
+        else [{"role": "assistant", "content": assistant_text}]
+    )
     ctx = EventContext(
         session_id=session_id,
         event=event,
@@ -71,9 +82,10 @@ def _stop_context(session_id, assistant_text, store=None, event="Stop"):
         tool_name="",
         tool_input={},
         tool_result="",
-        session_transcript=[{"role": "assistant", "content": assistant_text}],
+        session_transcript=transcript,
         store=store or ThreadSafeDB(),
         cli_type="claude",
+        last_assistant_message=last_assistant_message or "",
     )
     ctx.autorun_active = True
     ctx.autorun_stage = EventContext.STAGE_1
@@ -119,6 +131,25 @@ class TestDelegationMarkerWithoutAToolCall:
             "followed, so nothing read it — and the same block will repeat "
             f"forever. Message: {blocked!r}"
         )
+        assert manager.tasks["77"]["status"] == "delegated"
+
+    def test_structured_last_assistant_message_is_a_marker_source(
+        self, isolated_state, cfg
+    ):
+        """Claude Stop can provide the final message outside the transcript."""
+        session_id = "stop-delegate-structured"
+        seed = TaskLifecycle(config=cfg, session_id=session_id)
+        seed.create_task("77", {"subject": "Something"}, "created")
+        seed.update_task("77", {"status": "in_progress"}, "started")
+
+        ctx = _stop_context(
+            session_id,
+            "",
+            last_assistant_message=DELEGATE.format(id="77"),
+        )
+        manager = TaskLifecycle(ctx=ctx, config=cfg)
+
+        assert manager.handle_stop(ctx) is None
         assert manager.tasks["77"]["status"] == "delegated"
 
     def test_the_delegation_is_reported(self, isolated_state, cfg):

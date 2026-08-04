@@ -9,11 +9,12 @@ Three tasks handed to a subagent meant three near-identical lines. This
 widens the grammar in the one place both markers are parsed:
 
     AUTORUN_TASKS_CLEAR_STALE_TASK(1, 2, 3)
-    AUTORUN_TASK_DELEGATED(77, 78, session=agent-abc)
+    AUTORUN_TASK_DELEGATED(77, 78, agent_session_id=agent-abc)
 
-Bare arguments are task ids. ``session=`` names where the work went. Naming
-it rather than relying on position is what keeps ``(77, 78)`` unambiguous —
-two tasks, not one task handed to a session called "78".
+Bare arguments are task ids. ``agent_session_id=`` names where the work went.
+The legacy ``session=`` spelling remains accepted. Naming it rather than
+relying on position keeps ``(77, 78)`` unambiguous — two tasks, not one task
+handed to a session called "78".
 
 The single-argument form is what the guidance text prints today, so every
 test here also checks it still means exactly what it did.
@@ -175,6 +176,16 @@ class TestSessionArgument:
     def test_the_session_keyword_is_case_insensitive(self):
         assert extract_delegate_markers(
             "AUTORUN_TASK_DELEGATED(77, SESSION=abc)") == [(["77"], "abc")]
+
+    def test_the_explicit_agent_session_id_keyword_is_reported(self):
+        assert extract_delegate_markers(
+            "AUTORUN_TASK_DELEGATED(77, agent_session_id=agent-abc)"
+        ) == [(["77"], "agent-abc")]
+
+    def test_explicit_agent_session_id_takes_precedence_over_legacy_session(self):
+        assert extract_delegate_markers(
+            "AUTORUN_TASK_DELEGATED(77, session=old, agent_session_id=new)"
+        ) == [(["77"], "new")]
 
 
 # ── What the extended grammar does to real tasks ─────────────────────────────
