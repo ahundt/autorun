@@ -1108,6 +1108,12 @@ After every step and substep you must say "Wait," and execute this sequential th
     # Parent directory of the local plugin source the personal marketplace
     # references; the plugin name is appended to it.
     "codex_plugin_source_dir": "~/plugins",
+    # Per-harness config-root overrides, e.g. {"codex": "~/.codex-work"}.
+    # Resolution in install.platform_config_dir(): this mapping, then the
+    # harness's own env vars (CODEX_HOME, QWEN_HOME, CLAUDE_CONFIG_DIR,
+    # FORGE_CONFIG), then Platform.config_dir. Additional simultaneous
+    # installs of one flavor are custom_harnesses entries, not entries here.
+    "harness_config_dirs": {},
     # Command documents Codex may migrate into model-visible skill entries.
     #
     # `.codex-plugin/plugin.json` used to omit `commands`, so Codex fell back to

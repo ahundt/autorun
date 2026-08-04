@@ -556,6 +556,10 @@ class Platform:
     # CLI flag without selecting it during the default maintained-harness install.
     install_by_default: bool = True
     config_dir: str = ""
+    # Env vars the harness itself documents as relocating its config root
+    # (e.g. CODEX_HOME). install.platform_config_dir() honors them between the
+    # CONFIG["harness_config_dirs"] override and the config_dir default.
+    config_dir_env_vars: tuple[str, ...] = ()
     template_dir: str | None = None
     hooks_path_var: str = ""
     install_fn_name: str = ""
@@ -710,6 +714,7 @@ CLAUDE = register(
         has_exit2_workaround=True,
         drops_additional_context=True,
         config_dir="~/.claude/",
+        config_dir_env_vars=("CLAUDE_CONFIG_DIR",),
         template_dir=None,  # hooks live at plugin root
         hooks_path_var="${CLAUDE_PLUGIN_ROOT}",
         install_fn_name="_install_for_claude",
@@ -917,6 +922,7 @@ QWEN = register(
         has_exit2_workaround=False,
         drops_additional_context=False,
         config_dir="~/.qwen/",
+        config_dir_env_vars=("QWEN_HOME",),
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_qwen",
@@ -955,6 +961,7 @@ CODEX = register(
         has_exit2_workaround=False,  # exit 0 + JSON deny works
         drops_additional_context=False,
         config_dir="~/.codex/",
+        config_dir_env_vars=("CODEX_HOME",),
         template_dir=None,  # user-level install at ~/.codex/hooks.json
         hooks_path_var="${PLUGIN_ROOT}",  # ${CLAUDE_PLUGIN_ROOT} also set as compat
         install_fn_name="_install_for_codex",
@@ -1019,6 +1026,7 @@ FORGECODE = register(
         schema_type="none",  # no hook responses
         hook_protocol=NO_HOOKS,
         config_dir="~/.forge/",
+        config_dir_env_vars=("FORGE_CONFIG",),
         template_dir="forgecode_template",
         install_fn_name="_install_for_forgecode",
         memory_filename="AGENTS.md",

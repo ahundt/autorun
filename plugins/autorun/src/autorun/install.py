@@ -1829,7 +1829,7 @@ def _install_for_gemini(
         force=force,
         cli_name="gemini",
         display_name="Legacy Gemini CLI",
-        config_dir=Path.home() / ".gemini",
+        config_dir=platform_config_dir(PLATFORMS["gemini"]),
         install_hint="npm install -g @google-labs/gemini-cli",
         skill_placement=skill_placement,
     )
@@ -1854,7 +1854,7 @@ def _install_for_qwen(
         force=force,
         cli_name="qwen",
         display_name="Qwen Code",
-        config_dir=Path.home() / ".qwen",
+        config_dir=platform_config_dir(PLATFORMS["qwen"]),
         install_hint="brew install qwen-code",
         skill_placement=skill_placement,
     )
@@ -2710,7 +2710,7 @@ def _install_for_codex(
         except ValueError as exc:
             return (False, str(exc))
 
-    codex_dir = (codex_dir or (Path.home() / ".codex")).expanduser()
+    codex_dir = (codex_dir or platform_config_dir(PLATFORMS["codex"])).expanduser()
     codex_dir.mkdir(parents=True, exist_ok=True)
     hooks_path = codex_dir / "hooks.json"
 
@@ -2950,15 +2950,38 @@ def shared_agents_plugins_dir() -> Path:
     )
 
 
+def platform_config_dir(platform: Platform) -> Path | None:
+    """Resolve one harness's config root through a single seam.
+
+    Precedence: CONFIG["harness_config_dirs"][name] override, then the first
+    set env var the harness itself documents (Platform.config_dir_env_vars,
+    e.g. CODEX_HOME), then the declared Platform.config_dir default. None when
+    the platform declares no config dir at all.
+    """
+    from .config import CONFIG
+
+    override = CONFIG.get("harness_config_dirs", {}).get(platform.name)
+    if override:
+        return _expand_home(str(override))
+    for var in platform.config_dir_env_vars:
+        value = os.environ.get(var)
+        if value:
+            return _expand_home(value)
+    if not platform.config_dir:
+        return None
+    return _expand_home(platform.config_dir)
+
+
 def platform_extensions_dir(platform: Platform) -> Path | None:
     """Return where one harness materializes installed extensions.
 
     None when the harness has no extension directory of its own — Claude
     installs through ``claude plugin`` and ForgeCode is template-only.
     """
-    if not platform.extensions_subdir or not platform.config_dir:
+    base = platform_config_dir(platform)
+    if not platform.extensions_subdir or base is None:
         return None
-    return _expand_home(platform.config_dir) / platform.extensions_subdir
+    return base / platform.extensions_subdir
 
 
 def platform_skills_dir(platform: Platform) -> Path | None:
@@ -2967,9 +2990,10 @@ def platform_skills_dir(platform: Platform) -> Path | None:
     None when the harness declares no config-dir-local skills directory —
     Codex, for instance, reads :func:`shared_agents_skills_dir` instead.
     """
-    if not platform.skills_subdir or not platform.config_dir:
+    base = platform_config_dir(platform)
+    if not platform.skills_subdir or base is None:
         return None
-    return _expand_home(platform.config_dir) / platform.skills_subdir
+    return base / platform.skills_subdir
 
 
 _AGENTS_SKILLS_SETTING = ChoiceSetting(
@@ -3709,7 +3733,7 @@ def _install_codex_plugin_with_cli(
 
 def _codex_user_hooks_have_autorun() -> bool:
     """Return True when ~/.codex/hooks.json contains autorun's user hooks."""
-    hooks_path = Path.home() / ".codex" / "hooks.json"
+    hooks_path = platform_config_dir(PLATFORMS["codex"]) / "hooks.json"
     if not hooks_path.is_file():
         return False
     try:
@@ -3767,7 +3791,7 @@ def _codex_plugin_marketplace_status() -> tuple[bool, str]:
             f"✗ installed with duplicate user and plugin hooks in cache version(s): {versions}",
         )
 
-    config = Path.home() / ".codex" / "config.toml"
+    config = platform_config_dir(PLATFORMS["codex"]) / "config.toml"
     if not config.is_file():
         return (True, "✓ installed")
 
@@ -4114,16 +4138,17 @@ _FORGECODE_AGENTS_START, _FORGECODE_AGENTS_END = platform_memory_sentinels(
 def _resolve_forge_base() -> Path:
     """Resolve ForgeCode's base config path.
 
-    Per crates/forge_config/src/reader.rs:58-84 the precedence is:
-        FORGE_CONFIG env var > ~/forge/ (legacy, only if it exists) > ~/.forge/.
+    Per crates/forge_config/src/reader.rs:58-84 the harness's own precedence is
+    FORGE_CONFIG env var > ~/forge/ (legacy, only if it exists) > ~/.forge/.
+    platform_config_dir() covers the override and env tiers; the legacy
+    ~/forge quirk applies only when neither redirected the root.
     """
-    env = os.environ.get("FORGE_CONFIG")
-    if env:
-        return Path(env)
-    legacy = Path.home() / "forge"
-    if legacy.is_dir():
-        return legacy
-    return Path.home() / ".forge"
+    resolved = platform_config_dir(PLATFORMS["forgecode"])
+    if resolved == _expand_home(PLATFORMS["forgecode"].config_dir):
+        legacy = Path.home() / "forge"
+        if legacy.is_dir():
+            return legacy
+    return resolved
 
 
 def _install_for_forgecode(
@@ -5834,7 +5859,7 @@ def show_status(
 
     codex_ok = shutil.which("codex") is not None
     print(f"  codex CLI: {'found' if codex_ok else 'not found'}")
-    codex_dir = Path.home() / ".codex"
+    codex_dir = platform_config_dir(PLATFORMS["codex"])
     codex_hooks = codex_dir / "hooks.json"
     required_codex_events = {
         "PreToolUse",

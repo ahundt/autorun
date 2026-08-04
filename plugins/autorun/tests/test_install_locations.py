@@ -28,6 +28,7 @@ from autorun.config import CONFIG  # noqa: E402
 from autorun.install import (  # noqa: E402
     _codex_personal_marketplace_path,
     _codex_plugin_source_dir,
+    platform_config_dir,
     platform_skills_dir,
     shared_agents_dir,
     shared_agents_skills_dir,
@@ -163,3 +164,66 @@ def test_uninstall_removes_links_under_a_relocated_agents_dir(relocated, monkeyp
 
     assert not link.is_symlink(), "link under the configured agents dir was not removed"
     assert source.is_dir()
+
+
+# --------------------------------------------------------------------------
+# Per-platform config dirs: CONFIG override > harness-native env var > default
+# --------------------------------------------------------------------------
+
+
+def test_platform_config_dir_defaults_to_the_declared_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    assert platform_config_dir(PLATFORMS["codex"]) == tmp_path / ".codex"
+
+
+def test_platform_config_dir_honors_the_harness_native_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-work"))
+    assert platform_config_dir(PLATFORMS["codex"]) == tmp_path / "codex-work"
+
+
+def test_platform_config_dir_config_override_beats_the_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "from-env"))
+    monkeypatch.setitem(
+        CONFIG, "harness_config_dirs", {"codex": str(tmp_path / "from-config")}
+    )
+    assert platform_config_dir(PLATFORMS["codex"]) == tmp_path / "from-config"
+
+
+def test_platform_config_dir_expands_tilde_in_the_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(CONFIG, "harness_config_dirs", {"qwen": "~/qwen-home"})
+    monkeypatch.delenv("QWEN_HOME", raising=False)
+    assert platform_config_dir(PLATFORMS["qwen"]) == tmp_path / "qwen-home"
+
+
+@pytest.mark.parametrize(
+    "name,var",
+    [
+        ("claude", "CLAUDE_CONFIG_DIR"),
+        ("codex", "CODEX_HOME"),
+        ("qwen", "QWEN_HOME"),
+        ("forgecode", "FORGE_CONFIG"),
+    ],
+)
+def test_each_harness_declares_its_native_config_dir_env_var(name, var):
+    """The env vars each harness itself documents; see qwen-code storage.ts
+    getGlobalQwenDir (QWEN_HOME), codex-rs config (CODEX_HOME), Claude Code
+    settings docs (CLAUDE_CONFIG_DIR), forge_config/src/reader.rs
+    (FORGE_CONFIG)."""
+    assert var in PLATFORMS[name].config_dir_env_vars
+
+
+def test_config_declares_harness_config_dirs_empty_by_default():
+    assert CONFIG.get("harness_config_dirs") == {}
+
+
+def test_skills_dir_follows_the_config_dir_env_var(monkeypatch, tmp_path):
+    """Relocating a harness config dir moves its skills directory with it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-alt"))
+    assert platform_skills_dir(PLATFORMS["claude"]) == (
+        tmp_path / "claude-alt" / "skills"
+    )
