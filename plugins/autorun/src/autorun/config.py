@@ -1114,6 +1114,11 @@ After every step and substep you must say "Wait," and execute this sequential th
     # FORGE_CONFIG), then Platform.config_dir. Additional simultaneous
     # installs of one flavor are custom_harnesses entries, not entries here.
     "harness_config_dirs": {},
+    # Persistent custom harness targets in the --custom-harness SPEC grammar
+    # (name=flavor:binary:config_dir[::display]); merged with CLI flags at
+    # install and status, CLI winning by name. Multiple entries may share one
+    # flavor with different config dirs, e.g. codex-home + codex-work.
+    "custom_harnesses": (),
     # Command documents Codex may migrate into model-visible skill entries.
     #
     # `.codex-plugin/plugin.json` used to omit `commands`, so Codex fell back to

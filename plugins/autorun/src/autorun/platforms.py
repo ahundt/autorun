@@ -614,13 +614,14 @@ class Platform:
 PLATFORMS: dict[str, Platform] = {}
 
 CUSTOM_HARNESS_FLAVOR_ALIASES = {
+    "claude": "claude",
     "gemini": "gemini",
     "qwen": "qwen",
     "codex": "codex",
     "agy": "antigravity",
     "antigravity": "antigravity",
 }
-CUSTOM_HARNESS_FLAVOR_ORDER = ("gemini", "qwen", "antigravity", "agy", "codex")
+CUSTOM_HARNESS_FLAVOR_ORDER = ("claude", "gemini", "qwen", "antigravity", "agy", "codex")
 CUSTOM_HARNESS_SPEC_FORMAT = "name=flavor:binary:config_dir[::display]"
 
 
@@ -634,7 +635,10 @@ def custom_harness_spec_help() -> str:
         f"flavor: {flavors} (agy is an alias for antigravity); "
         "binary is the CLI executable; config_dir is the harness config root; "
         "display is optional. Use ::display as the unambiguous separator. "
-        "Repeat for multiple targets."
+        "Repeat for multiple targets. The claude flavor installs the portable "
+        "markdown commands + AGENTS.md bundle (no hooks). Persistent targets "
+        "can be declared in CONFIG['custom_harnesses'] with the same SPEC "
+        "format; a CLI spec overrides a config spec with the same name."
     )
 
 

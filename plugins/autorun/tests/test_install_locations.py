@@ -28,6 +28,9 @@ from autorun.config import CONFIG  # noqa: E402
 from autorun.install import (  # noqa: E402
     _codex_personal_marketplace_path,
     _codex_plugin_source_dir,
+    _install_markdown_commands_harness,
+    merge_custom_harness_specs,
+    parse_custom_harness_spec,
     platform_config_dir,
     platform_skills_dir,
     shared_agents_dir,
@@ -227,3 +230,62 @@ def test_skills_dir_follows_the_config_dir_env_var(monkeypatch, tmp_path):
     assert platform_skills_dir(PLATFORMS["claude"]) == (
         tmp_path / "claude-alt" / "skills"
     )
+
+
+# --------------------------------------------------------------------------
+# Custom harnesses persist in CONFIG and merge with CLI flags
+# --------------------------------------------------------------------------
+
+
+def test_config_declares_custom_harnesses_empty_by_default():
+    assert CONFIG.get("custom_harnesses") == ()
+
+
+def test_claude_flavor_parses():
+    target = parse_custom_harness_spec("workcode=claude:opencode:~/.opencode-work")
+    assert target.flavor == "claude"
+    assert target.binary == "opencode"
+
+
+def test_multiple_instances_of_one_flavor_carry_separate_config_dirs(monkeypatch):
+    monkeypatch.setitem(
+        CONFIG,
+        "custom_harnesses",
+        (
+            "codex-home=codex:codex:~/.codex-home",
+            "codex-work=codex:codex:~/.codex-work",
+        ),
+    )
+    targets = [parse_custom_harness_spec(s) for s in merge_custom_harness_specs()]
+    assert {t.name for t in targets} == {"codex-home", "codex-work"}
+    assert {t.flavor for t in targets} == {"codex"}
+    assert len({t.config_dir for t in targets}) == 2
+
+
+def test_cli_spec_overrides_the_config_spec_with_the_same_name(monkeypatch, tmp_path):
+    monkeypatch.setitem(
+        CONFIG, "custom_harnesses", ("codex-work=codex:codex:~/.codex-work",)
+    )
+    merged = merge_custom_harness_specs(
+        [f"codex-work=codex:codex:{tmp_path / 'elsewhere'}"]
+    )
+    targets = {parse_custom_harness_spec(s).name: parse_custom_harness_spec(s) for s in merged}
+    assert list(targets) == ["codex-work"]
+    assert targets["codex-work"].config_dir == tmp_path / "elsewhere"
+
+
+def test_claude_flavor_installs_markdown_commands_and_agents_md(tmp_path):
+    """The claude flavor gets the portable bundle, renamed for its harness."""
+    marketplace_root = Path(__file__).resolve().parents[3]
+    base = tmp_path / "opencode-home"
+
+    ok, msg = _install_markdown_commands_harness(
+        marketplace_root, ["autorun"], base=base, display_name="OpenCode"
+    )
+
+    assert ok, msg
+    assert (base / "AGENTS.md").is_file()
+    guidance = (base / "AGENTS.md").read_text(encoding="utf-8")
+    assert "OpenCode" in guidance
+    assert "ForgeCode" not in guidance
+    assert list((base / "commands").glob("ar-*.md"))

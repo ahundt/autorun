@@ -403,7 +403,7 @@ class TestCLIArgumentParsing:
         assert "--custom-harness SPEC" in help_text
         assert "--install --custom-harness" in help_text
         assert "--status --custom-harness" in help_text
-        assert "flavor: gemini|qwen|antigravity|agy|codex" in help_text
+        assert "flavor: claude|gemini|qwen|antigravity|agy|codex" in help_text
         assert "agy is an alias for antigravity" in help_text
         assert "--custom-harness-status" not in help_text
 

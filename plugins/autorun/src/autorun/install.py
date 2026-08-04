@@ -214,6 +214,27 @@ def parse_custom_harness_spec(spec: str) -> CustomHarnessInstall:
     )
 
 
+def merge_custom_harness_specs(
+    cli_specs: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """Merge CONFIG-declared custom harnesses with CLI-passed specs.
+
+    CONFIG["custom_harnesses"] persists targets across installs;
+    --custom-harness adds or overrides for one run. Dedupe is by harness name
+    with the CLI spec winning, so a config entry can be retargeted without
+    editing the config file. Invalid specs raise ValueError for the caller's
+    existing error reporting.
+    """
+    from .config import CONFIG
+
+    merged: dict[str, str] = {}
+    for spec in tuple(CONFIG.get("custom_harnesses", ()) or ()):
+        merged[parse_custom_harness_spec(spec).name] = spec
+    for spec in cli_specs or ():
+        merged[parse_custom_harness_spec(spec).name] = spec
+    return list(merged.values())
+
+
 # =============================================================================
 # Subprocess Helper
 # =============================================================================
@@ -3838,6 +3859,15 @@ def show_custom_harness_status(spec: str) -> int:
     print(f"  binary: {target.binary}")
     print(f"  config_dir: {target.config_dir}")
 
+    if target.flavor == "claude":
+        commands_dir = target.config_dir / "commands"
+        commands_ok = commands_dir.is_dir() and any(commands_dir.glob("*.md"))
+        agents_ok = (target.config_dir / "AGENTS.md").is_file()
+        print(f"  commands: {'✓ installed' if commands_ok else '✗ not installed'}")
+        print(f"  AGENTS.md: {'✓ installed' if agents_ok else '✗ not installed'}")
+        print("  Note: claude flavor is advisory-only (markdown commands + AGENTS.md).")
+        return 0 if commands_ok and agents_ok else 1
+
     if target.flavor == "codex":
         hooks_ok, hooks_status = _hooks_json_contains_cli(
             target.config_dir / "hooks.json",
@@ -4151,6 +4181,79 @@ def _resolve_forge_base() -> Path:
     return resolved
 
 
+def _install_markdown_commands_harness(
+    marketplace_root: Path,
+    plugins: list[str],
+    base: Path,
+    display_name: str,
+) -> tuple[bool, str]:
+    """Install the portable markdown-commands + AGENTS.md bundle into ``base``.
+
+    The install shape shared by every harness that reads Claude-format
+    markdown command files and an AGENTS.md instructions file but exposes no
+    external hook events: commands land under ``base/commands/*.md`` with an
+    ownership marker, and the advisory guidance is spliced into
+    ``base/AGENTS.md`` behind the standard sentinels. ForgeCode installs this
+    way, and so do claude-flavor custom harnesses.
+
+    ``display_name`` replaces the template's harness name in the guidance so
+    the advisory text names the harness actually being installed.
+    """
+    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
+    if plugin_dir is None:
+        return (False, f"autorun plugin not found under {marketplace_root}")
+
+    template = plugin_dir / "src" / "autorun" / "forgecode_template"
+    if not template.is_dir():
+        return (False, f"forgecode_template missing at {template}")
+
+    base.mkdir(parents=True, exist_ok=True)
+    cmds_dst = base / "commands"
+    cmds_dst.mkdir(exist_ok=True)
+
+    # <base>/commands/ is shared: the harness reads the user's own command
+    # files from it too. Record exactly which names came from the template so
+    # uninstall removes ours and leaves theirs, rather than clearing the
+    # directory.
+    cmds_src = template / "commands"
+    copied: list[str] = []
+    for src in sorted(cmds_src.glob("*.md")):
+        shutil.copy2(src, cmds_dst / src.name)
+        copied.append(src.name)
+    write_owned_marker(
+        cmds_dst, plugin=_plugin_registry_name(plugin_dir), files=copied
+    )
+
+    # Sentinel merge, not copy2: the harness reads <base>/AGENTS.md as custom
+    # instructions and the user may have written their own there. Same markers
+    # as install_platform_memory(PLATFORMS["forgecode"], ...) so uninstall can
+    # strip the block with the standard helpers.
+    platform = PLATFORMS["forgecode"]
+    memory_template = plugin_dir.joinpath(
+        "src", "autorun", *platform.memory_template.split("/")
+    )
+    if not memory_template.is_file():
+        msg = f"forgecode_template/AGENTS.md missing under {template}"
+        print(f"✗ {msg}")
+        return (False, msg)
+    start, end = platform_memory_sentinels(platform)
+    body = memory_template.read_text(encoding="utf-8").replace(
+        "ForgeCode", display_name
+    )
+    if not install_sentinel_block(
+        base / platform.memory_filename, body, start=start, end=end
+    ):
+        msg = f"advisory guidance body empty for {display_name}"
+        print(f"✗ {msg}")
+        return (False, msg)
+
+    print()
+    print(f"✓ {display_name} commands installed at {base}/commands/")
+    print(f"✓ Advisory safety guidance written to {base}/AGENTS.md")
+    print(f"  Note: {display_name} has no external hooks — guards run advisory only.")
+    return (True, "success")
+
+
 def _install_for_forgecode(
     marketplace_root: Path,
     plugins: list[str],
@@ -4170,46 +4273,12 @@ def _install_for_forgecode(
         force: Reserved for parity with other installers; copy is
                idempotent so force has no effect today.
     """
-    plugin_dir = _autorun_plugin_dir(marketplace_root, plugins)
-    if plugin_dir is None:
-        return (False, f"autorun plugin not found under {marketplace_root}")
-
-    template = plugin_dir / "src" / "autorun" / "forgecode_template"
-    if not template.is_dir():
-        return (False, f"forgecode_template missing at {template}")
-
-    base = _resolve_forge_base()
-    base.mkdir(parents=True, exist_ok=True)
-    cmds_dst = base / "commands"
-    cmds_dst.mkdir(exist_ok=True)
-
-    # <base>/commands/ is shared: ForgeCode reads the user's own command files
-    # from it too. Record exactly which names came from the template so
-    # uninstall removes ours and leaves theirs, rather than clearing the
-    # directory.
-    cmds_src = template / "commands"
-    copied: list[str] = []
-    for src in sorted(cmds_src.glob("*.md")):
-        shutil.copy2(src, cmds_dst / src.name)
-        copied.append(src.name)
-    write_owned_marker(
-        cmds_dst, plugin=_plugin_registry_name(plugin_dir), files=copied
+    return _install_markdown_commands_harness(
+        marketplace_root,
+        plugins,
+        base=_resolve_forge_base(),
+        display_name="ForgeCode",
     )
-
-    # Sentinel merge, not copy2: ForgeCode reads <base>/AGENTS.md as custom
-    # instructions and the user may have written their own there. Shared with
-    # every other harness that has a memory file; differences are platform data.
-    guidance_written = install_platform_memory(PLATFORMS["forgecode"], plugin_dir, base)
-    if not guidance_written:
-        msg = f"forgecode_template/AGENTS.md missing under {template}"
-        print(f"✗ {msg}")
-        return (False, msg)
-
-    print()
-    print(f"✓ ForgeCode commands installed at {base}/commands/")
-    print(f"✓ Advisory safety guidance written to {base}/AGENTS.md")
-    print("  Note: ForgeCode has no external hooks — guards run advisory only.")
-    return (True, "success")
 
 
 def _install_conductor(force: bool = False) -> tuple[bool, str]:
@@ -4584,7 +4653,10 @@ def install_plugins(
         print(f"Error: --skill-placement: {e}")
         return 1
     try:
-        custom_targets = [parse_custom_harness_spec(spec) for spec in custom_harnesses]
+        custom_targets = [
+            parse_custom_harness_spec(spec)
+            for spec in merge_custom_harness_specs(custom_harnesses)
+        ]
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -4880,7 +4952,14 @@ def install_plugins(
         all_succeeded = all_succeeded and qwen_success
 
     for custom in custom_targets:
-        if custom.flavor == "codex":
+        if custom.flavor == "claude":
+            custom_success, custom_msg = _install_markdown_commands_harness(
+                marketplace_root,
+                plugins,
+                base=custom.config_dir,
+                display_name=custom.display_name,
+            )
+        elif custom.flavor == "codex":
             custom_success, custom_msg = _install_for_codex(
                 marketplace_root,
                 plugins,
@@ -5988,7 +6067,13 @@ def show_status(
     print("  skills: unsupported by ForgeCode; commands and AGENTS.md are advisory")
     print("  hooks: advisory only (ForgeCode has no external hook system)")
 
-    for spec in custom_harnesses:
+    try:
+        merged_custom = merge_custom_harness_specs(custom_harnesses)
+    except ValueError as exc:
+        print(f"Error in custom harness spec: {exc}")
+        merged_custom = list(custom_harnesses or ())
+        all_ok = False
+    for spec in merged_custom:
         print()
         print("-" * 60)
         if show_custom_harness_status(spec) != 0:

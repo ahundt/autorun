@@ -1066,8 +1066,23 @@ statusline-command | autorun --cache-snapshot
 ```
 
 Custom harness specs use
-`name=flavor:binary:config_dir[::display]`. Supported flavors are `gemini`,
-`qwen`, `antigravity`, `agy` (an alias for `antigravity`), and `codex`.
+`name=flavor:binary:config_dir[::display]`. Supported flavors are `claude`,
+`gemini`, `qwen`, `antigravity`, `agy` (an alias for `antigravity`), and
+`codex`. The `claude` flavor installs the portable markdown commands +
+AGENTS.md bundle (no hooks) — the right shape for Claude-compatible harnesses
+such as OpenCode. Persistent targets belong in `CONFIG["custom_harnesses"]`
+using the same spec grammar; a `--custom-harness` flag overrides a config
+entry with the same name, and several entries may share one flavor with
+different config dirs (for example `codex-home=codex:codex:~/.codex-home` and
+`codex-work=codex:codex:~/.codex-work`).
+
+Each built-in harness's config root is also relocatable:
+`CONFIG["harness_config_dirs"]` (for example `{"codex": "~/.codex-work"}`)
+wins over the harness's own environment variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `QWEN_HOME`, `FORGE_CONFIG`), which wins over the default. The
+desktop apps need no separate configuration: the merged ChatGPT/Codex desktop
+app (bundle `com.openai.codex`) shares `~/.codex` with Codex CLI, and Claude
+Desktop's local Code sessions share `~/.claude` with Claude Code.
 The optional display name follows the unambiguous `::` separator, so a
 `config_dir` may itself contain `:` characters.
 
