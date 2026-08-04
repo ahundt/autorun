@@ -90,6 +90,27 @@ def _agents_skills_choices() -> tuple[str, ...]:
     return _AGENTS_SKILLS_SETTING.choices
 
 
+def _skill_placement_choices() -> tuple[str, ...]:
+    """Return skill-placement choices without duplicating install data."""
+    from .install import _SKILL_PLACEMENT_SETTING
+
+    return _SKILL_PLACEMENT_SETTING.choices
+
+
+def _skill_placement_help() -> str:
+    """Return shared parser help for --skill-placement."""
+    from .install import skill_placement_help
+
+    return skill_placement_help()
+
+
+def _skill_placement_token():
+    """Return the shared per-token validator for --skill-placement."""
+    from .install import skill_placement_token
+
+    return skill_placement_token
+
+
 def _codex_hook_source_choices() -> tuple[str, ...]:
     """Return Codex hook-source choices without duplicating install data."""
     from .install import _CODEX_HOOK_SOURCE_SETTING
@@ -423,6 +444,16 @@ For more information: https://github.com/ahundt/autorun
             "already provides are skipped. "
             "AUTORUN_CLAUDE_AGENTS_SKILLS also sets this; the flag wins."
         ),
+    )
+    install_group.add_argument(
+        "--skill-placement",
+        action="append",
+        type=_skill_placement_token(),
+        # None, not [], so an absent flag stays distinguishable from an
+        # explicit one and AUTORUN_SKILL_PLACEMENT can still win.
+        default=None,
+        metavar="MODE|HARNESS=MODE",
+        help=_skill_placement_help(),
     )
     install_group.add_argument(
         "--codex-hook-source",
@@ -1001,6 +1032,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "codex_hook_source": args.codex_hook_source,
             "codex_plugin_marketplace": args.codex_plugin_marketplace,
             "claude_agents_skills": args.claude_agents_skills,
+            "skill_placement": args.skill_placement,
         }
         if args.install_dry_run:
             install_kwargs["dry_run"] = True

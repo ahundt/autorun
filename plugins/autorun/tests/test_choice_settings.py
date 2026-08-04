@@ -231,3 +231,317 @@ def test_install_for_codex_does_not_re_resolve_an_explicit_hook_source(
     assert "user hooks only" not in message, (
         "env var overrode an explicitly passed codex_hook_source"
     )
+
+
+# --------------------------------------------------------------------------
+# Skill placement — one route per harness, alternate layouts explicit
+# --------------------------------------------------------------------------
+
+
+def test_skill_placement_setting_matches_documented_contract():
+    from autorun.install import _SKILL_PLACEMENT_SETTING
+
+    assert _SKILL_PLACEMENT_SETTING.env_var == "AUTORUN_SKILL_PLACEMENT"
+    assert _SKILL_PLACEMENT_SETTING.default == "auto"
+    assert _SKILL_PLACEMENT_SETTING.config_key == "skill_placement"
+    assert set(_SKILL_PLACEMENT_SETTING.choices) == {"auto", "native", "both"}
+
+
+def test_skill_placement_precedence_is_cli_env_config_default(monkeypatch):
+    from autorun.install import _SKILL_PLACEMENT_SETTING
+
+    monkeypatch.setenv("AUTORUN_SKILL_PLACEMENT", "native")
+    assert (
+        resolve_choice_setting(
+            _SKILL_PLACEMENT_SETTING, cli_value="both", config={"skill_placement": "native"}
+        ).value
+        == "both"
+    )
+    assert (
+        resolve_choice_setting(
+            _SKILL_PLACEMENT_SETTING, cli_value=None, config={"skill_placement": "both"}
+        ).value
+        == "native"
+    )
+
+    monkeypatch.delenv("AUTORUN_SKILL_PLACEMENT")
+    assert (
+        resolve_choice_setting(
+            _SKILL_PLACEMENT_SETTING, cli_value=None, config={"skill_placement": "both"}
+        ).value
+        == "both"
+    )
+    assert (
+        resolve_choice_setting(
+            _SKILL_PLACEMENT_SETTING, cli_value=None, config={}
+        ).value
+        == "auto"
+    )
+
+
+def test_absent_skill_placement_flag_reaches_install_plugins_as_none():
+    """argparse must forward "unspecified" so the env var can still win."""
+    from unittest.mock import patch
+
+    from autorun.__main__ import main
+
+    with patch("autorun.install.install_plugins", return_value=0) as install:
+        main(["--install", "--codex"])
+
+    assert install.call_args.kwargs["skill_placement"] is None
+
+
+def test_explicit_skill_placement_flag_reaches_install_plugins():
+    from unittest.mock import patch
+
+    from autorun.__main__ import main
+
+    with patch("autorun.install.install_plugins", return_value=0) as install:
+        main(["--install", "--codex", "--skill-placement", "both"])
+
+    assert install.call_args.kwargs["skill_placement"] == ["both"]
+
+
+def test_repeated_skill_placement_flags_all_reach_install_plugins():
+    """A multi-harness install states several routes in one command."""
+    from unittest.mock import patch
+
+    from autorun.__main__ import main
+
+    with patch("autorun.install.install_plugins", return_value=0) as install:
+        main(
+            [
+                "--install",
+                "--skill-placement",
+                "native",
+                "--skill-placement",
+                "codex=both",
+            ]
+        )
+
+    assert install.call_args.kwargs["skill_placement"] == ["native", "codex=both"]
+
+
+def test_skill_placement_argparse_rejects_an_invalid_cli_value(capsys):
+    """A CLI typo is caught at parse time, before any install work; env and
+    config keep the fail-open contract so a stale export cannot abort a run."""
+    from autorun.__main__ import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--install", "--skill-placement", "shared"])
+
+    assert exc.value.code != 0
+    assert "shared" in capsys.readouterr().err
+
+
+def test_skill_placement_argparse_rejects_an_unknown_harness(capsys):
+    from autorun.__main__ import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--install", "--skill-placement", "codx=native"])
+
+    assert exc.value.code != 0
+    err = capsys.readouterr().err
+    assert "codx" in err and "codex" in err
+
+
+def test_both_parsers_offer_the_same_skill_placement_choices():
+    """install.py and __main__.py must not drift into two grammars."""
+    from autorun.__main__ import _skill_placement_choices
+    from autorun.install import _SKILL_PLACEMENT_SETTING
+
+    assert _skill_placement_choices() == _SKILL_PLACEMENT_SETTING.choices
+
+
+def test_describe_skill_routes_names_mode_and_exact_paths_per_harness():
+    """"harness -> resolved mode -> exact paths" is what makes `auto` auditable;
+    a mode name alone does not tell a user which directory gets written."""
+    from autorun.install import describe_skill_routes, shared_agents_skills_dir
+
+    lines = describe_skill_routes("auto", ["codex", "claude"])
+    rendered = "\n".join(lines)
+
+    assert "codex" in rendered and "claude" in rendered
+    assert str(shared_agents_skills_dir()) in rendered
+    # Claude cannot read the shared root, so `auto` must not point it there.
+    claude_line = next(line for line in lines if "claude" in line)
+    assert str(shared_agents_skills_dir()) not in claude_line
+    assert "native" in claude_line
+
+
+def test_describe_skill_routes_flags_the_duplicate_risk_of_both():
+    from autorun.install import describe_skill_routes
+
+    rendered = "\n".join(describe_skill_routes("both", ["codex"]))
+
+    assert "shared" in rendered and "native" in rendered
+    assert "duplicate" in rendered.lower()
+
+
+def test_dry_run_reports_the_resolved_skill_placement_and_its_source(
+    tmp_path, monkeypatch, capsys
+):
+    """The user must be able to see which tier decided the layout before any
+    directory is written."""
+    from autorun.install import install_plugins
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("AUTORUN_SKILL_PLACEMENT", "native")
+
+    install_plugins("ar", dry_run=True)
+
+    out = capsys.readouterr().out
+    assert "Skill placement: native" in out
+    assert "AUTORUN_SKILL_PLACEMENT" in out
+
+
+# --------------------------------------------------------------------------
+# Multi-harness placement: one install writes several harnesses at once
+# --------------------------------------------------------------------------
+
+
+def test_bare_mode_applies_to_every_harness():
+    """The zero-configuration form must keep working unchanged."""
+    from autorun.install import parse_skill_placement
+
+    placement = parse_skill_placement(["native"])
+
+    assert placement.for_harness("codex") == "native"
+    assert placement.for_harness("claude") == "native"
+
+
+def test_per_harness_value_overrides_the_global_mode():
+    """A multi-harness install must be able to route harnesses differently
+    without running the installer once per harness."""
+    from autorun.install import parse_skill_placement
+
+    placement = parse_skill_placement(["native", "codex=both"])
+
+    assert placement.for_harness("codex") == "both"
+    assert placement.for_harness("gemini") == "native"
+
+
+def test_per_harness_value_without_a_global_mode_falls_back_to_the_default():
+    from autorun.install import parse_skill_placement
+
+    placement = parse_skill_placement(["codex=native"], default="auto")
+
+    assert placement.for_harness("codex") == "native"
+    assert placement.for_harness("claude") == "auto"
+
+
+def test_last_value_wins_for_a_repeated_key():
+    from autorun.install import parse_skill_placement
+
+    placement = parse_skill_placement(["auto", "codex=native", "codex=both", "native"])
+
+    assert placement.for_harness("codex") == "both"
+    assert placement.for_harness("claude") == "native"
+
+
+def test_unknown_harness_is_rejected_with_the_valid_names():
+    """Silently ignoring a typo would install a layout the user did not ask
+    for and give no signal that the override was dropped."""
+    from autorun.install import parse_skill_placement
+
+    with pytest.raises(ValueError) as exc:
+        parse_skill_placement(["codx=native"])
+
+    message = str(exc.value)
+    assert "codx" in message
+    assert "codex" in message
+
+
+def test_unknown_mode_is_rejected_with_the_valid_modes():
+    from autorun.install import parse_skill_placement
+
+    with pytest.raises(ValueError) as exc:
+        parse_skill_placement(["codex=shared"])
+
+    message = str(exc.value)
+    assert "shared" in message
+    assert "auto" in message and "native" in message and "both" in message
+
+
+@pytest.mark.parametrize("raw", ["native codex=both", "native,codex=both"])
+def test_env_var_accepts_the_same_grammar_space_or_comma_separated(raw, monkeypatch):
+    from autorun.install import resolve_skill_placement
+
+    monkeypatch.setenv("AUTORUN_SKILL_PLACEMENT", raw)
+    placement = resolve_skill_placement(cli_values=None, config={})
+
+    assert placement.for_harness("codex") == "both"
+    assert placement.for_harness("claude") == "native"
+
+
+def test_config_accepts_a_per_harness_mapping():
+    """A mapping is the natural config shape; a string must keep working too."""
+    from autorun.install import resolve_skill_placement
+
+    mapping = resolve_skill_placement(
+        cli_values=None,
+        config={"skill_placement": {"default": "native", "codex": "both"}},
+        env={},
+    )
+    assert mapping.for_harness("codex") == "both"
+    assert mapping.for_harness("claude") == "native"
+
+    plain = resolve_skill_placement(
+        cli_values=None, config={"skill_placement": "native"}, env={}
+    )
+    assert plain.for_harness("codex") == "native"
+
+
+def test_cli_values_beat_the_env_var():
+    from autorun.install import resolve_skill_placement
+
+    placement = resolve_skill_placement(
+        cli_values=["both"], config={}, env={"AUTORUN_SKILL_PLACEMENT": "native"}
+    )
+
+    assert placement.for_harness("codex") == "both"
+
+
+def test_invalid_env_value_falls_open_to_the_default_without_aborting():
+    """CLAUDE.md lesson 7: a stale export must not abort an install. A CLI
+    typo still fails hard, because the user is right there to fix it."""
+    from autorun.install import resolve_skill_placement
+
+    placement = resolve_skill_placement(
+        cli_values=None, config={}, env={"AUTORUN_SKILL_PLACEMENT": "codx=native"}
+    )
+
+    assert placement.for_harness("codex") == "auto"
+
+
+def test_route_report_lists_every_destination_directory():
+    """A harness with more than one skill root must not have the second one
+    silently dropped by an `or`."""
+    import dataclasses
+
+    from autorun.install import describe_skill_routes, platform_extensions_dir, platform_skills_dir
+    from autorun.platforms import PLATFORMS
+
+    multi = dataclasses.replace(
+        PLATFORMS["claude"], name="multiroot", skills_subdir="skills", extensions_subdir="exts"
+    )
+    lines = describe_skill_routes(
+        "native", ["multiroot"], platforms={"multiroot": multi}
+    )
+    rendered = "\n".join(lines)
+
+    assert str(platform_skills_dir(multi)) in rendered
+    assert str(platform_extensions_dir(multi)) in rendered
+
+
+def test_route_report_uses_the_per_harness_mode():
+    from autorun.install import describe_skill_routes, parse_skill_placement
+
+    lines = describe_skill_routes(
+        parse_skill_placement(["native", "codex=both"]), ["codex", "claude"]
+    )
+
+    codex_line = next(line for line in lines if line.startswith("codex"))
+    claude_line = next(line for line in lines if line.startswith("claude"))
+    assert "both" in codex_line
+    assert "native" in claude_line

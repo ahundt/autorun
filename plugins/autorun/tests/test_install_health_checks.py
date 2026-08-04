@@ -172,6 +172,28 @@ def test_reports_a_skill_reaching_the_harness_by_two_paths(home):
     assert any("demo" in f.detail for f in findings)
 
 
+def test_duplicate_remedy_never_tells_the_user_to_delete_an_unowned_copy(home):
+    """The check knows two paths exist; it does not know which one the user
+    wrote. "Delete whichever copy is stale" asks them to guess, and the guess
+    that goes wrong destroys their own skill."""
+    shared = home / ".agents" / "skills" / "demo"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_text("---\ndescription: d\n---\n", encoding="utf-8")
+    own = home / ".claude" / "skills" / "demo"
+    own.mkdir(parents=True)
+    (own / "SKILL.md").write_text("---\ndescription: d\n---\n", encoding="utf-8")
+
+    remedies = [f.remedy for f in check_install_health() if f.code == "skill-duplicate"]
+
+    assert remedies
+    for remedy in remedies:
+        assert "Delete" not in remedy and "rm " not in remedy
+        # It must instead point at the command that shows the intended route.
+        assert "--install-dry-run" in remedy
+        assert "--skill-placement" in remedy
+        assert str(own) in remedy
+
+
 def test_a_linked_skill_is_not_counted_as_a_duplicate_of_itself(home):
     shared = home / ".agents" / "skills" / "demo"
     shared.mkdir(parents=True)

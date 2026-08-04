@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Iterator, Mapping
+from typing import Callable, Iterable, Iterator, Mapping
 
 from filelock import FileLock
 
@@ -61,6 +61,7 @@ from .command_docs import iter_command_docs
 from .durable_io import atomic_write_text
 from . import ipc
 from .platforms import (
+    CODEX,
     CUSTOM_HARNESS_FLAVOR_ALIASES,
     CUSTOM_HARNESS_SPEC_FORMAT,
     PLATFORMS,
@@ -75,6 +76,12 @@ except ImportError:  # pragma: no cover - Python <3.11 compatibility
 
 # Configure logging (CLI entry points will set level)
 logger = logging.getLogger(__name__)
+
+# Skill placement vocabulary. Declared up here, not beside the ChoiceSetting it
+# feeds, because installer functions defined earlier in this module use the
+# default as a keyword default — which Python evaluates at definition time.
+_SKILL_PLACEMENT_CHOICES = ("auto", "native", "both")
+_SKILL_PLACEMENT_DEFAULT = "auto"
 
 __all__ = [
     "install_plugins",
@@ -1337,6 +1344,8 @@ def _sync_gemini_extension_resources(
     ext_dir: Path,
     ext_name: str,
     cli_name: str = "gemini",
+    *,
+    include_skills: bool = True,
 ) -> tuple[int, int]:
     """Materialize shared autorun resources into an installed Gemini extension.
 
@@ -1345,6 +1354,17 @@ def _sync_gemini_extension_resources(
     harnesses at the plugin root. Keep that source tree single-owned, and sync
     the shared resources into the installed extension after Gemini has created
     or confirmed the extension directory.
+
+    The family shares this staging path but not one native contract:
+
+    - Qwen documents Markdown commands as preferred and TOML as deprecated
+      (https://qwenlm.github.io/qwen-code-docs/en/users/features/commands/), so
+      it receives the Markdown copy without the generated TOML duplicate.
+      Gemini and Antigravity keep TOML generation unchanged.
+    - ``include_skills=False`` is the shared-route case for a harness that reads
+      ``~/.agents/skills`` itself. The manifest declaration is removed with the
+      directory, because a manifest naming a path that no longer exists is
+      worse than no declaration.
 
     Returns:
         (generated_command_count, synced_skill_count)
@@ -1362,14 +1382,75 @@ def _sync_gemini_extension_resources(
         _set_gemini_family_hook_cli(ext_dir, cli_name)
 
     commands_generated = 0
-    if _copy_tree(plugin_dir / "commands", ext_dir / "commands"):
+    if _copy_tree(plugin_dir / "commands", ext_dir / "commands") and cli_name != "qwen":
         commands_generated = _generate_gemini_toml_commands(ext_dir, ext_name)
 
+    skills_dir = ext_dir / "skills"
     skills_synced = 0
-    if _copy_tree(plugin_dir / "skills", ext_dir / "skills"):
-        skills_synced = _count_skill_dirs(ext_dir / "skills")
+    if include_skills:
+        if _copy_tree(plugin_dir / "skills", skills_dir):
+            skills_synced = _count_skill_dirs(skills_dir)
+    else:
+        if skills_dir.is_dir():
+            shutil.rmtree(skills_dir)
+        _drop_gemini_manifest_skills(ext_dir)
 
     return (commands_generated, skills_synced)
+
+
+def _publish_shared_skills_for_route(
+    plugin_dirs: Path | list[Path] | tuple[Path, ...],
+    *,
+    publish_shared: bool,
+) -> bool:
+    """Publish shared skills when the route calls for it; report keep-native.
+
+    Install order is publish, verify, then remove the other route. Returning
+    True means the caller must keep its native copy: either the route never
+    used the shared root, or a user-authored skill of the same name blocked
+    publication. Dropping the native copy in that second case would leave the
+    harness with no route to that skill at all.
+
+    Complexity: O(S) skills; delegates the copy to
+    :func:`_install_shared_agent_skills`.
+    """
+    if not publish_shared:
+        return True
+
+    installed, conflicts = _install_shared_agent_skills(plugin_dirs)
+    if installed:
+        shared_root = shared_agents_skills_dir()
+        print(
+            f"✓ Published {len(installed)} skill(s) to {shared_root}/: "
+            f"{', '.join(installed)}"
+        )
+    if conflicts:
+        print(
+            f"  Left untouched (user-authored, same name): {', '.join(conflicts)}"
+        )
+        print(
+            "  Keeping the harness-native skill copy so those skills stay "
+            "reachable. Rename or move one side, then re-run the install."
+        )
+    return bool(conflicts)
+
+
+def _drop_gemini_manifest_skills(ext_dir: Path) -> None:
+    """Remove the ``skills`` declaration from a staged extension manifest.
+
+    Only the plugin-owned copy inside the installed extension is touched; the
+    source manifest under the plugin tree is never rewritten.
+    """
+    manifest_path = ext_dir / "gemini-extension.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        logger.warning("Leaving %s unchanged: %s", manifest_path, exc)
+        return
+    if isinstance(manifest, dict) and manifest.pop("skills", None) is not None:
+        atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n")
 
 
 def _stage_antigravity_native_bundle(
@@ -1728,6 +1809,7 @@ def _install_for_gemini(
     marketplace_root: Path,
     plugins: list[str],
     force: bool = False,
+    skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
 ) -> tuple[bool, str]:
     """Install selected plugins for the legacy Gemini CLI.
 
@@ -1749,6 +1831,7 @@ def _install_for_gemini(
         display_name="Legacy Gemini CLI",
         config_dir=Path.home() / ".gemini",
         install_hint="npm install -g @google-labs/gemini-cli",
+        skill_placement=skill_placement,
     )
 
 
@@ -1756,6 +1839,7 @@ def _install_for_qwen(
     marketplace_root: Path,
     plugins: list[str],
     force: bool = False,
+    skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
 ) -> tuple[bool, str]:
     """Install selected plugins for Qwen Code.
 
@@ -1772,6 +1856,7 @@ def _install_for_qwen(
         display_name="Qwen Code",
         config_dir=Path.home() / ".qwen",
         install_hint="brew install qwen-code",
+        skill_placement=skill_placement,
     )
 
 
@@ -1785,9 +1870,22 @@ def _install_gemini_family_extensions(
     config_dir: Path,
     install_hint: str,
     hook_cli_name: str | None = None,
+    skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
 ) -> tuple[bool, str]:
-    """Install Gemini-compatible extensions into Gemini-family CLIs."""
+    """Install Gemini-compatible extensions into Gemini-family CLIs.
+
+    ``skill_placement`` is already resolved by install_plugins. A harness whose
+    platform does not declare shared-root discovery always keeps its native
+    copy, so an unknown or custom family member cannot lose its skills.
+    """
     hook_cli_name = hook_cli_name or cli_name
+    family_platform = PLATFORMS.get(cli_name)
+    if family_platform is None:
+        publish_shared, include_skills = (False, True)
+    else:
+        publish_shared, include_skills = resolve_skill_routes(
+            family_platform, skill_placement
+        )
     if not shutil.which(cli_name):
         msg = f"{cli_name} CLI not found. Install from: {install_hint}"
         print(msg)
@@ -1873,6 +1971,14 @@ def _install_gemini_family_extensions(
     print()
     print(f"Installing {len(plugins_to_install)} plugin(s) for {display_name}...")
 
+    # Publish the shared route before any native copy is dropped, and keep the
+    # native copy if publication was blocked by a user-authored skill.
+    if _publish_shared_skills_for_route(
+        [plugin_dir for plugin_dir, _src in plugins_to_install],
+        publish_shared=publish_shared,
+    ):
+        include_skills = True
+
     success_count = 0
     failed_plugins = []
 
@@ -1939,6 +2045,7 @@ def _install_gemini_family_extensions(
                     installed_dir,
                     ext_name,
                     hook_cli_name,
+                    include_skills=include_skills,
                 )
                 # Claim the extension directory so uninstall can remove exactly
                 # what this install produced, without matching on the name —
@@ -2167,6 +2274,14 @@ _CODEX_PLUGIN_MARKETPLACE_SETTING = ChoiceSetting(
     env_var="AUTORUN_CODEX_PLUGIN_MARKETPLACE",
     choices=_CODEX_PLUGIN_MARKETPLACE_CHOICES,
     default="personal",
+)
+
+_SKILL_PLACEMENT_SETTING = ChoiceSetting(
+    name="skill_placement",
+    env_var="AUTORUN_SKILL_PLACEMENT",
+    choices=_SKILL_PLACEMENT_CHOICES,
+    default=_SKILL_PLACEMENT_DEFAULT,
+    config_key="skill_placement",
 )
 
 
@@ -2539,6 +2654,7 @@ def _install_for_codex(
     codex_plugin_marketplace: str = "personal",
     codex_dir: Path | None = None,
     install_global_assets: bool = True,
+    skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
 ) -> tuple[bool, str]:
     """Install autorun for Codex with an explicit hook source mode.
 
@@ -2563,6 +2679,8 @@ def _install_for_codex(
         install_global_assets: If False, skip ~/.agents skills and Codex plugin
                                marketplace writes. Custom Codex-like harnesses
                                use this to stay scoped to their config dir.
+        skill_placement: auto, native, or both. Already resolved by
+                         install_plugins; see resolve_skill_routes().
 
     Returns:
         Tuple of (success: bool, message: str)
@@ -2608,14 +2726,21 @@ def _install_for_codex(
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
     agents_written = _install_codex_agents_md(plugin_dir, codex_dir)
-    if install_global_assets:
-        skills_installed, skills_skipped = _install_codex_skills(selected_plugin_dirs)
-    else:
-        skills_installed, skills_skipped = (0, 0)
+    publish_shared, package_native = resolve_skill_routes(CODEX, skill_placement)
+    # A custom Codex-like harness stays inside its own config dir, so it cannot
+    # use the shared root and must keep the plugin-packaged copy.
+    if not install_global_assets:
+        publish_shared, package_native = (False, True)
+
+    if _publish_shared_skills_for_route(
+        selected_plugin_dirs, publish_shared=publish_shared
+    ):
+        package_native = True
     if codex_plugin_marketplace == "personal" and install_global_assets:
         plugin_marketplace = _install_codex_plugin_marketplace(
             plugin_dir,
             include_hooks=_codex_uses_plugin_hooks(codex_hook_source),
+            include_skills=package_native,
             codex_hook_source=codex_hook_source,
         )
     elif codex_plugin_marketplace == "personal":
@@ -2640,10 +2765,8 @@ def _install_for_codex(
         print("✓ Codex plugin hooks packaged in autorun@personal")
     if agents_written:
         print(f"✓ Advisory safety guidance written to {codex_dir / 'AGENTS.md'}")
-    if skills_installed:
-        print(f"✓ Installed {skills_installed} selected plugin skill(s) at ~/.agents/skills/")
-    if skills_skipped:
-        print(f"  ({skills_skipped} user-authored skill(s) with matching names left untouched)")
+    # Shared skill publication (and any user-authored name it stepped around)
+    # is reported by _publish_shared_skills_for_route at the moment it happens.
     if plugin_marketplace.marketplace_ready:
         if codex_plugin_marketplace == "personal":
             print("✓ Codex plugin marketplace entry written to ~/.agents/plugins/marketplace.json")
@@ -2676,7 +2799,7 @@ def _collect_plugin_skill_sources(
     return skill_sources
 
 
-def _migrate_owned_codex_skill_names(
+def _migrate_owned_shared_skill_names(
     dst_root: Path,
     skill_sources: Mapping[str, Path],
 ) -> None:
@@ -2716,37 +2839,45 @@ def _migrate_owned_codex_skill_names(
                     raise
 
 
-def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> tuple[int, int]:
-    """Copy selected plugin skills into Codex's global skills directory.
+def _install_shared_agent_skills(
+    plugin_dirs: Path | list[Path] | tuple[Path, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Copy selected plugin skills into the shared ``~/.agents/skills`` root.
 
     Per https://developers.openai.com/codex/skills the user-level skills
     directory Codex scans is `$HOME/.agents/skills/` (NOT `~/.codex/skills/`,
-    which is unused). We copy each plugin skill dir into ~/.agents/skills/<name>/
-    and drop a `.autorun-owned` marker file so subsequent re-installs can
-    replace ours in place without ever clobbering a user-authored skill
-    that happens to share the same kebab-case name.
+    which is unused); other harnesses that document the same root read it too.
+    We copy each plugin skill dir into ~/.agents/skills/<name>/ and drop a
+    `.autorun-owned` marker file so subsequent re-installs can replace ours in
+    place without ever clobbering a user-authored skill that happens to share
+    the same kebab-case name.
 
     Returns:
-        (installed_count, skipped_count) — skipped counts user-authored
-        skills (no marker) that we deliberately left intact.
+        (installed_names, conflicting_names) — the second tuple holds
+        user-authored skills (no marker) deliberately left intact. Names, not
+        counts: "1 skill skipped" cannot tell the user which of their skills
+        needs attention, which is the only reason the message exists.
+
+    Complexity: O(S) skills, each an O(bytes) copytree; peak memory is one
+    file buffer, not one skill body.
     """
     if isinstance(plugin_dirs, Path):
         plugin_dirs = [plugin_dirs]
 
     skill_sources = _collect_plugin_skill_sources(plugin_dirs)
     if not skill_sources:
-        return (0, 0)
+        return ((), ())
 
     dst_root = shared_agents_skills_dir()
     dst_root.mkdir(parents=True, exist_ok=True)
 
-    installed = 0
-    skipped = 0
+    installed: list[str] = []
+    conflicts: list[str] = []
     for skill_src in skill_sources.values():
         skill_dst = dst_root / skill_src.name
         if skill_dst.exists() and read_owned_marker(skill_dst) is None:
             # User-authored skill with the same name — never touch it.
-            skipped += 1
+            conflicts.append(skill_src.name)
             continue
 
         # Locked per skill rather than once around the loop: the same lock file
@@ -2761,9 +2892,9 @@ def _install_codex_skills(plugin_dirs: Path | list[Path] | tuple[Path, ...]) -> 
             write_owned_marker(
                 staged, plugin=_plugin_registry_name(skill_src.parent.parent)
             )
-        installed += 1
-    _migrate_owned_codex_skill_names(dst_root, skill_sources)
-    return (installed, skipped)
+        installed.append(skill_src.name)
+    _migrate_owned_shared_skill_names(dst_root, skill_sources)
+    return (tuple(installed), tuple(conflicts))
 
 
 def _expand_home(value: str | Path) -> Path:
@@ -2848,6 +2979,256 @@ _AGENTS_SKILLS_SETTING = ChoiceSetting(
     default="none",
     config_key="claude_agents_skills",
 )
+
+def skill_placement_help() -> str:
+    """Return the one help string both parsers show for --skill-placement.
+
+    Two parsers declare this flag. Duplicating the prose lets them drift, and
+    the drift is invisible until a user compares two --help outputs.
+    """
+    modes = "|".join(_SKILL_PLACEMENT_CHOICES)
+    harnesses = ", ".join(sorted(PLATFORMS))
+    return (
+        f"Where installed skills are written. Give a bare mode ({modes}) to "
+        "apply it to every selected harness, and/or HARNESS=MODE to override "
+        "one harness; repeat the flag as needed, e.g. `--skill-placement "
+        "native --skill-placement codex=both`. Modes: auto (one route per "
+        "harness — shared ~/.agents/skills where the harness documents reading "
+        "it, otherwise that harness's native plugin/extension skills dir), "
+        "native (native route only, never shared), both (shared AND native "
+        "where the harness reads both — the only mode that can show one skill "
+        f"twice, after which the copies can drift). Harnesses: {harnesses}. "
+        "Default: auto. AUTORUN_SKILL_PLACEMENT (space- or comma-separated, "
+        "same grammar) and the skill_placement config key (a mode string, or a "
+        "mapping of harness to mode with an optional 'default' key) also set "
+        "this; the flag wins. Run --install-dry-run to print the resolved mode "
+        "and exact directories per harness."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPlacement:
+    """One install's skill layout decision for every harness it may touch.
+
+    An install writes several harnesses in one run, so a single mode cannot
+    express "shared for Codex, native for Gemini". ``by_harness`` holds the
+    explicit overrides and ``default`` covers everything else, which keeps the
+    zero-configuration form (one bare mode) unchanged.
+    """
+
+    default: str = "auto"
+    by_harness: Mapping[str, str] = field(default_factory=dict)
+    source: str = "default"
+
+    def for_harness(self, cli_name: str) -> str:
+        """Return the mode deciding one harness's routes. O(1)."""
+        return self.by_harness.get(cli_name, self.default)
+
+    def describe(self) -> str:
+        """Return a one-line human summary of the whole decision."""
+        overrides = ", ".join(
+            f"{name}={mode}" for name, mode in sorted(self.by_harness.items())
+        )
+        return f"{self.default} ({overrides})" if overrides else self.default
+
+
+def parse_skill_placement(
+    values: Iterable[str],
+    *,
+    default: str = _SKILL_PLACEMENT_DEFAULT,
+    source: str = "cli",
+) -> SkillPlacement:
+    """Parse ``MODE`` and ``HARNESS=MODE`` tokens into one placement decision.
+
+    Later tokens win over earlier ones for the same key, so a repeated flag
+    behaves the way users expect from every other repeatable option.
+
+    Raises ``ValueError`` naming the valid harnesses or modes. Silently
+    dropping an unrecognized token would install a layout the caller did not
+    ask for and give no signal that the override was ignored.
+
+    Complexity: O(V) time for V tokens; O(H) memory for H overridden harnesses.
+    """
+    resolved_default = default
+    by_harness: dict[str, str] = {}
+    for raw in values:
+        token = raw.strip().lower()
+        if not token:
+            continue
+        harness, sep, mode = token.partition("=")
+        if not sep:
+            harness, mode = "", token
+        if mode not in _SKILL_PLACEMENT_CHOICES:
+            raise ValueError(
+                f"unknown skill placement mode {mode!r} in {raw!r}; "
+                f"expected one of {', '.join(_SKILL_PLACEMENT_CHOICES)}"
+            )
+        if not harness:
+            resolved_default = mode
+            continue
+        if harness not in PLATFORMS:
+            raise ValueError(
+                f"unknown harness {harness!r} in {raw!r}; "
+                f"expected one of {', '.join(sorted(PLATFORMS))}"
+            )
+        by_harness[harness] = mode
+    return SkillPlacement(
+        default=resolved_default, by_harness=by_harness, source=source
+    )
+
+
+def skill_placement_token(value: str) -> str:
+    """Validate one ``--skill-placement`` token at parse time.
+
+    argparse ``choices=`` cannot express ``MODE|HARNESS=MODE``, so validation
+    lives here instead. Rejecting at parse time — before any banner or probe
+    runs — is what keeps a typo from looking like a slow-failing install.
+    """
+    try:
+        parse_skill_placement([value])
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return value
+
+
+def _split_placement_tokens(raw: str) -> list[str]:
+    """Split one env/config string on commas or whitespace."""
+    return [token for token in re.split(r"[,\s]+", raw) if token]
+
+
+def resolve_skill_placement(
+    *,
+    cli_values: Iterable[str] | str | None = None,
+    env: Mapping[str, str] | None = None,
+    config: Mapping[str, object] | None = None,
+) -> SkillPlacement:
+    """Resolve the placement decision using CLI > env > config > default.
+
+    Same precedence and the same ``None``-means-unspecified convention as
+    :func:`resolve_choice_setting`. The CLI tier raises on a bad token because
+    the user is present to fix it; the env and config tiers fall open to the
+    next tier, because a stale export must not abort an install
+    (``plugins/autorun/CLAUDE.md`` lesson 7).
+
+    Complexity: O(V) for V tokens at the winning tier.
+    """
+    env = os.environ if env is None else env
+    config = {} if config is None else config
+
+    if cli_values is not None:
+        tokens = [cli_values] if isinstance(cli_values, str) else list(cli_values)
+        if tokens:
+            return parse_skill_placement(tokens, source="cli")
+
+    raw_env = env.get(_SKILL_PLACEMENT_SETTING.env_var)
+    if isinstance(raw_env, str) and raw_env.strip():
+        try:
+            return parse_skill_placement(
+                _split_placement_tokens(raw_env),
+                source=f"env {_SKILL_PLACEMENT_SETTING.env_var}",
+            )
+        except ValueError as exc:
+            logger.warning("Ignoring %s: %s", _SKILL_PLACEMENT_SETTING.env_var, exc)
+
+    raw_config = config.get(_SKILL_PLACEMENT_SETTING.config_key)
+    tokens: list[str] = []
+    if isinstance(raw_config, str):
+        tokens = _split_placement_tokens(raw_config)
+    elif isinstance(raw_config, Mapping):
+        tokens = [
+            str(value) if key == "default" else f"{key}={value}"
+            for key, value in raw_config.items()
+        ]
+    if tokens:
+        try:
+            return parse_skill_placement(tokens, source="config")
+        except ValueError as exc:
+            logger.warning(
+                "Ignoring config key %s: %s", _SKILL_PLACEMENT_SETTING.config_key, exc
+            )
+
+    return SkillPlacement(default=_SKILL_PLACEMENT_DEFAULT, source="default")
+
+
+def resolve_skill_routes(platform: Platform, placement: str) -> tuple[bool, bool]:
+    """Return ``(publish_shared, publish_native)`` for one harness.
+
+    One skill should reach a harness through one route, so ``auto`` returns
+    exactly one True: the shared ``~/.agents/skills`` root when the harness
+    documents reading it, otherwise that harness's native packaging. ``native``
+    never publishes shared. ``both`` adds the shared copy only where shared
+    loading exists, which is why it is the only mode that can produce two
+    visible copies of one skill.
+
+    ``placement`` is validated here rather than coerced: this is the last owner
+    of the value before directories are written, and a silent fallback would
+    install a layout the user did not ask for.
+
+    Complexity: O(1) time and memory.
+    """
+    if placement not in _SKILL_PLACEMENT_CHOICES:
+        raise ValueError(
+            f"unknown skill placement {placement!r}; "
+            f"expected one of {', '.join(_SKILL_PLACEMENT_CHOICES)}"
+        )
+    shared = platform.loads_shared_agents_skills and placement in {"auto", "both"}
+    native = placement in {"native", "both"} or not platform.loads_shared_agents_skills
+    return (shared, native)
+
+
+def platform_skill_destinations(platform: Platform) -> tuple[Path, ...]:
+    """Return every directory this harness's native skill route can write.
+
+    A harness may declare both a config-dir skills root and an extensions root.
+    Reporting only the first — the shape an ``or`` produces — hides a real
+    destination from anyone auditing a dry run.
+
+    Complexity: O(1); at most one entry per declared root.
+    """
+    roots = (platform_skills_dir(platform), platform_extensions_dir(platform))
+    return tuple(root for root in roots if root is not None)
+
+
+def describe_skill_routes(
+    placement: SkillPlacement | str,
+    cli_names: Iterable[str],
+    *,
+    platforms: Mapping[str, Platform] | None = None,
+) -> list[str]:
+    """Return one ``harness -> mode -> exact paths`` line per named harness.
+
+    A mode name on its own does not tell a user which directory an install will
+    write, which is the question `auto` exists to answer. Unknown names are
+    reported rather than dropped so a typo in a target list stays visible.
+
+    Complexity: O(H) time and O(H) output for H named harnesses.
+    """
+    if isinstance(placement, str):
+        placement = SkillPlacement(default=placement)
+    registry = PLATFORMS if platforms is None else platforms
+
+    lines: list[str] = []
+    for name in cli_names:
+        platform = registry.get(name)
+        if platform is None:
+            lines.append(f"{name}: unknown harness, no skill route")
+            continue
+        mode = placement.for_harness(name)
+        shared, native = resolve_skill_routes(platform, mode)
+        routes: list[str] = []
+        if shared:
+            routes.append(f"shared {shared_agents_skills_dir()}")
+        if native:
+            destinations = platform_skill_destinations(platform)
+            routes.extend(f"native {path}" for path in destinations)
+            if not destinations:
+                routes.append("native (harness plugin package)")
+        suffix = ""
+        if shared and native:
+            suffix = "  [duplicate exposure: two copies of each skill can drift apart]"
+        routes_text = " AND ".join(routes) if routes else "no skill route"
+        lines.append(f"{name}: {mode} -> {routes_text}{suffix}")
+    return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -3070,9 +3451,10 @@ def _copy_codex_plugin_source(
     target: Path,
     *,
     include_hooks: bool = False,
+    include_skills: bool = True,
     codex_hook_source: str = "user",
 ) -> None:
-    """Copy the Codex plugin source with selected hook packaging.
+    """Copy the Codex plugin source with selected hook and skill packaging.
 
     Codex's local plugin cache copier copies regular files and directories but
     ignores symbolic links. Autorun keeps a few cross-harness skill entrypoints
@@ -3083,24 +3465,38 @@ def _copy_codex_plugin_source(
     Codex loads plugin-bundled `hooks/hooks.json` alongside user hooks, so
     plugin hooks are generated only when explicitly selected and always use a
     Codex-specific command with `--cli codex`.
+
+    ``include_skills=False`` is the shared-route case: Codex already reads
+    ``~/.agents/skills``, so packaging the same skills again would show each one
+    twice and let the two copies drift. The manifest key is dropped alongside
+    the directory — leaving it would point Codex at a path that no longer
+    exists. Commands are a separate surface and are never affected.
     """
-    shutil.copytree(
-        plugin_dir,
-        target,
-        ignore=shutil.ignore_patterns(
-            ".git",
-            ".venv",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            "__pycache__",
-            "*.pyc",
-            "*.pyo",
-            ".coverage",
-            "htmlcov",
-            "hooks",
-        ),
-    )
+    ignored = [
+        ".git",
+        ".venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "*.pyc",
+        "*.pyo",
+        ".coverage",
+        "htmlcov",
+        "hooks",
+    ]
+    if not include_skills:
+        ignored.append("skills")
+    shutil.copytree(plugin_dir, target, ignore=shutil.ignore_patterns(*ignored))
+
+    if not include_skills:
+        manifest_path = target / ".codex-plugin" / "plugin.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.pop("skills", None) is not None:
+                atomic_write_text(
+                    manifest_path, json.dumps(manifest, indent=2) + "\n"
+                )
     if include_hooks:
         _write_codex_plugin_hooks(plugin_dir, target)
     write_owned_marker(
@@ -3114,6 +3510,7 @@ def _ensure_codex_plugin_source(
     plugin_dir: Path,
     *,
     include_hooks: bool = False,
+    include_skills: bool = True,
     codex_hook_source: str = "user",
 ) -> tuple[bool, str]:
     """Materialize ~/plugins/autorun for Codex's implicit home marketplace.
@@ -3152,6 +3549,7 @@ def _ensure_codex_plugin_source(
                 plugin_dir,
                 staged,
                 include_hooks=include_hooks,
+                include_skills=include_skills,
                 codex_hook_source=codex_hook_source,
             )
     except StagedReplacementRefused as refusal:
@@ -3225,6 +3623,7 @@ def _install_codex_plugin_marketplace(
     plugin_dir: Path,
     *,
     include_hooks: bool = False,
+    include_skills: bool = True,
     codex_hook_source: str = "user",
 ) -> CodexPluginMarketplaceInstall:
     """Publish autorun as a Codex plugin in the home marketplace.
@@ -3232,10 +3631,14 @@ def _install_codex_plugin_marketplace(
     By default the plugin package exists for Codex-native skill discovery,
     install surfaces, and future MCP/app packaging. When the caller selects
     plugin hooks, this also packages Codex-specific lifecycle hooks.
+
+    ``include_skills=False`` means the shared ``~/.agents/skills`` root already
+    carries the skills; the plugin still ships commands, hooks, and manifest.
     """
     source_ready, source_message = _ensure_codex_plugin_source(
         plugin_dir,
         include_hooks=include_hooks,
+        include_skills=include_skills,
         codex_hook_source=codex_hook_source,
     )
     if not source_ready:
@@ -4058,6 +4461,7 @@ def install_plugins(
     codex_hook_source: str | None = None,
     codex_plugin_marketplace: str | None = None,
     claude_agents_skills: str | None = None,
+    skill_placement: str | None = None,
     custom_harnesses: list[str] | tuple[str, ...] = (),
     dry_run: bool = False,
 ) -> int:
@@ -4075,6 +4479,9 @@ def install_plugins(
         conductor: Install Conductor extension for Gemini (default: True)
         codex_hook_source: Codex hook source: user, plugin, both, or none
         codex_plugin_marketplace: Codex plugin marketplace mode: personal or github
+        skill_placement: Skill destination route: auto, native, or both.
+            None means unspecified, which lets AUTORUN_SKILL_PLACEMENT and the
+            skill_placement config key apply. See skill_placement_help().
         custom_harnesses: Custom harness specs in
             name=flavor:binary:config_dir[::display] form.
         dry_run: Preview install targets without writing files or running
@@ -4146,6 +4553,11 @@ def install_plugins(
     claude_agents_skills = resolve_choice_setting(
         _AGENTS_SKILLS_SETTING, cli_value=claude_agents_skills, config=_CONFIG
     ).value
+    try:
+        placement = resolve_skill_placement(cli_values=skill_placement, config=_CONFIG)
+    except ValueError as e:
+        print(f"Error: --skill-placement: {e}")
+        return 1
     try:
         custom_targets = [parse_custom_harness_spec(spec) for spec in custom_harnesses]
     except ValueError as e:
@@ -4221,6 +4633,9 @@ def install_plugins(
     if dry_run:
         print("DRY RUN: install preview only")
         print(f"  Plugins: {', '.join(plugins)}")
+        print(f"  Skill placement: {placement.describe()} (from {placement.source})")
+        for line in describe_skill_routes(placement, target_clis):
+            print(f"    {line}")
         if target_clis:
             print(f"  Detected platform targets: {', '.join(target_clis)}")
         if custom_targets:
@@ -4408,7 +4823,12 @@ def install_plugins(
 
     # Install for Gemini CLI
     if "gemini" in target_clis:
-        gemini_success, gemini_msg = _install_for_gemini(marketplace_root, plugins, force)
+        gemini_success, gemini_msg = _install_for_gemini(
+            marketplace_root,
+            plugins,
+            force,
+            skill_placement=placement.for_harness("gemini"),
+        )
         all_succeeded = all_succeeded and gemini_success
 
         # Install Conductor if requested and Gemini install succeeded
@@ -4424,7 +4844,12 @@ def install_plugins(
         all_succeeded = all_succeeded and antigravity_success
 
     if "qwen" in target_clis:
-        qwen_success, qwen_msg = _install_for_qwen(marketplace_root, plugins, force)
+        qwen_success, qwen_msg = _install_for_qwen(
+            marketplace_root,
+            plugins,
+            force,
+            skill_placement=placement.for_harness("qwen"),
+        )
         if not qwen_success:
             print(f"   Qwen Code install failed: {qwen_msg}")
         all_succeeded = all_succeeded and qwen_success
@@ -4469,6 +4894,7 @@ def install_plugins(
             force,
             codex_hook_source=codex_hook_source,
             codex_plugin_marketplace=codex_plugin_marketplace,
+            skill_placement=placement.for_harness(CODEX.name),
         )
         all_succeeded = all_succeeded and codex_success
         if codex_success:
@@ -4748,7 +5174,7 @@ def _uninstall_harness_extensions(plugins: list[str] | None) -> None:
 def _uninstall_shared_agents_skills(plugins: list[str] | None) -> None:
     """Remove plugin skills autorun copied into the shared agents directory.
 
-    The counterpart of :func:`_install_codex_skills`. Those copies carry an
+    The counterpart of :func:`_install_shared_agent_skills`. Those copies carry an
     ownership marker naming the plugin they shipped with, so a partial
     uninstall removes one plugin's skills and a user-authored skill of the same
     name is left alone.
@@ -5131,9 +5557,17 @@ def _health_duplicate_skills() -> list[HealthFinding]:
                         f"{agents_skills}. {platform.display_name} deduplicates "
                         "by resolved path, so it is listed twice."
                     ),
+                    # This check sees two paths; it cannot see which one the
+                    # user wrote. Telling them to delete "whichever copy is
+                    # stale" asks for a guess whose wrong answer destroys their
+                    # own skill, so it points at the command that shows the
+                    # intended route and its ownership instead.
                     remedy=(
-                        f"Delete whichever copy is stale, then link the survivor: "
-                        f"ln -s {agents_skills / entry.name} {entry}"
+                        "Run `autorun --install-dry-run --skill-placement auto` "
+                        "to see the intended route for this harness, then re-run "
+                        "the install to republish autorun-owned copies. If "
+                        f"{entry} is yours, move or rename it first — autorun "
+                        "never replaces a copy it does not own."
                     ),
                 )
             )
@@ -5835,6 +6269,15 @@ def _create_install_module_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--skill-placement",
+        action="append",
+        type=skill_placement_token,
+        # None, not [], so the env var can still win; see --codex-hook-source.
+        default=None,
+        metavar="MODE|HARNESS=MODE",
+        help=skill_placement_help(),
+    )
+    parser.add_argument(
         "--codex-hook-source",
         choices=_CODEX_HOOK_SOURCE_CHOICES,
         # None, not "user": an argparse-supplied default is indistinguishable
@@ -5899,6 +6342,7 @@ def _install_module_main(argv: list[str] | None = None) -> int:
         "codex_hook_source": args.codex_hook_source,
         "codex_plugin_marketplace": args.codex_plugin_marketplace,
         "claude_agents_skills": args.claude_agents_skills,
+        "skill_placement": args.skill_placement,
     }
     if args.install_dry_run:
         install_kwargs["dry_run"] = True

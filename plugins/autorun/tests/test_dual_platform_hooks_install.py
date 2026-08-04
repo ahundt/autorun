@@ -1339,6 +1339,72 @@ class TestGeminiExtensionResourceSync:
         assert not (ext_dir / "commands" / "__pycache__").exists()
         assert not (ext_dir / "skills" / "cache" / "__pycache__").exists()
 
+    # The Gemini family shares one staging function but not one native contract.
+    # Qwen documents Markdown commands as preferred and TOML as deprecated
+    # (https://qwenlm.github.io/qwen-code-docs/en/users/features/commands/), and
+    # Gemini's own discovery tiers already include ~/.agents/skills
+    # (https://geminicli.com/docs/cli/using-agent-skills/), so the extension
+    # copy is a duplicate rather than the only route. Antigravity changes in
+    # neither respect.
+    @pytest.mark.parametrize(
+        ("cli_name", "include_skills", "toml_expected", "skills_expected"),
+        [
+            ("gemini", False, True, False),
+            ("qwen", True, False, True),
+            ("antigravity", True, True, True),
+        ],
+    )
+    def test_family_resources_match_each_native_contract(
+        self, tmp_path, cli_name, include_skills, toml_expected, skills_expected
+    ):
+        import autorun.install as install_mod
+
+        plugin_dir = self._make_plugin(tmp_path)
+        ext_dir = tmp_path / cli_name / "extensions" / "ar"
+        ext_dir.mkdir(parents=True)
+
+        install_mod._sync_gemini_extension_resources(
+            plugin_dir, ext_dir, "ar", cli_name, include_skills=include_skills
+        )
+
+        # Markdown commands are the shared surface and survive every variant.
+        assert (ext_dir / "commands" / "status.md").is_file()
+        assert (ext_dir / "commands" / "ar" / "status.toml").exists() is toml_expected
+        assert (ext_dir / "skills" / "cache" / "SKILL.md").exists() is skills_expected
+
+    def test_dropping_skills_also_drops_the_manifest_entry(self, tmp_path):
+        """A manifest still naming ./skills after the directory is gone points
+        the harness at a path that does not exist."""
+        import json
+
+        import autorun.install as install_mod
+
+        plugin_dir = self._make_plugin(tmp_path)
+        (plugin_dir / "gemini-extension.json").write_text(
+            json.dumps({"name": "ar", "commands": "./commands", "skills": "./skills"}),
+            encoding="utf-8",
+        )
+        ext_dir = tmp_path / ".gemini" / "extensions" / "ar"
+        ext_dir.mkdir(parents=True)
+
+        # Seed a previous install's native copy plus its manifest declaration.
+        install_mod._sync_gemini_extension_resources(plugin_dir, ext_dir, "ar", "gemini")
+        assert (ext_dir / "skills" / "cache" / "SKILL.md").is_file()
+        seeded = json.loads(
+            (ext_dir / "gemini-extension.json").read_text(encoding="utf-8")
+        )
+        assert seeded["skills"] == "./skills"
+
+        install_mod._sync_gemini_extension_resources(
+            plugin_dir, ext_dir, "ar", "gemini", include_skills=False
+        )
+
+        assert not (ext_dir / "skills").exists()
+        manifest = json.loads(
+            (ext_dir / "gemini-extension.json").read_text(encoding="utf-8")
+        )
+        assert "skills" not in manifest
+
 
 class TestClaudeCachePathSubstitution:
     """Regression coverage for local Claude marketplace cache path substitution."""
@@ -1427,3 +1493,66 @@ class TestClaudeCachePathSubstitution:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestGeminiFamilySharedSkillRoute:
+    """`auto` removes Gemini's extension skill copy because Gemini also reads
+    ~/.agents/skills. Removing the only copy the user has, without publishing
+    the shared one first, would leave that harness with no skills at all."""
+
+    def _plugin(self, root: Path) -> Path:
+        plugin_dir = root / "plugins" / "autorun"
+        (plugin_dir / "skills" / "cache").mkdir(parents=True)
+        (plugin_dir / "skills" / "cache" / "SKILL.md").write_text(
+            "---\nname: cache\ndescription: d\n---\n", encoding="utf-8"
+        )
+        return plugin_dir
+
+    def test_shared_route_publishes_before_the_native_copy_is_dropped(
+        self, tmp_path, monkeypatch
+    ):
+        import autorun.install as install_mod
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        plugin_dir = self._plugin(tmp_path)
+        ext_dir = tmp_path / ".gemini" / "extensions" / "ar"
+        ext_dir.mkdir(parents=True)
+
+        install_mod._publish_shared_skills_for_route(plugin_dir, publish_shared=True)
+        install_mod._sync_gemini_extension_resources(
+            plugin_dir, ext_dir, "ar", "gemini", include_skills=False
+        )
+
+        assert (tmp_path / ".agents" / "skills" / "cache" / "SKILL.md").is_file()
+        assert not (ext_dir / "skills").exists()
+
+    def test_blocked_shared_publication_keeps_the_native_copy(
+        self, tmp_path, monkeypatch
+    ):
+        import autorun.install as install_mod
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        plugin_dir = self._plugin(tmp_path)
+        unowned = tmp_path / ".agents" / "skills" / "cache"
+        unowned.mkdir(parents=True)
+        (unowned / "SKILL.md").write_text("USER AUTHORED\n", encoding="utf-8")
+
+        keep_native = install_mod._publish_shared_skills_for_route(
+            plugin_dir, publish_shared=True
+        )
+
+        assert keep_native is True
+        assert (unowned / "SKILL.md").read_text(encoding="utf-8") == "USER AUTHORED\n"
+
+    def test_native_route_publishes_nothing_shared(self, tmp_path, monkeypatch):
+        import autorun.install as install_mod
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        plugin_dir = self._plugin(tmp_path)
+
+        keep_native = install_mod._publish_shared_skills_for_route(
+            plugin_dir, publish_shared=False
+        )
+
+        assert keep_native is True
+        assert not (tmp_path / ".agents" / "skills" / "cache").exists()

@@ -479,6 +479,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
 
     def test_install_module_main_codex_hook_source_routes_to_install_plugins(self):
@@ -501,6 +502,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source="plugin",
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
 
     def test_install_module_main_custom_harness_routes_to_install_plugins(self):
@@ -524,6 +526,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
             custom_harnesses=[spec],
         )
 
@@ -547,6 +550,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
             dry_run=True,
         )
 
@@ -632,6 +636,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace="github", claude_agents_skills=None,
+            skill_placement=None,
         )
 
     def test_install_module_main_antigravity_force_routes_to_install_plugins(self):
@@ -654,6 +659,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
 
     def test_install_module_main_qwen_force_routes_to_install_plugins(self):
@@ -676,6 +682,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
 
     def test_install_main_legacy_codex_force_routes_to_install_plugins(self):
@@ -706,6 +713,7 @@ class TestInstallMainAdapter:
             conductor=True,
             codex_hook_source=None,
             codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
 
 
@@ -1506,7 +1514,7 @@ class TestCustomHarnessInstall:
 
         synced = []
 
-        def fake_sync(plugin, ext, ext_name, cli_name="gemini"):
+        def fake_sync(plugin, ext, ext_name, cli_name="gemini", *, include_skills=True):
             synced.append((plugin.resolve(), ext, ext_name, cli_name))
             return (0, 0)
 
@@ -1567,7 +1575,7 @@ class TestCustomHarnessInstall:
         def global_asset_called(*_args, **_kwargs):
             raise AssertionError("custom Codex install must not touch global assets")
 
-        monkeypatch.setattr(install, "_install_codex_skills", global_asset_called)
+        monkeypatch.setattr(install, "_install_shared_agent_skills", global_asset_called)
         monkeypatch.setattr(install, "_install_codex_plugin_marketplace", global_asset_called)
 
         ok, message = install._install_for_codex(
@@ -1610,7 +1618,9 @@ class TestCustomHarnessInstall:
         )
         custom_codex = tmp_path / "custom-codex"
 
-        monkeypatch.setattr(install, "_install_codex_skills", lambda *_args, **_kwargs: (0, 0))
+        monkeypatch.setattr(
+            install, "_install_shared_agent_skills", lambda *_args, **_kwargs: ((), ())
+        )
         monkeypatch.setattr(
             install,
             "_install_codex_plugin_marketplace",

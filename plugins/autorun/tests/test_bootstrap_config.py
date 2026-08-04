@@ -481,6 +481,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -499,6 +500,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -517,6 +519,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -535,6 +538,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -553,6 +557,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source="plugin", codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -571,6 +576,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace="github", claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -590,6 +596,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
             custom_harnesses=[spec],
         )
         assert result == 0
@@ -609,6 +616,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
             dry_run=True,
         )
         assert result == 0
@@ -640,6 +648,7 @@ class TestMainFunctionRouting:
             antigravity_only=False,
             qwen_only=True,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 
@@ -658,6 +667,7 @@ class TestMainFunctionRouting:
             antigravity_only=True,
             qwen_only=False,
             conductor=True, codex_hook_source=None, codex_plugin_marketplace=None, claude_agents_skills=None,
+            skill_placement=None,
         )
         assert result == 0
 

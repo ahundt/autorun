@@ -592,3 +592,50 @@ def test_core_aliases_derived_from_platforms():
     expected_g2i = dict(PLATFORMS["gemini"].harness_cli_to_autorun_events)
     for k, v in expected_g2i.items():
         assert core_mod.GEMINI_EVENT_MAP.get(k) == v
+
+
+# ─── Skill placement routing (one route per harness) ─────────────────────────
+#
+# One Autorun skill must reach a harness through exactly one default route.
+# The capability bit is factual platform data ("does this harness document
+# discovery of ~/.agents/skills?"); the mode is user configuration. Keeping
+# them apart is what lets `auto` be decided per harness instead of guessed.
+
+
+def test_shared_agents_skills_capability_is_declared_per_platform():
+    """Only harnesses whose own docs describe ~/.agents/skills may claim it."""
+    claiming = {p.name for p in PLATFORMS.values() if p.loads_shared_agents_skills}
+
+    # Codex: https://learn.chatgpt.com/docs/build-skills
+    # Legacy Gemini: https://geminicli.com/docs/cli/using-agent-skills/
+    assert claiming == {"codex", "gemini"}
+
+
+def test_skill_placement_routes_cover_every_platform_and_mode():
+    """Route matrix: `auto` yields exactly one route for every registered
+    platform; `native` never publishes shared; `both` duplicates only where
+    shared loading actually exists."""
+    from autorun.install import resolve_skill_routes
+
+    for platform in PLATFORMS.values():
+        shared_auto, native_auto = resolve_skill_routes(platform, "auto")
+        assert shared_auto != native_auto, (
+            f"{platform.name}: auto must resolve to exactly one route"
+        )
+        assert shared_auto is platform.loads_shared_agents_skills
+
+        shared_native, native_native = resolve_skill_routes(platform, "native")
+        assert (shared_native, native_native) == (False, True)
+
+        shared_both, native_both = resolve_skill_routes(platform, "both")
+        assert native_both is True
+        assert shared_both is platform.loads_shared_agents_skills
+
+
+def test_skill_placement_rejects_an_unvalidated_mode():
+    """The resolver is the last owner of the value; a typo must not silently
+    resolve to a route."""
+    from autorun.install import resolve_skill_routes
+
+    with pytest.raises(ValueError, match="skill placement"):
+        resolve_skill_routes(PLATFORMS["codex"], "shared")

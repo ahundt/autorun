@@ -3,7 +3,7 @@
 Three installers carried byte-identical copies of this dance — take a lock,
 stage into a sibling temp dir, move the old target aside, rename the new one in,
 restore the backup if the rename fails: `_install_antigravity_cli_bundle`,
-`_install_codex_skills` and `_ensure_codex_plugin_source`. They differed only in
+`_install_shared_agent_skills` and `_ensure_codex_plugin_source`. They differed only in
 what they staged. A fourth copy was about to be written for the skills bridge.
 
 Expressing it as a context manager makes the guarantees the caller's to rely on

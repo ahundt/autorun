@@ -218,6 +218,39 @@ autorun --install --codex --codex-plugin-marketplace github
 
 Codex may intercept unknown slash commands before hooks see them, so use `ar:*` or `ar <command>` forms in Codex, such as `ar:st` or `ar:ok git push`. Autorun skills use Codex's native skill surfaces: run `/skills`, mention the skill as `$mermaid-diagrams`, or select the installed `@autorun` plugin. Codex does not turn arbitrary skills into slash commands such as `/mermaid`.
 
+#### Choosing where skills are installed
+
+An install writes several harnesses at once, and each one should end up with a
+skill by exactly one route. `--skill-placement` decides that route:
+
+```bash
+autorun --install                                     # auto (default)
+autorun --install --skill-placement native            # never use ~/.agents/skills
+autorun --install --skill-placement both              # shared AND native where supported
+autorun --install --skill-placement native --skill-placement codex=both
+```
+
+| Mode | Effect |
+|---|---|
+| `auto` | One route per harness: the shared `~/.agents/skills` root for harnesses whose docs describe reading it (Codex, legacy Gemini), otherwise that harness's native plugin/extension skills directory. |
+| `native` | Native route only. Nothing is written to the shared root. |
+| `both` | Shared **and** native where the harness reads both. The only mode that can list one skill twice, after which the two copies can drift apart. |
+
+A bare mode applies to every selected harness; `HARNESS=MODE` overrides one, and
+the flag repeats. Valid harness names are `claude`, `codex`, `gemini`, `qwen`,
+`antigravity`, and `forgecode`. An unknown harness or mode is rejected at parse
+time with the list of valid names.
+
+`AUTORUN_SKILL_PLACEMENT` accepts the same grammar, space- or comma-separated
+(`AUTORUN_SKILL_PLACEMENT="native codex=both"`), and the `skill_placement`
+config key accepts either a mode string or a mapping of harness to mode with an
+optional `default` key. Precedence is flag > environment > config > `auto`. A
+bad value in the environment or config is ignored rather than aborting the
+install; a bad flag value fails immediately.
+
+Run `autorun --install-dry-run` to print the resolved mode, where it came from,
+and the exact directories each harness would receive, before anything is written.
+
 #### Sharing skills with Claude Code
 
 Codex, OpenCode, Command Code and Gemini CLI all scan `~/.agents/skills/`, the cross-tool shared location. Claude Code does not — it reads `~/.claude/skills/` only. A skill authored in the shared directory is therefore invisible to Claude Code until it is bridged:
@@ -1042,7 +1075,8 @@ The optional display name follows the unambiguous `::` separator, so a
 
 Accepted option values: `--codex-hook-source: user|plugin|both|none`;
 `--codex-plugin-marketplace: personal|github`;
-`--claude-agents-skills: link|copy|none`.
+`--claude-agents-skills: link|copy|none`;
+`--skill-placement: auto|native|both` or `HARNESS=auto|native|both`, repeatable.
 
 **Maintenance:**
 

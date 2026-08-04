@@ -575,6 +575,12 @@ class Platform:
     memory_filename: str = ""
     # Template path relative to the plugin's src/autorun/ directory.
     memory_template: str = ""
+    # True only when the harness's own documentation describes direct discovery
+    # of the shared ~/.agents/skills root. This is factual capability data, not
+    # a preference: install.resolve_skill_routes() turns it plus the user's
+    # --skill-placement value into one route per harness, so a harness that
+    # cannot read the shared root never has `auto` point there.
+    loads_shared_agents_skills: bool = False
     # Subdirectory of config_dir this harness scans for skills. Empty means the
     # harness has no config-dir-local skills directory — Codex reads the shared
     # ~/.agents/skills instead, which is configuration, not platform data.
@@ -791,6 +797,10 @@ GEMINI = register(
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_gemini",
+        # https://geminicli.com/docs/cli/using-agent-skills/ — Gemini's
+        # discovery tiers include the shared ~/.agents/skills root, so the
+        # extension copy is a duplicate rather than the only route.
+        loads_shared_agents_skills=True,
         list_cmd=("gemini", "extensions", "list"),
         extensions_subdir="extensions",
         uninstall_cmd=("gemini", "extensions", "uninstall", "{name}"),
@@ -950,6 +960,9 @@ CODEX = register(
         install_fn_name="_install_for_codex",
         memory_filename="AGENTS.md",
         memory_template="codex_template/AGENTS.md",
+        # https://learn.chatgpt.com/docs/build-skills — Codex scans the shared
+        # $HOME/.agents/skills root directly, so it needs no second copy.
+        loads_shared_agents_skills=True,
         # Predates the shared installer; keep the slug so uninstall still finds
         # blocks written by earlier autorun versions.
         memory_sentinel_slug="codex-agents-md",

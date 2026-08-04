@@ -35,7 +35,7 @@ from autorun.install import (
     _install_for_antigravity,
     _install_for_qwen,
     _install_codex_plugin_with_cli,
-    _install_codex_skills,
+    _install_shared_agent_skills,
     _install_for_codex,
     _render_uv_hook_command,
     probe_hook_python_architecture,
@@ -1035,7 +1035,7 @@ def test_codex_skill_upgrade_restores_previous_copy_on_replace_failure(tmp_path,
     monkeypatch.setattr("autorun.install.os.replace", fail_new_install)
 
     with pytest.raises(OSError, match="injected skill replacement failure"):
-        _install_codex_skills(plugin_dir)
+        _install_shared_agent_skills(plugin_dir)
 
     assert (installed / "version.txt").read_text(encoding="utf-8") == "previous\n"
     assert (installed / ".autorun-owned").is_file()
@@ -1113,7 +1113,7 @@ def test_install_for_codex_migrates_autorun_owned_renamed_skill(tmp_path, monkey
         encoding="utf-8",
     )
 
-    _install_codex_skills(fake_marketplace / "plugins" / "autorun")
+    _install_shared_agent_skills(fake_marketplace / "plugins" / "autorun")
 
     assert not old_skill.exists()
     new_skill = tmp_path / ".agents" / "skills" / "ai-skill-builder"
@@ -1130,7 +1130,7 @@ def test_install_for_codex_preserves_user_owned_old_skill_name(tmp_path, monkeyp
     old_skill_md = old_skill / "SKILL.md"
     old_skill_md.write_text("USER OWNED OLD NAME\n", encoding="utf-8")
 
-    _install_codex_skills(fake_marketplace / "plugins" / "autorun")
+    _install_shared_agent_skills(fake_marketplace / "plugins" / "autorun")
 
     assert old_skill_md.read_text(encoding="utf-8") == "USER OWNED OLD NAME\n"
     assert (tmp_path / ".agents" / "skills" / "ai-skill-builder" / "SKILL.md").is_file()
@@ -1196,7 +1196,12 @@ def test_install_for_codex_creates_personal_plugin_marketplace(tmp_path, monkeyp
     plugin_source = tmp_path / "plugins" / "autorun"
     assert plugin_source.exists()
     assert (plugin_source / ".codex-plugin" / "plugin.json").is_file()
-    assert (plugin_source / "skills" / "cache" / "SKILL.md").is_file()
+    # Default placement is `auto`, and Codex reads ~/.agents/skills directly, so
+    # the plugin deliberately ships no second copy. See
+    # test_codex_native_placement_stages_plugin_skills_and_skips_the_shared_root
+    # for the mode that does package them.
+    assert not (plugin_source / "skills").exists()
+    assert (tmp_path / ".agents" / "skills" / "cache" / "SKILL.md").is_file()
     assert not (plugin_source / "hooks" / "hooks.json").exists(), (
         "Codex plugin packaging must not copy hooks/hooks.json. Codex loads "
         "plugin-bundled hooks alongside ~/.codex/hooks.json, so copying the "
@@ -1400,10 +1405,12 @@ def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monke
     """Codex plugin source must contain real SKILL.md files for link-backed skills.
 
     Codex's plugin cache copier copies regular files and directories, but not
-    symbolic links. Autorun keeps a few skill entrypoints as meaningful
-    Markdown filenames with SKILL.md symlinks for cross-harness compatibility,
-    so the Codex plugin source copy must dereference those symlinks before
-    Codex installs the plugin.
+    symbolic links. A skill entrypoint kept as a symlink to a longer Markdown
+    filename must therefore be dereferenced before Codex installs the plugin.
+
+    Exercised at `native`, the placement that still packages skills inside the
+    plugin. Under `auto` no skills are staged at all, so this copy path would
+    never run and the guarantee would go untested.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["parallel-subagent"])
@@ -1416,7 +1423,9 @@ def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monke
     (linked_skill / "SKILL.md").unlink()
     (linked_skill / "SKILL.md").symlink_to(skill_text.name)
 
-    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
+    ok, _msg = _install_for_codex(
+        fake_marketplace, ["autorun"], force=False, skill_placement="native"
+    )
     assert ok
 
     copied_entrypoint = tmp_path / "plugins" / "autorun" / "skills" / "parallel-subagent" / "SKILL.md"
@@ -1765,3 +1774,150 @@ def test_install_for_codex_agents_md_idempotent(tmp_path, monkeypatch):
     # Hard upper bound: 2× template length leaves no room for double-appending.
     assert second.count("/ar:sos") == 1
     assert second.count("/ar:task-ignore") == 1
+
+
+# ─── Shared skill installer reports names, not counts ───────────────────────
+#
+# "3 skills installed, 1 skipped" cannot tell a user WHICH skill autorun left
+# alone, so the one message that matters — your skill was not overwritten —
+# arrives without the name needed to act on it.
+
+
+def test_install_shared_agent_skills_returns_installed_and_conflicting_names(
+    tmp_path, monkeypatch
+):
+    from autorun.install import _install_shared_agent_skills
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(
+        tmp_path, ["ai-skill-builder", "cache"]
+    )
+    unowned = tmp_path / ".agents" / "skills" / "cache"
+    unowned.mkdir(parents=True)
+    original = "USER AUTHORED, DO NOT TOUCH\n"
+    (unowned / "SKILL.md").write_text(original, encoding="utf-8")
+
+    installed, conflicts = _install_shared_agent_skills(
+        fake_marketplace / "plugins" / "autorun"
+    )
+
+    assert installed == ("ai-skill-builder",)
+    assert conflicts == ("cache",)
+    assert (unowned / "SKILL.md").read_text(encoding="utf-8") == original
+
+
+def test_install_for_codex_names_the_untouched_user_skill(tmp_path, monkeypatch, capsys):
+    """The skipped skill's name has to reach the user who must resolve it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    unowned = tmp_path / ".agents" / "skills" / "cache"
+    unowned.mkdir(parents=True)
+    (unowned / "SKILL.md").write_text("USER AUTHORED\n", encoding="utf-8")
+
+    _install_for_codex(fake_marketplace, ["autorun"], force=False)
+
+    assert "cache" in capsys.readouterr().out
+
+
+# ─── Codex staged skill route ───────────────────────────────────────────────
+
+
+def test_staged_codex_plugin_omits_skills_when_the_shared_route_is_authoritative(
+    tmp_path,
+):
+    """Under `auto`, Codex reads ~/.agents/skills, so a second copy inside the
+    staged plugin would show every skill twice and then drift."""
+    from autorun.install import _copy_codex_plugin_source
+
+    plugin_dir = _make_fake_plugin_with_skills(tmp_path, ["cache"]) / "plugins" / "autorun"
+    (plugin_dir / "commands").mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "commands" / "status.md").write_text("---\n---\n", encoding="utf-8")
+    staged = tmp_path / "staged"
+
+    _copy_codex_plugin_source(plugin_dir, staged, include_skills=False)
+
+    data = json.loads((staged / ".codex-plugin" / "plugin.json").read_text())
+    assert "skills" not in data
+    assert not (staged / "skills").exists()
+    # Commands are a separate surface and must survive the skill routing.
+    assert (staged / "commands").is_dir()
+
+
+def test_staged_codex_plugin_keeps_skills_for_the_native_route(tmp_path):
+    """`native` and `both` still package skills inside the plugin."""
+    from autorun.install import _copy_codex_plugin_source
+
+    plugin_dir = _make_fake_plugin_with_skills(tmp_path, ["cache"]) / "plugins" / "autorun"
+    staged = tmp_path / "staged-native"
+
+    _copy_codex_plugin_source(plugin_dir, staged, include_skills=True)
+
+    data = json.loads((staged / ".codex-plugin" / "plugin.json").read_text())
+    assert data["skills"] == "./skills/"
+    assert (staged / "skills" / "cache" / "SKILL.md").is_file()
+
+
+def test_codex_auto_placement_publishes_shared_and_stages_no_plugin_skills(
+    tmp_path, monkeypatch
+):
+    """End-to-end `auto`: the shared root gets the skill, the staged personal
+    plugin does not. One route, one copy."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], skill_placement="auto")
+
+    assert ok
+    assert (tmp_path / ".agents" / "skills" / "cache" / "SKILL.md").is_file()
+    staged_manifest = tmp_path / "plugins" / "autorun" / ".codex-plugin" / "plugin.json"
+    assert "skills" not in json.loads(staged_manifest.read_text())
+    assert not (tmp_path / "plugins" / "autorun" / "skills").exists()
+
+
+def test_codex_native_placement_stages_plugin_skills_and_skips_the_shared_root(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(
+        fake_marketplace, ["autorun"], skill_placement="native"
+    )
+
+    assert ok
+    assert not (tmp_path / ".agents" / "skills" / "cache").exists()
+    staged = tmp_path / "plugins" / "autorun"
+    assert json.loads((staged / ".codex-plugin" / "plugin.json").read_text())["skills"]
+    assert (staged / "skills" / "cache" / "SKILL.md").is_file()
+
+
+def test_codex_both_placement_publishes_shared_and_stages_plugin_skills(
+    tmp_path, monkeypatch
+):
+    """`both` is the documented escape hatch, and the only mode that duplicates."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], skill_placement="both")
+
+    assert ok
+    assert (tmp_path / ".agents" / "skills" / "cache" / "SKILL.md").is_file()
+    assert (tmp_path / "plugins" / "autorun" / "skills" / "cache" / "SKILL.md").is_file()
+
+
+def test_codex_auto_keeps_plugin_skills_when_shared_publication_is_blocked(
+    tmp_path, monkeypatch
+):
+    """Publish-then-remove ordering: if an unowned skill blocks the shared root,
+    dropping the plugin copy too would leave the user with no route at all."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    unowned = tmp_path / ".agents" / "skills" / "cache"
+    unowned.mkdir(parents=True)
+    (unowned / "SKILL.md").write_text("USER AUTHORED\n", encoding="utf-8")
+
+    ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], skill_placement="auto")
+
+    assert ok
+    assert (unowned / "SKILL.md").read_text(encoding="utf-8") == "USER AUTHORED\n"
+    assert (tmp_path / "plugins" / "autorun" / "skills" / "cache" / "SKILL.md").is_file()
