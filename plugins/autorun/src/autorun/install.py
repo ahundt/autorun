@@ -4186,6 +4186,7 @@ def _install_markdown_commands_harness(
     plugins: list[str],
     base: Path,
     display_name: str,
+    memory_platform: Platform | None = None,
 ) -> tuple[bool, str]:
     """Install the portable markdown-commands + AGENTS.md bundle into ``base``.
 
@@ -4225,10 +4226,10 @@ def _install_markdown_commands_harness(
     )
 
     # Sentinel merge, not copy2: the harness reads <base>/AGENTS.md as custom
-    # instructions and the user may have written their own there. Same markers
-    # as install_platform_memory(PLATFORMS["forgecode"], ...) so uninstall can
-    # strip the block with the standard helpers.
-    platform = PLATFORMS["forgecode"]
+    # instructions and the user may have written their own there. The
+    # platform's own sentinels are used so uninstall can strip the block with
+    # the standard helpers; custom claude-flavor targets reuse ForgeCode's.
+    platform = memory_platform or PLATFORMS["forgecode"]
     memory_template = plugin_dir.joinpath(
         "src", "autorun", *platform.memory_template.split("/")
     )
@@ -4278,6 +4279,29 @@ def _install_for_forgecode(
         plugins,
         base=_resolve_forge_base(),
         display_name="ForgeCode",
+    )
+
+
+def _install_for_opencode(
+    marketplace_root: Path,
+    plugins: list[str],
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Install autorun commands + AGENTS.md into OpenCode's config dir.
+
+    OpenCode reads Claude-format markdown commands from
+    ``<config>/commands/*.md`` and AGENTS.md as instructions, and it scans
+    the shared ``~/.agents/skills`` route natively, so this install is the
+    portable bundle only: no hooks (OpenCode's hook surface is JS plugins),
+    no per-harness skills link.
+    """
+    base = platform_config_dir(PLATFORMS["opencode"])
+    return _install_markdown_commands_harness(
+        marketplace_root,
+        plugins,
+        base=base,
+        display_name="OpenCode",
+        memory_platform=PLATFORMS["opencode"],
     )
 
 
@@ -5025,6 +5049,12 @@ def install_plugins(
         forge_success, forge_msg = _install_for_forgecode(marketplace_root, plugins, force)
         all_succeeded = all_succeeded and forge_success
 
+    # Install for OpenCode (portable bundle — commands + AGENTS.md, no hooks)
+    opencode_success = False
+    if "opencode" in target_clis:
+        opencode_success, opencode_msg = _install_for_opencode(marketplace_root, plugins, force)
+        all_succeeded = all_succeeded and opencode_success
+
     # Optional: uv tool install for global CLI
     if tool:
         print()
@@ -5105,6 +5135,12 @@ def install_plugins(
             print("✓ ForgeCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
         else:
             print("✗ ForgeCode: install failed")
+
+    if "opencode" in target_clis:
+        if opencode_success:
+            print("✓ OpenCode: commands + AGENTS.md installed (advisory — no hook enforcement)")
+        else:
+            print("✗ OpenCode: install failed")
 
     print()
     print("Available commands:")
@@ -6066,6 +6102,20 @@ def show_status(
     print(f"  AGENTS.md: {'✓ installed' if forge_agents.is_file() else '✗ not installed'}")
     print("  skills: unsupported by ForgeCode; commands and AGENTS.md are advisory")
     print("  hooks: advisory only (ForgeCode has no external hook system)")
+
+    # Check OpenCode advisory install.
+    print()
+    print("-" * 60)
+    print("OpenCode:")
+
+    opencode_base = platform_config_dir(PLATFORMS["opencode"])
+    opencode_commands = opencode_base / "commands"
+    opencode_agents = opencode_base / "AGENTS.md"
+    opencode_command_count = len(list(opencode_commands.glob("ar-*.md"))) if opencode_commands.is_dir() else 0
+    print(f"  commands: {'✓ installed' if opencode_command_count else '✗ not installed'} ({opencode_command_count})")
+    print(f"  AGENTS.md: {'✓ installed' if opencode_agents.is_file() else '✗ not installed'}")
+    print("  skills: shared ~/.agents/skills route (read natively by OpenCode)")
+    print("  hooks: advisory only (OpenCode's hook surface is JS plugins)")
 
     try:
         merged_custom = merge_custom_harness_specs(custom_harnesses)

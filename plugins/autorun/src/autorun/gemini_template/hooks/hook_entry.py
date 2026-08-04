@@ -102,7 +102,7 @@ def _append_debug_log(message: str) -> None:
 # =============================================================================
 
 
-_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode")
+_VALID_CLI_TYPES = ("claude", "gemini", "antigravity", "qwen", "codex", "forgecode", "opencode")
 _TOOL_GATE_EVENTS = {"PreToolUse", "BeforeTool", "PermissionRequest"}
 
 
@@ -155,6 +155,8 @@ def detect_cli_type(payload: dict | None = None) -> str:
                 return "forgecode"
 
             transcript_path = str(payload.get("transcript_path", ""))
+            if ".opencode" in transcript_path or ".config/opencode" in transcript_path:
+                return "opencode"
             if ".codex" in transcript_path or "/codex/" in transcript_path:
                 return "codex"
             if ".qwen" in transcript_path or "/qwen/" in transcript_path:
@@ -173,6 +175,8 @@ def detect_cli_type(payload: dict | None = None) -> str:
             return "codex"
         if os.environ.get("FORGE_CONFIG"):
             return "forgecode"
+        if os.environ.get("OPENCODE_CONFIG") or os.environ.get("OPENCODE_CONFIG_DIR"):
+            return "opencode"
         if os.environ.get("GEMINI_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):
             return "gemini"
         if os.environ.get("QWEN_PROJECT_DIR") and not os.environ.get("CLAUDE_PROJECT_DIR"):

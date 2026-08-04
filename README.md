@@ -14,7 +14,7 @@
 4. **Room to Discuss**: `/ar:tasks pause <reason>` pauses reminders and Stop enforcement without changing tasks
 5. **Control AI File Creation**: Choose whether AI can create files freely, must justify them, or edit-only
 6. **Dangerous Commands Get Redirected**: `rm` becomes `trash`, `git reset --hard` becomes `git stash`
-7. **Works across maintained AI coding harnesses**: Same safety policies across Claude Code, Antigravity, Qwen Code, Codex CLI, and ForgeCode; legacy Gemini CLI remains available by explicit opt-in
+7. **Works across maintained AI coding harnesses**: Same safety policies across Claude Code, Antigravity, Qwen Code, Codex CLI, ForgeCode, and OpenCode; legacy Gemini CLI remains available by explicit opt-in
 8. **80+ Autorun Commands**: Plan auto-export, task tracking, git commit guidelines, design philosophy, and more
 9. **Learn From Mistakes**: Analyze past sessions to find recurring AI failures, then turn them into permanent CLAUDE.md rules, skills, and hook blocks
 
@@ -59,7 +59,7 @@ hooks in the background, run a task directly, or add planning for larger work.
 /ar:sos                  # Emergency stop
 ```
 
-> Works with **Claude Code**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, and **ForgeCode**. Legacy **Gemini CLI** support remains explicit opt-in — see [Multi-CLI Support](#multi-cli-support).
+> Works with **Claude Code**, **Google Antigravity**, **Qwen Code**, **Codex CLI**, **ForgeCode**, and **OpenCode**. Legacy **Gemini CLI** support remains explicit opt-in — see [Multi-CLI Support](#multi-cli-support).
 
 > Examples use Claude/Gemini slash commands. In Codex, use the same command without the leading slash, such as `ar:st` or `ar:ok git push`.
 
@@ -195,7 +195,7 @@ claude plugin marketplace list
 
 ### Multi-CLI Support
 
-**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, and ForgeCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
+**autorun defaults to Claude Code, Google Antigravity, Qwen Code, Codex CLI, ForgeCode, and OpenCode**, providing shared safety features, command handlers, and autonomous execution capabilities across maintained harnesses. Legacy Gemini CLI support remains available only through explicit `--gemini` selection.
 
 #### Codex CLI Support
 

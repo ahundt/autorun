@@ -1041,6 +1041,35 @@ FORGECODE = register(
 )
 
 
+OPENCODE = register(
+    Platform(
+        name="opencode",
+        display_name="OpenCode",
+        binary="opencode",
+        # OpenCode documents OPENCODE_CONFIG / OPENCODE_CONFIG_DIR for config
+        # relocation (opencode.ai/docs/config); no session env var is
+        # documented, so standalone identity needs --session or
+        # AUTORUN_SESSION_ID like the Claude fallback.
+        detect_env_vars=("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"),
+        detect_path_hints=(".opencode", ".config/opencode"),
+        has_hooks=False,
+        schema_type="none",  # hook surface is JS plugins, not external hooks
+        hook_protocol=NO_HOOKS,
+        config_dir="~/.config/opencode/",
+        config_dir_env_vars=("OPENCODE_CONFIG_DIR",),
+        install_fn_name="_install_for_opencode",
+        memory_filename="AGENTS.md",
+        memory_template="opencode_template/AGENTS.md",
+        memory_sentinel_slug="opencode-agents-md",
+        # OpenCode reads ~/.agents/skills natively (opencode.ai/docs/skills),
+        # so skills arrive through the shared route with no per-harness link.
+        loads_shared_agents_skills=True,
+        # Commands are Claude-format markdown ($ARGUMENTS, $1..$N, !`cmd`,
+        # @path) copied from the portable bundle; no hooks, advisory only.
+    )
+)
+
+
 # === Lookup API ============================================================
 
 

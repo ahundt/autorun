@@ -608,7 +608,8 @@ def test_shared_agents_skills_capability_is_declared_per_platform():
 
     # Codex: https://learn.chatgpt.com/docs/build-skills
     # Legacy Gemini: https://geminicli.com/docs/cli/using-agent-skills/
-    assert claiming == {"codex", "gemini"}
+    # OpenCode: https://opencode.ai/docs/skills/ (global ~/.agents/skills)
+    assert claiming == {"codex", "gemini", "opencode"}
 
 
 def test_skill_placement_routes_cover_every_platform_and_mode():

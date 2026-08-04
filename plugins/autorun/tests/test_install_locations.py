@@ -289,3 +289,34 @@ def test_claude_flavor_installs_markdown_commands_and_agents_md(tmp_path):
     assert "OpenCode" in guidance
     assert "ForgeCode" not in guidance
     assert list((base / "commands").glob("ar-*.md"))
+
+
+def test_opencode_install_lands_in_the_resolved_config_dir(monkeypatch, tmp_path):
+    """OpenCode gets the portable bundle at ~/.config/opencode by default."""
+    from autorun.install import _install_for_opencode
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    marketplace_root = Path(__file__).resolve().parents[3]
+
+    ok, msg = _install_for_opencode(marketplace_root, ["autorun"])
+
+    assert ok, msg
+    base = tmp_path / ".config" / "opencode"
+    guidance = (base / "AGENTS.md").read_text(encoding="utf-8")
+    assert "OpenCode" in guidance
+    assert "ForgeCode" not in guidance
+    assert list((base / "commands").glob("ar-*.md"))
+
+
+def test_opencode_install_follows_the_config_dir_env_var(monkeypatch, tmp_path):
+    from autorun.install import _install_for_opencode
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(tmp_path / "opencode-work"))
+    marketplace_root = Path(__file__).resolve().parents[3]
+
+    ok, msg = _install_for_opencode(marketplace_root, ["autorun"])
+
+    assert ok, msg
+    assert (tmp_path / "opencode-work" / "AGENTS.md").is_file()
