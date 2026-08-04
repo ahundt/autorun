@@ -181,15 +181,11 @@ See `plugins/autorun/src/autorun/config.py:175` for the DEFAULT_INTEGRATIONS lis
 
 | Short | Long | Description |
 |-------|------|-------------|
-| `/ar:pe` | `/ar:planexport` | Show plan export status |
-| `/ar:pe-on` | `/ar:planexport-enable` | Enable auto-export |
-| `/ar:pe-off` | `/ar:planexport-disable` | Disable auto-export |
-| `/ar:pe-cfg` | `/ar:planexport-configure` | Interactive configuration |
-| `/ar:pe-dir` | `/ar:planexport-dir` | Set output directory |
-| `/ar:pe-fmt` | `/ar:planexport-pattern` | Set filename pattern |
-| `/ar:pe-reset` | `/ar:planexport-reset` | Reset to defaults |
-| `/ar:pe-rej` | `/ar:planexport-rejected` | Toggle rejected plan export |
-| `/ar:pe-rdir` | `/ar:planexport-rejected-dir` | Set rejected plan output directory |
+| `/ar:pe [on\|off\|globalon\|globaloff]` | `/ar:planexport […]` | Status, per-project pin, or global default; a pin beats the global default |
+| `/ar:pe dir <path>` | `/ar:planexport dir <path>` | Set the export directory |
+| `/ar:pe pattern <template>` | `/ar:planexport pattern <template>` | Set the filename pattern |
+| `/ar:pe rejected [on\|off\|dir <path>]` | `/ar:planexport rejected […]` | Toggle or set rejected-plan export and its directory |
+| `/ar:pe reset` | `/ar:planexport reset` | Restore defaults (also clears project pins) |
 
 **Task Tracking** (v0.9+):
 
@@ -239,7 +235,6 @@ Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAll
 | `plugins/autorun/src/autorun/task_lifecycle.py` | Task lifecycle tracking and stop-hook enforcement |
 | `plugins/autorun/src/autorun/session_manager.py` | filelock+JSON session state backend |
 | `plugins/autorun/src/autorun/client.py` | Hook response output and CLI detection |
-| `plugins/autorun/scripts/plan_export_config.py` | Plan export configuration CLI |
 | `plugins/autorun/.claude-plugin/plugin.json` | Plugin manifest |
 
 ---

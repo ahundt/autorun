@@ -826,8 +826,8 @@ class TestClaudeHookEntryPoint:
             config = PlanExportConfig.load()
             if not config.enabled:
                 pytest.skip(
-                    "Plan export disabled in ~/.claude/plan-export.config.json. "
-                    "Enable with: /ar:pe-on or set enabled=true in the config."
+                    "Plan export disabled in the plan-export config. "
+                    "Enable with: /ar:pe globalon or set enabled=true in the config."
                 )
         except ImportError:
             pass  # Proceed with defaults if import fails

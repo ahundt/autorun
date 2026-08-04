@@ -665,15 +665,13 @@ python -m plugins.autorun.src.autorun.install --install --force
 | `/ar:cache ok [5m\|N\|perm]` | - | - | Override the gate — same grammar as `/ar:ok` |
 | `/ar:cache no` | - | - | Cancel outstanding overrides |
 | `/ar:cache global <subcmd>` | - | - | Same operations at the global (cross-session) scope |
-| `/ar:pe` | `/ar:planexport` | - | Show plan export status |
-| `/ar:pe-on` | `/ar:planexport-enable` | - | Enable auto-export |
-| `/ar:pe-off` | `/ar:planexport-disable` | - | Disable auto-export |
-| `/ar:pe-cfg` | `/ar:planexport-configure` | - | Interactive configuration |
-| `/ar:pe-dir` | `/ar:planexport-dir` | - | Set output directory |
-| `/ar:pe-fmt` | `/ar:planexport-pattern` | - | Set filename pattern |
-| `/ar:pe-reset` | `/ar:planexport-reset` | - | Reset to defaults |
-| `/ar:pe-rej` | `/ar:planexport-rejected` | - | Toggle rejected plan export |
-| `/ar:pe-rdir` | `/ar:planexport-rejected-dir` | - | Set rejected plan output directory |
+| `/ar:pe` | `/ar:planexport` | - | Show plan export status (effective state and which layer set it) |
+| `/ar:pe on\|off` | `/ar:planexport on\|off` | - | Pin plan export for the current project (pin beats the global default) |
+| `/ar:pe globalon\|globaloff` | `/ar:planexport globalon\|globaloff` | - | Set the global default for every project |
+| `/ar:pe dir <path>` | `/ar:planexport dir <path>` | - | Set the export directory (template variables allowed) |
+| `/ar:pe pattern <template>` | `/ar:planexport pattern <template>` | - | Set the filename pattern |
+| `/ar:pe rejected [on\|off\|dir <path>]` | `/ar:planexport rejected […]` | - | Toggle or set rejected-plan export and its directory |
+| `/ar:pe reset` | `/ar:planexport reset` | - | Restore defaults (also clears project pins) |
 | `/ar:tabw` | - | - | Cross-window session actions |
 | `/ar:gemini` | - | - | Gemini CLI reference guide |
 | `/ar:test` | - | - | Test command guidelines |

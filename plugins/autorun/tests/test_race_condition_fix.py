@@ -194,7 +194,11 @@ def sample_config(test_temp_dir, monkeypatch):
     }
 
     mock_config = PlanExportConfig(**config_data)
-    monkeypatch.setattr(PlanExportConfig, "load", classmethod(lambda cls: mock_config))
+    monkeypatch.setattr(
+        PlanExportConfig,
+        "load",
+        classmethod(lambda cls, project_dir=None: mock_config),
+    )
 
     return config_data
 
@@ -256,7 +260,11 @@ class TestBaselineFunctionality:
     def test_export_when_disabled(self, test_temp_dir, monkeypatch):
         """Test that PlanExport respects disabled config."""
         disabled_config = PlanExportConfig(enabled=False)
-        monkeypatch.setattr(PlanExportConfig, "load", classmethod(lambda cls: disabled_config))
+        monkeypatch.setattr(
+            PlanExportConfig,
+            "load",
+            classmethod(lambda cls, project_dir=None: disabled_config),
+        )
 
         # Verify config is disabled
         config = PlanExportConfig.load()

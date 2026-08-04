@@ -62,7 +62,9 @@ REQUIREMENTS:
     6. Support template variables: {YYYY}, {MM}, {DD}, {HH}, {mm}, {date}, {datetime}, {name}, {original}
     7. Terminal-agnostic: Works in VS Code extension, Claude App, and CLI terminals
 
-CONFIGURATION (~/.claude/plan-export.config.json):
+CONFIGURATION (plan-export.config.json in autorun's config directory,
+~/.autorun by default, AUTORUN_HOME override; a pre-0.13 file under
+~/.claude/ is still read until the first write publishes the new location):
     enabled                  - Enable/disable plan export (default: true)
     output_plan_dir          - Directory for exported plans (default: "notes")
     filename_pattern         - Filename template (default: "{datetime}_{name}")
@@ -188,7 +190,8 @@ import json
 from datetime import datetime
 from filelock import FileLock, Timeout as FileLockTimeout
 
-from .core import EventContext, app, logger
+from .core import EventContext, app, format_commands_for_cli, logger
+from .ipc import AUTORUN_CONFIG_DIR
 from .durable_io import atomic_write_json, reserve_unique_path, sync_file
 from .session_manager import (
     session_state, SessionTimeoutError, get_session_manager,
@@ -210,10 +213,46 @@ DEFAULT_CONFIG = {
     "notify_claude": True,
 }
 
-# Config file path
-CONFIG_PATH = Path.home() / ".claude" / "plan-export.config.json"
-PLANS_DIR = Path.home() / ".claude" / "plans"
-DEBUG_LOG_PATH = Path.home() / ".claude" / "plan-export-debug.log"
+def _claude_config_home() -> Path:
+    """~/.claude, or the isolated stand-in during tests.
+
+    Only Claude-owned paths (the plans directory) anchor here. Tests set
+    AUTORUN_TEST_STATE_DIR before any autorun import; honoring it keeps every
+    test run off the real user files, per docs/RUNTIME_STATE_ISOLATION.md.
+    """
+    test_dir = os.environ.get("AUTORUN_TEST_STATE_DIR")
+    if test_dir:
+        return Path(test_dir) / "claude-home"
+    return Path.home() / ".claude"
+
+
+# Plan-export settings are autorun's own configuration and apply to every
+# supported harness, so they live in autorun's config directory (~/.autorun,
+# overridable via AUTORUN_HOME — which also gives tests isolation for free).
+# The pre-0.13 location under ~/.claude is still read when the new file does
+# not exist; the first write publishes to the new location and the legacy
+# file is left untouched.
+CONFIG_PATH = AUTORUN_CONFIG_DIR / "plan-export.config.json"
+LEGACY_CONFIG_PATH = _claude_config_home() / "plan-export.config.json"
+DEBUG_LOG_PATH = AUTORUN_CONFIG_DIR / "plan-export-debug.log"
+# PLANS_DIR is Claude Code's own plans directory (configurable harness-side
+# via plansDirectory); other harnesses store plans elsewhere.
+PLANS_DIR = _claude_config_home() / "plans"
+
+
+def read_config_data() -> dict:
+    """Raw plan-export config; the autorun-dir file wins over the legacy file.
+
+    A corrupt current file yields {} rather than falling back to the legacy
+    file, so stale pre-migration settings can never silently resurrect.
+    """
+    for path in (CONFIG_PATH, LEGACY_CONFIG_PATH):
+        if path.exists():
+            try:
+                return json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return {}
+    return {}
 
 # Permission modes that indicate the user accepted the plan in the ExitPlanMode dialog.
 # Options 1 (bypassPermissions) and 3 (acceptEdits) count as acceptance.
@@ -374,18 +413,31 @@ class PlanExportConfig:
     notify_claude: bool = True
 
     @classmethod
-    def load(cls) -> "PlanExportConfig":
-        """Load from ~/.claude/plan-export.config.json with defaults."""
-        if CONFIG_PATH.exists():
-            try:
-                data = json.loads(CONFIG_PATH.read_text())
-                # Migrate legacy key name (config.py used "output_dir" before v0.8)
-                if "output_dir" in data and "output_plan_dir" not in data:
-                    data["output_plan_dir"] = data.pop("output_dir")
-                return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return cls()
+    def load(cls, project_dir: "Path | str | None" = None) -> "PlanExportConfig":
+        """Load global config, then apply the project's `enabled` pin if any.
+
+        The file's top-level keys are the global defaults. Its "projects" key
+        maps absolute project paths to per-project pins written by
+        `/ar:pe on|off`; a pin overrides only `enabled`, so every other
+        setting stays global. Passing no project keeps the global view.
+        """
+        data = read_config_data()
+        # Migrate legacy key name (config.py used "output_dir" before v0.8)
+        if "output_dir" in data and "output_plan_dir" not in data:
+            data["output_plan_dir"] = data.pop("output_dir")
+        try:
+            config = cls(**{
+                k: v
+                for k, v in data.items()
+                if hasattr(cls, k) and k != "projects"
+            })
+        except TypeError:
+            config = cls()
+        if project_dir is not None:
+            pin = data.get("projects", {}).get(str(Path(project_dir)), {})
+            if isinstance(pin, dict) and "enabled" in pin:
+                config.enabled = bool(pin["enabled"])
+        return config
 
     def to_dict(self) -> dict:
         """Convert config to dict (for backwards compatibility)."""
@@ -399,6 +451,158 @@ class PlanExportConfig:
             "debug_logging": self.debug_logging,
             "notify_claude": self.notify_claude,
         }
+
+
+# === /ar:pe toggle command (project pin + global default) ===
+
+_PLAN_EXPORT_CONFIG_HINT = "Config: /ar:pe off|on|globaloff|globalon"
+
+
+def with_plan_export_config_hint(message: str, cli_type: "str | None") -> str:
+    """Append the toggle hint, spelled for the reader's harness.
+
+    Every user-visible export notification carries this line so the reader
+    always sees how to turn the feature off without hunting through docs.
+    """
+    hint = format_commands_for_cli(_PLAN_EXPORT_CONFIG_HINT, cli_type)
+    return f"{message}\n{hint}"
+
+
+def _ctx_project_dir(ctx) -> "Path | None":
+    """The project directory this event belongs to, or None if unknown."""
+    cwd = getattr(ctx, "cwd", None)
+    if not cwd and hasattr(ctx, "tool_input"):
+        cwd = ctx.tool_input.get("cwd")
+    return Path(cwd) if cwd else None
+
+
+_PLAN_EXPORT_USAGE = (
+    "Usage: /ar:pe [on|off|globalon|globaloff|dir <path>|pattern <template>"
+    "|rejected [on|off|dir <path>]|reset]\n"
+    "  (no argument)         show status\n"
+    "  on | off              pin plan export for this project\n"
+    "  globalon | globaloff  set the default for every project\n"
+    "  dir <path>            set the export directory (template variables allowed)\n"
+    "  pattern <template>    set the filename pattern\n"
+    "  rejected              toggle rejected-plan export; `rejected on|off` sets it,\n"
+    "                        `rejected dir <path>` sets its directory\n"
+    "  reset                 restore defaults (also clears project pins)\n"
+    "  A project pin beats the global default."
+)
+
+
+def plan_export_command(args: str, project_dir: "Path | None", cli_type: "str | None") -> str:
+    """Dispatch /ar:pe subcommands. Bare command shows status.
+
+    `on`/`off` pin the current project; `globalon`/`globaloff` set the
+    default for every project; a pin beats the global default. The settings
+    subcommands (dir, pattern, rejected, reset) are global, replacing the
+    former pe-dir/pe-fmt/pe-rej/pe-rdir/pe-reset command family. Unknown
+    arguments return usage without touching the config file.
+    """
+    tokens = args.split()
+    sub = tokens[0].lower() if tokens else ""
+
+    def render(text: str) -> str:
+        return format_commands_for_cli(text, cli_type)
+
+    load_data = read_config_data
+
+    def save_setting(key: str, value, described: str) -> str:
+        data = load_data()
+        data[key] = value
+        atomic_write_json(CONFIG_PATH, data)
+        return with_plan_export_config_hint(described, cli_type)
+
+    if sub == "dir":
+        value = args.split(None, 1)[1].strip() if len(tokens) > 1 else ""
+        if not value:
+            return render(_PLAN_EXPORT_USAGE)
+        return save_setting("output_plan_dir", value, f"Plan export directory: {value}")
+
+    if sub in ("pattern", "fmt"):
+        value = args.split(None, 1)[1].strip() if len(tokens) > 1 else ""
+        if not value:
+            return render(_PLAN_EXPORT_USAGE)
+        return save_setting("filename_pattern", value, f"Plan filename pattern: {value}")
+
+    if sub == "rejected":
+        second = tokens[1].lower() if len(tokens) > 1 else ""
+        if second == "dir":
+            value = args.split(None, 2)[2].strip() if len(tokens) > 2 else ""
+            if not value:
+                return render(_PLAN_EXPORT_USAGE)
+            return save_setting(
+                "output_rejected_plan_dir", value, f"Rejected-plan directory: {value}"
+            )
+        if second in ("on", "off"):
+            enabled = second == "on"
+        elif second == "":
+            enabled = not load_data().get("export_rejected", True)
+        else:
+            return render(_PLAN_EXPORT_USAGE)
+        return save_setting(
+            "export_rejected", enabled, f"Rejected-plan export {'on' if enabled else 'off'}."
+        )
+
+    if sub == "reset":
+        atomic_write_json(CONFIG_PATH, {})
+        return with_plan_export_config_hint(
+            "Plan export settings reset to defaults (project pins cleared).", cli_type
+        )
+
+    if sub in ("on", "off"):
+        if project_dir is None:
+            return render(
+                "Plan export: no project directory in this context; use "
+                "/ar:pe globalon|globaloff for the global default."
+            )
+        data = load_data()
+        data.setdefault("projects", {})[str(project_dir)] = {"enabled": sub == "on"}
+        atomic_write_json(CONFIG_PATH, data)
+        return with_plan_export_config_hint(
+            f"Plan export {sub} for this project ({project_dir}).", cli_type
+        )
+
+    if sub in ("globalon", "globaloff"):
+        enabled = sub == "globalon"
+        return save_setting(
+            "enabled",
+            enabled,
+            render(
+                f"Plan export {'on' if enabled else 'off'} globally (projects "
+                "with an explicit /ar:pe on|off pin keep their own setting)."
+            ),
+        )
+
+    if sub == "":
+        data = load_data()
+        global_enabled = bool(data.get("enabled", True))
+        pin = None
+        if project_dir is not None:
+            entry = data.get("projects", {}).get(str(project_dir), {})
+            if isinstance(entry, dict) and "enabled" in entry:
+                pin = bool(entry["enabled"])
+        effective = pin if pin is not None else global_enabled
+        layer = "project setting" if pin is not None else "global default"
+        lines = [
+            f"Plan export: {'on' if effective else 'off'} ({layer})",
+            f"  Global default: {'on' if global_enabled else 'off'}",
+        ]
+        if pin is not None:
+            lines.append(f"  This project ({project_dir}): {'on' if pin else 'off'}")
+        lines.append(f"  {_PLAN_EXPORT_CONFIG_HINT}")
+        return render("\n".join(lines))
+
+    return render(_PLAN_EXPORT_USAGE)
+
+
+@app.command("/ar:pe", "/ar:planexport")
+def handle_plan_export_toggle(ctx: EventContext) -> str:
+    """Dispatch `/ar:pe` subcommands (status/on/off/globalon/globaloff)."""
+    prompt = ctx.activation_prompt or ctx.prompt or ""
+    tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
+    return plan_export_command(tail.strip(), _ctx_project_dir(ctx), ctx.cli_type)
 
 
 @dataclass
@@ -451,13 +655,10 @@ class PlanExport:
     @property
     def project_dir(self) -> Path:
         """Get project directory from context. Never falls back to daemon's cwd."""
-        cwd = getattr(self.ctx, 'cwd', None)
-        if cwd is None:
-            # Try to get from tool_input (hook input includes cwd)
-            cwd = self.ctx.tool_input.get('cwd') if hasattr(self.ctx, 'tool_input') else None
-        if cwd is None:
+        directory = _ctx_project_dir(self.ctx)
+        if directory is None:
             raise ValueError("project_dir: cwd not available in context")
-        return Path(cwd)
+        return directory
 
     # --- Plan File Detection ---
 
@@ -1106,7 +1307,7 @@ def export_plan(plan_path, project_dir, session_id: str = None) -> dict:
         tool_input={"cwd": str(project_dir)},
         store=store
     )
-    config = PlanExportConfig.load()
+    config = PlanExportConfig.load(project_dir)
     exporter = PlanExport(ctx, config)
     result = exporter.export(Path(plan_path), force=True)
 
@@ -1145,7 +1346,7 @@ def export_rejected_plan(plan_path, project_dir, session_id: str = None) -> dict
         tool_input={"cwd": str(project_dir)},
         store=store
     )
-    config = PlanExportConfig.load()
+    config = PlanExportConfig.load(project_dir)
     exporter = PlanExport(ctx, config)
     result = exporter.export(Path(plan_path), rejected=True, force=True)
 
@@ -1199,7 +1400,7 @@ def handle_session_start(hook_input: dict) -> None:
         transcript_path=_expanded_transcript_path,
     )
 
-    config = PlanExportConfig.load()
+    config = PlanExportConfig.load(cwd)
     if not config.enabled:
         print(json.dumps(validate_hook_response("SessionStart", {"continue": True, "suppressOutput": True}, cli_type=cli_type)))
         return
@@ -1248,7 +1449,9 @@ def handle_session_start(hook_input: dict) -> None:
             if config.notify_claude:
                 print(json.dumps(validate_hook_response("SessionStart", {
                     "continue": True,
-                    "systemMessage": f"📋 Recovered unexported plan: {result['message']}",
+                    "systemMessage": with_plan_export_config_hint(
+                        f"📋 Recovered unexported plan: {result['message']}", cli_type
+                    ),
                 }, cli_type=cli_type)))
                 return
 
@@ -1309,7 +1512,7 @@ def track_and_export_plans_early(ctx: EventContext) -> Optional[Dict]:
     Always returns None — never blocks tool execution.
     """
     try:
-        config = PlanExportConfig.load()
+        config = PlanExportConfig.load(_ctx_project_dir(ctx))
         if not config.enabled:
             return None
 
@@ -1339,7 +1542,7 @@ def track_plan_writes(ctx: EventContext) -> Optional[Dict]:
     if ctx.tool_name not in (WRITE_TOOLS | EDIT_TOOLS):
         return None
     try:
-        config = PlanExportConfig.load()
+        config = PlanExportConfig.load(_ctx_project_dir(ctx))
         if not config.enabled:
             return None
         PlanExport(ctx, config).record_write(ctx.tool_input.get("file_path", ""))
@@ -1356,7 +1559,7 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
     if ctx.tool_name not in PLAN_TOOLS:
         return None
     try:
-        config = PlanExportConfig.load()
+        config = PlanExportConfig.load(_ctx_project_dir(ctx))
         if not config.enabled:
             return None
         exporter = PlanExport(ctx, config)
@@ -1405,7 +1608,10 @@ def export_on_exit_plan_mode(ctx: EventContext) -> Optional[Dict]:
                 # (additionalContext), not just the human's terminal
                 # (systemMessage), or it won't know a plan was archived and
                 # will keep editing only the original working copy.
-                ctx.add_chain_notification(export_msg, channel="both")
+                ctx.add_chain_notification(
+                    with_plan_export_config_hint(export_msg, ctx.cli_type),
+                    channel="both",
+                )
                 return None
             if not result["success"]:
                 # channel="both": a silently-dropped failure is worse than a
@@ -1462,7 +1668,7 @@ def recover_unexported_plans(ctx: EventContext) -> Optional[Dict]:
     logger.info(f"SessionStart handler called (event: {ctx.event})")
 
     try:
-        config = PlanExportConfig.load()
+        config = PlanExportConfig.load(_ctx_project_dir(ctx))
         if not config.enabled:
             return None
 
