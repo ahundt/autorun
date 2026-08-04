@@ -135,6 +135,30 @@ def test_audit_script_exits_nonzero_on_missing_directory(tmp_path):
     assert result.returncode == 1
 
 
+def test_audit_resolves_repository_owned_notes_from_git_root(tmp_path):
+    """A skill-local relative path may point at a note owned by its repository."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    notes = repo / "notes"
+    notes.mkdir()
+    (notes / "actual.md").write_text("repository note", encoding="utf-8")
+    (repo / "plugins").mkdir()
+
+    skill = _write_skill(
+        repo / "plugins",
+        "repo-note-skill",
+        "name: repo-note-skill\n"
+        'description: Read repository notes. Use when asked to "read repository notes".',
+        "# Repo Note Skill\n\nRead `notes/actual.md`.\n",
+    )
+
+    result = _run_audit(str(skill))
+
+    assert "SKILL.md names files that do not exist" not in result.stdout
+    assert result.returncode == 0, result.stdout
+
+
 def test_skill_entrypoints_do_not_embed_executable_markdown_commands():
     """Skills should guide tool use; they must not run Claude-only !` snippets."""
     offenders = [

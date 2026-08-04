@@ -122,6 +122,11 @@ audit_skill() {
     # '.' or './my-skill/' makes basename return '.' or a trailing-slash artifact,
     # which then fails the kebab-case and name-match checks on a valid skill.
     skill_path=$(cd "$skill_path" && pwd -P)
+    # A plugin skill can document repository-owned notes alongside its package.
+    # Resolve those from the Git root before calling a real pointer missing;
+    # private notes outside the repository remain intentionally out of scope.
+    local repo_root
+    repo_root=$(git -C "$skill_path" rev-parse --show-toplevel 2>/dev/null || echo "")
 
     local skill_name
     skill_name=$(basename "$skill_path")
@@ -477,7 +482,8 @@ audit_skill() {
         while IFS= read -r target; do
             [ -n "$target" ] || continue
             case "$target" in /*|~*|*" "*) continue ;; esac
-            if [ ! -e "$dir/$target" ] && [ ! -e "$skill_path/$target" ]; then
+            if [ ! -e "$dir/$target" ] && [ ! -e "$skill_path/$target" ] && \
+               { [ -z "$repo_root" ] || [ ! -e "$repo_root/$target" ]; }; then
                 out="${out}${f#"$skill_path"/} → $target; "
             fi
         done < <(awk '/^```/{fence=!fence; next} !fence' "$f" \
@@ -621,10 +627,9 @@ PY
     # nothing in this script observes whether a host actually activated the
     # skill. Only a triggering test on the target host does that.
     #
-    # An earlier version of this section cited activation-rate percentages from
-    # a `notes/` file that was never shipped in the package, so no reader could
-    # check them. The claims are recorded, unverified, in references/sources.md
-    # rather than asserted here.
+    # Local validation receipts and personal notes are intentionally outside the
+    # distributable skill. This section checks only activation-shape heuristics;
+    # it must not turn private measurements into packaged claims.
     # ──────────────────────────────────────────────────────────
     print_section "7. Activation shape (proxy checks)"
 

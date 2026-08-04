@@ -47,9 +47,8 @@ Checked: 2026-08
 - plugin-dev:skill-development `SKILL.md` — Anthropic's official skill-creation plugin.
   Confirmed trigger-phrase description format, imperative writing style requirement, and the
   ideally-under-2,000-word guideline (plugin-dev origin, distinct from the PDF's 5,000-word
-  hard limit). Installed locally at
-  `~/.claude/plugins/cache/claude-code-plugins/plugin-dev/<version>/skills/skill-development/`;
-  the version segment changes on every plugin release, so resolve it rather than copying a path.
+  hard limit). Resolve the currently installed plugin-dev copy when available; do not copy
+  machine-specific installation paths into a distributable skill.
 
 - [YAML specification](https://yaml.org/spec/)
   — confirmed YAML frontmatter syntax requirements
@@ -85,14 +84,8 @@ Checked: 2026-08
   in `best-practices.md`. Outcome-only descriptions ("87% faster") satisfy neither and fail
   the audit.
 
-## Claims recorded without a retrievable source
+## Local validation boundaries
 
-Listed here rather than asserted in the guidance, so that nobody repeats them as measured.
-
-- **Skill activation rates by description shape.** Through v1.1, `SKILL.md` and
-  `scripts/audit-skill.sh` cited `notes/2026_03_reliable_skill_usage_and_design.md` for
-  "250 sandboxed evals", "specific technical terms trigger 100% activation", and "conceptual
-  queries fail 60-80% of the time". That file was never present in the package and no
-  publication matching it was located, so none of the figures can be checked. The underlying
-  advice — quote the literal phrases a user would type — is independently supported by the
-  Anthropic PDF and plugin-dev, and is what the script now checks. The percentages are not.
+- Unpublished or machine-local validation receipts are intentionally excluded from this
+  distributable source catalog. Keep personal notes, raw session content, and private
+  measurements in private evidence storage; list only sources another maintainer can retrieve.

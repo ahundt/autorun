@@ -56,8 +56,9 @@ so the same numbers do not point at the same text in v1.2.0.
 
 ### Broken pointers and commands
 
-3. `SKILL.md:286` linked `notes/2026_03_reliable_skill_usage_and_design.md`. No `notes/`
-   directory exists in the package and no such file exists on disk. Bullet removed.
+3. A `SKILL.md` bullet pointed at an unavailable private notes file. The package-only pointer
+   was removed; repository-only notes remain maintainer documentation rather than package
+   dependencies.
 4. `refining-skills.md:494` pointed at `../templates/SKILL-template.md`. Corrected to
    `examples/SKILL-template.md`.
 5. `discovery.md:55` pointed at `references/skill-categories.md`. Corrected to `categories.md`.
@@ -115,11 +116,9 @@ so the same numbers do not point at the same text in v1.2.0.
 Found by re-reading the whole package after the edits above, so these are defects the first
 pass introduced or walked past.
 
-22. `scripts/audit-skill.sh` still cited `notes/2026_03_reliable_skill_usage_and_design.md` at
-    three sites after item 3 removed the `SKILL.md` pointer to it, and printed its unretrievable
-    "250 sandboxed evals", "100% activation", and "60-80% failure" figures to the user. The
-    checks stayed; the numbers moved to `sources.md` under "Claims recorded without a
-    retrievable source".
+22. `scripts/audit-skill.sh` still repeated an unpublished local measurement claim after item 3
+    removed the package pointer. The useful checks stayed; the unsupported claim was removed
+    from distributable references.
 23. Four markdown files mis-rendered because a same-length code fence was nested inside
     another: `troubleshooting.md` State Tracking, `distribution.md` README template, and a stray
     unclosed fence in the extracted guide. Everything after the break rendered as the wrong kind
