@@ -544,26 +544,26 @@ def test_marker_template_integrity():
     assert prefix.endswith("(")
 
 
-def test_task_ignore_aliases_route_to_one_handler():
-    canonical = plg.app._find_command("/ar:task-ignore 72", "claude")
-    legacy = plg.app._find_command("/task-ignore 72", "claude")
-    codex_colon = plg.app._find_command("ar:task-ignore 72", "codex")
-    codex_space = plg.app._find_command("ar task-ignore 72", "codex")
+def test_task_ignore_spellings_route_to_one_handler():
+    canonical = plg.app._find_command("/ar:task ignore 72", "claude")
+    plural = plg.app._find_command("/ar:tasks ignore 72", "claude")
+    codex_colon = plg.app._find_command("ar:task ignore 72", "codex")
+    codex_space = plg.app._find_command("ar task ignore 72", "codex")
 
-    matches = [canonical, legacy, codex_colon, codex_space]
+    matches = [canonical, plural, codex_colon, codex_space]
     assert all(match is not None for match in matches)
-    assert {match.handler for match in matches if match is not None} == {plg.handle_task_ignore}
-    assert {match.alias for match in matches if match is not None} == {"/ar:task-ignore", "/task-ignore"}
+    assert {match.handler for match in matches if match is not None} == {plg.handle_task_command}
+    assert {match.alias for match in matches if match is not None} == {"/ar:task", "/ar:tasks"}
 
 
-def test_plain_task_ignore_alias_uses_task_lifecycle_state(tmp_path, monkeypatch):
+def test_task_ignore_subcommand_uses_task_lifecycle_state(tmp_path, monkeypatch):
     _isolated_cfg(tmp_path, monkeypatch)
     mgr = _make_mgr(tmp_path)
     _add_task(mgr, "72", "Stale task")
     ctx = EventContext(
         session_id=_sid(tmp_path),
         event="UserPromptSubmit",
-        prompt="/task-ignore 72 user confirmed stale",
+        prompt="/ar:task ignore 72 user confirmed stale",
         store=ThreadSafeDB(),
         cli_type="claude",
     )

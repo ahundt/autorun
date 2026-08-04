@@ -147,7 +147,7 @@ def _task_actions_fragment(cli_type: str | None, *, staleness_reminders_disabled
     """Return stop/resume actions in the platform's native task vocabulary."""
     sos = format_command_for_cli("/ar:sos", cli_type)
     task_pause = format_command_for_cli("/ar:task pause <reason>", cli_type)
-    task_ignore = format_command_for_cli("/ar:task-ignore <id>", cli_type)
+    task_ignore = format_command_for_cli("/ar:task ignore <id>", cli_type)
     user_actions = f"{task_pause} (discussion; tasks unchanged), {sos}, or {task_ignore}"
     if staleness_reminders_disabled:
         tasks_off = format_command_for_cli("/ar:tasks off", cli_type)
@@ -544,7 +544,7 @@ class TaskLifecycle:
     # Status constants (single source of truth - DRY)
     COMPLETED_STATUSES = COMPLETED_TASK_STATUSES
     # Statuses that don't block stopping.
-    # "ignored" is set by /ar:task-ignore (autorun code), not via TaskUpdate tool.
+    # "ignored" is set by /ar:task ignore (autorun code), not via TaskUpdate tool.
     # "delegated" is set explicitly by AI before spawning a subagent for a task.
     NON_BLOCKING_STATUSES = NON_BLOCKING_TASK_STATUSES
 
@@ -1632,7 +1632,7 @@ class TaskLifecycle:
         # Subtract the older tasks already named above: counting them again in
         # the "older" suffix reported one set of tasks as two.
         older_count = len(older_incomplete) - len(named_older)
-        overflow = f" [... and {total - total_shown} more: use /task-status to see all]" if total > total_shown else ""
+        overflow = f" [... and {total - total_shown} more: use /ar:task to see all]" if total > total_shown else ""
         older = f" [📅 {older_count} older task(s) from previous days also incomplete]" if older_count > 0 else ""
 
         injection = (
@@ -1674,7 +1674,7 @@ class TaskLifecycle:
 
         Task-state escape hatches (user-driven only, never automatic):
         - User runs /ar:sos to trigger emergency stop (AI outputs AUTORUN_STATE_PRESERVATION_EMERGENCY_STOP)
-        - User runs /ar:task-ignore <id> to mark specific tasks as ignored
+        - User runs /ar:task ignore <id> to mark specific tasks as ignored
         - User marks tasks as completed/deleted via TaskUpdate
 
         A configured consecutive-Stop bound may yield one stuck interaction,
@@ -1878,7 +1878,7 @@ class TaskLifecycle:
 
         task_list = " ".join(task_lines)
         total = len(incomplete_tasks)
-        overflow = f" [... and {total - max_tasks} more: use /task-status to see all]" if total > max_tasks else ""
+        overflow = f" [... and {total - max_tasks} more: use /ar:task to see all]" if total > max_tasks else ""
 
         injection = (
             f"🛑 CANNOT STOP — incomplete tasks: {task_list}{overflow}\n"
@@ -1917,7 +1917,7 @@ class TaskLifecycle:
         # generation semantics remain intact.
         #
         # Re-arm on EVERY Stop block so the AI reliably sees the override
-        # actions (/ar:sos, /ar:task-ignore) on its next PostToolUse. Earlier
+        # actions (/ar:sos, /ar:task ignore) on its next PostToolUse. Earlier
         # logic only re-armed on block_count==1 or consecutive==min_consecutive,
         # which left "infinite non-overridable stop failure" cases: e.g. the
         # AI churning task subjects between stops drove consecutive=1 forever,
@@ -2953,7 +2953,7 @@ def register_hooks(app_instance) -> None:
           An AI stuck repeating the same mistake produces an unchanged task
           list and therefore identical text on every block — suppressing that
           would stop feeding it the override actions (/ar:sos,
-          /ar:task-ignore) from the second block onward, recreating the
+          /ar:task ignore) from the second block onward, recreating the
           "infinite non-overridable stop failure" the every-block re-arm in
           handle_stop() exists to prevent. Every new Stop block re-delivers.
 

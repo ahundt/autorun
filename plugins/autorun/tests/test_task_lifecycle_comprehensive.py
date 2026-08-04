@@ -576,7 +576,7 @@ class TestStopHookBehavioralInvariants:
 
         Re-arm policy (v0.11.0):
           - EVERY Stop block re-arms pending_stop_injection so the override
-            actions (/ar:sos, /ar:task-ignore) reliably reach the AI on its
+            actions (/ar:sos, /ar:task ignore) reliably reach the AI on its
             next PostToolUse. Earlier policy (re-arm only on block_count==1
             or consecutive==min_consecutive) left "infinite non-overridable
             stop failure" cases where the AI churned tasks and never re-saw
@@ -960,7 +960,7 @@ class TestClaudeCodeBugScenarios:
         deadlock (deny→AI text→Stop→re-arm→deny→infinite). That deadlock
         path was removed when enforce_stop_injection (PreToolUse deny) was
         deleted, so unconditional re-arming is now safe and is required so
-        the override actions (/ar:sos, /ar:task-ignore) stay visible to the
+        the override actions (/ar:sos, /ar:task ignore) stay visible to the
         AI on every Stop block — not just the first or the escape-hatch
         threshold crossing.
         """

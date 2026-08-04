@@ -65,7 +65,10 @@ def test_capability_snapshot_command_docs_cover_runtime_ar_aliases():
     assert missing_docs == []
     assert command_docs["restart-daemon"]["executable"] is True
     assert "current autorun install/source tree" in command_docs["restart-daemon"]["description"]
-    assert command_docs["task-ignore"]["aliases"] == ["ti", "ignore-task"]
+    # `/ar:task status` and `/ar:task ignore` are subcommands of task.md's
+    # documented grammar; a per-subcommand document would be a second copy.
+    assert "task-status" not in command_docs
+    assert "task-ignore" not in command_docs
 
 
 def test_capability_snapshot_covers_installed_skills_with_descriptions():

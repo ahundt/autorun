@@ -1180,31 +1180,6 @@ def handle_sos(ctx: EventContext) -> str:
     return _deactivate(ctx, f"⚠️ EMERGENCY STOP\n{CONFIG['emergency_stop']}")
 
 
-# `commands/task-status.md` declares `name: task-status`, and every harness
-# advertises the document under that name. Registering it here is what makes the
-# advertisement true; without it only the two-word `/ar:task status` form
-# dispatched and the alias silently did nothing.
-#
-# Its frontmatter `aliases: [ts, task-state]` is deliberately NOT registered.
-# That field feeds command_docs_inventory and nothing else — `task-ignore`
-# declares `aliases: [ti, ignore-task]` the same way with no `/ar:ti` handler —
-# and test_capability_snapshot pins the invariant that every runtime `/ar:*`
-# alias owns a command document of its own name.
-@app.command("/ar:task-status", "/task-status")
-def handle_task_status_alias(ctx: EventContext) -> str:
-    """Compatibility entry point for the canonical ``ar:task status``."""
-    prompt = ctx.activation_prompt or ctx.prompt or ""
-    return _task_status(ctx, tuple(prompt.split()[1:]))
-
-
-@app.command("/ar:task-ignore", "/task-ignore")
-def handle_task_ignore(ctx: EventContext) -> str:
-    """Compatibility entry point for the canonical ``ar:task ignore``."""
-    prompt = ctx.activation_prompt or ctx.prompt or ""
-    parts = prompt.split(maxsplit=2)
-    return _task_ignore(ctx, tuple(parts[1:]))
-
-
 def _task_ignore(ctx: EventContext, arguments: tuple[str, ...]) -> str:
     """Mark one tracked task ignored without changing other task state."""
     if not arguments or not arguments[0].strip():
@@ -2388,7 +2363,7 @@ def _task_prompts(ctx: EventContext, arguments: tuple[str, ...]) -> str:
                             icon = {"in_progress": ">>", "pending": ".."}.get(st, "??")
                             lines.append(f"  {icon} #{tid}: {subj} ({st})")
                         if len(incomplete) > 5:
-                            lines.append(f"  ... and {len(incomplete) - 5} more (/ar:task-status for full list)")
+                            lines.append(f"  ... and {len(incomplete) - 5} more (/ar:task for full list)")
                     else:
                         lines.append("  All tasks completed!")
                 else:

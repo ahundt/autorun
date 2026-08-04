@@ -1139,8 +1139,8 @@ After every step and substep you must say "Wait," and execute this sequential th
         "status",
         "stop",
         "test",
-        "tmux-session-management",
-        "tmux-test-workflow",
+        "tmux",
+        "ttest",
     ),
 }
 

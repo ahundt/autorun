@@ -123,7 +123,7 @@ autorun provides convenient commands for tmux session automation:
 
 ### Related Documentation
 - `commands/tabs.md` - Session discovery user interface
-- `commands/tmux-session-management.md` - Enhanced session management
+- `commands/tmux.md` - Session management command (`/ar:tmux`)
 - `agents/tmux-session-automation.md` - Advanced automation patterns
 
 ### Quick Reference: Commands vs Manual tmux

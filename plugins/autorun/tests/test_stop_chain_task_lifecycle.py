@@ -1094,7 +1094,7 @@ class TestStopBlockRepeatedDeliverySuppression:
     The re-delivery guarantee is the important half. handle_stop() re-arms
     pending_stop_injection on every block precisely so an AI that keeps making
     the same mistake keeps re-seeing the override actions (/ar:sos,
-    /ar:task-ignore). Suppressing identical text across blocks recreates the
+    /ar:task ignore). Suppressing identical text across blocks recreates the
     "infinite non-overridable stop failure" that the re-arm exists to prevent:
     the AI gets blocked forever while never re-learning how to resolve it.
 

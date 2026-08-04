@@ -836,7 +836,7 @@ def test_codex_hooks_all_required_events_present(tmp_path, monkeypatch):
 # with project-level AGENTS.md). Autorun ships advisory safety guidance there
 # for the same reason it ships forgecode_template/AGENTS.md: hooks cover the
 # enforcement path, but the model also benefits from knowing the override
-# commands (/ar:sos, /ar:task-ignore) and the philosophy behind the guards.
+# commands (/ar:sos, /ar:task ignore) and the philosophy behind the guards.
 
 
 def test_install_for_codex_writes_agents_md(tmp_path, monkeypatch):
@@ -849,7 +849,7 @@ def test_install_for_codex_writes_agents_md(tmp_path, monkeypatch):
     (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
     template = fake_plugin / "src" / "autorun" / "codex_template"
     template.mkdir(parents=True)
-    (template / "AGENTS.md").write_text("# autorun safety guidance (Codex)\n\nOverride commands: /ar:sos, /ar:task-ignore <id>.\n")
+    (template / "AGENTS.md").write_text("# autorun safety guidance (Codex)\n\nOverride commands: /ar:sos, /ar:task ignore <id>.\n")
 
     ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
     assert ok
@@ -859,7 +859,7 @@ def test_install_for_codex_writes_agents_md(tmp_path, monkeypatch):
     text = agents.read_text()
     # Core override-action mentions must be present so the model can see them.
     assert "/ar:sos" in text
-    assert "/ar:task-ignore" in text
+    assert "/ar:task ignore" in text
 
 
 def test_install_for_codex_preserves_existing_user_agents_md(tmp_path, monkeypatch):
@@ -880,7 +880,7 @@ def test_install_for_codex_preserves_existing_user_agents_md(tmp_path, monkeypat
     (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
     template = fake_plugin / "src" / "autorun" / "codex_template"
     template.mkdir(parents=True)
-    (template / "AGENTS.md").write_text("# autorun safety guidance (Codex)\n\nOverride commands: /ar:sos, /ar:task-ignore <id>.\n")
+    (template / "AGENTS.md").write_text("# autorun safety guidance (Codex)\n\nOverride commands: /ar:sos, /ar:task ignore <id>.\n")
 
     ok, _msg = _install_for_codex(fake_marketplace, ["autorun"], force=False)
     assert ok
@@ -890,7 +890,7 @@ def test_install_for_codex_preserves_existing_user_agents_md(tmp_path, monkeypat
     assert "always use snake_case in python" in merged
     # Autorun guidance also present
     assert "/ar:sos" in merged
-    assert "/ar:task-ignore" in merged
+    assert "/ar:task ignore" in merged
 
 
 # ─── Global skills install (~/.agents/skills) ────────────────────────────────
@@ -924,7 +924,7 @@ def _make_fake_plugin_with_skills(tmp_path, skill_names):
     (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
     template = fake_plugin / "src" / "autorun" / "codex_template"
     template.mkdir(parents=True)
-    (template / "AGENTS.md").write_text("# autorun\n/ar:sos /ar:task-ignore\n")
+    (template / "AGENTS.md").write_text("# autorun\n/ar:sos /ar:task ignore\n")
     skills_root = fake_plugin / "skills"
     skills_root.mkdir()
     for name in skill_names:
@@ -1764,7 +1764,7 @@ def test_install_for_codex_agents_md_idempotent(tmp_path, monkeypatch):
     (fake_plugin / "hooks" / "hook_entry.py").write_text("#!/usr/bin/env python3\n")
     template = fake_plugin / "src" / "autorun" / "codex_template"
     template.mkdir(parents=True)
-    (template / "AGENTS.md").write_text("# autorun safety guidance (Codex)\n\nOverride commands: /ar:sos, /ar:task-ignore <id>.\n")
+    (template / "AGENTS.md").write_text("# autorun safety guidance (Codex)\n\nOverride commands: /ar:sos, /ar:task ignore <id>.\n")
 
     _install_for_codex(fake_marketplace, ["autorun"], force=False)
     first = (tmp_path / ".codex" / "AGENTS.md").read_text()
@@ -1773,7 +1773,7 @@ def test_install_for_codex_agents_md_idempotent(tmp_path, monkeypatch):
     assert first == second, "AGENTS.md content must be stable across re-installs"
     # Hard upper bound: 2× template length leaves no room for double-appending.
     assert second.count("/ar:sos") == 1
-    assert second.count("/ar:task-ignore") == 1
+    assert second.count("/ar:task ignore") == 1
 
 
 # ─── Shared skill installer reports names, not counts ───────────────────────
@@ -1857,7 +1857,7 @@ def test_canonical_codex_commands_exclude_alias_spellings():
     from autorun.config import CONFIG
 
     canonical = set(CONFIG["codex_canonical_commands"])
-    aliases = {"a", "f", "j", "st", "x", "sos", "task-status", "afa", "afj", "afs", "afst"}
+    aliases = {"a", "f", "j", "st", "x", "sos", "afa", "afj", "afs", "afst"}
 
     assert canonical & aliases == set()
 

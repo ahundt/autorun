@@ -188,7 +188,7 @@ def test_codex_formats_autorun_commands_with_platform_display_prefix():
     assert canonicalize_command_prompt("ar:ok git push", "codex") == "/ar:ok git push"
     assert canonicalize_command_prompt("ar ok git push", "codex") == "/ar:ok git push"
     assert canonicalize_command_prompt("/ar:ok git push", "codex") == "/ar:ok git push"
-    assert format_command_for_cli("/ar:task-ignore <id>", "codex") == "ar:task-ignore <id>"
+    assert format_command_for_cli("/ar:task ignore <id>", "codex") == "ar:task ignore <id>"
     assert format_commands_for_cli("Try /ar:ok git push then /ar:st", "codex") == ("Try ar:ok git push then ar:st")
     assert format_commands_for_cli("Try /ar:ok git push", "claude") == "Try /ar:ok git push"
 

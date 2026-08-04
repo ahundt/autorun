@@ -1233,9 +1233,9 @@ tmux.send_keys("npm test", "my-test-session")      # Targets specific session
 ### Tmux Agent Examples
 
 ```bash
-/autorun tmux-test-workflow claude --test-categories basic,integration,performance
-/autorun tmux-session-management create my-project --template development
-/autorun tmux-session-management monitor my-dev-session
+/ar:ttest basic
+/ar:tmux create my-project
+/ar:tmux list
 ```
 
 ## Project Structure

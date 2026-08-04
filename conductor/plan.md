@@ -95,7 +95,7 @@ def check_task_staleness(ctx: EventContext) -> Optional[Dict]:
 This plan extension describes how autorun will explicitly support the Conductor-based task lifecycle in Gemini CLI, ensuring that task status is visible and maintainable across platforms.
 
 ## 1. Conductor Integration Goals
-- **Unified Status**: The `/ar:status` and `/ar:task-status` commands should reflect Conductor tracks when running in Gemini CLI.
+- **Unified Status**: The `/ar:status` and `/ar:task status` commands should reflect Conductor tracks when running in Gemini CLI.
 - **Plan Tracking**: Leverage Conductor's `conductor/tracks/<track_id>/plan.md` as the source of truth for tasks in Gemini, matching Claude Code's internal task DB behavior.
 - **WOLOG Verification**: Ensure that when a user approves a Conductor plan, autorun recognizes it as an active "Feature Phase" or "Execution Phase".
 
@@ -108,7 +108,7 @@ Modify the `TaskLifecycle` class to detect and parse Conductor plans when in Gem
 1.  Check if `conductor/tracks/` exists.
 2.  Find the "active" track (referenced in `conductor/index.md` or the latest directory).
 3.  Parse the Markdown task list (`- [ ] task`) from `plan.md`.
-4.  Map these to internal `Task` objects for consistent display in `/ar:task-status`.
+4.  Map these to internal `Task` objects for consistent display in `/ar:task status`.
 
 ### B. Task Completion Sync
 When Conductor marks a task as complete in `plan.md`, `autorun` should detect the file change and update the session state accordingly.
@@ -120,7 +120,7 @@ When Conductor marks a task as complete in `plan.md`, `autorun` should detect th
 
 - **TOML Generation Fix**: Ensure regex patterns like `regex:eval\(` in `no.md` are escaped as `regex:eval\\(` in the generated `.toml` files.
 - **Strict Schema Enforcement**: Filter JSON responses per Gemini hook type to prevent schema validation errors.
-- **Task Interoperability**: Bypass Claude-specific `TaskCreate` enforcement in Gemini, replacing it with a first-class Conductor plan parser that reflects active tracks in `/ar:task-status`.
+- **Task Interoperability**: Bypass Claude-specific `TaskCreate` enforcement in Gemini, replacing it with a first-class Conductor plan parser that reflects active tracks in `/ar:task status`.
 
 ### D. Command Adjustment for `/ar:tasks` (`plugins/autorun/src/autorun/plugins.py`)
 

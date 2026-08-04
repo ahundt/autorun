@@ -123,8 +123,8 @@ autorun/
 │   └── cli-test-automation.md         # CLI testing automation
 ├── commands/
 │   ├── autorun            # Core plugin command script
-│   ├── tmux-test-workflow.md           # Testing workflow
-│   └── tmux-session-management.md      # Session management
+│   ├── ttest.md                        # CLI testing workflow
+│   └── tmux.md                         # Session management
 ├── src/
 │   └── autorun/           # Package code
 └── ... (other files)

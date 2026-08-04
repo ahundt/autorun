@@ -3,7 +3,7 @@
 Unit tests for tmux automation agents and commands.
 
 Tests the tmux-session-automation and cli-test-automation agents
-along with the tmux-test-workflow and tmux-session-management commands.
+along with the ttest and tmux commands.
 """
 
 import pytest
@@ -336,42 +336,39 @@ class TestAgentIntegrationScenarios:
 class TestCommandWorkflowIntegration:
     """Test command workflow integration"""
 
-    def test_tmux_test_workflow_command_structure(self):
-        """Test tmux-test-workflow command structure"""
-        # Test that command file exists and has proper structure
-        command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'tmux-test-workflow.md')
+    def test_ttest_command_structure(self):
+        """`ttest.md` is the one CLI-testing command document; the old
+        `tmux-test-workflow.md` summary duplicated it."""
+        command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'ttest.md')
         assert os.path.exists(command_file)
 
         with open(command_file, 'r', encoding="utf-8") as f:
             content = f.read()
 
-        # Check for required YAML frontmatter
-        assert 'name: tmux-test-workflow' in content
         assert 'description:' in content
-        assert 'model: sonnet' in content
+        assert 'argument-hint:' in content
+        assert '## Run a Custom Command in Isolation' in content
+        assert '## Basic Test Sequence' in content
+        assert '## Safety' in content
 
-        # Check for required workflow sections (simplified structure)
-        assert '## Quick Start' in content
-        assert '## Available Test Types' in content
-        assert '## Safety Features' in content
-
-    def test_tmux_session_management_command_structure(self):
-        """Test tmux-session-management command structure"""
-        command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'tmux-session-management.md')
+    def test_tmux_command_structure(self):
+        """`tmux.md` is the one session-management command document; the old
+        `tmux-session-management.md` summary duplicated it."""
+        command_file = os.path.join(os.path.dirname(__file__), '..', 'commands', 'tmux.md')
         assert os.path.exists(command_file)
 
         with open(command_file, 'r', encoding="utf-8") as f:
             content = f.read()
 
-        # Check for required YAML frontmatter
-        assert 'name: tmux-session-management' in content
         assert 'description:' in content
-        assert 'model: sonnet' in content
+        assert 'argument-hint:' in content
+        assert '## Actions' in content
+        assert '## Safety' in content
 
-        # Check for required management sections (simplified structure)
-        assert '## Quick Start' in content
-        assert '## Available Actions' in content
-        assert '## Safety Features' in content
+    def test_tmux_summary_duplicates_stay_deleted(self):
+        commands_dir = os.path.join(os.path.dirname(__file__), '..', 'commands')
+        for name in ('tmux-test-workflow.md', 'tmux-session-management.md'):
+            assert not os.path.exists(os.path.join(commands_dir, name)), name
 
     def test_agent_files_structure(self):
         """Test agent files structure"""

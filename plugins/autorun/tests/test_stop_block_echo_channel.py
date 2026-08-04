@@ -99,7 +99,7 @@ def test_every_generation_still_delivers_to_the_ai(ctx_factory):
     """Identical text across generations must NOT be suppressed.
 
     Suppressing it would stop feeding the AI the override actions (/ar:sos,
-    /ar:task-ignore) from the second block onward — the "infinite
+    /ar:task ignore) from the second block onward — the "infinite
     non-overridable stop failure" the re-arm exists to prevent.
     """
     for _ in range(3):

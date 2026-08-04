@@ -45,7 +45,7 @@ autorun template provides advisory safety guidance covering:
 - No `git reset --hard`, `git push --force`, `git clean -f` without
   explicit user instruction in the current turn
 - Stop semantics: only the user can type `/ar:sos` or
-  `/ar:task-ignore <id>` to unblock incomplete-task stops
+  `/ar:task ignore <id>` to unblock incomplete-task stops
 
 ## Base path resolution
 

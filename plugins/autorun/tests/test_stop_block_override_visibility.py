@@ -1,7 +1,7 @@
 """Regression test for "infinite non-overridable stop failure" bug (v0.11.0).
 
 Bug: When the AI repeatedly tries to Stop with incomplete tasks, the user-visible
-override actions (`/ar:sos` and `/ar:task-ignore`) must be reliably reachable
+override actions (`/ar:sos` and `/ar:task ignore`) must be reliably reachable
 by the AI on EVERY block — not only on the first block or when the
 consecutive-identical counter happens to hit `min_consecutive`.
 
@@ -33,9 +33,9 @@ from autorun.task_lifecycle import TaskLifecycle, TaskLifecycleConfig
 
 # === Sentinels — exact substrings that MUST appear in the user-visible channel ===
 OVERRIDE_SOS = "/ar:sos"
-OVERRIDE_TASK_IGNORE = "/ar:task-ignore"
+OVERRIDE_TASK_IGNORE = "/ar:task ignore"
 CODEX_OVERRIDE_SOS = "ar:sos"
-CODEX_OVERRIDE_TASK_IGNORE = "ar:task-ignore"
+CODEX_OVERRIDE_TASK_IGNORE = "ar:task ignore"
 
 
 # === Test fixtures (parallel to test_stop_chain_task_lifecycle.py) ===
@@ -355,7 +355,7 @@ def test_base_injection_includes_task_subject_and_count(
 #   earlier planning run. Claude Code's own TaskList returned "Task not found"
 #   for it, and TaskUpdate(taskId="1", status="deleted") returned the same.
 #   The AI gave up because the Stop-block message said:
-#     "6. Override: only the user can type /ar:sos or /ar:task-ignore"
+#     "6. Override: only the user can type /ar:sos or /ar:task ignore"
 #   …without mentioning that an AI-callable stale-clear marker
 #   (AUTORUN_TASKS_CLEAR_STALE_TASK(<id>)) becomes available after
 #   ghost_clear_min_consecutive_blocks identical blocks.

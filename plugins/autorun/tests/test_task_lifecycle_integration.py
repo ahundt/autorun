@@ -414,7 +414,7 @@ class TestTaskLifecycleIntegration:
 
         # Every actual block still teaches the user escape hatches.
         assert '/ar:sos' in result['systemMessage']
-        assert '/ar:task-ignore' in result['systemMessage']
+        assert '/ar:task ignore' in result['systemMessage']
 
         yielded = self.manager.handle_stop(ctx)
         assert "retained 1 incomplete task" in yielded["systemMessage"]

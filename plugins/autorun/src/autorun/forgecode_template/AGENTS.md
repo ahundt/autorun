@@ -31,4 +31,4 @@ irreversible actions.
 
 If the user wants you to stop and you have incomplete tasks, surface
 the override path explicitly: only the user can type `/ar:sos` or
-`/ar:task-ignore <id>` to unblock the stop.
+`/ar:task ignore <id>` to unblock the stop.

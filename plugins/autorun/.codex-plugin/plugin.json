@@ -35,8 +35,8 @@
     "./commands/status.md",
     "./commands/stop.md",
     "./commands/test.md",
-    "./commands/tmux-session-management.md",
-    "./commands/tmux-test-workflow.md"
+    "./commands/tmux.md",
+    "./commands/ttest.md"
   ],
   "skills": "./skills/",
   "interface": {

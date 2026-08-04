@@ -24,6 +24,7 @@ Tests for:
 - Plan Management Plugin: New/refine/update/process handlers
 """
 
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -1984,41 +1985,32 @@ class TestLegacyAutoFileCommandsDispatchInEveryAdvertisedSpelling:
         assert app._find_command("ar:afa", "codex") is not None
 
 
-class TestTaskStatusCompatibilityAliasDispatches:
-    """`commands/task-status.md` declares `name: task-status` and calls itself a
-    compatibility alias for `/ar:task status`. Claude advertises it as
-    `/ar:task-status` and Codex as `ar:task-status`, but no handler was
-    registered under any of those names — only the two-word `/ar:task status`
-    form worked.
-
-    This alias is also one of the eleven entries dropped from the Codex model
-    catalog, and a dropped catalog entry is only safe while the command it
-    names still executes for anyone who types it.
-
-    The document's frontmatter `aliases: [ts, task-state]` is descriptive
-    metadata for command_docs_inventory, not a dispatch promise — `task-ignore`
-    declares `aliases: [ti, ignore-task]` with no `/ar:ti` handler — so those
-    two spellings are deliberately not asserted here.
+class TestTaskSubcommandsAreTheOnlyTaskSpellings:
+    """`/ar:task <operation>` is the whole task command surface. The dash
+    spellings `/ar:task-status` and `/ar:task-ignore` used to exist as
+    compatibility wrappers with their own command documents; each document was
+    a second description of a subcommand `/ar:task` already parses, and every
+    harness catalog paid for the duplicate entry. The wrappers and documents
+    are gone — these tests keep the dash family from growing back.
     """
 
-    @pytest.mark.parametrize("prompt", ["/ar:task-status", "/task-status"])
-    def test_advertised_spelling_resolves(self, prompt):
+    @pytest.mark.parametrize(
+        "prompt",
+        ["/ar:task-status", "/task-status", "/ar:task-ignore", "/task-ignore"],
+    )
+    def test_dash_spellings_no_longer_dispatch(self, prompt):
+        assert app._find_command(prompt) is None, f"{prompt} still has a handler"
+
+    @pytest.mark.parametrize("prompt", ["/ar:task status", "/ar:task ignore 7 done"])
+    def test_two_word_forms_dispatch(self, prompt):
         assert app._find_command(prompt) is not None, f"{prompt} has no handler"
 
-    def test_codex_prefixless_spelling_resolves(self):
-        assert app._find_command("ar:task-status", "codex") is not None
+    def test_codex_prefixless_two_word_form_dispatches(self):
+        assert app._find_command("ar:task status", "codex") is not None
 
-    def test_alias_reports_the_same_thing_as_the_canonical_form(self):
-        store = ThreadSafeDB()
-
-        def run(prompt: str) -> str:
-            ctx = EventContext(
-                session_id="task-status-alias",
-                event="UserPromptSubmit",
-                prompt=prompt,
-                store=store,
-            )
-            ctx.activation_prompt = prompt
-            return app._find_command(prompt).handler(ctx)
-
-        assert run("/ar:task-status") == run("/ar:task status")
+    def test_no_command_document_advertises_a_task_dash_spelling(self):
+        commands_dir = Path(__file__).parents[1] / "commands"
+        dash_docs = sorted(
+            path.name for path in commands_dir.glob("task-*.md")
+        )
+        assert dash_docs == []

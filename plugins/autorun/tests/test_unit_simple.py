@@ -2798,7 +2798,7 @@ def test_stop_block_pending_injection_re_armed_every_block(tmp_path, monkeypatch
     consecutive==min_consecutive to break a PreToolUse-deny deadlock loop.
     That loop required enforce_stop_injection (PreToolUse deny) which was
     removed, so unconditional re-arming is now safe — and is REQUIRED
-    so the override actions (/ar:sos, /ar:task-ignore) stay visible to
+    so the override actions (/ar:sos, /ar:task ignore) stay visible to
     the AI even when consecutive resets because tasks churn between stops.
     Frequency stays low because Stop events themselves are infrequent.
     """

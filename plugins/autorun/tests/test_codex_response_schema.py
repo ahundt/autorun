@@ -153,8 +153,6 @@ def _sample_prompt(alias: str) -> str:
         return f"{alias} regex:test-block test block"
     if alias == "/ar:tasks":
         return "/ar:tasks 3"
-    if alias == "/ar:task-ignore":
-        return "/ar:task-ignore nonexistent-test-task no longer relevant"
     if alias == "/ar:cache":
         return "/ar:cache status"
     if alias in {"/ar:go", "/ar:run", "/ar:gp", "/ar:proc", "/autorun", "/autoproc", "activate"}:
@@ -730,7 +728,7 @@ def test_codex_plain_ar_allow_supports_unquoted_multiword_patterns(prompt, expec
     assert ctx.session_allowed_patterns[-1]["pattern"] == expected
 
 
-@pytest.mark.parametrize("prompt_prefix", ["/ar:task-ignore", "ar:task-ignore", "ar task-ignore"])
+@pytest.mark.parametrize("prompt_prefix", ["/ar:task ignore", "ar:task ignore", "ar task ignore"])
 def test_task_ignore_command_marks_task_ignored_across_native_and_plain_aliases(prompt_prefix):
     session_id = f"task-ignore-{uuid.uuid4().hex}"
     store = ThreadSafeDB()

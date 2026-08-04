@@ -66,7 +66,7 @@ class TestFailureModes:
         message = result['systemMessage']
         assert 'incomplete tasks' in message
         # Should mention there are more tasks (overflow indicator)
-        assert 'more' in message or '/task-status' in message
+        assert 'more' in message or '/ar:task' in message
 
         # Cleanup
         shutil.rmtree(manager.config.storage_dir / session_id, ignore_errors=True)
@@ -116,7 +116,7 @@ class TestFailureModes:
 
         # Verify the message includes user escape hatch instructions
         assert '/ar:sos' in result['systemMessage'], "Should mention /ar:sos as user escape hatch"
-        assert '/ar:task-ignore' in result['systemMessage'], "Should mention /ar:task-ignore"
+        assert '/ar:task ignore' in result['systemMessage'], "Should mention /ar:task ignore"
 
         yielded = manager.handle_stop(ctx)
         assert "retained 1 incomplete task" in yielded["systemMessage"]
