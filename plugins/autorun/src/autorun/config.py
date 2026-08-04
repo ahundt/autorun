@@ -1120,6 +1120,15 @@ After every step and substep you must say "Wait," and execute this sequential th
     # catalog. It does NOT remove any command: every alias stays registered in
     # plugins.py and every document stays in commands/ for human completion.
     #
+    # Codex converts each listed document into a skill entry at plugin install
+    # (codex-rs core-plugins command_migration) and SILENTLY DROPS any document
+    # that uses $ARGUMENTS, $0-$9, {{...}}, backtick-! shell blocks, @word
+    # tokens, or renders over 4,000 bytes. Only documents that pass that filter
+    # belong here. tmux.md and ttest.md fail it (dynamic ! status line,
+    # $ARGUMENTS, >4KB); Codex tmux capability ships as the tmux-automation
+    # plugin skill instead, which Codex loads natively and which shadows any
+    # migrated command of the same name.
+    #
     # Measured against Codex 0.146.0; receipt:
     # ~/.agents/notes/2026-08-03-0335-codex-skills-live-catalog-context-cost-assessment.md
     "codex_canonical_commands": (
@@ -1139,8 +1148,6 @@ After every step and substep you must say "Wait," and execute this sequential th
         "status",
         "stop",
         "test",
-        "tmux",
-        "ttest",
     ),
 }
 

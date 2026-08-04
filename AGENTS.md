@@ -18,6 +18,8 @@
 
 UV workspace containing 2 Claude Code plugins: **autorun**, **pdf-extractor**.
 
+gemini-cli is retired, 'gemini' represents the qwen code agy harness families.
+
 **For explicit legacy Gemini CLI support:** See
 [README.md — Legacy Gemini CLI Installation](README.md#legacy-gemini-cli-installation).
 

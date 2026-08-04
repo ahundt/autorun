@@ -34,9 +34,7 @@
     "./commands/reload.md",
     "./commands/status.md",
     "./commands/stop.md",
-    "./commands/test.md",
-    "./commands/tmux.md",
-    "./commands/ttest.md"
+    "./commands/test.md"
   ],
   "skills": "./skills/",
   "interface": {

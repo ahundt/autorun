@@ -1834,7 +1834,7 @@ def test_codex_manifest_declares_the_canonical_command_surface():
     expected = [f"./commands/{name}.md" for name in CONFIG["codex_canonical_commands"]]
 
     assert data["commands"] == expected
-    assert len(expected) == 18
+    assert len(expected) == 16
 
 
 def test_every_canonical_codex_command_document_exists():
@@ -1849,6 +1849,40 @@ def test_every_canonical_codex_command_document_exists():
     ]
 
     assert missing == []
+
+
+def test_canonical_codex_commands_survive_codex_command_migration_filter():
+    """Codex converts each manifest command document into a skill entry at
+    plugin install and silently drops any document that uses $ARGUMENTS,
+    numbered $N placeholders, {{...}} templates, inline backtick-! shell
+    blocks, @word tokens, or renders over 4,000 bytes (codex-rs core-plugins
+    command_migration). A listed document that fails the filter is a catalog
+    entry that silently never exists on Codex."""
+    import re
+
+    from autorun.config import CONFIG
+
+    commands_dir = Path(__file__).parents[1] / "commands"
+    dropped = {}
+    for name in CONFIG["codex_canonical_commands"]:
+        text = (commands_dir / f"{name}.md").read_text(encoding="utf-8")
+        reasons = []
+        if "$ARGUMENTS" in text:
+            reasons.append("$ARGUMENTS")
+        if re.search(r"\$[0-9]", text):
+            reasons.append("numbered placeholder")
+        if "{{" in text and "}}" in text:
+            reasons.append("{{...}} template")
+        if "!`" in text or "! `" in text:
+            reasons.append("inline shell block")
+        if any(token.startswith("@") and len(token) > 1 for token in text.split()):
+            reasons.append("@ token")
+        if len(text.encode("utf-8")) > 4000:
+            reasons.append("over 4,000 bytes")
+        if reasons:
+            dropped[name] = reasons
+
+    assert dropped == {}
 
 
 def test_canonical_codex_commands_exclude_alias_spellings():
