@@ -1,5 +1,8 @@
 ---
 description: Block a command pattern globally (persists across sessions)
+# Manual-only: reachable by typing the command, not by model choice.
+# Writes a block that persists across every future session, so it must be a human decision.
+disable-model-invocation: true
 ---
 
 # Global Block Pattern

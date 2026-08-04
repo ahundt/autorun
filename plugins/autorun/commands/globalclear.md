@@ -1,5 +1,8 @@
 ---
 description: Clear all global pattern blocks and allows
+# Manual-only: reachable by typing the command, not by model choice.
+# Discards every global block and allow the user has accumulated.
+disable-model-invocation: true
 ---
 
 # Clear Global Overrides

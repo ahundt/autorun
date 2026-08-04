@@ -177,3 +177,75 @@ def test_autorun_maintainer_skill_covers_current_harnesses_and_scoped_restarts()
     assert "name=flavor:binary:config_dir[:display]" not in text
     assert "pkill -f" not in text
     assert "0.11.0" not in text
+
+
+# ─── Explicit-only command metadata pilot ───────────────────────────────────
+#
+# Claude Code loads every command document's description into model context and
+# lets Claude invoke it (https://code.claude.com/docs/en/slash-commands:
+# "disable-model-invocation ... Set to true to prevent Claude from
+# automatically loading this skill. Use for workflows you want to trigger
+# manually with /name. Default: false").
+#
+# The commands below cross a session boundary or halt work outright. A model
+# should not reach for them on its own, and the user should still be able to
+# type them. Piloted on this set first; expand only with a completion and
+# behavior receipt per harness.
+
+COMMANDS_ROOT = PLUGIN_ROOT / "commands"
+
+MANUAL_ONLY_COMMANDS = (
+    "estop",
+    "sos",
+    "globalno",
+    "globalok",
+    "globalclear",
+)
+
+
+def _frontmatter(path: Path) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return fields
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        key, sep, value = line.partition(":")
+        if sep:
+            fields[key.strip()] = value.strip()
+    return fields
+
+
+@pytest.mark.parametrize("stem", MANUAL_ONLY_COMMANDS)
+def test_manual_only_command_is_not_model_invocable(stem):
+    path = COMMANDS_ROOT / f"{stem}.md"
+
+    assert path.is_file(), f"{stem}.md is missing"
+    assert _frontmatter(path).get("disable-model-invocation") == "true"
+
+
+@pytest.mark.parametrize("stem", MANUAL_ONLY_COMMANDS)
+def test_manual_only_command_stays_visible_in_the_slash_menu(stem):
+    """Explicit-only removes model invocation, not human completion. Hiding it
+    from the menu too would delete the command from the user's reach."""
+    fields = _frontmatter(COMMANDS_ROOT / f"{stem}.md")
+
+    assert fields.get("user-invocable", "true") != "false"
+    assert fields.get("description")
+
+
+def test_the_pilot_stays_small_and_excludes_ordinary_controls():
+    """A pilot that quietly grows into "hide everything" removes capability
+    instead of removing context. Ordinary policy and status commands must stay
+    model-invocable."""
+    for stem in ("status", "allow", "find", "justify", "ok", "no", "blocks"):
+        fields = _frontmatter(COMMANDS_ROOT / f"{stem}.md")
+        assert fields.get("disable-model-invocation") is None, stem
+
+    piloted = [
+        path.stem
+        for path in sorted(COMMANDS_ROOT.glob("*.md"))
+        if _frontmatter(path).get("disable-model-invocation") == "true"
+    ]
+    assert piloted == sorted(MANUAL_ONLY_COMMANDS)
