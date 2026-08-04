@@ -108,17 +108,12 @@ Use `autorun --restart-daemon` for the current install/source tree. Use `autorun
 
 ---
 
-## 6. Official & Internal References
+## 6. Official References
 
 *   **Claude Hooks Reference**: [https://code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks)
 *   **Claude Schema Output**: [https://code.claude.com/docs/en/hooks#json-output](https://code.claude.com/docs/en/hooks#json-output)
 *   **Gemini Hooks Reference**: [https://geminicli.com/docs/hooks/reference/](https://geminicli.com/docs/hooks/reference/)
 *   **Claude Bug #4669 (Exit 2)**: [https://claude.com/blog/how-to-configure-hooks](https://claude.com/blog/how-to-configure-hooks)
-These two live in the autorun git checkout, not in the installed skill package —
-read them from a clone, at the repository root:
-
-*   **Internal Path Ref**: <repo-root>/notes/clautorun_install_paths_reference.md
-*   **Lessons Learned**: <repo-root>/notes/2026_02_11_lessons_learned_hook_failure_loop_prevention.md
 
 ---
 

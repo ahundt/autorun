@@ -1041,7 +1041,6 @@ tmux.send_keys('gemini', session_name)
 - **Hook Reference**: https://docs.claude.com/en/docs/claude-code/hooks
 - **Troubleshooting Guide**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Gemini Usage**: [GEMINI.md](GEMINI.md)
-- **Integration Notes**: [notes/2026_02_10_1948_gemini_hooks_integration_complete_notes.md](../../notes/2026_02_10_1948_gemini_hooks_integration_complete_notes.md)
 
 ---
 

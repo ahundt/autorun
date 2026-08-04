@@ -56,9 +56,8 @@ so the same numbers do not point at the same text in v1.2.0.
 
 ### Broken pointers and commands
 
-3. A `SKILL.md` bullet pointed at an unavailable private notes file. The package-only pointer
-   was removed; repository-only notes remain maintainer documentation rather than package
-   dependencies.
+3. A `SKILL.md` bullet pointed at a file that is not part of the package. The pointer was
+   removed; the package cites only files it ships or public sources.
 4. `refining-skills.md:494` pointed at `../templates/SKILL-template.md`. Corrected to
    `examples/SKILL-template.md`.
 5. `discovery.md:55` pointed at `references/skill-categories.md`. Corrected to `categories.md`.

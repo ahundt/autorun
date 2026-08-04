@@ -1,0 +1,37 @@
+#!/bin/sh
+# Reject commits that add or modify files under notes/.
+#
+# autorun creates notes/ and fills it with exported plans and generated
+# reports. It is local working output, .gitignore already excludes it, and
+# nothing under it is committed. Deletions pass so untracking notes/
+# content is never blocked.
+#
+# Activate once per clone:  git config core.hooksPath .githooks
+# Cross-machine enforcement: plugins/autorun/tests/test_no_machine_local_leaks.py
+
+staged=$(git diff --cached --name-only --diff-filter=d -- 'notes/')
+if [ -n "$staged" ]; then
+    {
+        echo "COMMIT BLOCKED: notes/ stays out of version control."
+        echo ""
+        echo "Staged notes files:"
+        printf '%s\n' "$staged" | sed 's/^/  /'
+        echo ""
+        echo "autorun writes exported plans and generated reports into notes/."
+        echo "That directory is local working output and is never committed."
+        echo ""
+        echo "Repository policy:"
+        echo "  - Nothing under notes/ is committed, even with 'git add -f'."
+        echo "  - Tracked code, docs, and comments are self-contained: they"
+        echo "    cite only files that exist in the repository."
+        echo "  - Keep session-internal jargon (session IDs, task numbers,"
+        echo "    plan-phase labels) out of tracked files and commit messages;"
+        echo "    state the facts directly."
+        echo ""
+        echo "Fix: git restore --staged <file>   # unstage the notes files"
+        echo "To publish material from a note, write the facts into docs/, the"
+        echo "README, or the commit message."
+    } >&2
+    exit 1
+fi
+exit 0

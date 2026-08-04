@@ -84,8 +84,7 @@ Checked: 2026-08
   in `best-practices.md`. Outcome-only descriptions ("87% faster") satisfy neither and fail
   the audit.
 
-## Local validation boundaries
+## Catalog boundary
 
-- Unpublished or machine-local validation receipts are intentionally excluded from this
-  distributable source catalog. Keep personal notes, raw session content, and private
-  measurements in private evidence storage; list only sources another maintainer can retrieve.
+- This catalog lists only sources another maintainer can retrieve. Unpublished or
+  machine-local measurements are not cited as sources.

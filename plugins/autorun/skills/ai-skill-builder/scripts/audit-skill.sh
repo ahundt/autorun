@@ -122,9 +122,9 @@ audit_skill() {
     # '.' or './my-skill/' makes basename return '.' or a trailing-slash artifact,
     # which then fails the kebab-case and name-match checks on a valid skill.
     skill_path=$(cd "$skill_path" && pwd -P)
-    # A plugin skill can document repository-owned notes alongside its package.
+    # A plugin skill can document repository-owned files alongside its package.
     # Resolve those from the Git root before calling a real pointer missing;
-    # private notes outside the repository remain intentionally out of scope.
+    # files outside the repository are out of scope.
     local repo_root
     repo_root=$(git -C "$skill_path" rev-parse --show-toplevel 2>/dev/null || echo "")
 
@@ -627,9 +627,8 @@ PY
     # nothing in this script observes whether a host actually activated the
     # skill. Only a triggering test on the target host does that.
     #
-    # Local validation receipts and personal notes are intentionally outside the
-    # distributable skill. This section checks only activation-shape heuristics;
-    # it must not turn private measurements into packaged claims.
+    # This section checks only activation-shape heuristics. Packaged claims
+    # must cite sources a reader can retrieve.
     # ──────────────────────────────────────────────────────────
     print_section "7. Activation shape (proxy checks)"
 
