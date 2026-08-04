@@ -538,4 +538,26 @@ audit_skill() {
     echo ""
 }
 
+case "${1:-}" in
+    -h|--help)
+        echo "Usage: bash audit-skill.sh <skill-path>"
+        echo ""
+        echo "Audits one skill directory against the portable Agent Skills structure."
+        echo ""
+        echo "Exit codes:"
+        echo "  0  zero structural FAILs (warnings and proxy misses do not change it)"
+        echo "  1  no path given, path is not a directory, or one or more FAILs"
+        echo ""
+        echo "A zero exit means the files are shaped correctly. It does not mean the"
+        echo "guidance inside them is correct — see 'Needs a reader' in a full run."
+        exit 0
+        ;;
+esac
+
+# `set -e` is on, so a nonzero return from audit_skill would exit before this.
+# The FAIL count is the release gate: a structural failure that exits 0 reads to
+# CI and to a human as a clean run.
 audit_skill "$@"
+if [ "$FAILED" -gt 0 ]; then
+    exit 1
+fi

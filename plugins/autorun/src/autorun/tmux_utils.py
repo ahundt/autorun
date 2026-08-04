@@ -284,7 +284,7 @@ class TmuxUtilities:
     - Format: session:window.pane for precise targeting
     """
 
-    # Default session name as required by CLI_USAGE_AND_TEST_AUTOMATION_WITH_BYOBU_TMUX_SESSIONS.md
+    # Default session name as required by skills/tmux-automation/SKILL.md
     DEFAULT_SESSION_NAME = "autorun"
 
     # Complete WIN_OPS dispatch dictionary as required by documentation

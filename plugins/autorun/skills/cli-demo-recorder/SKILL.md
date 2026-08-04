@@ -4,7 +4,8 @@ description: Create demo videos for CLI and TUI tools. Use when user asks to "re
   "make a demo GIF", "create a demo video", "record my CLI tool", "asciinema demo",
   "demo recording script". Covers asciinema+agg+ffmpeg pipeline, tmux recording, multi-shell,
   and dual-purpose demo+test harnesses in Python, Rust, TypeScript, and Bash.
-version: 5.1.0
+metadata:
+  version: 5.1.0
 ---
 
 # CLI Demo Recorder
