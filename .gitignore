@@ -227,3 +227,6 @@ conductor/tracks/
 /autorun
 /debug/latest
 metadata.json
+
+# Machine-local dmux (tmux project) config with absolute projectRoot
+/.dmux/

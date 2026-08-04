@@ -23,7 +23,7 @@ However, some files require MANUAL updates and are intentionally NOT processed b
 
 1. .dmux/dmux.config.json (Tmux/Byobu Project Config)
    - projectName: "clautorun"
-   - projectRoot: "/Users/athundt/.claude/clautorun"
+   - projectRoot: "~/.claude/clautorun"
    - MANUAL FIX: Update paths to use ~/.claude/autorun
 
 2. .claude/settings.local.json (Claude Code Bash Integration)

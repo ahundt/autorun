@@ -664,7 +664,7 @@ class TestCheckBlockedCommandsIntegration:
             tool_name="Bash",
             tool_input={
                 "command": (
-                    "rtk git -C /Users/athundt/.claude/autorun "
+                    "rtk git -C /home/user/.claude/autorun "
                     "-c push.followTags=false push --porcelain --no-follow-tags origin main:main"
                 )
             },

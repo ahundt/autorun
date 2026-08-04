@@ -156,7 +156,7 @@ class TestPipeDetectionRealWorld:
 
     def test_compound_for_loop_git_show_grep_head_pipeline(self):
         """grep/head inside git-show pipelines in a for loop should be allowed."""
-        cmd = '''cd /Users/athundt/source/general/processtree/processtree-rs/.claude/worktrees/agent-ad441b24cfefc8af7
+        cmd = '''cd /home/user/source/processtree-rs/.claude/worktrees/agent-ad441b24cfefc8af7
 for f in crates/ui/src/state/metric_history.rs crates/ui/src/state/row_state.rs; do
   echo "===== $f ====="
   echo "--- Did a #[cfg(test)] mod tests ALREADY exist in parent bbaf38f? ---"

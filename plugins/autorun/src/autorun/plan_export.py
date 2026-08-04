@@ -594,7 +594,7 @@ class PlanExport:
         """Extract plan file path from ExitPlanMode response message.
 
         ExitPlanMode returns messages like:
-        "Your plan has been saved to: /Users/athundt/.claude/plans/foo.md"
+        "Your plan has been saved to: ~/.claude/plans/foo.md"
 
         This method parses the tool_result to extract the file path when
         filePath field is missing.

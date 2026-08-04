@@ -1069,7 +1069,7 @@ class TestGetPlanFromExitMessage:
     tool_result doesn't include filePath field directly.
 
     ExitPlanMode returns messages like:
-    "Your plan has been saved to: /Users/athundt/.claude/plans/foo.md"
+    "Your plan has been saved to: ~/.claude/plans/foo.md"
     """
 
     def test_extracts_path_from_dict_message_field(self, temp_project):
