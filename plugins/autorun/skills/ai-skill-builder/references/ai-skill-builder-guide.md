@@ -319,7 +319,7 @@ customer", "set up subscription", or "create PayFlow account".
 
 Examples of bad descriptions:
 Example:
-```bash
+
 # Too vague
 python scripts/fetch_data.py --project-id PROJECT_ID
 description: Helps with projects.

@@ -3,7 +3,7 @@
 Five advanced patterns from Anthropic's "The Complete Guide to Building Skills for Claude"
 (January 2026, Chapter 5). Apply these when the basic 4-phase workflow is insufficient.
 
-For fixing broken skills, see `references/troubleshooting.md`.
+For fixing broken skills, see `troubleshooting.md` in this directory.
 
 ---
 

@@ -11,15 +11,14 @@
 # Example:
 #   bash audit-skill.sh ~/.claude/skills/my-skill
 #
-# Score guide:
-#   90-100%  No structural problems detected
-#   70-89%   Minor warnings — review action items
-#   50-69%   Multiple issues found — address before distributing
-#   <50%     Critical structural problems — fix FAILs first
+# Release gate: zero FAILs. The printed percentage is a decided-check score —
+# the share of mechanically decidable checks that passed — and it is deliberately
+# not a quality verdict. A skill can score 100% and still carry contradictory
+# guidance, invented numbers, and untested compatibility claims; that is what the
+# "Needs a reader" section at the end of the run exists to say.
 #
-# Note: This is a smoke test of skill structure, not a comprehensive
-# quality or activation-rate review. A passing score means the file
-# structure follows conventions, not that the skill content is correct.
+# Requires: bash, awk, grep, find. The code-fence check also needs python3 and
+# reports itself as skipped when python3 is absent.
 ##############################################################################
 
 set -e
@@ -32,17 +31,46 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Three classes of check, deliberately counted apart.
+#
+#   DECIDED  the script observed the property itself (a filename, a character
+#            count, a parsed field, a path that does or does not exist). Only
+#            these move the score, because only these are decidable.
+#   PROXY    the script observed a stand-in for the property. A heading named
+#            "## How It Works" is not a workflow, and a workflow can carry a
+#            different heading. Reported, never scored.
+#   REVIEW   not mechanically checkable at all. Listed so its absence from the
+#            output is not mistaken for a pass.
 PASSED=0
 FAILED=0
 WARNINGS=0
+PROXY_OK=0
+PROXY_MISS=0
 
 # Collect action items for summary
 FAIL_ITEMS=()
 WARN_ITEMS=()
+PROXY_ITEMS=()
 
 print_pass() {
     echo -e "  ${GREEN}✅ PASS${NC}: $1"
     PASSED=$((PASSED+1))
+}
+
+# print_proxy_ok "what the stand-in showed"
+print_proxy_ok() {
+    echo -e "  ${BLUE}~ PROXY${NC}: $1"
+    PROXY_OK=$((PROXY_OK+1))
+}
+
+# print_proxy_miss "what the stand-in did not find" ["suggestion"]
+print_proxy_miss() {
+    echo -e "  ${BLUE}~ PROXY${NC}: $1"
+    if [ -n "$2" ]; then
+        echo -e "     ${CYAN}→ Consider${NC}: $2"
+        PROXY_ITEMS+=("$1 — $2")
+    fi
+    PROXY_MISS=$((PROXY_MISS+1))
 }
 
 # print_fail "issue" ["fix instruction"]
@@ -227,10 +255,23 @@ audit_skill() {
             if echo "$frontmatter" | grep -q "^version:"; then
                 local version_value
                 version_value=$(echo "$frontmatter" | grep "^version:" | cut -d: -f2- | tr -d ' ')
-                print_fail "top-level version field '$version_value' is not portable Agent Skills frontmatter" \
+                print_fail "top-level version field '$version_value' is not portable Agent Skills frontmatter — move it under metadata" \
                     "Move it under metadata, for example: metadata: { version: '$version_value' }"
             else
                 print_pass "No unsupported top-level version field"
+            fi
+
+            # metadata.version. Optional in the specification, but a versioned skill
+            # that records its version only in prose has nothing a tool can read.
+            if echo "$frontmatter" | grep -qE "^\s+version:"; then
+                local meta_version
+                meta_version=$(echo "$frontmatter" | grep -E "^\s+version:" | head -1 | cut -d: -f2- | tr -d ' ')
+                print_pass "metadata.version: $meta_version"
+            elif grep -qiE "^#{1,3} +(Version History|Changelog)" "$skill_path/SKILL.md"; then
+                print_fail "SKILL.md documents versions in prose but frontmatter has no metadata.version" \
+                    "Add it so tools can read the version: metadata:\\n  version: 1.0.0"
+            else
+                print_info "No metadata.version (optional; add one when the skill starts carrying a version)"
             fi
 
         else
@@ -266,12 +307,20 @@ audit_skill() {
             print_pass "SKILL.md is $word_count words — within limits"
         fi
 
-        # Level 2: How It Works (200-400 words)
-        if grep -q "## How It Works" "$skill_path/SKILL.md"; then
-            print_pass "Level 2: '## How It Works' section found"
+        # Level 2 workflow section. PROXY, not DECIDED: a heading is not a workflow.
+        # A skill can do this job under '## Workflow' or '## Process', and a skill can
+        # carry the exact heading with nothing useful beneath it. Accept the common
+        # heading names or any h2 followed by a numbered list of 3+ steps.
+        local level2_heading level2_numbered
+        level2_heading=$(grep -icE "^## (How It Works|How this works|Workflow|Process|How To Use)" "$skill_path/SKILL.md" || true)
+        level2_numbered=$(grep -cE "^[0-9]+\. |^### Step [0-9]|^### Phase [0-9]" "$skill_path/SKILL.md" || true)
+        if [ "$level2_heading" -gt 0 ]; then
+            print_proxy_ok "Level 2: a workflow-style heading is present (heading text only; content not assessed)"
+        elif [ "$level2_numbered" -ge 3 ]; then
+            print_proxy_ok "Level 2: $level2_numbered numbered steps found under other headings (structure only; content not assessed)"
         else
-            print_warn "Level 2: No '## How It Works' section" \
-                "Add a 200–400 word section with 3–5 numbered steps showing the workflow (inputs, outputs, time per step)"
+            print_proxy_miss "Level 2: no workflow-style heading and fewer than 3 numbered steps" \
+                "If the workflow lives elsewhere this is a false alarm; otherwise add 3–5 numbered steps with inputs, outputs, and time per step"
         fi
 
         # Level 3: check SKILL.md body AND references/ (lean design puts it there)
@@ -280,7 +329,8 @@ audit_skill() {
             ref_md_count=$(find "$skill_path/references" -maxdepth 2 -name "*.md" | wc -l | tr -d ' ')
         fi
         if grep -qi "## Detailed\|## Complete\|## Comprehensive" "$skill_path/SKILL.md"; then
-            print_pass "Level 3: Detailed section in SKILL.md body"
+            # Heading text only — same limitation as the Level 2 check above.
+            print_proxy_ok "Level 3: a detail-section heading is present in SKILL.md (heading text only)"
         elif [ "$ref_md_count" -gt 0 ]; then
             print_pass "Level 3: $ref_md_count reference file(s) in references/ (lean design — detail in references/)"
         else
@@ -294,11 +344,11 @@ audit_skill() {
             examples_file_count=$(find "$skill_path/references/examples" -type f | wc -l | tr -d ' ')
         fi
         if grep -q "## Examples\|### Example" "$skill_path/SKILL.md"; then
-            print_pass "Examples section in SKILL.md body"
+            print_proxy_ok "Examples heading found in SKILL.md body (heading only; content not assessed)"
         elif [ "$examples_file_count" -gt 0 ]; then
             print_pass "Examples in references/examples/ ($examples_file_count file(s))"
         else
-            print_warn "No examples found" \
+            print_proxy_miss "No examples heading and no references/examples/ files" \
                 "Add '## Examples' in SKILL.md or create references/examples/ with working code/templates users can copy"
         fi
     fi
@@ -311,40 +361,45 @@ audit_skill() {
     if [ -f "$skill_path/SKILL.md" ]; then
         # Invocation: body phrase OR frontmatter trigger phrases
         if grep -qi "invoke with:\|to invoke:\|trigger with:" "$skill_path/SKILL.md"; then
-            print_pass "Invocation phrase documented in body"
+            print_proxy_ok "Invocation phrase documented in body (phrase match only)"
         elif [ "$has_frontmatter" -eq 1 ] && echo "$frontmatter" | grep -q '"'; then
-            print_pass "Invocation covered by trigger phrases in frontmatter description"
+            print_proxy_ok "Invocation covered by trigger phrases in frontmatter description"
         else
-            print_warn "No invocation guidance" \
+            print_proxy_miss "No invocation guidance found by phrase match" \
                 "Add '**Invoke with:** /skill-name or ask about [topic]' near the top of SKILL.md"
         fi
 
-        # Quantitative outcomes
-        if grep -qi "faster\|reduction\|improvement\|save.*time\|[0-9][0-9]%\|percent\|metric\|minutes\|hours" "$skill_path/SKILL.md"; then
-            print_pass "Quantitative outcomes or time estimates mentioned"
+        # Unsourced wall-clock and percentage claims. This check used to reward them,
+        # passing a skill for containing "minutes" or "NN%". Wall-clock estimates depend
+        # on who or what runs the workflow and are invented more often than measured, and
+        # a bare percentage with no baseline is not checkable. Flag them for review instead.
+        local timeclaim_count
+        timeclaim_count=$(grep -cE "[0-9]+ ?(min|mins|minutes|hours|hrs)\b|[0-9]+% (faster|fewer|less|more)" "$skill_path/SKILL.md" || true)
+        if [ "$timeclaim_count" -gt 0 ]; then
+            print_proxy_miss "$timeclaim_count line(s) carry a wall-clock or percentage claim" \
+                "Each needs a baseline, a workload, and how it was measured, or it should state a completion condition instead. Pattern-matched only; verify each by hand."
         else
-            print_warn "No quantitative outcomes or time estimates" \
-                "Add specifics: '75% faster than manual', 'reduces X from 2 hours to 15 minutes per session'"
+            print_proxy_ok "No bare wall-clock or percentage claims found (pattern match only)"
         fi
 
         # Second-person prose (skills teach Claude to write — use imperative form)
         local second_person_count
         second_person_count=$(grep -c "you'll\|you should\|you need to\|What you'll\|you will\b\|You'll\|You should\|You need" "$skill_path/SKILL.md" || true)
         if [ "$second_person_count" -gt 0 ]; then
-            print_warn "$second_person_count line(s) use second-person prose ('you'll', 'you should')" \
+            print_proxy_miss "$second_person_count line(s) use second-person prose ('you'll', 'you should')" \
                 "Rewrite as imperative form — 'What you'll do:' → 'To do this:'. Skills teach Claude to write, so use the form Claude should follow."
         else
-            print_pass "No second-person prose (uses imperative form)"
+            print_proxy_ok "No second-person prose matched (pattern match only)"
         fi
 
         # Filler intro phrases (these add words without adding information)
         local filler_count
         filler_count=$(grep -ci "to understand\|skill should\|in this step\|in this section\|this section covers\|this section explains\|as you can see\|it is important to note\|please note that\|it is worth noting" "$skill_path/SKILL.md" || true)
         if [ "$filler_count" -gt 0 ]; then
-            print_warn "$filler_count line(s) contain filler phrases ('to understand', 'skill should', 'in this step', etc.)" \
+            print_proxy_miss "$filler_count line(s) contain filler phrases ('to understand', 'skill should', 'in this step', etc.)" \
                 "Remove filler intros — the step header already states context. 'To understand what the skill does:' → delete the line; the list below it stands alone."
         else
-            print_pass "No filler intro phrases"
+            print_proxy_ok "No filler intro phrases matched (pattern match only)"
         fi
 
         # DRY check: content duplication between body and references/
@@ -407,6 +462,126 @@ audit_skill() {
     # ──────────────────────────────────────────────────────────
     print_section "6. Common Issues"
 
+    # Internal links.
+    #
+    # From SKILL.md this is DECIDED: every path SKILL.md names is a pointer the
+    # agent is told to follow, so a missing file is a defect with no ambiguity.
+    #
+    # From a reference file it is a PROXY. Reference files carry teaching examples
+    # that name files of the skill *being built* (`references/policy.md`), and a
+    # changelog names paths that were deliberately removed. No script can tell
+    # those from a real broken pointer, so they are reported and never scored.
+    collect_broken_links() {
+        local f=$1 dir target out=""
+        dir=$(dirname "$f")
+        while IFS= read -r target; do
+            [ -n "$target" ] || continue
+            case "$target" in /*|~*|*" "*) continue ;; esac
+            if [ ! -e "$dir/$target" ] && [ ! -e "$skill_path/$target" ]; then
+                out="${out}${f#"$skill_path"/} → $target; "
+            fi
+        done < <(awk '/^```/{fence=!fence; next} !fence' "$f" \
+                 | grep -oE '`(\.\./)?(references|scripts|assets|notes|templates)/[^`]*\.(md|sh|py|pdf)`' \
+                 | tr -d '`' | sort -u)
+        printf '%s' "$out"
+    }
+
+    if [ -f "$skill_path/SKILL.md" ]; then
+        local skill_broken ref_broken=""
+        skill_broken=$(collect_broken_links "$skill_path/SKILL.md")
+        if [ -n "$skill_broken" ]; then
+            print_fail "SKILL.md names files that do not exist" "$skill_broken"
+        else
+            print_pass "Every path SKILL.md names resolves on disk"
+        fi
+
+        while IFS= read -r mdfile; do
+            [ -f "$mdfile" ] || continue
+            ref_broken="${ref_broken}$(collect_broken_links "$mdfile")"
+        done < <(find "$skill_path/references" -name "*.md" 2>/dev/null)
+
+        if [ -n "$ref_broken" ]; then
+            print_proxy_miss "Unresolved paths named in reference files: $ref_broken" \
+                "Some of these are teaching examples naming files of the skill being built, or historical paths in a changelog. Check each by hand."
+        else
+            print_proxy_ok "No unresolved paths named in reference files"
+        fi
+
+        # Destructive commands in shell examples. A skill's examples get run.
+        if awk '/^```(bash|sh)/{f=1; next} /^```/{f=0} f' "$skill_path/SKILL.md" \
+             $(find "$skill_path/references" -name "*.md" 2>/dev/null) 2>/dev/null \
+             | grep -qE '(^|[^a-zA-Z_-])rm (-[rRfi]+ )?[~/$]'; then
+            print_fail "A shell example runs 'rm' on a real path" \
+                "Use 'trash' or move to a backup. 'rm' destroys the only copy and the record of when it went."
+        else
+            print_pass "No 'rm' on real paths in shell examples"
+        fi
+
+        # Code-fence structure. Both failures below are decidable from the text
+        # and both silently corrupt rendering, so a reader sees instructions as
+        # code or code as prose without any error anywhere.
+        #
+        #   Unbalanced: an odd number of fence lines leaves the tail of the file
+        #   inside a code block.
+        #   Nested: CommonMark closes a fence at the first fence of the same
+        #   length, so ```bash written inside ```markdown ends the outer block
+        #   early. Nesting requires a longer outer fence (````).
+        local fence_report
+        if ! command -v python3 >/dev/null 2>&1; then
+            print_info "Code-fence check skipped — python3 not found on PATH"
+            fence_report="__skipped__"
+        else
+        fence_report=$(python3 - "$skill_path" <<'PY' 2>/dev/null || true
+import re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = [root / "SKILL.md"] + sorted(root.glob("references/**/*.md"))
+for f in files:
+    if not f.is_file():
+        continue
+    rel = f.relative_to(root)
+    # CommonMark: a fenced block ends at the first fence line that has no info
+    # string and is at least as long as its opener. A fence line carrying an
+    # info string is literal text inside a block, never a closer.
+    inside, opener = False, None
+    for i, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
+        m = re.match(r"^(`{3,})(\s*\S+)?\s*$", line)
+        if not m:
+            continue
+        ticks, info = len(m.group(1)), (m.group(2) or "").strip()
+        if not inside:
+            inside, opener = True, (i, ticks, info)
+        elif not info and ticks >= opener[1]:
+            inside = False
+        elif info and ticks == opener[1]:
+            # Same-length nesting. The inner fence is literal, and the next bare
+            # fence of this length ends the OUTER block early.
+            print(f"{rel}:{i} ```{info} nested inside the same-length ```"
+                  f"{opener[2] or 'plain'} block opened at line {opener[0]}")
+    if inside:
+        print(f"{rel}: block opened at line {opener[0]} (```{opener[2] or 'plain'}) is never closed")
+PY
+)
+        fi
+        if [ "$fence_report" = "__skipped__" ]; then
+            :
+        elif [ -n "$fence_report" ]; then
+            print_fail "Code fences do not nest or balance: $(echo "$fence_report" | tr '\n' '; ')" \
+                "Close every fence, and widen an outer fence that contains another to four backticks (\`\`\`\`)."
+        else
+            print_pass "Code fences balance and none nests inside a same-length fence"
+        fi
+
+        # open() on a tilde path in python examples: Python does not expand ~.
+        if awk '/^```python/{f=1; next} /^```/{f=0} f' "$skill_path/SKILL.md" \
+             $(find "$skill_path/references" -name "*.md" 2>/dev/null) 2>/dev/null \
+             | grep -qE "open\(['\"]~"; then
+            print_fail "A Python example calls open() on a '~' path, which always raises FileNotFoundError" \
+                "Python does not expand '~'. Pass the path as an argument, or use os.path.expanduser()."
+        else
+            print_pass "No Python open() calls on unexpanded '~' paths"
+        fi
+    fi
+
     if [ -f "$skill_path/SKILL.md" ]; then
         # TODO markers
         local todo_count
@@ -440,33 +615,38 @@ audit_skill() {
     fi
 
     # ──────────────────────────────────────────────────────────
-    # 7. Activation Quality (based on community benchmarks)
-    # See: notes/2026_03_reliable_skill_usage_and_design.md
-    # Research: 250 sandboxed evals show keyword matching >> semantic matching
+    # 7. Activation shape
+    #
+    # Both checks here are PROXY. They match the shape of a description, and
+    # nothing in this script observes whether a host actually activated the
+    # skill. Only a triggering test on the target host does that.
+    #
+    # An earlier version of this section cited activation-rate percentages from
+    # a `notes/` file that was never shipped in the package, so no reader could
+    # check them. The claims are recorded, unverified, in references/sources.md
+    # rather than asserted here.
     # ──────────────────────────────────────────────────────────
-    print_section "7. Activation Quality Hints"
+    print_section "7. Activation shape (proxy checks)"
 
     if [ -f "$skill_path/SKILL.md" ] && [ "$has_frontmatter" -eq 1 ]; then
-        # Check description uses "Use this when" / "Contains" / "For" template
-        # Research: This structure maximizes relevance checks at the activation layer
-        local has_use_when=0
+        # "Use when" phrasing states the activation condition in the field the
+        # host matches against. Both documented description formats include it.
         if echo "$frontmatter" | grep -qi "use this when\|use when\|should be used when"; then
-            has_use_when=1
-            print_pass "Description uses 'Use this when' pattern (improves activation matching)"
+            print_proxy_ok "Description states an activation condition ('use when' phrasing matched)"
         else
-            print_warn "Description lacks 'Use this when' / 'should be used when' pattern" \
-                "Research shows descriptions starting with 'This skill should be used when user wants to \"X\", \"Y\"' improve activation rates. See notes/2026_03_reliable_skill_usage_and_design.md"
+            print_proxy_miss "Description has no 'use when' / 'should be used when' phrasing" \
+                "State the condition explicitly, then quote the phrases: 'Generates X from Y. Use when user asks to \"A\", \"B\".' See references/best-practices.md, section 'Description Writing Formula'."
         fi
 
-        # Check for specific technical trigger words in description
-        # Research: Specific technical terms ($state, command(), *.ts) trigger 100% activation
-        # Conceptual queries ("How do X work?") fail 60-80% of the time
+        # Concrete identifiers (*.py, camelCase, `backticked`, $vars) give a host
+        # something literal to match. Counted by line, shape only.
         local trigger_word_count
         trigger_word_count=$(echo "$frontmatter" | grep -cE '\*\.[a-z]+|[A-Z][a-z]+[A-Z]|`[a-z_]+`|\$[a-z]|command\(\)|function\(\)' || true)
         if [ "$trigger_word_count" -gt 0 ]; then
-            print_pass "Description contains specific technical identifiers ($trigger_word_count found)"
+            print_proxy_ok "Description carries concrete identifiers on $trigger_word_count line(s) (pattern match only)"
         else
-            print_info "Consider adding specific technical terms to description (file patterns like *.py, function names, technical keywords). Research: specific terms trigger activation more reliably than conceptual language."
+            print_proxy_miss "Description carries no concrete identifiers (file patterns, function names, flags)" \
+                "Add the literal terms a user would type — '*.py', 'SKILL.md', 'pytest' — alongside the natural-language phrases."
         fi
     fi
 
@@ -480,24 +660,30 @@ audit_skill() {
     echo -e "  ${RED}Failed${NC}:   $FAILED"
     echo ""
 
+    # Score counts DECIDED checks only. Proxies are heuristics; folding them in
+    # produced a number that read as a quality verdict while measuring headings.
     local total=$((PASSED + WARNINGS + FAILED))
     local score=0
     if [ "$total" -gt 0 ]; then
         score=$((PASSED * 100 / total))
     fi
 
-    # Visual score bar (20 chars wide)
+    # Visual score bar (20 chars wide). The colour variables hold literal '\033'
+    # text, so they must sit in printf's FORMAT string, where printf interprets
+    # the escape. Passing them as %s arguments prints the escape verbatim.
     local bar_fill=$((score / 5))
     local bar_empty=$((20 - bar_fill))
     local bar_color="$GREEN"
     if [ "$score" -lt 70 ]; then bar_color="$RED"; elif [ "$score" -lt 90 ]; then bar_color="$YELLOW"; fi
-    printf "  Score: %s%d%%%s  [%s" "$bar_color" "$score" "$NC" "$bar_color"
+    printf "  Decided-check score: ${bar_color}%d%%${NC}  [${bar_color}" "$score"
     local j=0
     while [ $j -lt $bar_fill ]; do printf "█"; j=$((j+1)); done
-    printf "%s" "$NC"
+    printf "${NC}"
     local k=0
     while [ $k -lt $bar_empty ]; do printf "░"; k=$((k+1)); done
-    printf "]\n\n"
+    printf "]\n"
+    echo -e "  ${BLUE}Proxy checks${NC}: $PROXY_OK matched, $PROXY_MISS did not (heuristics, not scored)"
+    echo ""
 
     if [ "$FAILED" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
         echo -e "  ${GREEN}✨ No structural problems detected.${NC}"
@@ -508,7 +694,33 @@ audit_skill() {
     else
         echo -e "  ${RED}❌ Structural problems found — fix FAILs first (skill may not activate or work correctly).${NC}"
     fi
-    echo -e "  ${CYAN}Note: This is a smoke test of skill structure, not a comprehensive quality review.${NC}"
+    echo -e "  ${CYAN}This is a structural smoke test. A clean run means the files are shaped${NC}"
+    echo -e "  ${CYAN}correctly, not that the guidance inside them is correct or consistent.${NC}"
+    echo ""
+
+    # ──────────────────────────────────────────────────────────
+    # What this script cannot check
+    # ──────────────────────────────────────────────────────────
+    print_section "Needs a reader (not checkable by this script)"
+    echo ""
+    echo "  Every defect below has been found by hand in a shipped skill, including in"
+    echo "  ai-skill-builder itself. None is visible to any check above. Read for them."
+    echo ""
+    echo "  1. Guidance that contradicts other guidance in the same package — one"
+    echo "     reference prescribing what another calls a defect."
+    echo "  2. Guidance that contradicts this script. Where they disagree, the"
+    echo "     script is checkable and the prose is not; fix the prose."
+    echo "  3. Numbers presented as measurements with no baseline, workload, or"
+    echo "     source. A percentage with nothing behind it is not checkable."
+    echo "  4. Compatibility claimed for hosts nobody tested."
+    echo "  5. Whether a reference is actually loaded under the condition its"
+    echo "     pointer names, and whether reading it changes the outcome."
+    echo "  6. Whether the workflow is correct for the skill's actual domain."
+    echo "  7. What a script under scripts/ writes. This run reads the skill you"
+    echo "     pointed it at, not the output of anything in it. If a script"
+    echo "     generates skill content, run it and audit the result — that is how"
+    echo "     ai-skill-builder found its own scaffolder emitting a skill this"
+    echo "     script fails."
     echo ""
 
     # Actionable fix list

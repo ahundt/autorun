@@ -19,7 +19,7 @@ This guide covers improving and modernizing existing Claude skills to match curr
 - ❌ No progressive disclosure structure
 
 **Quality Issues** (improve soon):
-- ⚠️ Description over 50 words
+- ⚠️ Description too short to carry 4-8 quoted trigger phrases, or over the 1024-character limit
 - ⚠️ No examples section
 - ⚠️ Missing trigger phrases
 - ⚠️ No success metrics
@@ -35,7 +35,7 @@ This guide covers improving and modernizing existing Claude skills to match curr
 
 ## Refinement Workflow
 
-### Phase 1: Audit (5-10 minutes)
+### Phase 1: Audit
 
 **Step 1: Run Automated Audit**
 ```bash
@@ -69,7 +69,7 @@ Skill Path: ~/.claude/skills/[skill-name]
 2. [Priority 2 fix]
 ```
 
-### Phase 2: Prioritize (2-5 minutes)
+### Phase 2: Prioritize
 
 **Priority Framework:**
 
@@ -93,7 +93,7 @@ Skill Path: ~/.claude/skills/[skill-name]
 - Advanced features
 - Edge case handling
 
-### Phase 3: Implement Fixes (15-45 minutes)
+### Phase 3: Implement Fixes
 
 **For Critical Issues:**
 
@@ -109,8 +109,8 @@ Read: ~/.claude/skills/my-skill/README.md
 Write: ~/.claude/skills/my-skill/SKILL.md
 [Copy content]
 
-# 3. Remove old file
-Bash: rm ~/.claude/skills/my-skill/README.md
+# 3. Remove old file — use trash, not rm: rm destroys the only copy and its deletion time
+Bash: trash ~/.claude/skills/my-skill/README.md
 ```
 
 **Issue**: Wrong folder name
@@ -124,7 +124,9 @@ mv ~/.claude/skills/my_old_skill ~/.claude/skills/my-old-skill
 # Add to top of SKILL.md:
 ---
 name: skill-name
-description: Outcome-focused one-sentence description
+description: Generates X from Y. Use when user asks to "trigger phrase 1", "trigger phrase 2".
+metadata:
+  version: 0.1.0
 ---
 ```
 
@@ -134,7 +136,8 @@ description: Outcome-focused one-sentence description
 description: Uses OpenAPI parser and Jinja2 to generate Jest tests
 
 # ✅ After:
-description: Generate API test suites 75% faster than manual writing
+description: Generates Jest test suites from OpenAPI specs. Use when user asks to
+  "generate API tests", "create a test suite from my spec", "write tests for my endpoints".
 ```
 
 **For Quality Issues:**
@@ -190,7 +193,7 @@ Add examples section:
 **Result**: [Outcome achieved]
 ```
 
-### Phase 4: Test & Validate (10-20 minutes)
+### Phase 4: Test & Validate
 
 **Re-run Audit**:
 ```bash
@@ -219,15 +222,17 @@ bash ../scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
 ```markdown
 ## Before vs After
 
+Fill this table from your own measurements. The values below are placeholders, not results
+from any measured skill.
+
 | Metric | Before | After | Improvement |
 |--------|--------|-------|-------------|
-| Audit Score | 45% | 92% | +47pts |
-| Trigger Accuracy | 60% | 95% | +35% |
-| User Satisfaction | 3.2/5 | 4.7/5 | +47% |
-| Time to Complete | 45min | 12min | -73% |
+| Audit score | [measured] | [measured] | [delta] |
+| Trigger accuracy (passes / triggering tests run) | [measured] | [measured] | [delta] |
+| Time to complete (median of 3 runs) | [measured] | [measured] | [delta] |
 ```
 
-### Phase 5: Document Changes (5-10 minutes)
+### Phase 5: Document Changes
 
 **Update Version History**:
 ```markdown
@@ -237,9 +242,9 @@ bash ../scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
 - BREAKING: Renamed from my_old_skill to my-new-skill
 - BREAKING: Changed trigger from /old to /new
 - Added progressive disclosure structure
-- Improved description (outcome-focused)
+- Rewrote description to capability-plus-quoted-trigger-phrase format
 - Added 3 concrete examples
-- Audit score improved from 45% to 92%
+- Audit score improved from [before] to [after]
 
 **v1.0.0** - 2025-12-01
 - Initial release
@@ -257,7 +262,7 @@ bash ../scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
 - [ ] Rename README.md → SKILL.md
 - [ ] Fix folder name to kebab-case
 - [ ] Add YAML frontmatter
-- [ ] Convert description to outcome-focused
+- [ ] Convert description to capability-plus-quoted-trigger-phrase format
 - [ ] Add progressive disclosure (3 levels)
 - [ ] Add examples section
 - [ ] Add success metrics
@@ -265,7 +270,7 @@ bash ../scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
 - [ ] Run audit script
 - [ ] Test triggering and functionality
 
-**Time**: 30-60 minutes
+**Definition of Done**: the audit script reports no failures and triggering tests pass
 
 **Example**:
 ```bash
@@ -279,7 +284,8 @@ bash ../scripts/audit-skill.sh ~/.claude/skills/YOUR-SKILL
 ~/.claude/skills/api-test-generator/SKILL.md
 ---
 name: api-test-generator
-description: Generate API test suites 75% faster
+description: Generates Jest test suites from OpenAPI specs. Use when user asks to
+  "generate API tests", "create a test suite from my spec".
 ---
 # API Test Generator
 [Progressive disclosure structure]
@@ -299,7 +305,7 @@ description: Generate API test suites 75% faster
 - [ ] Enhance error messages
 - [ ] Add related skills links
 
-**Time**: 15-30 minutes
+**Definition of Done**: every checklist item above is satisfied
 
 ### Scenario 3: Adding Automation to Manual Skill
 
@@ -314,7 +320,7 @@ description: Generate API test suites 75% faster
 - [ ] Document automation requirements
 - [ ] Add rollback procedures
 
-**Time**: 45-90 minutes
+**Definition of Done**: the automation runs end to end and its failure path is documented
 
 **Example**:
 ```bash
@@ -353,15 +359,15 @@ new_string: "3. Run: python scripts/generate.py --spec openapi.yaml"
 
 ### Before/After Metrics
 
-**Audit Scores**:
-```bash
-# Before refinement
-bash audit-skill.sh my-skill
-Score: 45%
+**Audit Scores**: run the script before and after, and keep both outputs. What moves is the
+decided-check score and the FAIL count; proxy checks are heuristics and are reported separately,
+not scored.
 
-# After refinement
-bash audit-skill.sh my-skill
-Score: 92%
+```bash
+bash ../scripts/audit-skill.sh ~/.claude/skills/my-skill | tee before.txt
+# ...apply fixes...
+bash ../scripts/audit-skill.sh ~/.claude/skills/my-skill | tee after.txt
+diff before.txt after.txt
 ```
 
 **User Satisfaction** (gather feedback):
@@ -488,16 +494,13 @@ Bash: chmod +x script.sh
 
 **Official Guide**:
 - PDF: `../ai-skill-builder-guide.pdf`
-- Extracted content in SKILL.md
+- Extracted text: `ai-skill-builder-guide.md`
 
 **Templates**:
-- `../templates/SKILL-template.md`
+- `examples/SKILL-template.md`
 
 **Best Practices**:
-- `../references/best-practices.md`
-
-**This Guide**:
-- `../references/refining-skills.md`
+- `best-practices.md`
 
 ---
 
@@ -562,26 +565,24 @@ No structure
 ~/.claude/skills/test-generator/SKILL.md
 ---
 name: test-generator
-description: Generate test suites 80% faster
+description: Generates test suites from code analysis. Use when user asks to
+  "generate tests", "write tests for this module".
 ---
 
 # Test Generator
 
-Generate comprehensive test suites from code analysis...
+Generate test suites from code analysis...
 
 ## How It Works
 
-1. Analyze code (2 min)
-2. Generate tests (3 min)
-3. Validate (1 min)
-
-Total: ~6 minutes vs 30 minutes manual
+1. Analyze code — done when every exported symbol is listed
+2. Generate tests — done when each listed symbol has a test file
+3. Validate — done when the suite parses and runs
 ```
 
-**Impact**:
-- Audit score: 35% → 95%
-- Usage: 2x increase
-- Time saved: 80%
+**What changed**: file renamed so the host can find it, folder renamed to kebab-case,
+frontmatter added with trigger phrases, workflow split into three steps that each state
+when they are finished.
 
 ### Example 2: Adding Progressive Disclosure
 
@@ -603,19 +604,20 @@ Deploy containerized applications with automated validation and rollback.
 
 ## How It Works
 
-### Step 1: Pre-flight Checks (2 min)
+### Step 1: Pre-flight Checks
 - Validates prerequisites
 - Checks environment health
+- Done when: every prerequisite reports healthy
 
-### Step 2: Build & Push (5 min)
+### Step 2: Build & Push
 - Builds Docker image
 - Pushes to registry
+- Done when: the registry returns the pushed digest
 
-### Step 3: Deploy & Validate (3 min)
+### Step 3: Deploy & Validate
 - Deploys to Kubernetes
 - Validates health checks
-
-**Total**: ~10 minutes with automated rollback
+- Done when: all pods are Ready, or rollback has completed
 
 ---
 
@@ -623,24 +625,19 @@ Deploy containerized applications with automated validation and rollback.
 [Comprehensive documentation...]
 ```
 
-**Impact**:
-- Comprehension: 40% → 95%
-- Time to understand: 5min → 30sec
-- Adoption: 3x increase
+**What changed**: one 60-word paragraph became a 20-word hook, three named steps each stating
+what must be true before the next one runs, and a pointer to the detailed guide. A reader can
+now decide whether the skill applies without reading past the hook.
 
 ---
 
 ## Summary
 
-**Refining existing skills is often more valuable than creating new ones.**
-
 **Key Principles**:
 1. **Audit first** - Know what to improve
 2. **Prioritize ruthlessly** - Fix critical issues first
-3. **Test thoroughly** - Measure impact
+3. **Test thoroughly** - Measure impact against the baseline you recorded
 4. **Document changes** - Help future maintainers
 5. **Iterate continuously** - Skills are never "done"
-
-**Remember**: A well-refined skill following best practices is worth 10 poorly-structured ones.
 
 **Source**: Adapted from Anthropic's "The Complete Guide to Building Skills for Claude" (January 2026)

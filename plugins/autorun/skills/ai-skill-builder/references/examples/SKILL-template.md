@@ -26,22 +26,25 @@ To start: [first action to take]
 
 Brief overview of the process in 3-5 clear steps:
 
-### Step 1: [Phase Name] (X minutes)
+### Step 1: [Phase Name]
 - What happens in this step
 - What inputs are needed
 - What outputs are produced
+- Definition of Done: [what must be true before Step 2 starts]
 
-### Step 2: [Phase Name] (X minutes)
+### Step 2: [Phase Name]
 - What happens in this step
 - What inputs are needed
 - What outputs are produced
+- Definition of Done: [what must be true before Step 3 starts]
 
-### Step 3: [Phase Name] (X minutes)
+### Step 3: [Phase Name]
 - What happens in this step
 - What inputs are needed
 - What outputs are produced
+- Definition of Done: [what must be true before the skill reports success]
 
-**Total Time**: ~X-Y minutes (compare to manual baseline if applicable)
+**Definition of Done for the whole workflow**: [the checkable end state]
 
 ---
 
@@ -168,11 +171,10 @@ Brief overview of the process in 3-5 clear steps:
 
 ---
 
-## Version History
+## Changelog
 
-**v1.0.0** - [Date]
-- Initial release
-- [Key features included]
+Record the version in `metadata.version` above and the release history in
+`references/changelog.md`. Readers using the skill do not need it; readers changing it do.
 
 ---
 

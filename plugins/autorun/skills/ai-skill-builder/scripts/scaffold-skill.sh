@@ -11,8 +11,19 @@
 #   skill-name  - Name in kebab-case (e.g., api-test-generator)
 #   category    - Optional: document, workflow, or mcp (default: document)
 #
+# Environment:
+#   SKILLS_DIR  - Discovery root to scaffold into. Default ~/.claude/skills.
+#                 Set it for another host: SKILLS_DIR=~/.agents/skills bash scaffold-skill.sh x
+#
 # Example:
 #   bash scaffold-skill.sh my-awesome-skill document
+#
+# The generated SKILL.md is written to pass scripts/audit-skill.sh with zero
+# FAILs before any TODO is filled in. If a change here breaks that, the two
+# scripts have started disagreeing; fix this one.
+#
+# Portability: POSIX-compatible parameter expansion only. macOS ships bash
+# 3.2.57 as /bin/bash, where bash-4 forms such as ${var^} are a syntax error.
 ##############################################################################
 
 set -e
@@ -125,9 +136,15 @@ main() {
     # Get category info
     get_category_info "$CATEGORY"
 
-    # Set paths
-    SKILLS_DIR="$HOME/.claude/skills"
+    # Set paths. SKILLS_DIR is overridable because discovery roots differ by
+    # host — see the target-host questions in SKILL.md Step 1.
+    SKILLS_DIR="${SKILLS_DIR:-$HOME/.claude/skills}"
     SKILL_DIR="$SKILLS_DIR/$SKILL_NAME"
+
+    # Title for the H1. Written with tr and awk rather than ${SKILL_NAME^}:
+    # that form needs bash 4, and macOS /bin/bash is 3.2.57.
+    SKILL_TITLE=$(echo "$SKILL_NAME" | tr '-' ' ' \
+        | awk '{for (i = 1; i <= NF; i++) $i = toupper(substr($i, 1, 1)) substr($i, 2)} 1')
 
     print_info "Skill name: $SKILL_NAME"
     print_info "Category: $CATEGORY_NAME"
@@ -137,13 +154,23 @@ main() {
     # Check if directory exists
     if [ -d "$SKILL_DIR" ]; then
         print_warning "Skill directory already exists: $SKILL_DIR"
-        read -p "Overwrite? (y/N) " -n 1 -r
+        read -p "Move the existing directory aside and continue? (y/N) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_info "Cancelled"
             exit 0
         fi
-        rm -rf "$SKILL_DIR"
+        # Never rm -rf a directory the user may have worked in. This package
+        # tells skill authors to use trash instead of rm, and audit-skill.sh
+        # fails a skill whose examples do otherwise.
+        if command -v trash >/dev/null 2>&1; then
+            trash "$SKILL_DIR"
+            print_success "Existing directory moved to trash"
+        else
+            SKILL_BACKUP="${SKILL_DIR}.bak.$(date +%Y-%m-%d-%H%M%S)"
+            mv "$SKILL_DIR" "$SKILL_BACKUP"
+            print_success "Existing directory moved to $SKILL_BACKUP"
+        fi
     fi
 
     # Create directory structure
@@ -159,14 +186,17 @@ main() {
     cat > "$SKILL_DIR/SKILL.md" << EOF
 ---
 name: $SKILL_NAME
-description: [TODO: One sentence describing the outcome users achieve]
+description: TODO one sentence on what this produces. Use when user asks to
+  "$SKILL_NAME", "TODO second natural phrase", or "TODO third natural phrase".
+metadata:
+  version: 0.1.0
 ---
 
-# ${SKILL_NAME^}
+# $SKILL_TITLE
 
 [TODO: Write 50-100 word hook explaining what this skill does and who it's for]
 
-This skill [describe the outcome in one sentence].
+This skill [describe what it produces in one sentence].
 
 **Use this skill when:** [Specific scenario when this is useful]
 **Invoke with:** \`/$SKILL_NAME\` or "[Natural language trigger phrase]"
@@ -181,22 +211,25 @@ This skill [describe the outcome in one sentence].
 
 This skill follows these steps:
 
-### Step 1: [Phase Name] (X minutes)
+### Step 1: [Phase Name]
 - [What happens in this step]
 - [Inputs needed]
 - [Outputs produced]
+- Definition of Done: [what must be true before Step 2 starts]
 
-### Step 2: [Phase Name] (X minutes)
+### Step 2: [Phase Name]
 - [What happens in this step]
 - [Inputs needed]
 - [Outputs produced]
+- Definition of Done: [what must be true before Step 3 starts]
 
-### Step 3: [Phase Name] (X minutes)
+### Step 3: [Phase Name]
 - [What happens in this step]
 - [Inputs needed]
 - [Outputs produced]
+- Definition of Done: [what must be true before this skill reports success]
 
-**Total Time**: ~X-Y minutes (compare to [baseline])
+**Definition of Done for the whole workflow**: [the checkable end state]
 
 ---
 
@@ -255,21 +288,16 @@ This skill follows these steps:
 
 ## Success Metrics
 
+Measure the manual baseline before building, then state each number with its workload, its
+unit, and which direction is better. A figure with none of those is not checkable.
+
 ### Quantitative
-- Time Reduction: [X%] faster than manual process
-- Quality Improvement: [Specific measurable improvement]
+- [What was measured]: [manual baseline] → [with this skill], over [workload]
+- [What was measured]: [manual baseline] → [with this skill], over [workload]
 
 ### Qualitative
 - Consistency: [How it standardizes the process]
 - Best Practices: [What standards it follows]
-
----
-
-## Version History
-
-**v1.0.0** - $(date +%Y-%m-%d)
-- Initial release
-- [Key features]
 
 ---
 
@@ -283,72 +311,33 @@ This skill follows these steps:
 6. **Get Feedback**: Test with target users
 7. **Distribute**: Share on GitHub and community
 
-For guidance, see:
-- Template: ~/.claude/skills/ai-skill-builder/templates/SKILL-template.md
-- Best Practices: ~/.claude/skills/ai-skill-builder/references/best-practices.md
+Record the version in \`metadata.version\` above and the release history in a changelog file.
+
+For guidance, read these inside the ai-skill-builder skill directory. The paths are relative to
+that skill, not to this one, so they will not resolve from here:
+- Template: ai-skill-builder/references/examples/SKILL-template.md
+- Best practices: ai-skill-builder/references/best-practices.md
+
+Validate this file: \`bash ai-skill-builder/scripts/audit-skill.sh $SKILL_DIR\`
 EOF
     print_success "SKILL.md created"
 
-    # Create placeholder files
-    print_info "Creating placeholder files..."
-
-    # Scripts placeholder
-    cat > "$SKILL_DIR/scripts/README.md" << EOF
-# Scripts Directory
-
-Add automation scripts here (optional).
-
-## Examples
-- \`generate.py\` - Main generation script
-- \`validate.sh\` - Validation script
-- \`deploy.sh\` - Deployment automation
-
-Scripts should be:
-- Executable (\`chmod +x script.sh\`)
-- Well-documented with usage comments
-- Tested independently
-- Referenced in SKILL.md
-EOF
-
-    # References placeholder
-    cat > "$SKILL_DIR/references/README.md" << EOF
-# References Directory
-
-Add documentation and reference materials here (optional).
-
-## Examples
-- \`api-docs.md\` - API documentation
-- \`examples.md\` - Usage examples
-- \`best-practices.md\` - Guidelines
-- \`troubleshooting.md\` - Common issues
-
-References should:
-- Be in markdown format
-- Include links to external docs
-- Provide context for the skill
-- Be referenced in SKILL.md
-EOF
-
-    # Assets placeholder
-    cat > "$SKILL_DIR/assets/README.md" << EOF
-# Assets Directory
-
-Add templates, configs, and other assets here (optional).
-
-## Examples
-- \`template.yaml\` - Configuration template
-- \`config.json\` - Default settings
-- \`sample-input.txt\` - Example input
-- \`schema.json\` - Data schema
-
-Assets should:
-- Be well-formatted
-- Include usage documentation
-- Be versioned if they change
-- Be referenced in SKILL.md
-EOF
-
-    print_success "Placeholder files created"
+    # No placeholder files are written. Earlier versions dropped a README.md in
+    # scripts/, references/, and assets/. Two problems: this package's own rule
+    # is that a skill folder carries no README.md, and every .md under
+    # references/ is loadable context, so a file whose content is "add
+    # documentation here" costs tokens to say nothing. The guidance is printed
+    # to the terminal instead, where the author reads it once.
+    echo ""
+    print_info "What goes in each directory:"
+    echo "  scripts/     — executables the agent runs without loading into context"
+    echo "                 (validators, generators). chmod +x them."
+    echo "  references/  — markdown the agent loads on demand (schemas, API docs,"
+    echo "                 policies). Every file here costs context when read, so"
+    echo "                 name the condition for reading it in SKILL.md."
+    echo "  assets/      — files the skill pastes into its output (templates,"
+    echo "                 images, boilerplate). Never loaded as instructions."
+    echo "  Reference each one from SKILL.md, or the agent will not know it exists."
 
     # Create .gitignore
     cat > "$SKILL_DIR/.gitignore" << EOF
@@ -380,18 +369,17 @@ EOF
     tree -L 2 "$SKILL_DIR" 2>/dev/null || ls -R "$SKILL_DIR"
     echo ""
     print_info "Next steps:"
-    echo "  1. Edit SKILL.md and replace all [TODO] sections"
-    echo "  2. Update YAML frontmatter description"
-    echo "  3. Add scripts/references/assets as needed"
-    echo "  4. Test with: /$SKILL_NAME"
-    echo "  5. Iterate based on feedback"
+    echo "  1. Edit SKILL.md and replace every [TODO] section"
+    echo "  2. Rewrite the description: what it produces, then the phrases users say"
+    echo "  3. Add scripts, references, and assets as needed, and link them from SKILL.md"
+    echo "  4. Test triggering: /$SKILL_NAME, then a natural phrase, then one that must NOT match"
+    echo "  5. Re-run the audit until it reports zero FAILs"
     echo ""
-    print_info "Resources:"
-    echo "  - Template: ~/.claude/skills/ai-skill-builder/templates/SKILL-template.md"
-    echo "  - Guide: ~/.claude/skills/ai-skill-builder/SKILL.md"
-    echo "  - Best Practices: ~/.claude/skills/ai-skill-builder/references/best-practices.md"
-    echo ""
-    print_success "Happy skill building! 🎉"
+    print_info "Resources, relative to the ai-skill-builder skill directory:"
+    echo "  - Guide:          SKILL.md"
+    echo "  - Template:       references/examples/SKILL-template.md"
+    echo "  - Best practices: references/best-practices.md"
+    echo "  - Validate:       bash scripts/audit-skill.sh '$SKILL_DIR'"
 }
 
 # Error handling

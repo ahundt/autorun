@@ -12,7 +12,8 @@ simple git clone into `~/.claude/skills/`. This means:
 - **No approval process**: Publish when you're ready
 - **Version control**: GitHub handles versioning and changelogs
 - **Discovery**: Word of mouth, Claude Discord, social sharing
-- **Compatibility**: Any Claude Code installation can use any skill
+- **Compatibility**: state the hosts and versions you tested. Discovery roots, `allowed-tools`
+  handling, plugin versus standalone placement, and reload behavior all differ by host.
 
 ---
 
@@ -32,17 +33,19 @@ ls -d ~/.claude/skills/your-skill-name         # no underscores, no capitals
 bash ~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh \
     ~/.claude/skills/your-skill-name
 
-# Target score: 85%+ before distributing
+# Gate: zero FAILs. The percentage it prints is a decided-check score — the share of
+# mechanically decidable checks that passed — so it says nothing about content quality.
+# Read the proxy lines and the "Needs a reader" list by hand before distributing.
 ```
 
 ### Distribution Checklist
 
-- [ ] `SKILL.md` has YAML frontmatter with `name`, `description`, `version`
+- [ ] `SKILL.md` has YAML frontmatter with `name` and `description`
 - [ ] `description` uses trigger-phrase format (what users SAY to activate)
 - [ ] Folder is kebab-case, no README.md inside the skill folder
 - [ ] Triggering tests pass (skill activates on expected phrases)
 - [ ] Functional tests pass (at least happy path + 1 edge case)
-- [ ] `version` field is set to `0.1.0` or higher
+- [ ] `metadata.version` is set to `0.1.0` or higher (a top-level `version` fails `audit-skill.sh`)
 
 ---
 
@@ -85,7 +88,7 @@ The repo-level README.md is for **human readers deciding whether to install**. U
 
 ### README.md Template
 
-```markdown
+````markdown
 # [Skill Name]
 
 > [One outcome-focused sentence: "Generate X in Y% less time"]
@@ -139,7 +142,7 @@ Restart Claude Code, then activate with: `/your-skill-name`
 ## License
 
 [MIT / Apache-2.0 / etc.]
-```
+````
 
 ### README.md Content Rules
 

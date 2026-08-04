@@ -1,6 +1,6 @@
 # Guided Discovery — Interactive Skill Requirements Q&A
 
-Use this 20-question guide when starting a new skill from scratch or when requirements are unclear.
+Use this 22-question guide when starting a new skill from scratch or when requirements are unclear.
 Work through each phase in order. Skip a question only when it is clearly not applicable.
 
 ---
@@ -52,7 +52,7 @@ Set measurable success criteria before writing a line of SKILL.md.
 
 **5. Which skill category best fits?**
 
-Review `references/skill-categories.md` and choose:
+Review `categories.md` and choose:
 
 - **Category 1**: Primary output is a document or code artifact
 - **Category 2**: Primary output is a completed multi-step process
@@ -86,7 +86,7 @@ Examples for an API test generator:
 
 Break the skill into 3-5 phases. For each phase:
 - Name (action verb + noun): "Parse Spec", "Generate Tests", "Validate Output"
-- Time estimate: 1-2 min, 5-10 min, etc.
+- Definition of Done: what must be true before the next phase starts
 - What goes in, what comes out
 
 **9. What inputs does the skill need from the user?**

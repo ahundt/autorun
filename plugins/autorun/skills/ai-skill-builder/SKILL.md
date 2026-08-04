@@ -6,18 +6,21 @@ description: Guides creation and improvement of portable Agent Skills using the 
   "audit my skill", "refine my skill", "test a skill", "package a skill for distribution",
   or needs guidance on skill structure, progressive disclosure, description quality, testing,
   cross-harness compatibility, or distribution.
-allowed-tools: Read Write Edit Bash Glob Grep WebSearch WebFetch
+allowed-tools: Read Write Edit Bash WebSearch WebFetch
+metadata:
+  version: 1.2.0
 ---
 
 # AI Skill Builder
 
-Build Agent Skills for Claude Code, Codex, Qwen Code, Antigravity, and compatible
-hosts using the shared `SKILL.md` format and Anthropic's methodology.
+Build Agent Skills using the shared `SKILL.md` format and Anthropic's methodology.
+`references/sources.md` cites host documentation for Claude Code, Codex, and Qwen Code; every
+other host is untested here, so verify the one you target (Step 1).
 
 **Primary methodology source**: "The Complete Guide to Building Skills for Claude"
 (Anthropic, January 2026)
 - PDF: https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf
-- Extracted local reference: `references/ai-skill-builder-guide.md`
+- Extracted text: `references/ai-skill-builder-guide.md`
 
 **Portable format source**: https://agentskills.io/specification
 
@@ -27,27 +30,29 @@ hosts using the shared `SKILL.md` format and Anthropic's methodology.
 
 To create a skill from scratch, follow the 4-phase process below.
 To improve an existing skill, read `references/refining-skills.md`.
-To validate a skill's structure, run `scripts/audit-skill.sh`.
+To validate structure, run `scripts/audit-skill.sh`.
 
-**Invoke with:** ask for `ai-skill-builder`; supported hosts may expose it as
+**Invoke with:** ask for `ai-skill-builder`; hosts may expose it as
 `/ai-skill-builder`, `$ai-skill-builder`, or through their skills picker.
 
 ---
 
 ## How It Works
 
-Four-phase methodology from the Anthropic guide:
+Four-phase methodology from the Anthropic guide. Each phase carries a **Definition of Done**:
+the condition that must hold before the next phase starts.
 
-| Phase | Activity | Time |
-|-------|----------|------|
-| 1: Planning & Design | Define use cases, category, success criteria | 15-30 min |
-| 2: Implementation | Create folder, write SKILL.md, add resources | 30-60 min |
-| 3: Testing | Triggering, functional, performance tests | 20-40 min |
-| 4: Distribution | Package, document, publish to GitHub | 10-20 min |
-
-**Total**: ~75-150 minutes for a complete, tested skill
+| Phase | Activity | Definition of Done |
+|-------|----------|--------------------|
+| 1: Planning & Design | Define target hosts, use cases, category, success criteria | Criteria are measurable and the category is chosen |
+| 2: Implementation | Create folder, write SKILL.md, add resources | `audit-skill.sh` reports no failures |
+| 3: Testing | Triggering, functional, performance, compatibility tests | Every named host passes; baseline recorded |
+| 4: Distribution | Package, document, publish | Install verified from a clean root |
 
 Phase 1 covers Steps 1–2 below; Phases 2–4 correspond to Steps 3–5.
+
+How long a phase takes depends on who or what runs it, so this skill states no wall-clock
+estimates and the skills you build should not either.
 
 ---
 
@@ -55,22 +60,22 @@ Phase 1 covers Steps 1–2 below; Phases 2–4 correspond to Steps 3–5.
 
 ### Step 1: Discover Requirements
 
-**Research the domain first** — before writing instructions, verify current best practices
-for the skill's subject. Use the host's web tools to check official docs, community
-standards, and authoritative examples. Outdated or incorrect guidance in a skill is worse
-than no guidance: an agent will follow it confidently.
+**Research the domain first** — use the host's web tools to verify current best practices
+before writing instructions. Outdated guidance is worse than none: an agent follows it
+confidently.
 
-**Retain all sources**: every URL consulted must be recorded in the skill with its full
-link and a note of what it confirmed. Without sources, guidance cannot be verified or
-updated when the domain changes.
+**Retain all sources**: record every URL consulted with a note of what it confirmed.
+Unsourced guidance cannot be verified or updated.
 
 For research strategies, source quality standards, and the required Sources section
 format: `references/research.md`
 
 1. Identify the problem and target users
-2. Define 2-3 concrete use cases
-3. Set measurable success criteria (time saved, errors reduced, quality improved)
-4. Choose a skill category:
+2. Identify every target host and version, its discovery root, invocation form, and reload
+   behavior. Mark unknowns as unknown rather than guessing.
+3. Define 2-3 concrete use cases
+4. Set measurable success criteria (time saved, errors reduced, quality improved)
+5. Choose a skill category:
 
 | Category | INPUT → OUTPUT | Examples |
 |----------|---------------|---------|
@@ -117,26 +122,11 @@ description: What it does. Use when user asks to "specific phrase", "another phr
 ---
 ```
 
-**Frontmatter: all optional fields**:
-```yaml
----
-name: your-skill-name
-description: What it does and when. Use when user says "trigger phrase 1", "trigger phrase 2".
-license: MIT                   # Optional: open-source license (MIT, Apache-2.0, etc.)
-allowed-tools: "Bash(python:*) WebFetch"  # Optional: restrict which tools the skill can use
-compatibility: Claude Code     # Optional: 1-500 chars; environment requirements
-metadata:                      # Optional: custom key-value pairs
-  author: Your Name
-  version: 1.0.0               # Version belongs inside metadata
-  mcp-server: your-server      # If skill requires a specific MCP server
-  category: productivity
-  tags: [automation, workflow]
-  documentation: https://example.com/docs
----
-```
+For every optional field (`license`, `compatibility`, `allowed-tools`, `metadata`) with
+host-portability notes: `references/best-practices.md`
 
-**Positioning language** (outcome-focused: "generate tests 87% faster") belongs in README.md or
-GitHub landing page — NOT in the description field. See `references/best-practices.md`.
+**Positioning language** ("generate tests 87% faster") belongs in the repo README, never in
+`description`. See `references/best-practices.md`.
 
 **Folder structure (Claude Code standalone example):**
 ```
@@ -163,15 +153,18 @@ Note: Plugin skills (in `plugin-name/skills/`) may place `examples/` at the top 
 plugin-dev convention. For standalone `~/.claude/skills/` skills, put examples inside `references/`.
 
 To scaffold a new skill: `bash scripts/scaffold-skill.sh my-skill-name`
+(set `SKILLS_DIR` to target another host's root)
 To start from template: copy `references/examples/SKILL-template.md`
 
 ### Step 4: Test
 
-Three testing approaches (run in order):
+Four testing approaches (run in order):
 
 1. **Triggering tests** — verify the agent activates on expected phrases and not on unrelated requests
 2. **Functional tests** — validate the skill's core workflow produces correct output for known inputs
 3. **Performance tests** — measure improvement over baseline (time saved, error reduction, consistency)
+4. **Compatibility tests** — verify discovery, explicit invocation, reference loading, script
+   execution, and duplicate/name resolution on every named host and version
 
 **Debugging trigger issues**:
 ```
@@ -188,14 +181,16 @@ description: Processes PDF legal documents for contract review. Use for "review 
   image extraction, or non-legal documents (use doc-converter skill instead).
 ```
 
-To validate skill structure, naming, and frontmatter:
+For the full diagnosis-and-fix guide covering all four failure modes: `references/troubleshooting.md`
+
+To validate structure:
 ```bash
 bash scripts/audit-skill.sh /path/to/YOUR-SKILL
 ```
 
 For automated quality review, use the built-in `skill-creator` skill:
 ```
-"Use the skill-creator skill to review this skill and suggest improvements"
+"Use the skill-creator skill to review the skill I just built and suggest improvements"
 ```
 Also available: the `skill-reviewer` agent from the plugin-dev plugin checks description quality.
 
@@ -220,13 +215,8 @@ centralized management. Users get the skill without any install step.
 Add skills to Messages API requests via `container.skills` parameter. Use the `/v1/skills`
 endpoint to manage skills. Works with the Claude Agent SDK for building custom agents.
 
-**GitHub setup for public distribution:**
-1. Create a public repo — the skill folder IS the repo (or is nested inside it)
-2. Add `README.md` at the repo root (OUTSIDE the skill folder) with installation instructions
-   and outcome-focused positioning: "Generate tests 87% faster" (GitHub marketing, not SKILL.md)
-3. Share in Claude Discord or communities
-
-For full distribution guidance, GitHub templates, and community strategies: `references/distribution.md`
+For GitHub repo layout, the README template, versioning, and community channels:
+`references/distribution.md`
 
 ---
 
@@ -238,9 +228,10 @@ For full distribution guidance, GitHub templates, and community strategies: `ref
 | Description field | Outcome-focused: `"generates tests 87% faster"` | Trigger phrases: `"create a skill", "improve my skill"` |
 | README positioning | Trigger phrases in GitHub README | Outcome-focused: `"generate tests 87% faster"` |
 | No progressive disclosure | Monolithic wall of text | 3-level: hook (50-100w) → workflow (200-400w) → detail |
-| No testing | Write → publish immediately | Triggering + functional + performance tests |
-| Missing success criteria | "Build a skill that helps with APIs" | "Reduce API test writing time by 75%" |
+| No testing | Write → publish immediately | Triggering + functional + performance + compatibility tests |
+| Missing success criteria | "Build a skill that helps with APIs" | "Cut API test writing from 3 h to 45 min, median of 3 runs" |
 | Feature-focused description | "Uses OpenAPI parser and Jinja2 templates" | Trigger phrases + concise capability summary |
+| Unmeasured claim | "Works with any agent host", a bare "40% faster" | The hosts and versions you tested; the workload, baseline, and unit behind the number. The 87% in the rows above is correct placement only if it was measured |
 
 ---
 
@@ -254,67 +245,40 @@ Signs a skill needs refinement:
 - SKILL.md is over 2,000 words with no references/ files (P1 — detail belongs in references/)
 - Wall of text with no progressive disclosure structure (P1)
 
-For the complete 5-step refinement process (audit → prioritize → fix → validate → document),
-migration scenarios, before/after examples, and performance tracking:
-`references/refining-skills.md`
+For the 5-step refinement process (audit → prioritize → fix → validate → document), migration
+scenarios, and before/after examples: `references/refining-skills.md`
 
 ---
 
 ## Additional Resources
 
-### Reference Files (loaded as needed by the agent)
-- **`references/research.md`** — Research strategies before writing skill instructions:
-  how to find authoritative sources, evaluate quality, and translate knowledge into skill content
-- **`references/best-practices.md`** — Progressive disclosure writing tips, success metrics
-  framework, Testing Triangle, common anti-patterns
-- **`references/refining-skills.md`** — Complete 5-step refinement process with migration
-  scenarios, before/after examples, and continuous improvement framework
-- **`references/sources.md`** — Anthropic PDF guide URL, MCP docs, community links, full citations
-- **`references/categories.md`** — In-depth guide to all 3 skill categories
-  with characteristics, examples, and best practices for each
-- **`references/discovery.md`** — Interactive 20-question guided Q&A for discovering skill
-  requirements, design choices, and implementation plan
-- **`references/testing.md`** — Detailed test case templates for triggering, functional, and
-  performance testing with concrete examples
-- **`references/distribution.md`** — GitHub setup guide, installation instructions template,
-  positioning language, community sharing strategies
-- **`references/patterns.md`** — 5 advanced patterns (sequential orchestration,
-  multi-MCP coordination, iterative refinement, context-aware selection, domain intelligence)
-- **`references/troubleshooting.md`** — Fix guide: skill doesn't trigger, triggers too often,
-  instructions not followed, context overload
-- **`references/changelog.md`** — Version history and improvement notes
-- **`notes/2026_03_reliable_skill_usage_and_design.md`** — Community research on skill activation rates (250 sandboxed evals): keyword matching vs semantic, naming conventions, forced-eval hooks, description template patterns
+### Reference Files (loaded as needed by the agent — when to open it → what it gives back)
+
+- **`references/research.md`** — before writing any domain instruction → source-tier judgement, `sources.md` entries
+- **`references/discovery.md`** — when requirements are unclear → 22-question plan: name, triggers, use cases, inputs, outputs, tests
+- **`references/categories.md`** — when Step 1's category is not obvious → category, structure, Level 2 template
+- **`references/best-practices.md`** — while writing body and frontmatter → description format, every optional field, level targets, 5 anti-patterns
+- **`references/patterns.md`** — when 4 phases are not enough → orchestration, multi-MCP, refinement loops, runtime branching, domain rules
+- **`references/testing.md`** — at Step 4 → T1-T6 triggering cases, F1-F4 functional cases, baseline comparison
+- **`references/troubleshooting.md`** — when a built skill misbehaves → fixes for no trigger, over-trigger, skipped instructions, context overload
+- **`references/refining-skills.md`** — when improving an existing skill → P0-P3 audit, migration checklist
+- **`references/distribution.md`** — at Step 5 → repo layout, README, versioning
+- **`references/sources.md`** — when checking what a claim rests on, or adding one → citations, and claims with no retrievable source
+- **`references/changelog.md`** — when changing ai-skill-builder itself → its release history, not the history of the skill you are building
+
+### Related skills (separate packages — do not duplicate their content here)
+- **`engineer-agent-skills`** — Read when a skill targets more than one host, or makes a
+  portability, security, or performance claim. Supplies the portable-standard vs
+  runtime-extension claim matrix, per-host validation receipts, install/uninstall ownership
+  rules, and semantic XML body regions.
 
 ### Scripts (run directly — do not load into context)
-- **`scripts/audit-skill.sh`** — Skill structure smoke test with scored output (0-100%)
+- **`scripts/audit-skill.sh`** — structure smoke test. Gate on zero FAILs; the percentage
+  scores only the mechanically decidable checks, and proxy checks are listed unscored.
   ```bash
   bash scripts/audit-skill.sh /path/to/YOUR-SKILL
   ```
-- **`scripts/scaffold-skill.sh`** — Create a new skill directory with correct structure
+- **`scripts/scaffold-skill.sh`** — create a skill directory that already passes the audit
   ```bash
-  bash scripts/scaffold-skill.sh my-skill-name
+  SKILLS_DIR=~/.claude/skills bash scripts/scaffold-skill.sh my-skill-name
   ```
-
----
-
-## Version History
-
-**v1.1.0** - 2026-03-05
-- Added YAML frontmatter (enables Claude auto-detection)
-- Rewrote body to imperative form throughout
-- Integrated IMPROVEMENTS.md self-critique (moved to references/changelog.md)
-- Corrected description templates: trigger-phrase format for SKILL.md, outcome-focused for README
-- Trimmed SKILL.md from 932 → ~350 lines; moved detail to references/
-- Corrected directory taxonomy: references/examples/ for standalone skills (Anthropic's recommended structure)
-- Corrected README.md rule: enforce "no README inside skill folder" with distribution exception
-- Added description field constraints: 1024-char hard limit, no angle brackets, kebab-case names
-- Added Additional Resources section linking all references/ files and scripts/
-- Created references/patterns.md with 5 advanced patterns + troubleshooting from Anthropic's guide
-- Confirmed skill categories are from Anthropic's official guide — no "unofficial" label
-
-**v1.0.0** - Initial release based on Anthropic's Complete Guide
-- Complete 4-phase methodology
-- Progressive disclosure templates
-- Testing framework
-- Distribution strategies
-- Common pitfalls guide

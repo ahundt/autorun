@@ -201,11 +201,18 @@ Performance Test P3: Consistency across team
 
 ### When to Accept Performance Results
 
-A skill is ready to distribute when it achieves at least **two** of:
-- ≥50% time reduction compared to manual baseline
-- ≥10 percentage points quality improvement
-- Substantially higher consistency than manual process
-- Enables work that was previously infeasible manually
+Acceptance is relative to the baseline measured above, not to a fixed threshold. No published
+source establishes a cross-skill number, so do not import one. The skill under test is ready to
+distribute when all four hold:
+
+- It improves on the baseline measured for it in at least one metric from the table above.
+- No other measured metric regresses.
+- Functional tests F1-F4 pass.
+- The loaded-token cost is recorded, so the improvement can be weighed against what it costs
+  to keep the skill in context.
+
+State the baseline, the workload, the number with its unit, and which direction is better.
+A number without those four is not checkable.
 
 ---
 
@@ -222,5 +229,5 @@ After passing triggering and functional tests, test with 1-2 representative user
 **Do not publish until:**
 - [ ] Triggering tests: all pass
 - [ ] Functional tests: happy path + edge cases pass
-- [ ] Performance: measurable improvement in at least 2 metrics
+- [ ] Performance: improvement on the baseline measured for the skill under test, no regression
 - [ ] User feedback: no P0 or P1 usability issues remaining

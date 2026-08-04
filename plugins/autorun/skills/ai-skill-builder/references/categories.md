@@ -64,22 +64,22 @@ my-doc-skill/
 
 Generate [output type] from [input type] in 3 steps:
 
-### Step 1: Parse Input (1-2 min)
+### Step 1: Parse Input
 - Read and validate the [input type]
 - Extract [key fields] from the structure
 - Identify [special conditions or options]
 
-### Step 2: Generate [Output] (3-5 min)
+### Step 2: Generate [Output]
 - Create [output structure] from extracted data
 - Apply [templates or patterns] to each [element]
 - Add [supporting elements] (auth, error handling, etc.)
 
-### Step 3: Validate and Format (1-2 min)
+### Step 3: Validate and Format
 - Check output for [correctness criteria]
 - Format to [output spec]
 - Output to [location]
 
-**Total Time**: ~5-10 minutes for [typical input size]
+**Definition of Done**: [the specific, checkable end state for this skill]
 ```
 
 ---
@@ -143,23 +143,23 @@ my-workflow-skill/
 
 [Describe task] in [N] phases:
 
-### Phase 1: Pre-flight Checks (1-2 min)
+### Phase 1: Pre-flight Checks
 - Verify [credentials/config/dependencies]
 - Check [required state] is correct
 - Confirm [safety conditions] before proceeding
 
-### Phase 2: [Primary Action] (X-Y min)
+### Phase 2: [Primary Action]
 - [Main operation step 1]
 - [Main operation step 2]
 - Verify [intermediate result]
 
-### Phase 3: Validate and Report (1-2 min)
+### Phase 3: Validate and Report
 - Check [success criteria]
 - Generate status report
 - If failure: provide rollback instructions
 
 **On failure**: Run `scripts/rollback.sh` to restore previous state
-**Total Time**: ~X-Y minutes (varies with [variable factor])
+**Definition of Done**: [the specific, checkable end state. Not a wall-clock estimate.]
 ```
 
 ---

@@ -28,19 +28,28 @@ description: This skill should be used when the user wants to "trigger phrase 1"
 ---
 ```
 
-### Extended (Optional)
+### Extended — every optional field
 ```yaml
 ---
-name: skill-name
-description: Does X for Y inputs. Use when user asks for "trigger phrase 1",
-  "trigger phrase 2", or needs help with [domain].
-metadata:
-  version: 1.0.0
+name: your-skill-name
+description: What it does and when. Use when user says "trigger phrase 1", "trigger phrase 2".
+license: MIT                   # Optional: open-source license (MIT, Apache-2.0, etc.)
+allowed-tools: "Bash(python:*) WebFetch"  # Optional: restrict which tools the skill can use
+compatibility: Claude Code     # Optional: 1-500 chars; environment requirements
+metadata:                      # Optional: custom key-value pairs
   author: Your Name
-  tags: category1,category2
+  version: 1.0.0               # Version belongs inside metadata, never at the top level
+  mcp-server: your-server      # If skill requires a specific MCP server
+  category: productivity
+  tags: [automation, workflow]
   dependencies: tool-name,mcp-server-name
+  documentation: https://example.com/docs
 ---
 ```
+
+`license`, `compatibility`, and `allowed-tools` are optional in the portable specification and
+accepted differently by different hosts. `allowed-tools` is experimental and its accepted shape
+varies. Name the host and version you tested rather than assuming portability.
 
 ### Description Field Constraints
 - **Under 1024 characters** (hard limit — longer descriptions are truncated)
@@ -110,9 +119,9 @@ description: Uses OpenAPI parser with Jinja2 templates to generate Jest tests
 
 **Include**:
 - 3-5 numbered steps
-- Time estimates per step
 - Input → Output per step
-- Total time comparison
+- A Definition of Done per step: the checkable condition that must hold before the next one
+  starts. Not a wall-clock estimate — how long a step takes depends on who or what runs it.
 
 **Omit**:
 - Implementation details
@@ -286,7 +295,9 @@ Level 1 (Hook) → Level 2 (Workflow) → Level 3 (Details)
 ### Antipattern 2: The Feature List
 **Problem**: Describing what it has, not what it achieves
 
-**Solution**: Focus on outcomes
+**Solution**: Name the outcome — in the repo README and in the SKILL.md body. The `description`
+field is the one place this does not apply: there, outcome language displaces the trigger phrases
+a host matches on. See "Two Audiences, Two Formats" above.
 ```
 ❌ "Has integration with 5 APIs"
 ✅ "Sync data across 5 platforms automatically"
@@ -325,6 +336,12 @@ Result: [Outcome achieved]
 ```
 
 ## Success Criteria Patterns
+
+The strings below are shapes to fill from your own measurements, not results anyone recorded.
+A number earns its place once it names four things: the measured event, the workload and
+conditions, the number with its unit, and which direction counts as better. Record the manual
+baseline before building, so the improvement has something to be relative to —
+`references/testing.md` covers the measurement framework.
 
 ### Quantitative Metrics
 - **Time Reduction**: "75% faster than manual process"
@@ -401,14 +418,15 @@ head -5 ~/.claude/skills/my-skill/SKILL.md
 - **Level 3 Details**: No limit (comprehensive)
 
 ### Description Field
-- **YAML description**: 1-2 sentences (15-30 words)
-- Focus: Outcome achieved
-- Avoid: Technical implementation details
+- **YAML description**: 1-3 sentences, long enough to carry 4-8 quoted trigger phrases
+- Focus: what the skill does, then the phrases users say. Use Format A or B above.
+- Avoid: outcome-only positioning ("87% faster"). That belongs in the repo README.
+- Hard limit 1024 characters. `scripts/audit-skill.sh` fails a description with no quoted phrases.
 
 ### Step Descriptions
 - **Step title**: 3-5 words
 - **Step description**: 20-50 words
-- **Step time**: Estimate in minutes
+- **Definition of Done**: one checkable condition
 
 ## Version Control Tips
 
@@ -437,13 +455,12 @@ head -5 ~/.claude/skills/my-skill/SKILL.md
 ## Resources
 
 ### Official
-- [Anthropic Claude Docs](https://docs.anthropic.com)
+- [Claude Code skills documentation](https://code.claude.com/docs/en/skills)
 - [MCP Protocol](https://modelcontextprotocol.io)
-- [Agent Skills Standard](https://agent-skills.dev)
+- [Agent Skills specification](https://agentskills.io/specification)
 
 ### Community
-- [Claude Discord](https://discord.gg/claude)
-- [GitHub Discussions](https://github.com/anthropics)
+- [Anthropic on GitHub](https://github.com/anthropics)
 
 ### Tools
 - Claude Code CLI

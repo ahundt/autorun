@@ -15,7 +15,7 @@ Use this guide when a skill is built but not behaving as expected.
 ```bash
 # 1. Check the frontmatter exists
 head -10 ~/.claude/skills/your-skill-name/SKILL.md
-# Expected: --- block at line 1 with name, description, version
+# Expected: --- block at line 1 with name and description; version goes under metadata
 
 # 2. Check the description has trigger phrases
 head -15 ~/.claude/skills/your-skill-name/SKILL.md | grep -i "when\|wants to\|asks"
@@ -160,13 +160,16 @@ using wrong output format, or omitting required elements.
 
 ### Diagnosis
 
-1. Check if SKILL.md exceeds 3,000 words — long files cause attention drift
+1. Check if SKILL.md exceeds 2,000 words — long files cause attention drift
 2. Check if the relevant instruction is buried deep in SKILL.md
 3. Check if the instruction conflicts with another instruction
 
 ```bash
 wc -w ~/.claude/skills/your-skill-name/SKILL.md
-# If over 3,000 words, the file is too long — move content to references/
+# If over 2,000 words, move content to references/. Thresholds and their sources:
+# 2,000 words (plugin-dev guideline, what audit-skill.sh warns at), 5,000 words (Anthropic PDF
+# hard limit), and 5,000 tokens / 500 lines (Agent Skills spec recommendation).
+# See references/sources.md for which source establishes which.
 ```
 
 ### Common Causes and Fixes
@@ -237,7 +240,7 @@ Move everything non-essential out of SKILL.md:
 
 For workflows where Claude must track what's been done:
 
-```markdown
+````markdown
 ## State Tracking
 
 After completing each step, output:
@@ -250,6 +253,7 @@ Before starting each step, output:
 STARTING STEP [N]: [step name]
 Previous: [reference to what Step N-1 produced]
 ```
+````
 
 This creates an explicit checkpoint log that stays visible in context.
 
@@ -276,23 +280,24 @@ bash ~/.claude/skills/ai-skill-builder/scripts/audit-skill.sh ~/.claude/skills/y
 
 # Step 2: File size check
 wc -w ~/.claude/skills/your-skill-name/SKILL.md
-# Over 3,000 words? → Move content to references/
+# Over 2,000 words? → Move content to references/
 
 # Step 3: Frontmatter check
 head -10 ~/.claude/skills/your-skill-name/SKILL.md
 # Missing ---? → Add YAML frontmatter
 
 # Step 4: Description check
-python3 -c "
-import re
-content = open('~/.claude/skills/your-skill-name/SKILL.md').read()
+# Pass the path as an argument: Python's open() does not expand ~
+python3 - "$HOME/.claude/skills/your-skill-name/SKILL.md" <<'PY'
+import re, sys
+content = open(sys.argv[1]).read()
 m = re.search(r'^---\n(.*?)\n---', content, re.DOTALL)
 if m:
     desc = re.search(r'description: (.*?)(\n\w|\Z)', m.group(1), re.DOTALL)
     if desc:
         print('Description length:', len(desc.group(1)))
-        print('Has trigger phrases:', '\"' in desc.group(1))
-"
+        print('Has trigger phrases:', '"' in desc.group(1))
+PY
 # Description > 1024 chars? → Shorten it
 # No quotes? → Add trigger phrases
 
