@@ -46,52 +46,67 @@ async function askDaemon(payload) {
       _pid: process.pid,
     }) + "\n"
 
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (value) => {
-      if (!settled) {
-        settled = true
-        clearTimeout(timer)
-        resolve(value)
-      }
-    }
-    const timer = setTimeout(() => finish(null), TIMEOUT_MS)
-    const chunks = []
-
-    try {
+  // RAII shape: acquire inside the try, release once in the finally. Promise
+  // resolution is idempotent, so the handlers just resolve; the finally runs
+  // strictly after the promise settles, which makes the settle-before-close
+  // invariant hold by construction — an earlier version called sock.end()
+  // inside the data handler, close() fired synchronously and resolved null
+  // first, and every deny read as an allow.
+  let sock = null
+  let timer = null
+  let done = false
+  try {
+    return await new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), TIMEOUT_MS)
+      const chunks = []
       Bun.connect({
         unix: SOCKET,
         socket: {
-          open(sock) {
-            sock.write(frame)
+          open(s) {
+            sock = s
+            s.write(frame)
           },
-          data(sock, chunk) {
+          data(s, chunk) {
             chunks.push(chunk)
             if (!chunk.includes(10)) return // 10 = "\n": the frame terminator
-            // Settle BEFORE closing. sock.end() fires close() synchronously,
-            // and close() resolves null, so ending first threw the answer away
-            // and every deny read as an allow.
-            let reply = null
             try {
-              reply = JSON.parse(Buffer.concat(chunks).toString())
+              resolve(JSON.parse(Buffer.concat(chunks).toString()))
             } catch {
-              reply = null
+              resolve(null)
             }
-            finish(reply)
-            sock.end()
           },
           error() {
-            finish(null)
+            resolve(null)
           },
           close() {
-            finish(null)
+            resolve(null)
           },
         },
-      }).catch(() => finish(null))
+      }).then((s) => {
+        // The connect promise can resolve after the timeout already settled
+        // the call; adopt the socket so the finally below (or this branch,
+        // when it ran already) still closes it.
+        sock = s
+        if (done) {
+          try {
+            s.end()
+          } catch {
+            // already closed
+          }
+        }
+      }).catch(() => resolve(null))
+    })
+  } catch {
+    return null
+  } finally {
+    done = true
+    clearTimeout(timer)
+    try {
+      sock?.end()
     } catch {
-      finish(null)
+      // already closed
     }
-  })
+  }
 }
 
 /**
@@ -105,14 +120,36 @@ async function askDaemon(payload) {
 async function askHookEntry(payload) {
   const command = HOOK_ENTRY_COMMAND
   if (!command.length) return blockedBecause("autorun daemon unreachable")
+  let child = null
+  let timer = null
   try {
-    const child = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "ignore" })
+    child = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "ignore" })
     child.stdin.write(JSON.stringify({ ...payload, cli_type: "opencode" }) + "\n")
     child.stdin.end()
-    const text = await new Response(child.stdout).text()
+    // hook_entry bounds its own socket work, but uv can wedge before Python
+    // exists (bootstrap lock, cold cache), and OpenCode enforces no hook
+    // timeout the way Claude's hooks.json "timeout": 10 does — so the bound
+    // has to live here or the tool call hangs forever.
+    const text = await Promise.race([
+      new Response(child.stdout).text(),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), TIMEOUT_MS)
+      }),
+    ])
+    if (text === null) return blockedBecause("hook entry timed out")
     return JSON.parse(text)
   } catch {
     return blockedBecause("autorun daemon and hook entry both unreachable")
+  } finally {
+    // The child's lifetime is this call's lifetime: kill on every exit path
+    // (kill after normal exit is a no-op) so a wedged interpreter cannot
+    // outlive the tool call it was spawned to answer.
+    clearTimeout(timer)
+    try {
+      child?.kill()
+    } catch {
+      // already exited
+    }
   }
 }
 

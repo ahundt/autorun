@@ -216,6 +216,27 @@ class TestDaemonSocketFrames:
         assert "autorun" in result.stdout.lower()
         assert "restart-daemon" in result.stdout, "the block must name the way out"
 
+    @pytest.mark.skipif(shutil.which("bun") is None, reason="bun is required to run the shim")
+    def test_wedged_hook_entry_fallback_times_out_and_blocks(self, tmp_path):
+        """A fallback interpreter that never answers must not hang the tool call.
+
+        hook_entry bounds its own socket work, but uv can wedge before Python
+        exists (bootstrap lock, cold cache), and OpenCode enforces no hook
+        timeout the way Claude's hooks.json "timeout": 10 does. The shim owns
+        the bound: TIMEOUT_MS, then a fail-closed deny, and the child is
+        killed so a wedged interpreter cannot outlive the call it served.
+        """
+        result = _run_shim(
+            tmp_path,
+            tmp_path / "nothing.sock",
+            "veto",
+            hook_entry_command='["/bin/sleep", "300"]',
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "denied:" in result.stdout, result.stdout
+        assert "timed out" in result.stdout, result.stdout
+
 
 class TestDaemonRecordsTheAttachment:
     """The shim hands the daemon the address OpenCode is listening on. Storing
@@ -249,9 +270,12 @@ class TestDaemonRecordsTheAttachment:
     @pytest.mark.parametrize(
         "server_url",
         [
-            "http://10.0.0.5:7813/",
+            # RFC 5737 documentation addresses stand in for a LAN host and a
+            # link-local metadata-style endpoint; the property under test is
+            # that anything non-loopback is refused, whatever its class.
+            "http://192.0.2.5:7813/",
             "http://example.com/",
-            "https://169.254.169.254/",
+            "https://192.0.2.254/",
             "file:///etc/passwd",
             "",
         ],
@@ -280,15 +304,15 @@ class TestDaemonRecordsTheAttachment:
         assert not after.state_get("opencode_attachment")
 
 
-def _run_shim(tmp_path, socket_path, mode):
+def _run_shim(tmp_path, socket_path, mode, hook_entry_command="[]"):
     """Load the installed shim under real Bun and exercise one hook."""
     shim = tmp_path / "autorun.js"
-    # Same substitutions the installer performs; no hook-entry command here, so
-    # the unreachable-daemon path exercises the last-resort block.
+    # Same substitutions the installer performs; the default empty hook-entry
+    # command makes the unreachable-daemon path exercise the last-resort block.
     shim.write_text(
         SHIM_SOURCE.read_text(encoding="utf-8")
         .replace("__AUTORUN_SOCKET__", str(socket_path))
-        .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", "[]"),
+        .replace("__AUTORUN_HOOK_ENTRY_COMMAND__", hook_entry_command),
         encoding="utf-8",
     )
     driver = tmp_path / "driver.js"

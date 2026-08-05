@@ -72,6 +72,40 @@ class TestDispatchRegistration:
         assert app._find_command("/ar:planexport") is not None
 
 
+class TestConcurrentToggles:
+    def test_simultaneous_pins_from_many_sessions_all_survive(self, config_path, tmp_path):
+        """Pins toggled at the same moment must not erase each other.
+
+        Every write rewrites the whole config file, so an unserialized
+        read-modify-write keeps only whichever writer replaced last — the
+        daemon dispatches sessions from a thread pool and standalone hook
+        processes run beside it, so simultaneous /ar:pe from different
+        sessions is the normal case, not an edge. The write path therefore
+        holds the global-session lock across the read AND the replace.
+        """
+        import threading
+
+        projects = [tmp_path / f"proj-{i}" for i in range(12)]
+        for p in projects:
+            p.mkdir()
+        start = threading.Barrier(len(projects))
+
+        def toggle(project):
+            start.wait()
+            plan_export_command("on", project, "claude")
+
+        threads = [threading.Thread(target=toggle, args=(p,)) for p in projects]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        pins = json.loads(config_path.read_text()).get("projects", {})
+        assert set(pins) == {str(p) for p in projects}, (
+            f"lost {len(projects) - len(pins)} of {len(projects)} concurrent pins"
+        )
+
+
 class TestProjectToggle:
     def test_off_pins_only_the_current_project(self, config_path, project, other_project):
         reply = plan_export_command("off", project, "claude")

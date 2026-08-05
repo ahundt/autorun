@@ -1773,6 +1773,42 @@ class TestPreToolUseBackup:
     provide backup tracking and export. Content-hash dedup prevents double-export.
     """
 
+    def test_non_plan_tools_never_read_the_config_file(self, temp_project, monkeypatch):
+        """A Bash PreToolUse must not stat or parse the plan-export config.
+
+        track_and_export_plans_early runs on EVERY PreToolUse in the daemon,
+        but only Write/Edit and ExitPlanMode events consume the config. The
+        tool-name gate therefore comes first: one config-file read per
+        Bash/Read/Grep event is amortized waste on every harness, and on an
+        install that never wrote the new config location it costs two stats
+        per event (current path, then legacy path).
+        """
+        from autorun import plan_export as pe
+
+        reads = []
+        monkeypatch.setattr(pe, "read_config_data", lambda: reads.append(1) or {})
+
+        ctx = EventContext(
+            session_id="test-pre-gate",
+            event="PreToolUse",
+            tool_name="Bash",
+            tool_input={"command": "true"},
+            store=ThreadSafeDB(),
+        )
+        assert pe.track_and_export_plans_early(ctx) is None
+        assert not reads, "config was read for a tool plan export never acts on"
+
+        # The gate must not over-block: a Write still consults the config.
+        ctx_write = EventContext(
+            session_id="test-pre-gate",
+            event="PreToolUse",
+            tool_name="Write",
+            tool_input={"file_path": str(temp_project['plan_file'])},
+            store=ThreadSafeDB(),
+        )
+        pe.track_and_export_plans_early(ctx_write)
+        assert reads, "the Write branch must still consult the config"
+
     def test_pretooluse_tracking_populates_active_plans(self, temp_project):
         """track_and_export_plans_early() records Write to plan file in active_plans."""
         from autorun.plan_export import track_and_export_plans_early

@@ -198,6 +198,10 @@ from .session_manager import (
 )
 from .config import CONFIG, WRITE_TOOLS, EDIT_TOOLS, PLAN_TOOLS
 
+# The only tools whose PreToolUse events plan export acts on; everything else
+# returns before the config file is touched.
+_PLAN_EXPORT_TOOLS = frozenset(WRITE_TOOLS | EDIT_TOOLS | PLAN_TOOLS)
+
 # Global key for cross-session state (survives Option 1 fresh context)
 GLOBAL_SESSION_ID = "__plan_export__"
 
@@ -484,7 +488,34 @@ _PLAN_EXPORT_USAGE = (
 )
 
 
-def plan_export_command(args: str, project_dir: "Path | None", cli_type: "str | None") -> str:
+@contextlib.contextmanager
+def _config_write_scope(ctx: "EventContext | None"):
+    """Serialize a config read-modify-write everywhere it can race.
+
+    Every write below rewrites the whole file, so two sessions toggling pins
+    at once would keep only whichever replaced last. Layering per
+    docs/RUNTIME_STATE_ISOLATION.md, all through existing sugar — no lock
+    handling in the command code: ``ctx.state_synchronized`` orders daemon
+    executor threads; ``session_state``'s file lock orders processes. The
+    config file is ~1KB and written only on an explicit ``/ar:pe``, so
+    holding the global lock across this bounded write stays inside the
+    small-I/O rationale ``test_plan_export_no_io_in_lock`` protects.
+    """
+    synchronized = (
+        ctx.state_synchronized(session_id=GLOBAL_SESSION_ID)
+        if ctx is not None
+        else contextlib.nullcontext()
+    )
+    with synchronized, session_state(GLOBAL_SESSION_ID):
+        yield
+
+
+def plan_export_command(
+    args: str,
+    project_dir: "Path | None",
+    cli_type: "str | None",
+    ctx: "EventContext | None" = None,
+) -> str:
     """Dispatch /ar:pe subcommands. Bare command shows status.
 
     `on`/`off` pin the current project; `globalon`/`globaloff` set the
@@ -502,9 +533,10 @@ def plan_export_command(args: str, project_dir: "Path | None", cli_type: "str | 
     load_data = read_config_data
 
     def save_setting(key: str, value, described: str) -> str:
-        data = load_data()
-        data[key] = value
-        atomic_write_json(CONFIG_PATH, data)
+        with _config_write_scope(ctx):
+            data = load_data()
+            data[key] = value
+            atomic_write_json(CONFIG_PATH, data)
         return with_plan_export_config_hint(described, cli_type)
 
     if sub == "dir":
@@ -539,7 +571,8 @@ def plan_export_command(args: str, project_dir: "Path | None", cli_type: "str | 
         )
 
     if sub == "reset":
-        atomic_write_json(CONFIG_PATH, {})
+        with _config_write_scope(ctx):
+            atomic_write_json(CONFIG_PATH, {})
         return with_plan_export_config_hint(
             "Plan export settings reset to defaults (project pins cleared).", cli_type
         )
@@ -550,9 +583,10 @@ def plan_export_command(args: str, project_dir: "Path | None", cli_type: "str | 
                 "Plan export: no project directory in this context; use "
                 "/ar:pe globalon|globaloff for the global default."
             )
-        data = load_data()
-        data.setdefault("projects", {})[str(project_dir)] = {"enabled": sub == "on"}
-        atomic_write_json(CONFIG_PATH, data)
+        with _config_write_scope(ctx):
+            data = load_data()
+            data.setdefault("projects", {})[str(project_dir)] = {"enabled": sub == "on"}
+            atomic_write_json(CONFIG_PATH, data)
         return with_plan_export_config_hint(
             f"Plan export {sub} for this project ({project_dir}).", cli_type
         )
@@ -595,7 +629,7 @@ def handle_plan_export_toggle(ctx: EventContext) -> str:
     """Dispatch `/ar:pe` subcommands (status/on/off/globalon/globaloff)."""
     prompt = ctx.activation_prompt or ctx.prompt or ""
     tail = prompt.split(None, 1)[1] if " " in prompt.strip() else ""
-    return plan_export_command(tail.strip(), _ctx_project_dir(ctx), ctx.cli_type)
+    return plan_export_command(tail.strip(), _ctx_project_dir(ctx), ctx.cli_type, ctx=ctx)
 
 
 @dataclass
@@ -1505,6 +1539,12 @@ def track_and_export_plans_early(ctx: EventContext) -> Optional[Dict]:
     Always returns None — never blocks tool execution.
     """
     try:
+        # Gate on the tool BEFORE touching the config file: this handler runs
+        # on every PreToolUse in the daemon, and only the branches below read
+        # the config, so loading first would stat+parse it once per Bash/Read/
+        # Grep event on every harness for nothing.
+        if ctx.tool_name not in _PLAN_EXPORT_TOOLS:
+            return None
         config = PlanExportConfig.load(_ctx_project_dir(ctx))
         if not config.enabled:
             return None
