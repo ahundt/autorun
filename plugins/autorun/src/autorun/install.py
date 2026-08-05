@@ -1402,15 +1402,46 @@ def sync_owned_skill_tree(
             write_owned_marker(staged, plugin=plugin_name)
         installed += 1
 
+    prune_owned_skills(dst_root, plugin_name, keep=sources.keys())
+    return (installed, tuple(conflicts))
+
+
+def prune_owned_skills(
+    dst_root: Path,
+    plugin_name: str,
+    *,
+    keep: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Remove this plugin's own skills from a directory users also write to.
+
+    Rule 3 of :func:`sync_owned_skill_tree`, factored out because the route
+    that stops publishing to a destination needs exactly the same policy as the
+    route that keeps publishing to it. A harness that gains a shared-root
+    route drops its native copy, and doing that with ``rmtree(skills_dir)``
+    deletes whatever the user put beside ours — the same silent data loss the
+    marker policy exists to prevent, reached through the other branch.
+
+    An entry survives when it carries no marker (the user's), or carries
+    another plugin's marker, or is named in ``keep``.
+
+    Complexity: O(E) for E existing entries, one stat and one marker read each.
+
+    Returns:
+        The names removed, so callers can report them instead of a bare count.
+    """
+    if not dst_root.is_dir():
+        return ()
+    kept = set(keep)
+    removed: list[str] = []
     for entry in sorted(dst_root.iterdir()):
-        if not entry.is_dir() or entry.is_symlink() or entry.name in sources:
+        if not entry.is_dir() or entry.is_symlink() or entry.name in kept:
             continue
         marker = read_owned_marker(entry)
         if marker is None or (marker.plugin and marker.plugin != plugin_name):
             continue
         shutil.rmtree(entry, ignore_errors=True)
-
-    return (installed, tuple(conflicts))
+        removed.append(entry.name)
+    return tuple(removed)
 
 
 def _count_skill_dirs(skills_dir: Path) -> int:
@@ -1472,9 +1503,10 @@ def _sync_gemini_extension_resources(
       it receives the Markdown copy without the generated TOML duplicate.
       Gemini and Antigravity keep TOML generation unchanged.
     - ``include_skills=False`` is the shared-route case for a harness that reads
-      ``~/.agents/skills`` itself. The manifest declaration is removed with the
-      directory, because a manifest naming a path that no longer exists is
-      worse than no declaration.
+      ``~/.agents/skills`` itself. This plugin's own skills are pruned and the
+      manifest declaration goes with them, because a manifest naming a path
+      that no longer exists is worse than no declaration. Skills the user put
+      in that directory stay, and the directory stays with them.
 
     Returns:
         (generated_command_count, synced_skill_count)
@@ -1507,8 +1539,12 @@ def _sync_gemini_extension_resources(
             plugin_dir / "skills", skills_dir, _plugin_registry_name(plugin_dir)
         )
     else:
-        if skills_dir.is_dir():
-            shutil.rmtree(skills_dir)
+        # Drop only what this plugin put here. rmtree'ing the whole directory
+        # deleted the user's own skills whenever a harness moved to the shared
+        # route, which is the same loss the publish branch above avoids.
+        prune_owned_skills(skills_dir, _plugin_registry_name(plugin_dir))
+        if skills_dir.is_dir() and not any(skills_dir.iterdir()):
+            skills_dir.rmdir()
         _drop_gemini_manifest_skills(ext_dir)
 
     return (commands_generated, skills_synced)

@@ -278,6 +278,46 @@ def test_a_skill_removed_from_source_is_pruned_from_the_shared_root(tmp_path, mo
     )
 
 
+def test_switching_a_harness_to_the_shared_route_keeps_user_skills(tmp_path):
+    """Dropping the native copy must prune ours, not the whole directory.
+
+    Qwen Code reads ~/.agents/skills (Storage.getUserSkillsDirs maps
+    [".qwen", ".agents"] over os.homedir()), so its route moved from the
+    extension copy to the shared root. The branch that retires the native copy
+    ran shutil.rmtree on <ext>/skills/, taking every skill the user had put
+    there with it — the publish branch beside it had already been fixed to
+    respect the ownership marker, and this one had not.
+    """
+    from autorun import install as inst
+
+    plugin_dir = _plugin_with_skills(tmp_path, ["ours"])
+    ext_dir = tmp_path / "extensions" / "ar"
+    ext_dir.mkdir(parents=True)
+
+    inst._sync_gemini_extension_resources(
+        plugin_dir, ext_dir, "ar", "qwen", include_skills=True
+    )
+    assert (ext_dir / "skills" / "ours" / "SKILL.md").is_file(), "fixture must publish"
+
+    mine = ext_dir / "skills" / "hand-written"
+    mine.mkdir()
+    (mine / "SKILL.md").write_text("---\nname: hand-written\n---\nmy own\n", encoding="utf-8")
+    assert inst.read_owned_marker(mine) is None, "fixture must be unmarked"
+
+    # The same install after the harness gains a shared-root route.
+    inst._sync_gemini_extension_resources(
+        plugin_dir, ext_dir, "ar", "qwen", include_skills=False
+    )
+
+    assert not (ext_dir / "skills" / "ours").exists(), (
+        "the plugin's own skill must leave with the route, or the harness "
+        "sees it from both the extension and the shared root"
+    )
+    assert mine.is_dir() and (mine / "SKILL.md").read_text(encoding="utf-8") == (
+        "---\nname: hand-written\n---\nmy own\n"
+    ), "retiring autorun's route must not delete a skill the user wrote"
+
+
 def test_pruning_never_removes_a_user_authored_skill(tmp_path, monkeypatch):
     """No marker means not ours, whatever its name."""
     from autorun import install as inst

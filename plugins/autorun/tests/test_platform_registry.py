@@ -609,7 +609,16 @@ def test_shared_agents_skills_capability_is_declared_per_platform():
     # Codex: https://learn.chatgpt.com/docs/build-skills
     # Legacy Gemini: https://geminicli.com/docs/cli/using-agent-skills/
     # OpenCode: https://opencode.ai/docs/skills/ (global ~/.agents/skills)
-    assert claiming == {"codex", "gemini", "opencode"}
+    # Qwen Code: Storage.getUserSkillsDirs() maps [".qwen", ".agents"] over
+    #   os.homedir() (QwenLM/qwen-code#2042, closed completed 2026-03-03)
+    # ForgeCode: https://forgecode.dev/docs/skills/ "agents" tier;
+    #   forge_domain Env::agents_skills_path() -> home.join(".agents/skills")
+    #
+    # Antigravity is deliberately absent: its skill root is workspace-scoped
+    # ("{workspace}/.agents/skills/{skill_name}/SKILL.md" in the shipped agy
+    # binary), never ~/.agents/skills. Claude Code is absent because
+    # anthropics/claude-code#31005 is still open; it reads ~/.claude/skills.
+    assert claiming == {"codex", "forgecode", "gemini", "opencode", "qwen"}
 
 
 def test_skill_placement_routes_cover_every_platform_and_mode():

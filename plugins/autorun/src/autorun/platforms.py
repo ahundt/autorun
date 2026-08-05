@@ -1020,6 +1020,13 @@ QWEN = register(
         template_dir="gemini_template",
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_qwen",
+        # Qwen Code's Storage.getUserSkillsDirs() maps
+        # SKILL_PROVIDER_CONFIG_DIRS = [".qwen", ".agents"] over os.homedir(),
+        # so ~/.agents/skills is a user-scope discovery root alongside
+        # ~/.qwen/skills (verified in the shipped 0.21.1 bundle; upstream
+        # QwenLM/qwen-code#2042, closed completed 2026-03-03). Without this the
+        # extension copy and the shared root both reach Qwen and can drift.
+        loads_shared_agents_skills=True,
         list_cmd=("qwen", "extensions", "list"),
         extensions_subdir="extensions",
         uninstall_cmd=("qwen", "extensions", "uninstall", "{name}"),
@@ -1142,6 +1149,13 @@ FORGECODE = register(
         # ForgeCode exposes skills through a model-facing `skill` tool, with no
         # user-typed invocation of its own.
         skill_invocation_format="the {name} skill",
+        # https://forgecode.dev/docs/skills/ documents ~/.agents/skills as the
+        # "agents" tier between project (.forge/skills) and global, and
+        # forge_domain's Env::agents_skills_path() resolves it as
+        # home.join(".agents/skills") (string present in the shipped binary).
+        # ForgeCode ships no extension or plugin package, so without this the
+        # shared root is its only route and `auto` would point at nothing.
+        loads_shared_agents_skills=True,
         # tool_names empty: not relevant without hooks (advisory AGENTS.md only)
     )
 )
