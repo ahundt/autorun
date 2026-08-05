@@ -3527,14 +3527,61 @@ def resolve_skill_routes(platform: Platform, placement: str) -> tuple[bool, bool
 def platform_skill_destinations(platform: Platform) -> tuple[Path, ...]:
     """Return every directory this harness's native skill route can write.
 
-    A harness may declare both a config-dir skills root and an extensions root.
-    Reporting only the first — the shape an ``or`` produces — hides a real
-    destination from anyone auditing a dry run.
+    The route object answers this, so a harness whose skills ship inside a
+    plugin package reports that package and a harness with no native route
+    reports nothing. Reading it off two optional path fragments could not tell
+    those two apart, and described ForgeCode as having a package no installer
+    writes.
 
-    Complexity: O(1); at most one entry per declared root.
+    Complexity: O(1); at most one entry per route.
     """
-    roots = (platform_skills_dir(platform), platform_extensions_dir(platform))
-    return tuple(root for root in roots if root is not None)
+    return platform.native_skills.destinations(platform_config_dir(platform))
+
+
+def unsatisfiable_skill_placements(
+    placement: SkillPlacement | str,
+    cli_names: Iterable[str],
+    *,
+    platforms: Mapping[str, Platform] | None = None,
+) -> list[str]:
+    """Return one actionable message per harness the placement cannot serve.
+
+    A placement that resolves to no destination installs nothing, and it did so
+    silently: ``--skill-placement native`` gave ForgeCode and OpenCode zero
+    skills while the dry run described a plugin package they do not have. A
+    request the system cannot carry out has to say so before it writes
+    anything, and name the flag that would work instead.
+
+    Only genuinely empty routes are reported. A harness reached through the
+    shared root is satisfied whatever its native route looks like.
+
+    Complexity: O(H) for H named harnesses.
+    """
+    if isinstance(placement, str):
+        placement = SkillPlacement(default=placement)
+    registry = PLATFORMS if platforms is None else platforms
+
+    problems: list[str] = []
+    for name in cli_names:
+        platform = registry.get(name)
+        if platform is None:
+            continue
+        mode = placement.for_harness(name)
+        shared, native = resolve_skill_routes(platform, mode)
+        if shared or (native and platform_skill_destinations(platform)):
+            continue
+        remedy = (
+            f"use `--skill-placement {name}=auto` to reach it through "
+            f"{shared_agents_skills_dir()}"
+            if platform.loads_shared_agents_skills
+            else "this harness has no route autorun can write; omit it from "
+            "the install targets"
+        )
+        problems.append(
+            f"{name}: --skill-placement {mode} installs no skills — "
+            f"{platform.native_skills.describe()}. To fix: {remedy}."
+        )
+    return problems
 
 
 def describe_skill_routes(
@@ -3570,7 +3617,7 @@ def describe_skill_routes(
             destinations = platform_skill_destinations(platform)
             routes.extend(f"native {path}" for path in destinations)
             if not destinations:
-                routes.append("native (harness plugin package)")
+                routes.append(platform.native_skills.describe())
         suffix = ""
         if shared and native:
             suffix = "  [duplicate exposure: two copies of each skill can drift apart]"
@@ -5165,6 +5212,23 @@ def install_plugins(
     target_labels = list(target_clis) + [f"custom:{target.name}" for target in custom_targets]
     print(f"Target CLIs: {', '.join(target_labels)}")
     print()
+
+    # Refuse a placement that would install nothing, before anything is
+    # written. Silently producing an empty install is the failure mode this
+    # whole route redesign exists to remove. A dry run reports it and keeps
+    # going, because previewing the rest of the layout is the job it was asked
+    # to do and stopping early would hide it.
+    unsatisfiable = unsatisfiable_skill_placements(placement, target_clis)
+    if unsatisfiable:
+        print(
+            f"{'Warning' if dry_run else 'Error'}: --skill-placement cannot be "
+            "satisfied for every target:"
+        )
+        for problem in unsatisfiable:
+            print(f"  {problem}")
+        print()
+        if not dry_run:
+            return 1
 
     if dry_run:
         print("DRY RUN: install preview only")

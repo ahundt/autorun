@@ -522,8 +522,16 @@ def test_route_report_lists_every_destination_directory():
     from autorun.install import describe_skill_routes, platform_extensions_dir, platform_skills_dir
     from autorun.platforms import PLATFORMS
 
+    from autorun.platforms import CombinedSkillRoutes, ConfigDirSkills, ExtensionSkills
+
     multi = dataclasses.replace(
-        PLATFORMS["claude"], name="multiroot", skills_subdir="skills", extensions_subdir="exts"
+        PLATFORMS["claude"],
+        name="multiroot",
+        skills_subdir="skills",
+        extensions_subdir="exts",
+        native_skills=CombinedSkillRoutes(
+            (ConfigDirSkills("skills"), ExtensionSkills("exts"))
+        ),
     )
     lines = describe_skill_routes(
         "native", ["multiroot"], platforms={"multiroot": multi}

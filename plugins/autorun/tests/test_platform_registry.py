@@ -21,7 +21,9 @@ import pytest
 from autorun.platforms import (
     PLATFORMS,
     HookProtocol,
+    NoNativeSkillRoute,
     Platform,
+    SkillRoute,
     SessionIdentityResolutionError,
     register,
     resolve_standalone_session_identity,
@@ -522,12 +524,28 @@ def test_platform_fields_are_immutable_primitives():
     that imports `platforms` sees the same data without runtime mutation risk.
     """
     p = PLATFORMS["claude"]
-    allowed = (str, int, bool, float, tuple, frozenset, type(None), dict, HookProtocol)
+    allowed = (
+        str, int, bool, float, tuple, frozenset, type(None), dict,
+        HookProtocol, SkillRoute,
+    )
     for field in dataclasses.fields(p):
         value = getattr(p, field.name)
         assert isinstance(value, allowed), f"Platform field {field.name!r} = {value!r} is not a process-safe type"
     assert dataclasses.is_dataclass(p.hook_protocol)
     assert p.hook_protocol.__dataclass_params__.frozen
+
+
+def test_every_skill_route_is_frozen_like_the_hook_protocol():
+    """Route objects ride on Platform, so they carry its immutability rules.
+
+    A mutable route would let one harness's install rewrite another's
+    destination inside a shared daemon process.
+    """
+    for platform in PLATFORMS.values():
+        route = platform.native_skills
+        assert isinstance(route, SkillRoute), platform.name
+        assert dataclasses.is_dataclass(route), platform.name
+        assert route.__dataclass_params__.frozen, platform.name
 
 
 def test_platform_task_metadata_is_immutable():
@@ -640,6 +658,99 @@ def test_skill_placement_routes_cover_every_platform_and_mode():
         shared_both, native_both = resolve_skill_routes(platform, "both")
         assert native_both is True
         assert shared_both is platform.loads_shared_agents_skills
+
+
+def test_a_route_with_no_destination_says_so_instead_of_naming_a_package():
+    """Invariant 1: a described route names something a writer writes.
+
+    describe_skill_routes fell back to "native (harness plugin package)" for
+    any harness with neither a skills directory nor an extensions directory.
+    That is true for Codex, whose skills ship in the staged plugin bundle, and
+    false for ForgeCode and OpenCode, which have no package at all — so a dry
+    run reported a native route for two harnesses no installer writes. A route
+    nobody writes reads as coverage, which is worse than a reported gap.
+    """
+    from autorun.install import describe_skill_routes, platform_skill_destinations
+
+    for name, platform in PLATFORMS.items():
+        line = describe_skill_routes("native", [name])[0]
+        if platform_skill_destinations(platform):
+            assert "no native skill route" not in line, (
+                f"{name} has a real destination but is described as having none"
+            )
+            continue
+        assert "no native skill route" in line, (
+            f"{name} has no native destination, but its dry-run line claims a "
+            f"route: {line!r}"
+        )
+
+
+def test_a_placement_that_would_install_nothing_is_refused_with_a_remedy():
+    """Invariant 1, user-facing half: refuse before writing, and say the fix.
+
+    Reporting the gap is not enough. `--skill-placement native` used to run to
+    completion for ForgeCode and OpenCode and install zero skills, which looks
+    exactly like success. The check names the harness, what it would install,
+    and the flag that works instead.
+    """
+    from autorun.install import unsatisfiable_skill_placements
+
+    assert unsatisfiable_skill_placements("auto", sorted(PLATFORMS)) == [], (
+        "auto is the zero-configuration path and must be satisfiable for every "
+        "registered harness"
+    )
+
+    problems = unsatisfiable_skill_placements("native", sorted(PLATFORMS))
+    flagged = {p.split(":", 1)[0] for p in problems}
+    expected = {
+        name for name, platform in PLATFORMS.items()
+        if isinstance(platform.native_skills, NoNativeSkillRoute)
+    }
+    assert flagged == expected, f"expected {expected}, refused {flagged}"
+    for problem in problems:
+        assert "To fix:" in problem and "--skill-placement" in problem, (
+            f"a refusal must carry a runnable remedy: {problem!r}"
+        )
+
+
+def test_declared_install_functions_exist():
+    """Invariant 2: a named function in the registry must be a real function.
+
+    PLATFORMS["claude"] declared install_fn_name="_install_for_claude", which
+    was never written — Claude installs inline. Nothing dispatches on the
+    field, so the only visible effect was capability_snapshot.py publishing an
+    installer that does not exist. A name cannot fail on its own; this test is
+    what makes it fail.
+    """
+    from autorun import install as install_module
+
+    for name, platform in PLATFORMS.items():
+        if not platform.install_fn_name:
+            continue
+        assert hasattr(install_module, platform.install_fn_name), (
+            f"{name} declares install_fn_name={platform.install_fn_name!r}, "
+            f"which does not exist in autorun.install"
+        )
+
+
+def test_every_registry_reference_to_code_holds_the_callable():
+    """Invariant 2: store the function, not its name.
+
+    PLATFORMS["claude"].install_fn_name names "_install_for_claude", which does
+    not exist — Claude installs inline — and capability_snapshot exports it, so
+    the snapshot advertises an installer nobody wrote. A stored name cannot be
+    checked; a stored callable fails when it is wrong.
+
+    PluginPackageSkills holds its resolver directly, which is why calling
+    destinations() here is a real check rather than a string comparison.
+    """
+    from autorun.install import platform_skill_destinations
+
+    for name, platform in PLATFORMS.items():
+        destinations = platform_skill_destinations(platform)
+        assert isinstance(destinations, tuple), name
+        for path in destinations:
+            assert path.is_absolute(), f"{name} route returned {path!r}"
 
 
 def test_skill_placement_rejects_an_unvalidated_mode():

@@ -24,12 +24,150 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
-from typing import Mapping
+from pathlib import Path
+from typing import Callable, Mapping
 
 
 # The register(Platform(...)) declarations below provide Click/Typer-like
 # declarative configuration: callers look up typed behavior instead of
 # branching on harness names.
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRoute:
+    """Where one harness loads skills from when autorun does not use the
+    shared ``~/.agents/skills`` root.
+
+    One concept, one representation. This replaces three: a ``skills_subdir``
+    path fragment, an ``extensions_subdir`` path fragment, and the absence of
+    both — which made Codex (skills ship inside its plugin package) and
+    ForgeCode (no native route at all) indistinguishable. The reporting code
+    could not tell them apart either, so it described ForgeCode as having a
+    plugin package that no installer writes.
+
+    ``destinations`` takes the harness's already-resolved config directory
+    because resolving it lives in ``install`` and this module must not import
+    it. ``describe`` exists so no caller has to reconstruct a route's name
+    from the shape of its return value.
+
+    Subclasses override only where a harness genuinely differs, the same
+    contract :class:`HookProtocol` uses for wire formats.
+    """
+
+    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        """Return every directory this route writes. Empty means none."""
+        return ()
+
+    def describe(self) -> str:
+        """Return a phrase naming this route for dry runs and status output."""
+        return "no native skill route"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigDirSkills(SkillRoute):
+    """A skills directory inside the harness's own config directory."""
+
+    subdir: str = "skills"
+
+    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        return () if config_dir is None else (config_dir / self.subdir,)
+
+    def describe(self) -> str:
+        return f"config-dir {self.subdir}/"
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionSkills(SkillRoute):
+    """Skills bundled inside an installed extension or plugin directory.
+
+    Gemini and Qwen call the directory ``extensions``; Antigravity calls it
+    ``plugins``. All three discover ``<unit>/skills/`` automatically, so the
+    only difference is the name of the containing directory.
+    """
+
+    subdir: str = "extensions"
+
+    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        return () if config_dir is None else (config_dir / self.subdir,)
+
+    def describe(self) -> str:
+        return f"installed {self.subdir}/"
+
+
+@dataclass(frozen=True, slots=True)
+class PluginPackageSkills(SkillRoute):
+    """Skills carried inside a staged plugin package outside ``config_dir``.
+
+    Codex's package lives at a configurable path (``codex_plugin_source_dir``,
+    default ``~/plugins``), so no ``config_dir``-relative fragment can express
+    it. ``resolver`` holds the function itself rather than its name: a name
+    cannot be checked, which is how ``install_fn_name="_install_for_claude"``
+    came to reference a function nobody wrote and still be exported as a
+    capability.
+    """
+
+    resolver: Callable[[], Path] | None = None
+
+    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        return () if self.resolver is None else (self.resolver(),)
+
+    def describe(self) -> str:
+        return "installed plugin package"
+
+
+@dataclass(frozen=True, slots=True)
+class CombinedSkillRoutes(SkillRoute):
+    """A harness that loads skills from more than one native location.
+
+    No registered harness needs this today, but the capability predates the
+    route objects: reading two roots off an ``or`` of two optional fields
+    silently dropped the second one, and the guard against that regression is
+    older than this class. Composing routes keeps every destination reported
+    and gives a new harness variation somewhere to go that is not a new field.
+    """
+
+    routes: tuple[SkillRoute, ...] = ()
+
+    def destinations(self, config_dir: Path | None) -> tuple[Path, ...]:
+        return tuple(
+            destination
+            for route in self.routes
+            for destination in route.destinations(config_dir)
+        )
+
+    def describe(self) -> str:
+        return " AND ".join(route.describe() for route in self.routes) or (
+            SkillRoute.describe(self)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NoNativeSkillRoute(SkillRoute):
+    """The harness has no directory or package autorun can write skills to.
+
+    ForgeCode and OpenCode both read the shared ``~/.agents/skills`` root and
+    ship no extension or plugin package. Saying so plainly is the point: the
+    previous fallback claimed a plugin package for them, which reads as
+    coverage rather than as the gap it is.
+    """
+
+    def describe(self) -> str:
+        return (
+            "no native skill route: this harness has no skills directory and "
+            "no plugin package, so nothing is written"
+        )
+
+
+def _codex_plugin_package_dir() -> Path:
+    """Return Codex's staged plugin directory.
+
+    Imported at call time because ``install`` imports this module; the call
+    still fails loudly if the resolver is ever removed, which a stored name
+    would not.
+    """
+    from .install import _codex_plugin_source_dir
+
+    return _codex_plugin_source_dir()
 
 
 @dataclass(frozen=True, slots=True)
@@ -621,6 +759,11 @@ class Platform:
     config_dir_env_var_subdir: str = ""
     template_dir: str | None = None
     hooks_path_var: str = ""
+    # Name of this harness's install function in `install`, for the capability
+    # snapshot. Empty means the harness has no dedicated function — Claude
+    # installs inline through the marketplace and plugin cache. Nothing
+    # dispatches on this, so a wrong value is invisible except in the snapshot;
+    # `test_declared_install_functions_exist` is what makes it checkable.
     install_fn_name: str = ""
     list_cmd: tuple[str, ...] = ()
     app_bundle_ids: tuple[str, ...] = ()
@@ -648,6 +791,10 @@ class Platform:
     # harness has no config-dir-local skills directory — Codex reads the shared
     # ~/.agents/skills instead, which is configuration, not platform data.
     skills_subdir: str = ""
+    # Where skills go when this harness does not take the shared-root route.
+    # A SkillRoute rather than another path fragment, so "packages its skills"
+    # and "has no native route" are distinguishable; see SkillRoute.
+    native_skills: SkillRoute = field(default_factory=NoNativeSkillRoute)
     # Stable slug for the sentinel pair. Changing it orphans blocks already
     # written into users' files, which uninstall would then fail to remove.
     memory_sentinel_slug: str = ""
@@ -801,11 +948,15 @@ CLAUDE = register(
         config_dir_env_vars=("CLAUDE_CONFIG_DIR",),
         template_dir=None,  # hooks live at plugin root
         hooks_path_var="${CLAUDE_PLUGIN_ROOT}",
-        install_fn_name="_install_for_claude",
+        # No dedicated install function: Claude is installed inline through the
+        # marketplace and plugin cache. This declared "_install_for_claude" for
+        # a function nobody wrote, and capability_snapshot published it.
+        install_fn_name="",
         memory_filename="CLAUDE.md",
         memory_template="claude_template/CLAUDE.md",
         memory_sentinel_slug="claude-memory-md",
         skills_subdir="skills",
+        native_skills=ConfigDirSkills("skills"),
         list_cmd=("claude", "plugin", "list"),
         app_bundle_ids=("com.anthropic.claudefordesktop",),
         app_paths=("/Applications/Claude.app",),
@@ -900,6 +1051,7 @@ GEMINI = register(
         # extension copy is a duplicate rather than the only route.
         loads_shared_agents_skills=True,
         list_cmd=("gemini", "extensions", "list"),
+        native_skills=ExtensionSkills("extensions"),
         extensions_subdir="extensions",
         uninstall_cmd=("gemini", "extensions", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
@@ -972,6 +1124,7 @@ ANTIGRAVITY = register(
         hooks_path_var="${extensionPath}",
         install_fn_name="_install_for_antigravity",
         list_cmd=("agy", "plugin", "list"),
+        native_skills=ExtensionSkills("plugins"),
         extensions_subdir="plugins",
         uninstall_cmd=("agy", "plugin", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
@@ -1028,6 +1181,7 @@ QWEN = register(
         # extension copy and the shared root both reach Qwen and can drift.
         loads_shared_agents_skills=True,
         list_cmd=("qwen", "extensions", "list"),
+        native_skills=ExtensionSkills("extensions"),
         extensions_subdir="extensions",
         uninstall_cmd=("qwen", "extensions", "uninstall", "{name}"),
         tool_names=_GEMINI_TOOLS,
@@ -1068,6 +1222,7 @@ CODEX = register(
         memory_template="codex_template/AGENTS.md",
         # https://learn.chatgpt.com/docs/build-skills — Codex scans the shared
         # $HOME/.agents/skills root directly, so it needs no second copy.
+        native_skills=PluginPackageSkills(_codex_plugin_package_dir),
         loads_shared_agents_skills=True,
         # Predates the shared installer; keep the slug so uninstall still finds
         # blocks written by earlier autorun versions.
