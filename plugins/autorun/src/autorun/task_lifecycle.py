@@ -66,6 +66,7 @@ from .config import (
 )
 from .platforms import (
     SessionIdentityResolutionError,
+    agent_spawn_tools_for,
     platform_for,
     resolve_standalone_session_identity,
     task_tool_role,
@@ -345,7 +346,9 @@ _MARKER_SESSION_KEYWORDS = ("agent_session_id", "session")
 # the same forgery discipline the marker parser applies. Parallel subagents
 # share the parent session id (anthropics/claude-code#7881), so this ledger
 # is the only reliable identity source for the returned gate.
-_AGENT_SPAWN_TOOL_NAMES = frozenset({"Agent", "Task"})
+# Spawn tool names are per-harness and live on Platform.agent_spawn_tools, the
+# same registry that owns task_create_tools and friends, so a new harness
+# declares its name once instead of extending a set buried here.
 # The id arrives in two shapes and both must parse. A live claude -p fan-out
 # on 2026-08-05 sent PostToolUse tool_response as the structured launch record
 #   {"isAsync": true, "status": "async_launched", "agentId": "<id>", ...}
@@ -358,7 +361,10 @@ _AGENT_SPAWN_TOOL_NAMES = frozenset({"Agent", "Task"})
 # 'toolUseResult' field (that object is what arrives as tool_response; the
 # rendered tool_result content block is a different, prose shape), then
 # generalize ids, paths, and model names before committing it.
-_AGENT_SPAWN_ID_RE = re.compile(r'\bagentId"?\s*:\s*"?([A-Za-z0-9]{8,})')
+# Codex spells the same field `agent_id` and its ids carry dashes
+# (codex-rs/core/src/tools/handlers/multi_agents_tests.rs:257), so accept both
+# spellings and both id alphabets rather than one harness's.
+_AGENT_SPAWN_ID_RE = re.compile(r'\bagent(?:Id|_id)"?\s*:\s*"?([A-Za-z0-9][A-Za-z0-9-]{7,})')
 # A SubagentStop's transcript_path names the child: .../agent-<id>.jsonl.
 _AGENT_TRANSCRIPT_RE = re.compile(r"agent-([A-Za-z0-9]{8,})\.jsonl$")
 # Ring-buffer bound on remembered spawns; fan-outs beyond this simply lose
@@ -843,7 +849,7 @@ class TaskLifecycle:
         # Superset Capability: Aggregation with Conductor (Gemini-native)
         # If in Gemini session and Conductor plan exists, parse and merge its tasks.
         # This ensures /ar:status and /ar:tasks show Conductor tasks.
-        if self._cli_type == "gemini":
+        if platform_for(self._cli_type).aggregates_conductor_tasks:
             try:
                 conductor_dir = Path.cwd() / "conductor" / "tracks"
                 if conductor_dir.is_dir():
@@ -1866,7 +1872,7 @@ class TaskLifecycle:
         is what lets a later delegation marker attach automatically and the
         SubagentStop gate know which delegation returned.
         """
-        if ctx.tool_name not in _AGENT_SPAWN_TOOL_NAMES:
+        if ctx.tool_name not in agent_spawn_tools_for(ctx.cli_type):
             return
         match = _AGENT_SPAWN_ID_RE.search(ctx.tool_result_str)
         if not match:

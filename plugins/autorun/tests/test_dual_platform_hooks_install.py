@@ -1063,6 +1063,40 @@ class TestBinaryAbsentExtensionRefresh:
             "an extension without autorun's owned marker must never be touched"
         )
 
+    def test_owned_extension_is_refreshed_when_the_harness_is_not_selected(
+        self, tmp_path, monkeypatch
+    ):
+        """A present binary must not strand files the installer never visits.
+
+        platforms.gemini is install_by_default=False, so a normal install
+        never enters its pathway at all, and the binary-absent refresh above
+        cannot fire because the binary is present. That combination left
+        ~/.gemini/extensions/ar/ executing hook code from whenever it was
+        last materialized, while every selected harness moved on.
+        """
+        inst, config_dir, owned, stranger = self._refresh_env(
+            tmp_path, monkeypatch, cli_name="a-binary-that-is-not-installed"
+        )
+
+        ok, msg = inst._install_gemini_family_extensions(
+            marketplace_root=REPO_ROOT,
+            plugins=["autorun"],
+            force=True,
+            cli_name="gemini",
+            display_name="Legacy Gemini CLI",
+            config_dir=config_dir,
+            install_hint="npm install -g @google-labs/gemini-cli",
+            refresh_only=True,
+        )
+
+        assert ok is True, "a refresh sweep is not an install failure"
+        assert "Refreshed" in msg and "ar" in msg
+        refreshed = (owned / "hooks" / "hook_entry.py").read_text(encoding="utf-8")
+        assert "def main" in refreshed, "unselected harness kept stale hook code"
+        assert (stranger / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# theirs\n", (
+            "an extension without autorun's owned marker must never be touched"
+        )
+
     def test_unowned_only_extensions_report_no_refresh(self, tmp_path, monkeypatch):
         inst, config_dir, owned, _stranger = self._refresh_env(tmp_path, monkeypatch)
         (owned / inst.OWNED_MARKER_NAME).unlink()

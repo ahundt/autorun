@@ -531,6 +531,18 @@ class Platform:
     task_review_tools: frozenset[str] = field(default_factory=frozenset)
     task_bulk_tools: frozenset[str] = field(default_factory=frozenset)
     task_plan_tools: frozenset[str] = field(default_factory=frozenset)
+    # Tools whose result announces a newly spawned subagent, feeding the
+    # delegation spawn ledger. The name here is the one serialized into hook
+    # stdin, which is not always the one hook config matches on: Codex writes
+    # `spawn_agent` and accepts `Agent` only as a matcher alias
+    # (codex-rs/core/src/tools/hook_names.rs:46). Empty means this harness
+    # exposes no subagent spawn autorun can observe.
+    agent_spawn_tools: frozenset[str] = field(default_factory=frozenset)
+    # True when this harness can carry a Conductor plan whose conductor/tracks
+    # files autorun merges into its own task list. Declared rather than
+    # inferred from the harness name so a family member that gains Conductor
+    # opts in here instead of being excluded by a string literal.
+    aggregates_conductor_tasks: bool = False
     # Status values this harness's own task-update tool accepts. Guidance must
     # never name a value absent here: the AI would call it and get a hard
     # validation error instead of the action autorun offered it. Empty means
@@ -791,6 +803,7 @@ CLAUDE = register(
         task_management_style="task_tools",
         task_create_tools=frozenset({"TaskCreate"}),
         task_update_tools=frozenset({"TaskUpdate"}),
+        agent_spawn_tools=frozenset({"Agent", "Task"}),
         # TaskUpdate declares addBlockedBy and addBlocks.
         task_dependency_syntax="{task_update}({task_id_param}=N, addBlockedBy=[M])",
         task_review_tools=frozenset({"TaskList", "TaskGet"}),
@@ -882,6 +895,7 @@ GEMINI = register(
         tool_names=_GEMINI_TOOLS,
         task_management_style="bulk_todos",
         task_create_tools=frozenset({"task_create", "tracker_create_task"}),
+        aggregates_conductor_tasks=True,
         task_update_tools=frozenset({"task_update", "tracker_update_task"}),
         task_review_tools=frozenset(
             {
@@ -1048,6 +1062,7 @@ CODEX = register(
         native_shell_read_commands=frozenset({"cat", "head", "tail"}),
         task_management_style="plan_checklist",
         task_plan_tools=frozenset({"update_plan"}),
+        agent_spawn_tools=frozenset({"spawn_agent"}),
         command_display_prefix="ar:",
         command_invocation_hint=(
             "Type /ar:<command>. Codex keeps its own slash menu closed, so a "
@@ -1407,3 +1422,20 @@ def is_task_tool(cli_type: str | None, tool_name: str | None) -> bool:
 def is_task_progress_tool(cli_type: str | None, tool_name: str | None) -> bool:
     """True when tool_name can create/update task state for cli_type."""
     return task_tool_role(cli_type, tool_name) in {"create", "update", "bulk", "plan"}
+
+
+def agent_spawn_tools_for(cli_type: "str | None") -> frozenset[str]:
+    """Return the spawn-tool names to trust for one harness.
+
+    Mirrors :func:`task_tool_role`: a known harness answers only for its own
+    names, so a payload naming another harness's spawn tool cannot seed this
+    one's ledger. An unknown or custom harness falls back to every declared
+    name, because recording a real spawn matters more than excluding a
+    hypothetical forgery from a harness nobody has registered.
+    """
+    platform = get_platform(cli_type or "")
+    if platform is not None and platform.agent_spawn_tools:
+        return platform.agent_spawn_tools
+    if platform is not None:
+        return frozenset()
+    return frozenset().union(*(p.agent_spawn_tools for p in PLATFORMS.values()))

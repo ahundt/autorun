@@ -57,6 +57,8 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "task_review_tools": sorted(platform.task_review_tools),
         "task_bulk_tools": sorted(platform.task_bulk_tools),
         "task_plan_tools": sorted(platform.task_plan_tools),
+        "agent_spawn_tools": sorted(platform.agent_spawn_tools),
+        "aggregates_conductor_tasks": platform.aggregates_conductor_tasks,
         "command_prefixes": list(platform.command_prefixes),
         "command_display_prefix": platform.command_display_prefix,
         "has_exit2_workaround": platform.has_exit2_workaround,

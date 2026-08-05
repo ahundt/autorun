@@ -50,6 +50,11 @@ SPAWN_RESULT = (
 )
 SPAWN_ID = "a1b2c3d4e5f6a7b8c"
 
+# Codex's spawn_agent result, generalized: a JSON object whose id field is
+# snake_case, unlike Claude's camelCase `agentId`.
+CODEX_SPAWN_ID = "01997b21-0e6f-7bb2-9d1e-4f0a2c3d5e6f"
+CODEX_SPAWN_RESULT = {"agent_id": CODEX_SPAWN_ID, "status": "spawned"}
+
 # What a live `claude -p` fan-out actually put in PostToolUse tool_response on
 # 2026-08-05 (ids, paths, and model generalized). The prose form above is what
 # the transcript records; the hook is handed this structured launch record, so
@@ -93,6 +98,7 @@ def _ctx(
     tool_result="",
     assistant_text="",
     transcript_path="",
+    cli_type="claude",
 ):
     ctx = EventContext(
         session_id=session_id,
@@ -105,7 +111,7 @@ def _ctx(
             [{"role": "assistant", "content": assistant_text}] if assistant_text else []
         ),
         store=store,
-        cli_type="claude",
+        cli_type=cli_type,
         transcript_path=transcript_path,
     )
     ctx.autorun_active = True
@@ -113,8 +119,8 @@ def _ctx(
     return ctx
 
 
-def _spawn(session_id, store, cfg, result=SPAWN_RESULT, tool_name="Agent"):
-    ctx = _ctx(session_id, store, tool_name=tool_name, tool_result=result)
+def _spawn(session_id, store, cfg, result=SPAWN_RESULT, tool_name="Agent", cli_type="claude"):
+    ctx = _ctx(session_id, store, tool_name=tool_name, tool_result=result, cli_type=cli_type)
     TaskLifecycle(ctx=ctx, config=cfg).record_agent_spawn(ctx)
     return ctx
 
@@ -149,6 +155,25 @@ class TestSpawnLedger:
         _spawn("dl-structured", store, cfg, result=SPAWN_RESULT_STRUCTURED)
 
         assert [entry["id"] for entry in _ledger("dl-structured")] == [SPAWN_ID]
+
+    def test_codex_spawn_agent_result_is_recorded(self, isolated_state, cfg):
+        """Codex names the tool `spawn_agent` and the field `agent_id`.
+
+        codex-rs/core/src/tools/hook_names.rs:46 keeps `spawn_agent` as the
+        name serialized into hook stdin and treats `Agent` only as a matcher
+        alias for hook config, so an allowlist of {Agent, Task} never fires on
+        Codex. Its result carries a snake_case `agent_id`
+        (codex-rs/core/src/tools/handlers/multi_agents_tests.rs:257), which the
+        camelCase-only pattern also missed. Both gaps left the ledger empty, so
+        the SubagentStop gate Codex does emit had nothing to return.
+        """
+        store = ThreadSafeDB()
+        _spawn(
+            "dl-codex", store, cfg,
+            result=CODEX_SPAWN_RESULT, tool_name="spawn_agent", cli_type="codex",
+        )
+
+        assert [entry["id"] for entry in _ledger("dl-codex")] == [CODEX_SPAWN_ID]
 
     def test_non_spawn_tools_never_touch_the_ledger(self, isolated_state, cfg):
         """Forgery discipline: a Bash result QUOTING a spawn payload is noise."""
@@ -323,3 +348,50 @@ class TestReturnedGate:
             "a dead subagent must not exempt its task forever"
         )
         assert response is not None, "the reverted task blocks the stop again"
+
+
+class TestHarnessNamesLiveInTheRegistry:
+    """Per-harness behavior belongs on Platform, not in string comparisons.
+
+    core.py:353 states the rule ("replaces hard-coded cli_type == 'claude'
+    checks with a registry query"), and two defects in this file's own subject
+    came from breaking it: the spawn allowlist matched only Claude's tool
+    names, so Codex's `spawn_agent` never reached the ledger, and Conductor
+    aggregation compared against "gemini", excluding the Qwen and Antigravity
+    members that now carry the family's traffic.
+    """
+
+    def test_task_lifecycle_compares_no_harness_name_literals(self):
+        import re
+
+        source = (PLUGIN_ROOT / "src" / "autorun" / "task_lifecycle.py").read_text(
+            encoding="utf-8"
+        )
+        offenders = re.findall(r"cli_type\s*(?:==|!=)\s*\"[a-z]+\"", source)
+        assert not offenders, (
+            "resolve harness behavior through Platform fields instead: "
+            f"{offenders}"
+        )
+
+    def test_every_hook_capable_platform_declares_its_spawn_tools_or_none(self):
+        """An empty set is a real answer; a missing field is an oversight."""
+        from autorun.platforms import PLATFORMS, agent_spawn_tools_for
+
+        for name, platform in PLATFORMS.items():
+            resolved = agent_spawn_tools_for(name)
+            assert resolved == platform.agent_spawn_tools, (
+                f"{name} must resolve to its own declared spawn tools"
+            )
+            assert all(isinstance(tool, str) and tool for tool in resolved)
+
+    def test_one_harness_spawn_name_cannot_seed_another_harness_ledger(
+        self, isolated_state, cfg
+    ):
+        """Codex's `spawn_agent` arriving on a Claude session is not a spawn."""
+        store = ThreadSafeDB()
+        _spawn(
+            "dl-crossharness", store, cfg,
+            result=CODEX_SPAWN_RESULT, tool_name="spawn_agent", cli_type="claude",
+        )
+
+        assert _ledger("dl-crossharness") == []

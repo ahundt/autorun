@@ -1933,12 +1933,19 @@ def _install_gemini_family_extensions(
     install_hint: str,
     hook_cli_name: str | None = None,
     skill_placement: str = _SKILL_PLACEMENT_DEFAULT,
+    refresh_only: bool = False,
 ) -> tuple[bool, str]:
     """Install Gemini-compatible extensions into Gemini-family CLIs.
 
     ``skill_placement`` is already resolved by install_plugins. A harness whose
     platform does not declare shared-root discovery always keeps its native
     copy, so an unknown or custom family member cannot lose its skills.
+
+    ``refresh_only`` resyncs already-materialized extensions this installer
+    owns and registers nothing. It exists for family members that are not
+    ``install_by_default`` (today: the retired Gemini CLI), whose pathway a
+    normal install never enters — leaving files that still execute on every
+    session frozen at whatever revision last materialized them.
     """
     hook_cli_name = hook_cli_name or cli_name
     family_platform = PLATFORMS.get(cli_name)
@@ -2031,10 +2038,23 @@ def _install_gemini_family_extensions(
     if not plugins_to_install:
         return (False, f"No plugins found matching selection: {', '.join(plugins)} in {marketplace_root}")
 
-    if not shutil.which(cli_name):
+    # Two ways to reach a materialized extension without installing one: the
+    # binary is gone, or this harness was never selected. Both leave live hook
+    # files on disk, so both resync what autorun owns.
+    if refresh_only or not shutil.which(cli_name):
         refreshed = _refresh_owned_gemini_extensions(
             config_dir, plugins_to_install, hook_cli_name, include_skills
         )
+        if refresh_only:
+            if not refreshed:
+                return (True, f"No {cli_name} extensions owned by autorun to refresh.")
+            msg = (
+                f"Refreshed {len(refreshed)} materialized {cli_name} "
+                f"extension(s) from source ({', '.join(refreshed)}) so their "
+                "hook code cannot go stale while the harness is unselected."
+            )
+            print(f"✓ {msg}")
+            return (True, msg)
         msg = f"{cli_name} CLI not found. Install from: {install_hint}"
         if refreshed:
             msg += (
@@ -5127,6 +5147,30 @@ def install_plugins(
         if not qwen_success:
             print(f"   Qwen Code install failed: {qwen_msg}")
         all_succeeded = all_succeeded and qwen_success
+
+    # A family member left out of target_clis still has whatever autorun
+    # materialized for it earlier, and those files keep executing on every one
+    # of its sessions. Resync them from source so an unselected harness cannot
+    # run hook code older than the harnesses that were selected. Ownership is
+    # checked per directory, so an extension the user wrote is left alone, and
+    # a member with nothing materialized is a no-op.
+    for family_cli in ("gemini", "qwen"):
+        if family_cli in target_clis:
+            continue
+        family_platform = PLATFORMS.get(family_cli)
+        if family_platform is None:
+            continue
+        _install_gemini_family_extensions(
+            marketplace_root=marketplace_root,
+            plugins=plugins,
+            force=False,
+            cli_name=family_cli,
+            display_name=family_platform.display_name,
+            config_dir=platform_config_dir(family_platform),
+            install_hint="",
+            skill_placement=placement.for_harness(family_cli),
+            refresh_only=True,
+        )
 
     for custom in custom_targets:
         if custom.flavor == "claude":
