@@ -312,6 +312,33 @@ class TestHookEntryExecutionPriority:
 
         assert "antigravity" in hook_entry._VALID_CLI_TYPES
 
+    def test_standalone_detector_carries_every_registered_platform(self):
+        """hook_entry's detection data is a hand copy; this pins it.
+
+        The bootstrap constraint bars hook_entry from importing the package,
+        so `_VALID_CLI_TYPES` and the env/path detection literals are copies
+        of `platforms.py` registry data. Nothing else forces the copies to
+        move when a platform is added — an eighth harness would silently
+        misdetect as the fallback identity. Registry-driven detection
+        (`config.detect_cli_type`) needs no such pin.
+        """
+        from autorun.platforms import PLATFORMS
+
+        hook_entry = load_hook_entry_module()
+        assert set(hook_entry._VALID_CLI_TYPES) == set(PLATFORMS)
+
+        source = HOOK_ENTRY.read_text(encoding="utf-8")
+        missing = [
+            f"{platform.name}: {literal}"
+            for platform in PLATFORMS.values()
+            for literal in (*platform.detect_env_vars, *platform.detect_path_hints)
+            if literal not in source
+        ]
+        assert not missing, (
+            "platform detection literals absent from hook_entry.py's standalone "
+            f"detector: {missing}"
+        )
+
     def test_antigravity_tool_gate_fail_closed_uses_permissive_schema(self, capsys):
         """Antigravity shares Gemini-family hook response schema."""
         hook_entry = load_hook_entry_module()

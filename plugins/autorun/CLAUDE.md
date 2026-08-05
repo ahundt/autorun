@@ -121,7 +121,7 @@ Rules extracted from the `/ar:cache` build and earlier fixes. Follow them when a
 7. **Fail open when data is unknown.** A gate that errors or denies on missing fields is worse than a gate that allows. CacheGuard returns `HookDecision.allow()` whenever the configured axis's data is None. Cross-CLI robustness falls out of this rule for free.
 8. **Default off.** Any new gate must default `False` in its `FeatureToggle`. Users opt in via `/ar:<feature> on`.
 9. **Anchor `.gitignore` directory patterns with a leading `/` when you mean the repo root.** Unanchored `cache/` matches `plugins/autorun/skills/cache/` too — the `/ar:cache` skill was invisible to git until this was fixed. Use `/cache/` + explicit `!plugins/autorun/skills/cache/` when you must name the dir `cache` for UX reasons.
-10. **When editing a Gemini hook schema validator test, update the event list in ALL three tests:** `test_split_layout.py`, `test_hooks_format.py`, `test_dual_cli_pathways.py` — they each maintain a canonical event list independently.
+10. **Harness hook-event allowlists have one owner:** `tests/harness_hook_events.py` — `test_split_layout.py`, `test_hooks_format.py`, and `test_dual_cli_pathways.py` all import it. Edit the sets there only, and only with a source: an unknown event name in a Claude-scanned manifest is what bug #24115 turns into a silent disable of every hook.
 
 ## Verification Commands
 

@@ -65,6 +65,21 @@ def _jsonable_platform(platform: Platform) -> dict[str, Any]:
         "root_block_decision": platform.hook_protocol.root_block_decision,
         "supports_additional_context_events": sorted(platform.supports_additional_context_events),
         "unsupported_response_fields_by_event": {event: sorted(fields) for event, fields in platform.unsupported_response_fields_by_event.items()},
+        "command_invocation_hint": platform.command_invocation_hint,
+        "skill_invocation_format": platform.skill_invocation_format,
+        "task_dependency_syntax": platform.task_dependency_syntax,
+        "native_task_statuses": sorted(platform.native_task_statuses),
+        "config_dir_env_vars": list(platform.config_dir_env_vars),
+        "config_dir_env_var_subdir": platform.config_dir_env_var_subdir,
+        "extensions_subdir": platform.extensions_subdir,
+        "skills_subdir": platform.skills_subdir,
+        "loads_shared_agents_skills": platform.loads_shared_agents_skills,
+        "install_by_default": platform.install_by_default,
+        "memory_filename": platform.memory_filename,
+        "memory_template": platform.memory_template,
+        "memory_sentinel_slug": platform.memory_sentinel_slug,
+        "standalone_session_env_vars": list(platform.standalone_session_env_vars),
+        "uninstall_cmd": list(platform.uninstall_cmd),
     }
 
 

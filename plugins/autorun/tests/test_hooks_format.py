@@ -554,23 +554,12 @@ class TestGeminiHookMatchers:
                 )
 
 
-# --- Canonical valid event sets ---
-# Source: docs/claude-code-hooks-api.md, docs/gemini-cli-hooks-api.md,
-#         https://code.claude.com/docs/en/plugins-reference
-CLAUDE_CODE_VALID_EVENTS = {
-    "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
-    "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop",
-    "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest",
-    "Setup", "TeammateIdle", "TaskCompleted", "Elicitation",
-    "ElicitationResult", "ConfigChange", "WorktreeCreate",
-    "WorktreeRemove", "InstructionsLoaded",
-}
-
-GEMINI_CLI_VALID_EVENTS = {
-    "BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
-    "BeforeModel", "AfterModel", "BeforeToolSelection",
-    "SessionStart", "SessionEnd", "Notification", "PreCompress",
-}
+# Canonical valid event sets: one shared authority so the per-file copies
+# cannot drift apart again (they did — see harness_hook_events.py).
+from harness_hook_events import (  # noqa: E402
+    CLAUDE_CODE_VALID_EVENTS,
+    GEMINI_CLI_VALID_EVENTS,
+)
 
 
 class TestCrossCliEventValidation:

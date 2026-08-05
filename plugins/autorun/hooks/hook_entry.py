@@ -157,6 +157,16 @@ def detect_cli_type(payload: dict | None = None) -> str:
             transcript_path = str(payload.get("transcript_path", ""))
             if ".opencode" in transcript_path or ".config/opencode" in transcript_path:
                 return "opencode"
+            # Antigravity roots live under ~/.gemini, so its hints must be
+            # checked before the plain .gemini hint or they can never match.
+            if (
+                ".gemini/antigravity-cli" in transcript_path
+                or ".gemini/antigravity" in transcript_path
+                or ".antigravity" in transcript_path
+            ):
+                return "antigravity"
+            if ".forge" in transcript_path:
+                return "forgecode"
             if ".codex" in transcript_path or "/codex/" in transcript_path:
                 return "codex"
             if ".qwen" in transcript_path or "/qwen/" in transcript_path:
@@ -166,14 +176,26 @@ def detect_cli_type(payload: dict | None = None) -> str:
             if ".claude" in transcript_path or "/claude/" in transcript_path:
                 return "claude"
 
-        # Platform-specific environment variables
-        if os.environ.get("GEMINI_SESSION_ID"):
+        # Platform-specific environment variables. Antigravity shares the
+        # ~/.gemini root and may coexist with Gemini variables, so its own
+        # variables are checked before any gemini answer can win.
+        if (
+            os.environ.get("ANTIGRAVITY_SESSION_ID")
+            or os.environ.get("AGY_SESSION_ID")
+            or os.environ.get("ANTIGRAVITY_PROJECT_DIR")
+        ):
+            return "antigravity"
+        if os.environ.get("GEMINI_SESSION_ID") or os.environ.get("GEMINI_CLI"):
             return "gemini"
-        if os.environ.get("QWEN_SESSION_ID"):
+        if os.environ.get("QWEN_SESSION_ID") or os.environ.get("QWEN_CODE"):
             return "qwen"
-        if os.environ.get("CODEX_SESSION_ID"):
+        if (
+            os.environ.get("CODEX_SESSION_ID")
+            or os.environ.get("CODEX_THREAD_ID")
+            or os.environ.get("CODEX_PROJECT_DIR")
+        ):
             return "codex"
-        if os.environ.get("FORGE_CONFIG"):
+        if os.environ.get("FORGE_CONFIG") or os.environ.get("_FORGE_CONVERSATION_ID"):
             return "forgecode"
         if os.environ.get("OPENCODE_CONFIG") or os.environ.get("OPENCODE_CONFIG_DIR"):
             return "opencode"

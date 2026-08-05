@@ -18,6 +18,30 @@ def test_capability_snapshot_contains_all_registered_platforms():
     assert snapshot["hook_events"]
 
 
+def test_capability_snapshot_covers_every_platform_field():
+    """A field the snapshot omits is a per-harness value nobody reviews.
+
+    Divergence arrives as new Platform fields, and one left at its class
+    default on a single harness is a silent wrong answer there — exactly how
+    command_display_prefix was wrong on ForgeCode and OpenCode until F2.
+    Serializing every field in _jsonable_platform makes adding one force a
+    conscious per-platform decision. The extra hook-protocol expansion keys
+    do not count against coverage; the hook_protocol field itself is
+    serialized under its own name.
+    """
+    import dataclasses
+
+    from autorun.capability_snapshot import build_capability_snapshot
+    from autorun.platforms import Platform
+
+    entry = build_capability_snapshot()["platforms"]["claude"]
+    missing = {field.name for field in dataclasses.fields(Platform)} - set(entry)
+    assert not missing, (
+        f"Platform fields absent from the capability snapshot: {sorted(missing)}; "
+        "serialize each in _jsonable_platform"
+    )
+
+
 def test_capability_snapshot_records_multi_harness_task_surfaces():
     from autorun.capability_snapshot import build_capability_snapshot
 

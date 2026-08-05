@@ -29,21 +29,12 @@ REPO_ROOT = Path(__file__).parent.parent.parent.parent
 PLUGIN_ROOT = REPO_ROOT / "plugins" / "autorun"
 TEMPLATE = PLUGIN_ROOT / "src" / "autorun" / "gemini_template"
 
-CLAUDE_VALID_EVENTS = {
-    "SessionStart", "UserPromptSubmit", "PreToolUse", "PreToolUseFailure",
-    "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied",
-    "Notification", "SubagentStart", "SubagentStop", "TaskCreated",
-    "TaskCompleted", "Stop", "StopFailure", "TeammateIdle",
-    "InstructionsLoaded", "ConfigChange", "CwdChanged", "FileChanged",
-    "WorktreeCreate", "WorktreeRemove", "PreCompact", "PostCompact",
-    "Elicitation", "ElicitationResult", "SessionEnd",
-}
-
-GEMINI_VALID_EVENTS = {
-    "BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
-    "BeforeModel", "AfterModel", "BeforeToolSelection",
-    "SessionStart", "SessionEnd", "Notification", "PreCompress",
-}
+# One shared authority so the per-file copies cannot drift apart again
+# (they did — see harness_hook_events.py).
+from harness_hook_events import (  # noqa: E402
+    CLAUDE_CODE_VALID_EVENTS as CLAUDE_VALID_EVENTS,
+    GEMINI_CLI_VALID_EVENTS as GEMINI_VALID_EVENTS,
+)
 
 
 class TestGeminiPathway:
