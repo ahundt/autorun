@@ -1881,6 +1881,50 @@ def _install_for_qwen(
     )
 
 
+def _gemini_extension_name(gemini_src: Path, plugin_dir: Path) -> str:
+    """The extension's registered name: manifest ``name``, else the dir name."""
+    try:
+        import json
+
+        with open(gemini_src / "gemini-extension.json", encoding="utf-8") as f:
+            return json.load(f).get("name", plugin_dir.name)
+    except Exception:
+        return plugin_dir.name
+
+
+def _refresh_owned_gemini_extensions(
+    config_dir: Path,
+    plugins_to_install: list[tuple[Path, Path]],
+    hook_cli_name: str,
+    include_skills: bool,
+) -> list[str]:
+    """Resync materialized extensions autorun owns when the CLI is absent.
+
+    Registering an extension needs the harness binary, but a previously
+    materialized one keeps running from its files alone — so bailing on a
+    missing binary left stale hook code live under ``<config>/extensions/``
+    while the Claude cache updated (found 2026-08-04: a hook_entry.py edit
+    reached every other install target). File sync only, no CLI calls; and
+    only directories carrying autorun's owned marker are touched, so a
+    same-named extension the user wrote is left alone.
+    """
+    refreshed: list[str] = []
+    for plugin_dir, gemini_src in plugins_to_install:
+        ext_name = _gemini_extension_name(gemini_src, plugin_dir)
+        installed_dir = config_dir / "extensions" / ext_name
+        if not installed_dir.is_dir() or read_owned_marker(installed_dir) is None:
+            continue
+        _sync_gemini_extension_resources(
+            plugin_dir,
+            installed_dir,
+            ext_name,
+            hook_cli_name,
+            include_skills=include_skills,
+        )
+        refreshed.append(ext_name)
+    return refreshed
+
+
 def _install_gemini_family_extensions(
     *,
     marketplace_root: Path,
@@ -1907,10 +1951,11 @@ def _install_gemini_family_extensions(
         publish_shared, include_skills = resolve_skill_routes(
             family_platform, skill_placement
         )
-    if not shutil.which(cli_name):
-        msg = f"{cli_name} CLI not found. Install from: {install_hint}"
-        print(msg)
-        return (False, msg)
+    # The missing-binary bail happens AFTER plugin resolution (below), so a
+    # previously materialized extension can still be refreshed from source:
+    # an extension keeps running from its files after the CLI is gone, and
+    # skipping the whole pathway here left stale hook code live in
+    # ~/.gemini/extensions/ while every other install target updated.
 
     if not config_dir.exists():
         print(f"{config_dir}/ directory not found. Run '{cli_name}' once to initialize.")
@@ -1989,6 +2034,20 @@ def _install_gemini_family_extensions(
     if not plugins_to_install:
         return (False, f"No plugins found matching selection: {', '.join(plugins)} in {marketplace_root}")
 
+    if not shutil.which(cli_name):
+        refreshed = _refresh_owned_gemini_extensions(
+            config_dir, plugins_to_install, hook_cli_name, include_skills
+        )
+        msg = f"{cli_name} CLI not found. Install from: {install_hint}"
+        if refreshed:
+            msg += (
+                f" Refreshed {len(refreshed)} previously installed "
+                f"extension(s) from source ({', '.join(refreshed)}) so their "
+                "hook code cannot go stale."
+            )
+        print(msg)
+        return (False, msg)
+
     print()
     print(f"Installing {len(plugins_to_install)} plugin(s) for {display_name}...")
 
@@ -2009,15 +2068,7 @@ def _install_gemini_family_extensions(
         # Detect stale pre-refactor layout before doing anything destructive.
         _migrate_legacy_layout(plugin_dir)
 
-        # Read gemini-extension.json to get the extension name
-        try:
-            import json
-
-            with open(gemini_src / "gemini-extension.json", encoding="utf-8") as f:
-                ext_config = json.load(f)
-                ext_name = ext_config.get("name", plugin_name)
-        except Exception:
-            ext_name = plugin_name
+        ext_name = _gemini_extension_name(gemini_src, plugin_dir)
 
         print(f"   Installing {plugin_name} (name: {ext_name})...")
 

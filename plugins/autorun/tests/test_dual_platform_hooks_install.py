@@ -1014,6 +1014,74 @@ class TestDeployedCopiesMatchSource:
 # =============================================================================
 
 
+class TestBinaryAbsentExtensionRefresh:
+    """A materialized extension keeps running from its files after the CLI is
+    gone (this machine: gemini retired, ~/.gemini/extensions/ar/ still live),
+    so skipping the whole pathway on a missing binary left stale hook code
+    installed — hook_entry.py edits reached the Claude cache but not the
+    extension, and the installer's own remedy string could not fix it."""
+
+    def _refresh_env(self, tmp_path, monkeypatch, cli_name="gemini"):
+        from autorun import install as inst
+
+        config_dir = tmp_path / "gemini-home"
+        owned = config_dir / "extensions" / "ar"
+        (owned / "hooks").mkdir(parents=True)
+        (owned / "hooks" / "hook_entry.py").write_text("# stale\n", encoding="utf-8")
+        inst.write_owned_marker(owned, plugin="ar")
+
+        stranger = config_dir / "extensions" / "users-own"
+        (stranger / "hooks").mkdir(parents=True)
+        (stranger / "hooks" / "hook_entry.py").write_text("# theirs\n", encoding="utf-8")
+
+        real_which = inst.shutil.which
+        monkeypatch.setattr(
+            inst.shutil, "which", lambda name: None if name == cli_name else real_which(name)
+        )
+        return inst, config_dir, owned, stranger
+
+    def test_owned_extension_is_refreshed_when_the_binary_is_absent(self, tmp_path, monkeypatch):
+        inst, config_dir, owned, stranger = self._refresh_env(tmp_path, monkeypatch)
+
+        ok, msg = inst._install_gemini_family_extensions(
+            marketplace_root=REPO_ROOT,
+            plugins=["autorun"],
+            force=True,
+            cli_name="gemini",
+            display_name="Legacy Gemini CLI",
+            config_dir=config_dir,
+            install_hint="npm install -g @google-labs/gemini-cli",
+        )
+
+        assert ok is False, "a missing binary is still not an install success"
+        assert "Refreshed" in msg and "ar" in msg
+
+        refreshed = (owned / "hooks" / "hook_entry.py").read_text(encoding="utf-8")
+        assert refreshed != "# stale\n", "owned extension hook code stayed stale"
+        assert "def main" in refreshed, "refresh must copy the real hook_entry"
+        assert (stranger / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# theirs\n", (
+            "an extension without autorun's owned marker must never be touched"
+        )
+
+    def test_unowned_only_extensions_report_no_refresh(self, tmp_path, monkeypatch):
+        inst, config_dir, owned, _stranger = self._refresh_env(tmp_path, monkeypatch)
+        (owned / inst.OWNED_MARKER_NAME).unlink()
+
+        ok, msg = inst._install_gemini_family_extensions(
+            marketplace_root=REPO_ROOT,
+            plugins=["autorun"],
+            force=True,
+            cli_name="gemini",
+            display_name="Legacy Gemini CLI",
+            config_dir=config_dir,
+            install_hint="npm install -g @google-labs/gemini-cli",
+        )
+
+        assert ok is False
+        assert "Refreshed" not in msg
+        assert (owned / "hooks" / "hook_entry.py").read_text(encoding="utf-8") == "# stale\n"
+
+
 class TestInstallPathwayDetection:
     """Test install.py correctly detects and routes to the right pathway."""
 
