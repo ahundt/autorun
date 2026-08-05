@@ -58,7 +58,7 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/autorun/src/autorun/__init__.py` | `__version__ = "X.Y.Z"` | |
 | `plugins/autorun/src/autorun/install.py` | 5 references: 2 fallback defaults, 1 print, 1 config dict, 1 `__version__` fallback | |
 | `plugins/autorun/src/autorun/metadata.json` | `"version": "X.Y.Z"` | Build artifact — stale commit hash is OK |
-| `plugins/autorun/gemini-extension.json` | `"version": "X.Y.Z"` | |
+| `plugins/autorun/src/autorun/gemini_template/gemini-extension.json` | `"version": "X.Y.Z"` | Lives under `gemini_template/`, outside Claude's marketplace scan path — see the bug #24115 / #14449 workaround in `install.py` |
 
 ### pdf-extractor Plugin (4+ files)
 
@@ -74,8 +74,8 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | File | Notes |
 |------|-------|
 | `README.md` | Section headers, install verification examples |
-| `CLAUDE.md` | Section header `## autorun Plugin (vX.Y.Z)` |
-| `GEMINI.md` | Install verification examples (8 refs) |
+| `AGENTS.md` | 2 refs — `## autorun Plugin (vX.Y.Z)` and `## pdf-extractor Plugin (vX.Y.Z)`. `CLAUDE.md` and `GEMINI.md` are symlinks to it; edit this file, never a link |
+| `plugins/autorun/AGENTS.md` | 1 ref — the illustrative plugin-cache path `<version>/` |
 | `plugins/autorun/HOOK_ARCHITECTURE.md` | Version references in docs |
 | `docs/version_update_checklist.md` | `**Current Version: X.Y.Z**` at top |
 | `plugins/autorun/.codex-plugin/plugin.json` | Codex plugin package version |
@@ -98,6 +98,7 @@ The grep in "Quick Method" is the authoritative source. The lists below are a gu
 | `plugins/autorun/tests/test_install_pathways.py` | Cache version sort test data. **See Gotcha #3** — version lists must stay distinct. |
 | `plugins/autorun/tests/test_bootstrap_config.py` | Version in config |
 | `plugins/autorun/tests/test_claude_e2e_real_money.py` | Cache path version dirs |
+| `plugins/autorun/tests/test_codex_install.py` | Codex cache path version dirs |
 
 ## Gotchas (learned from 0.10.0 → 0.10.1 release)
 

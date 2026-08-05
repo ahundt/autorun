@@ -213,3 +213,73 @@ def test_agent_memory_files_only_reference_methods_that_exist():
         "agent memory files name methods that no longer exist:\n  "
         + "\n  ".join(missing)
     )
+
+
+# === Release checklist must name real files, and name all of them ===
+#
+# docs/version_update_checklist.md is the release runbook. It drifted silently
+# when CLAUDE.md and GEMINI.md became symlinks to AGENTS.md: the checklist kept
+# naming them, and its row for GEMINI.md claimed "Install verification examples
+# (8 refs)" that no longer existed anywhere. A releaser following it hunts for
+# content that is not there, and any version site the checklist omits is one a
+# release silently leaves stale.
+
+_CHECKLIST = REPO_ROOT / "docs" / "version_update_checklist.md"
+_CHECKLIST_PATH_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+
+
+def _checklist_paths() -> set[str]:
+    text = _CHECKLIST.read_text(encoding="utf-8")
+    return {
+        match
+        for match in _CHECKLIST_PATH_RE.findall(text)
+        # Table rows also carry example values like `"version": "X.Y.Z"`; a real
+        # path has a suffix and no spaces or quotes.
+        if "/" in match or match.endswith((".md", ".toml", ".json", ".py"))
+        if '"' not in match and " " not in match
+    }
+
+
+def test_release_checklist_names_only_files_that_exist():
+    missing = sorted(p for p in _checklist_paths() if not (REPO_ROOT / p).exists())
+    assert not missing, (
+        "docs/version_update_checklist.md names paths that do not exist, so a "
+        "release will skip them silently:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_release_checklist_covers_every_file_carrying_the_version():
+    """Any file holding the current version must be on the checklist.
+
+    Read the version from the autorun package rather than hardcoding it, so
+    this keeps working across releases.
+    """
+    import tomllib
+
+    pyproject = REPO_ROOT / "plugins" / "autorun" / "pyproject.toml"
+    version = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+
+    listed = _checklist_paths()
+    uncovered = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = path.relative_to(REPO_ROOT)
+        parts = set(rel.parts)
+        if parts & {".git", "notes", ".venv", "__pycache__", "htmlcov", "build", ".worktrees"}:
+            continue
+        if rel.suffix not in {".md", ".toml", ".json", ".py"}:
+            continue
+        try:
+            if version not in path.read_text(encoding="utf-8"):
+                continue
+        except (OSError, UnicodeDecodeError):
+            continue
+        if str(rel) not in listed:
+            uncovered.append(str(rel))
+
+    assert not uncovered, (
+        f"these files contain the current version {version!r} but are absent from "
+        "docs/version_update_checklist.md, so the next release will leave them "
+        "stale:\n  " + "\n  ".join(sorted(uncovered))
+    )
