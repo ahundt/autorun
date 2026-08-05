@@ -603,7 +603,7 @@ def test_show_status_reports_codex_and_forgecode_install_artifacts(tmp_path, mon
             )
 
     for skill_root in (
-        tmp_path / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "0.12.0" / "skills",
+        tmp_path / ".claude" / "plugins" / "cache" / "autorun" / "ar" / "1.0.0rc1" / "skills",
         tmp_path / ".gemini" / "extensions" / "ar" / "skills",
         tmp_path / ".qwen" / "extensions" / "ar" / "skills",
         tmp_path / ".gemini" / "antigravity-cli" / "plugins" / "ar" / "skills",
@@ -1432,6 +1432,31 @@ def test_install_for_codex_materializes_linked_skill_entrypoints(tmp_path, monke
     assert copied_entrypoint.is_file()
     assert not copied_entrypoint.is_symlink()
     assert "link-backed skill" in copied_entrypoint.read_text(encoding="utf-8")
+
+
+def test_install_for_codex_omits_incomplete_skill_directories(tmp_path, monkeypatch):
+    """Codex plugin bundles must not expose asset-only directories as skills.
+
+    Pinned to ``native`` because that is the only placement that packages
+    skills inside the plugin. Under ``auto`` Codex takes the shared
+    ``~/.agents/skills`` route and no ``skills/`` directory is staged at all,
+    so the bundle would be trivially free of asset-only directories and this
+    regression could reappear unnoticed.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_marketplace = _make_fake_plugin_with_skills(tmp_path, ["cache"])
+    incomplete = fake_marketplace / "plugins" / "autorun" / "skills" / "asset-only"
+    incomplete.mkdir()
+    (incomplete / "reference.pdf").write_bytes(b"fixture")
+
+    ok, message = _install_for_codex(
+        fake_marketplace, ["autorun"], force=False, skill_placement="native"
+    )
+
+    assert ok, message
+    copied_skills = tmp_path / "plugins" / "autorun" / "skills"
+    assert (copied_skills / "cache" / "SKILL.md").is_file()
+    assert not (copied_skills / "asset-only").exists()
 
 
 def test_install_for_codex_preserves_existing_personal_marketplace_entries(tmp_path, monkeypatch):

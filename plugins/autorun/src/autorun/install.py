@@ -654,7 +654,7 @@ def _read_plugin_version(plugin_dir: Path) -> str:
         plugin_dir: Path to plugin directory
 
     Returns:
-        Version string from package metadata, or "0.12.0" as fallback
+        Version string from package metadata, or "1.0.0rc1" as fallback
     """
     pyproject = plugin_dir / "pyproject.toml"
     if pyproject.exists():
@@ -671,10 +671,10 @@ def _read_plugin_version(plugin_dir: Path) -> str:
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-            return data.get("version", "0.12.0")
+            return data.get("version", "1.0.0rc1")
         except (json.JSONDecodeError, OSError):
             pass
-    return "0.12.0"
+    return "1.0.0rc1"
 
 
 def _check_hook_conflicts() -> None:
@@ -3589,7 +3589,7 @@ def _copy_codex_plugin_source(
     the directory — leaving it would point Codex at a path that no longer
     exists. Commands are a separate surface and are never affected.
     """
-    ignored = [
+    ignore_build_artifacts = shutil.ignore_patterns(
         ".git",
         ".venv",
         ".pytest_cache",
@@ -3601,19 +3601,30 @@ def _copy_codex_plugin_source(
         ".coverage",
         "htmlcov",
         "hooks",
-    ]
-    base_ignore = shutil.ignore_patterns(*ignored)
+    )
 
-    def _ignore(directory, names):
-        skipped = set(base_ignore(directory, names))
+    def _ignore(directory: str, names: list[str]) -> set[str]:
+        source = Path(directory)
+        skipped = set(ignore_build_artifacts(directory, names))
         # Only the TOP-LEVEL skills/ is the shared-route copy to drop; the
         # manifest's second root .codex-plugin/skills/ is Codex-native-only
         # (the $ar control skill would collide with Claude's /ar: namespace
         # on the shared route) and must ride inside the staged plugin on
         # every route. A name pattern prunes at any depth, so the check is
         # anchored to the plugin root.
-        if not include_skills and Path(directory) == Path(plugin_dir):
+        if not include_skills and source == Path(plugin_dir):
             skipped.add("skills")
+        # Codex reads every top-level skills/<name>/ as a skill and warns when
+        # SKILL.md is absent, so asset-only and empty directories must stay out
+        # of the bundle. Anchoring to the skills root leaves nested reference
+        # material alone. On the shared route the rule above already pruned
+        # skills/, so copytree never descends here and this is a no-op.
+        if source == plugin_dir / "skills":
+            skipped.update(
+                name
+                for name in names
+                if (source / name).is_dir() and not (source / name / "SKILL.md").is_file()
+            )
         return skipped
 
     shutil.copytree(plugin_dir, target, ignore=_ignore)
@@ -4916,7 +4927,7 @@ def install_plugins(
     try:
         from autorun import __version__
     except ImportError:
-        __version__ = "0.12.0"
+        __version__ = "1.0.0rc1"
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")

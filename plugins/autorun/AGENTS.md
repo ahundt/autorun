@@ -38,7 +38,7 @@ version controlled, are overwritten on the next install, and may already be
 behind the repository's bug fixes.
 
 You are in the wrong place if the path contains `.claude/plugins/cache/` or a
-version directory like `0.12.0/`. Recover by `cd <git-root>/plugins/autorun/`
+version directory like `1.0.0rc1/`. Recover by `cd <git-root>/plugins/autorun/`
 (`git status` must succeed, `pwd` must end in `plugins/autorun/`), make the edit
 and run the tests there, commit from the git root, then reinstall with
 `/plugin update autorun`.
