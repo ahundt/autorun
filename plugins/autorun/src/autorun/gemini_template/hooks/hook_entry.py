@@ -391,26 +391,46 @@ def fail_after_cli_timeout(cli_type: str, event_name: str) -> NoReturn:
 
 
 def get_autorun_bin() -> Path | None:
-    """Find autorun executable with priority: venv > global.
+    """Find autorun executable with priority: interpreter sibling > venv > global.
 
     Returns:
         Path to autorun binary, or None if not found.
 
     Priority order:
-        1. Plugin-local venv (isolated, preferred)
-        2. Global installation (uv pip install / pip install)
+        1. `autorun` beside the running interpreter — correct whenever any
+           venv python executes this file, with no launcher environment at
+           all. Under `uv run --project <cache>` this is the same binary as
+           tier 2, so behavior there is unchanged.
+        2. Plugin-local venv (`<plugin_root>/.venv`, the installed-cache shape)
+        3. Workspace-root venv relative to this file (`<repo>/.venv` — uv
+           keeps ONE shared venv at the workspace root, so the source tree
+           has no plugin-local venv to find)
+        4. Global installation (uv pip install / pip install)
+
+    Tiers 1 and 3 exist because resolution must not depend on the launcher:
+    without uv's environment the old venv-then-global order fell through to
+    the global binary, `_can_use_direct_daemon` rejected it, and every event
+    paid a second interpreter start — a measured 177 ms against the ~50 ms
+    fast path.
 
     Safety: Works with both Claude Code and Gemini CLI via get_plugin_root().
     """
+    exe_sibling = Path(sys.executable).with_name("autorun")
+    if exe_sibling.exists():
+        return exe_sibling
+
     plugin_root = get_plugin_root()
 
     if plugin_root:
-        # Priority 1: Plugin-local venv
         venv_bin = Path(plugin_root) / ".venv" / "bin" / "autorun"
         if venv_bin.exists():
             return venv_bin
+        # Source-tree shape: <repo>/plugins/autorun/hooks/hook_entry.py with
+        # the workspace venv two levels above the plugin root.
+        workspace_bin = Path(plugin_root).parent.parent / ".venv" / "bin" / "autorun"
+        if workspace_bin.exists():
+            return workspace_bin
 
-    # Priority 2: Global installation
     global_bin = shutil.which("autorun")
     if global_bin:
         return Path(global_bin)

@@ -26,6 +26,21 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 HOOK_ENTRY = PLUGIN_ROOT / "hooks" / "hook_entry.py"
+
+
+def _isolated_interpreter(tmp_path: Path) -> str:
+    """A python whose bin directory carries no `autorun` sibling.
+
+    get_autorun_bin resolves the binary beside sys.executable first, so a
+    subprocess test that stages its own fake `autorun` on PATH must not run
+    hook_entry with the workspace venv's interpreter — the real sibling would
+    win and the staged fake would never execute. hook_entry is stdlib-only by
+    design, so a bare symlink outside any venv is a complete interpreter for
+    it, and sys.executable inside the child is the symlink's own path.
+    """
+    link = tmp_path / "python"
+    link.symlink_to(sys.executable)
+    return str(link)
 SRC_DIR = PLUGIN_ROOT / "src"
 DAEMON_PY = PLUGIN_ROOT / "src" / "autorun" / "daemon.py"
 
@@ -312,6 +327,56 @@ class TestHookEntryExecutionPriority:
 
         assert "antigravity" in hook_entry._VALID_CLI_TYPES
 
+    def test_autorun_bin_resolves_beside_the_running_interpreter(self, tmp_path, monkeypatch):
+        """A venv python running this file must find the autorun beside it.
+
+        Without this tier, resolution depends on the LAUNCHER: outside uv no
+        CLAUDE_PLUGIN_ROOT is set, the plugin-local .venv probe misses (the
+        source tree keeps one workspace venv at the repo root, not under
+        plugins/autorun), and the global ~/.local/bin/autorun wins — which
+        `_can_use_direct_daemon` rejects, so every event pays a second
+        interpreter: the measured 177 ms cliff against the ~50 ms fast path.
+        """
+        hook_entry = load_hook_entry_module()
+        venv_bin = tmp_path / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "python").touch()
+        (venv_bin / "autorun").touch()
+        # hook_entry imports the real sys module, so this patches (and
+        # monkeypatch restores) the interpreter-wide value for the test body.
+        monkeypatch.setattr(hook_entry.sys, "executable", str(venv_bin / "python"))
+
+        resolved = hook_entry.get_autorun_bin()
+
+        assert resolved == venv_bin / "autorun"
+        assert hook_entry._can_use_direct_daemon(resolved), (
+            "the interpreter-sibling binary must qualify for the direct-daemon fast path"
+        )
+
+    def test_autorun_bin_falls_back_to_the_workspace_root_venv(self, tmp_path, monkeypatch):
+        """The source-tree shape: one uv workspace venv at the repo root.
+
+        hook_entry lives at <repo>/plugins/autorun/hooks/hook_entry.py and the
+        workspace venv at <repo>/.venv — two levels above the plugin root.
+        Resolving it relative to this file keeps the fast path reachable with
+        no launcher environment at all.
+        """
+        hook_entry = load_hook_entry_module()
+        repo = tmp_path / "repo"
+        plugin_root = repo / "plugins" / "autorun"
+        plugin_root.mkdir(parents=True)
+        workspace_bin = repo / ".venv" / "bin"
+        workspace_bin.mkdir(parents=True)
+        (workspace_bin / "autorun").touch()
+
+        monkeypatch.setattr(hook_entry.sys, "executable", str(tmp_path / "nowhere" / "python"))
+        monkeypatch.setattr(hook_entry, "get_plugin_root", lambda: str(plugin_root))
+
+        resolved = hook_entry.get_autorun_bin()
+
+        assert resolved == workspace_bin / "autorun"
+        assert hook_entry._can_use_direct_daemon(resolved)
+
     def test_standalone_detector_carries_every_registered_platform(self):
         """hook_entry's detection data is a hand copy; this pins it.
 
@@ -432,14 +497,14 @@ class TestHookEntryFailOpen:
         # Should have continue=True (fail-open) — empty dict defaults to True
         assert output.get("continue", True) is True
 
-    def test_invalid_plugin_root_fails_open(self):
+    def test_invalid_plugin_root_fails_open(self, tmp_path):
         """Invalid CLAUDE_PLUGIN_ROOT outputs valid JSON and exits 0."""
         env = os.environ.copy()
         env['CLAUDE_PLUGIN_ROOT'] = '/nonexistent/path'
         env['PATH'] = '/nonexistent'
 
         result = subprocess.run(
-            [sys.executable, str(HOOK_ENTRY)],
+            [_isolated_interpreter(tmp_path), str(HOOK_ENTRY)],
             capture_output=True,
             text=True,
             env=env,
@@ -599,7 +664,7 @@ class TestTryCliRobustness:
         env.pop("CLAUDE_PLUGIN_ROOT", None)
 
         result = subprocess.run(
-            [sys.executable, str(HOOK_ENTRY)],
+            [_isolated_interpreter(tmp_path), str(HOOK_ENTRY)],
             input=json.dumps({
                 "hook_event_name": "BeforeTool",
                 "tool_name": "bash_command",
@@ -630,7 +695,7 @@ class TestTryCliRobustness:
         env.pop("CLAUDE_PLUGIN_ROOT", None)
 
         result = subprocess.run(
-            [sys.executable, str(HOOK_ENTRY), "--cli", "gemini"],
+            [_isolated_interpreter(tmp_path), str(HOOK_ENTRY), "--cli", "gemini"],
             input=json.dumps({
                 "hook_event_name": "BeforeTool",
                 "tool_name": "bash_command",

@@ -12,18 +12,31 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+import sys as _sys
 
-MARKERS = (
-    "TASK UPDATE REQUIRED:",
-    "TASK UPDATE OVERDUE:",
-    "NO CHECKLIST EXISTS:",
+# The shared helpers live beside this script; make the sibling importable
+# no matter how this file is loaded (CLI from any cwd, or a test loading
+# it via importlib from the repo's tests directory).
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from task_reminder_analysis_common import (
+    REMINDER_MARKERS,
+    TASKUPDATE_DETAIL_KEYS,
+    db_query,
+    normalized_tool,
+    run_json,
+    search_marker,
+    sql_quote,
+    tool_args,
+    weighted_quantile,
+    write_json_output,
 )
+
+
 DEFAULT_THRESHOLDS = (15, 20, 25, 30, 35, 40, 45, 50, 60, 75)
 CODEX_DIRECT_UPDATE_PLAN = re.compile(
     r"^\s*const\s+[^=\n]+=\s*await\s+tools\.update_plan\s*\(",
@@ -34,25 +47,6 @@ CODEX_PARALLEL_UPDATE_PLAN = re.compile(
     r"(?:^|\n)\s*tools\.update_plan\s*\(",
     re.IGNORECASE | re.DOTALL,
 )
-
-
-def run_json(command: list[str]) -> Any:
-    """Run one checked command and decode its JSON output."""
-    try:
-        completed = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr.strip() or error.stdout.strip() or "no diagnostics"
-        raise RuntimeError(f"command failed: {detail}") from error
-    return json.loads(completed.stdout)
-
-
-def sql_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
 
 
 def index_snapshot_status(aise: str) -> dict[str, Any]:
@@ -78,62 +72,6 @@ def index_snapshot_status(aise: str) -> dict[str, Any]:
         "mtime_ns": db_stat.st_mtime_ns if db_stat else None,
     }
     return status
-
-
-def db_query(aise: str, sql: str, timeout_ms: int) -> list[dict[str, Any]]:
-    """Run one explicitly bounded read-only AI Session Search SQL query."""
-    return run_json(
-        [
-            aise,
-            "db",
-            "query",
-            sql,
-            "--limit",
-            "0",
-            "--timeout-ms",
-            str(timeout_ms),
-            "--format",
-            "json",
-        ]
-    )
-
-
-def search_marker(
-    aise: str,
-    marker: str,
-    since: str,
-    until: str,
-) -> list[dict[str, Any]]:
-    """Use the indexed message-search path for one exact reminder marker."""
-    payload = run_json(
-        [
-            aise,
-            "messages",
-            "search",
-            marker,
-            "--kind",
-            "harness-notice",
-            "--since",
-            since,
-            "--until",
-            until,
-            "--all-results",
-            "--context-before",
-            "0",
-            "--context-after",
-            "0",
-            "--lines-per-message",
-            "1",
-            "--include",
-            "normalized_session_metadata",
-            "--format",
-            "json",
-            "--index-refresh",
-            "existing-only",
-            "--skip-release-notification",
-        ]
-    )
-    return payload["results"]
 
 
 def session_metadata(
@@ -182,10 +120,6 @@ def is_tool_call(row: dict[str, Any]) -> bool:
         and row["role"] == "tool"
         and row.get("tool_name") is not None
     )
-
-
-def normalized_tool(row: dict[str, Any]) -> str:
-    return (row.get("tool_name") or "").replace("-", "_").split("__")[-1].lower()
 
 
 def codex_exec_source(row: dict[str, Any]) -> str:
@@ -261,15 +195,6 @@ def is_review_tool(row: dict[str, Any]) -> bool:
     return normalized_tool(row) in {"tasklist", "todoread"}
 
 
-def tool_args(row: dict[str, Any]) -> dict[str, Any]:
-    try:
-        payload = json.loads(row.get("content") or "{}")
-    except json.JSONDecodeError:
-        return {}
-    args = payload.get("args")
-    return args if isinstance(args, dict) else {}
-
-
 def classify_progress(row: dict[str, Any] | None) -> str:
     if row is None:
         return "none_observed"
@@ -283,14 +208,7 @@ def classify_progress(row: dict[str, Any] | None) -> str:
         return "plan_snapshot"
     if name == "taskupdate":
         lowered = {key.lower() for key in args}
-        detail = {
-            "description",
-            "subject",
-            "addblockedby",
-            "blockedby",
-            "dependencies",
-        }
-        if lowered & detail:
+        if lowered & TASKUPDATE_DETAIL_KEYS:
             return "work_or_dependency_detail"
         if "status" in lowered:
             return "status_only"
@@ -438,19 +356,6 @@ def run_histogram(
         """,
         timeout_ms,
     )
-
-
-def weighted_quantile(histogram: Counter[int], quantile: float) -> int | None:
-    total = sum(histogram.values())
-    if not total:
-        return None
-    target = max(1, int(total * quantile + 0.999999999))
-    seen = 0
-    for value in sorted(histogram):
-        seen += histogram[value]
-        if seen >= target:
-            return value
-    return max(histogram)
 
 
 def histogram_summary(
@@ -837,7 +742,7 @@ def build_analysis(args: argparse.Namespace) -> dict[str, Any]:
     until = as_of.isoformat()
     raw_hits = {
         marker: search_marker(args.aise, marker, long_since, until)
-        for marker in MARKERS
+        for marker in REMINDER_MARKERS
     }
     candidate_ids = {
         hit["message_ref"]["session_id"] for hits in raw_hits.values() for hit in hits
@@ -881,8 +786,8 @@ def build_analysis(args: argparse.Namespace) -> dict[str, Any]:
                 event["seq"],
             )
         )
-    primary_events = events_by_marker[MARKERS[0]]
-    overdue_events = events_by_marker[MARKERS[1]]
+    primary_events = events_by_marker[REMINDER_MARKERS[0]]
+    overdue_events = events_by_marker[REMINDER_MARKERS[1]]
     ordinals: Counter[str] = Counter()
     for event in primary_events:
         ordinals[event["root_session_id"]] += 1
@@ -1013,7 +918,7 @@ def build_analysis(args: argparse.Namespace) -> dict[str, Any]:
                     bool(event["ts"] and event["ts"] >= recent_since)
                     for event in events_by_marker[marker]
                 )
-                for marker in MARKERS
+                for marker in REMINDER_MARKERS
             },
         },
         "direct_blocked_tool_calls": {
@@ -1225,8 +1130,7 @@ startup replay always compares fixed 25, fixed 50, and staged 25 then 50.
 def main() -> None:
     args = parse_args()
     analysis = build_analysis(args)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(analysis, indent=2) + "\n", encoding="utf-8")
+    write_json_output(args.output, analysis)
 
 
 if __name__ == "__main__":

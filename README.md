@@ -636,18 +636,18 @@ which spellings they hand to autorun.
 |---|---|---|---|
 | `/ar:st` | runs, and appears in the slash menu | never arrives | never arrives |
 | `ar:st`, `ar st`, `ar-st` | runs | runs | never arrives |
-| `/ar-st` | untested | never arrives | runs, for the installed files named below |
+| `/ar-st` | never arrives — the harness answers with its own unknown-command message | never arrives | runs, for the installed files named below |
 | `ar:task-status`, `ar:task-ignore`, under any prefix above | runs as `ar:task status` and `ar:task ignore` | same | never arrives |
 
 "Never arrives" means the harness itself keeps the text: Codex holds its own
-slash menu closed, and ForgeCode and OpenCode send autorun no events at all. On
-those two the installed files `ar-go`, `ar-st`, `ar-allow`, `ar-find`,
-`ar-commit`, and `ar-ph` are the whole command surface, and the guards in their
-`AGENTS.md` are advice to the agent rather than enforcement.
-
-`/ar-st` on Claude Code, Antigravity, and Qwen Code depends on those harnesses
-passing an unknown slash command to their hooks, which autorun has not tested;
-the other four spellings always arrive.
+slash menu closed, Claude Code and Qwen Code consume an unknown slash command
+in their own slash processors and print their own feedback ("Unknown skill"
+on Claude, "Unknown command" on Qwen — verified in both harnesses' source, so
+you always see an immediate error rather than a silent drop), and ForgeCode
+and OpenCode send autorun no events at all. On those two the installed files
+`ar-go`, `ar-st`, `ar-allow`, `ar-find`, `ar-commit`, and `ar-ph` are the
+whole command surface, and the guards in their `AGENTS.md` are advice to the
+agent rather than enforcement.
 
 Autorun prints the local spelling everywhere: `/ar:` on Claude Code and the
 Gemini family, `ar:` on Codex, `/ar-` on ForgeCode and OpenCode. `/ar:help`
