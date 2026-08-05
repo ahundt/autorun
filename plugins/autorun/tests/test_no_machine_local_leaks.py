@@ -82,6 +82,79 @@ def test_tracked_files_do_not_name_the_local_username():
     )
 
 
+def test_no_tracked_file_is_binary():
+    """Binaries do not belong in this repository.
+
+    Classified by content, not by extension, using git's own detection: a
+    binary blob reports ``-`` for both counts against the empty tree. That
+    catches an unusual or missing extension, which an extension allowlist
+    cannot. The four tracked ``.svg`` diagrams are XML and stay text.
+    """
+    empty_tree = _git("hash-object", "-t", "tree", "/dev/null").strip()
+    offenders = [
+        line.split("\t", 2)[2]
+        for line in _git("diff", "--numstat", empty_tree, "HEAD").splitlines()
+        if line.startswith("-\t-\t")
+    ]
+    assert not offenders, (
+        "Tracked files are binary; build output and archives belong in "
+        ".gitignore, and generated assets should be produced at build time:\n"
+        + "\n".join(offenders)
+    )
+
+
+# One representative path per artifact family .gitignore must exclude. Each is
+# reachable from work this repository actually performs: `uv build --wheel` in
+# the packaging tests, `git bundle` recovery artifacts, zip backups, the SQLite
+# session store, and native builds on the platforms autorun claims to support.
+_MUST_BE_IGNORED = (
+    "lib.dylib",
+    "lib.so",
+    "pkg.whl",
+    "archive.zip",
+    "archive.7z",
+    "archive.tgz",
+    "archive.tar.gz",
+    "archive.tar.bz2",
+    "archive.tar.xz",
+    "recovery.bundle",
+    "objects.pack",
+    "state.sqlite",
+    "state.sqlite3",
+    "tool.exe",
+    "lib.dll",
+    "object.o",
+    "static.a",
+    "crate.rlib",
+    "Klass.class",
+    "app.jar",
+    "module.wasm",
+    "native.node",
+    "blob.bin",
+    "opaque.dat",
+    "module.pyc",
+    "pkg/__pycache__/mod.pyc",
+)
+
+
+@pytest.mark.parametrize("candidate", _MUST_BE_IGNORED)
+def test_gitignore_excludes_binary_and_build_artifacts(candidate):
+    """.gitignore must exclude each artifact family before one can be staged.
+
+    ``git check-ignore`` exits 0 only when a rule matches, so this asks git
+    itself rather than reading the file, which keeps the check honest about
+    negations and ordering.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "check-ignore", "-q", "--", candidate],
+        capture_output=True,
+    )
+    assert result.returncode == 0, (
+        f"{candidate!r} is not ignored, so a stray build artifact of that kind "
+        "could be committed. Add the pattern to .gitignore."
+    )
+
+
 def test_tracked_files_contain_no_real_ip_addresses():
     offenders = []
     for name, text in _tracked_text_files():

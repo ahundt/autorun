@@ -6,6 +6,44 @@ __pycache__/
 # C extensions
 *.so
 
+# Binaries and build output. No binary belongs in this repository; the only
+# tracked non-source assets are text (.svg diagrams). Enforced by
+# plugins/autorun/tests/test_no_machine_local_leaks.py, which classifies by
+# content rather than extension so an unusual one still fails.
+*.dylib
+*.dll
+*.exe
+*.o
+*.a
+*.lib
+*.rlib
+*.class
+*.jar
+*.wasm
+*.node
+*.bin
+*.dat
+*.dSYM/
+
+# Archives. Backups and git bundle recovery artifacts are written routinely
+# (see docs/version_update_checklist.md and the release flow) and must never be
+# staged. `dist/` already covers packaging output; these cover stray copies.
+*.whl
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tar.xz
+*.bundle
+*.pack
+
+# SQLite session state. *.db was already ignored; session_manager.py also
+# writes .sqlite/.sqlite3 files.
+*.sqlite
+*.sqlite3
+
 # Distribution / packaging
 .Python
 build/
