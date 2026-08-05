@@ -298,3 +298,88 @@ def test_pruning_never_removes_a_user_authored_skill(tmp_path, monkeypatch):
     assert (mine / "SKILL.md").read_text(encoding="utf-8") == "---\nname: hand-written\n---\nmy own\n", (
         "an unmarked skill is user-authored and must never be pruned"
     )
+
+
+# === Installed skills a user edited or added must survive a reinstall ===
+#
+# _copy_tree rmtree's the destination before copying, so the Gemini-family
+# extension route destroyed anything a user had written under
+# <ext>/skills/ — an edit to an installed SKILL.md, or a skill of their own
+# dropped beside ours. The shared ~/.agents/skills root already had the right
+# policy (marker-gated, conflicts reported by name); the extension route did
+# not, which is One Problem, Two Solutions with the unsafe one winning.
+
+def _ext_with_user_content(tmp_path, plugin_dir):
+    ext_dir = tmp_path / "ext"
+    (ext_dir / "skills").mkdir(parents=True)
+    # A skill of the user's own, sharing no name with ours.
+    theirs = ext_dir / "skills" / "user-authored"
+    theirs.mkdir()
+    (theirs / "SKILL.md").write_text("---\nname: user-authored\n---\nmine\n", encoding="utf-8")
+    return ext_dir
+
+
+def test_reinstall_preserves_a_user_authored_skill_in_the_extension(tmp_path, monkeypatch):
+    from autorun import install as inst
+
+    plugin_dir = _plugin_with_skills(tmp_path, ["ours"])
+    ext_dir = _ext_with_user_content(tmp_path, plugin_dir)
+
+    inst._sync_gemini_extension_resources(
+        plugin_dir, ext_dir, "ar", "gemini", include_skills=True
+    )
+
+    theirs = ext_dir / "skills" / "user-authored" / "SKILL.md"
+    assert theirs.is_file(), "a user-authored skill was destroyed by reinstall"
+    assert theirs.read_text(encoding="utf-8") == "---\nname: user-authored\n---\nmine\n"
+    assert (ext_dir / "skills" / "ours" / "SKILL.md").is_file(), "our skill must install"
+
+
+def test_reinstall_preserves_a_user_edit_to_a_skill_we_did_not_install(tmp_path):
+    """An unmarked directory sharing our name is theirs, not a stale copy of ours."""
+    from autorun import install as inst
+
+    plugin_dir = _plugin_with_skills(tmp_path, ["ours"])
+    ext_dir = tmp_path / "ext"
+    collision = ext_dir / "skills" / "ours"
+    collision.mkdir(parents=True)
+    (collision / "SKILL.md").write_text("---\nname: ours\n---\nhand edited\n", encoding="utf-8")
+
+    inst._sync_gemini_extension_resources(
+        plugin_dir, ext_dir, "ar", "gemini", include_skills=True
+    )
+
+    assert (collision / "SKILL.md").read_text(encoding="utf-8") == "---\nname: ours\n---\nhand edited\n", (
+        "an unmarked skill must never be overwritten, even when the name collides"
+    )
+
+
+def test_reinstall_prunes_our_retired_skill_from_the_extension(tmp_path):
+    """A skill removed upstream must leave the extension too.
+
+    Added because a mutation that deleted the prune passed every other test in
+    this area: they all build a fresh extension directory, so nothing retired
+    exists for the prune to act on. A guard needs a fixture that has something
+    to lose.
+    """
+    from autorun import install as inst
+
+    plugin_dir = _plugin_with_skills(tmp_path, ["keeper", "retiree"])
+    ext_dir = tmp_path / "ext"
+    ext_dir.mkdir()
+
+    inst._sync_gemini_extension_resources(
+        plugin_dir, ext_dir, "ar", "gemini", include_skills=True
+    )
+    assert (ext_dir / "skills" / "retiree" / "SKILL.md").is_file(), "fixture must install both"
+
+    shutil.rmtree(plugin_dir / "skills" / "retiree")
+    inst._sync_gemini_extension_resources(
+        plugin_dir, ext_dir, "ar", "gemini", include_skills=True
+    )
+
+    assert (ext_dir / "skills" / "keeper" / "SKILL.md").is_file()
+    assert not (ext_dir / "skills" / "retiree").exists(), (
+        "a skill removed upstream stayed in the extension and keeps appearing "
+        "in that harness's catalog"
+    )

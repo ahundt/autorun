@@ -1351,6 +1351,68 @@ def _copy_tree(src: Path, dst: Path) -> bool:
     return True
 
 
+def sync_owned_skill_tree(
+    src_root: Path,
+    dst_root: Path,
+    plugin_name: str,
+) -> tuple[int, tuple[str, ...]]:
+    """Publish a plugin's skills into a directory users also write to.
+
+    The one policy for "may I replace this?", shared by every destination that
+    is not exclusively autorun's. Three rules, in order:
+
+    1. An entry without autorun's owned marker is the user's, whatever it is
+       named. It is never overwritten and never deleted; its name is returned
+       so the caller can say which skill was skipped rather than reporting a
+       count nobody can act on.
+    2. An owned entry is replaced through :func:`staged_replacement`, so an
+       interrupted install leaves the previous copy rather than a partial one.
+    3. An owned entry whose name left the source is removed, because a skill
+       deleted upstream should not keep appearing in the user's catalog.
+
+    Replaces a ``shutil.rmtree`` + ``copytree`` mirror on this path. That
+    mirror destroyed user edits and user-authored skills silently, which is the
+    opposite of preserving user intent, and no message ever said so.
+
+    Complexity: O(S + E) for S source skills and E existing entries; each copy
+    is O(bytes) with one file buffer of peak memory.
+
+    Returns:
+        (installed_count, conflicting_names)
+    """
+    if not src_root.is_dir():
+        return (0, ())
+    dst_root.mkdir(parents=True, exist_ok=True)
+
+    sources = {p.name: p for p in sorted(src_root.iterdir()) if is_shippable_skill_dir(p)}
+    installed = 0
+    conflicts: list[str] = []
+
+    for name, skill_src in sources.items():
+        skill_dst = dst_root / name
+        if skill_dst.exists() and read_owned_marker(skill_dst) is None:
+            conflicts.append(name)
+            continue
+        with staged_replacement(skill_dst, prefix=f".autorun-{name}-") as staged:
+            shutil.copytree(
+                skill_src,
+                staged,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.tmp", "*~", "*.bak"),
+            )
+            write_owned_marker(staged, plugin=plugin_name)
+        installed += 1
+
+    for entry in sorted(dst_root.iterdir()):
+        if not entry.is_dir() or entry.is_symlink() or entry.name in sources:
+            continue
+        marker = read_owned_marker(entry)
+        if marker is None or (marker.plugin and marker.plugin != plugin_name):
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+
+    return (installed, tuple(conflicts))
+
+
 def _count_skill_dirs(skills_dir: Path) -> int:
     """Count top-level skill directories in a copied skills tree.
 
@@ -1436,16 +1498,14 @@ def _sync_gemini_extension_resources(
     skills_dir = ext_dir / "skills"
     skills_synced = 0
     if include_skills:
-        if _copy_tree(plugin_dir / "skills", skills_dir):
-            # Gemini-family harnesses read every child of skills/ as a skill, so
-            # prune the ones without a SKILL.md exactly as the Codex bundle does.
-            # _count_skill_dirs below counts only valid directories, which means
-            # an unpruned tree reports a correct number while shipping a broken
-            # directory — the count cannot detect this and never could.
-            for child in sorted(skills_dir.iterdir()):
-                if child.is_dir() and not is_shippable_skill_dir(child):
-                    shutil.rmtree(child)
-            skills_synced = _count_skill_dirs(skills_dir)
+        # NOT _copy_tree: that rmtree's the destination, and <ext>/skills/ is a
+        # directory users write to — an edit to an installed SKILL.md, or a
+        # skill of their own dropped beside ours, was destroyed silently on
+        # every reinstall. Same marker policy as the shared ~/.agents/skills
+        # root, so both routes answer "may I replace this?" the same way.
+        skills_synced, _conflicts = sync_owned_skill_tree(
+            plugin_dir / "skills", skills_dir, _plugin_registry_name(plugin_dir)
+        )
     else:
         if skills_dir.is_dir():
             shutil.rmtree(skills_dir)
