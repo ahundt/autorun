@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Project name is "autorun" - the plugin uses "ar" as command prefix for ergonomic typing
 name = "autorun"
-version = "0.12.0"
+version = "1.0.0rc1"
 description = "Claude Agent SDK command interceptor that saves tokens by processing autorun commands locally"
 readme = {file = "CLAUDE.md", content-type = "text/markdown"}
 requires-python = ">=3.10"

@@ -621,7 +621,7 @@ def _read_plugin_version(plugin_dir: Path) -> str:
         plugin_dir: Path to plugin directory
 
     Returns:
-        Version string from package metadata, or "0.12.0" as fallback
+        Version string from package metadata, or "1.0.0rc1" as fallback
     """
     pyproject = plugin_dir / "pyproject.toml"
     if pyproject.exists():
@@ -638,10 +638,10 @@ def _read_plugin_version(plugin_dir: Path) -> str:
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-            return data.get("version", "0.12.0")
+            return data.get("version", "1.0.0rc1")
         except (json.JSONDecodeError, OSError):
             pass
-    return "0.12.0"
+    return "1.0.0rc1"
 
 
 def _check_hook_conflicts() -> None:
@@ -2507,22 +2507,38 @@ def _copy_codex_plugin_source(
     plugin hooks are generated only when explicitly selected and always use a
     Codex-specific command with `--cli codex`.
     """
+
+    ignore_build_artifacts = shutil.ignore_patterns(
+        ".git",
+        ".venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "*.pyc",
+        "*.pyo",
+        ".coverage",
+        "htmlcov",
+        "hooks",
+    )
+
+    def _ignore_incomplete_skills(path: str, names: list[str]) -> set[str]:
+        source = Path(path)
+        ignored = set(ignore_build_artifacts(path, names))
+        if source == plugin_dir / "skills":
+            ignored.update(
+                {
+                    name
+                    for name in names
+                    if (source / name).is_dir() and not (source / name / "SKILL.md").is_file()
+                }
+            )
+        return ignored
+
     shutil.copytree(
         plugin_dir,
         target,
-        ignore=shutil.ignore_patterns(
-            ".git",
-            ".venv",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            "__pycache__",
-            "*.pyc",
-            "*.pyo",
-            ".coverage",
-            "htmlcov",
-            "hooks",
-        ),
+        ignore=_ignore_incomplete_skills,
     )
     if include_hooks:
         _write_codex_plugin_hooks(plugin_dir, target)
@@ -3460,7 +3476,7 @@ def install_plugins(
     try:
         from autorun import __version__
     except ImportError:
-        __version__ = "0.12.0"
+        __version__ = "1.0.0rc1"
 
     print(f"autorun v{__version__}")
     print(f"Marketplace root: {marketplace_root}")

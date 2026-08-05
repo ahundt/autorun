@@ -89,7 +89,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ---
 
-## autorun Plugin (v0.12.0)
+## autorun Plugin (v1.0.0rc1)
 
 ### Three-Stage Verification System
 
@@ -240,7 +240,7 @@ Feature lives in `plugins/autorun/src/autorun/cache_guard.py`. Reuses `ScopedAll
 
 ---
 
-## pdf-extractor Plugin (v0.12.0)
+## pdf-extractor Plugin (v1.0.0rc1)
 
 Extract text from PDFs with 9 backends (markitdown, pdfplumber, docling, marker, etc.).
 

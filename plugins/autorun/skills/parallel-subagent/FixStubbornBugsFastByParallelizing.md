@@ -1,5 +1,5 @@
 ---
-name: FixStubbornBugsFastByParallelizing
+name: parallel-subagent
 description: Systematically eliminate configuration bugs by testing 8-10 fundamentally different solutions in parallel. When root cause is ambiguous, this methodology finds the fix in hours instead of days through comprehensive parallel exploration. Build minimal test harness, evaluate all approaches simultaneously, identify winners, and understand WHY they work. Transforms guesswork into systematic discovery.
 ---
 
