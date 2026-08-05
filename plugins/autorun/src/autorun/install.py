@@ -3059,7 +3059,66 @@ def _install_shared_agent_skills(
             )
         installed.append(skill_src.name)
     _migrate_owned_shared_skill_names(dst_root, skill_sources)
+    _prune_retired_shared_skills(dst_root, skill_sources, plugin_dirs)
     return (tuple(installed), tuple(conflicts))
+
+
+def _prune_retired_shared_skills(
+    dst_root: Path,
+    skill_sources: dict[str, Path],
+    plugin_dirs: list[Path] | tuple[Path, ...],
+) -> tuple[str, ...]:
+    """Remove skills this plugin published that its source no longer ships.
+
+    Publishing was additive, so a skill deleted or renamed in the source stayed
+    in the shared root forever and kept appearing in every harness catalog that
+    reads it. Found when ``autorun-maintainer`` moved out of the plugin and
+    remained installed.
+
+    Three conditions must all hold before anything is removed, because this is
+    the only code that deletes from a directory users also write to:
+
+    1. the entry carries autorun's owned marker — an unmarked directory is
+       user-authored, whatever its name;
+    2. the marker names one of the plugins being installed right now, so
+       installing autorun alone never prunes pdf-extractor's skills;
+    3. the name is absent from this install's source set.
+
+    Removal reuses ``staged_replacement``'s quarantine so a failure mid-delete
+    restores the original rather than leaving a half-removed skill.
+
+    Complexity: O(E) stats for E entries in the shared root.
+
+    Returns:
+        The pruned names, for the caller's report.
+    """
+    expected_plugins = {_plugin_registry_name(p) for p in plugin_dirs}
+    pruned: list[str] = []
+    if not dst_root.is_dir():
+        return ()
+    for entry in sorted(dst_root.iterdir()):
+        if not entry.is_dir() or entry.is_symlink() or entry.name in skill_sources:
+            continue
+        marker = read_owned_marker(entry)
+        if marker is None:
+            continue  # user-authored
+        if marker.plugin and marker.plugin not in expected_plugins:
+            continue  # belongs to a plugin this install did not select
+        with FileLock(dst_root / _INSTALL_LOCK_NAME):
+            if not entry.is_dir() or read_owned_marker(entry) is None:
+                continue
+            with tempfile.TemporaryDirectory(
+                prefix=f".autorun-prune-{entry.name}-", dir=dst_root
+            ) as tmp:
+                quarantined = Path(tmp) / entry.name
+                os.replace(entry, quarantined)
+                try:
+                    shutil.rmtree(quarantined)
+                except Exception:
+                    os.replace(quarantined, entry)
+                    raise
+        pruned.append(entry.name)
+    return tuple(pruned)
 
 
 def _expand_home(value: str | Path) -> Path:

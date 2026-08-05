@@ -15,6 +15,7 @@ exactly one scope.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -232,3 +233,68 @@ def test_a_refusal_leaves_no_staging_directory(tmp_path):
         with staged_replacement(target, prefix=".probe-", precondition=lambda: "no"):
             pass
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".probe-")] == []
+
+
+# === Retired skills must not outlive their source ===
+#
+# The publisher was additive: it copied the current skill set in and never
+# removed a skill that had left the source tree. Found by the lateral matrix
+# after autorun-maintainer moved out of plugins/autorun/skills — it remained in
+# ~/.agents/skills, the Claude cache, and the Codex cache. A user who updates
+# keeps a retired skill indefinitely, and it keeps appearing in their catalog.
+#
+# Pruning must never reach a user-authored skill that happens to share a name,
+# which is exactly what the .autorun-owned marker already distinguishes.
+
+def _plugin_with_skills(tmp_path, names):
+    plugin_dir = tmp_path / "plugins" / "autorun"
+    for name in names:
+        d = plugin_dir / "skills" / name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {name} skill\n---\n", encoding="utf-8"
+        )
+    return plugin_dir
+
+
+def test_a_skill_removed_from_source_is_pruned_from_the_shared_root(tmp_path, monkeypatch):
+    from autorun import install as inst
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    inst._install_shared_agent_skills(_plugin_with_skills(tmp_path, ["keeper", "retiree"]))
+    shared = inst.shared_agents_skills_dir()
+    assert (shared / "retiree" / "SKILL.md").is_file(), "fixture must publish both"
+
+    # Second install with the skill gone from source, as a real removal looks.
+    shutil.rmtree(tmp_path / "plugins" / "autorun" / "skills" / "retiree")
+    inst._install_shared_agent_skills(tmp_path / "plugins" / "autorun")
+
+    assert (shared / "keeper" / "SKILL.md").is_file(), "current skills must survive"
+    assert not (shared / "retiree").exists(), (
+        "a skill removed from source stayed in the shared root, so it keeps "
+        "appearing in every harness catalog that reads it"
+    )
+
+
+def test_pruning_never_removes_a_user_authored_skill(tmp_path, monkeypatch):
+    """No marker means not ours, whatever its name."""
+    from autorun import install as inst
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    inst._install_shared_agent_skills(_plugin_with_skills(tmp_path, ["keeper"]))
+    shared = inst.shared_agents_skills_dir()
+
+    mine = shared / "hand-written"
+    mine.mkdir()
+    (mine / "SKILL.md").write_text("---\nname: hand-written\n---\nmy own\n", encoding="utf-8")
+    assert inst.read_owned_marker(mine) is None, "fixture must be unmarked"
+
+    inst._install_shared_agent_skills(tmp_path / "plugins" / "autorun")
+
+    assert (mine / "SKILL.md").read_text(encoding="utf-8") == "---\nname: hand-written\n---\nmy own\n", (
+        "an unmarked skill is user-authored and must never be pruned"
+    )
