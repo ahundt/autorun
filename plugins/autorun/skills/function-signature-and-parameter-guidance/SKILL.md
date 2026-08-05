@@ -38,13 +38,15 @@ every case named below is one instance of its rule, never the rule's limit.
 Correctness before brevity, always — trimming a wrong sentence produces a shorter wrong
 sentence.
 
-1. **Survey the existing vocabulary.** Structural search (`search_graph`, `kit symbols`) or
+1. **Survey the codebase's existing vocabulary, then applicable standards.** Structural
+   search (`search_graph`, `kit symbols`) or
    grep the schema and CLI. Two targets: **conventions** — sign, units, naming, what `0`
    already means, since a value's meaning comes from its siblings rather than first
    principles; and **semantic duplicates**, of a parameter (`limit` beside `max_results`) and
    of a whole tool — state each job in a sentence and look for matches, the tell being a
    parameter selecting behavior another tool provides. Extend what exists, or say how each
-   differs from its near-twin where the caller reads.
+   differs from its near-twin where the caller reads. Then check governing ISO/domain,
+   platform/protocol, and language naming conventions before inventing a name.
 2. **Inventory every entry point.** Grep the name across CLI, schema, bindings, config; fix
    all paths. A message correct in one path is routinely bypassed in another.
 3. **Trace parse to use.** Text review on a silently ignored parameter is wasted.
