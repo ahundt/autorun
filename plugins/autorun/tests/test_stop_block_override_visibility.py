@@ -424,3 +424,98 @@ def test_every_stop_block_mentions_ai_escape_path(
         ), f"[{cli_type} block#{i+1}] missing AI-escape hint: {sys_msg[:400]!r}"
         if i < 4:
             _simulate_posttooluse_delivery(sid, store)
+
+
+# === Stale replay: a resolved task list must not re-deliver the old block ===
+#
+# handle_stop stores its rendered text in pending_stop_injection and
+# deliver_pending_stop_injection replays it verbatim on the next PostToolUse.
+# Nothing re-checked the task state in between, so the tool call that RESOLVED
+# the tasks was itself the call that replayed "CANNOT STOP" naming them.
+#
+# Reported from a Codex prompt-fix session: the agent completed its last plan
+# item, saw the identical block echoed back by the PostToolUse that ran on that
+# very update_plan, concluded its fix had not worked, and DELETED the finished
+# item instead of completing it. The plan ended with 3 entries where it had 4.
+# Stale text does not merely waste tokens; it teaches the agent that the gate
+# is broken and that deletion is the way out.
+
+def _delivery_handler():
+    """Return the registered deliver_pending_stop_injection handler."""
+    from autorun import plugins as _plugins  # noqa: F401 - registers handlers
+
+    for handler in _plugins.app.chains.get("PostToolUse", []):
+        if getattr(handler, "__name__", "") == "deliver_pending_stop_injection":
+            return handler
+    raise AssertionError("deliver_pending_stop_injection is not registered on PostToolUse")
+
+
+def _posttooluse_ctx(session_id: str, store) -> EventContext:
+    return EventContext(
+        session_id=session_id,
+        event="PostToolUse",
+        tool_name="TaskUpdate",
+        tool_input={"taskId": "T0", "status": "completed"},
+        tool_result="Updated task #T0 status",
+        session_transcript=[],
+        store=store,
+        cli_type="claude",
+    )
+
+
+def _complete_every_task(manager: TaskLifecycle) -> None:
+    def updater(tasks):
+        for task in tasks.values():
+            task["status"] = "completed"
+    manager.atomic_update_tasks(updater)
+
+
+def test_stale_stop_replay_is_dropped_once_the_tasks_are_resolved(
+    isolated_task_config, isolated_session, monkeypatch
+):
+    """The call that finishes the work must not be told the work is unfinished."""
+    monkeypatch.setattr("autorun.task_lifecycle.is_enabled", lambda: True)
+    sid = "stale-replay-resolved"
+    store = ThreadSafeDB()
+    manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+    _seed_tasks(manager, 1)
+
+    stop_ctx = _make_stop_ctx(sid, cli_type="claude", store=store)
+    manager.handle_stop(stop_ctx)
+    assert stop_ctx.pending_stop_injection, "fixture needs an armed injection"
+
+    _complete_every_task(manager)
+
+    ctx = _posttooluse_ctx(sid, store)
+    _delivery_handler()(ctx)
+
+    assert ctx.pending_stop_injection is None, "the armed slot must still be cleared"
+    delivered = " ".join(str(n) for n in getattr(ctx, "_chain_notifications", []))
+    assert "CANNOT STOP" not in delivered, (
+        "a resolved task list must not replay the old block; the agent that just "
+        f"completed the work would read its own fix as failed. Got: {delivered[:300]!r}"
+    )
+
+
+def test_stop_replay_still_delivers_while_work_remains(
+    isolated_task_config, isolated_session, monkeypatch
+):
+    """The freshness check must not weaken the gate for genuinely open work."""
+    monkeypatch.setattr("autorun.task_lifecycle.is_enabled", lambda: True)
+    sid = "stale-replay-open"
+    store = ThreadSafeDB()
+    manager = TaskLifecycle(session_id=sid, config=isolated_task_config)
+    _seed_tasks(manager, 2)
+
+    stop_ctx = _make_stop_ctx(sid, cli_type="claude", store=store)
+    manager.handle_stop(stop_ctx)
+    assert stop_ctx.pending_stop_injection, "fixture needs an armed injection"
+
+    ctx = _posttooluse_ctx(sid, store)
+    _delivery_handler()(ctx)
+
+    delivered = " ".join(str(n) for n in getattr(ctx, "_chain_notifications", []))
+    assert "CANNOT STOP" in delivered, (
+        "with tasks still incomplete the block must reach the AI, including the "
+        f"override actions. Got: {delivered[:300]!r}"
+    )

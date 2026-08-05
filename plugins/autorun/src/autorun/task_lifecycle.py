@@ -3217,6 +3217,32 @@ def register_hooks(app_instance) -> None:
         ctx.pending_stop_injection = None  # Clear so it fires only once per Stop
 
         manager = TaskLifecycle(ctx=ctx)
+
+        # The injection is text rendered at Stop time, so it names the tasks that
+        # blocked THEN. The PostToolUse that delivers it is frequently the very
+        # TaskUpdate that resolved them, and replaying it there tells an AI its
+        # own fix failed. Observed consequence (Codex prompt-fix session,
+        # 2026-08-05): the agent completed its last plan item, saw the identical
+        # block echoed by the PostToolUse running on that update, and DELETED the
+        # finished item rather than completing it — the plan ended with three
+        # entries where it had four. Re-read before speaking.
+        #
+        # This does not weaken the gate. Stop itself still blocks on the live set
+        # (handle_stop), and while anything remains blocking the text is
+        # delivered unchanged, override actions included. It only suppresses a
+        # message whose own subject is already resolved. The every-generation
+        # re-delivery that prevents "infinite non-overridable stop failure" is
+        # untouched: that guarantees a NEW block always re-delivers, not that a
+        # satisfied one keeps echoing.
+        if not manager.get_incomplete_tasks(exclude_blocking=True):
+            manager.log_event(
+                "STOP_REPLAY_DROPPED",
+                "session",
+                "Tasks resolved before delivery; stale Stop block not replayed",
+                "skipped",
+            )
+            return None
+
         claimed = False
 
         def claim_this_generation(metadata):
